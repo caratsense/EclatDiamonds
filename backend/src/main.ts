@@ -5,8 +5,6 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { json, urlencoded } from 'express';
 import { isAbsolute, join } from 'path';
 import { AppModule } from './app.module';
-import { PrismaService } from './prisma/prisma.service';
-import { seedConfig } from './common/config-seed';
 
 async function bootstrap() {
   // rawBody: true captures the unparsed request body (req.rawBody) so provider
@@ -75,13 +73,5 @@ async function bootstrap() {
   await app.listen(port, '0.0.0.0');
   // eslint-disable-next-line no-console
   console.log(`Eclat backend listening on 0.0.0.0:${port}`);
-
-  // Best-effort, idempotent config bootstrap (lookup data for the new modules) —
-  // fired AFTER listen so it can NEVER block the app from serving; runs in the
-  // background and swallows errors. Idempotent: a no-op once already seeded.
-  void seedConfig(app.get(PrismaService)).catch((e) => {
-    // eslint-disable-next-line no-console
-    console.warn('[config-seed] skipped:', (e as Error).message);
-  });
 }
 bootstrap();
