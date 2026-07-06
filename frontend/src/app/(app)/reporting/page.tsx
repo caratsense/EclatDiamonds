@@ -11,6 +11,7 @@ import { MoversTable } from "@/components/reporting/movers-table";
 import { DsrPushCard } from "@/components/reporting/dsr-push-card";
 import { PeriodRollup } from "@/components/reporting/period-rollup";
 import { SendReportDialog } from "@/components/reporting/send-report-dialog";
+import { DailyReportSection } from "@/components/reporting/daily-report-section";
 import {
   Dialog,
   DialogContent,
@@ -108,6 +109,10 @@ export default function ReportingPage() {
         onOpenChange={setSendOpen}
         initialPeriod={period}
       />
+
+      <div className="my-6 h-px bg-gradient-to-r from-border via-border to-transparent" />
+
+      <DailyReportSection />
 
       <div className="my-6 h-px bg-gradient-to-r from-border via-border to-transparent" />
 

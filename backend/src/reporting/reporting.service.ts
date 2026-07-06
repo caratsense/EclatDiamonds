@@ -1,11 +1,21 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PaymentMode, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
 import { WhatsAppService } from '../integrations/whatsapp.service';
 import { EmailService } from '../integrations/email.service';
-import { ReportChannel, ReportPeriod, SendReportDto } from './dto/reporting.dto';
+import {
+  CreateDailyReportDto,
+  DailyReportQueryDto,
+  ReportChannel,
+  ReportPeriod,
+  SendDailyReportDto,
+  SendReportDto,
+} from './dto/reporting.dto';
+
+/** A DailyReport with its store relation eagerly loaded (for the composed text). */
+type DailyReportWithStore = Prisma.DailyReportGetPayload<{ include: { store: true } }>;
 
 function num(v: Prisma.Decimal | number | null | undefined): number {
   return v == null ? 0 : Number(v);
@@ -87,6 +97,25 @@ function inr(n: number): string {
       ? s
       : s.slice(0, -3).replace(/\B(?=(\d\d)+(?!\d))/g, ',') + ',' + s.slice(-3);
   return `${sign}₹${grouped}`;
+}
+
+/** Ungrouped rupee amount, e.g. ₹55000 (matches the owner's WhatsApp SALES line). */
+function rupeeRaw(n: number): string {
+  return `₹${Math.round(n)}`;
+}
+
+/** DD/MM/YYYY from a @db.Date value (UTC components — no timezone shift). */
+function fmtDMY(d: Date): string {
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  return `${day}/${m}/${d.getUTCFullYear()}`;
+}
+
+/** YYYY-MM-DD from a @db.Date value (UTC components — no timezone shift). */
+function fmtISODateUTC(d: Date): string {
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${m}-${day}`;
 }
 
 export interface ReportSummary {
@@ -413,5 +442,160 @@ export class ReportingService {
       `  Total: ${inr(s.payments.total)}`,
       `  ${modeLine}`,
     ].join('\n');
+  }
+
+  // ==========================================================================
+  // DAILY SALES REPORT (DSR) — the store-close entry a manager types on WhatsApp,
+  // stored so it lives on the website. Store-scoped; additive to the derived
+  // /reporting/dsr + /reporting/summary aggregates above.
+  // ==========================================================================
+
+  /** POST /reporting/daily — capture a store-close DSR. Store-scoped write. */
+  async createDaily(user: AuthUser, dto: CreateDailyReportDto) {
+    this.scope.assertStoreAllowed(user, dto.storeId);
+
+    const created = await this.prisma.dailyReport.create({
+      data: {
+        storeId: dto.storeId,
+        reportDate: new Date(`${dto.reportDate}T00:00:00.000Z`),
+        reportTime: dto.reportTime,
+        walkIns: dto.walkIns ?? 0,
+        seriousEnquiries: dto.seriousEnquiries ?? 0,
+        deliveredBilled: new Prisma.Decimal(dto.deliveredBilled ?? 0),
+        bookingsNew: new Prisma.Decimal(dto.bookingsNew ?? 0),
+        advanceReceived: new Prisma.Decimal(dto.advanceReceived ?? 0),
+        cash: new Prisma.Decimal(dto.cash ?? 0),
+        card: new Prisma.Decimal(dto.card ?? 0),
+        upi: new Prisma.Decimal(dto.upi ?? 0),
+        oldGoldWtG: dto.oldGoldWtG == null ? null : new Prisma.Decimal(dto.oldGoldWtG),
+        oldGoldValue: dto.oldGoldValue == null ? null : new Prisma.Decimal(dto.oldGoldValue),
+        submittedBy: dto.submittedBy,
+      },
+      include: { store: true },
+    });
+    return this.toDailyView(created);
+  }
+
+  /** GET /reporting/daily?date=&storeId= — store-scoped list, most recent first. */
+  async listDaily(user: AuthUser, query: DailyReportQueryDto, headerStore?: string) {
+    const where: Prisma.DailyReportWhereInput = this.scope.storeFilter(
+      user,
+      query.storeId ?? headerStore,
+    );
+    if (query.date) {
+      where.reportDate = new Date(`${query.date}T00:00:00.000Z`);
+    }
+    const rows = await this.prisma.dailyReport.findMany({
+      where,
+      include: { store: true },
+      orderBy: [{ reportDate: 'desc' }, { createdAt: 'desc' }],
+      take: 200,
+    });
+    return rows.map((r) => this.toDailyView(r));
+  }
+
+  /** GET /reporting/daily/:id — one report, gated to the caller's store scope. */
+  async getDaily(user: AuthUser, id: string) {
+    const report = await this.loadScopedDaily(user, id);
+    return this.toDailyView(report);
+  }
+
+  /**
+   * POST /reporting/daily/:id/send — compose the exact WhatsApp DSR text and
+   * deliver it over WhatsApp or email. Mirrors /reporting/send: each channel
+   * degrades to a safe no-op (sent=false, disabled=true) when unconfigured, and
+   * the composed preview is always returned.
+   */
+  async sendDaily(
+    user: AuthUser,
+    id: string,
+    dto: SendDailyReportDto,
+  ): Promise<{ sent: boolean; channel: ReportChannel; disabled?: boolean; preview: string }> {
+    const report = await this.loadScopedDaily(user, id);
+    const preview = this.composeDsrText(report);
+
+    if (dto.channel === 'whatsapp') {
+      if (!this.whatsapp.enabled) {
+        return { sent: false, channel: 'whatsapp', disabled: true, preview };
+      }
+      const res = await this.whatsapp.sendText(dto.to, preview);
+      return { sent: res.delivered, channel: 'whatsapp', preview };
+    }
+
+    // email
+    if (!this.email.enabled) {
+      return { sent: false, channel: 'email', disabled: true, preview };
+    }
+    const subject = `Daily Sales Report — ${report.store?.name ?? 'Store'} — ${fmtDMY(report.reportDate)}`;
+    const res = await this.email.send(dto.to, subject, preview);
+    return { sent: res.sent, channel: 'email', preview };
+  }
+
+  /** Fetch a DSR by id and assert it is within the caller's store scope. */
+  private async loadScopedDaily(user: AuthUser, id: string): Promise<DailyReportWithStore> {
+    const report = await this.prisma.dailyReport.findUnique({
+      where: { id },
+      include: { store: true },
+    });
+    if (!report) throw new NotFoundException('Daily report not found');
+    this.scope.assertStoreAllowed(user, report.storeId);
+    return report;
+  }
+
+  /**
+   * Render a DSR as the EXACT WhatsApp text the owner types at store close.
+   * The old-gold line shows `__ gm / ₹__` placeholders when no gold was taken.
+   */
+  composeDsrText(report: DailyReportWithStore): string {
+    const storeName = report.store?.name ?? '—';
+    const oldGoldWt = report.oldGoldWtG == null ? '__' : String(Number(report.oldGoldWtG));
+    const oldGoldVal = report.oldGoldValue == null ? '₹__' : inr(Number(report.oldGoldValue));
+
+    const header = [`STORE: ${storeName}`, `DATE: ${fmtDMY(report.reportDate)}`];
+    if (report.reportTime) header.push(`TIME: ${report.reportTime}`);
+
+    return [
+      header.join('   '),
+      'TRAFFIC'.padEnd(10) +
+        [`Walk-ins: ${report.walkIns}`, `Serious enquiries: ${report.seriousEnquiries}`].join('   '),
+      'SALES'.padEnd(10) +
+        [
+          `Delivered & billed: ${rupeeRaw(num(report.deliveredBilled))}`,
+          `Bookings (new): ${rupeeRaw(num(report.bookingsNew))} approx`,
+          `Advance received: ${rupeeRaw(num(report.advanceReceived))}`,
+        ].join('   '),
+      ''.padEnd(10) +
+        [
+          `→ Cash ${inr(num(report.cash))}`,
+          `→ Card ${inr(num(report.card))}`,
+          `→ UPI ${inr(num(report.upi))}`,
+          `→ Old gold (wt/val): ${oldGoldWt} gm / ${oldGoldVal}`,
+        ].join('   '),
+      `Submitted by: ${report.submittedBy ?? '—'}`,
+    ].join('\n');
+  }
+
+  /** Serialise a DSR row for JSON (Decimals → numbers) with a composed `text` preview. */
+  private toDailyView(r: DailyReportWithStore) {
+    return {
+      id: r.id,
+      storeId: r.storeId,
+      storeName: r.store?.name ?? null,
+      reportDate: fmtISODateUTC(r.reportDate),
+      reportTime: r.reportTime,
+      walkIns: r.walkIns,
+      seriousEnquiries: r.seriousEnquiries,
+      deliveredBilled: num(r.deliveredBilled),
+      bookingsNew: num(r.bookingsNew),
+      advanceReceived: num(r.advanceReceived),
+      cash: num(r.cash),
+      card: num(r.card),
+      upi: num(r.upi),
+      oldGoldWtG: r.oldGoldWtG == null ? null : Number(r.oldGoldWtG),
+      oldGoldValue: r.oldGoldValue == null ? null : Number(r.oldGoldValue),
+      submittedBy: r.submittedBy,
+      createdAt: r.createdAt.toISOString(),
+      text: this.composeDsrText(r),
+    };
   }
 }

@@ -354,6 +354,7 @@ model Store {
   returns             ReturnRecord[]
   discountRequests    DiscountRequest[]
   campaignStores      CampaignStore[]
+  dailyReports        DailyReport[]
 
   @@index([regionId])
 }
@@ -1647,6 +1648,38 @@ model Task {
   updatedAt DateTime @updatedAt
 
   @@index([storeId, status])
+}
+
+// ============================================================================
+// MODULE 10 — REPORTING & DSR (Daily Sales Report, store-close entry)
+// ============================================================================
+
+/// A store-close Daily Sales Report — the exact figures a store manager currently
+/// types on WhatsApp at end of day, captured on the website instead. One row per
+/// store per report-date (traffic + sales + payment split + old-gold). Rolls up
+/// into the derived weekly/monthly summaries; the composed text mirrors the
+/// owner's WhatsApp format 1:1 (see docs/CLIENT-CALL-2026-07.md § Module 10).
+model DailyReport {
+  id               String   @id @default(cuid())
+  storeId          String
+  reportDate       DateTime @db.Date
+  reportTime       String? // "8:00 PM"
+  walkIns          Int      @default(0)
+  seriousEnquiries Int      @default(0)
+  deliveredBilled  Decimal  @default(0) @db.Decimal(14, 2)
+  bookingsNew      Decimal  @default(0) @db.Decimal(14, 2)
+  advanceReceived  Decimal  @default(0) @db.Decimal(14, 2)
+  cash             Decimal  @default(0) @db.Decimal(14, 2)
+  card             Decimal  @default(0) @db.Decimal(14, 2)
+  upi              Decimal  @default(0) @db.Decimal(14, 2)
+  oldGoldWtG       Decimal? @db.Decimal(12, 3)
+  oldGoldValue     Decimal? @db.Decimal(14, 2)
+  submittedBy      String?
+  createdAt        DateTime @default(now())
+
+  store Store @relation(fields: [storeId], references: [id])
+
+  @@index([storeId, reportDate])
 }
 
 // ============================================================================

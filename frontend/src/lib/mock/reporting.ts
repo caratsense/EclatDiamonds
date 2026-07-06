@@ -1,3 +1,5 @@
+import { formatINR } from "@/lib/format";
+
 /**
  * Mock data for Module 10 — Reporting & DSR (Daily Sales Report).
  * Store-scoped seed data; Phase 2 replaces with API hooks.
@@ -110,3 +112,140 @@ export function formatPaymentMode(mode: string): string {
   if (["upi", "neft", "rtgs", "imps", "emi"].includes(m)) return m.toUpperCase();
   return m.charAt(0).toUpperCase() + m.slice(1);
 }
+
+/* -------------------------------------------------------------------------- */
+/* Daily Report (DSR) — the manual store-close report the manager used to type */
+/* on WhatsApp, now filed on the website. Contract:                           */
+/*   POST /reporting/daily · GET /reporting/daily · POST /reporting/daily/:id/send
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The store-close figures a manager enters. Mirrors the WhatsApp DSR layout:
+ * Traffic · Sales · Payment split (cash/card/upi) · Old gold · Submitted by.
+ */
+export interface DailyReportInput {
+  storeId: string;
+  /** yyyy-mm-dd (the business day the report covers). */
+  reportDate: string;
+  /** HH:mm (24h) — store-close time; optional. */
+  reportTime?: string;
+  // Traffic
+  walkIns: number;
+  seriousEnquiries: number;
+  // Sales
+  deliveredBilled: number;
+  bookingsNew: number;
+  advanceReceived: number;
+  // Payment split
+  cash: number;
+  card: number;
+  upi: number;
+  // Old gold (trade-in) — optional
+  oldGoldWtG?: number;
+  oldGoldValue?: number;
+  submittedBy?: string;
+}
+
+/** A persisted daily report — the input plus server-composed WhatsApp text. */
+export interface DailyReport extends DailyReportInput {
+  id: string;
+  /** Resolved store label for display (backend joins the store). */
+  storeName?: string;
+  /** The composed WhatsApp-format report text (source of truth for sends). */
+  text: string;
+  /** ISO timestamp the report was filed. */
+  createdAt?: string;
+}
+
+/** yyyy-mm-dd -> dd/MM/yyyy (the owner's WhatsApp date format). */
+function ddmmyyyy(iso: string): string {
+  const [y, m, d] = iso.split("-");
+  return y && m && d ? `${d}/${m}/${y}` : iso;
+}
+
+/** HH:mm (24h) -> h:mm AM/PM (the owner's WhatsApp time format). */
+function clock12(hhmm: string): string {
+  const [hStr, mStr] = hhmm.split(":");
+  const h = Number(hStr);
+  const m = Number(mStr);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return hhmm;
+  const period = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(m).padStart(2, "0")} ${period}`;
+}
+
+/**
+ * Compose the WhatsApp-format DSR text — the exact layout the owner types by
+ * hand. Used for the live preview and as an offline fallback when the backend
+ * `text` field is absent. Money uses consistent ₹ Indian grouping.
+ */
+export function composeDailyReportText(
+  r: DailyReportInput,
+  storeName: string,
+): string {
+  const inr = (n: number) => formatINR(n);
+  const header =
+    `STORE: ${storeName}   DATE: ${ddmmyyyy(r.reportDate)}` +
+    (r.reportTime ? `   TIME: ${clock12(r.reportTime)}` : "");
+
+  const hasOldGold = r.oldGoldWtG != null || r.oldGoldValue != null;
+  const oldGold = hasOldGold
+    ? `${r.oldGoldWtG != null ? `${r.oldGoldWtG} gm` : "—"} / ${
+        r.oldGoldValue != null ? inr(r.oldGoldValue) : "₹—"
+      }`
+    : "— gm / ₹—";
+
+  return [
+    header,
+    `TRAFFIC   Walk-ins: ${r.walkIns}   Serious enquiries: ${r.seriousEnquiries}`,
+    `SALES     Delivered & billed: ${inr(r.deliveredBilled)}   Bookings (new): ${inr(
+      r.bookingsNew,
+    )}   Advance received: ${inr(r.advanceReceived)}`,
+    `          → Cash ${inr(r.cash)}   → Card ${inr(r.card)}   → UPI ${inr(
+      r.upi,
+    )}   → Old gold (wt/val): ${oldGold}`,
+    `Submitted by: ${r.submittedBy?.trim() || "—"}`,
+  ].join("\n");
+}
+
+/** Seed daily reports (offline realism; live data comes from the API). */
+export const DAILY_REPORTS: DailyReport[] = [
+  {
+    id: "dsr-0001",
+    storeId: "surat-main",
+    storeName: "Surat — Main",
+    reportDate: "2026-07-05",
+    reportTime: "20:00",
+    walkIns: 12,
+    seriousEnquiries: 4,
+    deliveredBilled: 285000,
+    bookingsNew: 120000,
+    advanceReceived: 40000,
+    cash: 90000,
+    card: 155000,
+    upi: 80000,
+    oldGoldWtG: 8.42,
+    oldGoldValue: 62000,
+    submittedBy: "Aarav Mehta",
+    text: "",
+    createdAt: "2026-07-05T14:32:00.000Z",
+  },
+  {
+    id: "dsr-0002",
+    storeId: "mumbai-bandra",
+    storeName: "Mumbai — Bandra",
+    reportDate: "2026-07-05",
+    reportTime: "21:30",
+    walkIns: 21,
+    seriousEnquiries: 7,
+    deliveredBilled: 540000,
+    bookingsNew: 260000,
+    advanceReceived: 85000,
+    cash: 120000,
+    card: 305000,
+    upi: 200000,
+    submittedBy: "Rhea Kapoor",
+    text: "",
+    createdAt: "2026-07-05T16:05:00.000Z",
+  },
+].map((r) => ({ ...r, text: composeDailyReportText(r, r.storeName ?? "") }));

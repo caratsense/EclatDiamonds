@@ -851,6 +851,33 @@ async function main() {
     },
   });
 
+  // ==========================================================================
+  // MODULE 10 — Daily Sales Report (DSR): the exact store-close report a manager
+  // types on WhatsApp, captured on the website. Demo = the owner's Udaipur example
+  // (storeId points at an existing seeded store so it shows on the cloud).
+  // ==========================================================================
+  await prisma.dailyReport.upsert({
+    where: { id: "dsr-demo-udaipur" },
+    update: {},
+    create: {
+      id: "dsr-demo-udaipur",
+      storeId: "surat-main",
+      reportDate: new Date("2026-06-24T00:00:00.000Z"),
+      reportTime: "8:00 PM",
+      walkIns: 2,
+      seriousEnquiries: 1,
+      deliveredBilled: "55000",
+      bookingsNew: "80000",
+      advanceReceived: "10000",
+      cash: "65000",
+      card: "0",
+      upi: "0",
+      oldGoldWtG: null,
+      oldGoldValue: null,
+      submittedBy: "Manish Vaishnav",
+    },
+  });
+
   console.log("Seed complete:");
   console.log(`  ${userDefs.length} users (password: ${PASSWORD}), ${storeDefs.length} stores + 1 aggregate`);
   console.log(`  ${products.length} products, ${stock.length} stock items, ${leads.length} leads, ${quoteDefs.length} quotes`);

@@ -1,10 +1,16 @@
 "use client";
 
-import { useMutation, useQuery } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
 import { useStoreKey } from "@/lib/queries/keys";
 import type {
+  DailyReport,
+  DailyReportInput,
   DsrHeadline,
   MoverRow,
   PaymentSource,
@@ -15,6 +21,8 @@ import type {
 } from "@/lib/mock/reporting";
 
 export type {
+  DailyReport,
+  DailyReportInput,
   ReportChannel,
   ReportPeriod,
   ReportSummary,
@@ -98,6 +106,73 @@ export function useSendReport() {
       const { data } = await api.post<SendReportResult>(
         "/reporting/send",
         input,
+      );
+      return data;
+    },
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Daily Report (DSR) — the manual store-close report (was typed on WhatsApp). */
+/* -------------------------------------------------------------------------- */
+
+const DAILY_REPORTS_KEY = "daily-reports";
+
+/**
+ * GET /reporting/daily?date=&storeId= — recent filed DSRs, store-scoped.
+ * Keyed on the optional date + active store so the topbar switcher refetches.
+ */
+export function useDailyReports(date?: string) {
+  const storeId = useStoreKey();
+  return useQuery({
+    queryKey: [DAILY_REPORTS_KEY, date ?? null, storeId],
+    queryFn: async () => {
+      const { data } = await api.get<DailyReport[]>("/reporting/daily", {
+        params: { ...(date ? { date } : {}), storeId },
+      });
+      return data;
+    },
+  });
+}
+
+export type CreateDailyReportInput = DailyReportInput;
+
+/** POST /reporting/daily — file a store-close report (returns composed text). */
+export function useCreateDailyReport() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: CreateDailyReportInput) => {
+      const { data } = await api.post<DailyReport>("/reporting/daily", input);
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [DAILY_REPORTS_KEY] });
+    },
+  });
+}
+
+export interface SendDailyReportInput {
+  id: string;
+  channel: ReportChannel;
+  /** Phone number (WhatsApp) or email address. */
+  to: string;
+}
+
+export interface SendDailyReportResult {
+  sent: boolean;
+  /** True when that channel isn't configured yet — preview only, NOT an error. */
+  disabled?: boolean;
+  /** The composed report text the backend would deliver. */
+  preview: string;
+}
+
+/** POST /reporting/daily/:id/send — deliver a filed DSR over WhatsApp/email. */
+export function useSendDailyReport() {
+  return useMutation({
+    mutationFn: async ({ id, ...body }: SendDailyReportInput) => {
+      const { data } = await api.post<SendDailyReportResult>(
+        `/reporting/daily/${id}/send`,
+        body,
       );
       return data;
     },

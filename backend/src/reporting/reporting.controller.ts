@@ -1,8 +1,14 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ReportingService } from './reporting.service';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
-import { ReportSummaryQueryDto, SendReportDto } from './dto/reporting.dto';
+import {
+  CreateDailyReportDto,
+  DailyReportQueryDto,
+  ReportSummaryQueryDto,
+  SendDailyReportDto,
+  SendReportDto,
+} from './dto/reporting.dto';
 
 @Controller('reporting')
 export class ReportingController {
@@ -39,5 +45,37 @@ export class ReportingController {
     @StoreHeader() store?: string,
   ) {
     return this.reporting.send(user, dto, store);
+  }
+
+  /** POST /reporting/daily — capture a store-close Daily Sales Report (Module 10). */
+  @Post('daily')
+  createDaily(@CurrentUser() user: AuthUser, @Body() dto: CreateDailyReportDto) {
+    return this.reporting.createDaily(user, dto);
+  }
+
+  /** GET /reporting/daily?date=YYYY-MM-DD&storeId= — store-scoped DSR list. */
+  @Get('daily')
+  listDaily(
+    @CurrentUser() user: AuthUser,
+    @Query() query: DailyReportQueryDto,
+    @StoreHeader() store?: string,
+  ) {
+    return this.reporting.listDaily(user, query, store);
+  }
+
+  /** GET /reporting/daily/:id — a single DSR, gated to the caller's store scope. */
+  @Get('daily/:id')
+  getDaily(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.reporting.getDaily(user, id);
+  }
+
+  /** POST /reporting/daily/:id/send — deliver the composed DSR via WhatsApp/email. */
+  @Post('daily/:id/send')
+  sendDaily(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: SendDailyReportDto,
+  ) {
+    return this.reporting.sendDaily(user, id, dto);
   }
 }

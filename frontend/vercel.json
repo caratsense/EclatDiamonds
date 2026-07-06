@@ -2,8 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
   "buildCommand": "npm run build",
-  "installCommand": "npm ci",
+  "installCommand": "npm install",
   "outputDirectory": ".next",
-  "github": { "silent": true },
-  "//": "NEXT_PUBLIC_API_URL is a build-time public var and MUST be set in the Vercel project (Settings -> Environment Variables) for Production/Preview, e.g. https://eclat-backend.up.railway.app. Local dev keeps using frontend/.env.local. After the first backend deploy, set this then redeploy the frontend so the bundle points at the live API."
+  "github": { "silent": true }
 }
