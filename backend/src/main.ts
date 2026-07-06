@@ -5,6 +5,8 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { json, urlencoded } from 'express';
 import { isAbsolute, join } from 'path';
 import { AppModule } from './app.module';
+import { PrismaService } from './prisma/prisma.service';
+import { seedConfig } from './common/config-seed';
 
 async function bootstrap() {
   // rawBody: true captures the unparsed request body (req.rawBody) so provider
@@ -66,6 +68,16 @@ async function bootstrap() {
     credentials: true,
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Store-Id'],
   });
+
+  // Best-effort, idempotent config bootstrap (lookup data for the new modules).
+  // Runs in-process so it can't be skipped by the platform's deploy hooks; a
+  // failure here must never stop the app from serving.
+  try {
+    await seedConfig(app.get(PrismaService));
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[config-seed] skipped:', (e as Error).message);
+  }
 
   // Read PORT straight from the env (Railway injects it) and bind 0.0.0.0 so the
   // platform proxy can reach the container (binding ::/localhost causes 502s).
