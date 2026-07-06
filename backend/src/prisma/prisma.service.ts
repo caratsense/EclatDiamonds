@@ -23,15 +23,13 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     super(url ? { datasources: { db: { url } } } : {});
   }
 
-  async onModuleInit(): Promise<void> {
-    // Never let a transient DB hiccup block the whole app from serving; Prisma
-    // reconnects lazily on the next query if the initial connect fails.
-    try {
-      await this.$connect();
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.error('[prisma] initial connect failed (continuing):', (e as Error).message);
-    }
+  onModuleInit(): void {
+    // LAZY CONNECT — deliberately do NOT $connect() at boot. Establishing the pool
+    // against a saturated DB / public proxy makes $connect() hang indefinitely
+    // (it ignores connect_timeout at the driver level), which hangs NestFactory
+    // forever → the server never listens → 502. Prisma connects on the FIRST query
+    // instead, so the app always reaches app.listen(); queries then succeed as soon
+    // as a connection is available and fail fast (pool_timeout) if not.
   }
 
   async onModuleDestroy(): Promise<void> {
