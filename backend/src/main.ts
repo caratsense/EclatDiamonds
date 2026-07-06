@@ -69,21 +69,19 @@ async function bootstrap() {
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Store-Id'],
   });
 
-  // Best-effort, idempotent config bootstrap (lookup data for the new modules).
-  // Runs in-process so it can't be skipped by the platform's deploy hooks; a
-  // failure here must never stop the app from serving.
-  try {
-    await seedConfig(app.get(PrismaService));
-  } catch (e) {
-    // eslint-disable-next-line no-console
-    console.warn('[config-seed] skipped:', (e as Error).message);
-  }
-
   // Read PORT straight from the env (Railway injects it) and bind 0.0.0.0 so the
   // platform proxy can reach the container (binding ::/localhost causes 502s).
   const port = Number(process.env.PORT) || 4000;
   await app.listen(port, '0.0.0.0');
   // eslint-disable-next-line no-console
   console.log(`Eclat backend listening on 0.0.0.0:${port}`);
+
+  // Best-effort, idempotent config bootstrap (lookup data for the new modules) —
+  // fired AFTER listen so it can NEVER block the app from serving; runs in the
+  // background and swallows errors. Idempotent: a no-op once already seeded.
+  void seedConfig(app.get(PrismaService)).catch((e) => {
+    // eslint-disable-next-line no-console
+    console.warn('[config-seed] skipped:', (e as Error).message);
+  });
 }
 bootstrap();
