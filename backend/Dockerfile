@@ -56,4 +56,7 @@ EXPOSE 4000
 # `migrate deploy` is safe/idempotent: it only runs un-applied migrations.
 # Call the Prisma CLI directly (NOT via npx — npx hangs at boot on egress-restricted
 # hosts). migrate deploy is idempotent: only un-applied migrations run.
-CMD ["sh", "-c", "node node_modules/prisma/build/index.js migrate deploy && node dist/main.js"]
+# Migrations are applied out-of-band (Railway pre-deploy / one-off), not on every
+# boot — the prisma CLI's direct-node invocation doesn't always exit, which would
+# block `&& node` and hang startup. Boot just serves.
+CMD ["sh", "-c", "node dist/main.js"]
