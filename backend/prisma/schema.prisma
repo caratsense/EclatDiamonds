@@ -1,0 +1,1671 @@
+// Eclat / CaratSense — PostgreSQL target schema (data layer for the new backend).
+//
+// Design principles (see CLAUDE.md, docs/eclat-schema.md):
+//   1. Multi-store first: Region -> Store hierarchy; every business row carries storeId.
+//   2. RBAC: User / Role / UserStore assignments; per-role discount-approval limits.
+//   3. Exact numerics: Decimal for all money, gold/metal weights, making charges, tax.
+//   4. Legacy provenance: tables mirroring APRS-SJEP rows carry legacyId + legacyUpdatedAt
+//      so the 15-min sync agent can upsert by watermark (docs/DATA_PIPELINE.md).
+//   5. Images live in object storage; only URLs + (future) vectors live in Postgres.
+//
+// NOTE ON AI IMAGE SEARCH (Module 5):
+//   pgvector is NOT installed on the local dev Postgres, so the catalogue embedding is
+//   modelled as Float[] here (portable, applies cleanly everywhere). Once the `vector`
+//   extension is installed in the target environment, migrate `embedding` to a real
+//   `vector(N)` column and add an HNSW/IVFFlat ANN index. See docs/eclat-schema.md
+//   ("AI image search") for the exact upgrade migration.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum Role {
+  salesperson
+  store_manager
+  area_manager
+  head_office
+}
+
+enum PartyType {
+  customer
+  supplier
+  staff
+  salesperson
+  branch
+  account
+}
+
+enum LeadStage {
+  inquiry
+  quotation
+  order_placed
+}
+
+enum LeadSource {
+  walk_in
+  phone
+  whatsapp
+  website
+  instagram
+  referral
+}
+
+enum QuoteStatus {
+  draft
+  shared
+  accepted
+  expired
+}
+
+enum MetalKind {
+  gold_24k
+  gold_22k
+  gold_18k
+  rose_gold_18k
+  platinum
+  silver
+}
+
+enum ProductCategory {
+  necklace
+  ring
+  earrings
+  bangle
+  bracelet
+  pendant
+  chain
+  other
+}
+
+enum Availability {
+  in_stock
+  lead_time
+}
+
+enum StockStatus {
+  in_stock
+  aging
+  dead_stock
+  reserved
+  sold
+  melted
+  transferred
+}
+
+enum SaleDocType {
+  sale
+  purchase
+  branch_transfer
+  proforma
+  sale_return
+  purchase_return
+}
+
+enum OrderStatus {
+  booked
+  designing
+  casting
+  stone_setting
+  polishing
+  qc
+  ready
+  delivered
+  cancelled
+}
+
+enum TimelineRole {
+  salesperson
+  back_office
+  runner
+  factory
+}
+
+/// Whether an order is a customer custom order or a stock/replenishment order.
+enum OrderKind {
+  custom
+  stock
+}
+
+enum PaymentMode {
+  cash
+  card
+  upi
+  net_banking
+  online
+  cheque
+  gold_exchange
+}
+
+enum LedgerSide {
+  debit
+  credit
+}
+
+enum LedgerKind {
+  AR
+  AP
+  expense
+  income
+  asset
+  liability
+}
+
+enum AttendanceStatus {
+  present
+  late
+  on_leave
+  absent
+}
+
+enum LeaveType {
+  casual
+  sick
+  earned
+  festival
+}
+
+enum LeaveStatus {
+  pending
+  approved
+  rejected
+}
+
+enum SchemeStatus {
+  active
+  matured
+  defaulted
+  closed
+}
+
+enum InstallmentStatus {
+  due
+  paid
+  missed
+  waived
+}
+
+enum TicketCategory {
+  it
+  hr
+  maintenance
+  logistics
+}
+
+enum TicketPriority {
+  low
+  medium
+  high
+  urgent
+}
+
+enum TicketStatus {
+  open
+  routed
+  in_progress
+  resolved
+  closed
+}
+
+enum ReturnType {
+  return
+  exchange
+  repair
+  old_gold
+}
+
+enum ReturnStatus {
+  draft
+  pending_approval
+  approved
+  rejected
+  settled
+}
+
+enum SettlementType {
+  credit_note
+  refund
+  exchange
+}
+
+enum DiscountStatus {
+  pending
+  approved
+  rejected
+  escalated
+}
+
+enum CampaignStatus {
+  planning
+  in_review
+  live
+  completed
+  paused
+}
+
+enum CampaignType {
+  bridal
+  festive
+  catalog
+  always_on
+  digital
+}
+
+enum CheckinPurpose {
+  bridal
+  investment
+  repair
+  quote_followup
+  browsing
+  scheme
+  other
+}
+
+enum CheckinOutcome {
+  in_store
+  sale_closed
+  quote_given
+  follow_up
+  left
+}
+
+enum NewStoreDept {
+  it
+  inventory
+  interiors
+  hr
+  marketing
+}
+
+enum ChecklistStatus {
+  todo
+  in_progress
+  blocked
+  done
+}
+
+// ============================================================================
+// CORE: MULTI-STORE HIERARCHY + RBAC
+// ============================================================================
+
+/// Region / Area grouping so area-manager and head-office roles roll up.
+model Region {
+  id        String   @id @default(cuid())
+  name      String
+  code      String?  @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  stores Store[]
+}
+
+/// A physical store / branch. Legacy: a PartyMst row with IsLocation/IsFactory.
+model Store {
+  id          String  @id @default(cuid())
+  name        String
+  city        String
+  code        String? @unique
+  regionId    String?
+  isActive    Boolean @default(true)
+  /// true only for the synthetic "All Stores" aggregate the UI shows to broad roles.
+  isAggregate Boolean @default(false)
+
+  // Geofence for HRMS geo-attendance (Module 6).
+  latitude        Decimal? @db.Decimal(10, 7)
+  longitude       Decimal? @db.Decimal(10, 7)
+  geofenceRadiusM Int?     @default(150)
+  /// Weekly off day for this store (0=Sunday … 6=Saturday), set by HO (Module 6).
+  weekOffDay      Int?
+
+  // Legacy provenance (PartyMst branch/location row).
+  legacyId        String?   @unique
+  legacyUpdatedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  region              Region?              @relation(fields: [regionId], references: [id])
+  userStores          UserStore[]
+  parties             Party[]
+  products            Product[]
+  stockItems          StockItem[]
+  leads               Lead[]
+  quotes              Quote[]
+  sales               Sale[]
+  manufacturingOrders ManufacturingOrder[]
+  customOrders        CustomOrder[]
+  ledgerEntries       LedgerEntry[]
+  payments            Payment[]
+  attendanceRecords   AttendanceRecord[]
+  leaveRequests       LeaveRequest[]
+  shifts              Shift[]
+  holidays            StoreHoliday[]
+  checkIns            CheckIn[]
+  schemeMembers       SchemeMember[]
+  tickets             Ticket[]
+  returns             ReturnRecord[]
+  discountRequests    DiscountRequest[]
+  campaignStores      CampaignStore[]
+
+  @@index([regionId])
+}
+
+/// Application user (staff login). Legacy: SPM_Users (logins only).
+model User {
+  id           String  @id @default(cuid())
+  name         String
+  email        String  @unique
+  initials     String?
+  phone        String?
+  passwordHash String?
+  isActive     Boolean @default(true)
+
+  /// Primary role. Cross-store scope is derived from UserStore rows + role rank.
+  role Role @default(salesperson)
+
+  // Optional link to the party/staff master row.
+  partyId String? @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  party             Party?            @relation(fields: [partyId], references: [id])
+  userStores        UserStore[]
+  ownedLeads        Lead[]            @relation("LeadOwner")
+  leadNotes         LeadNote[]
+  followUpsDone     LeadFollowUp[]    @relation("FollowUpDoneBy")
+  quotes            Quote[]
+  discountRequested DiscountRequest[] @relation("DiscountRequester")
+  discountApproved  DiscountRequest[] @relation("DiscountApprover")
+  ticketMessages    TicketMessage[]
+  assignedTickets   Ticket[]          @relation("TicketAssignee")
+  commissions       Commission[]
+
+  @@index([role])
+}
+
+/// User <-> Store assignment. A salesperson maps to one store; area/HO map to many
+/// (or to a Region) so their dashboards roll up. RBAC + store-scoping (see eclat-schema.md).
+model UserStore {
+  id        String  @id @default(cuid())
+  userId    String
+  storeId   String
+  /// Optional per-assignment role override (else falls back to User.role).
+  role      Role?
+  isPrimary Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, storeId])
+  @@index([storeId])
+}
+
+/// Per-role discount approval ceiling (Module 15). e.g. salesperson <= 2%, SM <= 5%.
+/// Optionally scoped to a store/region; null scope = global default.
+model DiscountLimit {
+  id         String   @id @default(cuid())
+  role       Role
+  storeId    String?
+  /// Legacy single overall cap (kept for back-compat). Module 15 uses the split caps below.
+  maxPercent Decimal  @db.Decimal(5, 2)
+  /// Module 15: max self-approvable DIAMOND discount for this role (e.g. 5.00 = 5%). Gold is never discounted.
+  maxDiamondPercent Decimal? @db.Decimal(5, 2)
+  /// Module 15: max self-approvable MAKING-charge discount for this role (e.g. 10.00 = 10%).
+  maxMakingPercent  Decimal? @db.Decimal(5, 2)
+  /// Optional absolute ceiling in INR.
+  maxAmount  Decimal? @db.Decimal(14, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([role, storeId])
+}
+
+// ============================================================================
+// PARTY HUB (Module 1 customers, suppliers, staff) — legacy PartyMst
+// ============================================================================
+
+/// Universal party master mirroring legacy PartyMst (role flags -> `types`).
+model Party {
+  id        String      @id @default(cuid())
+  storeId   String?
+  name      String
+  legalName String?
+  code      String?
+  /// Which roles this party plays (customer / supplier / staff / salesperson ...).
+  types     PartyType[]
+
+  phone        String?
+  whatsapp     String?
+  email        String?
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  state        String?
+  country      String? @default("India")
+  pincode      String?
+
+  gstin   String?
+  pan     String?
+  aadhaar String?
+
+  birthday    DateTime? @db.Date
+  anniversary DateTime? @db.Date
+
+  creditLimit   Decimal? @db.Decimal(14, 2)
+  isBlacklisted Boolean  @default(false)
+
+  // Legacy provenance (PartyMst.PartyNo).
+  legacyId        String?   @unique
+  legacyUpdatedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store               Store?               @relation(fields: [storeId], references: [id])
+  user                User?
+  leads               Lead[]
+  quotes              Quote[]
+  sales               Sale[]
+  manufacturingOrders ManufacturingOrder[]
+  customOrders        CustomOrder[]
+  ledgerEntries       LedgerEntry[]
+  payments            Payment[]
+  checkIns            CheckIn[]
+  schemeMembers       SchemeMember[]
+  returns             ReturnRecord[]
+
+  @@index([storeId, createdAt])
+  @@index([phone])
+}
+
+// ============================================================================
+// MODULE 1 — CRM & LEADS (net-new; customer sourced from Party)
+// ============================================================================
+
+model Lead {
+  id      String  @id @default(cuid())
+  ref     String  @unique
+  storeId String
+  partyId String?
+  ownerId String?
+
+  customerName String
+  phone        String?
+  /// Estimated deal value (INR).
+  value        Decimal?   @db.Decimal(14, 2)
+  source       LeadSource
+  stage        LeadStage  @default(inquiry)
+  interest     String?
+  lastActivity DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store     Store              @relation(fields: [storeId], references: [id])
+  party     Party?             @relation(fields: [partyId], references: [id])
+  owner     User?              @relation("LeadOwner", fields: [ownerId], references: [id])
+  notes     LeadNote[]
+  reminders OccasionReminder[]
+  followUps LeadFollowUp[]
+  quotes    Quote[]
+
+  @@index([storeId, createdAt])
+  @@index([stage])
+  @@index([ownerId])
+}
+
+/// Auto follow-up reminders for a lead (Module 1). SOP defaults: +7d (seq 1) and
+/// +30d (seq 2) from lead creation; store manager can edit dates or mark done.
+/// In-app only — no WhatsApp/push (see docs/CLIENT-CALL-2026-07.md, Module 1).
+model LeadFollowUp {
+  id        String    @id @default(cuid())
+  leadId    String
+  storeId   String // denormalized for reminder scoping
+  seq       Int // 1 = +7d SOP, 2 = +30d SOP (extensible)
+  dueDate   DateTime  @db.Date
+  done      Boolean   @default(false)
+  doneAt    DateTime?
+  doneById  String?
+  note      String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  lead   Lead  @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  doneBy User? @relation("FollowUpDoneBy", fields: [doneById], references: [id])
+
+  @@index([storeId, done, dueDate])
+  @@index([leadId])
+}
+
+model LeadNote {
+  id         String   @id @default(cuid())
+  leadId     String
+  authorId   String?
+  authorName String?
+  text       String
+  createdAt  DateTime @default(now())
+
+  lead   Lead  @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  author User? @relation(fields: [authorId], references: [id])
+
+  @@index([leadId])
+}
+
+model OccasionReminder {
+  id       String   @id @default(cuid())
+  leadId   String
+  occasion String
+  date     DateTime @db.Date
+  notified Boolean  @default(false)
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+  @@index([date])
+}
+
+// ============================================================================
+// MODULE 2 — QUOTATION & PRICING (net-new; portable across stores)
+// ============================================================================
+
+/// Daily metal rate feed (Module 2 pricing source of truth — OP-2 open).
+/// Legacy: RateDailyMst / MetalRateMst.
+model MetalRate {
+  id            String    @id @default(cuid())
+  metal         MetalKind
+  /// INR per gram.
+  ratePerGram   Decimal   @db.Decimal(12, 2)
+  effectiveFrom DateTime
+  storeId       String?
+
+  legacyId        String?   @unique
+  legacyUpdatedAt DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([metal, effectiveFrom])
+}
+
+model Quote {
+  id            String  @id @default(cuid())
+  ref           String  @unique
+  /// Store where the quote was raised.
+  storeId       String
+  partyId       String?
+  leadId        String?
+  assignedRepId String?
+
+  customerName String
+  phone        String?
+  status       QuoteStatus @default(draft)
+  validUntil   DateTime?
+
+  /// Money rollup snapshot (recomputed from lines, persisted for fast listing).
+  metalValue    Decimal @default(0) @db.Decimal(14, 2)
+  makingCharges Decimal @default(0) @db.Decimal(14, 2)
+  stoneCharges  Decimal @default(0) @db.Decimal(14, 2)
+  taxableAmount Decimal @default(0) @db.Decimal(14, 2)
+  gstAmount     Decimal @default(0) @db.Decimal(14, 2)
+  grandTotal    Decimal @default(0) @db.Decimal(14, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store            Store                  @relation(fields: [storeId], references: [id])
+  party            Party?                 @relation(fields: [partyId], references: [id])
+  lead             Lead?                  @relation(fields: [leadId], references: [id])
+  assignedRep      User?                  @relation(fields: [assignedRepId], references: [id])
+  lines            QuoteLine[]
+  /// Branches where this quote can be redeemed/checked out (portability).
+  redeemableStores QuoteRedeemableStore[]
+
+  @@index([storeId, createdAt])
+  @@index([status])
+}
+
+/// Stores where a quote is redeemable (quote at Store A -> buy at Store B).
+model QuoteRedeemableStore {
+  id      String @id @default(cuid())
+  quoteId String
+  storeId String
+
+  quote Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  @@unique([quoteId, storeId])
+}
+
+model QuoteLine {
+  id          String  @id @default(cuid())
+  quoteId     String
+  productId   String?
+  description String
+
+  karat           Int
+  /// Net metal weight in grams.
+  weightGrams     Decimal @db.Decimal(12, 3)
+  /// Gold rate INR/g snapshotted at quote time.
+  goldRatePerGram Decimal @db.Decimal(12, 2)
+  makingCharges   Decimal @default(0) @db.Decimal(14, 2)
+  stoneCharges    Decimal @default(0) @db.Decimal(14, 2)
+  /// Stone weight in carats (display).
+  caratWeight     Decimal @default(0) @db.Decimal(10, 3)
+
+  quote   Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id])
+
+  @@index([quoteId])
+}
+
+// ============================================================================
+// MODULE 5 + 9 — CATALOGUE / PRODUCT (Design) + STOCK (per-piece)
+// ============================================================================
+
+/// Product / design template. Legacy: StyleMst (design) blended with catalogue view.
+model Product {
+  id           String          @id @default(cuid())
+  storeId      String?
+  sku          String          @unique
+  name         String
+  category     ProductCategory @default(other)
+  metal        MetalKind
+  /// Gold purity in karat (0 for platinum/silver-by-fineness).
+  karat        Int             @default(0)
+  /// Gross weight grams.
+  weightGrams  Decimal         @default(0) @db.Decimal(12, 3)
+  /// Diamond/gemstone weight carats.
+  caratWeight  Decimal         @default(0) @db.Decimal(10, 3)
+  /// Indicative retail price INR.
+  price        Decimal         @default(0) @db.Decimal(14, 2)
+  /// Landed cost price INR (from Gati). Module 15: visible only to area_manager/head_office; never to store_manager or below.
+  costPrice    Decimal?        @db.Decimal(14, 2)
+  availability Availability    @default(in_stock)
+  leadTimeDays Int?
+  description  String?
+  bestSeller   Boolean         @default(false)
+
+  // Image lives in object storage; only the URL is stored here.
+  imageUrl String?
+  stlUrl   String?
+
+  // AI image search (Module 5). Float[] until pgvector is installed; then -> vector(N).
+  // See header note + docs/eclat-schema.md for the pgvector upgrade migration.
+  embedding Float[]
+
+  // Legacy provenance (StyleMst.StyleId).
+  legacyId        String?   @unique
+  legacyUpdatedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store      Store?      @relation(fields: [storeId], references: [id])
+  stockItems StockItem[]
+  quoteLines QuoteLine[]
+  saleLines  SaleLine[]
+
+  @@index([storeId, createdAt])
+  @@index([category])
+  @@index([sku])
+}
+
+/// A physical jewellery piece in stock. Legacy: Inward + InwardSummary (1:1 rollup).
+/// All gold/diamond/stone weights and amounts live here as exact Decimals.
+model StockItem {
+  id        String          @id @default(cuid())
+  storeId   String
+  productId String?
+  sku       String?
+  name      String?
+  category  ProductCategory @default(other)
+  metal     MetalKind?
+  karat     Int?
+
+  status  StockStatus @default(in_stock)
+  /// Days since inward, used for aging/dead-stock trackers (Module 9). Derived on write.
+  ageDays Int?
+
+  // --- Weights (grams) — from InwardSummary ---
+  grossWeight     Decimal? @db.Decimal(12, 3)
+  netWeight       Decimal? @db.Decimal(12, 3)
+  pureWeight      Decimal? @db.Decimal(12, 3)
+  metalLossWeight Decimal? @db.Decimal(12, 3)
+
+  // --- Diamond / stone ---
+  diamondWeightCt Decimal? @db.Decimal(10, 3)
+  diamondPieces   Int?
+  stoneWeightCt   Decimal? @db.Decimal(10, 3)
+
+  // --- Amounts (INR) — from InwardSummary ---
+  metalAmount   Decimal? @db.Decimal(14, 2)
+  diamondAmount Decimal? @db.Decimal(14, 2)
+  stoneAmount   Decimal? @db.Decimal(14, 2)
+  makingAmount  Decimal? @db.Decimal(14, 2)
+  cpfAmount     Decimal? @db.Decimal(14, 2)
+  cost          Decimal? @db.Decimal(14, 2)
+  mrp           Decimal? @db.Decimal(14, 2)
+  tagPrice      Decimal? @db.Decimal(14, 2)
+
+  hallmarkNo    String?
+  certificateNo String?
+  imageUrl      String?
+  inwardDate    DateTime?
+
+  // Legacy provenance (Inward.JewelId).
+  legacyId        String?   @unique
+  legacyUpdatedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store     Store           @relation(fields: [storeId], references: [id])
+  product   Product?        @relation(fields: [productId], references: [id])
+  saleLines SaleLine[]
+  movements StockMovement[]
+
+  @@index([storeId, createdAt])
+  @@index([status])
+  @@index([productId])
+  @@index([sku])
+}
+
+/// Per-piece movement / location / status log. Legacy: InwardHistory (append-only).
+model StockMovement {
+  id          String   @id @default(cuid())
+  stockItemId String
+  fromStoreId String?
+  toStoreId   String?
+  status      String?
+  note        String?
+  occurredAt  DateTime @default(now())
+
+  // Legacy provenance (InwardHistory.Id — append-only, watermark by Id).
+  legacyId        String?   @unique
+  legacyUpdatedAt DateTime?
+
+  stockItem StockItem @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
+
+  @@index([stockItemId, occurredAt])
+}
+
+// ============================================================================
+// SALES (Module 10 DSR source) — legacy JewelTrans + JewelTransInward
+// ============================================================================
+
+model Sale {
+  id            String  @id @default(cuid())
+  storeId       String
+  partyId       String?
+  salesPersonId String?
+
+  docNo   String
+  docType SaleDocType @default(sale)
+  docDate DateTime
+
+  grossAmount    Decimal @default(0) @db.Decimal(14, 2)
+  discountAmount Decimal @default(0) @db.Decimal(14, 2)
+  taxAmount      Decimal @default(0) @db.Decimal(14, 2)
+  totalAmount    Decimal @default(0) @db.Decimal(14, 2)
+  remarks        String?
+
+  // Direct-sales (manual) capture for reporting + Module 12 payments-in-sales.
+  // Additive: legacy-synced sales leave these null / default (isManual=false).
+  /// Free-text customer name for a manual direct sale (when no linked Party).
+  customerName    String?
+  /// true = keyed by a store user via POST /sales (not sourced from the legacy sync).
+  isManual        Boolean      @default(false)
+  /// Advance payment method captured on the sale (Module 12 — folded into sales).
+  paymentMode     PaymentMode?
+  /// Advance amount received at sale time (INR). balance = totalAmount - advanceReceived.
+  advanceReceived Decimal?     @db.Decimal(14, 2)
+  /// Object-storage URL of the quotation photo given to the customer (Module 12).
+  quotationUrl    String?
+  /// Object-storage URL of the invoice photo (if the bill was made) (Module 12).
+  invoiceUrl      String?
+
+  /// Mirrors legacy soft-cancel (JewelTrans.isCancel) — do not hard-delete (audit).
+  isCancelled Boolean @default(false)
+
+  // Legacy provenance (JewelTrans.JewelTransId).
+  legacyId        String?   @unique
+  legacyUpdatedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store    Store          @relation(fields: [storeId], references: [id])
+  party    Party?         @relation(fields: [partyId], references: [id])
+  lines    SaleLine[]
+  payments Payment[]
+  returns  ReturnRecord[]
+
+  @@unique([storeId, docNo, docType])
+  @@index([storeId, docDate])
+  @@index([docType])
+}
+
+model SaleLine {
+  id          String  @id @default(cuid())
+  saleId      String
+  stockItemId String?
+  productId   String?
+  description String?
+
+  netWeight      Decimal? @db.Decimal(12, 3)
+  metalRate      Decimal? @db.Decimal(12, 2)
+  metalAmount    Decimal? @db.Decimal(14, 2)
+  makingAmount   Decimal? @db.Decimal(14, 2)
+  stoneAmount    Decimal? @db.Decimal(14, 2)
+  discountAmount Decimal? @db.Decimal(14, 2)
+  lineTotal      Decimal  @default(0) @db.Decimal(14, 2)
+
+  // Legacy provenance (JewelTransInwardDetail composite key flattened).
+  legacyId        String?   @unique
+  legacyUpdatedAt DateTime?
+
+  sale      Sale       @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  stockItem StockItem? @relation(fields: [stockItemId], references: [id])
+  product   Product?   @relation(fields: [productId], references: [id])
+
+  @@index([saleId])
+}
+
+// ============================================================================
+// MODULE 8 — TIMELINES: production orders + custom-order tracking
+// ============================================================================
+
+/// Manufacturing order. Legacy: Spm_MfgOrder (+ SPM_MfgOrderItem).
+model ManufacturingOrder {
+  id               String      @id @default(cuid())
+  storeId          String
+  partyId          String?
+  orderNo          String
+  orderDate        DateTime
+  status           OrderStatus @default(booked)
+  amount           Decimal     @default(0) @db.Decimal(14, 2)
+  poNo             String?
+  expectedDelivery DateTime?
+
+  // Legacy provenance (Spm_MfgOrder.OrderId).
+  legacyId        String?   @unique
+  legacyUpdatedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store Store                    @relation(fields: [storeId], references: [id])
+  party Party?                   @relation(fields: [partyId], references: [id])
+  items ManufacturingOrderItem[]
+  bags  ProductionBag[]
+
+  @@index([storeId, orderDate])
+  @@index([status])
+}
+
+model ManufacturingOrderItem {
+  id                  String      @id @default(cuid())
+  orderId             String
+  styleSku            String?
+  description         String?
+  orderQty            Int         @default(1)
+  status              OrderStatus @default(booked)
+  expectedDelivery    DateTime?
+  /// JewelId of the produced piece, once made (legacy SPM_MfgOrderItem.Inward_JewelId).
+  producedStockItemId String?
+
+  legacyId        String?   @unique
+  legacyUpdatedAt DateTime?
+
+  order ManufacturingOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+}
+
+/// Shop-floor bag/lot moving through production departments. Legacy: SPM_BagMaster.
+model ProductionBag {
+  id          String    @id @default(cuid())
+  orderId     String?
+  bagNo       String
+  barcode     String?
+  department  String?
+  status      String?
+  grossWeight Decimal?  @db.Decimal(12, 3)
+  netWeight   Decimal?  @db.Decimal(12, 3)
+  isComplete  Boolean   @default(false)
+  bagDate     DateTime?
+
+  legacyId        String?   @unique
+  legacyUpdatedAt DateTime?
+  createdAt       DateTime  @default(now())
+
+  order ManufacturingOrder? @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+}
+
+/// Customer-facing custom order with stage progress (Module 8 timeline UI).
+model CustomOrder {
+  id           String           @id @default(cuid())
+  ref          String           @unique
+  storeId      String
+  partyId      String?
+  customerName String
+  kind         OrderKind        @default(custom)
+  category     ProductCategory?
+  qty          Int              @default(1)
+  details      String?
+  imageUrl     String?
+  item         String
+  value        Decimal?         @db.Decimal(14, 2)
+  advanceReceived Decimal?      @db.Decimal(14, 2)
+  stage        OrderStatus      @default(booked)
+  ownerRole    TimelineRole     @default(salesperson)
+  ownerName    String?
+  bookedOn     DateTime
+  eta          DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store  Store              @relation(fields: [storeId], references: [id])
+  party  Party?             @relation(fields: [partyId], references: [id])
+  events CustomOrderEvent[]
+
+  @@index([storeId, createdAt])
+  @@index([stage])
+}
+
+model CustomOrderEvent {
+  id         String        @id @default(cuid())
+  orderId    String
+  stage      OrderStatus
+  note       String?
+  byRole     TimelineRole?
+  byName     String?
+  occurredAt DateTime      @default(now())
+
+  order CustomOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, occurredAt])
+}
+
+// ============================================================================
+// MODULE 4 + 12 — FINANCE: ledger, payments, dues
+// ============================================================================
+
+/// General-ledger / AP-AR entry. Legacy: Journal + AccountBalance + DueDetail.
+model LedgerEntry {
+  id        String     @id @default(cuid())
+  storeId   String?
+  partyId   String?
+  kind      LedgerKind
+  side      LedgerSide
+  amount    Decimal    @db.Decimal(16, 2)
+  entryDate DateTime
+  dueDate   DateTime?
+  reference String?
+  narration String?
+  status    String?    @default("open")
+
+  // Legacy provenance (Journal.Id — append-only, watermark by Id).
+  legacyId        String?   @unique
+  legacyUpdatedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  store Store? @relation(fields: [storeId], references: [id])
+  party Party? @relation(fields: [partyId], references: [id])
+
+  @@index([storeId, entryDate])
+  @@index([partyId])
+}
+
+/// Payment / receipt collection. Legacy: VoucherEntry. Drives Module 12 reconciliation.
+model Payment {
+  id             String  @id @default(cuid())
+  storeId        String
+  partyId        String?
+  saleId         String?
+  schemeMemberId String?
+
+  reference  String?
+  mode       PaymentMode
+  amount     Decimal     @db.Decimal(14, 2)
+  paidAt     DateTime
+  /// Object-storage URL of the receipt photo handed to the customer (Module 12).
+  receiptUrl String?
+  /// Reconciliation against bank statement (Module 12).
+  reconciled Boolean     @default(false)
+
+  // Legacy provenance (VoucherEntry.VoucherEntryId).
+  legacyId        String?   @unique
+  legacyUpdatedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  store  Store         @relation(fields: [storeId], references: [id])
+  party  Party?        @relation(fields: [partyId], references: [id])
+  sale   Sale?         @relation(fields: [saleId], references: [id])
+  scheme SchemeMember? @relation(fields: [schemeMemberId], references: [id])
+
+  @@index([storeId, paidAt])
+  @@index([mode])
+}
+
+// ============================================================================
+// MODULE 6 — HRMS & GEO ATTENDANCE (net-new)
+// ============================================================================
+
+model AttendanceRecord {
+  id          String           @id @default(cuid())
+  storeId     String
+  staffId     String
+  staffName   String?
+  date        DateTime         @db.Date
+  status      AttendanceStatus @default(present)
+  checkInAt   DateTime?
+  checkOutAt  DateTime?
+  // Geo-tag captured at check-in (verified against Store geofence).
+  checkInLat  Decimal?         @db.Decimal(10, 7)
+  checkInLng  Decimal?         @db.Decimal(10, 7)
+  geoVerified Boolean          @default(false)
+
+  // Shift / lateness (Module 6). Lateness is measured against the ASSIGNED shift's
+  // start + buffer, so a night/second-batch check-in in the afternoon is not "late".
+  shiftId     String?
+  isLate      Boolean          @default(false)
+  lateMinutes Int?
+
+  createdAt DateTime @default(now())
+
+  store Store @relation(fields: [storeId], references: [id])
+
+  @@unique([storeId, staffId, date])
+  @@index([storeId, date])
+}
+
+/// Store shift / batch (Module 6). Mall stores run 2 shifts (morning + night).
+/// startTime/endTime are "HH:MM" (24h) store-local; bufferMins is the grace window
+/// before a check-in counts as late. Lateness is always vs the assigned shift.
+model Shift {
+  id           String   @id @default(cuid())
+  storeId      String
+  name         String
+  startTime    String
+  endTime      String
+  bufferMins   Int      @default(15)
+  isNightBatch Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  store Store @relation(fields: [storeId], references: [id])
+
+  @@index([storeId])
+}
+
+/// Per-store holiday (Module 6), configured by head office alongside weekOffDay.
+model StoreHoliday {
+  id        String   @id @default(cuid())
+  storeId   String
+  date      DateTime @db.Date
+  label     String?
+  createdAt DateTime @default(now())
+
+  store Store @relation(fields: [storeId], references: [id])
+
+  @@unique([storeId, date])
+}
+
+model LeaveRequest {
+  id        String      @id @default(cuid())
+  storeId   String
+  staffId   String
+  staffName String?
+  type      LeaveType
+  status    LeaveStatus @default(pending)
+  fromDate  DateTime    @db.Date
+  toDate    DateTime    @db.Date
+  reason    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id])
+
+  @@index([storeId, fromDate])
+}
+
+/// Sales-incentive commission rows (Module 6 leaderboard / commission engine).
+model Commission {
+  id         String  @id @default(cuid())
+  userId     String
+  storeId    String?
+  period     String // e.g. "2026-06"
+  salesValue Decimal @default(0) @db.Decimal(14, 2)
+  rate       Decimal @default(0) @db.Decimal(5, 2)
+  amount     Decimal @default(0) @db.Decimal(14, 2)
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, period])
+}
+
+// ============================================================================
+// MODULE 7 — CUSTOMER CHECK-INS & FOOTFALL (net-new; CCTV dropped)
+// ============================================================================
+
+model CheckIn {
+  id           String         @id @default(cuid())
+  storeId      String
+  partyId      String?
+  customerName String
+  phone        String?
+  purpose      CheckinPurpose @default(other)
+  outcome      CheckinOutcome @default(in_store)
+  repId        String?
+  repName      String?
+  timeIn       DateTime
+  timeOut      DateTime?
+
+  createdAt DateTime @default(now())
+
+  store Store  @relation(fields: [storeId], references: [id])
+  party Party? @relation(fields: [partyId], references: [id])
+
+  @@index([storeId, timeIn])
+}
+
+// ============================================================================
+// MODULE 17 — LOYALTY & GOLD SAVINGS SCHEME (net-new; legacy schema-only)
+// ============================================================================
+
+/// Scheme plan template. Legacy: SchemeMaster (defined, no data).
+model SchemePlan {
+  id           String  @id @default(cuid())
+  name         String
+  tenureMonths Int
+  /// Store-funded bonus expressed as extra installments at maturity.
+  bonusMonths  Int     @default(0)
+  bonusLabel   String?
+  isActive     Boolean @default(true)
+
+  createdAt DateTime @default(now())
+
+  members SchemeMember[]
+}
+
+/// Enrolled gold-savings member account. Legacy: SchemeMemberMaster.
+model SchemeMember {
+  id           String       @id @default(cuid())
+  ref          String       @unique
+  storeId      String
+  partyId      String?
+  planId       String
+  customerName String
+  phone        String?
+  /// Monthly installment amount (INR).
+  installment  Decimal      @db.Decimal(14, 2)
+  tenureMonths Int
+  bonusMonths  Int          @default(0)
+  status       SchemeStatus @default(active)
+  enrolledAt   DateTime
+
+  legacyId        String?   @unique
+  legacyUpdatedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store        Store               @relation(fields: [storeId], references: [id])
+  party        Party?              @relation(fields: [partyId], references: [id])
+  plan         SchemePlan          @relation(fields: [planId], references: [id])
+  installments SchemeInstallment[]
+  payments     Payment[]
+
+  @@index([storeId, createdAt])
+  @@index([status])
+}
+
+/// One installment in a scheme member's plan. Legacy: SchemeMemberInstalment.
+model SchemeInstallment {
+  id          String            @id @default(cuid())
+  memberId    String
+  /// 1-based installment index in the plan.
+  sequence    Int
+  dueDate     DateTime          @db.Date
+  amount      Decimal           @db.Decimal(14, 2)
+  /// Gold weight credited (rate-on-pay model), exact.
+  goldWeightG Decimal?          @db.Decimal(12, 3)
+  goldRate    Decimal?          @db.Decimal(12, 2)
+  status      InstallmentStatus @default(due)
+  paidAt      DateTime?
+
+  member SchemeMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([memberId, sequence])
+  @@index([dueDate])
+}
+
+// ----------------------------------------------------------------------------
+// MODULE 17 — "Earn with Ratanlall" referral / commission program (net-new).
+// A referrer X gets a unique coupon code; a referee Y using it gets 5% off on
+// diamond, and X earns 5% commission on Y's total bill, credited to X's balance
+// and redeemable / cashable out. Optional per-code usage cap prevents public
+// leaks. See docs/CLIENT-CALL-2026-07.md (Module 17 referral bullet).
+// ----------------------------------------------------------------------------
+
+/// A referrer's unique coupon code + running commission balance.
+model ReferralCode {
+  id                String   @id @default(cuid())
+  code              String   @unique
+  referrerName      String
+  referrerPhone     String?
+  storeId           String?
+  /// Optional anti-leak cap: max number of times this code may be applied.
+  maxUses           Int?
+  uses              Int      @default(0)
+  /// Earned-but-unpaid commission (INR). Credited on each referral, drawn down on payout.
+  commissionBalance Decimal  @default(0) @db.Decimal(14, 2)
+  createdAt         DateTime @default(now())
+
+  referrals Referral[]
+  payouts   ReferralPayout[]
+
+  @@index([storeId])
+}
+
+/// One redemption of a referral code on a referee's purchase.
+model Referral {
+  id                    String   @id @default(cuid())
+  codeId                String
+  refereeName           String
+  refereePhone          String?
+  storeId               String?
+  billAmount            Decimal  @db.Decimal(14, 2)
+  diamondDiscountPct    Decimal  @default(5) @db.Decimal(5, 2)
+  diamondDiscountAmount Decimal  @default(0) @db.Decimal(14, 2)
+  commissionPct         Decimal  @default(5) @db.Decimal(5, 2)
+  commissionAmount      Decimal  @default(0) @db.Decimal(14, 2)
+  createdAt             DateTime @default(now())
+
+  code ReferralCode @relation(fields: [codeId], references: [id], onDelete: Cascade)
+
+  @@index([codeId])
+}
+
+/// A redeem / cash-out of a referrer's accrued commission balance.
+model ReferralPayout {
+  id        String   @id @default(cuid())
+  codeId    String
+  amount    Decimal  @db.Decimal(14, 2)
+  /// 'redeem' | 'cashout'.
+  type      String
+  createdAt DateTime @default(now())
+
+  code ReferralCode @relation(fields: [codeId], references: [id], onDelete: Cascade)
+
+  @@index([codeId])
+}
+
+// ============================================================================
+// MODULE 13 — TICKETING (net-new)
+// ============================================================================
+
+model Ticket {
+  id           String         @id @default(cuid())
+  ref          String         @unique
+  storeId      String?
+  subject      String
+  category     TicketCategory
+  priority     TicketPriority @default(medium)
+  status       TicketStatus   @default(open)
+  assigneeId   String?
+  assigneeName String?
+  reporterName String?
+  /// Group recurring tickets for structural-fix pattern recognition.
+  patternTag   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store    Store?          @relation(fields: [storeId], references: [id])
+  assignee User?           @relation("TicketAssignee", fields: [assigneeId], references: [id])
+  messages TicketMessage[]
+
+  @@index([storeId, createdAt])
+  @@index([status])
+  @@index([patternTag])
+}
+
+model TicketMessage {
+  id         String   @id @default(cuid())
+  ticketId   String
+  authorId   String?
+  authorName String?
+  body       String
+  createdAt  DateTime @default(now())
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author User?  @relation(fields: [authorId], references: [id])
+
+  @@index([ticketId])
+}
+
+// ============================================================================
+// MODULE 14 — RETURNS & EXCHANGE (partial legacy: JewelTrans return variant)
+// ============================================================================
+
+model ReturnRecord {
+  id           String         @id @default(cuid())
+  ref          String         @unique
+  storeId      String
+  partyId      String?
+  saleId       String?
+  customerName String
+  phone        String?
+  type         ReturnType
+  item         String?
+  /// Estimated value / trade-in value (INR).
+  value        Decimal?       @db.Decimal(14, 2)
+  weightGrams  Decimal?       @db.Decimal(12, 3)
+  settlement   SettlementType @default(credit_note)
+  status       ReturnStatus   @default(draft)
+  reason       String?
+  raisedBy     String?
+
+  // Module 14 — exchange / buyback calculator (all additive, nullable).
+  // Original purchase inputs (manager keys these from the old bill):
+  purchaseGoldWtG  Decimal? @db.Decimal(12, 3)
+  purchaseGoldRate Decimal? @db.Decimal(12, 2)
+  purchaseDiaCarat Decimal? @db.Decimal(10, 3)
+  purchaseDiaRate  Decimal? @db.Decimal(12, 2)
+  diaSpec          String?
+  purchaseMaking   Decimal? @db.Decimal(14, 2)
+  // Resolved "today" rates + computed option values (snapshot at intake):
+  todayGoldRate    Decimal? @db.Decimal(12, 2)
+  todayDiaRate     Decimal? @db.Decimal(12, 2)
+  exchangeValue    Decimal? @db.Decimal(14, 2)
+  buybackValue     Decimal? @db.Decimal(14, 2)
+  /// 'exchange' | 'buyback' — which option the customer took.
+  chosenOption     String?
+
+  // Legacy provenance (JewelTrans return-type doc).
+  legacyId        String?   @unique
+  legacyUpdatedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store  Store         @relation(fields: [storeId], references: [id])
+  party  Party?        @relation(fields: [partyId], references: [id])
+  sale   Sale?         @relation(fields: [saleId], references: [id])
+  photos ReturnPhoto[]
+
+  @@index([storeId, createdAt])
+  @@index([status])
+}
+
+/// Photo-based intake (Module 14) — file in object storage, URL only here.
+model ReturnPhoto {
+  id        String   @id @default(cuid())
+  returnId  String
+  url       String
+  label     String?
+  createdAt DateTime @default(now())
+
+  returnRecord ReturnRecord @relation(fields: [returnId], references: [id], onDelete: Cascade)
+
+  @@index([returnId])
+}
+
+/// HO-set diamond rate table for the Module 14 exchange/buyback calculator.
+/// Unlike gold (daily, MetalRate) this changes only every 3-6 months and is keyed
+/// by diamond spec / internal code (e.g. "1ct", "20cent"). Optional per-store override.
+model DiamondRate {
+  id            String   @id @default(cuid())
+  spec          String
+  ratePerCarat  Decimal  @db.Decimal(12, 2)
+  effectiveFrom DateTime
+  storeId       String?
+  createdAt     DateTime @default(now())
+
+  @@index([spec, effectiveFrom])
+}
+
+// ============================================================================
+// MODULE 15 — DISCOUNT MANAGEMENT (partial legacy: DiscountMarkupMst)
+// ============================================================================
+
+model DiscountRequest {
+  id           String         @id @default(cuid())
+  ref          String         @unique
+  storeId      String
+  customerName String
+  item         String?
+  /// Requested discount as percentage and/or absolute amount (legacy single figure).
+  percent      Decimal?       @db.Decimal(5, 2)
+  amount       Decimal?       @db.Decimal(14, 2)
+  /// Module 15 split caps: requested DIAMOND / MAKING discount percentages. Gold is never discounted.
+  diamondPercent Decimal?     @db.Decimal(5, 2)
+  makingPercent  Decimal?     @db.Decimal(5, 2)
+  /// Snapshot of the piece's selling price (INR) at request time (from Gati / Product).
+  sellingPrice Decimal?       @db.Decimal(14, 2)
+  /// Snapshot of the piece's cost price (INR). Never surfaced to store_manager or below.
+  costPrice    Decimal?       @db.Decimal(14, 2)
+  /// Margin-impact preview snapshot (INR) shown before approval.
+  marginImpact Decimal?       @db.Decimal(14, 2)
+  status       DiscountStatus @default(pending)
+  reason       String?
+
+  requestedById String?
+  requestedRole Role?
+  /// Module 15: the minimum role that must approve this request (set on escalation).
+  requiredRole  Role?
+  approvedById  String?
+  approvedRole  Role?
+  decidedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store       Store @relation(fields: [storeId], references: [id])
+  requestedBy User? @relation("DiscountRequester", fields: [requestedById], references: [id])
+  approvedBy  User? @relation("DiscountApprover", fields: [approvedById], references: [id])
+
+  @@index([storeId, createdAt])
+  @@index([status])
+}
+
+// ============================================================================
+// MODULE 16 — MARKETING (net-new)
+// ============================================================================
+
+model MarketingCampaign {
+  id        String         @id @default(cuid())
+  name      String
+  type      CampaignType
+  status    CampaignStatus @default(planning)
+  startDate DateTime?      @db.Date
+  endDate   DateTime?      @db.Date
+  budget    Decimal?       @db.Decimal(14, 2)
+  spend     Decimal?       @db.Decimal(14, 2)
+  ownerName String?
+  agency    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  stores CampaignStore[]
+  assets MarketingAsset[]
+
+  @@index([status])
+}
+
+/// Stores a campaign targets (campaigns can be pan-India or store-specific).
+model CampaignStore {
+  id         String @id @default(cuid())
+  campaignId String
+  storeId    String
+
+  campaign MarketingCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  store    Store             @relation(fields: [storeId], references: [id])
+
+  @@unique([campaignId, storeId])
+}
+
+/// Agency deliverable / asset — file in object storage, URL only here.
+model MarketingAsset {
+  id         String    @id @default(cuid())
+  campaignId String
+  title      String
+  url        String?
+  status     String?   @default("pending")
+  dueDate    DateTime? @db.Date
+
+  campaign MarketingCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+}
+
+// ============================================================================
+// MODULE 11 — NEW-STORE SETUP (net-new)
+// ============================================================================
+
+model NewStoreProject {
+  id         String    @id @default(cuid())
+  name       String
+  city       String
+  launchDate DateTime? @db.Date
+  leadName   String?
+  /// Optional link to the Store once it goes live.
+  storeId    String?
+  /// Region this launch belongs to (OP-4: area managers see only their region).
+  regionId   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  checklists NewStoreChecklistItem[]
+  milestones NewStoreMilestone[]
+  vendors    NewStoreVendor[]
+
+  @@index([regionId])
+}
+
+model NewStoreChecklistItem {
+  id         String          @id @default(cuid())
+  projectId  String
+  department NewStoreDept
+  title      String
+  status     ChecklistStatus @default(todo)
+  dueDate    DateTime?       @db.Date
+
+  project NewStoreProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, department])
+}
+
+model NewStoreMilestone {
+  id        String   @id @default(cuid())
+  projectId String
+  /// e.g. T-90 / T-60 / T-30 / Launch.
+  marker    String
+  title     String
+  summary   String?
+  date      DateTime @db.Date
+  state     String   @default("upcoming")
+
+  project NewStoreProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+model NewStoreVendor {
+  id        String    @id @default(cuid())
+  projectId String
+  name      String
+  task      String?
+  status    String?   @default("pending")
+  dueDate   DateTime? @db.Date
+
+  project NewStoreProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+// ============================================================================
+// DATA PIPELINE — sync watermark state (docs/DATA_PIPELINE.md)
+// ============================================================================
+
+/// Per-source-table watermark so the live SQL Server agent never re-pulls or loses rows.
+model SyncState {
+  id            String    @id @default(cuid())
+  /// Legacy source table, e.g. "JewelTrans", "Inward", "VoucherEntry".
+  sourceTable   String
+  /// Store this watermark belongs to (sync is per-store per-table).
+  storeId       String?
+  /// Highest identity PK seen (append-row watermark).
+  lastLegacyId  String?
+  /// Highest UpdateDate/EntryDate seen (changed-row watermark).
+  lastUpdatedAt DateTime?
+  lastRunAt     DateTime?
+  rowsSynced    Int       @default(0)
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([sourceTable, storeId])
+}
+
+// ============================================================================
+// MODULE 3 — DASHBOARD TASKS (to-do / cross-dept follow-ups)
+// ============================================================================
+
+/// A simple to-do/task surfaced on the dashboard agenda (Module 3).
+model Task {
+  id          String    @id @default(cuid())
+  storeId     String?
+  title       String
+  detail      String?
+  assignee    String?
+  /// "open" | "done"
+  status      String    @default("open")
+  dueDate     DateTime? @db.Date
+  createdById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([storeId, status])
+}
+
+// ============================================================================
+// LEGACY MIRROR — full raw copy of EVERY APRS-SJEP table (extract-everything-once)
+// ============================================================================
+
+/// Generic landing table: one row per source-table row, the whole record as JSON.
+/// The on-site agent's full-dump mode mirrors EVERY legacy table here, so ANY
+/// field is available later without ever changing the sync code. Upserted by
+/// (sourceTable, rowKey); incremental via legacyUpdatedAt where the source has it.
+model LegacyRow {
+  id              String    @id @default(cuid())
+  sourceTable     String
+  rowKey          String
+  data            Json
+  legacyUpdatedAt DateTime?
+  syncedAt        DateTime  @default(now())
+
+  @@unique([sourceTable, rowKey])
+  @@index([sourceTable])
+  @@index([sourceTable, legacyUpdatedAt])
+}

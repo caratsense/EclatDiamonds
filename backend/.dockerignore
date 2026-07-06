@@ -1,0 +1,27 @@
+# Keep the build context small and never ship secrets or local artifacts.
+node_modules
+dist
+npm-debug.log*
+*.log
+
+# Secrets — only the schema/code go into the image; env comes from Railway vars.
+.env
+.env.*
+!.env.example
+
+# Prisma generated client (regenerated inside the image)
+node_modules/.prisma
+generated
+
+# VCS / editor / OS
+.git
+.gitignore
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Docs / tests not needed at runtime
+README.md
+test
+*.spec.ts

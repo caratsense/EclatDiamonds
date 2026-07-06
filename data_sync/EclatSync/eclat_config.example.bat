@@ -1,0 +1,16 @@
+@echo off
+REM ── Eclat Busy/SJEP Sync config — copy to eclat_config.bat and fill in. ──
+REM Never commit the real eclat_config.bat (it holds passwords).
+
+REM Eclat dashboard backend(s). Comma-separate to push to several at once, e.g.
+REM   set ECLAT_BASE_URL=http://localhost:4000,https://your-eclat-backend.up.railway.app
+set ECLAT_BASE_URL=https://your-eclat-backend.up.railway.app
+set ECLAT_EMAIL=sync@yourjewelryclient.com
+set ECLAT_PASSWORD=CHANGE_ME
+
+REM Live SJE Plus / APRS SQL Server (READ-ONLY login recommended)
+set SJEP_SQL_SERVER=localhost\SQLEXPRESS
+set SJEP_SQL_DB=APRSSJEP
+REM Leave USER blank to use Windows authentication:
+set SJEP_SQL_USER=
+set SJEP_SQL_PASS=

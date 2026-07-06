@@ -1,0 +1,316 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+  Eclat / CaratSense — "Assay" design system.
+  Full spec + rationale: docs/DESIGN_SYSTEM.md.
+
+  Direction: warm metal on linen, not a cold dashboard.
+  - Canvas: porcelain (warm off-white) with a faint single-gold wash — never flat white.
+  - Surfaces: white cards that "catch the light" with soft, warm, layered shadows.
+  - Ink: a warm graphite (not blue-black). Primary actions are ink — quiet and legible.
+  - THE one accent: fine gold. Nothing else competes. It marks primary actions, the
+    single hero figure, selected/active states and focus — via the signature
+    "light-catch" hairline (.facet-top). Spend boldness ONLY here.
+  - Status uses real jewel tones: garnet (danger), emerald (success), amber (warn).
+  - Type: Fraunces (display) · Inter (UI) · Geist Mono (tabular "assay readout").
+
+  Single source of truth — restyles every page.
+*/
+
+:root {
+  --radius: 0.625rem; /* restrained: 10px */
+
+  /* warm neutrals */
+  --background: #f6f4f0; /* porcelain canvas */
+  --foreground: #1a1816; /* warm graphite ink */
+
+  --card: #ffffff;
+  --card-foreground: #1a1816;
+
+  --popover: #ffffff;
+  --popover-foreground: #1a1816;
+
+  /* primary action = ink (the gold light-catch marks it, not a colour fill) */
+  --primary: #211e1a;
+  --primary-foreground: #f6f4f0;
+
+  /* THE accent — fine gold */
+  --gold: #b08d3b;
+  --gold-foreground: #1a1816; /* ink engraving on a gold bar */
+  --gold-soft: #ead9b0; /* light gold for hairlines / tints */
+  --gold-strong: #8a6d2a; /* AA-legible gold for text + links on white */
+
+  /* Brand emerald — Éclat Diamonds' signature deep forest green (eclatdiamonds.in).
+     Used for the sidebar rail, the sign-in panel and the landing hero. */
+  --brand: #0f2a1e;
+  --brand-deep: #0a1f16;
+  --brand-foreground: #f4eede; /* warm ivory on emerald */
+
+  --secondary: #ece8e1; /* warm stone */
+  --secondary-foreground: #1a1816;
+
+  --muted: #efebe4;
+  --muted-foreground: #6b655c; /* warm stone grey */
+
+  --accent: #f1ead9; /* gold-tinted hover wash */
+  --accent-foreground: #1a1816;
+
+  --destructive: #b23b3b; /* garnet */
+  --destructive-foreground: #ffffff;
+
+  --success: #2f7d5b; /* emerald */
+  --warning: #c8872b; /* amber */
+
+  --border: #e6e1d8; /* linen line */
+  --input: #e0dacf;
+  --ring: #b08d3b; /* gold focus */
+
+  /* jewel-derived chart sequence (reads on light + dark) */
+  --chart-1: #b08d3b; /* gold     */
+  --chart-2: #3f3a33; /* graphite */
+  --chart-3: #2f7d5b; /* emerald  */
+  --chart-4: #9c3d3d; /* garnet   */
+  --chart-5: #3e5c76; /* sapphire */
+  --chart-6: #c8872b; /* amber    */
+
+  /* deep emerald sidebar rail (brand) with gold active accent */
+  --sidebar: #0f2a1e;
+  --sidebar-foreground: #aebcb1;
+  --sidebar-primary: #cbab6b; /* gold active */
+  --sidebar-primary-foreground: #0f2a1e;
+  --sidebar-accent: #163a2a;
+  --sidebar-accent-foreground: #f4eede;
+  --sidebar-border: #1c4533;
+  --sidebar-ring: #cbab6b;
+}
+
+.dark {
+  --background: #14120e; /* warm near-black */
+  --foreground: #ece7dd;
+
+  --card: #1c1914;
+  --card-foreground: #ece7dd;
+
+  --popover: #211d17;
+  --popover-foreground: #ece7dd;
+
+  /* in dark, the ink action inverts to warm bone (still quiet, still legible) */
+  --primary: #ebe6dc;
+  --primary-foreground: #1a1816;
+
+  --gold: #c9a96a;
+  --gold-foreground: #17150f;
+  --gold-soft: #6e5a2e;
+  --gold-strong: #d8be86;
+
+  --secondary: #262119;
+  --secondary-foreground: #ece7dd;
+
+  --muted: #262119;
+  --muted-foreground: #a39a88;
+
+  --accent: #2c261c;
+  --accent-foreground: #ece7dd;
+
+  --destructive: #e06a6a;
+  --destructive-foreground: #1a1816;
+
+  --success: #5bbf8e;
+  --warning: #e0a857;
+
+  --border: #2c271e;
+  --input: #2c271e;
+  --ring: #c9a96a;
+
+  --chart-1: #d8be86; /* gold     */
+  --chart-2: #c9c2b4; /* graphite */
+  --chart-3: #5bbf8e; /* emerald  */
+  --chart-4: #e08a8a; /* garnet   */
+  --chart-5: #7fa0be; /* sapphire */
+  --chart-6: #e0a857; /* amber    */
+
+  --brand: #0c2419;
+  --brand-deep: #081a12;
+  --brand-foreground: #f4eede;
+
+  --sidebar: #0a2017;
+  --sidebar-foreground: #9fb0a4;
+  --sidebar-primary: #cbab6b;
+  --sidebar-primary-foreground: #0a2017;
+  --sidebar-accent: #123026;
+  --sidebar-accent-foreground: #f4eede;
+  --sidebar-border: #173a2c;
+  --sidebar-ring: #cbab6b;
+}
+
+@theme {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-gold: var(--gold);
+  --color-gold-foreground: var(--gold-foreground);
+  --color-gold-soft: var(--gold-soft);
+  --color-gold-strong: var(--gold-strong);
+  --color-brand: var(--brand);
+  --color-brand-deep: var(--brand-deep);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* three faces, three jobs */
+  --font-sans: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-display), ui-serif, Georgia, "Times New Roman", serif;
+  --font-serif: var(--font-display), ui-serif, Georgia, serif;
+  --font-mono: var(--font-mono), ui-monospace, "SFMono-Regular", monospace;
+
+  /* soft, warm, layered elevation — light on a polished surface, not heavy drops */
+  --shadow-xs: 0 1px 2px 0 rgba(26, 24, 22, 0.05);
+  --shadow-sm: 0 1px 2px -1px rgba(26, 24, 22, 0.06), 0 1px 3px 0 rgba(26, 24, 22, 0.05);
+  --shadow-md: 0 2px 6px -2px rgba(26, 24, 22, 0.08), 0 6px 16px -6px rgba(26, 24, 22, 0.10);
+  --shadow-lg: 0 10px 30px -10px rgba(26, 24, 22, 0.16);
+  --shadow-xl: 0 20px 50px -16px rgba(26, 24, 22, 0.22);
+}
+
+* {
+  border-color: var(--border);
+}
+
+body {
+  /* a single faint gold wash over the warm canvas — never flat white */
+  background-color: var(--background);
+  background-image:
+    radial-gradient(1100px 560px at 100% -8%, color-mix(in srgb, var(--gold) 9%, transparent), transparent 60%),
+    radial-gradient(900px 480px at -6% -4%, color-mix(in srgb, var(--gold) 5%, transparent), transparent 55%);
+  background-attachment: fixed;
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Signature element: the "light-catch" / facet edge ───────────────────────
+   A thin gold gradient hairline along the top edge — like light hitting the
+   bevel of a polished gold surface. It marks primary actions and selected /
+   active states, and brightens on hover or when active. This is the ONE place
+   we spend boldness; everything else stays quiet graphite + porcelain. */
+.facet-top {
+  position: relative;
+  isolation: isolate;
+}
+.facet-top::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 6%,
+    color-mix(in srgb, var(--gold) 80%, white) 50%,
+    transparent 94%
+  );
+  opacity: 0.55;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
+  z-index: 1;
+}
+.facet-top:hover::after,
+.facet-top[data-active="true"]::after,
+.facet-top[aria-selected="true"]::after {
+  opacity: 1;
+}
+
+/* Brand emerald surface with a gold "sparkle" wash — sign-in panel + landing hero. */
+.emerald-panel {
+  background-color: var(--brand);
+  background-image:
+    radial-gradient(680px 380px at 78% -10%, color-mix(in srgb, var(--gold) 24%, transparent), transparent 60%),
+    radial-gradient(520px 420px at 6% 112%, color-mix(in srgb, var(--gold) 12%, transparent), transparent 55%),
+    linear-gradient(160deg, var(--brand) 0%, var(--brand-deep) 100%);
+  color: var(--brand-foreground);
+}
+
+/* Tabular "assay readout" — weights, carats, prices, every numeric column. */
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Champagne brand text (wordmark / hero accents only). */
+.text-gradient-gold {
+  background: linear-gradient(100deg, #d9bd86 0%, #b6894e 55%, #9a6f3a 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Refined thin scrollbars to match the premium surfaces. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted-foreground) 35%, transparent) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--muted-foreground) 30%, transparent);
+  border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--muted-foreground) 50%, transparent);
+}
+
+/* Accessibility floor: honour reduced-motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

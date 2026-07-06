@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 86" fill="none" role="img" aria-label="Éclat Diamonds">
+  <defs>
+    <linearGradient id="eclatGold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fbeac2"/>
+      <stop offset="0.42" stop-color="#e9c266"/>
+      <stop offset="0.72" stop-color="#cf9c3f"/>
+      <stop offset="1" stop-color="#a06f28"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Monogram: É over D, overlapped -->
+  <g font-family="Georgia, 'Times New Roman', 'Playfair Display', serif" fill="url(#eclatGold)">
+    <text x="2" y="68" font-size="78" font-weight="700" letter-spacing="-9">ÉD</text>
+  </g>
+
+  <!-- Wordmark -->
+  <g font-family="Georgia, 'Times New Roman', 'Playfair Display', serif" fill="url(#eclatGold)" font-weight="700">
+    <text x="114" y="40" font-size="29" letter-spacing="7">ECLAT</text>
+    <text x="114" y="74" font-size="29" letter-spacing="2.5">DIAMONDS</text>
+  </g>
+</svg>

@@ -1,0 +1,327 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import { DoorOpen, Users, UserCheck, TrendingUp } from "lucide-react";
+import { toast } from "sonner";
+
+import { SectionHeader } from "@/components/section/section-header";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useSession } from "@/store/use-session";
+import { getNavItem } from "@/lib/navigation";
+import { formatPercent } from "@/lib/format";
+import { StatTiles } from "@/components/hrms/stat-tiles";
+import {
+  type CheckIn,
+  type HourlyFootfall,
+  type StoreFootfall,
+  type VisitPurpose,
+} from "@/lib/mock/checkins";
+import {
+  FootfallByHourChart,
+  FootfallByStoreChart,
+} from "@/components/checkins/footfall-charts";
+import { CheckInLog, LiveInStore } from "@/components/checkins/checkin-tables";
+import {
+  PURPOSE_TO_ENUM,
+  useCheckins,
+  useCheckoutCheckin,
+  useCreateCheckin,
+} from "@/lib/queries/checkins";
+
+/** Bucket "HH:mm" into an hour label like "10a" / "1p" for the hourly chart. */
+function hourLabel(timeIn: string | null): string | null {
+  if (!timeIn) return null;
+  const hour = Number(timeIn.slice(0, 2));
+  if (Number.isNaN(hour)) return null;
+  const period = hour < 12 ? "a" : "p";
+  const h12 = hour % 12 === 0 ? 12 : hour % 12;
+  return `${h12}${period}`;
+}
+
+/** Derive the hourly-footfall series from the live check-in log (no endpoint). */
+function deriveByHour(checkins: CheckIn[]): HourlyFootfall[] {
+  const counts = new Map<string, number>();
+  const order: string[] = [];
+  for (const c of checkins) {
+    const label = hourLabel(c.timeIn);
+    if (!label) continue;
+    if (!counts.has(label)) order.push(label);
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  return order
+    .map((hour) => ({ hour, visitors: counts.get(hour) ?? 0 }))
+    .sort((a, b) => sortHour(a.hour) - sortHour(b.hour));
+}
+
+function sortHour(label: string): number {
+  const period = label.slice(-1);
+  const h = Number(label.slice(0, -1));
+  const base = h === 12 ? 0 : h;
+  return period === "a" ? base : base + 12;
+}
+
+const CLOSED_OUTCOMES = new Set(["sale_closed"]);
+
+export default function CheckinsPage() {
+  const { currentStore, stores } = useSession();
+  const nav = getNavItem("checkins");
+  const isAggregate = currentStore.isAggregate;
+
+  const { data: checkins = [], isLoading, isError, refetch } = useCheckins();
+  const [addOpen, setAddOpen] = useState(false);
+  const checkout = useCheckoutCheckin();
+
+  // Headline numbers derived from the live log. "Week" has no endpoint so we
+  // surface today's count for the single-store view.
+  const today = checkins.length;
+  const live = checkins.filter((c) => !c.timeOut).length;
+  const converted = checkins.filter((c) => CLOSED_OUTCOMES.has(c.outcome)).length;
+  const convRate = today ? (converted / today) * 100 : 0;
+
+  const byHour = useMemo(() => deriveByHour(checkins), [checkins]);
+
+  // Per-store breakdown only makes sense in the aggregate view; derive it from
+  // the live rows grouped by store.
+  const byStore = useMemo<StoreFootfall[]>(() => {
+    if (!isAggregate) return [];
+    const map = new Map<string, StoreFootfall>();
+    for (const c of checkins) {
+      const store = stores.find((s) => s.id === c.storeId);
+      const row =
+        map.get(c.storeId) ??
+        ({
+          storeId: c.storeId,
+          store: store?.name ?? c.storeId,
+          today: 0,
+          week: 0,
+          converted: 0,
+        } satisfies StoreFootfall);
+      row.today += 1;
+      if (CLOSED_OUTCOMES.has(c.outcome)) row.converted += 1;
+      map.set(c.storeId, row);
+    }
+    return [...map.values()];
+  }, [checkins, isAggregate, stores]);
+
+  function handleCheckout(id: string) {
+    checkout.mutate(
+      { id, outcome: "left" },
+      {
+        onSuccess: () => toast.success("Customer checked out"),
+        onError: () => toast.error("Could not check the customer out."),
+      },
+    );
+  }
+
+  return (
+    <>
+      <SectionHeader
+        title={nav?.title ?? "Check-ins & Footfall"}
+        purpose={nav?.purpose ?? ""}
+        primaryAction={nav?.primaryAction}
+        onPrimaryAction={() => setAddOpen(true)}
+      />
+
+      <div className="space-y-4">
+        <StatTiles
+          tiles={[
+            { label: "Footfall today", value: String(today), icon: DoorOpen },
+            {
+              label: "Logged total",
+              value: today.toLocaleString("en-IN"),
+              icon: Users,
+            },
+            {
+              label: "In store now",
+              value: String(live),
+              hint: "being attended",
+              icon: UserCheck,
+            },
+            {
+              label: "Conversion",
+              value: formatPercent(convRate, 0),
+              hint: `${converted} closed`,
+              icon: TrendingUp,
+            },
+          ]}
+        />
+
+        {isLoading ? (
+          <>
+            <Skeleton className="h-40 rounded-xl" />
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Skeleton className="h-64 rounded-xl" />
+              <Skeleton className="h-64 rounded-xl" />
+            </div>
+            <Skeleton className="h-72 rounded-xl" />
+          </>
+        ) : isError ? (
+          <div className="mx-auto max-w-md rounded-lg border bg-muted/30 p-4 text-center">
+            <p className="text-sm font-medium">Couldn&apos;t load check-ins.</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              The connection may have dropped. Check your network and try again.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={() => refetch()}
+            >
+              Retry
+            </Button>
+          </div>
+        ) : (
+          <>
+            <LiveInStore
+              checkins={checkins}
+              onCheckout={handleCheckout}
+              checkingOutId={checkout.isPending ? checkout.variables?.id : null}
+            />
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <FootfallByHourChart data={byHour} />
+              {isAggregate && byStore.length > 0 ? (
+                <FootfallByStoreChart data={byStore} />
+              ) : null}
+            </div>
+
+            <CheckInLog checkins={checkins} />
+          </>
+        )}
+      </div>
+
+      <AddCheckinDialog open={addOpen} onOpenChange={setAddOpen} />
+    </>
+  );
+}
+
+const PURPOSE_OPTIONS: VisitPurpose[] = [
+  "Browsing",
+  "Bridal",
+  "Gold Coin / Investment",
+  "Repair / Service",
+  "Gold Scheme",
+  "Quote Follow-up",
+];
+
+function AddCheckinDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { currentStore } = useSession();
+  const create = useCreateCheckin();
+  const [customer, setCustomer] = useState("");
+  const [phone, setPhone] = useState("");
+  const [purpose, setPurpose] = useState<VisitPurpose>("Browsing");
+
+  // Aggregate scope has no concrete store — fall back to the first real store.
+  const targetStoreId = currentStore.isAggregate
+    ? "surat-main"
+    : currentStore.id;
+
+  function save() {
+    if (!customer.trim()) {
+      toast.error("Customer name is required.");
+      return;
+    }
+    create.mutate(
+      {
+        storeId: targetStoreId,
+        customerName: customer.trim(),
+        phone: phone.trim() || undefined,
+        purpose: PURPOSE_TO_ENUM[purpose],
+      },
+      {
+        onSuccess: () => {
+          toast.success("Check-in logged");
+          setCustomer("");
+          setPhone("");
+          setPurpose("Browsing");
+          onOpenChange(false);
+        },
+        onError: () => toast.error("Could not log the walk-in."),
+      },
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Log walk-in</DialogTitle>
+          <DialogDescription>
+            New check-ins are recorded against{" "}
+            {currentStore.isAggregate ? "Surat — Main" : currentStore.name}.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="grid gap-1.5">
+            <Label htmlFor="ci-cust">Customer name</Label>
+            <Input
+              id="ci-cust"
+              placeholder="e.g. Rajesh Agarwal"
+              value={customer}
+              onChange={(e) => setCustomer(e.target.value)}
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="ci-phone">Phone</Label>
+            <Input
+              id="ci-phone"
+              placeholder="+91 ..."
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="ci-purpose">Purpose</Label>
+            <Select
+              value={purpose}
+              onValueChange={(v) => setPurpose(v as VisitPurpose)}
+            >
+              <SelectTrigger id="ci-purpose">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PURPOSE_OPTIONS.map((p) => (
+                  <SelectItem key={p} value={p}>
+                    {p}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={create.isPending}>
+            {create.isPending ? "Saving…" : "Log check-in"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

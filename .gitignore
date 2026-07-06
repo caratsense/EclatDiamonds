@@ -1,0 +1,57 @@
+# ── Dependencies ──────────────────────────────────────────────
+node_modules/
+**/node_modules/
+
+# ── Build output ──────────────────────────────────────────────
+backend/dist/
+frontend/.next/
+frontend/out/
+frontend/build/
+*.tsbuildinfo
+
+# ── Env / secrets (NEVER commit) ──────────────────────────────
+.env
+**/.env
+**/.env.local
+**/.env.development.local
+**/.env.test.local
+**/.env.production.local
+frontend/.env.production
+# keep templates:
+!**/.env.example
+
+# ── Sync agent secrets + runtime state ────────────────────────
+data_sync/EclatSync/eclat_config.bat
+data_sync/EclatSync/sync_state.json
+data_sync/EclatSync/_pyexe.bat
+data_sync/EclatSync/*.log
+
+# ── Runtime uploads ───────────────────────────────────────────
+backend/uploads/
+uploads/
+
+# ── Logs ──────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+
+# ── Screenshots / scratch / unrelated ─────────────────────────
+shots/
+shots-v2/
+EclatDiamonds/
+
+# ── Local DBs ─────────────────────────────────────────────────
+*.db
+*.db-journal
+*.sqlite
+
+# ── Deploy platform ───────────────────────────────────────────
+.vercel/
+
+# ── CI (re-add once the pushing token has `workflow` scope) ────
+.github/workflows/
+
+# ── OS / editor ───────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+*.swp

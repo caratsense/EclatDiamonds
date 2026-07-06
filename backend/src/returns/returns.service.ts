@@ -1,0 +1,376 @@
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
+import { AuthUser } from '../common/auth-user';
+import { StoreScopeService } from '../common/store-scope.service';
+import { CreateDiamondRateDto, CreateReturnDto, ValuateReturnDto } from './dto/return.dto';
+
+function num(v: Prisma.Decimal | number | null | undefined): number {
+  return v == null ? 0 : Number(v);
+}
+
+/** Round a Decimal to whole rupees (ROUND_HALF_UP — Decimal.js default). */
+function rupees(d: Prisma.Decimal): number {
+  return d.toDecimalPlaces(0).toNumber();
+}
+
+/**
+ * Live gold rate per gram (INR/g) by karat — fallback when no MetalRate row
+ * exists yet. The 22k rate is the default "today's gold rate" for the calculator.
+ */
+const GOLD_RATE_PER_GRAM: Record<number, number> = { 24: 7180, 22: 6580, 18: 5390 };
+
+// Module 14 calculator constants (client rules, CLIENT-CALL-2026-07 § Module 14).
+const GOLD_PCT = 100; // gold: 100% of today's rate for both options.
+const EXCHANGE_DIA_PCT = 100; // exchange: diamond at 100% of today's rate.
+const BUYBACK_DIA_PCT = 80; // buyback/return (cash): diamond at 80% of today's rate.
+
+/** Shape of a computed valuation (shared by /valuate preview + persisted create). */
+interface Valuation {
+  todayGoldRate: number;
+  todayDiaRate: number;
+  goldValueToday: number;
+  diaValueToday: number;
+  exchangeValue: number;
+  buybackValue: number;
+  breakdown: { makingReturned: 0; gstReturned: 0 };
+}
+
+function toView(r: any) {
+  return {
+    id: r.id,
+    ref: r.ref,
+    storeId: r.storeId,
+    customer: r.customerName,
+    phone: r.phone ?? '',
+    type: r.type,
+    item: r.item ?? '',
+    originalValue: 0,
+    oldGoldGrams: r.weightGrams != null ? num(r.weightGrams) : undefined,
+    creditValue: num(r.value),
+    deductions: 0,
+    settlement: r.settlement,
+    status: r.status,
+    reason: r.reason ?? '',
+    createdAt: r.createdAt.toISOString(),
+    raisedBy: r.raisedBy ?? '',
+    photos: (r.photos ?? []).map((p: any) => ({ id: p.id, label: p.label ?? '', swatch: '' })),
+    // Module 14 exchange/buyback calculator fields (undefined on legacy rows).
+    chosenOption: r.chosenOption ?? undefined,
+    exchangeValue: r.exchangeValue != null ? num(r.exchangeValue) : undefined,
+    buybackValue: r.buybackValue != null ? num(r.buybackValue) : undefined,
+    todayGoldRate: r.todayGoldRate != null ? num(r.todayGoldRate) : undefined,
+    todayDiaRate: r.todayDiaRate != null ? num(r.todayDiaRate) : undefined,
+    purchaseGoldWtG: r.purchaseGoldWtG != null ? num(r.purchaseGoldWtG) : undefined,
+    purchaseGoldRate: r.purchaseGoldRate != null ? num(r.purchaseGoldRate) : undefined,
+    purchaseDiaCarat: r.purchaseDiaCarat != null ? num(r.purchaseDiaCarat) : undefined,
+    purchaseDiaRate: r.purchaseDiaRate != null ? num(r.purchaseDiaRate) : undefined,
+    diaSpec: r.diaSpec ?? undefined,
+    purchaseMaking: r.purchaseMaking != null ? num(r.purchaseMaking) : undefined,
+  };
+}
+
+@Injectable()
+export class ReturnsService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly scope: StoreScopeService,
+  ) {}
+
+  /** GET /returns — returns/exchanges/buybacks, store-scoped. */
+  async list(user: AuthUser, headerStore?: string) {
+    const rows = await this.prisma.returnRecord.findMany({
+      where: this.scope.storeFilter(user, headerStore),
+      include: { photos: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    return rows.map(toView);
+  }
+
+  /** GET /returns/:id — one record with intake photos. */
+  async get(user: AuthUser, id: string) {
+    const r = await this.prisma.returnRecord.findFirst({
+      where: { id, ...this.scope.storeFilter(user) },
+      include: { photos: true },
+    });
+    if (!r) throw new NotFoundException('Return not found');
+    return toView(r);
+  }
+
+  // -------------------------------------------------------------------------
+  // Module 14 — exchange / buyback calculator
+  // -------------------------------------------------------------------------
+
+  /**
+   * POST /returns/valuate — preview only, nothing persisted. Resolves today's
+   * gold + diamond rates (request overrides win) and returns both option values.
+   */
+  async valuate(dto: ValuateReturnDto): Promise<Valuation> {
+    const todayGoldRate = await this.resolveGoldRate(dto.storeId, dto.todayGoldRate);
+    const todayDiaRate = await this.resolveDiaRate(dto.diaSpec, dto.storeId, dto.todayDiaRate);
+    return this.computeValuation(dto.goldWtG, dto.diaCarat, todayGoldRate, todayDiaRate);
+  }
+
+  /**
+   * Core exchange/buyback math (exact, Decimal-safe, whole-rupee rounded):
+   *   goldValueToday = goldWeightG × todayGoldRatePerGram        (×100%)
+   *   diaValueToday  = diaCarat    × todayDiaRatePerCarat        (100% base)
+   *   EXCHANGE = goldValueToday×100% + diaValueToday×100%   (making 0, GST 0)
+   *   BUYBACK  = goldValueToday×100% + diaValueToday×80%    (making 0, GST 0)
+   */
+  private computeValuation(
+    goldWtG: number | undefined,
+    diaCarat: number | undefined,
+    todayGoldRate: number,
+    todayDiaRate: number,
+  ): Valuation {
+    const goldWt = new Prisma.Decimal(goldWtG ?? 0);
+    const goldRate = new Prisma.Decimal(todayGoldRate ?? 0);
+    const diaCt = new Prisma.Decimal(diaCarat ?? 0);
+    const diaRate = new Prisma.Decimal(todayDiaRate ?? 0);
+
+    const goldValueTodayD = goldWt.mul(goldRate).mul(GOLD_PCT).div(100);
+    const diaValueTodayD = diaCt.mul(diaRate); // 100% diamond base value
+    const exchangeD = goldValueTodayD.add(diaValueTodayD.mul(EXCHANGE_DIA_PCT).div(100));
+    const buybackD = goldValueTodayD.add(diaValueTodayD.mul(BUYBACK_DIA_PCT).div(100));
+
+    return {
+      todayGoldRate: Number(todayGoldRate ?? 0),
+      todayDiaRate: Number(todayDiaRate ?? 0),
+      goldValueToday: rupees(goldValueTodayD),
+      diaValueToday: rupees(diaValueTodayD),
+      exchangeValue: rupees(exchangeD),
+      buybackValue: rupees(buybackD),
+      breakdown: { makingReturned: 0, gstReturned: 0 },
+    };
+  }
+
+  /**
+   * POST /returns — raise a return/exchange/buyback.
+   *
+   * New Module-14 calculator flow (when `chosenOption` is supplied): computes
+   * BOTH option values, persists the full purchase snapshot, sets `value` to the
+   * chosen one and `type` = exchange | return, status `pending_approval` (HO must
+   * approve). Otherwise falls back to the original exchange-value / old-gold /
+   * return branches unchanged.
+   */
+  async create(user: AuthUser, dto: CreateReturnDto) {
+    this.scope.assertStoreAllowed(user, dto.storeId);
+
+    const year = new Date().getFullYear();
+    const count = await this.prisma.returnRecord.count();
+    const ref = `RTN-${year}-${1001 + count}`;
+
+    // --- Module 14 exchange/buyback calculator branch ---
+    if (dto.chosenOption) {
+      const todayGoldRate = await this.resolveGoldRate(dto.storeId, dto.todayGoldRate);
+      const todayDiaRate = await this.resolveDiaRate(dto.diaSpec, dto.storeId, dto.todayDiaRate);
+      const v = this.computeValuation(dto.goldWtG, dto.diaCarat, todayGoldRate, todayDiaRate);
+
+      const isExchange = dto.chosenOption === 'exchange';
+      const value = isExchange ? v.exchangeValue : v.buybackValue;
+
+      const row = await this.prisma.returnRecord.create({
+        data: {
+          ref,
+          storeId: dto.storeId,
+          customerName: dto.customerName,
+          phone: dto.phone,
+          type: isExchange ? 'exchange' : 'return',
+          item: dto.item,
+          value: new Prisma.Decimal(value),
+          weightGrams: dto.goldWtG != null ? new Prisma.Decimal(dto.goldWtG) : null,
+          settlement: dto.settlement ?? (isExchange ? 'exchange' : 'refund'),
+          status: 'pending_approval',
+          reason: dto.reason,
+          raisedBy: user.name,
+          // Purchase snapshot + computed option values.
+          purchaseGoldWtG: dto.goldWtG != null ? new Prisma.Decimal(dto.goldWtG) : null,
+          purchaseGoldRate:
+            dto.goldRateAtPurchase != null ? new Prisma.Decimal(dto.goldRateAtPurchase) : null,
+          purchaseDiaCarat: dto.diaCarat != null ? new Prisma.Decimal(dto.diaCarat) : null,
+          purchaseDiaRate:
+            dto.diaRateAtPurchase != null ? new Prisma.Decimal(dto.diaRateAtPurchase) : null,
+          diaSpec: dto.diaSpec,
+          purchaseMaking: dto.making != null ? new Prisma.Decimal(dto.making) : null,
+          todayGoldRate: new Prisma.Decimal(todayGoldRate),
+          todayDiaRate: new Prisma.Decimal(todayDiaRate),
+          exchangeValue: new Prisma.Decimal(v.exchangeValue),
+          buybackValue: new Prisma.Decimal(v.buybackValue),
+          chosenOption: dto.chosenOption,
+        },
+        include: { photos: true },
+      });
+      return toView(row);
+    }
+
+    // --- Legacy branches (exchange-value / old-gold / return) — unchanged ---
+    if (!dto.type) {
+      throw new BadRequestException('type or chosenOption is required');
+    }
+
+    let creditValue = 0;
+    if (dto.type === 'old_gold' || dto.type === 'exchange') {
+      const rate = dto.ratePerGram ?? GOLD_RATE_PER_GRAM[dto.oldGoldKarat ?? 22] ?? 0;
+      const grams = dto.oldGoldGrams ?? 0;
+      creditValue = grams * rate - (dto.deductions ?? 0);
+    } else if (dto.type === 'return') {
+      creditValue = (dto.originalValue ?? 0) - (dto.deductions ?? 0);
+    } else {
+      creditValue = 0; // repair: estimate handled separately
+    }
+    creditValue = Math.max(0, Math.round(creditValue));
+
+    const row = await this.prisma.returnRecord.create({
+      data: {
+        ref,
+        storeId: dto.storeId,
+        customerName: dto.customerName,
+        phone: dto.phone,
+        type: dto.type,
+        item: dto.item,
+        value: new Prisma.Decimal(creditValue),
+        weightGrams: dto.oldGoldGrams != null ? new Prisma.Decimal(dto.oldGoldGrams) : null,
+        settlement: dto.settlement ?? 'credit_note',
+        status: 'pending_approval',
+        reason: dto.reason,
+        raisedBy: user.name,
+      },
+      include: { photos: true },
+    });
+    return toView(row);
+  }
+
+  /** PATCH /returns/:id/approve — HO signs off; store-access checked. */
+  async approve(user: AuthUser, id: string) {
+    return this.setStatus(user, id, 'approved');
+  }
+
+  /** PATCH /returns/:id/reject — HO declines; store-access checked. */
+  async reject(user: AuthUser, id: string) {
+    return this.setStatus(user, id, 'rejected');
+  }
+
+  private async setStatus(user: AuthUser, id: string, status: 'approved' | 'rejected') {
+    const existing = await this.prisma.returnRecord.findFirst({
+      where: { id, ...this.scope.storeFilter(user) },
+      select: { id: true },
+    });
+    if (!existing) throw new NotFoundException('Return not found');
+    const row = await this.prisma.returnRecord.update({
+      where: { id },
+      data: { status },
+      include: { photos: true },
+    });
+    return toView(row);
+  }
+
+  // -------------------------------------------------------------------------
+  // Rate tables (calculator UI + HO management)
+  // -------------------------------------------------------------------------
+
+  /** GET /returns/rates — current gold (per karat/gram) + diamond (per spec) rates. */
+  async rates(headerStore?: string) {
+    const scoped = headerStore && headerStore !== 'all' ? headerStore : undefined;
+    const goldMetals: Array<[number, string]> = [
+      [24, 'gold_24k'],
+      [22, 'gold_22k'],
+      [18, 'gold_18k'],
+    ];
+    const gold = [] as Array<{ karat: number; ratePerGram: number }>;
+    for (const [karat, metal] of goldMetals) {
+      gold.push({ karat, ratePerGram: await this.latestGoldRate(metal, scoped, karat) });
+    }
+    const diamond = await this.currentDiamondRates(scoped);
+    return { gold, diamond };
+  }
+
+  /** GET /returns/diamond-rates — full diamond-rate table (HO management view). */
+  async diamondRates(headerStore?: string) {
+    const scoped = headerStore && headerStore !== 'all' ? headerStore : undefined;
+    const rows = await this.prisma.diamondRate.findMany({
+      where: scoped ? { OR: [{ storeId: scoped }, { storeId: null }] } : {},
+      orderBy: [{ spec: 'asc' }, { effectiveFrom: 'desc' }, { createdAt: 'desc' }],
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      spec: r.spec,
+      ratePerCarat: num(r.ratePerCarat),
+      effectiveFrom: r.effectiveFrom.toISOString(),
+      storeId: r.storeId ?? null,
+      createdAt: r.createdAt.toISOString(),
+    }));
+  }
+
+  /** POST /returns/diamond-rates — HO sets/updates a diamond rate for a spec. */
+  async createDiamondRate(dto: CreateDiamondRateDto) {
+    const row = await this.prisma.diamondRate.create({
+      data: {
+        spec: dto.spec,
+        ratePerCarat: new Prisma.Decimal(dto.ratePerCarat),
+        effectiveFrom: dto.effectiveFrom ? new Date(dto.effectiveFrom) : new Date(),
+        storeId: dto.storeId ?? null,
+      },
+    });
+    return {
+      id: row.id,
+      spec: row.spec,
+      ratePerCarat: num(row.ratePerCarat),
+      effectiveFrom: row.effectiveFrom.toISOString(),
+      storeId: row.storeId ?? null,
+      createdAt: row.createdAt.toISOString(),
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // Rate resolution helpers
+  // -------------------------------------------------------------------------
+
+  /** Latest gold rate (INR/g) for a metal; store override wins, else fallback table. */
+  private async latestGoldRate(metal: string, scoped: string | undefined, karat: number): Promise<number> {
+    const row = await this.prisma.metalRate.findFirst({
+      where: { metal: metal as any, ...(scoped ? { OR: [{ storeId: scoped }, { storeId: null }] } : {}) },
+      orderBy: [{ storeId: 'desc' }, { effectiveFrom: 'desc' }, { createdAt: 'desc' }],
+    });
+    return row ? Number(row.ratePerGram) : (GOLD_RATE_PER_GRAM[karat] ?? GOLD_RATE_PER_GRAM[22]);
+  }
+
+  /** Resolve today's gold rate/gram: request override → latest 22k MetalRate → fallback. */
+  private async resolveGoldRate(storeId: string | undefined, override?: number): Promise<number> {
+    if (override != null) return override;
+    const scoped = storeId && storeId !== 'all' ? storeId : undefined;
+    return this.latestGoldRate('gold_22k', scoped, 22);
+  }
+
+  /** Resolve today's diamond rate/carat by spec: override → latest DiamondRate → 0. */
+  private async resolveDiaRate(
+    spec: string | undefined,
+    storeId: string | undefined,
+    override?: number,
+  ): Promise<number> {
+    if (override != null) return override;
+    if (!spec) return 0;
+    const scoped = storeId && storeId !== 'all' ? storeId : undefined;
+    const row = await this.prisma.diamondRate.findFirst({
+      where: { spec, ...(scoped ? { OR: [{ storeId: scoped }, { storeId: null }] } : {}) },
+      orderBy: [{ storeId: 'desc' }, { effectiveFrom: 'desc' }, { createdAt: 'desc' }],
+    });
+    return row ? Number(row.ratePerCarat) : 0;
+  }
+
+  /** Latest diamond rate per distinct spec (store override + most-recent wins). */
+  private async currentDiamondRates(scoped?: string) {
+    const rows = await this.prisma.diamondRate.findMany({
+      where: scoped ? { OR: [{ storeId: scoped }, { storeId: null }] } : {},
+      orderBy: [{ storeId: 'desc' }, { effectiveFrom: 'desc' }, { createdAt: 'desc' }],
+    });
+    const seen = new Map<string, (typeof rows)[number]>();
+    for (const r of rows) if (!seen.has(r.spec)) seen.set(r.spec, r);
+    return [...seen.values()].map((r) => ({
+      spec: r.spec,
+      ratePerCarat: num(r.ratePerCarat),
+      effectiveFrom: r.effectiveFrom.toISOString(),
+      storeId: r.storeId ?? null,
+    }));
+  }
+}

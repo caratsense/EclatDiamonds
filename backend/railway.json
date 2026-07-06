@@ -1,0 +1,13 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile"
+  },
+  "deploy": {
+    "startCommand": "node node_modules/prisma/build/index.js migrate deploy && node dist/main.js",
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 5
+  },
+  "//": "Provision a managed PostgreSQL plugin in the SAME Railway project (New -> Database -> PostgreSQL). Then in this service's Variables set DATABASE_URL to a reference: ${{ Postgres.DATABASE_URL }}. Append ?schema=public&sslmode=require if not already present. All other secrets (JWT_SECRET, integration keys) are set as plain service Variables — see .env.example. The healthcheckPath uses an authed route returning 401 (still proves the app is up); swap for a dedicated /health endpoint if one is added."
+}

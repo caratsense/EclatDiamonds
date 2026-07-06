@@ -1,0 +1,17 @@
+# dependencies
+node_modules/
+
+# env / secrets (only .env.example is committed)
+.env
+.env.*
+!.env.example
+
+# prisma generated client
+/node_modules/.prisma/
+/generated/
+
+# logs / os
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db

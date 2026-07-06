@@ -1,0 +1,159 @@
+# Eclat / CaratSense — Session Handoff (START HERE)
+
+> **New machine / new Claude session? Read this file first, then `CLAUDE.md`.**
+> This captures the full project state so work can continue exactly where it stopped.
+> Last updated: 2026-06-24.
+
+## 2026-06-24 — Spec audit + "Assay" design system + Éclat Diamonds brand
+- **Audit** of the codebase vs the build spec written to `docs/AUDIT.md` (evidence-based; verdict: demo-workable, production-workable for in-store web ops; blockers = scheduler/email/quote→order/mobile-app). Stack confirmed: NestJS+Prisma+Postgres backend, Next.js 16 web (no mobile app), RBAC globally enforced, frontend renders live API (mock = types only).
+- **Design system** `docs/DESIGN_SYSTEM.md` ("Assay"): dropped indigo → ONE gold accent; 3 faces (Fraunces display · Inter UI · Geist Mono tabular `.num`); signature `.facet-top` gold light-catch; warm porcelain/graphite; jewel charts. Tokens in `globals.css`, fonts in `layout.tsx`.
+- **Brand alignment to eclatdiamonds.in:** added emerald `--brand` `#0F2A1E` (+ `.emerald-panel`). Sidebar rail is now emerald with the gold "Éclat Diamonds" wordmark. **New public landing page at `/`** (was a redirect) and a **split-screen sign-in at `/login`**, both emerald + gold + serif.
+- **Mobile:** real bottom tab bar (`components/layout/mobile-nav.tsx`) replaces the top hamburger; 4 thumb tabs + More sheet, 44px targets.
+- **All 18 screens:** tabular `.num` numerics + loading/empty/error states (4 frontend agents). Verified: `tsc --noEmit` clean; live screenshots of landing/login/dashboard/8 modules + mobile = **0 console errors**. Screenshots in `shots-v2/` (`rb-*`, `tour-*`).
+
+## Frontend — BUILT (2026-06-17) ✅
+Next.js 16 + React 19 + TS + Tailwind v4 + shadcn/ui app at `E:\Eclat Project\frontend`. Run: `cd frontend; npm run dev` (→ http://localhost:3000 → `/dashboards`). Verified green: `tsc --noEmit`, `npm run lint` (1 trivial warning), `npm run build` (21 routes, exit 0).
+- **App shell:** sidebar nav (all 17 modules grouped by domain), top bar with **store switcher** + **role badge** (Salesperson/Store Manager/Area Manager/Head Office, switchable to demo role-based views), theme toggle. Session state in `src/store/use-session.ts`.
+- **All 17 module sections built** with realistic Indian-jewelry mock data (₹/grams/carats via `src/lib/format.ts`), role/store-scoped: CRM kanban, Catalogue + AI image-search affordance, Quotation builder w/ pricing breakdown, Returns photo-intake + exchange calc, Discounts role-limit approval + margin preview, Loyalty maturity calc, Timelines stepper, Inventory aging/rotation/scrap, Payments ledger + reconciliation, HRMS geo-attendance + leaderboard + commission, Check-ins footfall, Dashboards (default landing), Finance, Reporting/DSR, New-store checklists, Marketing, Ticketing.
+- **Still mock-only:** all data is from `src/lib/mock/*`; not wired to a backend yet. API client seam in `src/lib/api.ts`. Auth/session seeded mock. PWA + WhatsApp actions are stubs.
+- **Next on frontend:** wire react-query hooks to the real backend once it exists; role-gate rendering via `ROLE_RANK`; add PWA/geolocation for HRMS.
+
+## What this project is (30-second version)
+**Eclat** (product name **CaratSense**) = one unified operations platform for a **multi-store jewelry retail chain**, covering sales, inventory, finance, HR, and customers across all branches. It is **not greenfield** — it replaces/extends an existing jewelry ERP called **APRS-SJEP** (SQL Server). Full idea & flow are below; full spec is in `docs/MODULES.md`.
+
+## The product in one diagram (customer + product flow)
+```
+Inquiry (web/walk-in/phone/social)        → M1 CRM & Lead Mgmt
+   → Customer check-in, rep assigned       → M7 Footfall, M6 HRMS
+   → Browse catalogue (+ AI image search)  → M5 Catalogue
+   → Quotation (priced, WhatsApp, portable) → M2 Quotation & Pricing
+   → Discount within role limits           → M15 Discount
+   → ORDER ── in-stock ──┐
+            └ custom ──→ factory: melt→design→set→ready → M8 Timelines
+   → Payment (cash/card/UPI/online/scheme) → M12 Payments, M17 Gold Scheme
+   → Delivery / collection
+   → Returns / exchange / repair (photo)   → M14 Returns
+Continuous: M9 Inventory, M4 Finance, M3 Dashboards, M10 DSR,
+            M11 New-store setup, M16 Marketing, M13 Ticketing
+```
+17 modules total. Grouped: **Front-of-house** (1,2,5,7,14,15,17) · **Back-of-house** (6,8,9,12,13) · **Boardroom** (3,4,10,11,16).
+
+## Decisions locked (also in docs/DECISIONS.md)
+- ❌ **CCTV footfall analytics (was in Module 7) — DROPPED.** Footfall = manual/tablet check-in only.
+- ✅ All other 16 modules + non-CCTV Module 7 are **in scope**.
+- 📄 Docs strategy: keep `CLAUDE.md` + `docs/MODULES.md` + `docs/DECISIONS.md`. **No per-module files upfront** — create `docs/modules/NN-slug.md` on demand when a module's build starts (saves tokens).
+
+## Open points — NOT yet decided (need the owner)
+- **OP-1 (Module 8):** Is the customer order-status timeline shown to customers, or internal-only?
+- **OP-2 (Module 2):** Pricing source of truth — gold-rate feed, making-charge rules, store overrides?
+- **OP-3 (architecture):** Eclat = net-new app or extend APRS-SJEP? + migration approach from `SJEP BACKUP/`.
+
+## Agents set up — FULL TEAM (see docs/AGENTS.md)
+Role specialists in `.claude/agents/`: **tech-lead** (planner/PM), **db-migrator** (legacy DB), **database-architect** (Eclat Postgres), **backend-engineer** (NestJS), **frontend-engineer** (Next.js PWA), **integrations-engineer** (WhatsApp/Razorpay/sync), **jewelry-domain-expert** (pricing/domain), **security-auditor** (cyber), **qa-engineer** (QA), **devops-engineer** (Railway/Vercel/infra). Standard module flow + orchestration notes in `docs/AGENTS.md`. Built-ins: Explore, Plan, and the `/code-review` skill.
+
+## Existing system files (READ-ONLY — never overwrite/delete)
+- `SJEP DATA/APRSLog.mdf` (+ `.ldf`) — live DB data files.
+- `SJEP BACKUP/APRS-SJEP-<timestamp>/` — dated full backups. Main DB = `APRSSJEP.bak` (~100 MB). Use the **latest** timestamp.
+- `SJEP REPORT/Reports/*.repx` — DevExpress report templates (reveal real table/column names).
+- `SJEP REPORT/Eclat_RequirementsNotes_CaratSense.pdf` — detailed requirements.
+- `Eclat_feature planning.xlsx`, `Jewel Modules - Google Sheets.pdf` — planning sources.
+
+## Environment notes (machine-specific — re-check on the new laptop)
+- Original dev box (Windows 11): **no SQL Server installed**, no Docker, but **winget available**.
+- To read the legacy DB you must first stand up an engine: `winget install` SQL Server Express + `sqlcmd`, OR use Docker `mssql`, then restore a **copy** of `APRSSJEP.bak` into a throwaway DB. Never touch the original files.
+- ⚠️ On the new laptop, re-verify these (SQL Server / Docker / winget may differ).
+
+## Data pipeline (DECIDED 2026-06-16)
+**Hybrid:** one-time `APRSSJEP.bak` backfill + a live read-only SQL Server **sync agent** on the client's office PC (every 15 min, pushes changes to Eclat). This mirrors the **proven** Busy→CaratSense sync built for the **Ashish Textile** client (`...\OneDrive\Desktop\ashish textile\data_sync\CaratSenseSync\auto_sync_busy.py`) — repointed from MS Access to SQL Server. Full design in `docs/DATA_PIPELINE.md`. Skeleton already written: `data_sync/EclatSync/sync_sjep.py` (framework done; `extract_*()` SQL bodies marked TODO until the schema is known).
+
+## Legacy schema — EXTRACTED (2026-06-16) ✅
+SQL Server 2022 Express is installed (`localhost\SQLEXPRESS`); the June 8 `APRSSJEP.bak` is restored as throwaway DB **`APRSSJEP_eclat`** (ONLINE). Full schema in **`docs/legacy-schema.md`**. Postgres 18 is also already running on this box (Eclat target DB).
+- To re-query: `Import-Module 'C:\Users\Shrey\Documents\WindowsPowerShell\Modules\SqlServer\22.4.5.1\SqlServer.psd1' -Force` then `Invoke-Sqlcmd -ServerInstance 'localhost\SQLEXPRESS' -TrustServerCertificate -Database 'APRSSJEP_eclat' -Query "..."`.
+- **Key facts:** 1,102 tables but ~150 hold real data (~920 dormant). Two hubs: **`PartyMst`** (all customers/suppliers/staff/branches) and **`Inward`** (one row per jewellery piece; `InwardSummary` = weights/amounts). Sales/purchase = `JewelTrans` (TranType-driven). Manufacturing = `Spm_MfgOrder`→`SPM_BagMaster`. Accounting = `Journal`/`VoucherEntry`/`Heads`.
+- **Data looks recent (Mar–Jun 2026 only)** — possibly a fresh/seeded install, not years of history. ⚠️ CONFIRM with client whether this is their full data or a test instance (affects backfill expectations).
+- **Reusable legacy coverage:** M4 Finance (full ledger), M5 Catalogue, M9 Inventory, M2 pricing (rate charts + labour/CPF). **Net-new (no legacy data):** M3 Dashboards, M6 HRMS, M7 Check-ins, M13 Ticketing, M16 Marketing; M1 CRM & M17 Loyalty have schema but ~no data.
+- **Sync watermarks:** identity bigint PK + `UpdateDate`/`EntryDate` on every transaction table (e.g. `JewelTrans.JewelTransId`+`UpdateDate`, `Inward.JewelId`+`UpdateDate`). Cancellations are soft (`isCancel` bit) — re-pull by `UpdateDate`, don't rely on deletes.
+
+## Backend + full-stack slice — LIVE (2026-06-17) ✅
+- **Backend:** NestJS at `E:\Eclat Project\backend` on port **4000**, Prisma → Postgres `eclat_dev` (creds `postgres:postgres@localhost:5432`). Run: `cd backend; npm run start:dev`. 45-table schema (`prisma/schema.prisma`), migration applied, seeded demo data. JWT auth, RBAC + store-scoping (`src/common/store-scope.service.ts`), server-side quote pricing, discount escalation. Demo logins in `backend/README.md` (password `password123`): `head.office@caratsense.in`, `priya.rep@caratsense.in`, etc.
+- **Endpoints live:** `/auth/login`,`/auth/me`,`/stores`,`/leads`(+CRUD/stage),`/products`,`/quotes`(+POST),`/stock`,`/dashboard/kpis`,`/dashboard/charts`,`/discounts`(+POST). Auth header `Bearer`, active store via `X-Store-Id` header. Store ids: `surat-main`,`mumbai-bandra`,`ahmedabad-cg`,`all`.
+- **Frontend wired** to backend for 6 modules (Dashboards, CRM, Catalogue, Quotation, Inventory, Discounts) via `src/lib/queries/*`; real `/login` + session gate + logout; store switcher refetches. Verified store-scoping end-to-end (HO 8 leads / Surat 4).
+- **Still on MOCK (need backend endpoints):** checkins, finance, hrms, loyalty, marketing, new-store, payments, reporting, returns, ticketing, timelines (marked `// TODO: wire to backend`).
+- **Design:** Notion/Airtable, Inter font, Airtable-blue accent, ECharts for all charts. (Earlier luxury-gold-serif look was rejected & replaced.)
+
+## ALL 17 MODULES LIVE + HARDENED + REAL DATA (2026-06-17) ✅
+- **All 17 modules** now have real NestJS endpoints + wired frontend (no more mock). Backend `start:prod` on :4000, frontend `npm run dev` on :3000.
+- **Real legacy data backfilled** into `eclat_dev`: 564 parties, 753 products, 2,690 stock pieces, 239 sales, 3,275 sale lines, 121 mfg orders (`backend/scripts/backfill-legacy.mjs`, idempotent on `legacyId`).
+- **Security hardened:** audit fixed mass-assignment (forbidNonWhitelisted), JWT-secret fail-fast, finance role-gating; CORS now env-driven (`CORS_ORIGINS`). Verified: finance 403 for reps, cross-store 403, mass-assign 400.
+- **Tests:** 25 e2e tests pass (`cd backend; npm run test:e2e`) covering auth, store-scoping, RBAC, discount limits, quote pricing. No defects.
+- **Sync:** real `extract_*()` SQL in `sync_sjep.py` (validated vs restored legacy DB); production sink = Eclat REST bulk-upsert or direct PG load (route still to build).
+- **Deploy-ready:** Dockerfiles (backend+frontend), `railway.json`, `vercel.json`, CI (`.github/workflows/ci.yml`), runbook `docs/DEPLOYMENT.md`, sync-agent installer `data_sync/EclatSync/setup.bat`.
+
+## INTEGRATIONS (Phase 4) — CODE-COMPLETE behind env keys (2026-06-23) ✅
+`backend/src/integrations/` — a `@Global` NestJS module wrapping the three external touchpoints. **No new dependencies** (Node global `fetch` + built-in `crypto`). Every integration degrades to a logged **`dryRun`** no-op until its credentials are set, so the app runs identically with or without them and **activates the moment env vars are filled** (no code change).
+- **WhatsApp** (`whatsapp.service.ts`): Cloud/Graph API `sendText` + `sendTemplate` (auto-normalises Indian numbers to `91…`); webhook GET handshake (verify-token) + POST inbound with `X-Hub-Signature-256` HMAC check. Live when `WHATSAPP_ACCESS_TOKEN` + `WHATSAPP_PHONE_NUMBER_ID` set.
+- **Razorpay** (`razorpay.service.ts`): `createPaymentLink` (amount in paise, attribution carried in `notes`); webhook is HMAC-verified (`X-Razorpay-Signature`) and **idempotently records a `Payment` row** (mode=`online`, deduped on the rzp payment id in `Payment.reference`). Live when `RAZORPAY_KEY_ID/SECRET` set; webhook needs `RAZORPAY_WEBHOOK_SECRET`.
+- **Gold rate** (`gold-rate.service.ts`): `refresh()` pulls fine-gold spot from `GOLD_RATE_API_URL` and writes a `MetalRate` row per purity (24k/22k/18k/rose); auto-detects 3 feed shapes (generic `inr_per_gram`, goldapi.io `price_gram_24k`, metals.dev per-ounce). `getLatestRate()`/`currentRates()` fall back to last stored rate (also what the legacy backfill/sync populate) — quotes keep working with no live feed.
+- **Endpoints** (all under `/integrations`): `GET status` (which are live), `POST whatsapp/send`, `GET|POST whatsapp/webhook` (@Public), `POST razorpay/payment-link` (store-scoped), `POST razorpay/webhook` (@Public, signature-gated), `GET gold-rate`, `POST gold-rate/refresh` (manager+). Webhooks need raw bytes → `main.ts` now boots with `{ rawBody: true }`.
+- **Tests:** `backend/test/integrations.e2e-spec.ts` — 10 e2e (dry-run, auth, RBAC, store-scope, mass-assign guard, webhook-signature rejection). **Full suite now 35/35 green.** New env vars documented in `backend/.env.example` (`WHATSAPP_APP_SECRET`, `GOLD_RATE_API_KEY`, optional `WHATSAPP_API_VERSION`).
+
+## BLOCKED on external dependencies (cannot finish locally)
+- **Real-time sync on-site:** needs read-only access to the client's LIVE SQL Server (`APRSSJEP`) on his office PC + TCP enabled. Queries are ready.
+- **WhatsApp / Razorpay / gold-rate:** integration code is **DONE** (see Phase 4 above) — only need client accounts + API approvals, then fill the env vars in `.env.example`. Nothing left to build.
+- **Actual deploy:** needs Railway + Vercel + object-storage (R2) accounts. Apply CORS_ORIGINS=real domain on deploy.
+- **Open product decisions:** OP-1 (timeline visibility), OP-2 (pricing source), OP-4 (area-mgr new-store region scope), OP-5 (HRMS commission self-vs-all), OP-6 (live-data code decodes), + confirm legacy data completeness (looks like a fresh install).
+
+## SYNC INGESTION ROUTE — BUILT + AGENT WIRED (2026-06-23) ✅
+The last data-pipeline piece is done. `backend/src/sync/` — per-entity bulk-upsert routes the on-site agent pushes to.
+- **Routes** (`POST /sync/<entity>`, **head_office-gated**): `parties, products, stock, sales, sale-lines, orders, order-items`. Body `{ records: [...] }` of raw legacy rows; each upserts on its unique `legacyId`. Mapping is **ported verbatim from `scripts/backfill-legacy.mjs`** (`sync.util.ts`) so live-sync and backfill converge on identical Eclat rows. Idempotent; FKs (sale→party, line→sale/stock, item→order) resolved against already-synced rows. Returns `{received, upserted, skipped, watermark}`.
+- **Agent wired:** `data_sync/EclatSync/sync_sjep.py` production sink now POSTs to `/sync/*` in dependency order (`push_chunked`, 3000-row chunks, JSON-serialising datetime/Decimal) and **only advances the watermark after every entity succeeds** (partial failure re-pulls next cycle). Replaced the old `/upload/excel` stub.
+- **Tests:** `backend/test/sync.e2e-spec.ts` (5: RBAC gate, idempotent upsert, watermark, FK-skip, mass-assign guard).
+
+## FULL-STACK VERIFIED RUNNING (2026-06-23) ✅
+Both servers run together end-to-end. Backend :4000 (watch), frontend :3000 (Next 16). Logged in as head office, **all 17 module pages render authenticated against the live backend with real legacy data — 0 console errors, 0 failed requests, no login bounces** (verified via headless Chrome over every route; screenshots in `Eclat/shots/`).
+- **Fix — default store:** `auth.service.ts` now lands broad roles (head office / area manager) on the **"All Stores"** aggregate instead of the first store alphabetically (better UX + pan-India default view). Single-store users unchanged.
+- **Fix — finance duplicate React key:** `/finance/ledger` view now exposes a unique `key` (DB id) separate from the human `id` (ref, which repeats across stores); `LedgerTable` keys on it. Cleared the only console warning found.
+- **e2e: 40/40 green** (25 core + 10 integrations + 5 sync).
+- Note: e2e runs leave "QA Test" quotes in `eclat_dev` (harmless demo noise); the sync test leaves `TEST-SYNC-PARTY-1`.
+
+## PHASE 2 (photos) + OPEN DECISIONS CLOSED (2026-06-23) ✅
+- **Decisions locked** (see DECISIONS.md): OP-1 timeline = internal-only; OP-2 pricing source = `MetalRate` table; OP-4 area-mgr new-store = region-scoped; OP-5 HRMS commission/leaderboard = salesperson self-only; images = pluggable storage (local-disk dev, R2-ready); AI image search = Claude vision + rule-based (per [[feedback_no_ml]]).
+- **Photos pipeline (Phase 2) — BUILT & live:** `backend/src/storage/` (`StorageService`, local-disk provider, R2-ready) + `POST /products/:id/image` (manager+, multipart, ≤8MB) + static serving at `/uploads` (`main.ts` now `NestExpressApplication.useStaticAssets`). Frontend: `assetUrl()` helper, product **card + detail dialog render the image** (gem fallback) with a manager-only **Upload** control (`useUploadProductImage`). `scripts/seed-cover-images.mjs` generated 6 metal-tinted SVG covers and assigned them to all **763 products** (only where imageUrl empty) — catalogue now shows premium imagery end-to-end through the real storage pipeline. New env: `UPLOAD_DIR`.
+- **OP-4 implemented:** added `NewStoreProject.regionId` (migration `new_store_region`), `/new-store/projects` filters by the area manager's region(s); HO sees all. Backfilled regionId on existing projects.
+- **OP-5 implemented:** `/hrms/commission` & `/hrms/leaderboard` self-filter for salespersons.
+- **Verified:** backend builds clean; **40/40 e2e green**; catalogue re-screenshot shows photos.
+## PHASE 2 WRITE-FORMS — COMPLETE (2026-06-23) ✅
+Every module's primary "create" action is now a real working form (was toast-stub).
+- **Already existed** (POST endpoint + form): CRM New Lead, Quotation New Quote, Discounts Request, Loyalty Enroll, Returns New Intake, Check-ins Log, Ticketing New Ticket.
+- **Built this pass** (5 new, full-stack, via parallel subagents, following the New-Lead pattern): **Catalogue Add Product** (`POST /products`, manager+, dup-SKU guarded), **Payments Record Payment** (`POST /payments`, store-scoped), **Inventory Stock Entry** (`POST /stock`, manager+), **Marketing New Campaign** (`POST /marketing/campaigns`, manager+), **Finance Add Entry** (`POST /finance/ledger`, manager+). Each: DTO (whitelist-strict) + service `create` with `assertStoreAllowed` + Decimal-wrapped money + reuse of the module's view shape; frontend `useCreate*` mutation (invalidates the list key) + co-located `Add*Dialog` wired to the SectionHeader CTA.
+- **Verified:** backend `nest build` clean · **40/40 e2e** · frontend `tsc --noEmit` clean · all 5 endpoints return **201**, validation guard returns **400** on extra fields · "Add Product" dialog screenshot confirms the UI. Verify rows cleaned up.
+- **Lower-value CTAs still stubbed (by design, need new domain models):** Dashboards "New Task", Timelines "New Workflow", New-Store "launch wizard" — toast stubs; not transactional, deferred.
+
+## PHASE 2 FORMS + PHASE 3 (AI SEARCH) + PHASE 5 — COMPLETE (2026-06-23) ✅
+- **Phase 2 write-forms — DONE.** All five missing transactional creates built (Add Product `POST /products`, Record Payment `POST /payments`, Stock Entry `POST /stock`, New Campaign `POST /marketing/campaigns`, Add Ledger Entry `POST /finance/ledger`) + the seven that already existed (CRM/Quotation/Discounts/Loyalty/Returns/Check-ins/Ticketing). All endpoints verified 201; validation guard 400; "Add Product" dialog screenshotted.
+- **Phase 3 — AI image search — DONE.** `backend/src/products/ai-image-search.service.ts` + `POST /products/image-search` (multipart). Uses **Claude vision over raw fetch** (model `claude-opus-4-8`, `output_config.format` json-schema) to tag category/metal/keywords, then **rule-based** ranking against the store-scoped catalogue. Code-complete behind `ANTHROPIC_API_KEY`; with no key it degrades to a rule-based "best matches" view (`aiUsed:false`). Dependency-free (matches the integrations pattern; no `@anthropic-ai/sdk`), aligns with [[feedback_no_ml]] (Claude is the only AI; matching is rule-based). Frontend `image-search.tsx` wired to the live endpoint (shows detected chips + similarity badges). Verified: endpoint returns 201 with 12 ranked matches on the fallback path.
+- **Phase 5 — deploy config — DONE (code-level).** `main.ts` CORS already reads `CORS_ORIGINS` (prior follow-up resolved). `.env.example` complete with every integration + storage + AI key. Storage = local-disk provider, production-viable on a Railway **persistent volume** (`UPLOAD_DIR` → mounted path); R2/Cloudinary remain an optional provider swap. **Actual hosting (Railway + Vercel + R2 accounts) is the only external step left.**
+- **Verified end-to-end:** backend `nest build` clean · **40/40 e2e** · frontend `tsc --noEmit` clean · **17/17 pages render authenticated, 0 console errors** (full headless-Chrome pass).
+
+## EVERY BUTTON FUNCTIONAL + PROFILE/SETTINGS (2026-06-23) ✅
+- **All 17 modules' primary actions are now real forms** (verified via headless-Chrome clicks: 17/17 open a dialog/flow). The last 5 toast-stubs were wired: **Dashboards New Task** (`Task` model + `GET/POST /dashboard/tasks` + "My Tasks" card), **HRMS Mark Attendance** (`POST /hrms/attendance`), **Reporting Generate DSR** (DSR-summary dialog + "Send to owner" → WhatsApp dry-run), **Timelines New Workflow** (`POST /timelines/workflows` → CustomOrder), **New-Store New Project** (`POST /new-store/projects`).
+- **Profile & Settings page** — new `/settings` route (linked from the user menu): Profile (avatar/role/assigned stores), **Security → Change password** (`POST /auth/change-password`, bcrypt-verified — wrong current pw returns 401), Preferences (theme + default store).
+- **Google Sign-In — ADDED (2026-06-23, owner reversed the earlier "no Google" call).** `POST /auth/google` verifies a Google ID token (via Google's tokeninfo endpoint — checks `aud` = `GOOGLE_CLIENT_ID` + `email_verified`), then matches an **existing active user by email** (NO auto-provisioning — admin provisions users, Google just authenticates). Same JWT session as email login. Frontend `GoogleSignInButton` (Google Identity Services) sits on the login page below the email/password form. **Code-complete behind keys:** set `GOOGLE_CLIENT_ID` (backend) + `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (frontend, same id from Google Cloud Console) to enable; until then the button hides and `/auth/google` returns 400. Email/password login + change-password unaffected. Verified: route returns 400 when unconfigured, login page renders 0 errors, build + tsc + 40/40 e2e clean.
+- **New migration:** `dashboard_tasks` (the `Task` model).
+- **Verified:** backend `nest build` clean · frontend `tsc --noEmit` clean · **40/40 e2e** · all 5 new endpoints respond (201; change-password 401 on wrong pw) · Settings renders (0 console errors, no Google) · test rows cleaned.
+
+## ▶ REMAINING — all external / non-code
+1. **Go live:** create Railway (backend + Postgres) + Vercel (frontend) + R2 accounts; set the real env vars (incl. `CORS_ORIGINS`=prod domain); deploy. Everything is packaged.
+2. **Flip integrations on:** add WhatsApp / Razorpay / gold-rate / `ANTHROPIC_API_KEY` credentials — all code-complete behind keys.
+3. **On-site sync:** point `sync_sjep.py` at the client's live `APRSSJEP` SQL Server (read-only, TCP) using a head_office service account.
+4. **OP-6:** confirm legacy `TranType`/`OrderStatus` decodes against live data; confirm whether the legacy DB is full or a fresh install.
+
+## ▶ EXACT NEXT STEP (where we left off)
+Both remaining engineering pieces (Phase 4 integrations + `/sync` route) are DONE and the full stack is verified running. What's left is **non-code / external**:
+1. **Open product decisions** (no DB needed): **OP-1** (timeline visibility), **OP-2** (pricing source — legacy rate-chart/labour/CPF tables are the likely source of truth; the Phase-4 `MetalRate` feed is the live-rate half), **OP-4/OP-5** (role visibility), and the **Twenty CRM adopt-or-not** decision.
+2. **External credentials** to flip integrations live: WhatsApp / Razorpay / gold-rate accounts → fill `.env`. On-site sync needs read-only access to the client's live `APRSSJEP` SQL Server (TCP enabled) + a head_office sync service account.
+3. ⚠️ Confirm with client: is the legacy data a full dataset or a fresh/test install?
+
+Also still open: whether to **adopt Twenty CRM** as the customer/sales core (M1 + parts of 2,3,8,15,17) vs. build custom — and the **AGPL-3.0** license question if adopted. (User was mid-decision; build on its apps framework = AGPL-safe.)
+
+**To resume:** read this file + `CLAUDE.md` + `docs/MODULES.md` + `docs/DECISIONS.md` + `docs/DATA_PIPELINE.md`, then continue with step 1 (the `/sync/*` route), or ask which fork.
