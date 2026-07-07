@@ -55,6 +55,10 @@ export function formatNumber(value: number, fractionDigits = 0): string {
   }).format(value);
 }
 
-export function formatPercent(value: number, fractionDigits = 1): string {
+export function formatPercent(
+  value: number | null | undefined,
+  fractionDigits = 1,
+): string {
+  if (value == null || Number.isNaN(value)) return "—";
   return `${value.toFixed(fractionDigits)}%`;
 }

@@ -39,10 +39,10 @@ export interface CreateDiscountRequestInput {
 /** GET /discounts/limits row — the per-role diamond/making caps. */
 export interface DiscountLimit {
   role: Role;
-  /** Max diamond discount (%) this role may self-approve. */
-  diamondPercent: number;
-  /** Max making discount (%) this role may self-approve. */
-  makingPercent: number;
+  /** Max diamond discount (%) this role may self-approve. Null until configured. */
+  diamondPercent: number | null;
+  /** Max making discount (%) this role may self-approve. Null until configured. */
+  makingPercent: number | null;
 }
 
 /** GET /discounts — store-scoped, role-aware list of discount requests. */
@@ -52,7 +52,11 @@ export function useDiscounts() {
     queryKey: ["discounts", storeId],
     queryFn: async () => {
       const { data } = await api.get<DiscountRecord[]>("/discounts");
-      return data;
+      // Server sends `customer`; the UI reads `customerName` — normalise.
+      return data.map((d) => ({
+        ...d,
+        customerName: d.customerName ?? (d as { customer?: string }).customer ?? "",
+      }));
     },
   });
 }
@@ -117,8 +121,18 @@ export function useDiscountLimits() {
     queryKey: ["discounts", "limits"],
     enabled: canView,
     queryFn: async () => {
-      const { data } = await api.get<DiscountLimit[]>("/discounts/limits");
-      return data;
+      const { data } = await api.get<Array<Record<string, number | string | null>>>(
+        "/discounts/limits",
+      );
+      // Server sends maxDiamondPercent/maxMakingPercent (null until configured);
+      // fall back to the legacy single maxPercent so the caps still render.
+      return data.map(
+        (l): DiscountLimit => ({
+          role: l.role as Role,
+          diamondPercent: (l.maxDiamondPercent ?? l.maxPercent ?? null) as number | null,
+          makingPercent: (l.maxMakingPercent ?? l.maxPercent ?? null) as number | null,
+        }),
+      );
     },
   });
 }
