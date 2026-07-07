@@ -247,10 +247,13 @@ export function useLateFlags(month: string) {
   return useQuery({
     queryKey: [HRMS_KEY, "late-flags", storeId, month],
     queryFn: async () => {
-      const { data } = await api.get<LateFlag[]>("/hrms/late-flags", {
-        params: { month },
-      });
-      return data;
+      // Server wraps the rows: { month, note, staff: LateFlag[] } — unwrap to
+      // the array the tab expects (else rows.filter/.map crashes the page).
+      const { data } = await api.get<{ staff?: LateFlag[] } | LateFlag[]>(
+        "/hrms/late-flags",
+        { params: { month } },
+      );
+      return Array.isArray(data) ? data : (data.staff ?? []);
     },
   });
 }
