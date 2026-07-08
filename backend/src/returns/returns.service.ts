@@ -52,6 +52,8 @@ function toView(r: any) {
     settlement: r.settlement,
     status: r.status,
     reason: r.reason ?? '',
+    entryMode: r.entryMode ?? 'manual',
+    invoiceNo: r.invoiceNo ?? undefined,
     createdAt: r.createdAt.toISOString(),
     raisedBy: r.raisedBy ?? '',
     photos: (r.photos ?? []).map((p: any) => ({ id: p.id, label: p.label ?? '', swatch: '' })),
@@ -157,6 +159,11 @@ export class ReturnsService {
   async create(user: AuthUser, dto: CreateReturnDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
 
+    // Round 2: By-Invoice intake must carry the source invoice number.
+    if (dto.entryMode === 'invoice' && !dto.invoiceNo?.trim()) {
+      throw new BadRequestException('invoiceNo is required when entryMode is "invoice"');
+    }
+
     const year = new Date().getFullYear();
     const count = await this.prisma.returnRecord.count();
     const ref = `RTN-${year}-${1001 + count}`;
@@ -184,6 +191,8 @@ export class ReturnsService {
           status: 'pending_approval',
           reason: dto.reason,
           raisedBy: user.name,
+          entryMode: dto.entryMode,
+          invoiceNo: dto.invoiceNo,
           // Purchase snapshot + computed option values.
           purchaseGoldWtG: dto.goldWtG != null ? new Prisma.Decimal(dto.goldWtG) : null,
           purchaseGoldRate:
@@ -235,6 +244,8 @@ export class ReturnsService {
         status: 'pending_approval',
         reason: dto.reason,
         raisedBy: user.name,
+        entryMode: dto.entryMode,
+        invoiceNo: dto.invoiceNo,
       },
       include: { photos: true },
     });

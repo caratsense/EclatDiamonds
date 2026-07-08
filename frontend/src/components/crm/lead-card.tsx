@@ -1,10 +1,21 @@
 "use client";
 
+import { format, parseISO } from "date-fns";
 import { Bell, CalendarClock } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { formatINRCompact } from "@/lib/format";
 import { LEAD_SOURCE_LABELS, type Lead } from "@/lib/mock/crm";
 import { cn } from "@/lib/utils";
+
+/** Safe short date (dd MMM); falls back to the raw string on a bad value. */
+function shortDate(iso: string): string {
+  try {
+    return format(parseISO(iso), "dd MMM");
+  } catch {
+    return iso;
+  }
+}
 
 interface LeadCardProps {
   lead: Lead;
@@ -35,7 +46,19 @@ export function LeadCard({ lead, onOpen, onDragStart, draggable }: LeadCardProps
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium">{lead.customer}</p>
-          <p className="truncate text-xs text-muted-foreground">
+          {/* DSR chip — a compact value/last-activity summary right under the
+              customer name (the client wanted the DSR to appear automatically
+              after the name). Uses the lead's figure + last activity date. */}
+          <span className="mt-0.5 inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+            DSR
+            {lead.value ? (
+              <span className="num text-foreground/80">
+                · {formatINRCompact(lead.value)}
+              </span>
+            ) : null}
+            <span className="num">· {shortDate(lead.lastActivity)}</span>
+          </span>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">
             {lead.interest}
           </p>
         </div>

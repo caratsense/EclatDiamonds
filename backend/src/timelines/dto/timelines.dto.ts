@@ -6,6 +6,7 @@ import {
   IsISO8601,
   IsOptional,
   IsString,
+  Matches,
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -82,6 +83,32 @@ export class CreateOrderDto {
   @IsOptional()
   @IsISO8601()
   eta?: string;
+
+  // Round 2 — custom-order booking detail (all additive/optional).
+  /** Ring size (custom order booking detail). */
+  @IsOptional()
+  @IsString()
+  ringSize?: string;
+
+  /** Bangle size (custom order booking detail). */
+  @IsOptional()
+  @IsString()
+  bangleSize?: string;
+
+  /** Metal colour, open text: yellow / white / rose / platinum / silver. */
+  @IsOptional()
+  @IsString()
+  metalColor?: string;
+
+  /** Advance payment mode: cash / card / upi / bank. */
+  @IsOptional()
+  @IsString()
+  advanceMode?: string;
+
+  /** Promised customer-facing delivery date (yyyy-mm-dd). */
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  deliveryDate?: string;
 }
 
 /** Query filter for GET /timelines/orders. */

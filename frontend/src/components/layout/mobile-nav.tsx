@@ -12,7 +12,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { NAV_GROUPS, NAV_ITEMS } from "@/lib/navigation";
+import { NAV_ITEMS, visibleNavGroups } from "@/lib/navigation";
+import { useSession } from "@/store/use-session";
 
 /** The four thumb-reachable shop-floor tabs; everything else lives in "More". */
 const PRIMARY_SLUGS = ["dashboards", "crm", "catalogue", "checkins"] as const;
@@ -58,6 +59,9 @@ function Tab({
 export function MobileNav() {
   const pathname = usePathname();
   const [moreOpen, setMoreOpen] = React.useState(false);
+  // Role-aware "More" sheet: HO-only sections stay hidden for other roles.
+  const role = useSession((s) => s.role);
+  const groups = visibleNavGroups(role);
 
   const isActive = (slug: string) => {
     const href = `/${slug}`;
@@ -111,7 +115,7 @@ export function MobileNav() {
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-5">
-            {NAV_GROUPS.map((group) => (
+            {groups.map((group) => (
               <div key={group.label}>
                 <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
                   {group.label}

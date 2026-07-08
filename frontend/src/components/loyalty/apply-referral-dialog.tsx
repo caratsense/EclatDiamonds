@@ -63,6 +63,8 @@ export function ApplyReferralDialog({
   const [refereeName, setRefereeName] = React.useState("");
   const [refereePhone, setRefereePhone] = React.useState("");
   const [bill, setBill] = React.useState("");
+  const [invoiceNo, setInvoiceNo] = React.useState("");
+  const [billDate, setBillDate] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [result, setResult] = React.useState<Referral | null>(null);
 
@@ -76,6 +78,8 @@ export function ApplyReferralDialog({
     setRefereeName("");
     setRefereePhone("");
     setBill("");
+    setInvoiceNo("");
+    setBillDate("");
     setError(null);
     setResult(null);
   }
@@ -106,6 +110,8 @@ export function ApplyReferralDialog({
         refereePhone: refereePhone.trim() || undefined,
         billAmount,
         storeId: targetStoreId,
+        invoiceNo: invoiceNo.trim() || undefined,
+        billDate: billDate || undefined,
       },
       {
         onSuccess: (rec) => {
@@ -210,6 +216,8 @@ export function ApplyReferralDialog({
                   setRefereeName("");
                   setRefereePhone("");
                   setBill("");
+                  setInvoiceNo("");
+                  setBillDate("");
                 }}
               >
                 Apply another
@@ -280,6 +288,27 @@ export function ApplyReferralDialog({
                   % of bill). Exact diamond discount is computed on submit.
                 </p>
               ) : null}
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-1.5">
+                <Label htmlFor="ar-invoice">Invoice No</Label>
+                <Input
+                  id="ar-invoice"
+                  placeholder="e.g. INV-2026-0481"
+                  value={invoiceNo}
+                  onChange={(e) => setInvoiceNo(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="ar-billdate">Bill date</Label>
+                <Input
+                  id="ar-billdate"
+                  type="date"
+                  value={billDate}
+                  onChange={(e) => setBillDate(e.target.value)}
+                />
+              </div>
             </div>
 
             {error ? (

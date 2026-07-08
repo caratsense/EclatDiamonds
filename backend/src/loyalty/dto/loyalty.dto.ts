@@ -1,4 +1,16 @@
-import { IsIn, IsNumber, IsOptional, IsPositive, IsString, Max, Min } from 'class-validator';
+import {
+  IsIn,
+  IsNumber,
+  IsOptional,
+  IsPositive,
+  IsString,
+  Matches,
+  Max,
+  Min,
+} from 'class-validator';
+
+/** yyyy-mm-dd (date-only). */
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
 
 export class EnrollMemberDto {
   @IsString()
@@ -78,6 +90,16 @@ export class CreateReferralDto {
   @Min(0)
   @Max(100)
   commissionPct?: number;
+
+  /** Round 2: invoice number of the referee's purchase. */
+  @IsOptional()
+  @IsString()
+  invoiceNo?: string;
+
+  /** Round 2: sale / bill date (date-only, yyyy-mm-dd). */
+  @IsOptional()
+  @Matches(YMD, { message: 'billDate must be yyyy-mm-dd' })
+  billDate?: string;
 }
 
 /** POST /loyalty/referral-codes/:id/payout — draw down a referrer's balance. */
@@ -89,4 +111,9 @@ export class ReferralPayoutDto {
 
   @IsIn(['redeem', 'cashout'])
   type!: 'redeem' | 'cashout';
+
+  /** Round 2: invoice a redeem is tied to (encash/cashout has none). */
+  @IsOptional()
+  @IsString()
+  invoiceNo?: string;
 }

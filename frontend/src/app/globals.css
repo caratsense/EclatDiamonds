@@ -314,3 +314,35 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/*
+ * Print helper — used by the referral wallet's "Print / Save PDF" action.
+ * Hides the whole app and lays out only the `.print-wallet` section so the
+ * browser print dialog (or "Save as PDF") captures just the formatted wallet.
+ */
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+  .print-wallet,
+  .print-wallet * {
+    visibility: visible !important;
+  }
+  .print-wallet {
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100% !important;
+    max-height: none !important;
+    height: auto !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 24px !important;
+    background: #fff !important;
+    color: #000 !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+}

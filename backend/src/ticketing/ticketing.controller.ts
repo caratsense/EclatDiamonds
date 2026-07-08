@@ -7,6 +7,7 @@ import {
 } from './dto/ticket.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
+import { Roles } from '../auth/roles.decorator';
 
 @Controller('tickets')
 export class TicketingController {
@@ -34,6 +35,13 @@ export class TicketingController {
     @Body() dto: UpdateTicketDto,
   ) {
     return this.ticketing.update(user, id, dto);
+  }
+
+  /** Back office (area manager / head office) closes a ticket. */
+  @Roles('area_manager', 'head_office')
+  @Patch(':id/close')
+  close(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.ticketing.close(user, id);
   }
 
   @Post(':id/messages')

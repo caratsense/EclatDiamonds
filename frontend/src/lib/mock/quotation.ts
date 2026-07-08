@@ -14,6 +14,18 @@ export const QUOTE_STATUS_LABELS: Record<QuoteStatus, string> = {
   expired: "Expired",
 };
 
+/**
+ * A quote is either a SALE (gold + stones, GST on the full taxable value) or a
+ * REPAIR (making-only: metal & stones are zero, GST is charged on labour). The
+ * server recomputes totals per kind — the client preview mirrors that formula.
+ */
+export type QuoteKind = "sale" | "repair";
+
+export const QUOTE_KIND_LABELS: Record<QuoteKind, string> = {
+  sale: "Sale",
+  repair: "Repair",
+};
+
 /** Live-ish gold rate feed (₹ per gram). Phase 2 wires a real feed. */
 export const GOLD_RATE_PER_GRAM: Record<number, number> = {
   22: 7180,
@@ -40,6 +52,14 @@ export interface QuoteLine {
   caratWeight: number;
 }
 
+/** A reference photo attached to a quote (uploaded after creation). */
+export interface QuotePhoto {
+  id: string;
+  url: string;
+  label: string;
+  createdAt: string;
+}
+
 export interface Quote {
   id: string;
   /** Quote number, e.g. QT-1042. */
@@ -54,6 +74,14 @@ export interface Quote {
    */
   redeemableStoreIds: string[];
   status: QuoteStatus;
+  /** Sale (gold + stones) vs repair (making-only). Defaults to "sale". */
+  kind: QuoteKind;
+  /** Free-text remarks — used to capture repair notes. */
+  remarks: string;
+  /** Gross intake weight in grams (repair); null for a sale quote. */
+  grossWeightG: number | null;
+  /** Reference photos attached after the quote is created. */
+  photos: QuotePhoto[];
   createdAt: string;
   validUntil: string;
   assignedRep: string;
@@ -108,6 +136,10 @@ export const MOCK_QUOTES: Quote[] = [
     createdAt: "2026-06-12",
     validUntil: "2026-06-26",
     assignedRep: "Aarav Mehta",
+    kind: "sale",
+    remarks: "",
+    grossWeightG: null,
+    photos: [],
     lines: [
       {
         id: "l1",
@@ -132,6 +164,10 @@ export const MOCK_QUOTES: Quote[] = [
     createdAt: "2026-06-11",
     validUntil: "2026-06-25",
     assignedRep: "Isha Patel",
+    kind: "sale",
+    remarks: "",
+    grossWeightG: null,
+    photos: [],
     lines: [
       {
         id: "l1",
@@ -166,6 +202,10 @@ export const MOCK_QUOTES: Quote[] = [
     createdAt: "2026-06-13",
     validUntil: "2026-06-27",
     assignedRep: "Karan Malhotra",
+    kind: "sale",
+    remarks: "",
+    grossWeightG: null,
+    photos: [],
     lines: [
       {
         id: "l1",
@@ -190,6 +230,10 @@ export const MOCK_QUOTES: Quote[] = [
     createdAt: "2026-06-10",
     validUntil: "2026-06-24",
     assignedRep: "Rina Trivedi",
+    kind: "sale",
+    remarks: "",
+    grossWeightG: null,
+    photos: [],
     lines: [
       {
         id: "l1",
@@ -214,6 +258,10 @@ export const MOCK_QUOTES: Quote[] = [
     createdAt: "2026-05-20",
     validUntil: "2026-06-03",
     assignedRep: "Isha Patel",
+    kind: "sale",
+    remarks: "",
+    grossWeightG: null,
+    photos: [],
     lines: [
       {
         id: "l1",

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { format, parseISO } from "date-fns";
-import { ArrowRightLeft, Bot } from "lucide-react";
+import { ArrowRightLeft, Bot, Lock } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -29,8 +29,18 @@ import {
   PriorityBadge,
   TicketStatusBadge,
 } from "@/components/ticketing/status-badges";
-import { useReplyToTicket, useTicket, useUpdateTicket } from "@/lib/queries/ticketing";
-import { CATEGORIES, resolverFor, type TicketStatus } from "@/lib/mock/ticketing";
+import {
+  useCloseTicket,
+  useReplyToTicket,
+  useTicket,
+  useUpdateTicket,
+} from "@/lib/queries/ticketing";
+import {
+  categoryLabel,
+  resolverFor,
+  type TicketStatus,
+} from "@/lib/mock/ticketing";
+import { useSession } from "@/store/use-session";
 
 const STATUS_OPTIONS: { value: TicketStatus; label: string }[] = [
   { value: "open", label: "Open" },
@@ -52,6 +62,10 @@ export function TicketDetailDialog({
   const { data: ticket, isLoading } = useTicket(open ? ticketId : null);
   const reply = useReplyToTicket();
   const updateTicket = useUpdateTicket();
+  const closeTicket = useCloseTicket();
+  const role = useSession((s) => s.role);
+  // Closing a ticket is a back-office action (area manager / head office).
+  const canClose = role === "area_manager" || role === "head_office";
   const [body, setBody] = React.useState("");
 
   function send() {
@@ -82,9 +96,15 @@ export function TicketDetailDialog({
     );
   }
 
-  const categoryLabel = ticket
-    ? (CATEGORIES.find((c) => c.key === ticket.category)?.label ?? ticket.category)
-    : "";
+  function close() {
+    if (!ticketId) return;
+    closeTicket.mutate(ticketId, {
+      onSuccess: () => toast.success("Ticket closed"),
+      onError: () => toast.error("Could not close the ticket."),
+    });
+  }
+
+  const catLabel = ticket ? categoryLabel(ticket.category) : "";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -108,7 +128,7 @@ export function TicketDetailDialog({
               </div>
               <DialogTitle className="text-left">{ticket.subject}</DialogTitle>
               <DialogDescription className="text-left">
-                {ticket.store} · {categoryLabel} · reported by {ticket.reporter}
+                {ticket.store} · {catLabel} · Raised by {ticket.reporter}
               </DialogDescription>
             </DialogHeader>
 
@@ -122,7 +142,7 @@ export function TicketDetailDialog({
               </span>
             </div>
 
-            {/* Status control */}
+            {/* Status control + back-office close */}
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">Status</span>
               <Select
@@ -140,6 +160,18 @@ export function TicketDetailDialog({
                   ))}
                 </SelectContent>
               </Select>
+              {canClose && ticket.status !== "closed" ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="ml-auto"
+                  onClick={close}
+                  disabled={closeTicket.isPending}
+                >
+                  <Lock className="h-3.5 w-3.5" />
+                  {closeTicket.isPending ? "Closing…" : "Close ticket"}
+                </Button>
+              ) : null}
             </div>
 
             <Separator />

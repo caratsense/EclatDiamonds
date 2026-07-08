@@ -15,6 +15,16 @@ export class CreateReturnDto {
   @IsString()
   phone?: string;
 
+  /** Round 2: 'invoice' (pulled from a bill) vs 'manual' (typed). Defaults to 'manual'. */
+  @IsOptional()
+  @IsIn(['invoice', 'manual'])
+  entryMode?: 'invoice' | 'manual';
+
+  /** Source invoice number; required when entryMode = 'invoice'. */
+  @IsOptional()
+  @IsString()
+  invoiceNo?: string;
+
   /**
    * Legacy return kind (return / exchange / repair / old_gold). Optional now:
    * when `chosenOption` is supplied the Module-14 calculator derives the type
@@ -163,6 +173,15 @@ export class ValuateReturnDto {
   @IsOptional()
   @IsString()
   storeId?: string;
+
+  /** Round 2: 'invoice' vs 'manual' intake toggle (preview only; not persisted). */
+  @IsOptional()
+  @IsIn(['invoice', 'manual'])
+  entryMode?: 'invoice' | 'manual';
+
+  @IsOptional()
+  @IsString()
+  invoiceNo?: string;
 }
 
 /** POST /returns/diamond-rates — HO sets a diamond rate for a spec/code. */

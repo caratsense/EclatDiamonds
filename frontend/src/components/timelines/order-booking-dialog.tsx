@@ -26,12 +26,18 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { formatINR } from "@/lib/format";
 import {
+  ADVANCE_MODE_OPTIONS,
+  METAL_COLOR_PRESETS,
   ORDER_CATEGORY_OPTIONS,
   STOCK_ORDER_SLA_DAYS,
   type OrderCategory,
   type OrderKind,
 } from "@/lib/mock/timelines";
-import { useCreateOrder, useUploadOrderImage } from "@/lib/queries/timelines";
+import {
+  useCreateOrder,
+  useUploadOrderImage,
+  useUploadReceipt,
+} from "@/lib/queries/timelines";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
@@ -80,6 +86,7 @@ export function OrderBookingDialog({
   const { currentStore } = useSession();
   const createOrder = useCreateOrder();
   const uploadImage = useUploadOrderImage();
+  const uploadReceipt = useUploadReceipt();
 
   const [kind, setKind] = useState<OrderKind>("custom");
   const [customer, setCustomer] = useState("");
@@ -91,10 +98,22 @@ export function OrderBookingDialog({
   const [eta, setEta] = useState("");
   const [etaTouched, setEtaTouched] = useState(false);
   const [advance, setAdvance] = useState("");
+  const [advanceMode, setAdvanceMode] = useState("");
   const [estimation, setEstimation] = useState("");
+  const [ringSize, setRingSize] = useState("");
+  const [bangleSize, setBangleSize] = useState("");
+  const [metalColorSel, setMetalColorSel] = useState("");
+  const [metalColorOther, setMetalColorOther] = useState("");
+  const [deliveryDate, setDeliveryDate] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [receiptUrl, setReceiptUrl] = useState<string | null>(null);
+  const receiptRef = useRef<HTMLInputElement>(null);
+
+  const metalColor =
+    metalColorSel === "other" ? metalColorOther.trim() : metalColorSel;
 
   // Aggregate ("all") scope has no concrete store to write to — fall back to the
   // first real store id; broad roles normally pick a store first.
@@ -124,6 +143,16 @@ export function OrderBookingDialog({
     return () => URL.revokeObjectURL(url);
   }, [file]);
 
+  useEffect(() => {
+    if (!receiptFile) {
+      setReceiptUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(receiptFile);
+    setReceiptUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [receiptFile]);
+
   function reset() {
     setKind("custom");
     setCustomer("");
@@ -135,9 +164,17 @@ export function OrderBookingDialog({
     setEta("");
     setEtaTouched(false);
     setAdvance("");
+    setAdvanceMode("");
     setEstimation("");
+    setRingSize("");
+    setBangleSize("");
+    setMetalColorSel("");
+    setMetalColorOther("");
+    setDeliveryDate("");
     setFile(null);
+    setReceiptFile(null);
     if (fileRef.current) fileRef.current.value = "";
+    if (receiptRef.current) receiptRef.current.value = "";
   }
 
   function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -150,7 +187,18 @@ export function OrderBookingDialog({
     setFile(f);
   }
 
-  const submitting = createOrder.isPending || uploadImage.isPending;
+  function onPickReceipt(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0] ?? null;
+    if (f && f.size > 8 * 1024 * 1024) {
+      toast.error("Receipt image is too large — please keep it under 8 MB.");
+      e.target.value = "";
+      return;
+    }
+    setReceiptFile(f);
+  }
+
+  const submitting =
+    createOrder.isPending || uploadImage.isPending || uploadReceipt.isPending;
   const isStock = kind === "stock";
   const advanceNum = toNumber(advance);
   const estimationNum = toNumber(estimation);
@@ -178,6 +226,14 @@ export function OrderBookingDialog({
         item: item.trim() || undefined,
         estimation: estimationNum,
         advanceReceived: advanceNum,
+        advanceMode: advanceMode || undefined,
+        // Custom-order specifics (ignored server-side for stock orders).
+        ringSize: kind === "custom" ? ringSize.trim() || undefined : undefined,
+        bangleSize:
+          kind === "custom" ? bangleSize.trim() || undefined : undefined,
+        metalColor: kind === "custom" ? metalColor || undefined : undefined,
+        deliveryDate:
+          kind === "custom" ? deliveryDate || undefined : undefined,
         bookedOn: bookedOn || undefined,
         // Let the server apply the +21-day SLA if a stock ETA is blank.
         eta: eta || undefined,
@@ -189,6 +245,16 @@ export function OrderBookingDialog({
         } catch {
           toast.warning(
             "Order booked, but the reference image failed to upload. You can add it from the order.",
+          );
+        }
+      }
+
+      if (receiptFile && order?.id) {
+        try {
+          await uploadReceipt.mutateAsync({ id: order.id, file: receiptFile });
+        } catch {
+          toast.warning(
+            "Order booked, but the advance receipt failed to upload. You can add it from the order.",
           );
         }
       }
@@ -317,6 +383,70 @@ export function OrderBookingDialog({
             />
           </div>
 
+          {/* Custom-order specifics */}
+          {kind === "custom" ? (
+            <div className="grid gap-3 rounded-lg border p-3">
+              <p className="text-sm font-medium">Custom-order specifics</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-1.5">
+                  <Label htmlFor="ob-ring">Ring size</Label>
+                  <Input
+                    id="ob-ring"
+                    placeholder="e.g. 16"
+                    value={ringSize}
+                    onChange={(e) => setRingSize(e.target.value)}
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="ob-bangle">Bangle size</Label>
+                  <Input
+                    id="ob-bangle"
+                    placeholder="e.g. 2.6"
+                    value={bangleSize}
+                    onChange={(e) => setBangleSize(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="ob-metal">Metal colour</Label>
+                <Select
+                  value={metalColorSel}
+                  onValueChange={setMetalColorSel}
+                >
+                  <SelectTrigger id="ob-metal">
+                    <SelectValue placeholder="Select metal colour" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {METAL_COLOR_PRESETS.map((c) => (
+                      <SelectItem key={c} value={c}>
+                        {c}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="other">
+                      Other (platinum / silver…)
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                {metalColorSel === "other" ? (
+                  <Input
+                    placeholder="e.g. Platinum"
+                    value={metalColorOther}
+                    onChange={(e) => setMetalColorOther(e.target.value)}
+                  />
+                ) : null}
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="ob-delivery">Promised delivery date</Label>
+                <Input
+                  id="ob-delivery"
+                  type="date"
+                  value={deliveryDate}
+                  onChange={(e) => setDeliveryDate(e.target.value)}
+                />
+              </div>
+            </div>
+          ) : null}
+
           {/* Reference image */}
           <div className="grid gap-1.5">
             <Label>Reference image</Label>
@@ -443,6 +573,81 @@ export function OrderBookingDialog({
               </span>
             </p>
           ) : null}
+
+          {/* Advance mode */}
+          <div className="grid gap-1.5">
+            <Label htmlFor="ob-advmode">Advance mode</Label>
+            <Select value={advanceMode} onValueChange={setAdvanceMode}>
+              <SelectTrigger id="ob-advmode">
+                <SelectValue placeholder="Cash / Card / UPI / Bank" />
+              </SelectTrigger>
+              <SelectContent>
+                {ADVANCE_MODE_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Advance receipt */}
+          <div className="grid gap-1.5">
+            <Label>Advance receipt</Label>
+            {receiptUrl ? (
+              <div className="relative flex items-center gap-3 rounded-lg border bg-muted/30 p-2">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={receiptUrl}
+                  alt="Advance receipt preview"
+                  className="h-16 w-16 shrink-0 rounded-md object-cover"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">
+                    {receiptFile?.name}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Uploaded after the order is created.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => {
+                    setReceiptFile(null);
+                    if (receiptRef.current) receiptRef.current.value = "";
+                  }}
+                >
+                  <X className="h-4 w-4" />
+                  <span className="sr-only">Remove receipt</span>
+                </Button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => receiptRef.current?.click()}
+                className={cn(
+                  "flex flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-muted-foreground/25 p-4 text-center transition-colors hover:border-primary/50",
+                )}
+              >
+                <ImagePlus className="h-5 w-5 text-muted-foreground" />
+                <span className="text-sm font-medium">
+                  Attach advance receipt
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  Photo of the cash/card/UPI receipt — up to 8 MB
+                </span>
+              </button>
+            )}
+            <input
+              ref={receiptRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={onPickReceipt}
+            />
+          </div>
         </div>
 
         <DialogFooter>

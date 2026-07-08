@@ -88,14 +88,17 @@ export class TicketingService {
   async create(user: AuthUser, dto: CreateTicketDto) {
     if (dto.storeId) this.scope.assertStoreAllowed(user, dto.storeId);
     const count = await this.prisma.ticket.count();
-    const team = RESOLVER_TEAM[dto.category];
+    // Category is optional (Round 2): default the stored category to `maintenance`
+    // and route omitted tickets to the general Back Office bucket.
+    const category = dto.category ?? 'maintenance';
+    const team = dto.category ? RESOLVER_TEAM[dto.category] : 'Back Office';
 
     const ticket = await this.prisma.ticket.create({
       data: {
         ref: `TKT-${2061 + count + 1}`,
         storeId: dto.storeId ?? null,
         subject: dto.subject,
-        category: dto.category,
+        category,
         priority: dto.priority ?? 'medium',
         status: 'routed',
         assigneeName: team,
@@ -103,13 +106,36 @@ export class TicketingService {
         patternTag: dto.patternTag,
         messages: {
           create: {
-            body: `Auto-routed to ${team} based on category: ${dto.category.toUpperCase()}.`,
+            body: dto.category
+              ? `Auto-routed to ${team} based on category: ${dto.category.toUpperCase()}.`
+              : `Routed to Back Office (general) — no category specified.`,
           },
         },
       },
       include: { store: true, messages: true },
     });
     return toListView(ticket);
+  }
+
+  /**
+   * PATCH /tickets/:id/close — back office (area manager / head office) closes a
+   * ticket and appends a system note recording who closed it.
+   */
+  async close(user: AuthUser, id: string) {
+    const existing = await this.prisma.ticket.findFirst({
+      where: { id, ...this.scopedWhere(user) },
+    });
+    if (!existing) throw new NotFoundException('Ticket not found');
+    await this.prisma.ticket.update({
+      where: { id },
+      data: {
+        status: 'closed',
+        messages: {
+          create: { body: `Closed by back office — ${user.name}` },
+        },
+      },
+    });
+    return this.get(user, id);
   }
 
   /** PATCH /tickets/:id — update status / priority / assignee. */

@@ -47,6 +47,7 @@ export function PayoutDialog({ open, onOpenChange, code }: PayoutDialogProps) {
 
   const [amount, setAmount] = React.useState("");
   const [type, setType] = React.useState<PayoutType>("redeem");
+  const [invoiceNo, setInvoiceNo] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [balanceAfter, setBalanceAfter] = React.useState<number | null>(null);
 
@@ -59,6 +60,7 @@ export function PayoutDialog({ open, onOpenChange, code }: PayoutDialogProps) {
     if (open) {
       setAmount("");
       setType("redeem");
+      setInvoiceNo("");
       setError(null);
       setBalanceAfter(null);
     }
@@ -76,7 +78,7 @@ export function PayoutDialog({ open, onOpenChange, code }: PayoutDialogProps) {
       return;
     }
     payout.mutate(
-      { codeId: code.id, amount: amt, type },
+      { codeId: code.id, amount: amt, type, invoiceNo: invoiceNo.trim() || undefined },
       {
         onSuccess: (res) => {
           setBalanceAfter(res.balanceAfter);
@@ -180,6 +182,19 @@ export function PayoutDialog({ open, onOpenChange, code }: PayoutDialogProps) {
                   </p>
                 ) : null}
               </div>
+
+              {/* Invoice the commission is redeemed against (optional). */}
+              {type === "redeem" ? (
+                <div className="grid gap-1.5">
+                  <Label htmlFor="po-invoice">Invoice No</Label>
+                  <Input
+                    id="po-invoice"
+                    placeholder="e.g. INV-2026-0481"
+                    value={invoiceNo}
+                    onChange={(e) => setInvoiceNo(e.target.value)}
+                  />
+                </div>
+              ) : null}
 
               {error ? (
                 <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">

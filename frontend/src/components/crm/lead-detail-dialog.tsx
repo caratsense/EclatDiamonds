@@ -2,8 +2,11 @@
 
 import {
   Bell,
+  Cake,
   CalendarClock,
   Check,
+  Heart,
+  MapPin,
   Phone,
   Store as StoreIcon,
   User,
@@ -82,6 +85,57 @@ export function LeadDetailDialog({
             <p className="text-xs text-muted-foreground">Interested in</p>
             <p className="font-medium">{lead.interest}</p>
           </div>
+
+          {lead.address ? (
+            <Field
+              icon={<MapPin className="h-3.5 w-3.5" />}
+              label="Address"
+            >
+              {lead.address}
+            </Field>
+          ) : null}
+
+          {lead.birthday || lead.anniversary ? (
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-3">
+                {lead.birthday ? (
+                  <Field
+                    icon={<Cake className="h-3.5 w-3.5" />}
+                    label="Birthday"
+                  >
+                    <span className="num">{lead.birthday}</span>
+                  </Field>
+                ) : null}
+                {lead.anniversary ? (
+                  <Field
+                    icon={<Heart className="h-3.5 w-3.5" />}
+                    label="Anniversary"
+                  >
+                    <span className="num">{lead.anniversary}</span>
+                  </Field>
+                ) : null}
+              </div>
+              {/* Informational hints only — manual-first, no auto-send. */}
+              <div className="flex flex-wrap gap-2">
+                {lead.birthday ? (
+                  <Badge
+                    variant="outline"
+                    className="border-amber-300 text-amber-800 dark:text-amber-300"
+                  >
+                    🎂 Birthday offer eligible
+                  </Badge>
+                ) : null}
+                {lead.anniversary ? (
+                  <Badge
+                    variant="outline"
+                    className="border-rose-300 text-rose-800 dark:text-rose-300"
+                  >
+                    💍 Anniversary
+                  </Badge>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
 
           {lead.remark ? (
             <div>

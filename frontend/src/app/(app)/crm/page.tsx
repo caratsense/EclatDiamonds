@@ -57,8 +57,16 @@ const nav = getNavItem("crm")!;
 
 export default function CrmPage() {
   const { currentStore, role } = useSession();
+  // Date-range filter (inclusive; API returns latest-first).
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   // Leads come live + already role/store-scoped server-side.
-  const { data: leads = [], isLoading, isError, refetch } = useLeads();
+  const {
+    data: leads = [],
+    isLoading,
+    isError,
+    refetch,
+  } = useLeads({ from: from || undefined, to: to || undefined });
   const moveStage = useMoveLeadStage();
   const [view, setView] = useState<"board" | "list">("board");
   const [active, setActive] = useState<Lead | null>(null);
@@ -106,8 +114,49 @@ export default function CrmPage() {
         onPrimaryAction={() => setAddOpen(true)}
       />
 
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <p className="text-sm text-muted-foreground">{scopeNote}</p>
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <p className="mb-1.5 text-sm text-muted-foreground">{scopeNote}</p>
+          <div className="grid gap-1.5">
+            <Label htmlFor="lead-from" className="text-xs text-muted-foreground">
+              From
+            </Label>
+            <Input
+              id="lead-from"
+              type="date"
+              value={from}
+              max={to || undefined}
+              onChange={(e) => setFrom(e.target.value)}
+              className="h-9 w-[9.5rem]"
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="lead-to" className="text-xs text-muted-foreground">
+              To
+            </Label>
+            <Input
+              id="lead-to"
+              type="date"
+              value={to}
+              min={from || undefined}
+              onChange={(e) => setTo(e.target.value)}
+              className="h-9 w-[9.5rem]"
+            />
+          </div>
+          {from || to ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-9"
+              onClick={() => {
+                setFrom("");
+                setTo("");
+              }}
+            >
+              Clear
+            </Button>
+          ) : null}
+        </div>
         <Tabs value={view} onValueChange={(v) => setView(v as "board" | "list")}>
           <TabsList>
             <TabsTrigger value="board">
@@ -257,6 +306,9 @@ function AddLeadDialog({
   const [source, setSource] = useState<LeadSource | "">("");
   const [interest, setInterest] = useState("");
   const [remark, setRemark] = useState("");
+  const [address, setAddress] = useState("");
+  const [birthday, setBirthday] = useState("");
+  const [anniversary, setAnniversary] = useState("");
 
   // Aggregate ("all") scope has no concrete store to write to — fall back
   // to the first real store id; broad roles normally pick a store first.
@@ -268,11 +320,19 @@ function AddLeadDialog({
     setSource("");
     setInterest("");
     setRemark("");
+    setAddress("");
+    setBirthday("");
+    setAnniversary("");
   }
 
   function save() {
     if (!customer.trim()) {
       toast.error("Customer name is required.");
+      return;
+    }
+    // Phone is mandatory (Round-2) — block client-side before the call.
+    if (!phone.trim()) {
+      toast.error("Phone number is required to save a lead.");
       return;
     }
     if (!source) {
@@ -283,10 +343,13 @@ function AddLeadDialog({
       {
         storeId: targetStoreId,
         customerName: customer.trim(),
-        phone: phone.trim() || undefined,
+        phone: phone.trim(),
         source,
         interest: interest.trim() || undefined,
         remark: remark.trim() || undefined,
+        address: address.trim() || undefined,
+        birthday: birthday || undefined,
+        anniversary: anniversary || undefined,
       },
       {
         onSuccess: () => {
@@ -320,7 +383,9 @@ function AddLeadDialog({
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="phone">Phone</Label>
+            <Label htmlFor="phone">
+              Phone <span className="text-destructive">*</span>
+            </Label>
             <Input
               id="phone"
               placeholder="+91 ..."
@@ -356,6 +421,35 @@ function AddLeadDialog({
               value={interest}
               onChange={(e) => setInterest(e.target.value)}
             />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="address">Address</Label>
+            <Input
+              id="address"
+              placeholder="Street, area, city"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="birthday">Birthday</Label>
+              <Input
+                id="birthday"
+                type="date"
+                value={birthday}
+                onChange={(e) => setBirthday(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="anniversary">Anniversary</Label>
+              <Input
+                id="anniversary"
+                type="date"
+                value={anniversary}
+                onChange={(e) => setAnniversary(e.target.value)}
+              />
+            </div>
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="remark">Remarks</Label>

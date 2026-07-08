@@ -43,6 +43,7 @@ import { useReferralCodes, useReferrals } from "@/lib/queries/loyalty";
 import { ApplyReferralDialog } from "./apply-referral-dialog";
 import { CreateReferralCodeDialog } from "./create-referral-code-dialog";
 import { PayoutDialog } from "./payout-dialog";
+import { ReferralWalletDialog } from "./referral-wallet-dialog";
 
 /** Copy-to-clipboard button with a brief "copied" confirmation. */
 function CopyButton({ value }: { value: string }) {
@@ -85,6 +86,8 @@ export function ReferralProgram() {
   const [payoutOpen, setPayoutOpen] = React.useState(false);
   const [payoutCode, setPayoutCode] = React.useState<ReferralCode | null>(null);
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const [walletOpen, setWalletOpen] = React.useState(false);
+  const [walletCodeId, setWalletCodeId] = React.useState<string | null>(null);
 
   // Keep the selected code in sync with the freshest server data.
   const selected =
@@ -106,6 +109,11 @@ export function ReferralProgram() {
   function openPayout(code: ReferralCode) {
     setPayoutCode(code);
     setPayoutOpen(true);
+  }
+
+  function openWallet(codeId: string) {
+    setWalletCodeId(codeId);
+    setWalletOpen(true);
   }
 
   return (
@@ -197,7 +205,17 @@ export function ReferralProgram() {
                       >
                         <TableCell>
                           <div className="flex items-center gap-2">
-                            <span className="num font-medium">{c.code}</span>
+                            <button
+                              type="button"
+                              className="num font-medium underline-offset-2 hover:underline"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openWallet(c.id);
+                              }}
+                              title="Open wallet"
+                            >
+                              {c.code}
+                            </button>
                             <CopyButton value={c.code} />
                           </div>
                         </TableCell>
@@ -232,6 +250,14 @@ export function ReferralProgram() {
                           onClick={(e) => e.stopPropagation()}
                         >
                           <div className="flex items-center justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openWallet(c.id)}
+                            >
+                              <Wallet className="h-3.5 w-3.5" />
+                              Wallet
+                            </Button>
                             <Button
                               variant="ghost"
                               size="sm"
@@ -364,6 +390,11 @@ export function ReferralProgram() {
         open={payoutOpen}
         onOpenChange={setPayoutOpen}
         code={payoutCode}
+      />
+      <ReferralWalletDialog
+        open={walletOpen}
+        onOpenChange={setWalletOpen}
+        codeId={walletCodeId}
       />
     </div>
   );

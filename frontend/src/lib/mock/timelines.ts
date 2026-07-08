@@ -62,6 +62,31 @@ export const ORDER_CATEGORY_OPTIONS = (
   Object.keys(ORDER_CATEGORY_LABELS) as OrderCategory[]
 ).map((value) => ({ value, label: ORDER_CATEGORY_LABELS[value] }));
 
+/**
+ * Metal-colour presets offered in the order/quote builders. Anything outside
+ * this set (platinum, silver, two-tone…) is captured as free text.
+ */
+export const METAL_COLOR_PRESETS = [
+  "Yellow gold",
+  "White gold",
+  "Rose gold",
+] as const;
+
+/** How the advance was collected. Shared by the booking + convert flows. */
+export type AdvanceMode = "cash" | "card" | "upi" | "bank";
+
+export const ADVANCE_MODE_LABELS: Record<AdvanceMode, string> = {
+  cash: "Cash",
+  card: "Card",
+  upi: "UPI",
+  bank: "Bank transfer",
+};
+
+/** Ordered options for the advance-mode select. */
+export const ADVANCE_MODE_OPTIONS = (
+  Object.keys(ADVANCE_MODE_LABELS) as AdvanceMode[]
+).map((value) => ({ value, label: ADVANCE_MODE_LABELS[value] }));
+
 /** Who is accountable at a given moment. "back boys" = runners/helpers. */
 export type TimelineRole = "salesperson" | "back_office" | "runner" | "factory";
 
@@ -95,6 +120,18 @@ export interface CustomOrder {
   estimation?: number;
   /** Advance already collected in ₹. */
   advanceReceived?: number;
+  /** Ring size (custom rings). Null when not applicable. */
+  ringSize: string | null;
+  /** Bangle size (custom bangles). Null when not applicable. */
+  bangleSize: string | null;
+  /** Metal colour, e.g. "White gold" or free text ("Platinum"). */
+  metalColor: string | null;
+  /** How the advance was collected (cash/card/upi/bank). */
+  advanceMode: string | null;
+  /** Uploaded advance-receipt image path, if captured. */
+  advanceReceiptUrl: string | null;
+  /** Promised delivery date, yyyy-mm-dd, or "" when unset. */
+  deliveryDate: string;
   /** Approx gross weight in grams. */
   grams: number;
   storeId: string;
@@ -124,6 +161,12 @@ export const MOCK_CUSTOM_ORDERS: CustomOrder[] = [
     details: "Peacock motif, add matching maang-tikka. Antique finish.",
     estimation: 485000,
     advanceReceived: 100000,
+    ringSize: null,
+    bangleSize: null,
+    metalColor: "Yellow gold",
+    advanceMode: "upi",
+    advanceReceiptUrl: null,
+    deliveryDate: "2026-06-28",
     grams: 84.6,
     storeId: "surat-main",
     storeName: "Surat — Main",
@@ -145,6 +188,12 @@ export const MOCK_CUSTOM_ORDERS: CustomOrder[] = [
     details: "Solitaire 1.71ct, ring size 16, white-gold band instead of yellow.",
     estimation: 265000,
     advanceReceived: 50000,
+    ringSize: "16",
+    bangleSize: null,
+    metalColor: "White gold",
+    advanceMode: "card",
+    advanceReceiptUrl: null,
+    deliveryDate: "2026-06-19",
     grams: 6.2,
     storeId: "surat-main",
     storeName: "Surat — Main",
@@ -166,6 +215,12 @@ export const MOCK_CUSTOM_ORDERS: CustomOrder[] = [
     details: "Lakshmi motif, size 2.6. Matching the customer's existing set.",
     estimation: 720000,
     advanceReceived: 200000,
+    ringSize: null,
+    bangleSize: "2.6",
+    metalColor: "Yellow gold",
+    advanceMode: "bank",
+    advanceReceiptUrl: null,
+    deliveryDate: "2026-06-15",
     grams: 142.0,
     storeId: "mumbai-bandra",
     storeName: "Mumbai — Bandra",
@@ -187,6 +242,12 @@ export const MOCK_CUSTOM_ORDERS: CustomOrder[] = [
     details: "Engraving inside both bands, matte centre with polished edges.",
     estimation: 148000,
     advanceReceived: 148000,
+    ringSize: null,
+    bangleSize: null,
+    metalColor: "Platinum",
+    advanceMode: "cash",
+    advanceReceiptUrl: null,
+    deliveryDate: "2026-06-18",
     grams: 18.4,
     storeId: "ahmedabad-cg",
     storeName: "Ahmedabad — C.G. Road",
@@ -208,6 +269,12 @@ export const MOCK_CUSTOM_ORDERS: CustomOrder[] = [
     details: "Kundan work, ruby drops. Ready for collection — call customer.",
     estimation: 395000,
     advanceReceived: 150000,
+    ringSize: null,
+    bangleSize: null,
+    metalColor: "Yellow gold",
+    advanceMode: "upi",
+    advanceReceiptUrl: null,
+    deliveryDate: "2026-06-16",
     grams: 67.9,
     storeId: "mumbai-bandra",
     storeName: "Mumbai — Bandra",
@@ -229,6 +296,12 @@ export const MOCK_CUSTOM_ORDERS: CustomOrder[] = [
     details: "Replenishment for showcase. Standard sizes 20/22/24, half-bezel.",
     estimation: 540000,
     advanceReceived: 0,
+    ringSize: null,
+    bangleSize: null,
+    metalColor: null,
+    advanceMode: null,
+    advanceReceiptUrl: null,
+    deliveryDate: "",
     grams: 22.1,
     storeId: "ahmedabad-cg",
     storeName: "Ahmedabad — C.G. Road",

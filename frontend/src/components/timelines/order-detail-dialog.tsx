@@ -16,10 +16,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { assetUrl } from "@/lib/api";
 import { formatINR } from "@/lib/format";
 import {
+  ADVANCE_MODE_LABELS,
   ORDER_CATEGORY_LABELS,
   ORDER_STAGES,
   STOCK_ORDER_SLA_DAYS,
   TIMELINE_ROLE_LABELS,
+  type AdvanceMode,
   type CustomOrder,
   type OrderCategory,
   type TimelineRole,
@@ -41,6 +43,11 @@ function roleLabel(role: string): string {
 
 function categoryLabel(category?: OrderCategory): string | null {
   return category ? ORDER_CATEGORY_LABELS[category] : null;
+}
+
+function advanceModeLabel(mode?: string | null): string | null {
+  if (!mode) return null;
+  return ADVANCE_MODE_LABELS[mode as AdvanceMode] ?? mode;
 }
 
 interface OrderDetailDialogProps {
@@ -71,6 +78,8 @@ export function OrderDetailDialog({
   const events = detail?.events ?? [];
   const isStock = o.kind === "stock";
   const src = assetUrl(o.imageUrl);
+  const receiptSrc = assetUrl(o.advanceReceiptUrl);
+  const advMode = advanceModeLabel(o.advanceMode);
   const cat = categoryLabel(o.category);
   const hasMoney = o.estimation !== undefined || o.advanceReceived !== undefined;
   const balance =
@@ -160,6 +169,24 @@ export function OrderDetailDialog({
               </Badge>
             ) : null}
           </Field>
+          {o.deliveryDate ? (
+            <Field label="Promised delivery">
+              <span className="num">{prettyDate(o.deliveryDate)}</span>
+            </Field>
+          ) : null}
+          {o.ringSize ? (
+            <Field label="Ring size">
+              <span className="num">{o.ringSize}</span>
+            </Field>
+          ) : null}
+          {o.bangleSize ? (
+            <Field label="Bangle size">
+              <span className="num">{o.bangleSize}</span>
+            </Field>
+          ) : null}
+          {o.metalColor ? (
+            <Field label="Metal colour">{o.metalColor}</Field>
+          ) : null}
           {hasMoney ? (
             <>
               <Field label="Estimate / quote">
@@ -173,6 +200,11 @@ export function OrderDetailDialog({
                     ? formatINR(o.advanceReceived)
                     : "—"}
                 </span>
+                {advMode ? (
+                  <Badge variant="outline" className="ml-1.5 text-[10px]">
+                    {advMode}
+                  </Badge>
+                ) : null}
               </Field>
               {balance !== undefined ? (
                 <Field label="Balance due">
@@ -185,6 +217,27 @@ export function OrderDetailDialog({
             {o.ownerName || roleLabel(o.ownerRole)}
           </Field>
         </dl>
+
+        {receiptSrc ? (
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-muted-foreground">
+              Advance receipt
+            </p>
+            <a
+              href={receiptSrc}
+              target="_blank"
+              rel="noreferrer"
+              className="block overflow-hidden rounded-lg border bg-muted/30"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={receiptSrc}
+                alt={`Advance receipt for ${o.ref}`}
+                className="max-h-56 w-full object-contain"
+              />
+            </a>
+          </div>
+        ) : null}
 
         {o.details ? (
           <div className="rounded-lg border bg-muted/30 p-3">

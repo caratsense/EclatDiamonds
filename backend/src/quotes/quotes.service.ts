@@ -1,9 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { OrderStatus, Prisma, QuoteKind } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
-import { CreateQuoteDto, QuoteLineDto } from './dto/quote.dto';
+import { StorageService } from '../storage/storage.service';
+import { ConvertToOrderDto, CreateQuoteDto, QuoteLineDto } from './dto/quote.dto';
 
 const GST_RATE = 0.03;
 
@@ -16,6 +17,9 @@ function toView(q: any) {
     originStoreId: q.storeId,
     redeemableStoreIds: (q.redeemableStores ?? []).map((r: any) => r.storeId),
     status: q.status,
+    kind: q.kind,
+    remarks: q.remarks ?? '',
+    grossWeightG: q.grossWeightG == null ? null : Number(q.grossWeightG),
     createdAt: q.createdAt.toISOString().slice(0, 10),
     validUntil: q.validUntil ? q.validUntil.toISOString().slice(0, 10) : '',
     assignedRep: q.assignedRep?.name ?? '',
@@ -29,6 +33,12 @@ function toView(q: any) {
       stoneCharges: Number(l.stoneCharges),
       caratWeight: Number(l.caratWeight),
     })),
+    photos: (q.photos ?? []).map((p: any) => ({
+      id: p.id,
+      url: p.url,
+      label: p.label ?? '',
+      createdAt: p.createdAt.toISOString(),
+    })),
     totals: {
       metalValue: Number(q.metalValue),
       makingCharges: Number(q.makingCharges),
@@ -40,15 +50,24 @@ function toView(q: any) {
   };
 }
 
-/** Server-side pricing rollup — the source of truth (never trust client totals). */
-function computeTotals(lines: QuoteLineDto[]) {
+/**
+ * Server-side pricing rollup — the source of truth (never trust client totals).
+ *
+ * For a `sale` quote: taxable = metal + making + stone, GST 3% on the whole.
+ * For a `repair` quote: making-ONLY — metal & stone are zeroed, taxable = sum of
+ * line making charges, GST 3% on making, grandTotal = making + GST.
+ */
+function computeTotals(lines: QuoteLineDto[], kind: QuoteKind = QuoteKind.sale) {
+  const repair = kind === QuoteKind.repair;
   let metalValue = 0;
   let makingCharges = 0;
   let stoneCharges = 0;
   for (const l of lines) {
-    metalValue += l.weightGrams * l.goldRatePerGram;
     makingCharges += l.makingCharges ?? 0;
-    stoneCharges += l.stoneCharges ?? 0;
+    if (!repair) {
+      metalValue += l.weightGrams * l.goldRatePerGram;
+      stoneCharges += l.stoneCharges ?? 0;
+    }
   }
   const taxable = metalValue + makingCharges + stoneCharges;
   const gst = taxable * GST_RATE;
@@ -60,6 +79,7 @@ export class QuotesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
+    private readonly storage: StorageService,
   ) {}
 
   async list(user: AuthUser, headerStore?: string) {
@@ -74,7 +94,7 @@ export class QuotesService {
   async get(user: AuthUser, id: string) {
     const q = await this.prisma.quote.findFirst({
       where: { id, ...this.scope.storeFilter(user) },
-      include: { assignedRep: true, lines: true, redeemableStores: true },
+      include: { assignedRep: true, lines: true, redeemableStores: true, photos: true },
     });
     if (!q) throw new NotFoundException('Quote not found');
     return toView(q);
@@ -82,7 +102,8 @@ export class QuotesService {
 
   async create(user: AuthUser, dto: CreateQuoteDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
-    const t = computeTotals(dto.lines);
+    const kind = dto.kind ?? QuoteKind.sale;
+    const t = computeTotals(dto.lines, kind);
     const count = await this.prisma.quote.count();
     const redeemable = [...new Set([dto.storeId, ...(dto.redeemableStoreIds ?? [])])];
 
@@ -95,6 +116,10 @@ export class QuotesService {
         customerName: dto.customerName,
         phone: dto.phone,
         status: dto.status ?? 'draft',
+        kind,
+        remarks: dto.remarks ?? null,
+        grossWeightG:
+          dto.grossWeightG != null ? new Prisma.Decimal(dto.grossWeightG) : null,
         validUntil: dto.validUntil ? new Date(dto.validUntil) : null,
         metalValue: new Prisma.Decimal(t.metalValue),
         makingCharges: new Prisma.Decimal(t.makingCharges),
@@ -116,8 +141,97 @@ export class QuotesService {
         },
         redeemableStores: { create: redeemable.map((storeId) => ({ storeId })) },
       },
-      include: { assignedRep: true, lines: true, redeemableStores: true },
+      include: { assignedRep: true, lines: true, redeemableStores: true, photos: true },
     });
     return toView(quote);
+  }
+
+  /**
+   * POST /quotes/:id/photo — attach a reference / repair photo to a quote.
+   * Reuses the shared StorageService (only the public URL is persisted). Store
+   * scope is enforced through the quote's storeId (findFirst + storeFilter).
+   * Returns the updated quote (with photos).
+   */
+  async addPhoto(
+    user: AuthUser,
+    id: string,
+    file?: { buffer?: Buffer; originalname?: string; mimetype?: string },
+    label?: string,
+  ) {
+    if (!file?.buffer?.length) throw new BadRequestException('No image file uploaded');
+    if (file.mimetype && !file.mimetype.startsWith('image/')) {
+      throw new BadRequestException('Uploaded file is not an image');
+    }
+
+    const q = await this.prisma.quote.findFirst({
+      where: { id, ...this.scope.storeFilter(user) },
+      select: { id: true },
+    });
+    if (!q) throw new NotFoundException('Quote not found');
+
+    const ext = (file.originalname?.split('.').pop() || 'jpg')
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '');
+    const url = await this.storage.save('quotes', `${id}-${Date.now()}.${ext}`, file.buffer);
+    await this.prisma.quotePhoto.create({
+      data: { quoteId: id, url, label: label ?? null },
+    });
+    return this.get(user, id);
+  }
+
+  /**
+   * POST /quotes/:id/convert-to-order — fork a custom order (Module 8 timeline)
+   * from an accepted quote. Creates the CustomOrder inline (no cross-module DI),
+   * seeds an initial `booked` event, and flips the quote to `accepted`. Money is
+   * taken from the quote (grandTotal), never the client.
+   */
+  async convertToOrder(user: AuthUser, id: string, dto: ConvertToOrderDto) {
+    const q = await this.prisma.quote.findFirst({
+      where: { id, ...this.scope.storeFilter(user) },
+      include: { lines: true },
+    });
+    if (!q) throw new NotFoundException('Quote not found');
+    this.scope.assertStoreAllowed(user, q.storeId);
+
+    const item = q.lines[0]?.description ?? 'Custom piece';
+
+    const order = await this.prisma.customOrder.create({
+      data: {
+        ref: `CO-${Date.now()}`,
+        storeId: q.storeId,
+        partyId: q.partyId,
+        customerName: q.customerName,
+        value: q.grandTotal,
+        item,
+        stage: OrderStatus.booked,
+        ownerRole: 'salesperson',
+        ownerName: user.name,
+        bookedOn: new Date(),
+        ringSize: dto.ringSize ?? null,
+        bangleSize: dto.bangleSize ?? null,
+        metalColor: dto.metalColor ?? null,
+        advanceMode: dto.advanceMode ?? null,
+        advanceReceived:
+          dto.advanceReceived != null ? new Prisma.Decimal(dto.advanceReceived) : null,
+        deliveryDate: dto.deliveryDate ? new Date(dto.deliveryDate) : null,
+        events: {
+          create: {
+            stage: OrderStatus.booked,
+            note: `Converted from quote ${q.ref}`,
+            byRole: 'salesperson',
+            byName: user.name,
+          },
+        },
+      },
+      select: { id: true, ref: true },
+    });
+
+    const quote = await this.prisma.quote.update({
+      where: { id },
+      data: { status: 'accepted' },
+      include: { assignedRep: true, lines: true, redeemableStores: true, photos: true },
+    });
+
+    return { order, quote: toView(quote) };
   }
 }

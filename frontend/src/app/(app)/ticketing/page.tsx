@@ -54,6 +54,7 @@ import {
 import { useSession } from "@/store/use-session";
 import {
   CATEGORIES,
+  categoryLabel,
   resolverFor,
   type TicketCategory,
   type TicketPriority,
@@ -208,13 +209,14 @@ export default function TicketingPage() {
                           recurring
                         </Badge>
                       ) : null}
+                      <div className="text-xs text-muted-foreground">
+                        Raised by {t.reporter}
+                      </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {t.store}
                     </TableCell>
-                    <TableCell>
-                      {CATEGORIES.find((c) => c.key === t.category)?.label}
-                    </TableCell>
+                    <TableCell>{categoryLabel(t.category)}</TableCell>
                     <TableCell className="text-muted-foreground">
                       {resolverFor(t.category)}
                     </TableCell>
@@ -268,11 +270,15 @@ function NewTicketDialog({
   const { currentStore } = useSession();
   const createTicket = useCreateTicket();
   const [subject, setSubject] = useState("");
-  const [category, setCategory] = useState<TicketCategory>("it");
+  // "none" = no category → server routes it to the back-office bucket.
+  const [category, setCategory] = useState<TicketCategory | "none">("none");
   const [priority, setPriority] = useState<TicketPriority>("medium");
 
   // Aggregate scope has no concrete store — let the ticket be HO-level (no storeId).
   const targetStoreId = currentStore.isAggregate ? undefined : currentStore.id;
+
+  const resolvedCategory = category === "none" ? undefined : category;
+  const routedTo = resolverFor(resolvedCategory);
 
   function save() {
     if (!subject.trim()) {
@@ -280,14 +286,19 @@ function NewTicketDialog({
       return;
     }
     createTicket.mutate(
-      { storeId: targetStoreId, subject: subject.trim(), category, priority },
+      {
+        storeId: targetStoreId,
+        subject: subject.trim(),
+        category: resolvedCategory,
+        priority,
+      },
       {
         onSuccess: () => {
           toast.success("Ticket raised", {
-            description: `Auto-routed to ${resolverFor(category)}.`,
+            description: `Auto-routed to ${routedTo}.`,
           });
           setSubject("");
-          setCategory("it");
+          setCategory("none");
           setPriority("medium");
           onOpenChange(false);
         },
@@ -319,15 +330,23 @@ function NewTicketDialog({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">
-              <Label htmlFor="cat">Category</Label>
+              <Label htmlFor="cat">
+                Category{" "}
+                <span className="text-xs font-normal text-muted-foreground">
+                  (optional — routed to back office)
+                </span>
+              </Label>
               <Select
                 value={category}
-                onValueChange={(v) => setCategory(v as TicketCategory)}
+                onValueChange={(v) => setCategory(v as TicketCategory | "none")}
               >
                 <SelectTrigger id="cat">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="none">
+                    None — route to back office
+                  </SelectItem>
                   {CATEGORIES.map((c) => (
                     <SelectItem key={c.key} value={c.key}>
                       {c.label}
@@ -355,7 +374,7 @@ function NewTicketDialog({
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            Routes to: {resolverFor(category)}
+            Routes to: {routedTo}
           </p>
         </div>
         <DialogFooter>

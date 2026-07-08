@@ -3,6 +3,7 @@ import {
   IsEnum,
   IsIn,
   IsInt,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
@@ -25,9 +26,10 @@ export class CreateLeadDto {
   @IsString()
   customerName!: string;
 
-  @IsOptional()
+  /** Phone is mandatory on create (Round 2). */
   @IsString()
-  phone?: string;
+  @IsNotEmpty()
+  phone!: string;
 
   @IsOptional()
   @IsNumber()
@@ -48,6 +50,19 @@ export class CreateLeadDto {
   @IsOptional()
   @IsString()
   ownerId?: string;
+
+  /** Round 2: CRM contact detail (all optional). */
+  @IsOptional()
+  @IsString()
+  address?: string;
+
+  @IsOptional()
+  @Matches(YMD, { message: 'birthday must be yyyy-mm-dd' })
+  birthday?: string;
+
+  @IsOptional()
+  @Matches(YMD, { message: 'anniversary must be yyyy-mm-dd' })
+  anniversary?: string;
 
   /** Free-text remark; when present, seeded as the lead's first note. */
   @IsOptional()
@@ -72,6 +87,19 @@ export class UpdateLeadDto {
   @IsOptional()
   @IsString()
   ownerId?: string;
+
+  /** Round 2: CRM contact detail (all optional; phone stays optional on update). */
+  @IsOptional()
+  @IsString()
+  address?: string;
+
+  @IsOptional()
+  @Matches(YMD, { message: 'birthday must be yyyy-mm-dd' })
+  birthday?: string;
+
+  @IsOptional()
+  @Matches(YMD, { message: 'anniversary must be yyyy-mm-dd' })
+  anniversary?: string;
 }
 
 export class ListLeadsQuery {
@@ -86,6 +114,15 @@ export class ListLeadsQuery {
   @IsOptional()
   @IsString()
   storeId?: string;
+
+  /** Round 2: filter by createdAt date range (inclusive, yyyy-mm-dd). */
+  @IsOptional()
+  @Matches(YMD, { message: 'from must be yyyy-mm-dd' })
+  from?: string;
+
+  @IsOptional()
+  @Matches(YMD, { message: 'to must be yyyy-mm-dd' })
+  to?: string;
 }
 
 /** PATCH /leads/reminders/:id body. */

@@ -5,6 +5,7 @@ import { MessageCircle } from "lucide-react";
 import { toast } from "sonner";
 
 import { QuoteBuilderDialog } from "@/components/quotation/quote-builder-dialog";
+import { QuoteDetailDialog } from "@/components/quotation/quote-detail-dialog";
 import { SectionHeader } from "@/components/section/section-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,18 +26,7 @@ import {
   type Quote,
   type QuoteStatus,
 } from "@/lib/mock/quotation";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { useQuotes, useCreateQuote } from "@/lib/queries/quotes";
-import { GOLD_RATE_PER_GRAM } from "@/lib/mock/quotation";
+import { useQuotes } from "@/lib/queries/quotes";
 import { useSession } from "@/store/use-session";
 
 const nav = getNavItem("quotation")!;
@@ -191,140 +181,8 @@ export default function QuotationPage() {
         </Table>
       </div>
 
-      <QuoteBuilderDialog quote={active} open={open} onOpenChange={setOpen} />
-      <NewQuoteDialog open={newOpen} onOpenChange={setNewOpen} />
+      <QuoteDetailDialog quote={active} open={open} onOpenChange={setOpen} />
+      <QuoteBuilderDialog open={newOpen} onOpenChange={setNewOpen} />
     </>
-  );
-}
-
-function NewQuoteDialog({
-  open,
-  onOpenChange,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const { currentStore } = useSession();
-  const createQuote = useCreateQuote();
-  const [customer, setCustomer] = useState("");
-  const [phone, setPhone] = useState("");
-  const [description, setDescription] = useState("");
-  const [karat, setKarat] = useState(22);
-  const [weight, setWeight] = useState(10);
-  const [making, setMaking] = useState(15000);
-
-  const targetStoreId = currentStore.isAggregate ? "surat-main" : currentStore.id;
-
-  function save() {
-    if (!customer.trim() || !description.trim()) {
-      toast.error("Customer and item description are required.");
-      return;
-    }
-    createQuote.mutate(
-      {
-        storeId: targetStoreId,
-        customerName: customer.trim(),
-        phone: phone.trim() || undefined,
-        lines: [
-          {
-            description: description.trim(),
-            karat,
-            weightGrams: weight,
-            goldRatePerGram: GOLD_RATE_PER_GRAM[karat] ?? 7180,
-            makingCharges: making,
-            stoneCharges: 0,
-            caratWeight: 0,
-          },
-        ],
-      },
-      {
-        onSuccess: (q) => {
-          toast.success(`Quote ${q.ref} created`);
-          onOpenChange(false);
-        },
-        onError: () => toast.error("Could not create quote."),
-      },
-    );
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>New quote</DialogTitle>
-          <DialogDescription>
-            Raised at{" "}
-            {currentStore.isAggregate ? "Surat — Main" : currentStore.name}.
-            Gold rate is snapshotted from the active feed.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="grid gap-3">
-          <div className="grid gap-1.5">
-            <Label htmlFor="q-cust">Customer name</Label>
-            <Input
-              id="q-cust"
-              value={customer}
-              onChange={(e) => setCustomer(e.target.value)}
-              placeholder="e.g. Meera Iyer"
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="q-phone">Phone</Label>
-            <Input
-              id="q-phone"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="+91 ..."
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="q-desc">Item description</Label>
-            <Input
-              id="q-desc"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="e.g. 22K gold chain"
-            />
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            <div className="grid gap-1.5">
-              <Label htmlFor="q-karat">Karat</Label>
-              <Input
-                id="q-karat"
-                type="number"
-                value={karat}
-                onChange={(e) => setKarat(Number(e.target.value) || 22)}
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="q-wt">Weight (g)</Label>
-              <Input
-                id="q-wt"
-                type="number"
-                value={weight}
-                onChange={(e) => setWeight(Number(e.target.value) || 0)}
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="q-mk">Making (₹)</Label>
-              <Input
-                id="q-mk"
-                type="number"
-                value={making}
-                onChange={(e) => setMaking(Number(e.target.value) || 0)}
-              />
-            </div>
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button onClick={save} disabled={createQuote.isPending}>
-            {createQuote.isPending ? "Creating…" : "Create quote"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }

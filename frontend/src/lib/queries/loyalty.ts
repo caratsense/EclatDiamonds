@@ -78,6 +78,7 @@ export function useEnrollMember() {
 export const referralKeys = {
   codes: ["referral-codes"] as const,
   referrals: (codeId: string) => ["referrals", codeId] as const,
+  wallet: (codeId: string) => ["referral-wallet", codeId] as const,
 };
 
 /** GET /loyalty/referral-codes — all referrer coupon codes + balances. */
@@ -137,6 +138,59 @@ export interface ApplyReferralInput {
   /** Referee's total bill (₹). */
   billAmount: number;
   storeId?: string;
+  /** Round-2 — the sale's invoice number. */
+  invoiceNo?: string;
+  /** Round-2 — bill date, yyyy-mm-dd. */
+  billDate?: string;
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Referrer wallet (detailed ledger)                                          */
+/* -------------------------------------------------------------------------- */
+
+export interface ReferralWallet {
+  code: {
+    id: string;
+    code: string;
+    referrerName: string;
+    referrerPhone: string;
+    commissionBalance: number;
+  };
+  referrals: {
+    id: string;
+    refereeName: string;
+    billDate: string | null;
+    invoiceNo: string | null;
+    billAmount: number;
+    commissionAmount: number;
+    createdAt: string;
+  }[];
+  payouts: {
+    id: string;
+    type: PayoutType;
+    invoiceNo: string | null;
+    amount: number;
+    createdAt: string;
+  }[];
+  totals: {
+    totalWallet: number;
+    redeemed: number;
+    balance: number;
+  };
+}
+
+/** GET /loyalty/referral-codes/:id/wallet — a code's full wallet (newest first). */
+export function useReferralWallet(codeId: string | null) {
+  return useQuery({
+    queryKey: referralKeys.wallet(codeId ?? ""),
+    enabled: !!codeId,
+    queryFn: async () => {
+      const { data } = await api.get<ReferralWallet>(
+        `/loyalty/referral-codes/${codeId}/wallet`,
+      );
+      return data;
+    },
+  });
 }
 
 /**
@@ -155,6 +209,7 @@ export function useApplyReferral() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: referralKeys.codes });
       qc.invalidateQueries({ queryKey: ["referrals"] });
+      qc.invalidateQueries({ queryKey: ["referral-wallet"] });
     },
   });
 }
@@ -163,6 +218,8 @@ export interface PayoutInput {
   codeId: string;
   amount: number;
   type: PayoutType;
+  /** Round-2 — invoice the commission was redeemed against. */
+  invoiceNo?: string;
 }
 
 /**
@@ -172,15 +229,16 @@ export interface PayoutInput {
 export function usePayout() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ codeId, amount, type }: PayoutInput) => {
+    mutationFn: async ({ codeId, amount, type, invoiceNo }: PayoutInput) => {
       const { data } = await api.post<{ balanceAfter: number }>(
         `/loyalty/referral-codes/${codeId}/payout`,
-        { amount, type },
+        { amount, type, invoiceNo },
       );
       return data;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: referralKeys.codes });
+      qc.invalidateQueries({ queryKey: ["referral-wallet"] });
     },
   });
 }

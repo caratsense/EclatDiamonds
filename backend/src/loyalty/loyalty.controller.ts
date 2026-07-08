@@ -43,6 +43,15 @@ export class LoyaltyController {
     return this.loyalty.createReferralCode(user, dto);
   }
 
+  @Get('referral-codes/:id/wallet')
+  wallet(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @StoreHeader() store?: string,
+  ) {
+    return this.loyalty.wallet(user, id, store);
+  }
+
   @Post('referral-codes/:id/payout')
   payout(
     @CurrentUser() user: AuthUser,

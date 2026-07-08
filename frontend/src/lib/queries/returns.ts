@@ -73,6 +73,9 @@ export interface ValuateInput {
   /** Optional overrides — normally the server supplies today's rates. */
   todayGoldRate?: number;
   todayDiaRate?: number;
+  /** How the piece was entered. Default 'manual'; 'invoice' requires invoiceNo. */
+  entryMode?: "invoice" | "manual";
+  invoiceNo?: string;
 }
 
 export interface ValuationResult {
@@ -136,6 +139,9 @@ export interface CreateReturnInput {
   making?: number;
   chosenOption: ChosenOption;
   reason?: string;
+  /** How the piece was entered. Default 'manual'; 'invoice' requires invoiceNo. */
+  entryMode?: "invoice" | "manual";
+  invoiceNo?: string;
 }
 
 /**

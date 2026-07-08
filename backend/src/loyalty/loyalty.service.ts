@@ -30,6 +30,12 @@ function pctOf(bill: Prisma.Decimal, pct: number): Prisma.Decimal {
   return bill.mul(new Prisma.Decimal(pct)).div(100).toDecimalPlaces(2);
 }
 
+/** Parse a yyyy-mm-dd string into a UTC-midnight Date for a `@db.Date` column. */
+function parseYmd(s: string): Date {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
+}
+
 @Injectable()
 export class LoyaltyService {
   constructor(
@@ -259,6 +265,8 @@ export class LoyaltyService {
           diamondDiscountAmount,
           commissionPct: new Prisma.Decimal(commissionPct),
           commissionAmount,
+          invoiceNo: dto.invoiceNo,
+          billDate: dto.billDate ? parseYmd(dto.billDate) : undefined,
         },
       });
 
@@ -282,6 +290,8 @@ export class LoyaltyService {
         diamondDiscountAmount: num(referral.diamondDiscountAmount),
         commissionPct: num(referral.commissionPct),
         commissionAmount: num(referral.commissionAmount),
+        invoiceNo: referral.invoiceNo ?? null,
+        billDate: referral.billDate ? referral.billDate.toISOString().slice(0, 10) : null,
         codeBalanceAfter: num(updated.commissionBalance),
         usesAfter: updated.uses,
         createdAt: referral.createdAt.toISOString(),
@@ -312,6 +322,8 @@ export class LoyaltyService {
       diamondDiscountAmount: num(r.diamondDiscountAmount),
       commissionPct: num(r.commissionPct),
       commissionAmount: num(r.commissionAmount),
+      invoiceNo: r.invoiceNo ?? null,
+      billDate: r.billDate ? r.billDate.toISOString().slice(0, 10) : null,
       createdAt: r.createdAt.toISOString(),
     }));
   }
@@ -333,7 +345,7 @@ export class LoyaltyService {
       }
 
       const payout = await tx.referralPayout.create({
-        data: { codeId: id, amount, type: dto.type },
+        data: { codeId: id, amount, type: dto.type, invoiceNo: dto.invoiceNo },
       });
       const updated = await tx.referralCode.update({
         where: { id },
@@ -345,9 +357,73 @@ export class LoyaltyService {
         codeId: payout.codeId,
         type: payout.type,
         amount: num(payout.amount),
+        invoiceNo: payout.invoiceNo ?? null,
         balanceAfter: num(updated.commissionBalance),
         createdAt: payout.createdAt.toISOString(),
       };
     });
+  }
+
+  /**
+   * GET /loyalty/referral-codes/:id/wallet — full wallet view for one code:
+   * the code header, its referrals (earnings) and payouts (redemptions) newest
+   * first, plus Decimal-safe totals. Scope-checked via scopedWhere.
+   */
+  async wallet(user: AuthUser, id: string, headerStore?: string) {
+    const code = await this.prisma.referralCode.findFirst({
+      where: { id, ...this.scopedWhere(user, headerStore) },
+    });
+    if (!code) throw new NotFoundException('referral code not found');
+
+    const [referrals, payouts] = await Promise.all([
+      this.prisma.referral.findMany({
+        where: { codeId: id },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.referralPayout.findMany({
+        where: { codeId: id },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    const totalWallet = referrals.reduce(
+      (acc, r) => acc.add(r.commissionAmount),
+      new Prisma.Decimal(0),
+    );
+    const redeemed = payouts.reduce(
+      (acc, p) => acc.add(p.amount),
+      new Prisma.Decimal(0),
+    );
+
+    return {
+      code: {
+        id: code.id,
+        code: code.code,
+        referrerName: code.referrerName,
+        referrerPhone: code.referrerPhone ?? '',
+        commissionBalance: num(code.commissionBalance),
+      },
+      referrals: referrals.map((r) => ({
+        id: r.id,
+        refereeName: r.refereeName,
+        billDate: r.billDate ? r.billDate.toISOString().slice(0, 10) : null,
+        invoiceNo: r.invoiceNo ?? null,
+        billAmount: num(r.billAmount),
+        commissionAmount: num(r.commissionAmount),
+        createdAt: r.createdAt.toISOString(),
+      })),
+      payouts: payouts.map((p) => ({
+        id: p.id,
+        type: p.type,
+        invoiceNo: p.invoiceNo ?? null,
+        amount: num(p.amount),
+        createdAt: p.createdAt.toISOString(),
+      })),
+      totals: {
+        totalWallet: num(totalWallet),
+        redeemed: num(redeemed),
+        balance: num(code.commissionBalance),
+      },
+    };
   }
 }

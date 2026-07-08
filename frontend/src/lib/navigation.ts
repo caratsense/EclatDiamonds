@@ -18,7 +18,10 @@ import {
   Megaphone,
   LifeBuoy,
   BellRing,
+  Store,
 } from "lucide-react";
+
+import type { Role } from "@/lib/types";
 
 export interface NavItem {
   /** Module number from MODULES.md. */
@@ -31,6 +34,11 @@ export interface NavItem {
   /** Label for the primary action on the section header. */
   primaryAction: string;
   icon: LucideIcon;
+  /**
+   * Roles allowed to see this item. Undefined = visible to everyone.
+   * Drives role-aware nav visibility (never hardcode per-screen).
+   */
+  roles?: Role[];
 }
 
 export interface NavGroup {
@@ -229,10 +237,41 @@ export const NAV_GROUPS: NavGroup[] = [
       },
     ],
   },
+  {
+    label: "Administration",
+    items: [
+      {
+        module: 11,
+        slug: "settings/stores",
+        title: "Store Setup",
+        purpose:
+          "Add store branches and assign each a store-manager login. Every store gets its own scoped system via the store switcher.",
+        primaryAction: "Add Store",
+        icon: Store,
+        roles: ["head_office"],
+      },
+    ],
+  },
 ];
 
 export const NAV_ITEMS: NavItem[] = NAV_GROUPS.flatMap((g) => g.items);
 
 export function getNavItem(slug: string): NavItem | undefined {
   return NAV_ITEMS.find((i) => i.slug === slug);
+}
+
+/** Whether a role may see a nav item (undefined roles = everyone). */
+export function canSeeNavItem(item: NavItem, role: Role): boolean {
+  return !item.roles || item.roles.includes(role);
+}
+
+/**
+ * Nav groups filtered to what `role` may see, with empty groups dropped.
+ * Keeps the sidebar + mobile nav role-aware from a single source of truth.
+ */
+export function visibleNavGroups(role: Role): NavGroup[] {
+  return NAV_GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => canSeeNavItem(item, role)),
+  })).filter((group) => group.items.length > 0);
 }

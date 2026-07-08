@@ -5,11 +5,15 @@ import { usePathname } from "next/navigation";
 
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/brand/logo";
-import { NAV_GROUPS } from "@/lib/navigation";
+import { visibleNavGroups } from "@/lib/navigation";
 import { pendingDueCount, useReminders } from "@/lib/queries/reminders";
+import { useSession } from "@/store/use-session";
 
 export function Sidebar() {
   const pathname = usePathname();
+  // Role-aware nav: HO-only sections (e.g. Store Setup) stay hidden otherwise.
+  const role = useSession((s) => s.role);
+  const groups = visibleNavGroups(role);
   // Pending follow-ups due today or overdue → the Reminders nav badge.
   const { data: reminders } = useReminders("pending");
   const dueCount = pendingDueCount(reminders);
@@ -24,7 +28,7 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 py-5">
-        {NAV_GROUPS.map((group) => (
+        {groups.map((group) => (
           <div key={group.label} className="mb-5">
             <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-sidebar-foreground/45">
               {group.label}

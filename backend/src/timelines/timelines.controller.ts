@@ -55,6 +55,18 @@ export class TimelinesController {
     return this.timelines.setOrderImage(user, id, file);
   }
 
+  /** Attach the advance-payment receipt photo (multipart field `file`). Managers and above. */
+  @Roles('store_manager', 'area_manager', 'head_office')
+  @Post('orders/:id/receipt')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 8 * 1024 * 1024 } }))
+  uploadOrderReceipt(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @UploadedFile() file: any,
+  ) {
+    return this.timelines.setOrderReceipt(user, id, file);
+  }
+
   @Get('replenishment')
   replenishment(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.timelines.replenishment(user, store);

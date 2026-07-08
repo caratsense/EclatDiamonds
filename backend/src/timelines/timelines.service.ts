@@ -140,6 +140,11 @@ export class TimelinesService {
         item,
         value: dto.estimation ?? null,
         advanceReceived: dto.advanceReceived ?? null,
+        ringSize: dto.ringSize ?? null,
+        bangleSize: dto.bangleSize ?? null,
+        metalColor: dto.metalColor ?? null,
+        advanceMode: dto.advanceMode ?? null,
+        deliveryDate: dto.deliveryDate ? new Date(dto.deliveryDate) : null,
         stage: OrderStatus.booked,
         ownerRole: 'salesperson',
         ownerName: user.name,
@@ -189,6 +194,41 @@ export class TimelinesService {
     return this.toView(updated);
   }
 
+  /**
+   * POST /timelines/orders/:id/receipt — attach the advance-payment receipt photo
+   * to an order. Mirrors setOrderImage but writes CustomOrder.advanceReceiptUrl
+   * (separate from imageUrl, which is the design reference). Store-scoped.
+   */
+  async setOrderReceipt(
+    user: AuthUser,
+    id: string,
+    file?: { buffer?: Buffer; originalname?: string; mimetype?: string },
+  ) {
+    if (!file?.buffer?.length) throw new BadRequestException('No image file uploaded');
+    if (file.mimetype && !file.mimetype.startsWith('image/')) {
+      throw new BadRequestException('Uploaded file is not an image');
+    }
+
+    const o = await this.prisma.customOrder.findUnique({ where: { id } });
+    if (!o) throw new NotFoundException('Custom order not found');
+    this.scope.assertStoreAllowed(user, o.storeId);
+
+    const ext = (file.originalname?.split('.').pop() || 'jpg')
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '');
+    const advanceReceiptUrl = await this.storage.save(
+      'orders',
+      `${id}-receipt.${ext}`,
+      file.buffer,
+    );
+    const updated = await this.prisma.customOrder.update({
+      where: { id },
+      data: { advanceReceiptUrl },
+      include: { store: true },
+    });
+    return this.toView(updated);
+  }
+
   private toView(o: any) {
     const eta: Date | null = o.eta ?? null;
     const delayed =
@@ -205,6 +245,12 @@ export class TimelinesService {
       imageUrl: o.imageUrl ?? null,
       estimation: num(o.value),
       advanceReceived: o.advanceReceived == null ? null : Number(o.advanceReceived),
+      ringSize: o.ringSize ?? null,
+      bangleSize: o.bangleSize ?? null,
+      metalColor: o.metalColor ?? null,
+      advanceMode: o.advanceMode ?? null,
+      advanceReceiptUrl: o.advanceReceiptUrl ?? null,
+      deliveryDate: o.deliveryDate ? o.deliveryDate.toISOString().slice(0, 10) : '',
       grams: num(o.value) > 0 ? 0 : 0, // grams not modelled on CustomOrder; see flags.
       storeId: o.storeId,
       storeName: o.store?.name ?? '',

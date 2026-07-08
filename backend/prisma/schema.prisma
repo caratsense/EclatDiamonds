@@ -66,6 +66,12 @@ enum QuoteStatus {
   expired
 }
 
+/// Whether a quote is a normal sale quote or a making-only repair quote (Round 2).
+enum QuoteKind {
+  sale
+  repair
+}
+
 enum MetalKind {
   gold_24k
   gold_22k
@@ -415,17 +421,17 @@ model UserStore {
 /// Per-role discount approval ceiling (Module 15). e.g. salesperson <= 2%, SM <= 5%.
 /// Optionally scoped to a store/region; null scope = global default.
 model DiscountLimit {
-  id         String   @id @default(cuid())
-  role       Role
-  storeId    String?
+  id                String   @id @default(cuid())
+  role              Role
+  storeId           String?
   /// Legacy single overall cap (kept for back-compat). Module 15 uses the split caps below.
-  maxPercent Decimal  @db.Decimal(5, 2)
+  maxPercent        Decimal  @db.Decimal(5, 2)
   /// Module 15: max self-approvable DIAMOND discount for this role (e.g. 5.00 = 5%). Gold is never discounted.
   maxDiamondPercent Decimal? @db.Decimal(5, 2)
   /// Module 15: max self-approvable MAKING-charge discount for this role (e.g. 10.00 = 10%).
   maxMakingPercent  Decimal? @db.Decimal(5, 2)
   /// Optional absolute ceiling in INR.
-  maxAmount  Decimal? @db.Decimal(14, 2)
+  maxAmount         Decimal? @db.Decimal(14, 2)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -510,6 +516,11 @@ model Lead {
   stage        LeadStage  @default(inquiry)
   interest     String?
   lastActivity DateTime?
+
+  // Round 2: CRM contact detail (all additive/optional).
+  address     String?
+  birthday    DateTime? @db.Date
+  anniversary DateTime? @db.Date
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -610,7 +621,13 @@ model Quote {
   customerName String
   phone        String?
   status       QuoteStatus @default(draft)
+  kind         QuoteKind   @default(sale)
   validUntil   DateTime?
+
+  /// Round 2: free-text remarks (e.g. repair notes).
+  remarks      String?
+  /// Round 2: gross weight in grams for a repair quote (making-only).
+  grossWeightG Decimal? @db.Decimal(10, 3)
 
   /// Money rollup snapshot (recomputed from lines, persisted for fast listing).
   metalValue    Decimal @default(0) @db.Decimal(14, 2)
@@ -628,11 +645,26 @@ model Quote {
   lead             Lead?                  @relation(fields: [leadId], references: [id])
   assignedRep      User?                  @relation(fields: [assignedRepId], references: [id])
   lines            QuoteLine[]
+  photos           QuotePhoto[]
   /// Branches where this quote can be redeemed/checked out (portability).
   redeemableStores QuoteRedeemableStore[]
 
   @@index([storeId, createdAt])
   @@index([status])
+}
+
+/// Reference / repair photos attached to a quote (Round 2) — mirrors ReturnPhoto.
+/// File lives in object storage, URL only here.
+model QuotePhoto {
+  id        String   @id @default(cuid())
+  quoteId   String
+  url       String
+  label     String?
+  createdAt DateTime @default(now())
+
+  quote Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  @@index([quoteId])
 }
 
 /// Stores where a quote is redeemable (quote at Store A -> buy at Store B).
@@ -956,24 +988,38 @@ model ProductionBag {
 
 /// Customer-facing custom order with stage progress (Module 8 timeline UI).
 model CustomOrder {
-  id           String           @id @default(cuid())
-  ref          String           @unique
-  storeId      String
-  partyId      String?
-  customerName String
-  kind         OrderKind        @default(custom)
-  category     ProductCategory?
-  qty          Int              @default(1)
-  details      String?
-  imageUrl     String?
-  item         String
-  value        Decimal?         @db.Decimal(14, 2)
-  advanceReceived Decimal?      @db.Decimal(14, 2)
-  stage        OrderStatus      @default(booked)
-  ownerRole    TimelineRole     @default(salesperson)
-  ownerName    String?
-  bookedOn     DateTime
-  eta          DateTime?
+  id              String           @id @default(cuid())
+  ref             String           @unique
+  storeId         String
+  partyId         String?
+  customerName    String
+  kind            OrderKind        @default(custom)
+  category        ProductCategory?
+  qty             Int              @default(1)
+  details         String?
+  imageUrl        String?
+  item            String
+  value           Decimal?         @db.Decimal(14, 2)
+  advanceReceived Decimal?         @db.Decimal(14, 2)
+  stage           OrderStatus      @default(booked)
+  ownerRole       TimelineRole     @default(salesperson)
+  ownerName       String?
+  bookedOn        DateTime
+  eta             DateTime?
+
+  // Round 2: custom-order booking detail + advance proof (all additive/optional).
+  /// Ring size (custom order booking detail).
+  ringSize          String?
+  /// Bangle size (custom order booking detail).
+  bangleSize        String?
+  /// Metal colour, open text: yellow / white / rose / platinum / silver.
+  metalColor        String?
+  /// Payment mode for the advance: cash / card / upi / bank.
+  advanceMode       String?
+  /// Object-storage URL of the advance receipt photo (separate from imageUrl design ref).
+  advanceReceiptUrl String?
+  /// Promised customer-facing delivery date (distinct from eta).
+  deliveryDate      DateTime? @db.Date
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1084,7 +1130,7 @@ model AttendanceRecord {
   // Shift / lateness (Module 6). Lateness is measured against the ASSIGNED shift's
   // start + buffer, so a night/second-batch check-in in the afternoon is not "late".
   shiftId     String?
-  isLate      Boolean          @default(false)
+  isLate      Boolean @default(false)
   lateMinutes Int?
 
   createdAt DateTime @default(now())
@@ -1288,17 +1334,24 @@ model ReferralCode {
 
 /// One redemption of a referral code on a referee's purchase.
 model Referral {
-  id                    String   @id @default(cuid())
+  id                    String  @id @default(cuid())
   codeId                String
   refereeName           String
   refereePhone          String?
   storeId               String?
-  billAmount            Decimal  @db.Decimal(14, 2)
-  diamondDiscountPct    Decimal  @default(5) @db.Decimal(5, 2)
-  diamondDiscountAmount Decimal  @default(0) @db.Decimal(14, 2)
-  commissionPct         Decimal  @default(5) @db.Decimal(5, 2)
-  commissionAmount      Decimal  @default(0) @db.Decimal(14, 2)
-  createdAt             DateTime @default(now())
+  billAmount            Decimal @db.Decimal(14, 2)
+  diamondDiscountPct    Decimal @default(5) @db.Decimal(5, 2)
+  diamondDiscountAmount Decimal @default(0) @db.Decimal(14, 2)
+  commissionPct         Decimal @default(5) @db.Decimal(5, 2)
+  commissionAmount      Decimal @default(0) @db.Decimal(14, 2)
+
+  // Round 2: per-referral invoice + sale date (referral wallet sheet).
+  /// Invoice number of the referee's purchase.
+  invoiceNo String?
+  /// Sale / bill date (distinct from createdAt).
+  billDate  DateTime? @db.Date
+
+  createdAt DateTime @default(now())
 
   code ReferralCode @relation(fields: [codeId], references: [id], onDelete: Cascade)
 
@@ -1312,6 +1365,8 @@ model ReferralPayout {
   amount    Decimal  @db.Decimal(14, 2)
   /// 'redeem' | 'cashout'.
   type      String
+  /// Round 2: invoice a redeem is tied to (encash/cashout has none).
+  invoiceNo String?
   createdAt DateTime @default(now())
 
   code ReferralCode @relation(fields: [codeId], references: [id], onDelete: Cascade)
@@ -1385,6 +1440,12 @@ model ReturnRecord {
   reason       String?
   raisedBy     String?
 
+  // Round 2: By-Invoice vs By-Manual intake toggle.
+  /// 'invoice' = pulled from a Gati bill, 'manual' = typed.
+  entryMode String? @default("manual")
+  /// Source invoice number when entryMode = 'invoice'.
+  invoiceNo String?
+
   // Module 14 — exchange / buyback calculator (all additive, nullable).
   // Original purchase inputs (manager keys these from the old bill):
   purchaseGoldWtG  Decimal? @db.Decimal(12, 3)
@@ -1449,25 +1510,25 @@ model DiamondRate {
 // ============================================================================
 
 model DiscountRequest {
-  id           String         @id @default(cuid())
-  ref          String         @unique
-  storeId      String
-  customerName String
-  item         String?
+  id             String         @id @default(cuid())
+  ref            String         @unique
+  storeId        String
+  customerName   String
+  item           String?
   /// Requested discount as percentage and/or absolute amount (legacy single figure).
-  percent      Decimal?       @db.Decimal(5, 2)
-  amount       Decimal?       @db.Decimal(14, 2)
+  percent        Decimal?       @db.Decimal(5, 2)
+  amount         Decimal?       @db.Decimal(14, 2)
   /// Module 15 split caps: requested DIAMOND / MAKING discount percentages. Gold is never discounted.
-  diamondPercent Decimal?     @db.Decimal(5, 2)
-  makingPercent  Decimal?     @db.Decimal(5, 2)
+  diamondPercent Decimal?       @db.Decimal(5, 2)
+  makingPercent  Decimal?       @db.Decimal(5, 2)
   /// Snapshot of the piece's selling price (INR) at request time (from Gati / Product).
-  sellingPrice Decimal?       @db.Decimal(14, 2)
+  sellingPrice   Decimal?       @db.Decimal(14, 2)
   /// Snapshot of the piece's cost price (INR). Never surfaced to store_manager or below.
-  costPrice    Decimal?       @db.Decimal(14, 2)
+  costPrice      Decimal?       @db.Decimal(14, 2)
   /// Margin-impact preview snapshot (INR) shown before approval.
-  marginImpact Decimal?       @db.Decimal(14, 2)
-  status       DiscountStatus @default(pending)
-  reason       String?
+  marginImpact   Decimal?       @db.Decimal(14, 2)
+  status         DiscountStatus @default(pending)
+  reason         String?
 
   requestedById String?
   requestedRole Role?

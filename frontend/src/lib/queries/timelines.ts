@@ -83,6 +83,16 @@ export interface CreateOrderInput {
   item?: string;
   estimation?: number;
   advanceReceived?: number;
+  /** Ring size (custom rings). */
+  ringSize?: string;
+  /** Bangle size (custom bangles). */
+  bangleSize?: string;
+  /** Metal colour — preset or free text. */
+  metalColor?: string;
+  /** How the advance was collected (cash/card/upi/bank). */
+  advanceMode?: string;
+  /** yyyy-mm-dd — promised delivery date (customer-facing). */
+  deliveryDate?: string;
   /** yyyy-mm-dd — order-placed date. */
   bookedOn?: string;
   /** yyyy-mm-dd — estimated delivery date. */
@@ -115,6 +125,30 @@ export function useUploadOrderImage() {
       form.append("file", file);
       const { data } = await api.post<CustomOrder>(
         `/timelines/orders/${id}/image`,
+        form,
+        { headers: { "Content-Type": "multipart/form-data" } },
+      );
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [TIMELINES_KEY, "orders"] });
+    },
+  });
+}
+
+/**
+ * POST /timelines/orders/:id/receipt — attach the advance-receipt image to an
+ * order. Sends multipart form-data (field `file`); returns the order with
+ * `advanceReceiptUrl`. Mirrors {@link useUploadOrderImage}.
+ */
+export function useUploadReceipt() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, file }: { id: string; file: File }) => {
+      const form = new FormData();
+      form.append("file", file);
+      const { data } = await api.post<CustomOrder>(
+        `/timelines/orders/${id}/receipt`,
         form,
         { headers: { "Content-Type": "multipart/form-data" } },
       );

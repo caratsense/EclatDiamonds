@@ -6,10 +6,11 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Matches,
   Min,
   ValidateNested,
 } from 'class-validator';
-import { QuoteStatus } from '@prisma/client';
+import { QuoteKind, QuoteStatus } from '@prisma/client';
 
 export class QuoteLineDto {
   @IsString()
@@ -61,6 +62,23 @@ export class CreateQuoteDto {
   @IsEnum(QuoteStatus)
   status?: QuoteStatus;
 
+  /** 'sale' (default) or making-only 'repair' quote (Round 2). */
+  @IsOptional()
+  @IsEnum(QuoteKind)
+  kind?: QuoteKind;
+
+  /** Free-text remarks (e.g. repair notes). */
+  @IsOptional()
+  @IsString()
+  remarks?: string;
+
+  /** Gross weight in grams (used by repair quotes). */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  grossWeightG?: number;
+
   @IsOptional()
   @IsString()
   validUntil?: string;
@@ -78,4 +96,47 @@ export class CreateQuoteDto {
   @ValidateNested({ each: true })
   @Type(() => QuoteLineDto)
   lines!: QuoteLineDto[];
+}
+
+/** Optional label carried alongside a quote photo upload (multipart body). */
+export class QuotePhotoDto {
+  @IsOptional()
+  @IsString()
+  label?: string;
+}
+
+/**
+ * Body for POST /quotes/:id/convert-to-order — the custom-order-only booking
+ * fields that aren't on the quote. Money is taken from the quote (grandTotal),
+ * never from the client.
+ */
+export class ConvertToOrderDto {
+  @IsOptional()
+  @IsString()
+  ringSize?: string;
+
+  @IsOptional()
+  @IsString()
+  bangleSize?: string;
+
+  @IsOptional()
+  @IsString()
+  metalColor?: string;
+
+  /** Promised delivery date, yyyy-mm-dd. */
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  deliveryDate?: string;
+
+  /** Advance amount received at booking. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  advanceReceived?: number;
+
+  /** Advance payment mode: cash / card / upi / bank. */
+  @IsOptional()
+  @IsString()
+  advanceMode?: string;
 }

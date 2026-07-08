@@ -21,10 +21,15 @@ export const CATEGORIES: CategoryMeta[] = [
   { key: "logistics", label: "Logistics", resolverTeam: "Supply Chain" },
 ];
 
-export function resolverFor(category: TicketCategory): string {
+export function resolverFor(category?: TicketCategory | null): string {
   return (
-    CATEGORIES.find((c) => c.key === category)?.resolverTeam ?? "Triage"
+    CATEGORIES.find((c) => c.key === category)?.resolverTeam ?? "Back office"
   );
+}
+
+/** Human label for a ticket category, with the back-office fallback. */
+export function categoryLabel(category?: TicketCategory | null): string {
+  return CATEGORIES.find((c) => c.key === category)?.label ?? "Back office";
 }
 
 export type TicketPriority = "low" | "medium" | "high" | "urgent";

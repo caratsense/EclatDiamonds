@@ -9,8 +9,10 @@ export class CreateTicketDto {
   @IsString()
   subject!: string;
 
+  /** Optional (Round 2): omitted tickets route to the general Back Office bucket. */
+  @IsOptional()
   @IsEnum(TicketCategory)
-  category!: TicketCategory;
+  category?: TicketCategory;
 
   @IsOptional()
   @IsEnum(TicketPriority)

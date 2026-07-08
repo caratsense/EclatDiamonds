@@ -31,7 +31,8 @@ export interface TicketListItem {
   ref: string;
   subject: string;
   store: string;
-  category: TicketCategory;
+  /** Optional — a ticket raised without a category lands in the back-office bucket. */
+  category?: TicketCategory | null;
   priority: TicketPriority;
   status: TicketStatus;
   assignee: string;
@@ -84,7 +85,8 @@ export function useTicket(id: string | null) {
 export interface CreateTicketInput {
   storeId?: string;
   subject: string;
-  category: TicketCategory;
+  /** Optional (Round-2) — omit to route the ticket to the back-office bucket. */
+  category?: TicketCategory;
   priority?: TicketPriority;
   reporterName?: string;
   patternTag?: string;
@@ -124,6 +126,24 @@ export function useUpdateTicket() {
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: ticketKeys.all });
       qc.invalidateQueries({ queryKey: ticketKeys.detail(vars.id) });
+    },
+  });
+}
+
+/**
+ * PATCH /tickets/:id/close — back-office close (area_manager / head_office).
+ * No body; the API appends a system message and returns the full ticket.
+ */
+export function useCloseTicket() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data } = await api.patch<TicketDetail>(`/tickets/${id}/close`);
+      return data;
+    },
+    onSuccess: (_data, id) => {
+      qc.invalidateQueries({ queryKey: ticketKeys.all });
+      qc.invalidateQueries({ queryKey: ticketKeys.detail(id) });
     },
   });
 }

@@ -71,6 +71,10 @@ export function ReturnCalculatorDialog({
     ? "Surat — Main"
     : currentStore.name;
 
+  const [entryMode, setEntryMode] = React.useState<"manual" | "invoice">(
+    "manual",
+  );
+  const [invoiceNo, setInvoiceNo] = React.useState("");
   const [customer, setCustomer] = React.useState("");
   const [phone, setPhone] = React.useState("");
   const [item, setItem] = React.useState("");
@@ -87,10 +91,15 @@ export function ReturnCalculatorDialog({
   const goldWtNum = toNumber(goldWtG);
   const diaCaratNum = toNumber(diaCarat);
   const makingNum = toNumber(making);
+  // In invoice mode a valid invoice number is enough for the server to value the
+  // piece; in manual mode we need gold or diamond figures typed in.
+  const invoiceReady = entryMode === "invoice" && invoiceNo.trim().length > 0;
   const hasValuationInput =
-    (goldWtNum ?? 0) > 0 || (diaCaratNum ?? 0) > 0;
+    (goldWtNum ?? 0) > 0 || (diaCaratNum ?? 0) > 0 || invoiceReady;
 
   function reset() {
+    setEntryMode("manual");
+    setInvoiceNo("");
     setCustomer("");
     setPhone("");
     setItem("");
@@ -113,6 +122,9 @@ export function ReturnCalculatorDialog({
       resetValuate();
       return;
     }
+    // Only tag the preview as 'invoice' once a number is present, so a half-typed
+    // invoice-mode form doesn't 400 on the live valuation.
+    const useInvoice = entryMode === "invoice" && invoiceNo.trim().length > 0;
     const body: ValuateInput = {
       goldWtG: goldWtNum,
       goldRateAtPurchase: toNumber(goldRate),
@@ -120,11 +132,13 @@ export function ReturnCalculatorDialog({
       diaSpec: diaSpec || undefined,
       diaRateAtPurchase: toNumber(diaRate),
       making: makingNum,
+      entryMode: useInvoice ? "invoice" : "manual",
+      invoiceNo: useInvoice ? invoiceNo.trim() : undefined,
     };
     const t = setTimeout(() => runValuate(body), 350);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, goldWtG, goldRate, diaCarat, diaSpec, diaRate, making]);
+  }, [open, goldWtG, goldRate, diaCarat, diaSpec, diaRate, making, entryMode, invoiceNo]);
 
   const result = valuate.data;
   const goldToday = result?.goldValueToday ?? 0;
@@ -138,8 +152,14 @@ export function ReturnCalculatorDialog({
       toast.error("Customer name is required.");
       return;
     }
+    if (entryMode === "invoice" && !invoiceNo.trim()) {
+      toast.error("Enter the invoice number for an invoice-based return.");
+      return;
+    }
     if (!hasValuationInput) {
-      toast.error("Enter the gold or diamond details to value the piece.");
+      toast.error(
+        "Enter the gold or diamond details (or an invoice number) to value the piece.",
+      );
       return;
     }
     try {
@@ -157,6 +177,8 @@ export function ReturnCalculatorDialog({
         diaRateAtPurchase: toNumber(diaRate),
         making: makingNum,
         chosenOption: chosen,
+        entryMode,
+        invoiceNo: entryMode === "invoice" ? invoiceNo.trim() : undefined,
       });
       toast.success("Sent to Head Office for approval", {
         description: `${created.ref ?? "Return"} · ${
@@ -193,6 +215,45 @@ export function ReturnCalculatorDialog({
         </DialogHeader>
 
         <div className="grid gap-5">
+          {/* Entry mode: pull the original bill by invoice, or type it manually. */}
+          <div className="grid gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:max-w-sm">
+              {(["invoice", "manual"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setEntryMode(m)}
+                  aria-pressed={entryMode === m}
+                  className={cn(
+                    "rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
+                    entryMode === m
+                      ? "border-gold-strong bg-[color-mix(in_srgb,var(--gold)_12%,transparent)] text-gold-strong"
+                      : "text-muted-foreground hover:bg-muted/50",
+                  )}
+                >
+                  {m === "invoice" ? "By Invoice" : "By Manual"}
+                </button>
+              ))}
+            </div>
+            {entryMode === "invoice" ? (
+              <div className="grid gap-1.5 sm:max-w-sm">
+                <Label htmlFor="rc-invoice">
+                  Invoice number <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="rc-invoice"
+                  placeholder="e.g. INV-2026-0481"
+                  value={invoiceNo}
+                  onChange={(e) => setInvoiceNo(e.target.value)}
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  The original bill is pulled from this invoice; adjust the figures
+                  below if needed.
+                </p>
+              </div>
+            ) : null}
+          </div>
+
           {/* Customer */}
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="grid gap-1.5">

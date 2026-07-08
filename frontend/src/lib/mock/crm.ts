@@ -53,9 +53,15 @@ export interface Lead {
   ref: string;
   customer: string;
   phone: string;
+  /** Postal address (Round-2 — captured on the entry form, echoed by the API). */
+  address: string;
+  /** Birthday as yyyy-mm-dd, or null when not captured. */
+  birthday: string | null;
+  /** Anniversary as yyyy-mm-dd, or null when not captured. */
+  anniversary: string | null;
   /**
    * @deprecated Price/amount was removed from CRM per the client (Module 1).
-   * Kept optional only for legacy seed data; never displayed.
+   * Kept optional only for legacy seed data; surfaced only as the DSR chip.
    */
   value?: number;
   source: LeadSource;
@@ -107,6 +113,9 @@ export const MOCK_LEADS: Lead[] = [
     ref: "LD-2041",
     customer: "Priya Sharma",
     phone: "+91 98250 11234",
+    address: "12, Ghod Dod Road, Surat, Gujarat",
+    birthday: null,
+    anniversary: "2026-11-22",
     value: 285000,
     source: "walk_in",
     stage: "inquiry",
@@ -132,6 +141,9 @@ export const MOCK_LEADS: Lead[] = [
     ref: "LD-2042",
     customer: "Rohan Desai",
     phone: "+91 99041 55678",
+    address: "48, Adajan, Surat, Gujarat",
+    birthday: "2026-07-03",
+    anniversary: null,
     value: 64000,
     source: "whatsapp",
     stage: "inquiry",
@@ -148,6 +160,9 @@ export const MOCK_LEADS: Lead[] = [
     ref: "LD-2043",
     customer: "Meera Iyer",
     phone: "+91 98198 33445",
+    address: "7, Vesu Main Road, Surat, Gujarat",
+    birthday: null,
+    anniversary: null,
     value: 152000,
     source: "instagram",
     stage: "quotation",
@@ -171,6 +186,9 @@ export const MOCK_LEADS: Lead[] = [
     ref: "LD-2044",
     customer: "Aditya Nair",
     phone: "+91 90042 78901",
+    address: "22, Piplod, Surat, Gujarat",
+    birthday: null,
+    anniversary: "2026-06-28",
     value: 410000,
     source: "referral",
     stage: "quotation",
@@ -194,6 +212,9 @@ export const MOCK_LEADS: Lead[] = [
     ref: "LD-2045",
     customer: "Sneha Kulkarni",
     phone: "+91 98765 22110",
+    address: "301, Citylight, Surat, Gujarat",
+    birthday: null,
+    anniversary: null,
     value: 98000,
     source: "website",
     stage: "order_placed",
@@ -217,6 +238,9 @@ export const MOCK_LEADS: Lead[] = [
     ref: "LD-2046",
     customer: "Vikram Joshi",
     phone: "+91 99876 44556",
+    address: "9, Athwa Lines, Surat, Gujarat",
+    birthday: null,
+    anniversary: null,
     value: 220000,
     source: "phone",
     stage: "order_placed",
@@ -234,6 +258,9 @@ export const MOCK_LEADS: Lead[] = [
     ref: "LD-3010",
     customer: "Fatima Shaikh",
     phone: "+91 98200 90011",
+    address: "14, Hill Road, Bandra West, Mumbai",
+    birthday: "2026-08-19",
+    anniversary: null,
     value: 175000,
     source: "walk_in",
     stage: "inquiry",
@@ -250,6 +277,9 @@ export const MOCK_LEADS: Lead[] = [
     ref: "LD-3011",
     customer: "Neha Kapoor",
     phone: "+91 98201 33221",
+    address: "88, Carter Road, Bandra West, Mumbai",
+    birthday: null,
+    anniversary: null,
     value: 340000,
     source: "instagram",
     stage: "quotation",
@@ -273,6 +303,9 @@ export const MOCK_LEADS: Lead[] = [
     ref: "LD-3012",
     customer: "Arjun Reddy",
     phone: "+91 98202 77889",
+    address: "5, Pali Naka, Bandra West, Mumbai",
+    birthday: null,
+    anniversary: null,
     value: 125000,
     source: "referral",
     stage: "order_placed",
@@ -290,6 +323,9 @@ export const MOCK_LEADS: Lead[] = [
     ref: "LD-4007",
     customer: "Hetal Patel",
     phone: "+91 99099 12345",
+    address: "26, C.G. Road, Ahmedabad, Gujarat",
+    birthday: null,
+    anniversary: null,
     value: 88000,
     source: "whatsapp",
     stage: "inquiry",
@@ -306,6 +342,9 @@ export const MOCK_LEADS: Lead[] = [
     ref: "LD-4008",
     customer: "Sanjay Mehta",
     phone: "+91 99098 65432",
+    address: "3, Navrangpura, Ahmedabad, Gujarat",
+    birthday: null,
+    anniversary: "2026-12-05",
     value: 510000,
     source: "walk_in",
     stage: "quotation",

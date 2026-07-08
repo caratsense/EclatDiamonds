@@ -35,6 +35,12 @@ function parseYmd(s: string): Date {
   return new Date(Date.UTC(y, m - 1, d));
 }
 
+/** End-of-day (23:59:59.999 UTC) of a yyyy-mm-dd — inclusive upper bound for createdAt. */
+function endOfDayUtc(s: string): Date {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
+}
+
 const followUpInclude = { orderBy: { seq: 'asc' } } as const;
 
 /** Shape a Lead row into the frontend `Lead` interface (mock/crm.ts). */
@@ -50,6 +56,9 @@ function toView(l: any) {
     assignedRep: l.owner?.name ?? '',
     storeId: l.storeId,
     interest: l.interest ?? '',
+    address: l.address ?? '',
+    birthday: l.birthday ? l.birthday.toISOString().slice(0, 10) : null,
+    anniversary: l.anniversary ? l.anniversary.toISOString().slice(0, 10) : null,
     createdAt: l.createdAt.toISOString().slice(0, 10),
     lastActivity: (l.lastActivity ?? l.updatedAt).toISOString().slice(0, 10),
     notes: (l.notes ?? []).map((n: any) => ({
@@ -105,6 +114,12 @@ export class LeadsService {
     };
     if (q.stage) where.stage = q.stage;
     if (q.rep) where.OR = [{ ownerId: q.rep }, { owner: { name: { contains: q.rep, mode: 'insensitive' } } }];
+    if (q.from || q.to) {
+      where.createdAt = {
+        ...(q.from ? { gte: parseYmd(q.from) } : {}),
+        ...(q.to ? { lte: endOfDayUtc(q.to) } : {}),
+      };
+    }
 
     const leads = await this.prisma.lead.findMany({
       where,
@@ -146,6 +161,9 @@ export class LeadsService {
         source: dto.source,
         stage: dto.stage ?? 'inquiry',
         interest: dto.interest,
+        address: dto.address,
+        birthday: dto.birthday ? parseYmd(dto.birthday) : undefined,
+        anniversary: dto.anniversary ? parseYmd(dto.anniversary) : undefined,
         ownerId: dto.ownerId ?? user.id,
         lastActivity: new Date(),
       },
@@ -197,6 +215,9 @@ export class LeadsService {
         interest: dto.interest,
         value: dto.value != null ? new Prisma.Decimal(dto.value) : undefined,
         ownerId: dto.ownerId,
+        address: dto.address,
+        birthday: dto.birthday ? parseYmd(dto.birthday) : undefined,
+        anniversary: dto.anniversary ? parseYmd(dto.anniversary) : undefined,
         lastActivity: new Date(),
       },
       include: {
