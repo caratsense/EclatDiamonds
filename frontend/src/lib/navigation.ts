@@ -6,9 +6,7 @@ import {
   RotateCcw,
   Percent,
   PiggyBank,
-  GitBranch,
   Boxes,
-  Wallet,
   Fingerprint,
   DoorOpen,
   LayoutDashboard,
@@ -53,6 +51,29 @@ export interface NavGroup {
  */
 export const NAV_GROUPS: NavGroup[] = [
   {
+    label: "Overview",
+    items: [
+      {
+        module: 3,
+        slug: "dashboards",
+        title: "Dashboards",
+        purpose:
+          "Role-specific dashboards and cross-department collaboration.",
+        primaryAction: "New Task",
+        icon: LayoutDashboard,
+      },
+      {
+        module: 10,
+        slug: "reporting",
+        title: "Reporting & DSR",
+        purpose:
+          "Automated daily sales reports and store analytics.",
+        primaryAction: "Generate DSR",
+        icon: BarChart3,
+      },
+    ],
+  },
+  {
     label: "Sales",
     items: [
       {
@@ -63,6 +84,15 @@ export const NAV_GROUPS: NavGroup[] = [
           "Single source of truth for all potential customers across every channel.",
         primaryAction: "New Lead",
         icon: Users,
+      },
+      {
+        module: 7,
+        slug: "checkins",
+        title: "Check-ins & Footfall",
+        purpose:
+          "Track customer traffic and sales-rep allocation via check-ins (part of CRM).",
+        primaryAction: "Log Check-in",
+        icon: DoorOpen,
       },
       {
         module: 1,
@@ -76,9 +106,9 @@ export const NAV_GROUPS: NavGroup[] = [
       {
         module: 2,
         slug: "quotation",
-        title: "Quotation & Pricing",
+        title: "Quotation & Orders",
         purpose:
-          "Consistent pricing across digital and physical touchpoints with portable quotes.",
+          "Create a quote or a custom order in one place; custom orders route to the back office and appear on the production timeline.",
         primaryAction: "New Quote",
         icon: FileText,
       },
@@ -96,7 +126,7 @@ export const NAV_GROUPS: NavGroup[] = [
         slug: "returns",
         title: "Returns & Exchange",
         purpose:
-          "Standardize returns, exchanges, repairs and old-gold trade-ins.",
+          "Standardize returns, exchanges, buyback, repairs and old-gold trade-ins.",
         primaryAction: "New Intake",
         icon: RotateCcw,
       },
@@ -111,8 +141,9 @@ export const NAV_GROUPS: NavGroup[] = [
       {
         module: 17,
         slug: "loyalty",
-        title: "Loyalty & Gold Scheme",
-        purpose: "Manage recurring gold-savings accounts and monthly deposits.",
+        title: "Loyalty & Referral",
+        purpose:
+          "Gold-savings schemes plus the referral wallet (5% pre-GST credit).",
         primaryAction: "Enroll Customer",
         icon: PiggyBank,
       },
@@ -122,15 +153,6 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Operations",
     items: [
       {
-        module: 8,
-        slug: "timelines",
-        title: "Timelines & Status",
-        purpose:
-          "Real-time progress engine for custom orders and stock movements.",
-        primaryAction: "New Workflow",
-        icon: GitBranch,
-      },
-      {
         module: 9,
         slug: "inventory",
         title: "Inventory & Stock",
@@ -138,15 +160,6 @@ export const NAV_GROUPS: NavGroup[] = [
           "Inventory optimization, aging-stock control and scrap recycling.",
         primaryAction: "Stock Entry",
         icon: Boxes,
-      },
-      {
-        module: 12,
-        slug: "payments",
-        title: "Payments",
-        purpose:
-          "Centralized payment-collection ledger with bank reconciliation.",
-        primaryAction: "Record Payment",
-        icon: Wallet,
       },
     ],
   },
@@ -162,29 +175,11 @@ export const NAV_GROUPS: NavGroup[] = [
         primaryAction: "Mark Attendance",
         icon: Fingerprint,
       },
-      {
-        module: 7,
-        slug: "checkins",
-        title: "Check-ins & Footfall",
-        purpose:
-          "Track customer traffic and sales-rep allocation via check-ins.",
-        primaryAction: "Log Check-in",
-        icon: DoorOpen,
-      },
     ],
   },
   {
     label: "Management",
     items: [
-      {
-        module: 3,
-        slug: "dashboards",
-        title: "Dashboards",
-        purpose:
-          "Role-specific dashboards and cross-department collaboration.",
-        primaryAction: "New Task",
-        icon: LayoutDashboard,
-      },
       {
         module: 4,
         slug: "finance",
@@ -193,15 +188,6 @@ export const NAV_GROUPS: NavGroup[] = [
           "End-to-end finance: ledgers, budgets, cash-flow and expansion costs.",
         primaryAction: "Add Entry",
         icon: Banknote,
-      },
-      {
-        module: 10,
-        slug: "reporting",
-        title: "Reporting & DSR",
-        purpose:
-          "Automated daily sales reports and store analytics.",
-        primaryAction: "Generate DSR",
-        icon: BarChart3,
       },
       {
         module: 11,
@@ -231,7 +217,7 @@ export const NAV_GROUPS: NavGroup[] = [
         slug: "ticketing",
         title: "Ticketing",
         purpose:
-          "Internal helpdesk for operational issues with auto-routing.",
+          "Internal helpdesk for operational issues, routed to the back office.",
         primaryAction: "New Ticket",
         icon: LifeBuoy,
       },

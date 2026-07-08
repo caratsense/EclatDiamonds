@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { QuoteBuilderDialog } from "@/components/quotation/quote-builder-dialog";
 import { QuoteDetailDialog } from "@/components/quotation/quote-detail-dialog";
 import { SectionHeader } from "@/components/section/section-header";
+import { OrdersTimelineView } from "@/components/timelines/orders-timeline-view";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -18,6 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getNavItem } from "@/lib/navigation";
 import { formatINR } from "@/lib/format";
 import {
@@ -67,14 +69,21 @@ export default function QuotationPage() {
         onPrimaryAction={() => setNewOpen(true)}
       />
 
-      <p className="mb-4 text-sm text-muted-foreground">
-        {currentStore.isAggregate
-          ? "Showing quotes across all stores"
-          : `Showing quotes raised at or portable to ${currentStore.name}`}
-      </p>
+      <Tabs defaultValue="quotes" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="quotes">Quotes</TabsTrigger>
+          <TabsTrigger value="orders">Custom Orders &amp; Timeline</TabsTrigger>
+        </TabsList>
 
-      <div className="rounded-xl border">
-        <Table>
+        <TabsContent value="quotes" className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            {currentStore.isAggregate
+              ? "Showing quotes across all stores"
+              : `Showing quotes raised at or portable to ${currentStore.name}`}
+          </p>
+
+          <div className="rounded-xl border">
+            <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Quote #</TableHead>
@@ -178,8 +187,14 @@ export default function QuotationPage() {
               );
             })}
           </TableBody>
-        </Table>
-      </div>
+            </Table>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="orders">
+          <OrdersTimelineView />
+        </TabsContent>
+      </Tabs>
 
       <QuoteDetailDialog quote={active} open={open} onOpenChange={setOpen} />
       <QuoteBuilderDialog open={newOpen} onOpenChange={setNewOpen} />
