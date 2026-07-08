@@ -14,8 +14,12 @@ import type {
   Holiday,
   LateFlag,
   LeaderboardRow,
+  LeaveBalance,
   LeaveRequest,
   LeaveStatus,
+  LeaveType,
+  Regularization,
+  SelfAttendance,
   Shift,
 } from "@/lib/mock/hrms";
 
@@ -103,6 +107,203 @@ export function useDecideLeave() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [HRMS_KEY, "leave"] });
+    },
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* A. Self-service geo check-in / check-out (Module 6)                 */
+/* ------------------------------------------------------------------ */
+
+export interface PunchInput {
+  lat: number;
+  lng: number;
+  /** Optional shift/batch to score lateness against (check-in only). */
+  shiftId?: string;
+}
+
+/**
+ * GET /hrms/attendance/me?month=YYYY-MM — the current user's own punches.
+ * Returns today's state (or null) + this-month's records. Keyed on the active
+ * store so switching stores refetches; the X-Store-Id header scopes it server-side.
+ */
+export function useMyAttendance(month: string) {
+  const storeId = useStoreKey();
+  return useQuery({
+    queryKey: [HRMS_KEY, "attendance", "me", storeId, month],
+    queryFn: async () => {
+      const { data } = await api.get<{
+        today: SelfAttendance | null;
+        records: SelfAttendance[];
+      }>("/hrms/attendance/me", { params: { month } });
+      return data;
+    },
+  });
+}
+
+/** POST /hrms/attendance/check-in — the current user punches in (lat/lng). */
+export function useCheckIn() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: PunchInput) => {
+      const { data } = await api.post<SelfAttendance>(
+        "/hrms/attendance/check-in",
+        input,
+      );
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [HRMS_KEY, "attendance"] });
+      qc.invalidateQueries({ queryKey: [HRMS_KEY, "attendance", "me"] });
+    },
+  });
+}
+
+/** POST /hrms/attendance/check-out — the current user punches out (400 if not in). */
+export function useCheckOut() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { lat: number; lng: number }) => {
+      const { data } = await api.post<SelfAttendance>(
+        "/hrms/attendance/check-out",
+        input,
+      );
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [HRMS_KEY, "attendance"] });
+      qc.invalidateQueries({ queryKey: [HRMS_KEY, "attendance", "me"] });
+    },
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* B. Leave balances + apply (Module 6)                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * GET /hrms/leave/balances?staffId? — leave balances (self by default; a
+ * manager+ may pass a team member's staffId). Auto-seeds the year on first read.
+ */
+export function useLeaveBalances(staffId?: string) {
+  const storeId = useStoreKey();
+  return useQuery({
+    queryKey: [HRMS_KEY, "leave", "balances", storeId, staffId ?? "me"],
+    queryFn: async () => {
+      const { data } = await api.get<LeaveBalance[]>("/hrms/leave/balances", {
+        params: staffId ? { staffId } : undefined,
+      });
+      return data;
+    },
+  });
+}
+
+export interface ApplyLeaveInput {
+  type: LeaveType;
+  /** YYYY-MM-DD (inclusive). */
+  fromDate: string;
+  /** YYYY-MM-DD (inclusive). */
+  toDate: string;
+  /** Explicit day count; auto-computed (working days) when omitted. */
+  days?: number;
+  halfDay?: boolean;
+  reason?: string;
+}
+
+/** POST /hrms/leave — apply for leave (self). Invalidates leave + balances. */
+export function useApplyLeave() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: ApplyLeaveInput) => {
+      const { data } = await api.post<LeaveRequest>("/hrms/leave", input);
+      return data;
+    },
+    onSuccess: () => {
+      // Prefix invalidation covers both the leave list and the balance rows.
+      qc.invalidateQueries({ queryKey: [HRMS_KEY, "leave"] });
+    },
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* C. Attendance regularization (Module 6)                             */
+/* ------------------------------------------------------------------ */
+
+export interface CreateRegularizationInput {
+  /** YYYY-MM-DD — the day being corrected. */
+  date: string;
+  /** ISO datetime the staffer actually checked in / out. */
+  requestedCheckIn?: string;
+  requestedCheckOut?: string;
+  reason?: string;
+}
+
+/** GET /hrms/regularize — regularization requests (staff see only their own). */
+export function useRegularizations() {
+  const storeId = useStoreKey();
+  return useQuery({
+    queryKey: [HRMS_KEY, "regularize", storeId],
+    queryFn: async () => {
+      const { data } = await api.get<Regularization[]>("/hrms/regularize");
+      return data;
+    },
+  });
+}
+
+/** POST /hrms/regularize — request a fix for a missed/wrong punch (self). */
+export function useCreateRegularization() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: CreateRegularizationInput) => {
+      const { data } = await api.post<Regularization>("/hrms/regularize", input);
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [HRMS_KEY, "regularize"] });
+    },
+  });
+}
+
+/** PATCH /hrms/regularize/:id — approve/reject (manager+). Corrects the record. */
+export function useDecideRegularization() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: LeaveStatus }) => {
+      const { data } = await api.patch<Regularization>(
+        `/hrms/regularize/${id}`,
+        { status },
+      );
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [HRMS_KEY, "regularize"] });
+      // Approval rewrites the attendance record — refresh attendance too.
+      qc.invalidateQueries({ queryKey: [HRMS_KEY, "attendance"] });
+    },
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* D. Editable commission rate (Module 6 → surfaced on Sales)          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * PATCH /hrms/commission/:id — set the commission rate (manager+). `rate` is a
+ * PERCENT of sales value (e.g. 2.5 = 2.5%), 0–100; the backend recomputes the
+ * incentive amount and returns the refreshed commission view.
+ */
+export function useUpdateCommissionRate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, rate }: { id: string; rate: number }) => {
+      const { data } = await api.patch<CommissionRow>(
+        `/hrms/commission/${id}`,
+        { rate },
+      );
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [HRMS_KEY, "commission"] });
     },
   });
 }

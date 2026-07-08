@@ -1,11 +1,17 @@
 import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { HrmsService } from './hrms.service';
 import {
+  ApplyLeaveDto,
+  CheckInDto,
+  CheckOutDto,
   CreateHolidayDto,
+  CreateRegularizationDto,
   CreateShiftDto,
   DecideLeaveDto,
+  DecideRegularizationDto,
   MarkAttendanceDto,
   SetWeekOffDto,
+  UpdateCommissionRateDto,
 } from './dto/hrms.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
@@ -15,19 +21,75 @@ import { Roles } from '../auth/roles.decorator';
 export class HrmsController {
   constructor(private readonly hrms: HrmsService) {}
 
+  // --- Attendance -----------------------------------------------------------
+  // Static sub-routes are declared BEFORE any `:id` route so they aren't shadowed.
+
   @Get('attendance')
   attendance(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.hrms.attendance(user, store);
   }
 
+  /** Self-service geo check-in — the puncher is the current user. */
+  @Post('attendance/check-in')
+  checkIn(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: CheckInDto,
+    @StoreHeader() store?: string,
+  ) {
+    return this.hrms.checkIn(user, dto, store);
+  }
+
+  /** Self-service geo check-out — the puncher is the current user. */
+  @Post('attendance/check-out')
+  checkOut(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: CheckOutDto,
+    @StoreHeader() store?: string,
+  ) {
+    return this.hrms.checkOut(user, dto, store);
+  }
+
+  /** The current user's own punches for a month (+ today's state). */
+  @Get('attendance/me')
+  myAttendance(
+    @CurrentUser() user: AuthUser,
+    @Query('month') month?: string,
+    @StoreHeader() store?: string,
+  ) {
+    return this.hrms.myAttendance(user, month, store);
+  }
+
+  /** Admin/tablet manual mark (unchanged). */
   @Post('attendance')
   markAttendance(@CurrentUser() user: AuthUser, @Body() dto: MarkAttendanceDto) {
     return this.hrms.markAttendance(user, dto);
   }
 
+  // --- Leave ----------------------------------------------------------------
+
   @Get('leave')
   leave(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.hrms.leave(user, store);
+  }
+
+  /** Leave balances — self by default; a manager+ may pass ?staffId within scope. */
+  @Get('leave/balances')
+  leaveBalances(
+    @CurrentUser() user: AuthUser,
+    @Query('staffId') staffId?: string,
+    @StoreHeader() store?: string,
+  ) {
+    return this.hrms.leaveBalances(user, staffId, store);
+  }
+
+  /** Apply for leave (self, or a manager+ on behalf of team staff). */
+  @Post('leave')
+  applyLeave(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: ApplyLeaveDto,
+    @StoreHeader() store?: string,
+  ) {
+    return this.hrms.applyLeave(user, dto, store);
   }
 
   /** Approving/rejecting leave is a manager+ action (role hierarchy, CLAUDE.md rule #2). */
@@ -40,6 +102,37 @@ export class HrmsController {
   ) {
     return this.hrms.decideLeave(user, id, dto.status);
   }
+
+  // --- Regularization -------------------------------------------------------
+
+  /** Request a fix for a missed/wrong punch (current user). */
+  @Post('regularize')
+  createRegularization(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: CreateRegularizationDto,
+    @StoreHeader() store?: string,
+  ) {
+    return this.hrms.createRegularization(user, dto, store);
+  }
+
+  /** Store-scoped regularizations — managers see the team, staff see their own. */
+  @Get('regularize')
+  listRegularizations(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
+    return this.hrms.listRegularizations(user, store);
+  }
+
+  /** Approve/reject a regularization — manager+ (applies the fix on approval). */
+  @Roles('store_manager', 'area_manager', 'head_office')
+  @Patch('regularize/:id')
+  decideRegularization(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: DecideRegularizationDto,
+  ) {
+    return this.hrms.decideRegularization(user, id, dto.status);
+  }
+
+  // --- Shifts / holidays / week-off -----------------------------------------
 
   @Get('shifts')
   shifts(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
@@ -72,6 +165,8 @@ export class HrmsController {
     return this.hrms.setWeekOff(user, dto);
   }
 
+  // --- Analytics / commission ----------------------------------------------
+
   @Get('late-flags')
   lateFlags(
     @CurrentUser() user: AuthUser,
@@ -89,5 +184,16 @@ export class HrmsController {
   @Get('commission')
   commission(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.hrms.commission(user, store);
+  }
+
+  /** Edit a commission's rate (manager+) — recomputes the incentive amount. */
+  @Roles('store_manager', 'area_manager', 'head_office')
+  @Patch('commission/:id')
+  updateCommissionRate(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateCommissionRateDto,
+  ) {
+    return this.hrms.updateCommissionRate(user, id, dto.rate);
   }
 }

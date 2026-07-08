@@ -17,6 +17,7 @@ import {
   LifeBuoy,
   BellRing,
   Store,
+  Trophy,
 } from "lucide-react";
 
 import type { Role } from "@/lib/types";
@@ -147,6 +148,14 @@ export const NAV_GROUPS: NavGroup[] = [
         primaryAction: "Enroll Customer",
         icon: PiggyBank,
       },
+      {
+        module: 6,
+        slug: "sales-performance",
+        title: "Sales Performance",
+        purpose: "Sales leaderboard and editable commission/incentives.",
+        primaryAction: "",
+        icon: Trophy,
+      },
     ],
   },
   {
@@ -171,7 +180,7 @@ export const NAV_GROUPS: NavGroup[] = [
         slug: "hrms",
         title: "HRMS & Attendance",
         purpose:
-          "Staff rosters, geo-tagged attendance and sales incentives.",
+          "Self-service geo attendance, rosters, leave and regularization.",
         primaryAction: "Mark Attendance",
         icon: Fingerprint,
       },

@@ -352,6 +352,7 @@ model Store {
   payments            Payment[]
   attendanceRecords   AttendanceRecord[]
   leaveRequests       LeaveRequest[]
+  regularizations     AttendanceRegularization[]
   shifts              Shift[]
   holidays            StoreHoliday[]
   checkIns            CheckIn[]
@@ -395,6 +396,7 @@ model User {
   ticketMessages    TicketMessage[]
   assignedTickets   Ticket[]          @relation("TicketAssignee")
   commissions       Commission[]
+  leaveBalances     LeaveBalance[]
 
   @@index([role])
 }
@@ -1127,6 +1129,15 @@ model AttendanceRecord {
   checkInLng  Decimal?         @db.Decimal(10, 7)
   geoVerified Boolean          @default(false)
 
+  // Zoho-style HRMS additions (Module 6). All additive/nullable.
+  // Geo-tag captured at check-out (verified against Store geofence).
+  checkOutLat      Decimal? @db.Decimal(10, 7)
+  checkOutLng      Decimal? @db.Decimal(10, 7)
+  /// Metres from the store centre at check-in (geofence distance).
+  checkInDistanceM Int?
+  /// Worked duration in minutes (checkOut − checkIn).
+  workedMins       Int?
+
   // Shift / lateness (Module 6). Lateness is measured against the ASSIGNED shift's
   // start + buffer, so a night/second-batch check-in in the afternoon is not "late".
   shiftId     String?
@@ -1183,6 +1194,14 @@ model LeaveRequest {
   toDate    DateTime    @db.Date
   reason    String?
 
+  // Zoho-style HRMS additions (Module 6). All additive/nullable.
+  /// Reserved for future configurable leave types; no relation for now.
+  leaveTypeId String?
+  /// Number of leave days; Decimal(4,1) supports half-days (e.g. 1.5).
+  days        Decimal? @db.Decimal(4, 1)
+  /// true when this request covers a half day.
+  halfDay     Boolean  @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1206,6 +1225,43 @@ model Commission {
   user User @relation(fields: [userId], references: [id])
 
   @@unique([userId, period])
+}
+
+/// Per-staff, per-leave-type, per-year leave balance (Zoho-style HRMS, Module 6).
+model LeaveBalance {
+  id        String    @id @default(cuid())
+  userId    String
+  storeId   String?
+  type      LeaveType
+  year      Int
+  allocated Decimal   @default(0) @db.Decimal(5, 1)
+  used      Decimal   @default(0) @db.Decimal(5, 1)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, type, year])
+  @@index([userId, year])
+}
+
+/// Request to fix a missed/wrong punch (Zoho-style HRMS regularization, Module 6).
+model AttendanceRegularization {
+  id                String      @id @default(cuid())
+  storeId           String
+  staffId           String
+  staffName         String?
+  date              DateTime    @db.Date
+  requestedCheckIn  DateTime?
+  requestedCheckOut DateTime?
+  reason            String?
+  status            LeaveStatus @default(pending)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id])
+
+  @@index([storeId, date])
 }
 
 // ============================================================================

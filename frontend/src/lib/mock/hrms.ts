@@ -76,7 +76,28 @@ export interface RosterRow {
   week: ShiftAssignment[];
 }
 
-export type LeaveType = "Casual" | "Sick" | "Earned" | "Festival";
+/**
+ * Canonical leave-type keys — match the backend Prisma enum, the apply-leave
+ * body and the LeaveBalance rows. `festival` is unpaid (no allocation / cap).
+ */
+export type LeaveType = "casual" | "sick" | "earned" | "festival";
+
+/** Display labels for the lowercase leave-type keys (tiles + selects). */
+export const LEAVE_TYPE_LABELS: Record<LeaveType, string> = {
+  casual: "Casual",
+  sick: "Sick",
+  earned: "Earned",
+  festival: "Festival",
+};
+
+/** Fixed display order for the balance tiles / type select. */
+export const LEAVE_TYPE_ORDER: LeaveType[] = [
+  "casual",
+  "sick",
+  "earned",
+  "festival",
+];
+
 export type LeaveStatus = "pending" | "approved" | "rejected";
 
 export interface LeaveRequest {
@@ -85,10 +106,16 @@ export interface LeaveRequest {
   staffId: string;
   name: string;
   initials: string;
-  type: LeaveType;
+  /**
+   * Display label from the backend leave view (e.g. "Casual"). The raw enum key
+   * (LeaveType) is used only on the apply body + balance rows.
+   */
+  type: string;
   from: string;
   to: string;
   days: number;
+  /** Half-day request (counts as 0.5 day). */
+  halfDay?: boolean;
   reason: string;
   status: LeaveStatus;
 }
@@ -109,6 +136,8 @@ export interface LeaderboardRow {
 }
 
 export interface CommissionRow {
+  /** Commission row id — needed to PATCH the editable rate. */
+  id: string;
   staffId: string;
   name: string;
   initials: string;
@@ -122,6 +151,64 @@ export interface CommissionRow {
   incentive: number;
   /** Monthly target, ₹. */
   target: number;
+}
+
+/* ------------------------------------------------------------------ */
+/* Zoho-informed additions — self-service punch, balances, regularize  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The current user's own attendance record (GET /hrms/attendance/me).
+ * Geo-fencing is LENIENT: the punch is always recorded; `withinFence` +
+ * `checkInDistanceM` merely flag whether it landed inside the store radius.
+ * Lateness (`isLate`/`lateMinutes`) is measured against the assigned shift.
+ */
+export interface SelfAttendance {
+  id: string;
+  storeId: string;
+  /** YYYY-MM-DD */
+  date: string;
+  status: AttendanceStatus;
+  /** ISO datetime, or null before the punch lands. */
+  checkInAt: string | null;
+  checkOutAt: string | null;
+  /** Metres from the store centre at check-in; null if the store has no coords. */
+  checkInDistanceM: number | null;
+  withinFence: boolean;
+  /** Minutes worked once checked out; null while still checked in. */
+  workedMins: number | null;
+  isLate: boolean;
+  lateMinutes: number | null;
+  shiftId: string | null;
+}
+
+/** A per-staff, per-type, per-year leave balance (GET /hrms/leave/balances). */
+export interface LeaveBalance {
+  /** Lowercase enum key — see LEAVE_TYPE_LABELS for the display label. */
+  type: LeaveType;
+  year: number;
+  allocated: number;
+  used: number;
+  balance: number;
+}
+
+/**
+ * An attendance-regularization request — a fix for a missed / wrong punch.
+ * Reuses LeaveStatus (pending | approved | rejected).
+ */
+export interface Regularization {
+  id: string;
+  storeId: string;
+  staffId: string;
+  name: string;
+  initials: string;
+  /** YYYY-MM-DD — the day being corrected. */
+  date: string;
+  /** ISO datetime the staffer says they actually checked in / out. */
+  requestedCheckIn: string | null;
+  requestedCheckOut: string | null;
+  reason: string | null;
+  status: LeaveStatus;
 }
 
 /* ------------------------------------------------------------------ */
@@ -676,6 +763,7 @@ export const LEADERBOARD: LeaderboardRow[] = [
 
 export const COMMISSIONS: CommissionRow[] = [
   {
+    id: "cm-01",
     staffId: "s-101",
     name: "Priya Sharma",
     initials: "PS",
@@ -687,6 +775,7 @@ export const COMMISSIONS: CommissionRow[] = [
     target: 4000000,
   },
   {
+    id: "cm-02",
     staffId: "s-201",
     name: "Aditya Nair",
     initials: "AN",
@@ -698,6 +787,7 @@ export const COMMISSIONS: CommissionRow[] = [
     target: 5000000,
   },
   {
+    id: "cm-03",
     staffId: "s-102",
     name: "Rohan Desai",
     initials: "RD",
@@ -709,6 +799,7 @@ export const COMMISSIONS: CommissionRow[] = [
     target: 3000000,
   },
   {
+    id: "cm-04",
     staffId: "s-302",
     name: "Harsh Solanki",
     initials: "HS",
@@ -720,6 +811,7 @@ export const COMMISSIONS: CommissionRow[] = [
     target: 2500000,
   },
   {
+    id: "cm-05",
     staffId: "s-202",
     name: "Fatima Shaikh",
     initials: "FS",

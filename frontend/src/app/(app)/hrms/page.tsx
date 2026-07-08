@@ -34,17 +34,16 @@ import {
 } from "@/lib/mock/hrms";
 import { AttendanceTab } from "@/components/hrms/attendance-tab";
 import { RosterTab } from "@/components/hrms/roster-tab";
-import { LeaderboardTab } from "@/components/hrms/leaderboard-tab";
-import { CommissionTab } from "@/components/hrms/commission-tab";
 import { ShiftsScheduleTab } from "@/components/hrms/shifts-schedule-tab";
 import { LateFlagsTab } from "@/components/hrms/late-flags-tab";
+import { GeoPunchCard } from "@/components/hrms/geo-punch-card";
+import { LeaveBalances } from "@/components/hrms/leave-balances";
+import { RegularizationTab } from "@/components/hrms/regularization-tab";
 import {
   useAttendance,
-  useCommission,
   useDecideLeave,
   useHolidays,
   useLateFlags,
-  useLeaderboard,
   useLeaveRequests,
   useMarkAttendance,
   useShifts,
@@ -67,8 +66,6 @@ export default function HrmsPage() {
   // Live, already store/role-scoped server-side (keyed on the active store).
   const attendanceQuery = useAttendance();
   const leaveQuery = useLeaveRequests();
-  const leaderboardQuery = useLeaderboard();
-  const commissionQuery = useCommission();
   const shiftsQuery = useShifts();
   const holidaysQuery = useHolidays();
   // Current month key (YYYY-MM) for the late-flag roll-up.
@@ -76,8 +73,6 @@ export default function HrmsPage() {
   const lateFlagsQuery = useLateFlags(month);
   const { data: attendance = [], isLoading: attLoading } = attendanceQuery;
   const { data: leave = [], isLoading: leaveLoading } = leaveQuery;
-  const { data: leaderboard = [], isLoading: lbLoading } = leaderboardQuery;
-  const { data: commissions = [], isLoading: commLoading } = commissionQuery;
   const { data: shifts = [] } = shiftsQuery;
   const { data: holidays = [] } = holidaysQuery;
   const { data: lateFlags = [], isLoading: flagsLoading } = lateFlagsQuery;
@@ -118,14 +113,17 @@ export default function HrmsPage() {
         onPrimaryAction={() => setMarkOpen(true)}
       />
 
+      <div className="mb-4">
+        <GeoPunchCard />
+      </div>
+
       <Tabs defaultValue="attendance" className="space-y-4">
         <TabsList className="flex h-auto flex-wrap">
           <TabsTrigger value="attendance">Attendance</TabsTrigger>
           <TabsTrigger value="schedule">Shifts &amp; Schedule</TabsTrigger>
           <TabsTrigger value="flags">Late Flags</TabsTrigger>
           <TabsTrigger value="roster">Roster &amp; Leave</TabsTrigger>
-          <TabsTrigger value="leaderboard">Leaderboard</TabsTrigger>
-          <TabsTrigger value="commission">Commission</TabsTrigger>
+          <TabsTrigger value="regularize">Regularization</TabsTrigger>
         </TabsList>
 
         <TabsContent value="attendance">
@@ -165,36 +163,27 @@ export default function HrmsPage() {
           )}
         </TabsContent>
         <TabsContent value="roster">
-          {leaveLoading ? (
-            <TabSkeleton />
-          ) : leaveQuery.isError ? (
-            <TabError what="leave requests" onRetry={() => leaveQuery.refetch()} />
-          ) : (
-            <RosterTab
-              roster={roster}
-              leave={leave}
-              onDecide={handleDecide}
-              deciding={decideLeave.isPending}
-            />
-          )}
+          <div className="space-y-4">
+            <LeaveBalances />
+            {leaveLoading ? (
+              <TabSkeleton />
+            ) : leaveQuery.isError ? (
+              <TabError
+                what="leave requests"
+                onRetry={() => leaveQuery.refetch()}
+              />
+            ) : (
+              <RosterTab
+                roster={roster}
+                leave={leave}
+                onDecide={handleDecide}
+                deciding={decideLeave.isPending}
+              />
+            )}
+          </div>
         </TabsContent>
-        <TabsContent value="leaderboard">
-          {lbLoading ? (
-            <TabSkeleton />
-          ) : leaderboardQuery.isError ? (
-            <TabError what="the leaderboard" onRetry={() => leaderboardQuery.refetch()} />
-          ) : (
-            <LeaderboardTab rows={leaderboard} />
-          )}
-        </TabsContent>
-        <TabsContent value="commission">
-          {commLoading ? (
-            <TabSkeleton />
-          ) : commissionQuery.isError ? (
-            <TabError what="commission figures" onRetry={() => commissionQuery.refetch()} />
-          ) : (
-            <CommissionTab rows={commissions} />
-          )}
+        <TabsContent value="regularize">
+          <RegularizationTab />
         </TabsContent>
       </Tabs>
 
