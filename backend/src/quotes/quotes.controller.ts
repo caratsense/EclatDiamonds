@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
@@ -19,8 +20,14 @@ export class QuotesController {
   constructor(private readonly quotes: QuotesService) {}
 
   @Get()
-  list(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
-    return this.quotes.list(user, store);
+  list(
+    @CurrentUser() user: AuthUser,
+    @StoreHeader() store?: string,
+    @Query('includeKaccha') includeKaccha?: string,
+  ) {
+    // "@" kaccha quotes stay hidden unless a head_office user explicitly opts in.
+    const include = includeKaccha === 'true' || includeKaccha === '1';
+    return this.quotes.list(user, store, include);
   }
 
   @Get(':id')

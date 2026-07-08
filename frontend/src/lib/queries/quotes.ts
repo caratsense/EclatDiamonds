@@ -22,16 +22,26 @@ export interface CreateQuoteInput {
   remarks?: string;
   /** Gross intake weight in grams (repair). */
   grossWeightG?: number;
+  /** Kaccha ("@") estimate — server forces GST = 0 and hides it from the list. */
+  isKaccha?: boolean;
   lines: Omit<QuoteLine, "id">[];
 }
 
-/** GET /quotes — portable quotes raised at or redeemable to the active store. */
-export function useQuotes() {
+/**
+ * GET /quotes — portable quotes raised at or redeemable to the active store.
+ * Kaccha estimates are excluded server-side by default; pass
+ * `{ includeKaccha: true }` to opt back in (the backend gates this to
+ * head-office, so it's safe to always send when the toggle is on).
+ */
+export function useQuotes(opts: { includeKaccha?: boolean } = {}) {
   const storeId = useStoreKey();
+  const includeKaccha = opts.includeKaccha ?? false;
   return useQuery({
-    queryKey: ["quotes", storeId],
+    queryKey: ["quotes", storeId, { includeKaccha }],
     queryFn: async () => {
-      const { data } = await api.get<Quote[]>("/quotes");
+      const { data } = await api.get<Quote[]>("/quotes", {
+        params: includeKaccha ? { includeKaccha: "true" } : undefined,
+      });
       return data;
     },
   });

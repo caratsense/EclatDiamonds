@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   IsArray,
+  IsBoolean,
   IsEnum,
   IsInt,
   IsNumber,
@@ -66,6 +67,15 @@ export class CreateQuoteDto {
   @IsOptional()
   @IsEnum(QuoteKind)
   kind?: QuoteKind;
+
+  /**
+   * "@" kaccha provision: a rough no-GST estimate. When true the quote carries
+   * NO GST (gstAmount = 0, grandTotal = taxable) and is hidden from the normal
+   * quote list — only head_office can see/fetch it.
+   */
+  @IsOptional()
+  @IsBoolean()
+  isKaccha?: boolean;
 
   /** Free-text remarks (e.g. repair notes). */
   @IsOptional()

@@ -177,46 +177,57 @@ export function PeriodRollup({
               <Skeleton key={i} className="h-44 rounded-xl" />
             ))
           ) : (
-            <>
-              <RollupTile
-                hero
-                icon={IndianRupee}
-                label="Sales (net)"
-                value={formatINRCompact(s.sales.net)}
-                rows={[
-                  { label: "Bills", value: formatNumber(s.sales.count) },
-                  { label: "Gross", value: formatINR(s.sales.gross) },
-                  { label: "Discount", value: formatINR(s.sales.discount) },
-                ]}
-              />
-              <RollupTile
-                icon={Package}
-                label="Orders booked"
-                value={formatNumber(s.orders.count)}
-                rows={[
-                  { label: "Advance", value: formatINR(s.orders.advance) },
-                  {
-                    label: "Estimation",
-                    value: formatINR(s.orders.estimation),
-                  },
-                ]}
-              />
-              <RollupTile
-                icon={Wallet}
-                label="Payments collected"
-                value={formatINRCompact(s.payments.total)}
-                rows={[
-                  {
-                    label: "Transactions",
-                    value: formatNumber(s.payments.count),
-                  },
-                  ...Object.entries(s.payments.byMode).map(([mode, amt]) => ({
-                    label: formatPaymentMode(mode),
-                    value: formatINR(amt),
-                  })),
-                ]}
-              />
-            </>
+            (() => {
+              // `sales`/`orders` are always present; `payments` is NOT in the
+              // live /reporting/summary shape — fall back so the tile can't crash.
+              const payments = s.payments ?? {
+                count: 0,
+                total: 0,
+                byMode: {} as Record<string, number>,
+              };
+              return (
+                <>
+                  <RollupTile
+                    hero
+                    icon={IndianRupee}
+                    label="Sales (net)"
+                    value={formatINRCompact(s.sales.net)}
+                    rows={[
+                      { label: "Bills", value: formatNumber(s.sales.count) },
+                      { label: "Gross", value: formatINR(s.sales.gross) },
+                      { label: "Discount", value: formatINR(s.sales.discount) },
+                    ]}
+                  />
+                  <RollupTile
+                    icon={Package}
+                    label="Orders booked"
+                    value={formatNumber(s.orders.count)}
+                    rows={[
+                      { label: "Advance", value: formatINR(s.orders.advance) },
+                      {
+                        label: "Estimation",
+                        value: formatINR(s.orders.estimation),
+                      },
+                    ]}
+                  />
+                  <RollupTile
+                    icon={Wallet}
+                    label="Payments collected"
+                    value={formatINRCompact(payments.total)}
+                    rows={[
+                      {
+                        label: "Transactions",
+                        value: formatNumber(payments.count),
+                      },
+                      ...Object.entries(payments.byMode).map(([mode, amt]) => ({
+                        label: formatPaymentMode(mode),
+                        value: formatINR(amt),
+                      })),
+                    ]}
+                  />
+                </>
+              );
+            })()
           )}
         </div>
       )}

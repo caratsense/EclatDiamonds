@@ -76,6 +76,12 @@ export interface Quote {
   status: QuoteStatus;
   /** Sale (gold + stones) vs repair (making-only). Defaults to "sale". */
   kind: QuoteKind;
+  /**
+   * Kaccha ("@") estimate — a rough, no-GST quote kept head-office-only. When
+   * true the server forces GST = 0 and grandTotal = taxable. Hidden from the
+   * normal quote list; only HO can opt in to see these. Defaults to false.
+   */
+  isKaccha: boolean;
   /** Free-text remarks — used to capture repair notes. */
   remarks: string;
   /** Gross intake weight in grams (repair); null for a sale quote. */
@@ -109,9 +115,12 @@ export interface QuoteTotals {
 
 /** Roll up all lines into a money breakdown. */
 export function computeQuoteTotals(quote: Quote): QuoteTotals {
-  const metalValue = quote.lines.reduce((s, l) => s + lineMetalValue(l), 0);
-  const makingCharges = quote.lines.reduce((s, l) => s + l.makingCharges, 0);
-  const stoneCharges = quote.lines.reduce((s, l) => s + l.stoneCharges, 0);
+  // A quote from the list endpoint may arrive without its lines expanded —
+  // default to [] so the reduces don't throw (the totals just come out 0).
+  const lines = quote.lines ?? [];
+  const metalValue = lines.reduce((s, l) => s + lineMetalValue(l), 0);
+  const makingCharges = lines.reduce((s, l) => s + l.makingCharges, 0);
+  const stoneCharges = lines.reduce((s, l) => s + l.stoneCharges, 0);
   const taxable = metalValue + makingCharges + stoneCharges;
   const gst = taxable * GST_RATE;
   return {
@@ -137,6 +146,7 @@ export const MOCK_QUOTES: Quote[] = [
     validUntil: "2026-06-26",
     assignedRep: "Aarav Mehta",
     kind: "sale",
+    isKaccha: false,
     remarks: "",
     grossWeightG: null,
     photos: [],
@@ -165,6 +175,7 @@ export const MOCK_QUOTES: Quote[] = [
     validUntil: "2026-06-25",
     assignedRep: "Isha Patel",
     kind: "sale",
+    isKaccha: false,
     remarks: "",
     grossWeightG: null,
     photos: [],
@@ -203,6 +214,7 @@ export const MOCK_QUOTES: Quote[] = [
     validUntil: "2026-06-27",
     assignedRep: "Karan Malhotra",
     kind: "sale",
+    isKaccha: false,
     remarks: "",
     grossWeightG: null,
     photos: [],
@@ -231,6 +243,7 @@ export const MOCK_QUOTES: Quote[] = [
     validUntil: "2026-06-24",
     assignedRep: "Rina Trivedi",
     kind: "sale",
+    isKaccha: false,
     remarks: "",
     grossWeightG: null,
     photos: [],
@@ -259,6 +272,7 @@ export const MOCK_QUOTES: Quote[] = [
     validUntil: "2026-06-03",
     assignedRep: "Isha Patel",
     kind: "sale",
+    isKaccha: false,
     remarks: "",
     grossWeightG: null,
     photos: [],

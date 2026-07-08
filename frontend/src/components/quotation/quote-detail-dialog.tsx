@@ -54,6 +54,9 @@ export function QuoteDetailDialog({
 
   const isRepair = quote.kind === "repair";
   const totals = computeQuoteTotals(quote);
+  // Kaccha estimates carry no GST — mirror the server (GST = 0, grand = taxable).
+  const gstShown = quote.isKaccha ? 0 : totals.gst;
+  const grandShown = quote.isKaccha ? totals.taxable : totals.grandTotal;
   const photos = quote.photos ?? [];
   const originName =
     stores.find((s) => s.id === quote.originStoreId)?.name ?? quote.originStoreId;
@@ -82,6 +85,9 @@ export function QuoteDetailDialog({
               ) : (
                 <Badge variant="gold">{QUOTE_KIND_LABELS.sale}</Badge>
               )}
+              {quote.isKaccha ? (
+                <Badge variant="outline">Kaccha — no GST</Badge>
+              ) : null}
             </DialogTitle>
             <Badge variant="secondary">
               {QUOTE_STATUS_LABELS[quote.status]}
@@ -237,19 +243,21 @@ export function QuoteDetailDialog({
             <Row label="Taxable value" value={formatINR(totals.taxable)} />
             <Row
               label={
-                <>
-                  GST @{" "}
-                  <span className="num">{formatPercent(GST_RATE * 100, 0)}</span>
-                </>
+                quote.isKaccha ? (
+                  "GST (kaccha — none)"
+                ) : (
+                  <>
+                    GST @{" "}
+                    <span className="num">
+                      {formatPercent(GST_RATE * 100, 0)}
+                    </span>
+                  </>
+                )
               }
-              value={formatINR(totals.gst)}
+              value={formatINR(gstShown)}
             />
             <Separator className="my-1" />
-            <Row
-              label="Grand total"
-              value={formatINR(totals.grandTotal)}
-              bold
-            />
+            <Row label="Grand total" value={formatINR(grandShown)} bold />
           </dl>
         </div>
 

@@ -106,6 +106,8 @@ export function QuoteBuilderDialog({
   // Shared
   const [customer, setCustomer] = useState("");
   const [phone, setPhone] = useState("");
+  // Kaccha ("@") estimate — rough, no-GST, kept head-office-only.
+  const [isKaccha, setIsKaccha] = useState(false);
 
   // Sale — gold
   const [saleDesc, setSaleDesc] = useState("");
@@ -184,10 +186,13 @@ export function QuoteBuilderDialog({
   const repairMakingNum = toNumber(repairMaking) ?? 0;
 
   const preview = useMemo(() => {
+    // Kaccha estimates carry no GST — mirror the server (GST = 0, grand =
+    // taxable) for both Sale and Repair modes.
+    const rate = isKaccha ? 0 : GST_RATE;
     if (mode === "repair") {
       const makingV = repairMakingNum;
       const taxable = makingV;
-      const gst = taxable * GST_RATE;
+      const gst = taxable * rate;
       return {
         metal: 0,
         making: makingV,
@@ -199,7 +204,7 @@ export function QuoteBuilderDialog({
     }
     const metal = weightNum * goldRate;
     const taxable = metal + makingNum + diamondsTotal;
-    const gst = taxable * GST_RATE;
+    const gst = taxable * rate;
     return {
       metal,
       making: makingNum,
@@ -208,7 +213,15 @@ export function QuoteBuilderDialog({
       gst,
       grand: taxable + gst,
     };
-  }, [mode, repairMakingNum, weightNum, goldRate, makingNum, diamondsTotal]);
+  }, [
+    mode,
+    isKaccha,
+    repairMakingNum,
+    weightNum,
+    goldRate,
+    makingNum,
+    diamondsTotal,
+  ]);
 
   const busy =
     createQuote.isPending ||
@@ -254,6 +267,7 @@ export function QuoteBuilderDialog({
     setMode("sale");
     setCustomer("");
     setPhone("");
+    setIsKaccha(false);
     setSaleDesc("");
     setKarat(22);
     setWeight("");
@@ -430,6 +444,7 @@ export function QuoteBuilderDialog({
         customerName: name,
         phone: phone.trim() || undefined,
         kind: mode,
+        isKaccha: isKaccha || undefined,
         remarks: mode === "repair" ? remarks.trim() || undefined : undefined,
         grossWeightG: mode === "repair" ? toNumber(grossWeight) : undefined,
         lines,
@@ -530,6 +545,39 @@ export function QuoteBuilderDialog({
                 placeholder="+91 ..."
               />
             </div>
+          </div>
+
+          {/* Kaccha ("@") estimate — no-GST, head-office-only */}
+          <div className="flex items-start justify-between gap-4 rounded-lg border bg-muted/30 px-3 py-2.5">
+            <div className="min-w-0">
+              <Label htmlFor="qb-kaccha" className="text-sm font-medium">
+                Kaccha estimate — no GST (head-office only)
+              </Label>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Rough estimate; typing &ldquo;@&rdquo; before an amount is the
+                kaccha convention. Saved privately, hidden from the normal quote
+                list.
+              </p>
+            </div>
+            <button
+              id="qb-kaccha"
+              type="button"
+              role="switch"
+              aria-checked={isKaccha}
+              aria-label="Kaccha estimate — no GST"
+              onClick={() => setIsKaccha((v) => !v)}
+              className={cn(
+                "relative mt-0.5 inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                isKaccha ? "bg-primary" : "bg-input",
+              )}
+            >
+              <span
+                className={cn(
+                  "inline-block h-5 w-5 transform rounded-full bg-background shadow-sm transition-transform",
+                  isKaccha ? "translate-x-5" : "translate-x-0.5",
+                )}
+              />
+            </button>
           </div>
 
           {mode === "sale" ? (
@@ -909,7 +957,11 @@ export function QuoteBuilderDialog({
               <Separator className="my-1" />
               <PreviewRow label="Taxable value" value={preview.taxable} />
               <PreviewRow
-                label={`GST @ ${formatPercent(GST_RATE * 100, 0)}`}
+                label={
+                  isKaccha
+                    ? "GST (kaccha — none)"
+                    : `GST @ ${formatPercent(GST_RATE * 100, 0)}`
+                }
                 value={preview.gst}
               />
               <Separator className="my-1" />

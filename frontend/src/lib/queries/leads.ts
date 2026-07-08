@@ -48,7 +48,15 @@ export function useLeads(filter: LeadFilter = {}) {
           ...(to ? { to } : {}),
         },
       });
-      return data;
+      // Normalise the collection fields: the list endpoint may omit occasion
+      // reminders / notes / SOP follow-ups, and the lead card + detail dialog
+      // read `.length`/`.map` on each — default them to [] so neither crashes.
+      return (Array.isArray(data) ? data : []).map((l) => ({
+        ...l,
+        reminders: l.reminders ?? [],
+        notes: l.notes ?? [],
+        followUps: l.followUps ?? [],
+      }));
     },
   });
 }

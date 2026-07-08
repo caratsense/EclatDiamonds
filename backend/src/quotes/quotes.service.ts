@@ -3,6 +3,7 @@ import { OrderStatus, Prisma, QuoteKind } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
+import { isAllStoreRole } from '../common/role.util';
 import { StorageService } from '../storage/storage.service';
 import { ConvertToOrderDto, CreateQuoteDto, QuoteLineDto } from './dto/quote.dto';
 
@@ -18,6 +19,7 @@ function toView(q: any) {
     redeemableStoreIds: (q.redeemableStores ?? []).map((r: any) => r.storeId),
     status: q.status,
     kind: q.kind,
+    isKaccha: q.isKaccha ?? false,
     remarks: q.remarks ?? '',
     grossWeightG: q.grossWeightG == null ? null : Number(q.grossWeightG),
     createdAt: q.createdAt.toISOString().slice(0, 10),
@@ -82,9 +84,17 @@ export class QuotesService {
     private readonly storage: StorageService,
   ) {}
 
-  async list(user: AuthUser, headerStore?: string) {
+  async list(user: AuthUser, headerStore?: string, includeKaccha = false) {
+    // "@" kaccha provision: rough no-GST estimates are hidden from the normal
+    // list. Only head_office may opt back in (includeKaccha); any non-HO request
+    // keeps them hidden regardless of the flag.
+    const showKaccha = includeKaccha && isAllStoreRole(user.role);
+    const where: Prisma.QuoteWhereInput = {
+      ...this.scope.storeFilter(user, headerStore),
+      ...(showKaccha ? {} : { isKaccha: false }),
+    };
     const quotes = await this.prisma.quote.findMany({
-      where: this.scope.storeFilter(user, headerStore),
+      where,
       include: { assignedRep: true, lines: true, redeemableStores: true },
       orderBy: { createdAt: 'desc' },
     });
@@ -97,13 +107,23 @@ export class QuotesService {
       include: { assignedRep: true, lines: true, redeemableStores: true, photos: true },
     });
     if (!q) throw new NotFoundException('Quote not found');
+    // "@" kaccha quotes are HO-only: don't reveal them by ref to anyone else.
+    if (q.isKaccha && !isAllStoreRole(user.role)) throw new NotFoundException('Quote not found');
     return toView(q);
   }
 
   async create(user: AuthUser, dto: CreateQuoteDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
     const kind = dto.kind ?? QuoteKind.sale;
+    const isKaccha = dto.isKaccha ?? false;
     const t = computeTotals(dto.lines, kind);
+    // "@" kaccha provision: a rough estimate carries NO GST. Taxable (making +
+    // metal + stones, per the sale/repair rule above) stays as computed; we just
+    // force the tax to zero and make the grand total equal the taxable amount.
+    if (isKaccha) {
+      t.gst = 0;
+      t.grandTotal = t.taxable;
+    }
     const count = await this.prisma.quote.count();
     const redeemable = [...new Set([dto.storeId, ...(dto.redeemableStoreIds ?? [])])];
 
@@ -117,6 +137,7 @@ export class QuotesService {
         phone: dto.phone,
         status: dto.status ?? 'draft',
         kind,
+        isKaccha,
         remarks: dto.remarks ?? null,
         grossWeightG:
           dto.grossWeightG != null ? new Prisma.Decimal(dto.grossWeightG) : null,

@@ -631,6 +631,10 @@ model Quote {
   /// Round 2: gross weight in grams for a repair quote (making-only).
   grossWeightG Decimal? @db.Decimal(10, 3)
 
+  /// "@" kaccha provision: rough no-GST estimate. Hidden from the normal quote
+  /// list and only reachable by head_office. Lightweight flag, not a separate DB.
+  isKaccha     Boolean @default(false)
+
   /// Money rollup snapshot (recomputed from lines, persisted for fast listing).
   metalValue    Decimal @default(0) @db.Decimal(14, 2)
   makingCharges Decimal @default(0) @db.Decimal(14, 2)

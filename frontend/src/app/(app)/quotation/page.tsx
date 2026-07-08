@@ -44,9 +44,19 @@ const STATUS_VARIANT: Record<
 };
 
 export default function QuotationPage() {
-  const { currentStore, stores } = useSession();
+  const { currentStore, stores, role } = useSession();
+  // Kaccha ("@") estimates are HO-only. The toggle is gated on the session role;
+  // non-HO users never see it and the server never returns kaccha rows to them.
+  const isHeadOffice = role === "head_office";
+  const [showKaccha, setShowKaccha] = useState(false);
+  const includeKaccha = isHeadOffice && showKaccha;
   // Quotes come live + portability-scoped server-side (origin or redeemable).
-  const { data: scoped = [], isLoading, isError, refetch } = useQuotes();
+  const {
+    data: scoped = [],
+    isLoading,
+    isError,
+    refetch,
+  } = useQuotes({ includeKaccha });
   const [active, setActive] = useState<Quote | null>(null);
   const [open, setOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
@@ -76,11 +86,38 @@ export default function QuotationPage() {
         </TabsList>
 
         <TabsContent value="quotes" className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            {currentStore.isAggregate
-              ? "Showing quotes across all stores"
-              : `Showing quotes raised at or portable to ${currentStore.name}`}
-          </p>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">
+              {currentStore.isAggregate
+                ? "Showing quotes across all stores"
+                : `Showing quotes raised at or portable to ${currentStore.name}`}
+            </p>
+            {isHeadOffice ? (
+              <label className="flex cursor-pointer select-none items-center gap-2 text-sm">
+                <span className="text-muted-foreground">
+                  Show kaccha estimates
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={showKaccha}
+                  aria-label="Show kaccha estimates"
+                  onClick={() => setShowKaccha((v) => !v)}
+                  className={
+                    "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring " +
+                    (showKaccha ? "bg-primary" : "bg-input")
+                  }
+                >
+                  <span
+                    className={
+                      "inline-block h-5 w-5 transform rounded-full bg-background shadow-sm transition-transform " +
+                      (showKaccha ? "translate-x-5" : "translate-x-0.5")
+                    }
+                  />
+                </button>
+              </label>
+            ) : null}
+          </div>
 
           <div className="rounded-xl border">
             <Table>
@@ -147,7 +184,16 @@ export default function QuotationPage() {
                   <TableCell className="font-medium">
                     <span className="num">{q.ref}</span>
                   </TableCell>
-                  <TableCell>{q.customer}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1.5">
+                      {q.customer}
+                      {q.isKaccha ? (
+                        <Badge variant="outline" className="text-[10px]">
+                          Kaccha
+                        </Badge>
+                      ) : null}
+                    </div>
+                  </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1.5">
                       {storeName(q.originStoreId)}

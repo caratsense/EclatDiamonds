@@ -33,12 +33,22 @@ export function formatINRCompact(amount: number): string {
 }
 
 /** Weight in grams — gold/silver gross/net weights. */
-export function formatGrams(grams: number, fractionDigits = 3): string {
+export function formatGrams(
+  grams: number | null | undefined,
+  fractionDigits = 3,
+): string {
+  // Optional/absent weights (e.g. a product or stock piece saved without a
+  // gross weight) come back null from the API — render "—" instead of crashing.
+  if (grams == null || Number.isNaN(grams)) return "—";
   return `${grams.toFixed(fractionDigits)} g`;
 }
 
 /** Weight in carats — diamonds / gemstones. */
-export function formatCarats(carats: number, fractionDigits = 2): string {
+export function formatCarats(
+  carats: number | null | undefined,
+  fractionDigits = 2,
+): string {
+  if (carats == null || Number.isNaN(carats)) return "—";
   return `${carats.toFixed(fractionDigits)} ct`;
 }
 
