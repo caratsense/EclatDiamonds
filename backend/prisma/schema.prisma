@@ -420,6 +420,21 @@ model UserStore {
   @@index([storeId])
 }
 
+/// One-time WhatsApp sign-in code (POST /auth/otp/request|verify). `phone` is the
+/// NORMALIZED last-10-digit Indian mobile. Only the bcrypt hash of the 6-digit
+/// code is stored; rows are rate-limit evidence too (5/phone/hour, 60s cooldown).
+model LoginOtp {
+  id         String    @id @default(cuid())
+  phone      String
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int       @default(0)
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([phone, createdAt])
+}
+
 /// Per-role discount approval ceiling (Module 15). e.g. salesperson <= 2%, SM <= 5%.
 /// Optionally scoped to a store/region; null scope = global default.
 model DiscountLimit {

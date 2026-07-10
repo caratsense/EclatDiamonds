@@ -9,19 +9,49 @@ import type { AxiosError } from "axios";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Logo } from "@/components/brand/logo";
 import { GoogleSignInButton } from "@/components/auth/google-sign-in-button";
 import { homeForRole } from "@/lib/navigation";
 import { getStoredToken } from "@/lib/api";
-import { useLogin, useGoogleLogin } from "@/lib/queries/auth";
+import {
+  useLogin,
+  useGoogleLogin,
+  useRequestOtp,
+  useVerifyOtp,
+} from "@/lib/queries/auth";
 import { useSession } from "@/store/use-session";
 
 const DEMO_ACCOUNTS = [
-  { email: "head.office@caratsense.in", label: "Head Office — all stores" },
-  { email: "neelam.area@caratsense.in", label: "Area Manager — West region" },
-  { email: "aarav.mehta@caratsense.in", label: "Store Manager — Surat" },
-  { email: "priya.rep@caratsense.in", label: "Salesperson — Surat" },
+  {
+    email: "head.office@caratsense.in",
+    phone: "9100000001",
+    label: "Head Office — all stores",
+  },
+  {
+    email: "neelam.area@caratsense.in",
+    phone: "9100000002",
+    label: "Area Manager — West region",
+  },
+  {
+    email: "aarav.mehta@caratsense.in",
+    phone: "9100000003",
+    label: "Store Manager — Surat",
+  },
+  {
+    email: "priya.rep@caratsense.in",
+    phone: "9100000004",
+    label: "Salesperson — Surat",
+  },
 ];
+
+/** Surface the backend's 4xx message (NestJS: string or string[]) or fall back. */
+function apiMessage(err: unknown, fallback: string): string {
+  const message = (err as AxiosError<{ message?: string | string[] }>)
+    ?.response?.data?.message;
+  if (Array.isArray(message)) return message[0] ?? fallback;
+  return typeof message === "string" && message ? message : fallback;
+}
 
 const HIGHLIGHTS = [
   "Multi-store sales & daily reports in real time",
@@ -34,9 +64,24 @@ export default function LoginPage() {
   const hydrate = useSession((s) => s.hydrate);
   const login = useLogin();
   const googleLogin = useGoogleLogin();
+  const requestOtp = useRequestOtp();
+  const verifyOtp = useVerifyOtp();
 
   const [email, setEmail] = React.useState("head.office@caratsense.in");
   const [password, setPassword] = React.useState("password123");
+
+  // WhatsApp OTP flow (the primary staff sign-in).
+  const [phone, setPhone] = React.useState("");
+  const [code, setCode] = React.useState("");
+  const [otpStep, setOtpStep] = React.useState<"phone" | "code">("phone");
+  const [resendIn, setResendIn] = React.useState(0);
+
+  // Live resend countdown — ticks down once per second while > 0.
+  React.useEffect(() => {
+    if (resendIn <= 0) return;
+    const t = setTimeout(() => setResendIn((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendIn]);
 
   function finishLogin(me: Parameters<typeof hydrate>[0]) {
     hydrate(me);
@@ -78,6 +123,55 @@ export default function LoginPage() {
               : "Couldn't sign in. Check your connection and try again.",
           );
         },
+      },
+    );
+  }
+
+  function sendCode() {
+    if (!/^\d{10}$/.test(phone)) {
+      toast.error("Enter a valid 10-digit mobile number.");
+      return;
+    }
+    requestOtp.mutate(phone, {
+      onSuccess: (res) => {
+        toast.success(
+          res.dryRun
+            ? "Code sent (test mode — ask your administrator)."
+            : "Code sent on WhatsApp.",
+        );
+        setOtpStep("code");
+        setCode("");
+        setResendIn(60);
+      },
+      // 429 (cooldown / hourly cap) and 400 carry a human message in the
+      // body — surface it verbatim. The countdown is deliberately left
+      // untouched on error.
+      onError: (err) =>
+        toast.error(
+          apiMessage(err, "Couldn't send the code. Try again in a moment."),
+        ),
+    });
+  }
+
+  function onSendCode(e: React.FormEvent) {
+    e.preventDefault();
+    sendCode();
+  }
+
+  function onVerify(e: React.FormEvent) {
+    e.preventDefault();
+    if (!/^\d{6}$/.test(code)) {
+      toast.error("Enter the 6-digit code.");
+      return;
+    }
+    verifyOtp.mutate(
+      { phone, code },
+      {
+        onSuccess: finishLogin,
+        onError: (err) =>
+          toast.error(
+            apiMessage(err, "Couldn't verify the code. Try again."),
+          ),
       },
     );
   }
@@ -138,45 +232,163 @@ export default function LoginPage() {
             Welcome back. Enter your details to continue.
           </p>
 
-          <form onSubmit={onSubmit} className="mt-7 space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                autoComplete="username"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
-            </div>
-            <Button
-              type="submit"
-              variant="gold"
-              size="lg"
-              className="w-full"
-              disabled={login.isPending}
-            >
-              {login.isPending ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" /> Signing in…
-                </>
+          <Tabs defaultValue="otp" className="mt-6">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="otp">WhatsApp OTP</TabsTrigger>
+              <TabsTrigger value="password">Password</TabsTrigger>
+            </TabsList>
+
+            {/* ── WhatsApp OTP — primary staff flow ─────────────────── */}
+            <TabsContent value="otp" className="mt-5">
+              {otpStep === "phone" ? (
+                <form onSubmit={onSendCode} className="space-y-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="otp-phone">Mobile number</Label>
+                    <Input
+                      id="otp-phone"
+                      type="tel"
+                      inputMode="numeric"
+                      autoComplete="tel-national"
+                      placeholder="10-digit mobile number"
+                      maxLength={10}
+                      value={phone}
+                      onChange={(e) =>
+                        setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))
+                      }
+                      required
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      We&apos;ll send a one-time sign-in code to this number on
+                      WhatsApp.
+                    </p>
+                  </div>
+                  <Button
+                    type="submit"
+                    variant="gold"
+                    size="lg"
+                    className="w-full"
+                    disabled={requestOtp.isPending}
+                  >
+                    {requestOtp.isPending ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" /> Sending…
+                      </>
+                    ) : (
+                      "Send code"
+                    )}
+                  </Button>
+                </form>
               ) : (
-                "Sign in"
+                <form onSubmit={onVerify} className="space-y-4">
+                  <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2 text-sm">
+                    <span>
+                      Code sent to{" "}
+                      <span className="num font-medium">{phone}</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setOtpStep("phone")}
+                      className="text-xs font-medium underline underline-offset-2 hover:text-foreground"
+                    >
+                      Change
+                    </button>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="otp-code">6-digit code</Label>
+                    <Input
+                      id="otp-code"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      placeholder="6-digit code"
+                      maxLength={6}
+                      autoFocus
+                      className="num tracking-[0.35em]"
+                      value={code}
+                      onChange={(e) =>
+                        setCode(e.target.value.replace(/\D/g, "").slice(0, 6))
+                      }
+                      required
+                    />
+                  </div>
+                  <Button
+                    type="submit"
+                    variant="gold"
+                    size="lg"
+                    className="w-full"
+                    disabled={verifyOtp.isPending}
+                  >
+                    {verifyOtp.isPending ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" /> Verifying…
+                      </>
+                    ) : (
+                      "Verify & sign in"
+                    )}
+                  </Button>
+                  <p className="text-center text-xs text-muted-foreground">
+                    Didn&apos;t receive it?{" "}
+                    <button
+                      type="button"
+                      onClick={sendCode}
+                      disabled={resendIn > 0 || requestOtp.isPending}
+                      className="font-medium underline underline-offset-2 hover:text-foreground disabled:no-underline disabled:opacity-70"
+                    >
+                      {resendIn > 0 ? (
+                        <>
+                          Resend in <span className="num">{resendIn}</span>s
+                        </>
+                      ) : (
+                        "Resend code"
+                      )}
+                    </button>
+                  </p>
+                </form>
               )}
-            </Button>
-          </form>
+            </TabsContent>
+
+            {/* ── Email + password ───────────────────────────────────── */}
+            <TabsContent value="password" className="mt-5">
+              <form onSubmit={onSubmit} className="space-y-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="email">Email</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    autoComplete="username"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="password">Password</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                  />
+                </div>
+                <Button
+                  type="submit"
+                  variant="gold"
+                  size="lg"
+                  className="w-full"
+                  disabled={login.isPending}
+                >
+                  {login.isPending ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" /> Signing in…
+                    </>
+                  ) : (
+                    "Sign in"
+                  )}
+                </Button>
+              </form>
+            </TabsContent>
+          </Tabs>
 
           {/* Google sign-in (renders only when NEXT_PUBLIC_GOOGLE_CLIENT_ID is set). */}
           {process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ? (
@@ -195,18 +407,25 @@ export default function LoginPage() {
               Demo accounts — password{" "}
               <code className="num rounded bg-muted px-1 py-0.5 text-foreground">
                 password123
-              </code>
+              </code>{" "}
+              · tap one to pre-fill either tab
             </p>
             <ul className="space-y-1">
               {DEMO_ACCOUNTS.map((a) => (
                 <li key={a.email}>
                   <button
                     type="button"
-                    onClick={() => setEmail(a.email)}
+                    onClick={() => {
+                      setEmail(a.email);
+                      setPhone(a.phone);
+                      setOtpStep("phone");
+                    }}
                     className="w-full rounded-lg px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent"
                   >
                     <span className="font-medium">{a.email}</span>
-                    <span className="block text-muted-foreground">{a.label}</span>
+                    <span className="block text-muted-foreground">
+                      {a.label} · <span className="num">{a.phone}</span>
+                    </span>
                   </button>
                 </li>
               ))}

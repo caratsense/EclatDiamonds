@@ -64,6 +64,67 @@ export function useGoogleLogin() {
 }
 
 /**
+ * useRequestOtp — asks the backend to send a 6-digit sign-in code on
+ * WhatsApp. The response is identical for known and unknown phones (no
+ * account enumeration); `dryRun` is true when WhatsApp delivery is not
+ * configured (test mode — the code is logged server-side).
+ */
+export function useRequestOtp() {
+  return useMutation({
+    mutationFn: async (phone: string) => {
+      const { data } = await api.post<{ sent: boolean; dryRun: boolean }>(
+        "/auth/otp/request",
+        { phone },
+      );
+      return data;
+    },
+  });
+}
+
+/**
+ * useVerifyOtp — exchanges phone + 6-digit code for a session. The backend
+ * responds with the exact /auth/login shape (token + full session payload),
+ * so no follow-up /auth/me round trip is needed. Token and active store are
+ * persisted before resolving (mirrors useLogin).
+ */
+export function useVerifyOtp() {
+  return useMutation({
+    mutationFn: async (input: { phone: string; code: string }) => {
+      const { data } = await api.post<{ token: string } & AuthMeResponse>(
+        "/auth/otp/verify",
+        input,
+      );
+      setStoredToken(data.token);
+      setStoredStoreId(data.currentStore.id);
+      const me: AuthMeResponse = {
+        user: data.user,
+        role: data.role,
+        stores: data.stores,
+        currentStore: data.currentStore,
+      };
+      return me;
+    },
+  });
+}
+
+/**
+ * useResetPassword — sets a new password for another user (store_manager and
+ * above; the backend enforces store scope and role rank, returning 403 when
+ * the target is out of reach).
+ */
+export function useResetPassword() {
+  return useMutation({
+    mutationFn: async (input: { userId: string; newPassword: string }) => {
+      const { data } = await api.post<{ ok: boolean }>(
+        "/auth/reset-password",
+        input,
+      );
+      return data;
+    },
+  });
+}
+
+/**
  * useChangePassword — updates the signed-in user's password (the in-app
  * password; Google sign-in is a separate path). The backend verifies
  * `currentPassword` before accepting `newPassword`.

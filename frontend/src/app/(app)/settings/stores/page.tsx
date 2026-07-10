@@ -4,12 +4,14 @@ import { useState } from "react";
 import {
   Check,
   Copy,
+  KeyRound,
   Lock,
   Mail,
   Pencil,
   UserPlus,
 } from "lucide-react";
 import { toast } from "sonner";
+import type { AxiosError } from "axios";
 
 import { SectionHeader } from "@/components/section/section-header";
 import { Badge } from "@/components/ui/badge";
@@ -34,12 +36,14 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { getNavItem } from "@/lib/navigation";
+import { useResetPassword } from "@/lib/queries/auth";
 import {
   useAddStoreManager,
   useCreateStore,
   useStoresAdmin,
   useUpdateStore,
   type AdminStore,
+  type StoreManager,
 } from "@/lib/queries/stores";
 import { useSession } from "@/store/use-session";
 
@@ -50,6 +54,7 @@ export default function StoreSetupPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [editStore, setEditStore] = useState<AdminStore | null>(null);
   const [managerStore, setManagerStore] = useState<AdminStore | null>(null);
+  const [resetUser, setResetUser] = useState<StoreManager | null>(null);
 
   const { data: stores = [], isLoading, isError, refetch } = useStoresAdmin();
 
@@ -159,13 +164,27 @@ export default function StoreSetupPage() {
                     ) : (
                       <ul className="space-y-1">
                         {store.managers.map((m) => (
-                          <li key={m.id} className="leading-tight">
-                            <span className="text-sm font-medium">
-                              {m.name}
-                            </span>
-                            <span className="block text-xs text-muted-foreground">
-                              {m.email}
-                            </span>
+                          <li
+                            key={m.id}
+                            className="flex items-center justify-between gap-3 leading-tight"
+                          >
+                            <div className="min-w-0">
+                              <span className="block truncate text-sm font-medium">
+                                {m.name}
+                              </span>
+                              <span className="block truncate text-xs text-muted-foreground">
+                                {m.email}
+                              </span>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 shrink-0 px-2 text-xs"
+                              onClick={() => setResetUser(m)}
+                            >
+                              <KeyRound className="h-3.5 w-3.5" /> Reset
+                              password
+                            </Button>
                           </li>
                         ))}
                       </ul>
@@ -218,6 +237,10 @@ export default function StoreSetupPage() {
       <AddManagerDialog
         store={managerStore}
         onOpenChange={(open) => !open && setManagerStore(null)}
+      />
+      <ResetPasswordDialog
+        user={resetUser}
+        onOpenChange={(open) => !open && setResetUser(null)}
       />
     </>
   );
@@ -699,6 +722,107 @@ function AddManagerDialog({
             </DialogFooter>
           </>
         )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Reset password                                                     */
+/* ------------------------------------------------------------------ */
+
+function ResetPasswordDialog({
+  user,
+  onOpenChange,
+}: {
+  user: StoreManager | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const resetPassword = useResetPassword();
+  const [newPassword, setNewPassword] = useState("");
+  const [touched, setTouched] = useState(false);
+  // Re-seed the form whenever the dialog opens (also when it re-opens for
+  // the same person after closing).
+  const [seededId, setSeededId] = useState<string | null>(null);
+  if (user && user.id !== seededId) {
+    setSeededId(user.id);
+    setNewPassword("");
+    setTouched(false);
+  }
+  if (!user && seededId !== null) {
+    setSeededId(null);
+    setNewPassword("");
+    setTouched(false);
+  }
+
+  const tooShort = newPassword.length < 8;
+  const showError = touched && tooShort;
+
+  function save() {
+    if (!user) return;
+    if (tooShort) {
+      setTouched(true);
+      return;
+    }
+    resetPassword.mutate(
+      { userId: user.id, newPassword },
+      {
+        onSuccess: () => {
+          toast.success("Password updated.");
+          onOpenChange(false);
+        },
+        onError: (err) => {
+          // 403 (out of scope / insufficient rank) carries a human message.
+          const message = (err as AxiosError<{ message?: string | string[] }>)
+            ?.response?.data?.message;
+          toast.error(
+            (Array.isArray(message) ? message[0] : message) ||
+              "Could not update the password.",
+          );
+        },
+      },
+    );
+  }
+
+  return (
+    <Dialog open={!!user} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Reset password</DialogTitle>
+          <DialogDescription>
+            {user
+              ? `Set a new password for ${user.name}. Share it with them privately; they can change it later in Settings.`
+              : null}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-1.5">
+          <Label htmlFor="reset-password">
+            New password <span className="text-destructive">*</span>
+          </Label>
+          <Input
+            id="reset-password"
+            type="password"
+            autoComplete="new-password"
+            placeholder="At least 8 characters"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            onBlur={() => setTouched(true)}
+            aria-invalid={showError}
+          />
+          {showError ? (
+            <p className="text-xs text-destructive">
+              Password must be at least 8 characters.
+            </p>
+          ) : null}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={resetPassword.isPending}>
+            {resetPassword.isPending ? "Updating…" : "Update password"}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

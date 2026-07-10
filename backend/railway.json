@@ -5,7 +5,7 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "preDeployCommand": "node node_modules/prisma/build/index.js migrate deploy",
+    "preDeployCommand": "node node_modules/prisma/build/index.js migrate deploy && node prisma/seed-user-phones.mjs",
     "startCommand": "node dist/main.js",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 5
