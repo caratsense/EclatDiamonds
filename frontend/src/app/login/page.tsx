@@ -9,7 +9,6 @@ import type { AxiosError } from "axios";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Logo } from "@/components/brand/logo";
 import { GoogleSignInButton } from "@/components/auth/google-sign-in-button";
 import { homeForRole } from "@/lib/navigation";
@@ -75,6 +74,8 @@ export default function LoginPage() {
   const [code, setCode] = React.useState("");
   const [otpStep, setOtpStep] = React.useState<"phone" | "code">("phone");
   const [resendIn, setResendIn] = React.useState(0);
+  // Email/password is a fallback until Google + WhatsApp are configured.
+  const [showPassword, setShowPassword] = React.useState(false);
 
   // Live resend countdown — ticks down once per second while > 0.
   React.useEffect(() => {
@@ -232,14 +233,20 @@ export default function LoginPage() {
             Welcome back. Enter your details to continue.
           </p>
 
-          <Tabs defaultValue="otp" className="mt-6">
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="otp">WhatsApp OTP</TabsTrigger>
-              <TabsTrigger value="password">Password</TabsTrigger>
-            </TabsList>
+          {/* ── Google — one-tap primary (renders once NEXT_PUBLIC_GOOGLE_CLIENT_ID is configured) ── */}
+          {process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ? (
+            <div className="mt-6">
+              <GoogleSignInButton onCredential={onGoogle} />
+              <div className="mt-5 flex items-center gap-3 text-xs text-muted-foreground">
+                <div className="h-px flex-1 bg-border" />
+                or sign in with WhatsApp
+                <div className="h-px flex-1 bg-border" />
+              </div>
+            </div>
+          ) : null}
 
-            {/* ── WhatsApp OTP — primary staff flow ─────────────────── */}
-            <TabsContent value="otp" className="mt-5">
+          {/* ── WhatsApp OTP — primary staff flow ─────────────────── */}
+          <div className="mt-5">
               {otpStep === "phone" ? (
                 <form onSubmit={onSendCode} className="space-y-4">
                   <div className="space-y-1.5">
@@ -344,10 +351,23 @@ export default function LoginPage() {
                   </p>
                 </form>
               )}
-            </TabsContent>
+          </div>
 
-            {/* ── Email + password ───────────────────────────────────── */}
-            <TabsContent value="password" className="mt-5">
+          {/* ── Email + password — kept as an administrative fallback until
+                 Google + WhatsApp are fully configured; collapsed by default ── */}
+          <p className="mt-5 text-center">
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              className="text-xs font-medium text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            >
+              {showPassword
+                ? "Hide password sign-in"
+                : "Sign in with email and password instead"}
+            </button>
+          </p>
+          {showPassword ? (
+            <div className="mt-4">
               <form onSubmit={onSubmit} className="space-y-4">
                 <div className="space-y-1.5">
                   <Label htmlFor="email">Email</Label>
@@ -387,19 +407,7 @@ export default function LoginPage() {
                   )}
                 </Button>
               </form>
-            </TabsContent>
-          </Tabs>
-
-          {/* Google sign-in (renders only when NEXT_PUBLIC_GOOGLE_CLIENT_ID is set). */}
-          {process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ? (
-            <>
-              <div className="my-5 flex items-center gap-3 text-xs text-muted-foreground">
-                <div className="h-px flex-1 bg-border" />
-                or
-                <div className="h-px flex-1 bg-border" />
-              </div>
-              <GoogleSignInButton onCredential={onGoogle} />
-            </>
+            </div>
           ) : null}
 
           <div className="mt-7 rounded-xl border bg-card p-3.5 shadow-xs">
@@ -408,7 +416,7 @@ export default function LoginPage() {
               <code className="num rounded bg-muted px-1 py-0.5 text-foreground">
                 password123
               </code>{" "}
-              · tap one to pre-fill either tab
+              · tap one to pre-fill
             </p>
             <ul className="space-y-1">
               {DEMO_ACCOUNTS.map((a) => (
