@@ -110,7 +110,7 @@ export function KpiCard({
         <p className="mt-4 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
           {label}
         </p>
-        <p className="mt-1.5 font-display text-[32px] font-medium leading-none tracking-tight tabular-nums text-foreground">
+        <p className="mt-1.5 font-display text-[32px] font-semibold leading-none tracking-tight tabular-nums text-foreground">
           {format === "inr" ? formatINRCompact(value) : formatNumber(value)}
         </p>
         <p className="mt-2 text-[11px] text-muted-foreground">vs prior period</p>

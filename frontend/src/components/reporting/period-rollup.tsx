@@ -84,7 +84,7 @@ function RollupTile({
             {label}
           </p>
         </div>
-        <p className="mt-3.5 font-display text-[30px] font-medium leading-none tracking-tight tabular-nums text-foreground">
+        <p className="mt-3.5 font-display text-[30px] font-semibold leading-none tracking-tight tabular-nums text-foreground">
           {value}
         </p>
         <div className="mt-4 space-y-1.5 border-t pt-3">
@@ -124,7 +124,7 @@ export function PeriodRollup({
     <section className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="font-display text-lg font-medium tracking-tight text-foreground">
+          <h2 className="font-display text-lg font-semibold tracking-tight text-foreground">
             Period rollup
           </h2>
           <p className="text-sm text-muted-foreground">

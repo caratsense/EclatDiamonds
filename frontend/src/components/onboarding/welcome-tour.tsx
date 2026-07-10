@@ -169,7 +169,7 @@ export function WelcomeTour() {
               <Sparkles className="h-5 w-5" />
             )}
           </div>
-          <DialogTitle className="font-display text-xl font-medium tracking-tight">
+          <DialogTitle className="font-display text-xl font-semibold tracking-tight">
             {current.title}
           </DialogTitle>
           <DialogDescription className="leading-relaxed">

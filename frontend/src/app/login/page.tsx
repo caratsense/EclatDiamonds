@@ -91,7 +91,7 @@ export default function LoginPage() {
         </div>
 
         <div className="max-w-md">
-          <h1 className="font-display text-4xl font-medium leading-[1.1] xl:text-5xl">
+          <h1 className="font-display text-4xl font-semibold leading-[1.1] xl:text-5xl">
             Where dreams meet diamonds.
           </h1>
           <p className="mt-5 text-[15px] leading-relaxed text-brand-foreground/75">
@@ -131,7 +131,7 @@ export default function LoginPage() {
             </span>
           </div>
 
-          <h2 className="font-display text-3xl font-medium tracking-tight">
+          <h2 className="font-display text-3xl font-semibold tracking-tight">
             Sign in
           </h2>
           <p className="mt-1.5 text-sm text-muted-foreground">

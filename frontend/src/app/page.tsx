@@ -83,7 +83,7 @@ export default function LandingPage() {
             <Sparkles className="h-3.5 w-3.5 text-[var(--gold)]" />
             CaratSense operations platform
           </span>
-          <h1 className="mt-6 max-w-3xl font-display text-5xl font-medium leading-[1.05] text-brand-foreground sm:text-6xl">
+          <h1 className="mt-6 max-w-3xl font-display text-5xl font-semibold leading-[1.05] text-brand-foreground sm:text-6xl">
             Run every Éclat Diamonds store from one place.
           </h1>
           <p className="mt-6 max-w-xl text-lg leading-relaxed text-brand-foreground/75">
@@ -126,7 +126,7 @@ export default function LandingPage() {
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gold-strong">
             One platform, every counter
           </p>
-          <h2 className="mt-3 font-display text-4xl font-medium tracking-tight">
+          <h2 className="mt-3 font-display text-4xl font-semibold tracking-tight">
             The whole business, quietly in order.
           </h2>
           <p className="mt-4 text-base leading-relaxed text-muted-foreground">
@@ -146,7 +146,7 @@ export default function LandingPage() {
                 <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[color-mix(in_srgb,var(--gold)_14%,transparent)] text-gold-strong">
                   <Icon className="h-5 w-5" />
                 </span>
-                <h3 className="mt-4 font-display text-xl font-medium">{f.title}</h3>
+                <h3 className="mt-4 font-display text-xl font-semibold">{f.title}</h3>
                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
                   {f.body}
                 </p>
@@ -161,7 +161,7 @@ export default function LandingPage() {
         <div className="mx-auto grid w-full max-w-6xl gap-8 px-5 py-16 sm:grid-cols-3 sm:px-8">
           {STATS.map((s) => (
             <div key={s.label} className="text-center">
-              <div className="font-display text-5xl font-medium text-[var(--gold)]">
+              <div className="font-display text-5xl font-semibold text-[var(--gold)]">
                 {s.value}
               </div>
               <div className="mt-2 text-sm text-brand-foreground/70">
@@ -175,7 +175,7 @@ export default function LandingPage() {
       {/* ── Closing CTA ─────────────────────────────────────────────── */}
       <section className="mx-auto w-full max-w-6xl px-5 py-20 text-center sm:px-8 sm:py-24">
         <Store className="mx-auto h-7 w-7 text-gold-strong" />
-        <h2 className="mt-5 font-display text-4xl font-medium tracking-tight">
+        <h2 className="mt-5 font-display text-4xl font-semibold tracking-tight">
           Ready when you open the shutters.
         </h2>
         <p className="mx-auto mt-4 max-w-md text-base text-muted-foreground">
