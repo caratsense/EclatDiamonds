@@ -1,11 +1,12 @@
 "use client";
 
 import * as React from "react";
-import { Check, Gem, Hammer, Lock, ShieldCheck, X } from "lucide-react";
+import { Check, Gem, Hammer, Lock, Percent, ShieldCheck, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { DiscountRequestDialog } from "@/components/discounts/discount-request-dialog";
 import { SectionHeader } from "@/components/section/section-header";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -184,11 +185,14 @@ export default function DiscountsPage() {
                 </TableRow>
               ) : rows.length === 0 ? (
                 <TableRow>
-                  <TableCell
-                    colSpan={colCount}
-                    className="py-10 text-center text-muted-foreground"
-                  >
-                    No discount requests yet — raise the first one above.
+                  <TableCell colSpan={colCount} className="py-6">
+                    <EmptyState
+                      icon={Percent}
+                      title="No discount requests yet"
+                      description="Raise a discount on diamond or making; within store-manager caps it auto-approves, higher amounts escalate for approval."
+                      actionLabel="Request Discount"
+                      onAction={() => setAddOpen(true)}
+                    />
                   </TableCell>
                 </TableRow>
               ) : (

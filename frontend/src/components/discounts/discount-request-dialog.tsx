@@ -67,6 +67,7 @@ export function DiscountRequestDialog({
   const [making, setMaking] = React.useState("");
   const [selling, setSelling] = React.useState("");
   const [reason, setReason] = React.useState("");
+  const [errors, setErrors] = React.useState<Record<string, string>>({});
 
   const diamondPct = toNumber(diamond) ?? 0;
   const makingPct = toNumber(making) ?? 0;
@@ -84,15 +85,17 @@ export function DiscountRequestDialog({
     setMaking("");
     setSelling("");
     setReason("");
+    setErrors({});
   }
 
   function submit() {
-    if (!customer.trim()) {
-      toast.error("Customer name is required.");
-      return;
-    }
-    if (!hasDiscount) {
-      toast.error("Enter a diamond % or making % — gold is never discounted.");
+    const fe: Record<string, string> = {};
+    if (!customer.trim()) fe.customer = "Customer name is required.";
+    if (!hasDiscount)
+      fe.discount = "Enter a diamond % or making % — gold is never discounted.";
+    setErrors(fe);
+    if (Object.keys(fe).length > 0) {
+      toast.error("Please fill in the required fields.");
       return;
     }
     createRequest.mutate(
@@ -157,8 +160,15 @@ export function DiscountRequestDialog({
               id="dr-customer"
               placeholder="e.g. Priya Sharma"
               value={customer}
-              onChange={(e) => setCustomer(e.target.value)}
+              onChange={(e) => {
+                setCustomer(e.target.value);
+                if (errors.customer) setErrors((p) => ({ ...p, customer: "" }));
+              }}
+              aria-invalid={!!errors.customer}
             />
+            {errors.customer ? (
+              <p className="mt-1 text-xs text-destructive">{errors.customer}</p>
+            ) : null}
           </div>
 
           <div className="grid gap-1.5">
@@ -198,7 +208,12 @@ export function DiscountRequestDialog({
                   step={0.5}
                   placeholder="0"
                   value={diamond}
-                  onChange={(e) => setDiamond(e.target.value)}
+                  onChange={(e) => {
+                    setDiamond(e.target.value);
+                    if (errors.discount)
+                      setErrors((p) => ({ ...p, discount: "" }));
+                  }}
+                  aria-invalid={!!errors.discount}
                 />
               </div>
               <div className="grid gap-1.5">
@@ -218,10 +233,18 @@ export function DiscountRequestDialog({
                   step={0.5}
                   placeholder="0"
                   value={making}
-                  onChange={(e) => setMaking(e.target.value)}
+                  onChange={(e) => {
+                    setMaking(e.target.value);
+                    if (errors.discount)
+                      setErrors((p) => ({ ...p, discount: "" }));
+                  }}
+                  aria-invalid={!!errors.discount}
                 />
               </div>
             </div>
+            {errors.discount ? (
+              <p className="mt-2 text-xs text-destructive">{errors.discount}</p>
+            ) : null}
           </div>
 
           <div className="grid gap-1.5 sm:max-w-xs">

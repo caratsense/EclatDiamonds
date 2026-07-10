@@ -85,6 +85,7 @@ export function ReturnCalculatorDialog({
   const [diaRate, setDiaRate] = React.useState("");
   const [making, setMaking] = React.useState("");
   const [chosen, setChosen] = React.useState<ChosenOption>("exchange");
+  const [errors, setErrors] = React.useState<Record<string, string>>({});
 
   const diamondSpecs = rates?.diamond ?? [];
 
@@ -110,6 +111,7 @@ export function ReturnCalculatorDialog({
     setDiaRate("");
     setMaking("");
     setChosen("exchange");
+    setErrors({});
     valuate.reset();
   }
 
@@ -148,12 +150,13 @@ export function ReturnCalculatorDialog({
   const buybackDia = result ? result.buybackValue - goldToday : 0;
 
   async function submit() {
-    if (!customer.trim()) {
-      toast.error("Customer name is required.");
-      return;
-    }
-    if (entryMode === "invoice" && !invoiceNo.trim()) {
-      toast.error("Enter the invoice number for an invoice-based return.");
+    const nextErrors: Record<string, string> = {};
+    if (!customer.trim()) nextErrors.customer = "Customer name is required.";
+    if (entryMode === "invoice" && !invoiceNo.trim())
+      nextErrors.invoiceNo = "Invoice number is required for an invoice-based return.";
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) {
+      toast.error("Please fill in the required fields.");
       return;
     }
     if (!hasValuationInput) {
@@ -244,8 +247,18 @@ export function ReturnCalculatorDialog({
                   id="rc-invoice"
                   placeholder="e.g. INV-2026-0481"
                   value={invoiceNo}
-                  onChange={(e) => setInvoiceNo(e.target.value)}
+                  onChange={(e) => {
+                    setInvoiceNo(e.target.value);
+                    if (errors.invoiceNo)
+                      setErrors((p) => ({ ...p, invoiceNo: "" }));
+                  }}
+                  aria-invalid={!!errors.invoiceNo}
                 />
+                {errors.invoiceNo ? (
+                  <p className="mt-1 text-xs text-destructive">
+                    {errors.invoiceNo}
+                  </p>
+                ) : null}
                 <p className="text-[11px] text-muted-foreground">
                   The original bill is pulled from this invoice; adjust the figures
                   below if needed.
@@ -264,8 +277,17 @@ export function ReturnCalculatorDialog({
                 id="rc-customer"
                 placeholder="e.g. Priya Sharma"
                 value={customer}
-                onChange={(e) => setCustomer(e.target.value)}
+                onChange={(e) => {
+                  setCustomer(e.target.value);
+                  if (errors.customer) setErrors((p) => ({ ...p, customer: "" }));
+                }}
+                aria-invalid={!!errors.customer}
               />
+              {errors.customer ? (
+                <p className="mt-1 text-xs text-destructive">
+                  {errors.customer}
+                </p>
+              ) : null}
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="rc-phone">Phone</Label>

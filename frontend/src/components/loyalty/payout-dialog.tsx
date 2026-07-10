@@ -49,6 +49,9 @@ export function PayoutDialog({ open, onOpenChange, code }: PayoutDialogProps) {
   const [type, setType] = React.useState<PayoutType>("redeem");
   const [invoiceNo, setInvoiceNo] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>(
+    {},
+  );
   const [balanceAfter, setBalanceAfter] = React.useState<number | null>(null);
 
   const balance = code?.commissionBalance ?? 0;
@@ -62,6 +65,7 @@ export function PayoutDialog({ open, onOpenChange, code }: PayoutDialogProps) {
       setType("redeem");
       setInvoiceNo("");
       setError(null);
+      setFieldErrors({});
       setBalanceAfter(null);
     }
   }, [open, code?.id]);
@@ -69,14 +73,17 @@ export function PayoutDialog({ open, onOpenChange, code }: PayoutDialogProps) {
   function submit() {
     setError(null);
     if (!code) return;
-    if (amt == null || amt <= 0) {
-      toast.error("Enter an amount to pay out.");
+    const fe: Record<string, string> = {};
+    if (amt == null || amt <= 0) fe.amount = "Enter an amount to pay out.";
+    else if (amt > balance)
+      fe.amount = `Amount can't exceed ${formatINR(balance)}.`;
+    setFieldErrors(fe);
+    if (Object.keys(fe).length > 0) {
+      toast.error("Please enter a valid payout amount.");
       return;
     }
-    if (exceeds) {
-      setError("Amount exceeds the available commission balance.");
-      return;
-    }
+    // Validated above; narrow for the type-checker.
+    if (amt == null) return;
     payout.mutate(
       { codeId: code.id, amount: amt, type, invoiceNo: invoiceNo.trim() || undefined },
       {
@@ -152,7 +159,9 @@ export function PayoutDialog({ open, onOpenChange, code }: PayoutDialogProps) {
               {/* Amount */}
               <div className="grid gap-1.5">
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="po-amount">Amount (₹)</Label>
+                  <Label htmlFor="po-amount">
+                    Amount (₹) <span className="text-destructive">*</span>
+                  </Label>
                   <button
                     type="button"
                     className="text-[11px] text-gold-strong underline underline-offset-2"
@@ -173,12 +182,18 @@ export function PayoutDialog({ open, onOpenChange, code }: PayoutDialogProps) {
                   onChange={(e) => {
                     setAmount(e.target.value);
                     setError(null);
+                    if (fieldErrors.amount)
+                      setFieldErrors((p) => ({ ...p, amount: "" }));
                   }}
-                  aria-invalid={exceeds}
+                  aria-invalid={exceeds || !!fieldErrors.amount}
                 />
                 {exceeds ? (
                   <p className="text-[11px] text-destructive">
                     Can’t exceed {formatINR(balance)}.
+                  </p>
+                ) : fieldErrors.amount ? (
+                  <p className="mt-1 text-xs text-destructive">
+                    {fieldErrors.amount}
                   </p>
                 ) : null}
               </div>

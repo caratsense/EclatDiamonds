@@ -66,6 +66,7 @@ export function DirectSaleDialog({ open, onOpenChange }: DirectSaleDialogProps) 
   const [mode, setMode] = useState<SalePaymentMode | "">("");
   const [advance, setAdvance] = useState("");
   const [docs, setDocs] = useState<StagedDocs>(EMPTY_DOCS);
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   // Aggregate ("all") scope has no concrete store to write to — fall back to
   // the first real store id; broad roles normally pick a store first.
@@ -92,24 +93,25 @@ export function DirectSaleDialog({ open, onOpenChange }: DirectSaleDialogProps) 
     setMode("");
     setAdvance("");
     setDocs(EMPTY_DOCS);
+    setErrors({});
   }
 
   const submitting = createSale.isPending || uploadDoc.isPending;
 
   async function save() {
     const name = customer.trim();
-    if (!name) {
-      toast.error("Customer name is required.");
+    const fe: Record<string, string> = {};
+    if (!name) fe.customer = "Customer name is required.";
+    if (!invoiceNo.trim()) fe.invoiceNo = "Invoice number is required.";
+    if (salesNum === undefined || salesNum <= 0)
+      fe.salesValue = "Enter a valid sales value.";
+    setErrors(fe);
+    if (Object.keys(fe).length > 0) {
+      toast.error("Please fill in the required fields.");
       return;
     }
-    if (!invoiceNo.trim()) {
-      toast.error("Invoice number is required.");
-      return;
-    }
-    if (salesNum === undefined || salesNum <= 0) {
-      toast.error("Enter a valid sales value.");
-      return;
-    }
+    // Validated above; narrow for the type-checker.
+    if (salesNum === undefined) return;
     const finalAfter = afterNum ?? salesNum;
     if (finalAfter > salesNum) {
       toast.error("After-discount value cannot exceed the sales value.");
@@ -186,8 +188,15 @@ export function DirectSaleDialog({ open, onOpenChange }: DirectSaleDialogProps) 
               id="sale-customer"
               placeholder="e.g. Priya Sharma"
               value={customer}
-              onChange={(e) => setCustomer(e.target.value)}
+              onChange={(e) => {
+                setCustomer(e.target.value);
+                if (errors.customer) setErrors((p) => ({ ...p, customer: "" }));
+              }}
+              aria-invalid={!!errors.customer}
             />
+            {errors.customer ? (
+              <p className="mt-1 text-xs text-destructive">{errors.customer}</p>
+            ) : null}
           </div>
 
           {/* Description */}
@@ -210,8 +219,18 @@ export function DirectSaleDialog({ open, onOpenChange }: DirectSaleDialogProps) 
               id="sale-invoice"
               placeholder="e.g. INV-22841"
               value={invoiceNo}
-              onChange={(e) => setInvoiceNo(e.target.value)}
+              onChange={(e) => {
+                setInvoiceNo(e.target.value);
+                if (errors.invoiceNo)
+                  setErrors((p) => ({ ...p, invoiceNo: "" }));
+              }}
+              aria-invalid={!!errors.invoiceNo}
             />
+            {errors.invoiceNo ? (
+              <p className="mt-1 text-xs text-destructive">
+                {errors.invoiceNo}
+              </p>
+            ) : null}
           </div>
 
           {/* Sales value + after discount */}
@@ -227,8 +246,18 @@ export function DirectSaleDialog({ open, onOpenChange }: DirectSaleDialogProps) 
                 inputMode="numeric"
                 placeholder="0"
                 value={salesValue}
-                onChange={(e) => setSalesValue(e.target.value)}
+                onChange={(e) => {
+                  setSalesValue(e.target.value);
+                  if (errors.salesValue)
+                    setErrors((p) => ({ ...p, salesValue: "" }));
+                }}
+                aria-invalid={!!errors.salesValue}
               />
+              {errors.salesValue ? (
+                <p className="mt-1 text-xs text-destructive">
+                  {errors.salesValue}
+                </p>
+              ) : null}
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="sale-after">After-discount (₹)</Label>

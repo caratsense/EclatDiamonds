@@ -111,6 +111,7 @@ export function OrderBookingDialog({
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [receiptUrl, setReceiptUrl] = useState<string | null>(null);
   const receiptRef = useRef<HTMLInputElement>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   const metalColor =
     metalColorSel === "other" ? metalColorOther.trim() : metalColorSel;
@@ -173,6 +174,7 @@ export function OrderBookingDialog({
     setDeliveryDate("");
     setFile(null);
     setReceiptFile(null);
+    setErrors({});
     if (fileRef.current) fileRef.current.value = "";
     if (receiptRef.current) receiptRef.current.value = "";
   }
@@ -205,8 +207,14 @@ export function OrderBookingDialog({
 
   async function save() {
     const name = customer.trim();
-    if (kind === "custom" && !name) {
-      toast.error("Customer name is required for a custom order.");
+    const fe: Record<string, string> = {};
+    if (kind === "custom" && !name)
+      fe.customer = "Customer name is required for a custom order.";
+    if (!item.trim() && !category)
+      fe.item = "Add an item description or pick a category.";
+    setErrors(fe);
+    if (Object.keys(fe).length > 0) {
+      toast.error("Please fill in the required fields.");
       return;
     }
     if (advanceNum !== undefined && estimationNum !== undefined && advanceNum > estimationNum) {
@@ -324,8 +332,15 @@ export function OrderBookingDialog({
                   : "e.g. Priya Sharma"
               }
               value={customer}
-              onChange={(e) => setCustomer(e.target.value)}
+              onChange={(e) => {
+                setCustomer(e.target.value);
+                if (errors.customer) setErrors((p) => ({ ...p, customer: "" }));
+              }}
+              aria-invalid={!!errors.customer}
             />
+            {errors.customer ? (
+              <p className="mt-1 text-xs text-destructive">{errors.customer}</p>
+            ) : null}
           </div>
 
           {/* Category + Quantity */}
@@ -334,7 +349,10 @@ export function OrderBookingDialog({
               <Label htmlFor="ob-category">Category</Label>
               <Select
                 value={category}
-                onValueChange={(v) => setCategory(v as OrderCategory)}
+                onValueChange={(v) => {
+                  setCategory(v as OrderCategory);
+                  if (errors.item) setErrors((p) => ({ ...p, item: "" }));
+                }}
               >
                 <SelectTrigger id="ob-category">
                   <SelectValue placeholder="Select category" />
@@ -368,8 +386,15 @@ export function OrderBookingDialog({
               id="ob-item"
               placeholder="e.g. 22K Bridal Necklace Set"
               value={item}
-              onChange={(e) => setItem(e.target.value)}
+              onChange={(e) => {
+                setItem(e.target.value);
+                if (errors.item) setErrors((p) => ({ ...p, item: "" }));
+              }}
+              aria-invalid={!!errors.item}
             />
+            {errors.item ? (
+              <p className="mt-1 text-xs text-destructive">{errors.item}</p>
+            ) : null}
           </div>
 
           {/* Details */}

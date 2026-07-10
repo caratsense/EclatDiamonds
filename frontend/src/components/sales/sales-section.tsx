@@ -1,10 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { Receipt } from "lucide-react";
 
 import { SaleDetailDialog } from "@/components/sales/sale-detail-dialog";
 import { SaleDocThumbs } from "@/components/sales/sale-doc-thumbs";
 import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
 import {
   Card,
   CardContent,
@@ -111,11 +113,12 @@ export function SalesSection() {
                   </TableRow>
                 ) : sales.length === 0 ? (
                   <TableRow>
-                    <TableCell
-                      colSpan={9}
-                      className="py-10 text-center text-sm text-muted-foreground"
-                    >
-                      No sales yet — record the first one.
+                    <TableCell colSpan={9} className="py-6">
+                      <EmptyState
+                        icon={Receipt}
+                        title="No sales yet"
+                        description="Record a direct sale to capture the advance vs balance split and counter photos."
+                      />
                     </TableCell>
                   </TableRow>
                 ) : (

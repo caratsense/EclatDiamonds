@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { MessageCircle } from "lucide-react";
+import { FileText, MessageCircle } from "lucide-react";
 import { toast } from "sonner";
 
 import { QuoteBuilderDialog } from "@/components/quotation/quote-builder-dialog";
@@ -10,6 +10,7 @@ import { SectionHeader } from "@/components/section/section-header";
 import { OrdersTimelineView } from "@/components/timelines/orders-timeline-view";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -70,13 +71,15 @@ export default function QuotationPage() {
     setOpen(true);
   }
 
+  const openBuilder = () => setNewOpen(true);
+
   return (
     <>
       <SectionHeader
         title={nav.title}
         purpose={nav.purpose}
         primaryAction={nav.primaryAction}
-        onPrimaryAction={() => setNewOpen(true)}
+        onPrimaryAction={openBuilder}
       />
 
       <Tabs defaultValue="quotes" className="space-y-4">
@@ -119,6 +122,15 @@ export default function QuotationPage() {
             ) : null}
           </div>
 
+          {!isLoading && !isError && scoped.length === 0 ? (
+            <EmptyState
+              icon={FileText}
+              title="No quotes yet"
+              description="Create a quote or a custom order to share with a customer."
+              actionLabel="New Quote"
+              onAction={openBuilder}
+            />
+          ) : (
           <div className="rounded-xl border">
             <Table>
           <TableHeader>
@@ -158,15 +170,6 @@ export default function QuotationPage() {
                       Retry
                     </Button>
                   </div>
-                </TableCell>
-              </TableRow>
-            ) : scoped.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  colSpan={6}
-                  className="py-10 text-center text-muted-foreground"
-                >
-                  No quotes yet — create the first one to share with a customer.
                 </TableCell>
               </TableRow>
             ) : null}
@@ -235,6 +238,7 @@ export default function QuotationPage() {
           </TableBody>
             </Table>
           </div>
+          )}
         </TabsContent>
 
         <TabsContent value="orders">

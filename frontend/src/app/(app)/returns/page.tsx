@@ -1,10 +1,11 @@
 "use client";
 
 import * as React from "react";
-import { Check, Gem, X } from "lucide-react";
+import { Check, Gem, RotateCcw, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { SectionHeader } from "@/components/section/section-header";
+import { EmptyState } from "@/components/ui/empty-state";
 import { PhotoIntake } from "@/components/returns/photo-intake";
 import { ReturnCalculatorDialog } from "@/components/returns/return-calculator-dialog";
 import { DiamondRatesDialog } from "@/components/returns/diamond-rates-dialog";
@@ -169,6 +170,14 @@ export default function ReturnsPage() {
                     Try again
                   </Button>
                 </div>
+              ) : rows.length === 0 ? (
+                <EmptyState
+                  icon={RotateCcw}
+                  title="No intakes yet"
+                  description="Start a return, exchange or buyback for a customer — values are computed at today's rates and sent to Head Office for approval."
+                  actionLabel="New Intake"
+                  onAction={() => setCalcOpen(true)}
+                />
               ) : (
                 <Table>
                   <TableHeader>
@@ -281,16 +290,6 @@ export default function ReturnsPage() {
                         </TableRow>
                       );
                     })}
-                    {rows.length === 0 ? (
-                      <TableRow>
-                        <TableCell
-                          colSpan={isHeadOffice ? 8 : 7}
-                          className="py-10 text-center text-muted-foreground"
-                        >
-                          No returns yet — start one with New Return / Exchange.
-                        </TableCell>
-                      </TableRow>
-                    ) : null}
                   </TableBody>
                 </Table>
               )}

@@ -23,6 +23,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -208,12 +209,13 @@ export function OrdersTimelineView() {
               </CardContent>
             </Card>
           ) : !active ? (
-            <Card>
-              <CardContent className="py-12 text-center text-sm text-muted-foreground">
-                No ongoing orders here yet — book one with Book Order, or convert
-                a quote into a custom order.
-              </CardContent>
-            </Card>
+            <EmptyState
+              icon={Package}
+              title="No ongoing orders"
+              description="Book a custom or stock order, or convert a quote."
+              actionLabel="Book Order"
+              onAction={() => setBookingOpen(true)}
+            />
           ) : (
             <>
               <Card>

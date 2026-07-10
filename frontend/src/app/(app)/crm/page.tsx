@@ -1,13 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { KanbanSquare, Table as TableIcon } from "lucide-react";
+import { KanbanSquare, Table as TableIcon, Users } from "lucide-react";
 import { toast } from "sonner";
 
 import { LeadCard } from "@/components/crm/lead-card";
 import { LeadDetailDialog } from "@/components/crm/lead-detail-dialog";
 import { SectionHeader } from "@/components/section/section-header";
 import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
 import {
   Dialog,
   DialogContent,
@@ -105,13 +106,15 @@ export default function CrmPage() {
         ? "Showing leads across all stores"
         : `Showing the ${currentStore.name} pipeline`;
 
+  const openCreateDialog = () => setAddOpen(true);
+
   return (
     <>
       <SectionHeader
         title={nav.title}
         purpose={nav.purpose}
         primaryAction={nav.primaryAction}
-        onPrimaryAction={() => setAddOpen(true)}
+        onPrimaryAction={openCreateDialog}
       />
 
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
@@ -190,6 +193,14 @@ export default function CrmPage() {
             Retry
           </Button>
         </div>
+      ) : scoped.length === 0 ? (
+        <EmptyState
+          icon={Users}
+          title="No leads yet"
+          description="Add your first customer enquiry to start tracking follow-ups."
+          actionLabel="New Lead"
+          onAction={openCreateDialog}
+        />
       ) : view === "board" ? (
         <div className="grid gap-4 md:grid-cols-3">
           {LEAD_STAGES.map((stage) => {
@@ -266,16 +277,6 @@ export default function CrmPage() {
                   <TableCell>{lead.assignedRep}</TableCell>
                 </TableRow>
               ))}
-              {scoped.length === 0 ? (
-                <TableRow>
-                  <TableCell
-                    colSpan={5}
-                    className="py-10 text-center text-muted-foreground"
-                  >
-                    No leads in scope yet — add the first lead to get started.
-                  </TableCell>
-                </TableRow>
-              ) : null}
             </TableBody>
           </Table>
         </div>
@@ -309,6 +310,12 @@ function AddLeadDialog({
   const [address, setAddress] = useState("");
   const [birthday, setBirthday] = useState("");
   const [anniversary, setAnniversary] = useState("");
+  // Inline validation errors, keyed by field. Cleared per-field on change.
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  function clearError(field: string) {
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
+  }
 
   // Aggregate ("all") scope has no concrete store to write to — fall back
   // to the first real store id; broad roles normally pick a store first.
@@ -323,20 +330,20 @@ function AddLeadDialog({
     setAddress("");
     setBirthday("");
     setAnniversary("");
+    setErrors({});
   }
 
   function save() {
-    if (!customer.trim()) {
-      toast.error("Customer name is required.");
-      return;
-    }
+    // Validate all required fields up front so every offending field shows
+    // its own inline message; the toast is just a summary.
+    const next: Record<string, string> = {};
+    if (!customer.trim()) next.customer = "Customer name is required.";
     // Phone is mandatory (Round-2) — block client-side before the call.
-    if (!phone.trim()) {
-      toast.error("Phone number is required to save a lead.");
-      return;
-    }
-    if (!source) {
-      toast.error("Lead source is required.");
+    if (!phone.trim()) next.phone = "Phone number is required to save a lead.";
+    if (!source) next.source = "Lead source is required.";
+    if (Object.keys(next).length > 0) {
+      setErrors(next);
+      toast.error("Please fill in the required fields.");
       return;
     }
     createLead.mutate(
@@ -344,7 +351,8 @@ function AddLeadDialog({
         storeId: targetStoreId,
         customerName: customer.trim(),
         phone: phone.trim(),
-        source,
+        // Validated non-empty just above; narrow away the "" union member.
+        source: source as LeadSource,
         interest: interest.trim() || undefined,
         remark: remark.trim() || undefined,
         address: address.trim() || undefined,
@@ -374,13 +382,21 @@ function AddLeadDialog({
         </DialogHeader>
         <div className="grid gap-3">
           <div className="grid gap-1.5">
-            <Label htmlFor="cust">Customer name</Label>
+            <Label htmlFor="cust">
+              Customer name <span className="text-destructive">*</span>
+            </Label>
             <Input
               id="cust"
               placeholder="e.g. Priya Sharma"
               value={customer}
-              onChange={(e) => setCustomer(e.target.value)}
+              onChange={(e) => {
+                setCustomer(e.target.value);
+                clearError("customer");
+              }}
             />
+            {errors.customer ? (
+              <p className="mt-1 text-xs text-destructive">{errors.customer}</p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="phone">
@@ -390,8 +406,14 @@ function AddLeadDialog({
               id="phone"
               placeholder="+91 ..."
               value={phone}
-              onChange={(e) => setPhone(e.target.value)}
+              onChange={(e) => {
+                setPhone(e.target.value);
+                clearError("phone");
+              }}
             />
+            {errors.phone ? (
+              <p className="mt-1 text-xs text-destructive">{errors.phone}</p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="source">
@@ -399,7 +421,10 @@ function AddLeadDialog({
             </Label>
             <Select
               value={source}
-              onValueChange={(v) => setSource(v as LeadSource)}
+              onValueChange={(v) => {
+                setSource(v as LeadSource);
+                clearError("source");
+              }}
             >
               <SelectTrigger id="source" aria-required>
                 <SelectValue placeholder="Where did this lead come from?" />
@@ -412,6 +437,9 @@ function AddLeadDialog({
                 ))}
               </SelectContent>
             </Select>
+            {errors.source ? (
+              <p className="mt-1 text-xs text-destructive">{errors.source}</p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="interest">Interest / what they want</Label>

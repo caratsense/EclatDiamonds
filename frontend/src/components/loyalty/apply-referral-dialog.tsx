@@ -66,6 +66,9 @@ export function ApplyReferralDialog({
   const [invoiceNo, setInvoiceNo] = React.useState("");
   const [billDate, setBillDate] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>(
+    {},
+  );
   const [result, setResult] = React.useState<Referral | null>(null);
 
   // Re-seed the code whenever the dialog is (re)opened for a specific row.
@@ -81,6 +84,7 @@ export function ApplyReferralDialog({
     setInvoiceNo("");
     setBillDate("");
     setError(null);
+    setFieldErrors({});
     setResult(null);
   }
 
@@ -91,18 +95,18 @@ export function ApplyReferralDialog({
 
   function submit() {
     setError(null);
-    if (!code.trim()) {
-      toast.error("Enter the referral code.");
+    const fe: Record<string, string> = {};
+    if (!code.trim()) fe.code = "Referral code is required.";
+    if (!refereeName.trim()) fe.refereeName = "Referee name is required.";
+    if (billAmount == null || billAmount <= 0)
+      fe.bill = "Enter the referee's total bill amount.";
+    setFieldErrors(fe);
+    if (Object.keys(fe).length > 0) {
+      toast.error("Please fill in the required fields.");
       return;
     }
-    if (!refereeName.trim()) {
-      toast.error("Referee name is required.");
-      return;
-    }
-    if (billAmount == null || billAmount <= 0) {
-      toast.error("Enter the referee's total bill amount.");
-      return;
-    }
+    // Validated above; narrow for the type-checker.
+    if (billAmount == null) return;
     applyReferral.mutate(
       {
         code: code.trim(),
@@ -213,6 +217,7 @@ export function ApplyReferralDialog({
                 onClick={() => {
                   setResult(null);
                   setError(null);
+                  setFieldErrors({});
                   setRefereeName("");
                   setRefereePhone("");
                   setBill("");
@@ -242,8 +247,16 @@ export function ApplyReferralDialog({
                 onChange={(e) => {
                   setCode(e.target.value);
                   setError(null);
+                  if (fieldErrors.code)
+                    setFieldErrors((p) => ({ ...p, code: "" }));
                 }}
+                aria-invalid={!!fieldErrors.code}
               />
+              {fieldErrors.code ? (
+                <p className="mt-1 text-xs text-destructive">
+                  {fieldErrors.code}
+                </p>
+              ) : null}
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
@@ -255,8 +268,18 @@ export function ApplyReferralDialog({
                   id="ar-name"
                   placeholder="e.g. Rahul Mehta"
                   value={refereeName}
-                  onChange={(e) => setRefereeName(e.target.value)}
+                  onChange={(e) => {
+                    setRefereeName(e.target.value);
+                    if (fieldErrors.refereeName)
+                      setFieldErrors((p) => ({ ...p, refereeName: "" }));
+                  }}
+                  aria-invalid={!!fieldErrors.refereeName}
                 />
+                {fieldErrors.refereeName ? (
+                  <p className="mt-1 text-xs text-destructive">
+                    {fieldErrors.refereeName}
+                  </p>
+                ) : null}
               </div>
               <div className="grid gap-1.5">
                 <Label htmlFor="ar-phone">Referee phone</Label>
@@ -280,8 +303,18 @@ export function ApplyReferralDialog({
                 min={0}
                 placeholder="0"
                 value={bill}
-                onChange={(e) => setBill(e.target.value)}
+                onChange={(e) => {
+                  setBill(e.target.value);
+                  if (fieldErrors.bill)
+                    setFieldErrors((p) => ({ ...p, bill: "" }));
+                }}
+                aria-invalid={!!fieldErrors.bill}
               />
+              {fieldErrors.bill ? (
+                <p className="mt-1 text-xs text-destructive">
+                  {fieldErrors.bill}
+                </p>
+              ) : null}
               {estCommission != null && estCommission > 0 ? (
                 <p className="text-[11px] text-muted-foreground">
                   ≈ {formatINR(estCommission)} commission ({REFERRAL_COMMISSION_PCT}

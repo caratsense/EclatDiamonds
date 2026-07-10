@@ -5,6 +5,7 @@ import {
   Check,
   Copy,
   Gem,
+  Gift,
   HandCoins,
   Plus,
   Share2,
@@ -22,6 +23,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -179,6 +181,14 @@ export function ReferralProgram() {
                 Could not load referral codes. Check your connection and try
                 again.
               </div>
+            ) : codes.length === 0 ? (
+              <EmptyState
+                icon={Gift}
+                title="No referral codes yet"
+                description="Mint an “Earn with Ratanlall” code so a referrer can share it and earn commission on every referred bill."
+                actionLabel="New referral code"
+                onAction={() => setCreateOpen(true)}
+              />
             ) : (
               <Table>
                 <TableHeader>
@@ -272,16 +282,6 @@ export function ReferralProgram() {
                       </TableRow>
                     );
                   })}
-                  {codes.length === 0 ? (
-                    <TableRow>
-                      <TableCell
-                        colSpan={5}
-                        className="py-10 text-center text-muted-foreground"
-                      >
-                        No referral codes yet — create the first one above.
-                      </TableCell>
-                    </TableRow>
-                  ) : null}
                 </TableBody>
               </Table>
             )}

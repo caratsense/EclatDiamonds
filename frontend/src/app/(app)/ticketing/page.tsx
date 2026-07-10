@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import { format, parseISO } from "date-fns";
-import { ArrowRight, Repeat2, ShieldAlert } from "lucide-react";
+import { ArrowRight, LifeBuoy, Repeat2, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 
 import { SectionHeader } from "@/components/section/section-header";
+import { EmptyState } from "@/components/ui/empty-state";
 import { TicketDetailDialog } from "@/components/ticketing/ticket-detail-dialog";
 import {
   PriorityBadge,
@@ -174,6 +175,14 @@ export default function TicketingPage() {
                 Try again
               </Button>
             </div>
+          ) : tickets.length === 0 ? (
+            <EmptyState
+              icon={LifeBuoy}
+              title="No tickets yet"
+              description="Raise an internal ticket for an operational issue; it auto-routes to a resolver team by category."
+              actionLabel="New Ticket"
+              onAction={() => setAddOpen(true)}
+            />
           ) : (
             <Table>
               <TableHeader>
@@ -234,16 +243,6 @@ export default function TicketingPage() {
                     </TableCell>
                   </TableRow>
                 ))}
-                {tickets.length === 0 ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={9}
-                      className="py-10 text-center text-muted-foreground"
-                    >
-                      No tickets yet — raise the first one.
-                    </TableCell>
-                  </TableRow>
-                ) : null}
               </TableBody>
             </Table>
           )}
@@ -273,6 +272,7 @@ function NewTicketDialog({
   // "none" = no category → server routes it to the back-office bucket.
   const [category, setCategory] = useState<TicketCategory | "none">("none");
   const [priority, setPriority] = useState<TicketPriority>("medium");
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   // Aggregate scope has no concrete store — let the ticket be HO-level (no storeId).
   const targetStoreId = currentStore.isAggregate ? undefined : currentStore.id;
@@ -282,9 +282,11 @@ function NewTicketDialog({
 
   function save() {
     if (!subject.trim()) {
+      setErrors({ subject: "Subject is required." });
       toast.error("Subject is required.");
       return;
     }
+    setErrors({});
     createTicket.mutate(
       {
         storeId: targetStoreId,
@@ -320,13 +322,22 @@ function NewTicketDialog({
         </DialogHeader>
         <div className="grid gap-3">
           <div className="grid gap-1.5">
-            <Label htmlFor="subject">Subject</Label>
+            <Label htmlFor="subject">
+              Subject <span className="text-destructive">*</span>
+            </Label>
             <Input
               id="subject"
               placeholder="e.g. POS terminal freezes during billing"
               value={subject}
-              onChange={(e) => setSubject(e.target.value)}
+              onChange={(e) => {
+                setSubject(e.target.value);
+                if (errors.subject) setErrors((p) => ({ ...p, subject: "" }));
+              }}
+              aria-invalid={!!errors.subject}
             />
+            {errors.subject ? (
+              <p className="mt-1 text-xs text-destructive">{errors.subject}</p>
+            ) : null}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">

@@ -52,18 +52,22 @@ export function CreateReferralCodeDialog({
   const [name, setName] = React.useState("");
   const [phone, setPhone] = React.useState("");
   const [maxUses, setMaxUses] = React.useState("");
+  const [errors, setErrors] = React.useState<Record<string, string>>({});
 
   function reset() {
     setName("");
     setPhone("");
     setMaxUses("");
+    setErrors({});
   }
 
   function submit() {
     if (!name.trim()) {
+      setErrors({ name: "Referrer name is required." });
       toast.error("Referrer name is required.");
       return;
     }
+    setErrors({});
     createCode.mutate(
       {
         referrerName: name.trim(),
@@ -128,8 +132,15 @@ export function CreateReferralCodeDialog({
               id="rc-name"
               placeholder="e.g. Priya Sharma"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                setName(e.target.value);
+                if (errors.name) setErrors((p) => ({ ...p, name: "" }));
+              }}
+              aria-invalid={!!errors.name}
             />
+            {errors.name ? (
+              <p className="mt-1 text-xs text-destructive">{errors.name}</p>
+            ) : null}
           </div>
 
           <div className="grid gap-1.5">

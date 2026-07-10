@@ -2,14 +2,17 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowRight,
   ChevronDown,
   Gem,
   ImagePlus,
   Plus,
+  SlidersHorizontal,
   Sparkles,
   Trash2,
   Wrench,
   X,
+  Zap,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -103,6 +106,13 @@ export function QuoteBuilderDialog({
 
   const [mode, setMode] = useState<QuoteKind>("sale");
 
+  // Quick = simplified front door (gold + one diamond); Advanced = the full
+  // builder. Both drive the SAME state/totals/submit — Quick only hides extra
+  // controls, so nothing about pricing or saving changes between them.
+  const [view, setView] = useState<"quick" | "advanced">("quick");
+  // Inline validation errors, keyed by field. Cleared per-field on change.
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
   // Shared
   const [customer, setCustomer] = useState("");
   const [phone, setPhone] = useState("");
@@ -185,6 +195,43 @@ export function QuoteBuilderDialog({
   );
   const repairMakingNum = toNumber(repairMaking) ?? 0;
 
+  // Quick-mode gold rate: show the live auto rate but let the user overwrite it
+  // (typing switches the shared rate control to manual so goldRate follows).
+  const quickRate = rateMode === "manual" ? manualRate : String(autoRate);
+  function onQuickRateChange(v: string) {
+    setRateMode("manual");
+    setManualRate(v);
+  }
+  // Quick mode edits a single diamond — the first row of the shared array — so
+  // buildLines()/totals treat it identically to an Advanced diamond line.
+  const quickDiamond = diamonds[0];
+  function setQuickDiamond(patch: Partial<DiamondRow>) {
+    setDiamonds((d) =>
+      d.length === 0
+        ? [
+            {
+              id: (diamondId.current += 1),
+              desc: "",
+              carat: "",
+              price: "",
+              ...patch,
+            },
+          ]
+        : d.map((x, i) => (i === 0 ? { ...x, ...patch } : x)),
+    );
+  }
+
+  function clearError(field: string) {
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
+  }
+
+  function changeView(next: "quick" | "advanced") {
+    // Quick only handles Sale (gold + diamond); returning to Quick from an
+    // Advanced repair snaps the mode back so the simplified form stays coherent.
+    if (next === "quick" && mode === "repair") setMode("sale");
+    setView(next);
+  }
+
   const preview = useMemo(() => {
     // Kaccha estimates carry no GST — mirror the server (GST = 0, grand =
     // taxable) for both Sale and Repair modes.
@@ -265,6 +312,8 @@ export function QuoteBuilderDialog({
 
   function reset() {
     setMode("sale");
+    setView("quick");
+    setErrors({});
     setCustomer("");
     setPhone("");
     setIsKaccha(false);
@@ -424,11 +473,17 @@ export function QuoteBuilderDialog({
 
   async function submit(asCustomOrder: boolean) {
     const name = customer.trim();
-    if (!name) {
-      toast.error("Customer name is required.");
+    // Inline-validate the required identity fields first; toast is the summary.
+    const next: Record<string, string> = {};
+    if (!name) next.customer = "Customer name is required.";
+    if (!phone.trim()) next.phone = "Phone number is required.";
+    if (Object.keys(next).length > 0) {
+      setErrors(next);
+      toast.error("Please fill in the required fields.");
       return;
     }
     const lines = buildLines();
+    // Guard: at least one line must carry a weight or a price before saving.
     if (lines.length === 0) {
       toast.error(
         mode === "repair"
@@ -480,6 +535,13 @@ export function QuoteBuilderDialog({
   }
 
   function onCustomOrderClick() {
+    // A custom order needs the extra details (size, delivery, advance) that
+    // only live in Advanced — jump there and open that section first.
+    if (view === "quick") {
+      setView("advanced");
+      setCustomOpen(true);
+      return;
+    }
     // First tap reveals the custom-order fields; second tap submits.
     if (!customOpen) {
       setCustomOpen(true);
@@ -506,22 +568,41 @@ export function QuoteBuilderDialog({
         </DialogHeader>
 
         <div className="grid gap-4">
-          {/* Sale / Repair mode */}
-          <div className="grid gap-1.5">
-            <Label>Quote type</Label>
-            <Tabs value={mode} onValueChange={(v) => setMode(v as QuoteKind)}>
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="sale">
-                  <Sparkles className="mr-1.5 h-4 w-4" />
-                  Sale
-                </TabsTrigger>
-                <TabsTrigger value="repair">
-                  <Wrench className="mr-1.5 h-4 w-4" />
-                  Repair
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
-          </div>
+          {/* Quick vs Advanced — simplified front door defaults on */}
+          <Tabs
+            value={view}
+            onValueChange={(v) => changeView(v as "quick" | "advanced")}
+          >
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="quick">
+                <Zap className="mr-1.5 h-4 w-4" />
+                Quick
+              </TabsTrigger>
+              <TabsTrigger value="advanced">
+                <SlidersHorizontal className="mr-1.5 h-4 w-4" />
+                Advanced
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+
+          {/* Sale / Repair mode — Advanced only */}
+          {view === "advanced" ? (
+            <div className="grid gap-1.5">
+              <Label>Quote type</Label>
+              <Tabs value={mode} onValueChange={(v) => setMode(v as QuoteKind)}>
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="sale">
+                    <Sparkles className="mr-1.5 h-4 w-4" />
+                    Sale
+                  </TabsTrigger>
+                  <TabsTrigger value="repair">
+                    <Wrench className="mr-1.5 h-4 w-4" />
+                    Repair
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
+          ) : null}
 
           {/* Customer */}
           <div className="grid grid-cols-2 gap-3">
@@ -532,21 +613,140 @@ export function QuoteBuilderDialog({
               <Input
                 id="qb-cust"
                 value={customer}
-                onChange={(e) => setCustomer(e.target.value)}
+                onChange={(e) => {
+                  setCustomer(e.target.value);
+                  clearError("customer");
+                }}
                 placeholder="e.g. Meera Iyer"
               />
+              {errors.customer ? (
+                <p className="mt-1 text-xs text-destructive">
+                  {errors.customer}
+                </p>
+              ) : null}
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="qb-phone">Phone</Label>
+              <Label htmlFor="qb-phone">
+                Phone <span className="text-destructive">*</span>
+              </Label>
               <Input
                 id="qb-phone"
                 value={phone}
-                onChange={(e) => setPhone(e.target.value)}
+                onChange={(e) => {
+                  setPhone(e.target.value);
+                  clearError("phone");
+                }}
                 placeholder="+91 ..."
               />
+              {errors.phone ? (
+                <p className="mt-1 text-xs text-destructive">{errors.phone}</p>
+              ) : null}
             </div>
           </div>
 
+          {/* Quick mode — essentials only. Reuses the SAME weight/rate/making
+              and first-diamond state that Advanced edits, so totals + submit
+              are identical; this is just a simplified front door. */}
+          {view === "quick" ? (
+            <>
+              {/* Gold */}
+              <div className="rounded-lg border p-3">
+                <p className="mb-3 flex items-center gap-1.5 text-sm font-medium">
+                  <Sparkles className="h-4 w-4 text-gold-strong" />
+                  Gold
+                </p>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="qb-q-wt">Weight (g)</Label>
+                    <Input
+                      id="qb-q-wt"
+                      type="number"
+                      inputMode="decimal"
+                      placeholder="0"
+                      value={weight}
+                      onChange={(e) => setWeight(e.target.value)}
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="qb-q-rate">Rate (₹/g)</Label>
+                    <Input
+                      id="qb-q-rate"
+                      type="number"
+                      inputMode="numeric"
+                      placeholder="0"
+                      value={quickRate}
+                      onChange={(e) => onQuickRateChange(e.target.value)}
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="qb-q-making">Making (₹)</Label>
+                    <Input
+                      id="qb-q-making"
+                      type="number"
+                      inputMode="numeric"
+                      placeholder="0"
+                      value={making}
+                      onChange={(e) => setMaking(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* One diamond (optional) */}
+              <div className="rounded-lg border p-3">
+                <p className="mb-3 flex items-center gap-1.5 text-sm font-medium">
+                  <Gem className="h-4 w-4 text-sky-500" />
+                  Diamond
+                  <span className="text-xs font-normal text-muted-foreground">
+                    optional
+                  </span>
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="qb-q-carat">Carat (ct)</Label>
+                    <Input
+                      id="qb-q-carat"
+                      type="number"
+                      inputMode="decimal"
+                      placeholder="0"
+                      value={quickDiamond?.carat ?? ""}
+                      onChange={(e) =>
+                        setQuickDiamond({ carat: e.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="qb-q-price">Price (₹)</Label>
+                    <Input
+                      id="qb-q-price"
+                      type="number"
+                      inputMode="numeric"
+                      placeholder="0"
+                      value={quickDiamond?.price ?? ""}
+                      onChange={(e) =>
+                        setQuickDiamond({ price: e.target.value })
+                      }
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Escalate to the full builder */}
+              <button
+                type="button"
+                onClick={() => changeView("advanced")}
+                className="inline-flex items-center gap-1 justify-self-start text-sm font-medium text-primary hover:underline"
+              >
+                More options
+                <ArrowRight className="h-4 w-4" />
+              </button>
+            </>
+          ) : null}
+
+          {/* Advanced-only body — kaccha toggle, full gold/repair sections and
+              reference images. Quick mode hides all of this. */}
+          {view === "advanced" ? (
+            <>
           {/* Kaccha ("@") estimate — no-GST, head-office-only */}
           <div className="flex items-start justify-between gap-4 rounded-lg border bg-muted/30 px-3 py-2.5">
             <div className="min-w-0">
@@ -938,6 +1138,8 @@ export function QuoteBuilderDialog({
               onChange={onPickRefs}
             />
           </div>
+            </>
+          ) : null}
 
           {/* Live totals preview */}
           <div className="rounded-lg bg-muted/50 p-3">
@@ -969,7 +1171,8 @@ export function QuoteBuilderDialog({
             </dl>
           </div>
 
-          {/* Custom-order details (revealed for the Custom Order action) */}
+          {/* Custom-order details — Advanced only (Quick escalates here). */}
+          {view === "advanced" ? (
           <div className="rounded-lg border">
             <button
               type="button"
@@ -1078,6 +1281,7 @@ export function QuoteBuilderDialog({
               </div>
             ) : null}
           </div>
+          ) : null}
         </div>
 
         <DialogFooter className="gap-2 sm:justify-between">
