@@ -85,7 +85,7 @@ export default function ReportingPage() {
   return (
     <>
       <SectionHeader
-        title={item?.title ?? "Reporting & DSR"}
+        title="Reporting & Daily Sales Report (DSR)"
         purpose={item?.purpose ?? ""}
         primaryAction={item?.primaryAction}
         onPrimaryAction={() => setDsrOpen(true)}

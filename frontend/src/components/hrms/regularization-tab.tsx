@@ -68,7 +68,7 @@ export function RegularizationTab() {
       {
         onSuccess: () =>
           toast.success(
-            `${status === "approved" ? "Approved" : "Rejected"} regularization for ${row.name}`,
+            `${status === "approved" ? "Approved" : "Rejected"} attendance fix for ${row.name}`,
           ),
         onError: () => toast.error("Could not update the request."),
       },
@@ -88,7 +88,7 @@ export function RegularizationTab() {
           <div className="space-y-1.5">
             <CardTitle className="flex items-center gap-2">
               <Clock3 className="h-4 w-4 text-muted-foreground" />
-              Attendance regularizations
+              Fix attendance
             </CardTitle>
             <CardDescription>
               {canDecide
@@ -98,7 +98,7 @@ export function RegularizationTab() {
           </div>
           <Button size="sm" className="shrink-0" onClick={() => setOpen(true)}>
             <Plus className="h-4 w-4" />
-            Regularize
+            Request fix
           </Button>
         </CardHeader>
         <CardContent className="space-y-2">
@@ -123,7 +123,7 @@ export function RegularizationTab() {
             </div>
           ) : ordered.length === 0 ? (
             <p className="rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground">
-              No regularization requests for this store.
+              No attendance-fix requests for this store.
             </p>
           ) : (
             ordered.map((row) => {

@@ -255,6 +255,10 @@ export default function PaymentsPage() {
         </TabsContent>
 
         <TabsContent value="recon" className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Reconciliation — matching card and bank payouts to your recorded
+            sales.
+          </p>
           <div className="grid gap-4 sm:grid-cols-3">
             <Card>
               <CardContent className="flex items-center gap-3 py-4">

@@ -123,7 +123,7 @@ export default function HrmsPage() {
           <TabsTrigger value="schedule">Shifts &amp; Schedule</TabsTrigger>
           <TabsTrigger value="flags">Late Flags</TabsTrigger>
           <TabsTrigger value="roster">Roster &amp; Leave</TabsTrigger>
-          <TabsTrigger value="regularize">Regularization</TabsTrigger>
+          <TabsTrigger value="regularize">Fix attendance</TabsTrigger>
         </TabsList>
 
         <TabsContent value="attendance">

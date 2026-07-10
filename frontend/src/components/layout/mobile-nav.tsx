@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { NAV_ITEMS, visibleNavGroups } from "@/lib/navigation";
 import { useSession } from "@/store/use-session";
+import { useT } from "@/lib/i18n";
 
 /**
  * Preferred order for the thumb-reachable bottom tabs; we render the first four
@@ -72,6 +73,7 @@ function Tab({
  */
 export function MobileNav() {
   const pathname = usePathname();
+  const t = useT();
   const [moreOpen, setMoreOpen] = React.useState(false);
   // Role-aware "More" sheet: HO-only sections stay hidden for other roles.
   const role = useSession((s) => s.role);
@@ -105,7 +107,7 @@ export function MobileNav() {
           <Tab
             key={item.slug}
             href={`/${item.slug}`}
-            title={item.title.split(" ")[0]}
+            title={t(`nav.${item.slug}`, item.title).split(" ")[0]}
             hint={item.purpose}
             Icon={item.icon}
             active={isActive(item.slug)}
@@ -124,7 +126,9 @@ export function MobileNav() {
             <span className="absolute inset-x-5 top-0 h-[2px] rounded-full bg-[var(--gold)]" />
           ) : null}
           <MoreHorizontal className="h-5 w-5 shrink-0" />
-          <span className="text-[10px] font-medium leading-none">More</span>
+          <span className="text-[10px] font-medium leading-none">
+            {t("nav.more", "More")}
+          </span>
         </button>
       </nav>
 
@@ -139,7 +143,7 @@ export function MobileNav() {
             {groups.map((group) => (
               <div key={group.label}>
                 <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
-                  {group.label}
+                  {t(`group.${group.label}`, group.label)}
                 </p>
                 <div className="grid grid-cols-3 gap-2">
                   {group.items.map((item) => {
@@ -160,7 +164,7 @@ export function MobileNav() {
                       >
                         <Icon className="h-5 w-5 shrink-0" />
                         <span className="text-[11px] font-medium leading-tight">
-                          {item.title}
+                          {t(`nav.${item.slug}`, item.title)}
                         </span>
                       </Link>
                     );

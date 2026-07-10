@@ -168,7 +168,7 @@ export function OrdersTimelineView() {
       <Tabs defaultValue="orders">
         <TabsList>
           <TabsTrigger value="orders">Orders</TabsTrigger>
-          <TabsTrigger value="replenishment">Replenishment</TabsTrigger>
+          <TabsTrigger value="replenishment">Stock in transit</TabsTrigger>
         </TabsList>
 
         <TabsContent value="orders" className="space-y-4">
@@ -427,11 +427,11 @@ export function OrdersTimelineView() {
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-base">
                 <Truck className="h-4 w-4" />
-                Factory → Store replenishment
+                Stock in transit
               </CardTitle>
               <CardDescription>
                 Raw material and finished stock moving from factory/warehouse to
-                the storefront.
+                the storefront (replenishment).
               </CardDescription>
             </CardHeader>
             <CardContent>

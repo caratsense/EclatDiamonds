@@ -8,9 +8,11 @@ import { Logo } from "@/components/brand/logo";
 import { homeForRole, visibleNavGroups } from "@/lib/navigation";
 import { pendingDueCount, useReminders } from "@/lib/queries/reminders";
 import { useSession } from "@/store/use-session";
+import { useT } from "@/lib/i18n";
 
 export function Sidebar() {
   const pathname = usePathname();
+  const t = useT();
   // Role-aware nav: HO-only sections (e.g. Store Setup) stay hidden otherwise.
   const role = useSession((s) => s.role);
   const groups = visibleNavGroups(role);
@@ -31,7 +33,7 @@ export function Sidebar() {
         {groups.map((group) => (
           <div key={group.label} className="mb-5">
             <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-sidebar-foreground/45">
-              {group.label}
+              {t(`group.${group.label}`, group.label)}
             </p>
             <ul className="space-y-0.5">
               {group.items.map((item) => {
@@ -64,7 +66,9 @@ export function Sidebar() {
                             : "text-sidebar-foreground/55 group-hover:text-white",
                         )}
                       />
-                      <span className="truncate">{item.title}</span>
+                      <span className="truncate">
+                        {t(`nav.${item.slug}`, item.title)}
+                      </span>
                       {badgeCount > 0 ? (
                         <span
                           aria-label={`${badgeCount} due`}

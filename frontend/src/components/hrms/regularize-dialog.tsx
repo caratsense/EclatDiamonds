@@ -67,13 +67,13 @@ export function RegularizeDialog({
       },
       {
         onSuccess: () => {
-          toast.success("Regularization requested", {
+          toast.success("Attendance fix requested", {
             description: "Sent to your manager for approval.",
           });
           reset();
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not submit the regularization."),
+        onError: () => toast.error("Could not submit the request."),
       },
     );
   }
@@ -82,7 +82,7 @@ export function RegularizeDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Regularize attendance</DialogTitle>
+          <DialogTitle>Fix an attendance record</DialogTitle>
           <DialogDescription>
             Fix a missed or wrong punch. Your manager approves it to correct the
             record for that day.
