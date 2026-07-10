@@ -201,7 +201,7 @@ export default function StoreSetupPage() {
                     colSpan={6}
                     className="py-10 text-center text-muted-foreground"
                   >
-                    No stores yet — add your first branch to get started.
+                    No stores yet. Add a branch to begin.
                   </TableCell>
                 </TableRow>
               ) : null}

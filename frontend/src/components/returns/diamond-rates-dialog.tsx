@@ -132,7 +132,7 @@ export function DiamondRatesDialog({
                 className="mt-3"
                 onClick={() => refetch()}
               >
-                Try again
+                Retry
               </Button>
             </div>
           ) : (

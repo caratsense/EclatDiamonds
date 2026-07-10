@@ -11,12 +11,12 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { Campaign, CampaignType } from "@/lib/mock/marketing";
 
-/** Type -> bar colour, so the planner reads at a glance. */
+/** Type -> bar colour (jewel chart sequence), so the planner reads at a glance. */
 const TYPE_COLOR: Record<CampaignType, string> = {
-  bridal: "bg-rose-500",
-  festive: "bg-amber-500",
-  catalog: "bg-sky-500",
-  always_on: "bg-emerald-500",
+  bridal: "bg-chart-4",
+  festive: "bg-chart-2",
+  catalog: "bg-chart-5",
+  always_on: "bg-chart-3",
 };
 
 const TYPE_LABEL: Record<CampaignType, string> = {
@@ -96,7 +96,7 @@ export function CampaignPlanner({ campaigns }: { campaigns: Campaign[] }) {
                 </span>
                 <div className="relative h-6 flex-1 rounded bg-muted/50">
                   <div
-                    className={`absolute top-0 flex h-6 items-center overflow-hidden rounded px-2 text-[11px] font-medium text-white ${TYPE_COLOR[c.type]}`}
+                    className={`absolute top-0 flex h-6 items-center overflow-hidden rounded px-2 text-[11px] font-medium text-primary-foreground ${TYPE_COLOR[c.type]}`}
                     style={{ left: `${left}%`, width: `${width}%` }}
                     title={`${format(start, "dd MMM")} – ${format(end, "dd MMM yyyy")}`}
                   >

@@ -193,17 +193,17 @@ export function GeoPunchCard() {
           });
         },
         onError: () =>
-          toast.error("Could not check out. Are you checked in yet?"),
+          toast.error("Could not check out. You may not be checked in."),
       },
     );
   }
 
   return (
-    <Card className="border-[var(--gold)]/40 bg-gradient-to-br from-card to-accent/30">
+    <Card className="facet-top overflow-hidden">
       <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
         <div className="space-y-1.5">
           <CardTitle className="flex items-center gap-2">
-            <MapPin className="h-4 w-4 text-[var(--gold)]" />
+            <MapPin className="h-4 w-4 text-muted-foreground" />
             My attendance
           </CardTitle>
           <CardDescription>
@@ -348,7 +348,7 @@ export function GeoPunchCard() {
             <p className="text-xs font-medium text-muted-foreground">This month</p>
             {records.length === 0 ? (
               <p className="rounded-lg border border-dashed py-6 text-center text-xs text-muted-foreground">
-                No punches yet this month — check in to start your record.
+                No attendance recorded this month yet.
               </p>
             ) : (
               <div className="overflow-hidden rounded-lg border">

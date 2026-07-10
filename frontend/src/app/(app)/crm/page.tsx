@@ -197,7 +197,7 @@ export default function CrmPage() {
         <EmptyState
           icon={Users}
           title="No leads yet"
-          description="Add your first customer enquiry to start tracking follow-ups."
+          description="Add a customer enquiry to begin tracking follow-ups."
           actionLabel="New Lead"
           onAction={openCreateDialog}
         />

@@ -162,7 +162,7 @@ export function ApplyReferralDialog({
         {result ? (
           /* ---- Outcome: the authoritative 5% / 5% split from the API ---- */
           <div className="grid gap-4">
-            <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300">
+            <div className="flex items-center gap-2 rounded-lg border border-success/30 bg-success/10 p-3 text-sm text-success">
               <CheckCircle2 className="h-4 w-4 shrink-0" />
               Applied for <span className="font-medium">{result.refereeName}</span>
               {" · "}

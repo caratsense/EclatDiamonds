@@ -34,7 +34,7 @@ function AchievementBar({ pct }: { pct: number }) {
     <div className="flex items-center gap-2">
       <div className="h-2 w-24 overflow-hidden rounded-full bg-muted">
         <div
-          className={`h-full rounded-full ${hit ? "bg-emerald-500" : "bg-amber-500"}`}
+          className={`h-full rounded-full ${hit ? "bg-success" : "bg-warning"}`}
           style={{ width: `${capped}%` }}
         />
       </div>
@@ -229,7 +229,7 @@ export function EditableCommissionTab({
                     colSpan={6}
                     className="py-10 text-center text-sm text-muted-foreground"
                   >
-                    No commission attributed yet — close a sale to start earning.
+                    No commission attributed yet.
                   </TableCell>
                 </TableRow>
               ) : null}

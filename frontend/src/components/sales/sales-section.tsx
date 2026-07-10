@@ -150,7 +150,7 @@ export function SalesSection() {
                           {formatINR(sale.afterDiscountValue)}
                         </span>
                       </TableCell>
-                      <TableCell className="text-right text-emerald-600">
+                      <TableCell className="text-right text-success">
                         <span className="num">
                           {formatINR(sale.advanceReceived)}
                         </span>
@@ -158,7 +158,7 @@ export function SalesSection() {
                       <TableCell
                         className={
                           sale.balance > 0
-                            ? "text-right font-medium text-amber-600"
+                            ? "text-right font-medium text-warning"
                             : "text-right text-muted-foreground"
                         }
                       >

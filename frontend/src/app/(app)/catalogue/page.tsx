@@ -184,7 +184,7 @@ export default function CataloguePage() {
 
           {!isLoading && products.length === 0 ? (
             <p className="rounded-xl border border-dashed py-12 text-center text-sm text-muted-foreground">
-              No pieces match these filters yet — adjust them or add a product.
+              No pieces match these filters. Adjust them or add a product.
             </p>
           ) : null}
         </>

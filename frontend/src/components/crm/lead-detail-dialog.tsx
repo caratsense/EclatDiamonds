@@ -118,20 +118,10 @@ export function LeadDetailDialog({
               {/* Informational hints only — manual-first, no auto-send. */}
               <div className="flex flex-wrap gap-2">
                 {lead.birthday ? (
-                  <Badge
-                    variant="outline"
-                    className="border-amber-300 text-amber-800 dark:text-amber-300"
-                  >
-                    🎂 Birthday offer eligible
-                  </Badge>
+                  <Badge variant="outline">Birthday offer eligible</Badge>
                 ) : null}
                 {lead.anniversary ? (
-                  <Badge
-                    variant="outline"
-                    className="border-rose-300 text-rose-800 dark:text-rose-300"
-                  >
-                    💍 Anniversary
-                  </Badge>
+                  <Badge variant="outline">Anniversary</Badge>
                 ) : null}
               </div>
             </div>
@@ -194,16 +184,12 @@ export function LeadDetailDialog({
             <>
               <Separator />
               <div>
-                <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+                <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                   <Bell className="h-3.5 w-3.5" /> Occasion reminders
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {lead.reminders.map((r) => (
-                    <Badge
-                      key={r.id}
-                      variant="outline"
-                      className="border-amber-300 text-amber-800 dark:text-amber-300"
-                    >
+                    <Badge key={r.id} variant="outline">
                       {r.occasion} · {r.date}
                     </Badge>
                   ))}

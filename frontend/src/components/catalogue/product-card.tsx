@@ -29,7 +29,7 @@ export function ProductCard({ product, onOpen, similarity }: ProductCardProps) {
       className="group flex flex-col overflow-hidden rounded-xl border bg-card text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
     >
       {/* Image (falls back to a gem glyph when no photo yet) */}
-      <div className="relative flex aspect-square items-center justify-center overflow-hidden bg-gradient-to-br from-amber-50 to-amber-100 dark:from-amber-950/40 dark:to-amber-900/20">
+      <div className="relative flex aspect-square items-center justify-center overflow-hidden bg-muted">
         {src ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -39,7 +39,7 @@ export function ProductCard({ product, onOpen, similarity }: ProductCardProps) {
             className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
           />
         ) : (
-          <Gem className="h-10 w-10 text-amber-400/70" />
+          <Gem className="h-10 w-10 text-muted-foreground/40" />
         )}
         <div className="absolute left-2 top-2">
           <Badge variant={inStock ? "success" : "secondary"}>

@@ -119,10 +119,10 @@ export default function TicketingPage() {
           {patterns.map((p) => (
             <Card
               key={p.tag}
-              className="border-amber-300 bg-amber-50/60 dark:border-amber-900/50 dark:bg-amber-950/20"
+              className="border-warning/30 bg-warning/5"
             >
               <CardContent className="flex gap-3 pt-6">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-warning/10 text-warning">
                   <Repeat2 className="h-5 w-5" />
                 </div>
                 <div>
@@ -165,14 +165,14 @@ export default function TicketingPage() {
             </div>
           ) : isError ? (
             <div className="rounded-lg border bg-muted/40 p-6 text-center text-sm text-muted-foreground">
-              <p>We could not load tickets just now.</p>
+              <p>Couldn&apos;t load tickets.</p>
               <Button
                 variant="outline"
                 size="sm"
                 className="mt-3"
                 onClick={() => refetch()}
               >
-                Try again
+                Retry
               </Button>
             </div>
           ) : tickets.length === 0 ? (

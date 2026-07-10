@@ -72,8 +72,7 @@ export default function FinancePage() {
 
       {hasError ? (
         <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-muted-foreground">
-          Could not load finance data right now. Check your connection and try
-          again — switching store or refreshing the page usually fixes it.
+          Couldn&apos;t load finance data. Check your connection and try again.
         </div>
       ) : null}
 

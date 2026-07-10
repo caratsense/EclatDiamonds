@@ -137,8 +137,8 @@ export default function ApprovalsPage() {
       ) : allClear ? (
         <EmptyState
           icon={ClipboardCheck}
-          title="All caught up"
-          description="No approvals waiting on you right now."
+          title="No pending approvals"
+          description="Nothing is awaiting your approval."
         />
       ) : (
         <>
@@ -431,7 +431,7 @@ function ApprovalSection({
       <CardContent>
         {isError ? (
           <div className="flex flex-col gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-            <span>Could not load {title.toLowerCase()}.</span>
+            <span>Couldn&apos;t load {title.toLowerCase()}.</span>
             {onRetry ? (
               <Button
                 variant="outline"
@@ -439,7 +439,7 @@ function ApprovalSection({
                 className="w-fit"
                 onClick={onRetry}
               >
-                Try again
+                Retry
               </Button>
             ) : null}
           </div>

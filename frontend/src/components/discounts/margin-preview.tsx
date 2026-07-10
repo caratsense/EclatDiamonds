@@ -62,7 +62,7 @@ export function MarginPreview({
             <p
               className={cn(
                 "num text-base font-semibold",
-                lossMaking ? "text-destructive" : "text-emerald-600",
+                lossMaking ? "text-destructive" : "text-success",
               )}
             >
               {formatPercent(marginPctAfter)}
@@ -73,7 +73,7 @@ export function MarginPreview({
           </div>
           <div className="text-center">
             <p className="text-xs text-muted-foreground">Erosion</p>
-            <p className="num flex items-center gap-1 text-base font-semibold text-amber-600">
+            <p className="num flex items-center gap-1 text-base font-semibold text-warning">
               <TrendingDown className="h-4 w-4" />
               {formatPercent(erosion)}
             </p>

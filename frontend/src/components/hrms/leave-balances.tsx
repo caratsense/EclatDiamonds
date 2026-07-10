@@ -13,18 +13,9 @@ import {
   LEAVE_TYPE_LABELS,
   LEAVE_TYPE_ORDER,
   type LeaveBalance,
-  type LeaveType,
 } from "@/lib/mock/hrms";
 import { useLeaveBalances } from "@/lib/queries/hrms";
 import { ApplyLeaveDialog } from "@/components/hrms/apply-leave-dialog";
-
-/** Colour accent per leave type for the tile. */
-const TYPE_ACCENT: Record<LeaveType, string> = {
-  casual: "text-sky-600 dark:text-sky-400",
-  sick: "text-rose-600 dark:text-rose-400",
-  earned: "text-emerald-600 dark:text-emerald-400",
-  festival: "text-amber-600 dark:text-amber-400",
-};
 
 /**
  * Leave balances row + "Apply for leave" action (Module 6). Balances are the
@@ -75,14 +66,12 @@ export function LeaveBalances() {
                     {isFestival ? " · unpaid" : ""}
                   </p>
                   {isFestival ? (
-                    <p className={`text-2xl font-semibold ${TYPE_ACCENT[type]}`}>
+                    <p className="text-2xl font-semibold text-muted-foreground">
                       Unpaid
                     </p>
                   ) : (
                     <>
-                      <p
-                        className={`num text-2xl font-semibold ${TYPE_ACCENT[type]}`}
-                      >
+                      <p className="num text-2xl font-semibold">
                         {b ? b.balance : "—"}
                         <span className="text-sm font-normal text-muted-foreground">
                           {" "}

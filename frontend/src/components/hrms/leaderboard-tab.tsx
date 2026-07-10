@@ -23,7 +23,11 @@ import {
 import { formatINRCompact, formatPercent } from "@/lib/format";
 import type { LeaderboardRow } from "@/lib/mock/hrms";
 
-const RANK_BADGE = ["bg-amber-400 text-amber-950", "bg-zinc-300 text-zinc-800", "bg-orange-300 text-orange-950"];
+const RANK_BADGE = [
+  "bg-gold text-gold-foreground",
+  "bg-secondary text-secondary-foreground",
+  "bg-secondary text-secondary-foreground",
+];
 
 export function LeaderboardTab({ rows }: { rows: LeaderboardRow[] }) {
   const t = useChartTokens();
@@ -60,7 +64,7 @@ export function LeaderboardTab({ rows }: { rows: LeaderboardRow[] }) {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Trophy className="h-4 w-4 text-amber-500" />
+            <Trophy className="h-4 w-4 text-muted-foreground" />
             Sales-staff leaderboard
           </CardTitle>
           <CardDescription>

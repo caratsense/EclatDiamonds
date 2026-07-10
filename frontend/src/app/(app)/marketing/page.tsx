@@ -128,20 +128,20 @@ export default function MarketingPage() {
           ) : campaignsError ? (
             <Card>
               <CardContent className="flex flex-col items-center gap-3 py-12 text-center text-sm text-muted-foreground">
-                <p>We could not load campaigns just now.</p>
+                <p>Couldn&apos;t load campaigns.</p>
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => refetchCampaigns()}
                 >
-                  Try again
+                  Retry
                 </Button>
               </CardContent>
             </Card>
           ) : campaigns.length === 0 ? (
             <Card>
               <CardContent className="py-12 text-center text-muted-foreground">
-                No campaigns yet — plan the first one with New campaign.
+                No campaigns yet. Create a campaign to get started.
               </CardContent>
             </Card>
           ) : (
@@ -176,14 +176,14 @@ export default function MarketingPage() {
                 </div>
               ) : tasksError ? (
                 <div className="rounded-lg border bg-muted/40 p-6 text-center text-sm text-muted-foreground">
-                  <p>We could not load agency tasks just now.</p>
+                  <p>Couldn&apos;t load agency tasks.</p>
                   <Button
                     variant="outline"
                     size="sm"
                     className="mt-3"
                     onClick={() => refetchTasks()}
                   >
-                    Try again
+                    Retry
                   </Button>
                 </div>
               ) : (
@@ -225,7 +225,7 @@ export default function MarketingPage() {
                           colSpan={6}
                           className="py-10 text-center text-muted-foreground"
                         >
-                          No agency tasks yet — share the first deliverable.
+                          No agency tasks yet. Share a deliverable to begin.
                         </TableCell>
                       </TableRow>
                     ) : null}
@@ -249,19 +249,19 @@ export default function MarketingPage() {
                 ))
               ) : assetsError ? (
                 <div className="col-span-full rounded-lg border bg-muted/40 p-6 text-center text-sm text-muted-foreground">
-                  <p>We could not load shared assets just now.</p>
+                  <p>Couldn&apos;t load shared assets.</p>
                   <Button
                     variant="outline"
                     size="sm"
                     className="mt-3"
                     onClick={() => refetchAssets()}
                   >
-                    Try again
+                    Retry
                   </Button>
                 </div>
               ) : assets.length === 0 ? (
                 <p className="col-span-full py-6 text-center text-sm text-muted-foreground">
-                  No shared assets yet — agency uploads will appear here.
+                  No shared assets yet. Agency uploads will appear here.
                 </p>
               ) : (
                 assets.map((a) => <AssetTile key={a.id} asset={a} />)

@@ -183,9 +183,9 @@ function Figure({
       <p
         className={
           tone === "emerald"
-            ? "num mt-0.5 text-sm font-semibold text-emerald-600"
+            ? "num mt-0.5 text-sm font-semibold text-success"
             : tone === "amber" && value > 0
-              ? "num mt-0.5 text-sm font-semibold text-amber-600"
+              ? "num mt-0.5 text-sm font-semibold text-warning"
               : "num mt-0.5 text-sm font-semibold"
         }
       >

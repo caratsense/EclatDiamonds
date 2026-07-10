@@ -34,7 +34,7 @@ export function InstallmentProgress({
         <div
           className={cn(
             "h-full rounded-full transition-all",
-            atRisk ? "bg-amber-500" : "bg-emerald-500",
+            atRisk ? "bg-warning" : "bg-success",
           )}
           style={{ width: `${pct}%` }}
         />

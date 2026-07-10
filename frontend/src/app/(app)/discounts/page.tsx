@@ -171,14 +171,14 @@ export default function DiscountsPage() {
                 <TableRow>
                   <TableCell colSpan={colCount} className="py-10 text-center">
                     <div className="mx-auto max-w-sm rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
-                      <p>Could not load discount requests.</p>
+                      <p>Couldn&apos;t load discount requests.</p>
                       <Button
                         variant="outline"
                         size="sm"
                         className="mt-3"
                         onClick={() => refetch()}
                       >
-                        Try again
+                        Retry
                       </Button>
                     </div>
                   </TableCell>
@@ -244,7 +244,7 @@ export default function DiscountsPage() {
                                 className={
                                   margin < 0
                                     ? "num font-medium text-destructive"
-                                    : "num font-medium text-emerald-600"
+                                    : "num font-medium text-success"
                                 }
                               >
                                 {formatINR(margin)}
@@ -343,7 +343,7 @@ function DiscountLimitsCard() {
           <Skeleton className="h-32 w-full" />
         ) : isError ? (
           <p className="text-sm text-muted-foreground">
-            Could not load the limits table.
+            Couldn&apos;t load the limits table.
           </p>
         ) : (
           <Table>

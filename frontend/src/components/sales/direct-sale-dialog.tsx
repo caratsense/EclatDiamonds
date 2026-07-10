@@ -329,7 +329,7 @@ export function DirectSaleDialog({ open, onOpenChange }: DirectSaleDialogProps) 
               <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
                 Advance
               </p>
-              <p className="num mt-0.5 text-sm font-semibold text-emerald-600">
+              <p className="num mt-0.5 text-sm font-semibold text-success">
                 {formatINR(advanceNum ?? 0)}
               </p>
             </div>
@@ -340,7 +340,7 @@ export function DirectSaleDialog({ open, onOpenChange }: DirectSaleDialogProps) 
               <p
                 className={cn(
                   "num mt-0.5 text-sm font-semibold",
-                  balance && balance > 0 ? "text-amber-600" : "text-foreground",
+                  balance && balance > 0 ? "text-warning" : "text-foreground",
                 )}
               >
                 {balance !== undefined ? formatINR(balance) : "—"}

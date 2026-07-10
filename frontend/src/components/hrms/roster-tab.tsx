@@ -23,10 +23,10 @@ import {
 } from "@/lib/mock/hrms";
 
 const SHIFT_STYLES: Record<ShiftAssignment["shift"], string> = {
-  M: "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200",
-  E: "bg-indigo-100 text-indigo-900 dark:bg-indigo-900/40 dark:text-indigo-200",
+  M: "bg-secondary text-secondary-foreground",
+  E: "bg-secondary text-secondary-foreground",
   O: "bg-muted text-muted-foreground",
-  L: "bg-rose-100 text-rose-900 dark:bg-rose-900/40 dark:text-rose-200",
+  L: "bg-muted text-muted-foreground",
 };
 
 const LEAVE_STATUS_META: Record<

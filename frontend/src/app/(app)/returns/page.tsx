@@ -160,14 +160,14 @@ export default function ReturnsPage() {
                 </div>
               ) : isError ? (
                 <div className="rounded-lg border bg-muted/40 p-6 text-center text-sm text-muted-foreground">
-                  <p>We could not load returns just now.</p>
+                  <p>Couldn&apos;t load returns.</p>
                   <Button
                     variant="outline"
                     size="sm"
                     className="mt-3"
                     onClick={() => refetch()}
                   >
-                    Try again
+                    Retry
                   </Button>
                 </div>
               ) : rows.length === 0 ? (

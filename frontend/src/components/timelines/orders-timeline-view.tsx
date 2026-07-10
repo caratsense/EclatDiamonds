@@ -96,7 +96,7 @@ function KindBadge({ kind }: { kind: CustomOrder["kind"] }) {
 function OrderThumb({ order }: { order: CustomOrder }) {
   const src = assetUrl(order.imageUrl);
   return (
-    <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md bg-gradient-to-br from-amber-50 to-amber-100 dark:from-amber-950/40 dark:to-amber-900/20">
+    <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted">
       {src ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
@@ -105,7 +105,7 @@ function OrderThumb({ order }: { order: CustomOrder }) {
           className="h-full w-full object-cover"
         />
       ) : (
-        <Gem className="h-4 w-4 text-amber-400/70" />
+        <Gem className="h-4 w-4 text-muted-foreground" />
       )}
     </div>
   );
@@ -198,13 +198,13 @@ export function OrdersTimelineView() {
           ) : ordersError ? (
             <Card>
               <CardContent className="flex flex-col items-center gap-3 py-12 text-center text-sm text-muted-foreground">
-                <p>We could not load orders just now.</p>
+                <p>Couldn&apos;t load orders.</p>
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => refetchOrders()}
                 >
-                  Try again
+                  Retry
                 </Button>
               </CardContent>
             </Card>
@@ -443,14 +443,14 @@ export function OrdersTimelineView() {
                 </div>
               ) : replenError ? (
                 <div className="rounded-lg border bg-muted/40 p-6 text-center text-sm text-muted-foreground">
-                  <p>We could not load replenishment movements just now.</p>
+                  <p>Couldn&apos;t load stock in transit.</p>
                   <Button
                     variant="outline"
                     size="sm"
                     className="mt-3"
                     onClick={() => refetchReplen()}
                   >
-                    Try again
+                    Retry
                   </Button>
                 </div>
               ) : (

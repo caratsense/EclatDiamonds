@@ -124,7 +124,7 @@ export default function InventoryPage() {
           </Card>
           <Card>
             <CardContent className="flex items-center gap-3 py-4">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-500/10 text-amber-600">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-warning/10 text-warning">
                 <ShoppingCart className="h-5 w-5" />
               </div>
               <div>
@@ -198,7 +198,7 @@ export default function InventoryPage() {
                         colSpan={7}
                         className="py-10 text-center text-muted-foreground"
                       >
-                        No stock entries yet — add the first piece.
+                        No stock entries yet. Add a piece to begin.
                       </TableCell>
                     </TableRow>
                   ) : null}
@@ -379,7 +379,7 @@ export default function InventoryPage() {
                 </TableHeader>
                 <TableBody>
                   {MOCK_REORDER_ALERTS.map((a) => (
-                    <TableRow key={a.id} className="bg-amber-500/5">
+                    <TableRow key={a.id} className="bg-warning/5">
                       <TableCell>
                         <div className="font-medium">{a.name}</div>
                         <div className="text-xs text-muted-foreground">

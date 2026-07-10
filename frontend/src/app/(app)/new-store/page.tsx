@@ -83,14 +83,13 @@ export default function NewStorePage() {
         <Card>
           <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
             <div className="space-y-1">
-              <p className="font-medium">We could not load store-launch projects</p>
+              <p className="font-medium">Couldn&apos;t load store-launch projects</p>
               <p className="max-w-sm text-sm text-muted-foreground">
-                Something went wrong fetching the projects. Check your connection
-                and try again.
+                Check your connection and try again.
               </p>
             </div>
             <Button variant="outline" size="sm" onClick={() => refetch()}>
-              Try again
+              Retry
             </Button>
           </CardContent>
         </Card>
@@ -130,7 +129,7 @@ export default function NewStorePage() {
         {header}
         <Card>
           <CardContent className="py-16 text-center text-sm text-muted-foreground">
-            No store-launch projects yet — start one with New project.
+            No store-launch projects yet. Create a project to get started.
           </CardContent>
         </Card>
       </>
@@ -322,7 +321,7 @@ export default function NewStorePage() {
                     colSpan={4}
                     className="py-10 text-center text-muted-foreground"
                   >
-                    No vendors assigned yet — add the first assignment.
+                    No vendors assigned yet. Add an assignment to begin.
                   </TableCell>
                 </TableRow>
               ) : null}

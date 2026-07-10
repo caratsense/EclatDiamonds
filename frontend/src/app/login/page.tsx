@@ -75,7 +75,7 @@ export default function LoginPage() {
           toast.error(
             status === 401
               ? "Invalid email or password."
-              : "Could not sign in. Is the API running?",
+              : "Couldn't sign in. Check your connection and try again.",
           );
         },
       },

@@ -73,12 +73,12 @@ export function ProductDetailDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="group relative flex aspect-[16/9] items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-amber-50 to-amber-100 dark:from-amber-950/40 dark:to-amber-900/20">
+        <div className="group relative flex aspect-[16/9] items-center justify-center overflow-hidden rounded-lg bg-muted">
           {src ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={src} alt={product.name} className="h-full w-full object-cover" />
           ) : (
-            <Gem className="h-12 w-12 text-amber-400/70" />
+            <Gem className="h-12 w-12 text-muted-foreground/40" />
           )}
           {canEdit ? (
             <>

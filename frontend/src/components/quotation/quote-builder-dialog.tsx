@@ -695,7 +695,7 @@ export function QuoteBuilderDialog({
               {/* One diamond (optional) */}
               <div className="rounded-lg border p-3">
                 <p className="mb-3 flex items-center gap-1.5 text-sm font-medium">
-                  <Gem className="h-4 w-4 text-sky-500" />
+                  <Gem className="h-4 w-4 text-muted-foreground" />
                   Diamond
                   <span className="text-xs font-normal text-muted-foreground">
                     optional
@@ -888,7 +888,7 @@ export function QuoteBuilderDialog({
               <div className="rounded-lg border p-3">
                 <div className="mb-2 flex items-center justify-between">
                   <p className="flex items-center gap-1.5 text-sm font-medium">
-                    <Gem className="h-4 w-4 text-sky-500" />
+                    <Gem className="h-4 w-4 text-muted-foreground" />
                     Diamonds
                   </p>
                   <Button

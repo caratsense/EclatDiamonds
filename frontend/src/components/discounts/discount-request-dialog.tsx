@@ -186,7 +186,7 @@ export function DiscountRequestDialog({
 
           {/* Gold-no-discount note + the two discountable inputs. */}
           <div className="rounded-lg border bg-muted/20 p-4">
-            <p className="mb-3 flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+            <p className="mb-3 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
               <Lock className="h-3.5 w-3.5" />
               Gold: no discount — only diamond &amp; making are discountable.
             </p>
@@ -276,13 +276,13 @@ export function DiscountRequestDialog({
               className={cn(
                 "flex items-start gap-2 rounded-lg border p-3 text-sm",
                 withinCaps
-                  ? "border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/30"
-                  : "border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-950/30",
+                  ? "border-success/30 bg-success/10"
+                  : "border-warning/30 bg-warning/10",
               )}
             >
               {withinCaps ? (
                 <>
-                  <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                  <Check className="mt-0.5 h-4 w-4 shrink-0 text-success" />
                   <span>
                     Within store-manager caps (Diamond ≤{" "}
                     {formatPercent(STORE_MANAGER_CAPS.diamondPercent)} / Making ≤{" "}
@@ -292,7 +292,7 @@ export function DiscountRequestDialog({
                 </>
               ) : (
                 <>
-                  <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                  <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
                   <span>
                     Above store-manager caps — this will escalate for approval.
                   </span>

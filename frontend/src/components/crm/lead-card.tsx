@@ -65,7 +65,7 @@ export function LeadCard({ lead, onOpen, onDragStart, draggable }: LeadCardProps
         {hasReminder ? (
           <span
             title="Occasion reminder"
-            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground"
           >
             <Bell className="h-3 w-3" />
           </span>

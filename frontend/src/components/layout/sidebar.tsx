@@ -87,10 +87,9 @@ export function Sidebar() {
       </nav>
 
       <div className="border-t border-sidebar-border px-5 py-3">
-        <div className="flex items-center gap-2 text-[11px] text-sidebar-foreground/55">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px] shadow-emerald-400/60" />
-          All systems live
-        </div>
+        <p className="text-[11px] tracking-wide text-sidebar-foreground/50">
+          Éclat · CaratSense
+        </p>
       </div>
     </aside>
   );

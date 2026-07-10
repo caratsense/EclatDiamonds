@@ -74,12 +74,12 @@ export function MaturityCalculator() {
             <dd className="num font-medium">{formatINR(paidIn)}</dd>
           </div>
           <div className="flex items-center justify-between">
-            <dt className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400">
+            <dt className="flex items-center gap-1.5 text-muted-foreground">
               <Gift className="h-3.5 w-3.5" />
               Store bonus ({plan.bonusMonths} month
               {plan.bonusMonths === 1 ? "" : "s"})
             </dt>
-            <dd className="num font-medium text-emerald-700 dark:text-emerald-400">
+            <dd className="num font-medium text-success">
               + {formatINR(bonus)}
             </dd>
           </div>

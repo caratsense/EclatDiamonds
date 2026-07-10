@@ -215,9 +215,9 @@ export default function LoyaltyPage() {
 
       {/* default-risk flags */}
       {atRisk.length > 0 ? (
-        <Card className="mb-4 border-amber-200 dark:border-amber-900/50">
+        <Card className="mb-4 border-warning/30">
           <CardContent className="flex flex-col gap-2 py-4">
-            <div className="flex items-center gap-2 text-sm font-medium text-amber-700 dark:text-amber-400">
+            <div className="flex items-center gap-2 text-sm font-medium text-warning">
               <AlertTriangle className="h-4 w-4" />
               {atRisk.length} account{atRisk.length === 1 ? "" : "s"} with missed
               payments
@@ -254,7 +254,7 @@ export default function LoyaltyPage() {
             </div>
           ) : isError ? (
             <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-muted-foreground">
-              Could not load scheme accounts. Check your connection and try
+              Couldn&apos;t load scheme accounts. Check your connection and try
               again.
             </div>
           ) : (
@@ -313,7 +313,7 @@ export default function LoyaltyPage() {
                       colSpan={7}
                       className="py-10 text-center text-muted-foreground"
                     >
-                      No members yet — enroll the first customer above.
+                      No members yet. Enroll a customer above.
                     </TableCell>
                   </TableRow>
                 ) : null}

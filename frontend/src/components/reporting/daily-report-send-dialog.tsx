@@ -215,7 +215,7 @@ export function DailyReportSendDialog({
           </div>
 
           {outcome?.disabled ? (
-            <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-600 dark:text-amber-400">
+            <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
               <Info className="mt-0.5 h-4 w-4 shrink-0" />
               <span>
                 {outcome.channel === "email" ? "Email" : "WhatsApp"} isn&apos;t

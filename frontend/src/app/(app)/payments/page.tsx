@@ -130,7 +130,7 @@ export default function PaymentsPage() {
       <SectionHeader
         title="Sales & Payments"
         purpose="Record direct sales with advance vs balance and counter photos, plus the payment-collection ledger and bank reconciliation."
-        primaryAction="New sale"
+        primaryAction="New Sale"
         onPrimaryAction={() => setSaleOpen(true)}
       />
 
@@ -185,8 +185,8 @@ export default function PaymentsPage() {
                       <TableRow>
                         <TableCell colSpan={6} className="py-10 text-center">
                           <div className="mx-auto max-w-sm rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-muted-foreground">
-                            Could not load collections. Check your connection and
-                            try again.
+                            Couldn&apos;t load collections. Check your connection
+                            and try again.
                           </div>
                         </TableCell>
                       </TableRow>
@@ -196,7 +196,7 @@ export default function PaymentsPage() {
                           colSpan={6}
                           className="py-10 text-center text-sm text-muted-foreground"
                         >
-                          No payments yet — record the first one.
+                          No payments yet. Record a payment to begin.
                         </TableCell>
                       </TableRow>
                     ) : (
@@ -262,7 +262,7 @@ export default function PaymentsPage() {
           <div className="grid gap-4 sm:grid-cols-3">
             <Card>
               <CardContent className="flex items-center gap-3 py-4">
-                <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                <CheckCircle2 className="h-5 w-5 text-success" />
                 <div>
                   <p className="num text-2xl font-semibold">{matched}</p>
                   <p className="text-xs text-muted-foreground">Matched</p>
@@ -324,8 +324,8 @@ export default function PaymentsPage() {
                     <TableRow>
                       <TableCell colSpan={7} className="py-10 text-center">
                         <div className="mx-auto max-w-sm rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-muted-foreground">
-                          Could not load reconciliation. Check your connection and
-                          try again.
+                          Couldn&apos;t load reconciliation. Check your connection
+                          and try again.
                         </div>
                       </TableCell>
                     </TableRow>
@@ -335,7 +335,7 @@ export default function PaymentsPage() {
                         colSpan={7}
                         className="py-10 text-center text-sm text-muted-foreground"
                       >
-                        Nothing to reconcile yet — it appears once collections post.
+                        Nothing to reconcile yet. Entries appear once collections post.
                       </TableCell>
                     </TableRow>
                   ) : (

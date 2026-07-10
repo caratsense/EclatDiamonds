@@ -138,8 +138,7 @@ export default function RemindersPage() {
           </span>
           <p className="text-sm font-medium">No follow-ups due.</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            You&apos;re all caught up. New leads schedule follow-ups
-            automatically at 7 and 30 days.
+            New leads automatically schedule follow-ups at 7 and 30 days.
           </p>
         </div>
       ) : (

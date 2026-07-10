@@ -162,14 +162,16 @@ export function WelcomeTour() {
     >
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <div className="mb-1 flex h-9 w-9 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">
+          <div className="mb-1 flex h-9 w-9 items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--gold)_12%,transparent)] text-gold-strong">
             {isLast ? (
               <Compass className="h-5 w-5" />
             ) : (
               <Sparkles className="h-5 w-5" />
             )}
           </div>
-          <DialogTitle>{current.title}</DialogTitle>
+          <DialogTitle className="font-display text-xl font-medium tracking-tight">
+            {current.title}
+          </DialogTitle>
           <DialogDescription className="leading-relaxed">
             {current.body}
           </DialogDescription>
