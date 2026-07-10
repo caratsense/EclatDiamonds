@@ -62,6 +62,7 @@ export const NAV_GROUPS: NavGroup[] = [
           "Role-specific dashboards and cross-department collaboration.",
         primaryAction: "New Task",
         icon: LayoutDashboard,
+        roles: ["store_manager", "area_manager", "head_office"],
       },
       {
         module: 10,
@@ -71,6 +72,7 @@ export const NAV_GROUPS: NavGroup[] = [
           "Automated daily sales reports and store analytics.",
         primaryAction: "Generate DSR",
         icon: BarChart3,
+        roles: ["store_manager", "area_manager", "head_office"],
       },
     ],
   },
@@ -155,6 +157,7 @@ export const NAV_GROUPS: NavGroup[] = [
         purpose: "Sales leaderboard and editable commission/incentives.",
         primaryAction: "",
         icon: Trophy,
+        roles: ["store_manager", "area_manager", "head_office"],
       },
     ],
   },
@@ -169,6 +172,7 @@ export const NAV_GROUPS: NavGroup[] = [
           "Inventory optimization, aging-stock control and scrap recycling.",
         primaryAction: "Stock Entry",
         icon: Boxes,
+        roles: ["area_manager", "head_office"],
       },
     ],
   },
@@ -197,6 +201,7 @@ export const NAV_GROUPS: NavGroup[] = [
           "End-to-end finance: ledgers, budgets, cash-flow and expansion costs.",
         primaryAction: "Add Entry",
         icon: Banknote,
+        roles: ["area_manager", "head_office"],
       },
       {
         module: 11,
@@ -206,6 +211,7 @@ export const NAV_GROUPS: NavGroup[] = [
           "Project management for launching new store locations.",
         primaryAction: "New Project",
         icon: Building2,
+        roles: ["area_manager", "head_office"],
       },
       {
         module: 16,
@@ -215,6 +221,7 @@ export const NAV_GROUPS: NavGroup[] = [
           "Coordinate external campaigns and agency deliverables.",
         primaryAction: "New Campaign",
         icon: Megaphone,
+        roles: ["store_manager", "area_manager", "head_office"],
       },
     ],
   },
@@ -269,4 +276,14 @@ export function visibleNavGroups(role: Role): NavGroup[] {
     ...group,
     items: group.items.filter((item) => canSeeNavItem(item, role)),
   })).filter((group) => group.items.length > 0);
+}
+
+/**
+ * Landing route per role. A salesperson has no Dashboards/Reporting in their
+ * nav, so sending them there lands on a mostly-empty (or forbidden) screen —
+ * they start on CRM (their funnel). Managers+ get the Dashboards home.
+ * Also used by the sidebar logo so "home" always points somewhere visible.
+ */
+export function homeForRole(role: Role): string {
+  return role === "salesperson" ? "/crm" : "/dashboards";
 }

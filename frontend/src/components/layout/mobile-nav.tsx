@@ -15,23 +15,37 @@ import {
 import { NAV_ITEMS, visibleNavGroups } from "@/lib/navigation";
 import { useSession } from "@/store/use-session";
 
-/** The four thumb-reachable shop-floor tabs; everything else lives in "More". */
-const PRIMARY_SLUGS = ["dashboards", "crm", "catalogue", "checkins"] as const;
+/**
+ * Preferred order for the thumb-reachable bottom tabs; we render the first four
+ * the current role can actually see (a salesperson has no Dashboards, so they
+ * get Quotation instead). Everything else lives in "More".
+ */
+const PREFERRED_PRIMARY = [
+  "dashboards",
+  "crm",
+  "quotation",
+  "catalogue",
+  "checkins",
+  "reminders",
+] as const;
 
 function Tab({
   href,
   title,
+  hint,
   Icon,
   active,
 }: {
   href: string;
   title: string;
+  hint?: string;
   Icon: LucideIcon;
   active: boolean;
 }) {
   return (
     <Link
       href={href}
+      title={hint}
       aria-current={active ? "page" : undefined}
       className={cn(
         // ≥44px tap target, one-handed reach
@@ -68,12 +82,18 @@ export function MobileNav() {
     return pathname === href || pathname.startsWith(`${href}/`);
   };
 
-  const primary = PRIMARY_SLUGS.map(
-    (slug) => NAV_ITEMS.find((i) => i.slug === slug)!,
-  ).filter(Boolean);
+  // Role-aware primary tabs: keep only what this role can see, take the first 4.
+  const visibleSlugs = new Set(
+    groups.flatMap((g) => g.items.map((i) => i.slug)),
+  );
+  const primary = PREFERRED_PRIMARY.filter((s) => visibleSlugs.has(s))
+    .slice(0, 4)
+    .map((slug) => NAV_ITEMS.find((i) => i.slug === slug)!)
+    .filter(Boolean);
+  const primarySlugs = primary.map((i) => i.slug);
 
   const moreActive =
-    !PRIMARY_SLUGS.some((s) => isActive(s)) && pathname !== "/login";
+    !primarySlugs.some((s) => isActive(s)) && pathname !== "/login";
 
   return (
     <>
@@ -86,6 +106,7 @@ export function MobileNav() {
             key={item.slug}
             href={`/${item.slug}`}
             title={item.title.split(" ")[0]}
+            hint={item.purpose}
             Icon={item.icon}
             active={isActive(item.slug)}
           />
@@ -128,6 +149,7 @@ export function MobileNav() {
                       <Link
                         key={item.slug}
                         href={`/${item.slug}`}
+                        title={item.purpose}
                         onClick={() => setMoreOpen(false)}
                         className={cn(
                           "flex min-h-20 flex-col items-center justify-center gap-1.5 rounded-lg border p-2 text-center transition-colors",

@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Logo } from "@/components/brand/logo";
 import { GoogleSignInButton } from "@/components/auth/google-sign-in-button";
+import { homeForRole } from "@/lib/navigation";
 import { getStoredToken } from "@/lib/api";
 import { useLogin, useGoogleLogin } from "@/lib/queries/auth";
 import { useSession } from "@/store/use-session";
@@ -40,7 +41,8 @@ export default function LoginPage() {
   function finishLogin(me: Parameters<typeof hydrate>[0]) {
     hydrate(me);
     toast.success(`Welcome, ${me.user.name}`);
-    router.replace("/dashboards");
+    // Land each role where their work starts (salesperson has no Dashboards nav).
+    router.replace(homeForRole(me.role));
   }
 
   function onGoogle(credential: string) {

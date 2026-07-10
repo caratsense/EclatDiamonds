@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/brand/logo";
-import { visibleNavGroups } from "@/lib/navigation";
+import { homeForRole, visibleNavGroups } from "@/lib/navigation";
 import { pendingDueCount, useReminders } from "@/lib/queries/reminders";
 import { useSession } from "@/store/use-session";
 
@@ -22,7 +22,7 @@ export function Sidebar() {
     <aside className="hidden w-64 shrink-0 flex-col bg-sidebar text-sidebar-foreground md:flex">
       {/* Brand */}
       <div className="flex h-16 items-center border-b border-sidebar-border px-5">
-        <Link href="/dashboards" aria-label="Éclat Diamonds">
+        <Link href={homeForRole(role)} aria-label="Éclat Diamonds">
           <Logo className="h-8 w-auto" />
         </Link>
       </div>
@@ -45,6 +45,7 @@ export function Sidebar() {
                   <li key={item.slug}>
                     <Link
                       href={href}
+                      title={item.purpose}
                       className={cn(
                         "group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all duration-150",
                         active
@@ -84,7 +85,7 @@ export function Sidebar() {
       <div className="border-t border-sidebar-border px-5 py-3">
         <div className="flex items-center gap-2 text-[11px] text-sidebar-foreground/55">
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px] shadow-emerald-400/60" />
-          Phase 1 · 17 modules live
+          All systems live
         </div>
       </div>
     </aside>
