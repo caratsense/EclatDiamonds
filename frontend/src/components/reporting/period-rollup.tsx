@@ -84,7 +84,8 @@ function RollupTile({
             {label}
           </p>
         </div>
-        <p className="mt-3.5 font-display text-[30px] font-semibold leading-none tracking-tight tabular-nums text-foreground">
+        {/* Numeric hero in the mono readout — serif oldstyle figures misalign. */}
+        <p className="num mt-3.5 text-[26px] font-semibold leading-none tracking-tight text-foreground">
           {value}
         </p>
         <div className="mt-4 space-y-1.5 border-t pt-3">

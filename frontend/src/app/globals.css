@@ -276,6 +276,13 @@ body {
   letter-spacing: -0.01em;
 }
 
+/* Safety: the display serif (Cormorant) defaults to oldstyle (hanging) figures
+   that bounce off the baseline. Numeric heroes use .num instead, but if a digit
+   ever lands inside a display-face title, force lining, equal-width figures. */
+.font-display {
+  font-variant-numeric: lining-nums tabular-nums;
+}
+
 /* Champagne brand text (wordmark / hero accents only). */
 .text-gradient-gold {
   background: linear-gradient(100deg, #d9bd86 0%, #b6894e 55%, #9a6f3a 100%);

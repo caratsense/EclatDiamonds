@@ -55,11 +55,11 @@ split-screen sign-in at `/login`.
 
 | Role | Face | Used for | Notes |
 |---|---|---|---|
-| Display | **Cormorant Garamond** (classical high-contrast serif) | Page titles + the **single hero figure** per screen | The jewellery-house register (Garamond lineage). Rendered at 600 ("semibold") — its 500 is too delicate on Windows. Replaced Fraunces (2026-07): Fraunces's soft "wonk" read playful/AI-default. |
+| Display | **Cormorant Garamond** (classical high-contrast serif) | Page titles — **words only, never digits** | The jewellery-house register (Garamond lineage). Rendered at 600 ("semibold") — its 500 is too delicate on Windows. Its figures are oldstyle (hanging) and bounce off the baseline, so **numeric heroes wear the mono readout (`.num`), not the serif** (a `.font-display` CSS rule forces `lining-nums` as a safety net). Replaced Fraunces (2026-07): Fraunces's soft "wonk" read playful/AI-default. |
 | UI | **Hanken Grotesk** | All dense operational data, chrome, forms, body | Premium grotesk workhorse. Replaced Inter (2026-07): Inter is the generic-AI-dashboard tell. |
 | Tabular | **IBM Plex Mono** (`.num`) | Weights, carats, prices, every numeric column | The "assay readout" — `tabular-nums lining-nums` so columns align like a scale. Replaced Geist Mono (Vercel default). |
 
-**Scale** (line-height in parens): Hero figure 32 (1.0) Cormorant 600 · H1 30 (1.1) Cormorant 600 ·
+**Scale** (line-height in parens): Hero figure 28 (1.0) Plex Mono 600 (`.num`) · H1 30 (1.1) Cormorant 600 ·
 H2 22 (1.2) Cormorant 600 · Card title 18 (1.2) Hanken 600 · Body 14 (1.43) Hanken 400 ·
 Body-strong 14 Hanken 600 · Meta 12.5 Hanken 500 stone · Overline 11 Hanken 600 uppercase +0.1em stone ·
 Numeric 13 Plex Mono 500 tnum.

@@ -161,7 +161,8 @@ export default function LandingPage() {
         <div className="mx-auto grid w-full max-w-6xl gap-8 px-5 py-16 sm:grid-cols-3 sm:px-8">
           {STATS.map((s) => (
             <div key={s.label} className="text-center">
-              <div className="font-display text-5xl font-semibold text-[var(--gold)]">
+              {/* Stat figures in the mono readout — serif oldstyle digits bounce. */}
+              <div className="num text-4xl font-semibold text-[var(--gold)]">
                 {s.value}
               </div>
               <div className="mt-2 text-sm text-brand-foreground/70">
