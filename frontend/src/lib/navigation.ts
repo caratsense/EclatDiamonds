@@ -18,6 +18,8 @@ import {
   BellRing,
   Store,
   Trophy,
+  ClipboardCheck,
+  GitCompare,
 } from "lucide-react";
 
 import type { Role } from "@/lib/types";
@@ -73,6 +75,16 @@ export const NAV_GROUPS: NavGroup[] = [
         primaryAction: "Generate DSR",
         icon: BarChart3,
         roles: ["store_manager", "area_manager", "head_office"],
+      },
+      {
+        module: 10,
+        slug: "store-comparison",
+        title: "Store Comparison",
+        purpose:
+          "Compare every store side by side — revenue, orders and staff — without switching stores.",
+        primaryAction: "",
+        icon: GitCompare,
+        roles: ["area_manager", "head_office"],
       },
     ],
   },
@@ -228,6 +240,16 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: "Back-office",
     items: [
+      {
+        module: 3,
+        slug: "approvals",
+        title: "Approvals",
+        purpose:
+          "One queue for everything waiting on you — discount, return and leave requests.",
+        primaryAction: "",
+        icon: ClipboardCheck,
+        roles: ["store_manager", "area_manager", "head_office"],
+      },
       {
         module: 13,
         slug: "ticketing",
