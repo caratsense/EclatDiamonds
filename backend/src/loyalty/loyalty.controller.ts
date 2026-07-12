@@ -8,6 +8,7 @@ import {
 } from './dto/loyalty.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
+import { Roles } from '../auth/roles.decorator';
 
 @Controller('loyalty')
 export class LoyaltyController {
@@ -35,6 +36,8 @@ export class LoyaltyController {
     return this.loyalty.referralCodes(user, store);
   }
 
+  /** Minting codes is a manager+ action; company-wide codes are HO-only (service). */
+  @Roles('store_manager', 'area_manager', 'head_office')
   @Post('referral-codes')
   createReferralCode(
     @CurrentUser() user: AuthUser,
@@ -52,6 +55,8 @@ export class LoyaltyController {
     return this.loyalty.wallet(user, id, store);
   }
 
+  /** Paying out commission moves money — manager+ only (HO-only for company-wide codes). */
+  @Roles('store_manager', 'area_manager', 'head_office')
   @Post('referral-codes/:id/payout')
   payout(
     @CurrentUser() user: AuthUser,

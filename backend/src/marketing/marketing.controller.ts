@@ -14,7 +14,8 @@ export class MarketingController {
     return this.marketing.campaigns(user, store);
   }
 
-  @Roles('store_manager', 'area_manager', 'head_office')
+  /** Launching campaigns spends marketing budget — area_manager+ only. */
+  @Roles('area_manager', 'head_office')
   @Post('campaigns')
   createCampaign(@CurrentUser() user: AuthUser, @Body() dto: CreateCampaignDto) {
     return this.marketing.create(user, dto);

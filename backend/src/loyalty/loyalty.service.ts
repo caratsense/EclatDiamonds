@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -8,6 +9,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
+import { ROLE_RANK } from '../common/role.util';
 import {
   CreateReferralCodeDto,
   CreateReferralDto,
@@ -208,7 +210,14 @@ export class LoyaltyService {
 
   /** POST /loyalty/referral-codes — mint a unique coupon code for a referrer. */
   async createReferralCode(user: AuthUser, dto: CreateReferralCodeDto) {
-    if (dto.storeId) this.scope.assertStoreAllowed(user, dto.storeId);
+    if (dto.storeId) {
+      this.scope.assertStoreAllowed(user, dto.storeId);
+    } else if (user.role !== 'head_office') {
+      // A null-store code is company-wide — only head office may mint those.
+      throw new ForbiddenException(
+        'Only head office may create company-wide referral codes',
+      );
+    }
     const code = await this.generateCode(dto.referrerName);
     const row = await this.prisma.referralCode.create({
       data: {
@@ -239,8 +248,16 @@ export class LoyaltyService {
   async createReferral(user: AuthUser, dto: CreateReferralDto) {
     if (dto.storeId) this.scope.assertStoreAllowed(user, dto.storeId);
 
-    const diamondDiscountPct = dto.diamondDiscountPct ?? DIAMOND_DISCOUNT_PCT;
-    const commissionPct = dto.commissionPct ?? COMMISSION_PCT;
+    // SECURITY: pct overrides are area_manager+ only. For lower roles the dto
+    // fields are hard-ignored (inert) and the config defaults always apply —
+    // a salesperson can still apply a code, but never change the economics.
+    const canOverridePct = ROLE_RANK[user.role] >= ROLE_RANK.area_manager;
+    const diamondDiscountPct = canOverridePct
+      ? dto.diamondDiscountPct ?? DIAMOND_DISCOUNT_PCT
+      : DIAMOND_DISCOUNT_PCT;
+    const commissionPct = canOverridePct
+      ? dto.commissionPct ?? COMMISSION_PCT
+      : COMMISSION_PCT;
     const bill = new Prisma.Decimal(dto.billAmount);
     const diamondDiscountAmount = pctOf(bill, diamondDiscountPct);
     const commissionAmount = pctOf(bill, commissionPct);
@@ -338,6 +355,12 @@ export class LoyaltyService {
       const code = await tx.referralCode.findUnique({ where: { id } });
       if (!code) throw new NotFoundException('referral code not found');
       this.assertCodeAccess(user, code.storeId);
+      // A null-store code is company-wide — only head office may pay it out.
+      if (code.storeId == null && user.role !== 'head_office') {
+        throw new ForbiddenException(
+          'Only head office may pay out company-wide referral codes',
+        );
+      }
 
       const amount = new Prisma.Decimal(dto.amount);
       if (amount.greaterThan(code.commissionBalance)) {

@@ -52,6 +52,7 @@ export class IntegrationsController {
   // ── WhatsApp ────────────────────────────────────────────────────────────────
 
   /** Send a quote/reminder/DSR message (text inside the 24h window, else template). */
+  @Roles('store_manager', 'area_manager', 'head_office')
   @Post('whatsapp/send')
   sendWhatsApp(@Body() dto: SendWhatsAppDto) {
     if (dto.template) {

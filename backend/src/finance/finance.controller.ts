@@ -7,12 +7,12 @@ import { Roles } from '../auth/roles.decorator';
 
 /**
  * Finance & Fund Planning (Module 4) is a Management-tier area: ledgers (AP/AR with
- * party names), P&L/EBITDA, budgets and cash-flow. A salesperson has no finance
- * workflow, so the whole controller is gated to store_manager and above (role
- * hierarchy still rolls up to area_manager / head_office). Store-scoping inside the
- * service further restricts which stores a manager/area can see.
+ * party names), P&L/EBITDA, budgets and cash-flow. The whole controller is gated to
+ * area_manager and above — matching the frontend nav, which shows Finance to
+ * area_manager+ only (security audit, 2026-07). Store-scoping inside the service
+ * further restricts which stores an area manager can see.
  */
-@Roles('store_manager', 'area_manager', 'head_office')
+@Roles('area_manager', 'head_office')
 @Controller('finance')
 export class FinanceController {
   constructor(private readonly finance: FinanceService) {}

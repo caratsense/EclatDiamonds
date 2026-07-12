@@ -1,8 +1,13 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { TicketCategory } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
+import { ROLE_RANK } from '../common/role.util';
 import {
   CreateTicketDto,
   CreateTicketMessageDto,
@@ -144,6 +149,18 @@ export class TicketingService {
       where: { id, ...this.scopedWhere(user) },
     });
     if (!existing) throw new NotFoundException('Ticket not found');
+
+    // Closing a ticket or reassigning it is a back-office action (area_manager+),
+    // mirroring the dedicated /close route. Other field updates stay open.
+    const closesOrReassigns =
+      dto.status === 'closed' ||
+      dto.assigneeId !== undefined ||
+      dto.assigneeName !== undefined;
+    if (closesOrReassigns && ROLE_RANK[user.role] < ROLE_RANK.area_manager) {
+      throw new ForbiddenException(
+        'Closing or reassigning a ticket requires area manager or head office',
+      );
+    }
     const ticket = await this.prisma.ticket.update({
       where: { id },
       data: {

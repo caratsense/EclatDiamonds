@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
@@ -180,7 +180,12 @@ export class DashboardService {
 
   /** POST /dashboard/tasks — create a task, optionally pinned to a store. */
   async createTask(user: AuthUser, dto: CreateTaskDto) {
-    if (dto.storeId) this.scope.assertStoreAllowed(user, dto.storeId);
+    if (dto.storeId) {
+      this.scope.assertStoreAllowed(user, dto.storeId);
+    } else if (ROLE_RANK[user.role] < ROLE_RANK.store_manager) {
+      // Global (null-store) tasks are manager+; a salesperson must pin a store.
+      throw new BadRequestException('storeId is required');
+    }
 
     const task = await this.prisma.task.create({
       data: {

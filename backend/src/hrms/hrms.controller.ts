@@ -59,7 +59,8 @@ export class HrmsController {
     return this.hrms.myAttendance(user, month, store);
   }
 
-  /** Admin/tablet manual mark (unchanged). */
+  /** Admin/tablet manual mark — marking attendance for others is manager+ only. */
+  @Roles('store_manager', 'area_manager', 'head_office')
   @Post('attendance')
   markAttendance(@CurrentUser() user: AuthUser, @Body() dto: MarkAttendanceDto) {
     return this.hrms.markAttendance(user, dto);

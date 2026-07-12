@@ -1,4 +1,9 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { DiscountStatus, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
@@ -164,6 +169,11 @@ export class DiscountsService {
   private async decide(user: AuthUser, id: string, decision: DiscountStatus, reason?: string) {
     const row = await this.prisma.discountRequest.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('Discount request not found');
+
+    // Only undecided requests may be decided — no flipping a settled decision.
+    if (row.status !== 'pending' && row.status !== 'escalated') {
+      throw new BadRequestException('This request has already been decided');
+    }
 
     // Store-scoping: the approver must have this store in scope.
     this.scope.assertStoreAllowed(user, row.storeId);
