@@ -534,6 +534,11 @@ model Lead {
   interest     String?
   lastActivity DateTime?
 
+  /// Zoho-style closed-outcome tracking: 'open' | 'won' | 'lost' (validated in DTO).
+  outcome    String    @default("open")
+  lostReason String?
+  closedAt   DateTime?
+
   // Round 2: CRM contact detail (all additive/optional).
   address     String?
   birthday    DateTime? @db.Date
@@ -583,6 +588,8 @@ model LeadNote {
   leadId     String
   authorId   String?
   authorName String?
+  /// Activity kind: 'note' | 'call' | 'visit' | 'whatsapp' (validated in DTO).
+  kind       String   @default("note")
   text       String
   createdAt  DateTime @default(now())
 

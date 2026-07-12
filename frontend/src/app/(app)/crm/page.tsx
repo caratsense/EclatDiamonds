@@ -51,23 +51,36 @@ import {
   useLeads,
   useMoveLeadStage,
   useCreateLead,
+  type LeadOutcomeFilter,
 } from "@/lib/queries/leads";
 import { useSession } from "@/store/use-session";
 
 const nav = getNavItem("crm")!;
+
+/** Outcome facet tabs — 'open' reads as "Active" for store staff. */
+const OUTCOME_TABS: { value: LeadOutcomeFilter; label: string }[] = [
+  { value: "open", label: "Active" },
+  { value: "won", label: "Won" },
+  { value: "lost", label: "Lost" },
+  { value: "all", label: "All" },
+];
 
 export default function CrmPage() {
   const { currentStore, role } = useSession();
   // Date-range filter (inclusive; API returns latest-first).
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  // Outcome facet — Active (open) by default; server-side param.
+  const [outcome, setOutcome] = useState<LeadOutcomeFilter>("open");
+  // Source facet — client-side over the fetched page.
+  const [sourceFilter, setSourceFilter] = useState<LeadSource | "all">("all");
   // Leads come live + already role/store-scoped server-side.
   const {
     data: leads = [],
     isLoading,
     isError,
     refetch,
-  } = useLeads({ from: from || undefined, to: to || undefined });
+  } = useLeads({ from: from || undefined, to: to || undefined, outcome });
   const moveStage = useMoveLeadStage();
   const [view, setView] = useState<"board" | "list">("board");
   const [active, setActive] = useState<Lead | null>(null);
@@ -75,8 +88,18 @@ export default function CrmPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
 
-  const scoped = leads;
+  const scoped =
+    sourceFilter === "all"
+      ? leads
+      : leads.filter((l) => l.source === sourceFilter);
   const byStage = (stage: LeadStage) => scoped.filter((l) => l.stage === stage);
+
+  // Keep the open dialog's lead in sync with refetched data; fall back to
+  // the last snapshot when the lead drops out of the current facet
+  // (e.g. just marked lost while viewing Active).
+  const activeLead = active
+    ? (leads.find((l) => l.id === active.id) ?? active)
+    : null;
 
   function openLead(lead: Lead) {
     setActive(lead);
@@ -120,6 +143,42 @@ export default function CrmPage() {
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div className="flex flex-wrap items-end gap-3">
           <p className="mb-1.5 text-sm text-muted-foreground">{scopeNote}</p>
+          <Tabs
+            value={outcome}
+            onValueChange={(v) => setOutcome(v as LeadOutcomeFilter)}
+          >
+            <TabsList className="h-9">
+              {OUTCOME_TABS.map((t) => (
+                <TabsTrigger key={t.value} value={t.value}>
+                  {t.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+          <div className="grid gap-1.5">
+            <Label
+              htmlFor="lead-source-filter"
+              className="text-xs text-muted-foreground"
+            >
+              Source
+            </Label>
+            <Select
+              value={sourceFilter}
+              onValueChange={(v) => setSourceFilter(v as LeadSource | "all")}
+            >
+              <SelectTrigger id="lead-source-filter" className="h-9 w-[9.5rem]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All sources</SelectItem>
+                {LEAD_SOURCE_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <div className="grid gap-1.5">
             <Label htmlFor="lead-from" className="text-xs text-muted-foreground">
               From
@@ -194,13 +253,21 @@ export default function CrmPage() {
           </Button>
         </div>
       ) : scoped.length === 0 ? (
-        <EmptyState
-          icon={Users}
-          title="No leads yet"
-          description="Add a customer enquiry to begin tracking follow-ups."
-          actionLabel="New Lead"
-          onAction={openCreateDialog}
-        />
+        outcome !== "open" || sourceFilter !== "all" || from || to ? (
+          <EmptyState
+            icon={Users}
+            title="No leads match these filters"
+            description="Adjust the outcome, source or date range to see more."
+          />
+        ) : (
+          <EmptyState
+            icon={Users}
+            title="No leads yet"
+            description="Add a customer enquiry to begin tracking follow-ups."
+            actionLabel="New Lead"
+            onAction={openCreateDialog}
+          />
+        )
       ) : view === "board" ? (
         <div className="grid gap-4 md:grid-cols-3">
           {LEAD_STAGES.map((stage) => {
@@ -283,9 +350,10 @@ export default function CrmPage() {
       )}
 
       <LeadDetailDialog
-        lead={active}
+        lead={activeLead}
         open={detailOpen}
         onOpenChange={setDetailOpen}
+        onLeadChange={setActive}
       />
 
       <AddLeadDialog open={addOpen} onOpenChange={setAddOpen} />

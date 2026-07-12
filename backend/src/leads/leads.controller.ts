@@ -1,11 +1,14 @@
 import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { LeadsService } from './leads.service';
 import {
+  CreateActivityDto,
+  CreateFollowUpDto,
   CreateLeadDto,
   ListLeadsQuery,
   ReminderQuery,
   UpdateFollowUpDto,
   UpdateLeadDto,
+  UpdateOutcomeDto,
 } from './dto/lead.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
@@ -56,5 +59,35 @@ export class LeadsController {
   @Patch(':id')
   update(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateLeadDto) {
     return this.leads.update(user, id, dto);
+  }
+
+  /** Log an activity (note/call/visit/whatsapp) on a lead. Manual-first: never sends anything. */
+  @Post(':id/activities')
+  addActivity(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: CreateActivityDto,
+  ) {
+    return this.leads.addActivity(user, id, dto);
+  }
+
+  /** Add an ad-hoc follow-up task; flows into GET /leads/reminders automatically. */
+  @Post(':id/follow-ups')
+  addFollowUp(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: CreateFollowUpDto,
+  ) {
+    return this.leads.addFollowUp(user, id, dto);
+  }
+
+  /** Set won/lost/open outcome ('lost' requires lostReason). */
+  @Patch(':id/outcome')
+  setOutcome(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateOutcomeDto,
+  ) {
+    return this.leads.setOutcome(user, id, dto);
   }
 }

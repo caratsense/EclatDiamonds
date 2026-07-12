@@ -16,6 +16,18 @@ import { LeadSource, LeadStage } from '@prisma/client';
 export const REMINDER_SCOPES = ['today', 'overdue', 'upcoming', 'pending', 'all'] as const;
 export type ReminderScope = (typeof REMINDER_SCOPES)[number];
 
+/** Activity kinds for POST /leads/:id/activities (stored on LeadNote.kind). */
+export const NOTE_KINDS = ['note', 'call', 'visit', 'whatsapp'] as const;
+export type NoteKind = (typeof NOTE_KINDS)[number];
+
+/** Lead closed-outcome values (Zoho-style won/lost tracking; string in DB). */
+export const LEAD_OUTCOMES = ['open', 'won', 'lost'] as const;
+export type LeadOutcome = (typeof LEAD_OUTCOMES)[number];
+
+/** GET /leads ?outcome= — 'all' disables the default 'open' filter. */
+export const LEAD_OUTCOME_FILTERS = [...LEAD_OUTCOMES, 'all'] as const;
+export type LeadOutcomeFilter = (typeof LEAD_OUTCOME_FILTERS)[number];
+
 /** yyyy-mm-dd (date-only). */
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -123,6 +135,42 @@ export class ListLeadsQuery {
   @IsOptional()
   @Matches(YMD, { message: 'to must be yyyy-mm-dd' })
   to?: string;
+
+  /** Outcome filter; defaults to 'open' so the kanban shows only active leads. */
+  @IsOptional()
+  @IsIn(LEAD_OUTCOME_FILTERS)
+  outcome?: LeadOutcomeFilter;
+}
+
+/** POST /leads/:id/activities body (Zoho-style logged activity → LeadNote). */
+export class CreateActivityDto {
+  @IsIn(NOTE_KINDS)
+  kind!: NoteKind;
+
+  @IsString()
+  @IsNotEmpty()
+  text!: string;
+}
+
+/** POST /leads/:id/follow-ups body (ad-hoc task with a due date). */
+export class CreateFollowUpDto {
+  @IsString()
+  @Matches(YMD, { message: 'dueDate must be yyyy-mm-dd' })
+  dueDate!: string;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
+/** PATCH /leads/:id/outcome body ('lost' requires a non-empty lostReason). */
+export class UpdateOutcomeDto {
+  @IsIn(LEAD_OUTCOMES)
+  outcome!: LeadOutcome;
+
+  @IsOptional()
+  @IsString()
+  lostReason?: string;
 }
 
 /** PATCH /leads/reminders/:id body. */

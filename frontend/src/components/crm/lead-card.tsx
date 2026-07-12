@@ -5,8 +5,23 @@ import { Bell, CalendarClock } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { formatINRCompact } from "@/lib/format";
-import { LEAD_SOURCE_LABELS, type Lead } from "@/lib/mock/crm";
+import {
+  LEAD_SOURCE_LABELS,
+  TEMPERATURE_LABELS,
+  type Lead,
+  type LeadTemperature,
+} from "@/lib/mock/crm";
 import { cn } from "@/lib/utils";
+
+/** Chip styling per temperature — Hot gets the gold treatment. */
+const TEMPERATURE_VARIANT: Record<
+  LeadTemperature,
+  "gold" | "secondary" | "outline"
+> = {
+  hot: "gold",
+  warm: "secondary",
+  cold: "outline",
+};
 
 /** Safe short date (dd MMM); falls back to the raw string on a bad value. */
 function shortDate(iso: string): string {
@@ -87,9 +102,20 @@ export function LeadCard({ lead, onOpen, onDragStart, draggable }: LeadCardProps
         ) : null}
       </div>
 
-      <p className="mt-2 text-[11px] text-muted-foreground">
-        {lead.ref} · {lead.assignedRep}
-      </p>
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <p className="truncate text-[11px] text-muted-foreground">
+          {lead.ref} · {lead.assignedRep}
+        </p>
+        {lead.temperature ? (
+          <Badge
+            variant={TEMPERATURE_VARIANT[lead.temperature]}
+            className="px-1.5 text-[10px]"
+            title="Lead temperature"
+          >
+            {TEMPERATURE_LABELS[lead.temperature]}
+          </Badge>
+        ) : null}
+      </div>
     </button>
   );
 }
