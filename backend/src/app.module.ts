@@ -28,6 +28,7 @@ import { TicketingModule } from './ticketing/ticketing.module';
 import { ReturnsModule } from './returns/returns.module';
 import { MarketingModule } from './marketing/marketing.module';
 import { LoyaltyModule } from './loyalty/loyalty.module';
+import { SearchModule } from './search/search.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { SyncModule } from './sync/sync.module';
 import { StorageModule } from './storage/storage.module';
@@ -63,6 +64,7 @@ import { HealthController } from './health/health.controller';
     ReturnsModule,
     MarketingModule,
     LoyaltyModule,
+    SearchModule,
     IntegrationsModule,
     SyncModule,
     StorageModule,

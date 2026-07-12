@@ -1,5 +1,6 @@
 "use client";
 
+import { GlobalSearch } from "@/components/layout/global-search";
 import { RoleBadge } from "@/components/layout/role-badge";
 import { StoreSwitcher } from "@/components/layout/store-switcher";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
@@ -12,6 +13,11 @@ export function Topbar() {
 
       {/* Multi-store context is always present. */}
       <StoreSwitcher />
+
+      {/* Global search — Ctrl/Cmd+K. Full field on desktop, icon on mobile. */}
+      <div className="flex flex-1 justify-center md:px-4">
+        <GlobalSearch />
+      </div>
 
       <div className="ml-auto flex items-center gap-2">
         <RoleBadge />
