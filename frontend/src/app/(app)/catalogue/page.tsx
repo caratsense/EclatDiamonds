@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 
 import { ImageSearch } from "@/components/catalogue/image-search";
@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 import {
   Select,
   SelectContent,
@@ -47,8 +48,6 @@ type StoreFilter = string; // store id or "all"
 
 export default function CataloguePage() {
   const { currentStore, stores } = useSession();
-  // Product index comes live + store-scoped from the API.
-  const { data: allProducts = [], isLoading, isError, refetch } = useProducts();
   const [active, setActive] = useState<Product | null>(null);
   const [open, setOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -60,16 +59,22 @@ export default function CataloguePage() {
   const [store, setStore] = useState<StoreFilter>(
     currentStore.isAggregate ? "all" : currentStore.id,
   );
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
 
-  const products = useMemo(() => {
-    return allProducts.filter((p) => {
-      if (category !== "all" && p.category !== category) return false;
-      if (metal !== "all" && p.metal !== metal) return false;
-      if (avail !== "all" && p.availability !== avail) return false;
-      if (store !== "all" && p.storeId !== store) return false;
-      return true;
-    });
-  }, [allProducts, category, metal, avail, store]);
+  // Product index comes live + store-scoped from the API. Filters run
+  // server-side so `total` reflects the filtered count; a filter change
+  // always resets to page 1 (see the onValueChange handlers below).
+  const { data, isLoading, isError, refetch } = useProducts({
+    page,
+    pageSize,
+    category: category === "all" ? undefined : category,
+    metal: metal === "all" ? undefined : metal,
+    availability: avail === "all" ? undefined : avail,
+    storeId: store === "all" ? undefined : store,
+  });
+  const products = data?.items ?? [];
+  const total = data?.total ?? 0;
 
   function openProduct(p: Product) {
     setActive(p);
@@ -95,7 +100,10 @@ export default function CataloguePage() {
       <div className="mb-4 flex flex-wrap gap-2">
         <Select
           value={category}
-          onValueChange={(v) => setCategory(v as CategoryFilter)}
+          onValueChange={(v) => {
+            setCategory(v as CategoryFilter);
+            setPage(1);
+          }}
         >
           <SelectTrigger className="w-[150px]">
             <SelectValue placeholder="Category" />
@@ -110,7 +118,13 @@ export default function CataloguePage() {
           </SelectContent>
         </Select>
 
-        <Select value={metal} onValueChange={(v) => setMetal(v as MetalFilter)}>
+        <Select
+          value={metal}
+          onValueChange={(v) => {
+            setMetal(v as MetalFilter);
+            setPage(1);
+          }}
+        >
           <SelectTrigger className="w-[150px]">
             <SelectValue placeholder="Metal" />
           </SelectTrigger>
@@ -124,7 +138,13 @@ export default function CataloguePage() {
           </SelectContent>
         </Select>
 
-        <Select value={store} onValueChange={setStore}>
+        <Select
+          value={store}
+          onValueChange={(v) => {
+            setStore(v);
+            setPage(1);
+          }}
+        >
           <SelectTrigger className="w-[170px]">
             <SelectValue placeholder="Store" />
           </SelectTrigger>
@@ -138,7 +158,13 @@ export default function CataloguePage() {
           </SelectContent>
         </Select>
 
-        <Select value={avail} onValueChange={(v) => setAvail(v as AvailFilter)}>
+        <Select
+          value={avail}
+          onValueChange={(v) => {
+            setAvail(v as AvailFilter);
+            setPage(1);
+          }}
+        >
           <SelectTrigger className="w-[150px]">
             <SelectValue placeholder="Availability" />
           </SelectTrigger>
@@ -151,8 +177,8 @@ export default function CataloguePage() {
       </div>
 
       <p className="mb-3 text-sm text-muted-foreground">
-        <span className="num">{products.length}</span>{" "}
-        {products.length === 1 ? "piece" : "pieces"}
+        <span className="num">{total}</span>{" "}
+        {total === 1 ? "piece" : "pieces"}
       </p>
 
       {isError ? (
@@ -186,6 +212,19 @@ export default function CataloguePage() {
             <p className="rounded-xl border border-dashed py-12 text-center text-sm text-muted-foreground">
               No pieces match these filters. Adjust them or add a product.
             </p>
+          ) : null}
+
+          {!isLoading && total > 0 ? (
+            <PaginationBar
+              page={page}
+              pageSize={pageSize}
+              total={total}
+              onPageChange={setPage}
+              onPageSizeChange={(size) => {
+                setPageSize(size);
+                setPage(1);
+              }}
+            />
           ) : null}
         </>
       )}

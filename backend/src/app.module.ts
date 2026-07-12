@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 
 import { PrismaModule } from './prisma/prisma.module';
 import { CommonModule } from './common/common.module';
@@ -30,10 +31,16 @@ import { LoyaltyModule } from './loyalty/loyalty.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { SyncModule } from './sync/sync.module';
 import { StorageModule } from './storage/storage.module';
+import { HealthController } from './health/health.controller';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    // Global anti-abuse rate limit: 300 req / 60s per client IP. Generous by
+    // design — a 500-user ops tool never hits this in normal use; it only stops
+    // scripted abuse. OTP endpoints carry tighter per-route @Throttle overrides.
+    // Per-IP accuracy behind Railway's proxy relies on `trust proxy` (main.ts).
+    ThrottlerModule.forRoot({ throttlers: [{ ttl: 60_000, limit: 300 }] }),
     PrismaModule,
     CommonModule,
     AuthModule,
@@ -60,11 +67,15 @@ import { StorageModule } from './storage/storage.module';
     SyncModule,
     StorageModule,
   ],
+  controllers: [HealthController],
   providers: [
     // Global auth: every route requires a valid JWT unless marked @Public().
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     // Role-hierarchy gate for routes annotated with @Roles().
     { provide: APP_GUARD, useClass: RolesGuard },
+    // IP rate limit (registered last; guards run in registration order, though
+    // ordering is not functionally required here — throttling is per-IP, not per-user).
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
   ],
 })
 export class AppModule {}

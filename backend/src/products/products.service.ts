@@ -8,6 +8,7 @@ import { Availability, MetalKind, Prisma, ProductCategory } from '@prisma/client
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
+import { PageRequest, Paginated } from '../common/pagination';
 import { StorageService } from '../storage/storage.service';
 import { CreateProductDto } from './dto/product.dto';
 
@@ -46,7 +47,12 @@ export class ProductsService {
     private readonly storage: StorageService,
   ) {}
 
-  async list(user: AuthUser, f: ProductFilters, headerStore?: string) {
+  async list(
+    user: AuthUser,
+    f: ProductFilters,
+    headerStore?: string,
+    pagination?: PageRequest,
+  ): Promise<ReturnType<typeof toView>[] | Paginated<ReturnType<typeof toView>>> {
     const where: Prisma.ProductWhereInput = {};
     if (f.category) where.category = f.category;
     if (f.metal) where.metal = f.metal;
@@ -61,11 +67,25 @@ export class ProductsService {
       where.OR = [{ storeId: { in: user.storeIds } }, { storeId: null }];
     }
 
-    const products = await this.prisma.product.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-    });
-    return products.map(toView);
+    const orderBy: Prisma.ProductOrderByWithRelationInput = { createdAt: 'desc' };
+
+    // No page/pageSize → legacy plain-array response (existing frontend shape).
+    if (!pagination) {
+      const products = await this.prisma.product.findMany({ where, orderBy });
+      return products.map(toView);
+    }
+
+    const { page, pageSize } = pagination;
+    const [total, rows] = await this.prisma.$transaction([
+      this.prisma.product.count({ where }),
+      this.prisma.product.findMany({
+        where,
+        orderBy,
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+    return { items: rows.map(toView), total, page, pageSize };
   }
 
   async get(_user: AuthUser, id: string) {

@@ -17,6 +17,10 @@ async function bootstrap() {
   app.use(json({ limit: '25mb', verify: (req: any, _res, buf) => { req.rawBody = buf; } }));
   app.use(urlencoded({ extended: true, limit: '25mb' }));
 
+  // The app runs behind Railway's edge proxy: trust the first X-Forwarded-For hop
+  // so req.ip is the real client IP (per-IP rate limiting depends on this).
+  app.set('trust proxy', 1);
+
   const config = app.get(ConfigService);
 
   // Serve uploaded images/photos statically at /uploads (same dir StorageService

@@ -3,6 +3,7 @@ import { Prisma, StockStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
+import { PageRequest, Paginated } from '../common/pagination';
 import { CreateStockDto } from './dto/stock.dto';
 
 const STATUS_LABEL: Partial<Record<StockStatus, string>> = {
@@ -46,16 +47,39 @@ export class StockService {
     private readonly scope: StoreScopeService,
   ) {}
 
-  async list(user: AuthUser, headerStore?: string) {
-    const items = await this.prisma.stockItem.findMany({
-      where: {
-        ...this.scope.storeFilter(user, headerStore),
-        status: { in: ['in_stock', 'aging', 'dead_stock', 'reserved'] },
-      },
-      include: { store: true },
-      orderBy: { ageDays: 'desc' },
-    });
-    return items.map(toView);
+  async list(
+    user: AuthUser,
+    headerStore?: string,
+    pagination?: PageRequest,
+  ): Promise<ReturnType<typeof toView>[] | Paginated<ReturnType<typeof toView>>> {
+    const where: Prisma.StockItemWhereInput = {
+      ...this.scope.storeFilter(user, headerStore),
+      status: { in: ['in_stock', 'aging', 'dead_stock', 'reserved'] },
+    };
+    const orderBy: Prisma.StockItemOrderByWithRelationInput = { ageDays: 'desc' };
+
+    // No page/pageSize → legacy plain-array response (existing frontend shape).
+    if (!pagination) {
+      const items = await this.prisma.stockItem.findMany({
+        where,
+        include: { store: true },
+        orderBy,
+      });
+      return items.map(toView);
+    }
+
+    const { page, pageSize } = pagination;
+    const [total, rows] = await this.prisma.$transaction([
+      this.prisma.stockItem.count({ where }),
+      this.prisma.stockItem.findMany({
+        where,
+        include: { store: true },
+        orderBy,
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+    return { items: rows.map(toView), total, page, pageSize };
   }
 
   async create(user: AuthUser, dto: CreateStockDto) {

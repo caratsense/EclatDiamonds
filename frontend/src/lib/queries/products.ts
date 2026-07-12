@@ -26,19 +26,45 @@ export interface CreateProductInput {
   storeId?: string;
 }
 
+/** Paginated envelope returned by list endpoints when page params are sent. */
+export interface Paginated<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface ProductListParams {
+  /** 1-based page index — always sent so the API returns the envelope. */
+  page: number;
+  pageSize: number;
+  category?: ProductCategory;
+  metal?: Metal;
+  availability?: Availability;
+  /** Explicit store filter (distinct from the session store scope). */
+  storeId?: string;
+}
+
 /**
- * GET /products — unified catalogue index. The API returns the active store's
- * products (or all stores for broad roles on the "all" scope). Category /
- * metal / availability filtering stays client-side over this set.
+ * GET /products — unified catalogue index, server-paginated. The API scopes
+ * to the active store (or all stores for broad roles on the "all" scope);
+ * category / metal / availability / store filters are applied server-side so
+ * `total` reflects the filtered count. Page + pageSize are always sent, which
+ * makes the response the `{ items, total, page, pageSize }` envelope.
  */
-export function useProducts() {
+export function useProducts(params: ProductListParams) {
   const storeId = useStoreKey();
   return useQuery({
-    queryKey: ["products", storeId],
+    queryKey: ["products", storeId, params],
     queryFn: async () => {
-      const { data } = await api.get<Product[]>("/products");
+      const { data } = await api.get<Paginated<Product>>("/products", {
+        params,
+      });
       return data;
     },
+    // Keep the previous page on screen while the next one loads — page flips
+    // must not flash the grid empty (TanStack v5 keepPreviousData equivalent).
+    placeholderData: (prev) => prev,
   });
 }
 

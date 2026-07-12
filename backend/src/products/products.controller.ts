@@ -15,6 +15,7 @@ import { AiImageSearchService } from './ai-image-search.service';
 import { CreateProductDto } from './dto/product.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
+import { parsePagination } from '../common/pagination';
 import { Roles } from '../auth/roles.decorator';
 
 @Controller('products')
@@ -35,6 +36,10 @@ export class ProductsController {
     return this.aiSearch.search(user, file, store);
   }
 
+  /**
+   * List catalogue products. Without `page`/`pageSize` returns the plain array
+   * (legacy shape); with either param returns { items, total, page, pageSize }.
+   */
   @Get()
   list(
     @CurrentUser() user: AuthUser,
@@ -43,8 +48,15 @@ export class ProductsController {
     @Query('metal') metal?: MetalKind,
     @Query('storeId') storeId?: string,
     @Query('availability') availability?: Availability,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
   ) {
-    return this.products.list(user, { category, metal, storeId, availability }, store);
+    return this.products.list(
+      user,
+      { category, metal, storeId, availability },
+      store,
+      parsePagination(page, pageSize),
+    );
   }
 
   /** Create a catalogue product. Managers and above. */

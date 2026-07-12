@@ -24,15 +24,40 @@ export interface CreateStockInput {
   productId?: string;
 }
 
-/** GET /stock — store-scoped stock ledger (aging, status, tag price). */
-export function useStock() {
+/** Paginated envelope returned by list endpoints when page params are sent. */
+export interface Paginated<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface StockListParams {
+  /** 1-based page index — always sent so the API returns the envelope. */
+  page: number;
+  pageSize: number;
+  /** Optional server-side status filter (reflected in `total`). */
+  status?: string;
+}
+
+/**
+ * GET /stock — store-scoped stock ledger (aging, status, tag price),
+ * server-paginated. Page + pageSize are always sent, which makes the
+ * response the `{ items, total, page, pageSize }` envelope.
+ */
+export function useStock(params: StockListParams) {
   const storeId = useStoreKey();
   return useQuery({
-    queryKey: ["stock", storeId],
+    queryKey: ["stock", storeId, params],
     queryFn: async () => {
-      const { data } = await api.get<StockItem[]>("/stock");
+      const { data } = await api.get<Paginated<StockItem>>("/stock", {
+        params,
+      });
       return data;
     },
+    // Keep the previous page on screen while the next one loads — page flips
+    // must not flash the table empty (TanStack v5 keepPreviousData equivalent).
+    placeholderData: (prev) => prev,
   });
 }
 

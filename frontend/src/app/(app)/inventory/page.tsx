@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 import {
   Select,
   SelectContent,
@@ -74,10 +75,16 @@ const MELT_VARIANT: Record<MeltStage, "outline" | "secondary" | "default" | "suc
 };
 
 export default function InventoryPage() {
-  // Stock ledger comes live + store-scoped from the API.
-  const { data: rows = [], isLoading, isError, refetch } = useStock();
   const [addOpen, setAddOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
 
+  // Stock ledger comes live + store-scoped and server-paginated from the API.
+  const { data, isLoading, isError, refetch } = useStock({ page, pageSize });
+  const rows = data?.items ?? [];
+  const total = data?.total ?? 0;
+
+  // Counted over the loaded page only — the ledger is server-paginated.
   const deadCount = rows.filter(
     (s) => s.ageDays > DEAD_STOCK_THRESHOLD_DAYS,
   ).length;
@@ -117,7 +124,8 @@ export default function InventoryPage() {
               <div>
                 <p className="num text-2xl font-semibold">{deadCount}</p>
                 <p className="text-xs text-muted-foreground">
-                  Dead-stock items (&gt;{DEAD_STOCK_THRESHOLD_DAYS}d)
+                  Dead-stock items (&gt;{DEAD_STOCK_THRESHOLD_DAYS}d, current
+                  page)
                 </p>
               </div>
             </CardContent>
@@ -248,6 +256,20 @@ export default function InventoryPage() {
                   })}
                 </TableBody>
               </Table>
+
+              {!isLoading && total > 0 ? (
+                <PaginationBar
+                  page={page}
+                  pageSize={pageSize}
+                  total={total}
+                  onPageChange={setPage}
+                  onPageSizeChange={(size) => {
+                    setPageSize(size);
+                    setPage(1);
+                  }}
+                  className="border-t"
+                />
+              ) : null}
             </CardContent>
           </Card>
         </TabsContent>
