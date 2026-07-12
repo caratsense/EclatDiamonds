@@ -46,8 +46,10 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma
 
-# Run as the unprivileged 'node' user shipped with the base image.
-USER node
+# NOTE: intentionally NOT dropping to the unprivileged 'node' user. The Railway
+# persistent volume mounted at /app/uploads is root-owned at mount time, and a
+# non-root process gets EACCES on every upload write (verified live). Running as
+# root inside Railway's isolated container is the platform-standard pattern here.
 
 # Railway provides $PORT; the app falls back to 4000 (see src/main.ts).
 EXPOSE 4000
