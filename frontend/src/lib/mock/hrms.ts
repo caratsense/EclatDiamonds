@@ -190,6 +190,79 @@ export interface LeaveBalance {
   allocated: number;
   used: number;
   balance: number;
+  /** Financial-year display label, e.g. "2026–27". Present on newer rows. */
+  financialYearLabel?: string;
+}
+
+/* ------------------------------------------------------------------ */
+/* Attendance reports — date-range self report + manager team view     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One day in an attendance report (GET /hrms/attendance/report). Geo-fencing is
+ * LENIENT (the punch is always recorded); `withinFence`/`checkInDistanceM`
+ * merely flag whether the check-in landed inside the store radius. Coordinates
+ * are null when the store has no fence or the device couldn't capture a fix.
+ */
+export interface AttendanceReportRow {
+  /** YYYY-MM-DD */
+  date: string;
+  status: AttendanceStatus;
+  /** ISO datetime, or null. */
+  checkInAt: string | null;
+  checkOutAt: string | null;
+  /** Minutes worked once checked out; null while open / absent. */
+  workedMins: number | null;
+  isLate: boolean;
+  lateMinutes: number | null;
+  checkInLat: number | null;
+  checkInLng: number | null;
+  /** Metres from the store centre at check-in; null if no coords. */
+  checkInDistanceM: number | null;
+  withinFence: boolean;
+  shiftId: string | null;
+}
+
+/** Roll-up totals for a date-range attendance report. */
+export interface AttendanceReportSummary {
+  present: number;
+  late: number;
+  absent: number;
+  onLeave: number;
+  totalWorkedMins: number;
+  avgWorkedMins: number;
+}
+
+/** A staffer's attendance over a date range, records newest-first. */
+export interface AttendanceReport {
+  /** YYYY-MM-DD */
+  from: string;
+  to: string;
+  /** The staffer this report covers (self, or a managed team member). */
+  staffId: string | null;
+  records: AttendanceReportRow[];
+  summary: AttendanceReportSummary;
+}
+
+/**
+ * One staffer's punch for a single day (GET /hrms/attendance/team). The
+ * manager's anti-buddy-punching view: everyone in scope for the chosen date,
+ * with the geofence outcome surfaced prominently.
+ */
+export interface TeamPunch {
+  staffId: string;
+  staffName: string;
+  storeId: string;
+  status: AttendanceStatus;
+  checkInAt: string | null;
+  checkOutAt: string | null;
+  workedMins: number | null;
+  isLate: boolean;
+  lateMinutes: number | null;
+  checkInLat: number | null;
+  checkInLng: number | null;
+  checkInDistanceM: number | null;
+  withinFence: boolean;
 }
 
 /**

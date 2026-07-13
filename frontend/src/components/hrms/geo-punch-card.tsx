@@ -18,6 +18,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -30,6 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { useSession } from "@/store/use-session";
 import type { SelfAttendance } from "@/lib/mock/hrms";
 import {
   useCheckIn,
@@ -125,6 +127,7 @@ function GeoResult({
  * X-Store-Id header (the active store).
  */
 export function GeoPunchCard() {
+  const { user } = useSession();
   const month = useMemo(() => new Date().toISOString().slice(0, 7), []);
   const { data, isLoading, isError, refetch } = useMyAttendance(month);
   const { data: shifts = [] } = useShifts();
@@ -217,6 +220,20 @@ export function GeoPunchCard() {
       </CardHeader>
 
       <CardContent className="space-y-4">
+        {/* Logged-in employee identity — name + id/email, like the
+            EzAttendancePro dashboard header. */}
+        <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-3 py-2">
+          <Avatar className="h-9 w-9">
+            <AvatarFallback className="text-xs">{user.initials}</AvatarFallback>
+          </Avatar>
+          <div className="min-w-0 leading-tight">
+            <p className="truncate text-sm font-medium">{user.name}</p>
+            <p className="num truncate text-xs text-muted-foreground">
+              {user.email || `ID ${user.id.slice(0, 8)}`}
+            </p>
+          </div>
+        </div>
+
         {isLoading ? (
           <Skeleton className="h-28 rounded-xl" />
         ) : isError ? (

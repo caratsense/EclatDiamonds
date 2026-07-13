@@ -39,6 +39,7 @@ import { LateFlagsTab } from "@/components/hrms/late-flags-tab";
 import { GeoPunchCard } from "@/components/hrms/geo-punch-card";
 import { LeaveBalances } from "@/components/hrms/leave-balances";
 import { RegularizationTab } from "@/components/hrms/regularization-tab";
+import { AttendanceReportsTab } from "@/components/hrms/attendance-reports-tab";
 import {
   useAttendance,
   useDecideLeave,
@@ -123,6 +124,7 @@ export default function HrmsPage() {
           <TabsTrigger value="schedule">Shifts &amp; Schedule</TabsTrigger>
           <TabsTrigger value="flags">Late Flags</TabsTrigger>
           <TabsTrigger value="roster">Roster &amp; Leave</TabsTrigger>
+          <TabsTrigger value="reports">Reports</TabsTrigger>
           <TabsTrigger value="regularize">Fix attendance</TabsTrigger>
         </TabsList>
 
@@ -181,6 +183,9 @@ export default function HrmsPage() {
               />
             )}
           </div>
+        </TabsContent>
+        <TabsContent value="reports">
+          <AttendanceReportsTab />
         </TabsContent>
         <TabsContent value="regularize">
           <RegularizationTab />

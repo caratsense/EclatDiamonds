@@ -10,6 +10,7 @@ import { api } from "@/lib/api";
 import { useStoreKey } from "@/lib/queries/keys";
 import type {
   AttendanceRecord,
+  AttendanceReport,
   CommissionRow,
   Holiday,
   LateFlag,
@@ -21,6 +22,7 @@ import type {
   Regularization,
   SelfAttendance,
   Shift,
+  TeamPunch,
 } from "@/lib/mock/hrms";
 
 /**
@@ -173,6 +175,73 @@ export function useCheckOut() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [HRMS_KEY, "attendance"] });
       qc.invalidateQueries({ queryKey: [HRMS_KEY, "attendance", "me"] });
+    },
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* A2. Attendance reports — date-range self report + team day view     */
+/* ------------------------------------------------------------------ */
+
+export interface AttendanceReportParams {
+  /** YYYY-MM-DD (inclusive). */
+  from: string;
+  /** YYYY-MM-DD (inclusive). */
+  to: string;
+  /**
+   * Report for another staffer in scope (managers only). Omitted → the
+   * current user's own report.
+   */
+  staffId?: string;
+}
+
+/**
+ * GET /hrms/attendance/report?from&to&staffId? — a staffer's attendance over a
+ * date range with summary totals. Records come newest-first. Disabled until
+ * both dates are set. Keyed on the active store so switching stores refetches.
+ */
+export function useAttendanceReport({
+  from,
+  to,
+  staffId,
+}: Partial<AttendanceReportParams>) {
+  const storeId = useStoreKey();
+  return useQuery({
+    queryKey: [
+      HRMS_KEY,
+      "attendance",
+      "report",
+      storeId,
+      from ?? "",
+      to ?? "",
+      staffId ?? "me",
+    ],
+    enabled: !!from && !!to,
+    queryFn: async () => {
+      const { data } = await api.get<AttendanceReport>(
+        "/hrms/attendance/report",
+        { params: { from, to, ...(staffId ? { staffId } : {}) } },
+      );
+      return data;
+    },
+  });
+}
+
+/**
+ * GET /hrms/attendance/team?date=YYYY-MM-DD — everyone's punch for that day in
+ * scope (store_manager+). The manager's anti-buddy-punching view. Keyed on the
+ * active store; disabled until a date is chosen.
+ */
+export function useTeamAttendance(date: string) {
+  const storeId = useStoreKey();
+  return useQuery({
+    queryKey: [HRMS_KEY, "attendance", "team", storeId, date],
+    enabled: !!date,
+    queryFn: async () => {
+      const { data } = await api.get<TeamPunch[]>("/hrms/attendance/team", {
+        params: { date },
+      });
+      return data;
     },
   });
 }

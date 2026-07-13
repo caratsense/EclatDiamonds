@@ -202,6 +202,38 @@ export class DecideRegularizationDto {
   status!: LeaveStatus;
 }
 
+/**
+ * GET /hrms/attendance/report — a user's attendance history over a date range
+ * (EzAttendancePro "Attendance Report" + "GPS Report"). Self by default; a
+ * store_manager+ may pass `staffId` for anyone in their store scope.
+ */
+export class AttendanceReportQueryDto {
+  /** Inclusive range start (YYYY-MM-DD). */
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'from must be YYYY-MM-DD' })
+  from!: string;
+
+  /** Inclusive range end (YYYY-MM-DD). */
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'to must be YYYY-MM-DD' })
+  to!: string;
+
+  /** Manager+ only: report for another staff member (within store scope). */
+  @IsOptional()
+  @IsString()
+  staffId?: string;
+}
+
+/**
+ * GET /hrms/attendance/team — every staff member's punch for a day within the
+ * caller's store scope (manager team-GPS / anti-buddy-punching view). Defaults
+ * to today when `date` is omitted.
+ */
+export class TeamAttendanceQueryDto {
+  /** Day to report (YYYY-MM-DD). Defaults to today. */
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'date must be YYYY-MM-DD' })
+  date?: string;
+}
+
 /** PATCH /hrms/commission/:id — edit an incentive's commission rate (manager+). */
 export class UpdateCommissionRateDto {
   /** Commission rate as a percentage of sales value (e.g. 2.5 = 2.5%). */

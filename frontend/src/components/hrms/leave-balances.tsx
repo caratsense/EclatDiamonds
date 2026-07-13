@@ -32,13 +32,18 @@ export function LeaveBalances() {
     return map;
   }, [balances]);
 
+  // Financial-year label from the balance rows (e.g. "2026–27"), if present.
+  const fyLabel = balances.find((b) => b.financialYearLabel)?.financialYearLabel;
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h3 className="text-sm font-medium">My leave balances</h3>
+          <h3 className="text-sm font-medium">
+            My leave balances{fyLabel ? ` · FY ${fyLabel}` : ""}
+          </h3>
           <p className="text-xs text-muted-foreground">
-            Remaining paid leave for {new Date().getFullYear()}.
+            Remaining paid leave for {fyLabel ?? new Date().getFullYear()}.
           </p>
         </div>
         <Button size="sm" onClick={() => setApplyOpen(true)}>

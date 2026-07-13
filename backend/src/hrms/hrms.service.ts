@@ -11,6 +11,7 @@ import { StoreScopeService } from '../common/store-scope.service';
 import { ROLE_RANK } from '../common/role.util';
 import {
   ApplyLeaveDto,
+  AttendanceReportQueryDto,
   CheckInDto,
   CheckOutDto,
   CreateHolidayDto,
@@ -165,6 +166,22 @@ function parseDateOnly(s: string): Date {
   const d = new Date(s);
   d.setUTCHours(0, 0, 0, 0);
   return d;
+}
+
+/**
+ * Indian financial year (Apr 1 – Mar 31) that a date belongs to, returned as the
+ * STARTING calendar year — the int stored in LeaveBalance.year. A date on/after
+ * Apr 1 belongs to the FY starting that calendar year; Jan–Mar belongs to the FY
+ * that started the previous calendar year (so allocations reset in April, not January).
+ */
+function financialYear(d: Date): number {
+  const y = d.getUTCFullYear();
+  return d.getUTCMonth() >= 3 ? y : y - 1; // getUTCMonth() is 0-based; 3 = April
+}
+
+/** Human FY label from its starting calendar year, e.g. 2026 -> "2026–27". */
+function financialYearLabel(fyStart: number): string {
+  return `${fyStart}–${String((fyStart + 1) % 100).padStart(2, '0')}`;
 }
 
 @Injectable()
@@ -388,7 +405,8 @@ export class HrmsService {
     const prevStatus = existing.status;
     const days = num(existing.days);
     if (PAID_LEAVE_TYPES.includes(existing.type) && days > 0 && status !== prevStatus) {
-      const year = existing.fromDate.getUTCFullYear();
+      // Key the balance on the request's financial year (Apr–Mar), not calendar year.
+      const year = financialYear(existing.fromDate);
       if (status === 'approved') {
         // Newly approved: consume balance.
         await this.ensureLeaveBalances(existing.staffId, year, existing.storeId);
@@ -697,6 +715,125 @@ export class HrmsService {
   }
 
   // ==========================================================================
+  // A2. Date-range attendance + GPS report / team view (EzAttendancePro parity)
+  // ==========================================================================
+
+  /**
+   * GET /hrms/attendance/report — a user's attendance + GPS history over a date
+   * range (EzAttendancePro "Attendance Report" + "GPS Report"). Self by default;
+   * a store_manager+ may pass `staffId` for anyone in their store scope (resolveActor
+   * enforces the role gate + store-scoping). Range is validated (from ≤ to, ≤ 92 days).
+   */
+  async attendanceReport(user: AuthUser, query: AttendanceReportQueryDto, headerStore?: string) {
+    const from = parseDateOnly(query.from);
+    const to = parseDateOnly(query.to);
+    if (to < from) throw new BadRequestException('`to` must be on or after `from`');
+    const spanDays = Math.round((to.getTime() - from.getTime()) / 86400000) + 1;
+    if (spanDays > 92) {
+      throw new BadRequestException('Date range too large (max 92 days)');
+    }
+
+    // Self by default; a manager+ targeting another staff is authorized + store-scoped
+    // here, reusing the leave/regularize "manager-acts-for-staff" resolution.
+    const actor = await this.resolveActor(user, headerStore, query.staffId);
+
+    // `to` is inclusive; records are @db.Date UTC-midnights, so query [from, to+1day).
+    const end = new Date(to);
+    end.setUTCDate(end.getUTCDate() + 1);
+
+    const rows = await this.prisma.attendanceRecord.findMany({
+      where: {
+        staffId: actor.staffId,
+        date: { gte: from, lt: end },
+        ...this.scope.storeFilter(user, headerStore),
+      },
+      orderBy: { date: 'desc' }, // newest-first
+    });
+
+    return {
+      from: query.from,
+      to: query.to,
+      staffId: actor.staffId,
+      records: rows.map((r) => this.toReportRow(r)),
+      summary: this.summarizeReport(rows),
+    };
+  }
+
+  /** One attendance row shaped for the EzAttendancePro report (GPS-aware, null-safe). */
+  private toReportRow(r: any) {
+    return {
+      date: r.date.toISOString().slice(0, 10),
+      status: r.status,
+      checkInAt: r.checkInAt ? r.checkInAt.toISOString() : null,
+      checkOutAt: r.checkOutAt ? r.checkOutAt.toISOString() : null,
+      workedMins: r.workedMins ?? null,
+      isLate: r.isLate ?? false,
+      lateMinutes: r.lateMinutes ?? null,
+      checkInLat: r.checkInLat != null ? num(r.checkInLat) : null,
+      checkInLng: r.checkInLng != null ? num(r.checkInLng) : null,
+      checkInDistanceM: r.checkInDistanceM ?? null,
+      withinFence: r.geoVerified,
+      shiftId: r.shiftId ?? null,
+    };
+  }
+
+  /** Roll a set of attendance rows into present/late/absent/leave + worked-time totals. */
+  private summarizeReport(rows: any[]) {
+    let present = 0;
+    let late = 0;
+    let absent = 0;
+    let onLeave = 0;
+    let totalWorkedMins = 0;
+    let workedDays = 0;
+    for (const r of rows) {
+      if (r.status === 'on_leave') onLeave++;
+      else if (r.status === 'absent') absent++;
+      else present++; // 'present' or 'late' both count as an attended day
+      if (r.isLate) late++; // lateness is tracked by the flag, independent of status
+      if (r.workedMins != null) {
+        totalWorkedMins += r.workedMins;
+        workedDays++;
+      }
+    }
+    return {
+      present,
+      late,
+      absent,
+      onLeave,
+      totalWorkedMins,
+      avgWorkedMins: workedDays ? Math.round(totalWorkedMins / workedDays) : 0,
+    };
+  }
+
+  /**
+   * GET /hrms/attendance/team?date=YYYY-MM-DD — every staff member's punch for a day
+   * within the caller's store scope (manager team-GPS / anti-buddy-punching view).
+   * Shows WHERE each person punched. `date` defaults to today. Store-scoped.
+   */
+  async teamAttendance(user: AuthUser, date?: string, headerStore?: string) {
+    const day = date ? parseDateOnly(date) : todayUtc();
+    const rows = await this.prisma.attendanceRecord.findMany({
+      where: { date: day, ...this.scope.storeFilter(user, headerStore) },
+      orderBy: [{ storeId: 'asc' }, { staffName: 'asc' }],
+    });
+    return rows.map((r) => ({
+      staffId: r.staffId,
+      staffName: r.staffName ?? r.staffId,
+      storeId: r.storeId,
+      status: r.status,
+      checkInAt: r.checkInAt ? r.checkInAt.toISOString() : null,
+      checkOutAt: r.checkOutAt ? r.checkOutAt.toISOString() : null,
+      workedMins: r.workedMins ?? null,
+      isLate: r.isLate ?? false,
+      lateMinutes: r.lateMinutes ?? null,
+      checkInLat: r.checkInLat != null ? num(r.checkInLat) : null,
+      checkInLng: r.checkInLng != null ? num(r.checkInLng) : null,
+      checkInDistanceM: r.checkInDistanceM ?? null,
+      withinFence: r.geoVerified,
+    }));
+  }
+
+  // ==========================================================================
   // B. Leave balances + apply/approve (Module 6)
   // ==========================================================================
 
@@ -706,7 +843,10 @@ export class HrmsService {
    */
   async leaveBalances(user: AuthUser, staffId?: string, headerStore?: string) {
     const actor = await this.resolveActor(user, headerStore, staffId);
-    const year = new Date().getUTCFullYear();
+    // Balances key on the Indian financial year (Apr–Mar), not the calendar year,
+    // so allocations reset in April. Auto-seeds the FY row on first read.
+    const year = financialYear(new Date());
+    const label = financialYearLabel(year);
     await this.ensureLeaveBalances(actor.staffId, year, actor.storeId);
 
     const rows = await this.prisma.leaveBalance.findMany({
@@ -716,6 +856,7 @@ export class HrmsService {
     return rows.map((r) => ({
       type: r.type,
       year: r.year,
+      financialYearLabel: label,
       allocated: num(r.allocated),
       used: num(r.used),
       balance: num(r.allocated) - num(r.used),
@@ -754,7 +895,8 @@ export class HrmsService {
         ? dto.days
         : await this.computeWorkingDays(actor.storeId, fromDate, toDate, halfDay);
 
-    const year = fromDate.getUTCFullYear();
+    // Validate/seed against the request's financial year (Apr–Mar), not calendar year.
+    const year = financialYear(fromDate);
     if (PAID_LEAVE_TYPES.includes(dto.type)) {
       await this.ensureLeaveBalances(actor.staffId, year, actor.storeId);
       const bal = await this.prisma.leaveBalance.findUnique({

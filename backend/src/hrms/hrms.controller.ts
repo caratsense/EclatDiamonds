@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common
 import { HrmsService } from './hrms.service';
 import {
   ApplyLeaveDto,
+  AttendanceReportQueryDto,
   CheckInDto,
   CheckOutDto,
   CreateHolidayDto,
@@ -11,6 +12,7 @@ import {
   DecideRegularizationDto,
   MarkAttendanceDto,
   SetWeekOffDto,
+  TeamAttendanceQueryDto,
   UpdateCommissionRateDto,
 } from './dto/hrms.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
@@ -57,6 +59,34 @@ export class HrmsController {
     @StoreHeader() store?: string,
   ) {
     return this.hrms.myAttendance(user, month, store);
+  }
+
+  /**
+   * A user's attendance + GPS history over a date range (EzAttendancePro
+   * "Attendance Report" + "GPS Report"). Self by default; a store_manager+ may
+   * pass ?staffId for anyone in their store scope.
+   */
+  @Get('attendance/report')
+  attendanceReport(
+    @CurrentUser() user: AuthUser,
+    @Query() query: AttendanceReportQueryDto,
+    @StoreHeader() store?: string,
+  ) {
+    return this.hrms.attendanceReport(user, query, store);
+  }
+
+  /**
+   * Manager team-GPS view: every staff member's punch for a day within scope,
+   * showing WHERE each person punched (owner anti-buddy-punching visibility).
+   */
+  @Roles('store_manager', 'area_manager', 'head_office')
+  @Get('attendance/team')
+  teamAttendance(
+    @CurrentUser() user: AuthUser,
+    @Query() query: TeamAttendanceQueryDto,
+    @StoreHeader() store?: string,
+  ) {
+    return this.hrms.teamAttendance(user, query.date, store);
   }
 
   /** Admin/tablet manual mark — marking attendance for others is manager+ only. */
