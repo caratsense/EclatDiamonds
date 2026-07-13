@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Logo } from "@/components/brand/logo";
 import { GoogleSignInButton } from "@/components/auth/google-sign-in-button";
 import { homeForRole } from "@/lib/navigation";
+import { clearAttendanceHandled } from "@/lib/attendance-gate";
 import { getStoredToken } from "@/lib/api";
 import {
   useLogin,
@@ -87,8 +88,13 @@ export default function LoginPage() {
   function finishLogin(me: Parameters<typeof hydrate>[0]) {
     hydrate(me);
     toast.success(`Welcome, ${me.user.name}`);
-    // Land each role where their work starts (salesperson has no Dashboards nav).
-    router.replace(homeForRole(me.role));
+    // Fresh login = a new session/day: re-prompt attendance for salespeople.
+    clearAttendanceHandled();
+    // A salesperson lands on the attendance-first check-in; other roles go
+    // straight to their dashboards (salesperson has no Dashboards nav).
+    router.replace(
+      me.role === "salesperson" ? "/check-in" : homeForRole(me.role),
+    );
   }
 
   function onGoogle(credential: string) {
