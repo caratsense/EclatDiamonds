@@ -714,6 +714,31 @@ export class HrmsService {
     });
   }
 
+  /**
+   * GET /hrms/geofence — the caller's resolved store geofence, so the client can do
+   * LIVE (client-side) distance checks and auto-punch when in range. Store resolution
+   * mirrors check-in: the header store if given AND in scope, else the user's first
+   * assigned store (`resolveStoreId`). `geofenceRadiusM` falls back to 150 when unset;
+   * Decimal lat/lng are coerced to plain numbers (or null).
+   */
+  async geofence(user: AuthUser, headerStore?: string) {
+    const storeId = this.resolveStoreId(user, headerStore, user.storeIds);
+    this.scope.assertStoreAllowed(user, storeId);
+    const store = await this.prisma.store.findUnique({ where: { id: storeId } });
+    if (!store) throw new NotFoundException('Store not found');
+
+    const latitude = store.latitude != null ? num(store.latitude) : null;
+    const longitude = store.longitude != null ? num(store.longitude) : null;
+    return {
+      storeId: store.id,
+      storeName: store.name,
+      latitude,
+      longitude,
+      geofenceRadiusM: store.geofenceRadiusM ?? 150,
+      hasCoords: latitude != null && longitude != null,
+    };
+  }
+
   // ==========================================================================
   // A2. Date-range attendance + GPS report / team view (EzAttendancePro parity)
   // ==========================================================================

@@ -179,6 +179,38 @@ export function useCheckOut() {
   });
 }
 
+/**
+ * The resolved store's geofence for the caller. `latitude`/`longitude` are null
+ * when the store has no coordinates set (`hasCoords === false`), in which case
+ * automatic geo-detection is impossible and the UI must fall back to a manual
+ * punch. `geofenceRadiusM` is the "within range" radius in metres.
+ */
+export interface Geofence {
+  storeId: string;
+  storeName: string;
+  latitude: number | null;
+  longitude: number | null;
+  geofenceRadiusM: number;
+  hasCoords: boolean;
+}
+
+/**
+ * GET /hrms/geofence — the caller's resolved store centre + radius. Cached for
+ * ~5 min (store coordinates rarely change) and keyed on the active store so a
+ * store switch refetches. Drives the auto check-in geofence on the check-in screen.
+ */
+export function useGeofence() {
+  const storeId = useStoreKey();
+  return useQuery({
+    queryKey: [HRMS_KEY, "geofence", storeId],
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const { data } = await api.get<Geofence>("/hrms/geofence");
+      return data;
+    },
+  });
+}
+
 /* ------------------------------------------------------------------ */
 /* A2. Attendance reports — date-range self report + team day view     */
 /* ------------------------------------------------------------------ */

@@ -31,6 +31,15 @@ export class HrmsController {
     return this.hrms.attendance(user, store);
   }
 
+  /**
+   * The caller's resolved store geofence for LIVE client-side auto check-in — any
+   * authenticated role. Static route, declared before any `:id`/dynamic route.
+   */
+  @Get('geofence')
+  geofence(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
+    return this.hrms.geofence(user, store);
+  }
+
   /** Self-service geo check-in — the puncher is the current user. */
   @Post('attendance/check-in')
   checkIn(
