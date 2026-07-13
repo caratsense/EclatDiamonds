@@ -368,7 +368,7 @@ export function GeoPunchCard() {
                 No attendance recorded this month yet.
               </p>
             ) : (
-              <div className="overflow-hidden rounded-lg border">
+              <div className="overflow-x-auto rounded-lg border">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b bg-muted/40 text-xs text-muted-foreground">

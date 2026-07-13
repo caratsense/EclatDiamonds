@@ -96,7 +96,7 @@ export function SaleDetailDialog({
             </DialogHeader>
 
             {/* Advance vs total */}
-            <div className="grid grid-cols-4 gap-3 rounded-lg border bg-muted/30 p-3 text-center">
+            <div className="grid grid-cols-2 gap-3 rounded-lg border bg-muted/30 p-3 text-center sm:grid-cols-4">
               <Figure label="Sales" value={sale.salesValue} />
               <Figure label="Billed" value={sale.afterDiscountValue} />
               <Figure label="Advance" value={sale.advanceReceived} tone="emerald" />

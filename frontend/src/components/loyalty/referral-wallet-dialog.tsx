@@ -119,7 +119,7 @@ export function ReferralWalletDialog({
               </div>
 
               {/* Three totals tiles */}
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                 <StatTile
                   label="Total wallet"
                   value={formatINR(wallet.totals.totalWallet)}

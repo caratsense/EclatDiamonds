@@ -655,7 +655,7 @@ export function QuoteBuilderDialog({
                   <Sparkles className="h-4 w-4 text-gold-strong" />
                   Gold
                 </p>
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                   <div className="grid gap-1.5">
                     <Label htmlFor="qb-q-wt">Weight (g)</Label>
                     <Input
@@ -798,7 +798,7 @@ export function QuoteBuilderDialog({
                       placeholder="e.g. 22K gold chain"
                     />
                   </div>
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                     <div className="grid gap-1.5">
                       <Label htmlFor="qb-karat">Karat</Label>
                       <Input

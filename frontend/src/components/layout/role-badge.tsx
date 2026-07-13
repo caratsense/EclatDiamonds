@@ -37,7 +37,7 @@ export function RoleBadge() {
         >
           <Badge
             variant="outline"
-            className="gap-1.5 py-1 font-medium transition-colors hover:bg-accent"
+            className="hidden gap-1.5 py-1 font-medium transition-colors hover:bg-accent sm:inline-flex"
           >
             <ShieldCheck className="h-3.5 w-3.5 text-muted-foreground" />
             {ROLE_LABELS[role]}

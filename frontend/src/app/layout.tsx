@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Hanken_Grotesk, Cormorant_Garamond, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -40,6 +40,8 @@ export const metadata: Metadata = {
   description:
     "Unified operations platform for multi-store jewelry retail: sales, inventory, finance, HR and customer management.",
 };
+
+export const viewport: Viewport = { width: "device-width", initialScale: 1 };
 
 export default function RootLayout({
   children,

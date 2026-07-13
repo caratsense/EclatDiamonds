@@ -276,7 +276,7 @@ export function DirectSaleDialog({ open, onOpenChange }: DirectSaleDialogProps) 
           {/* Payment mode — large, touch-friendly segmented control */}
           <div className="grid gap-1.5">
             <Label>Advance payment mode</Label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {SALE_PAYMENT_MODES.map((m) => {
                 const Icon = MODE_ICON[m.value];
                 const active = mode === m.value;
@@ -316,7 +316,7 @@ export function DirectSaleDialog({ open, onOpenChange }: DirectSaleDialogProps) 
           </div>
 
           {/* Live advance vs balance summary */}
-          <div className="grid grid-cols-3 gap-3 rounded-lg border bg-muted/30 p-3 text-center">
+          <div className="grid grid-cols-2 gap-3 rounded-lg border bg-muted/30 p-3 text-center sm:grid-cols-3">
             <div>
               <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
                 Billed
@@ -351,7 +351,7 @@ export function DirectSaleDialog({ open, onOpenChange }: DirectSaleDialogProps) 
           {/* Counter photos — quotation / invoice / receipt */}
           <div className="grid gap-1.5">
             <Label>Photos (optional)</Label>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {SALE_DOC_META.map(({ type, label, hint }) => (
                 <SaleDocSlot
                   key={type}

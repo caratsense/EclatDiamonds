@@ -21,7 +21,7 @@ export function StoreSwitcher() {
 
   return (
     <Select value={currentStore.id} onValueChange={setCurrentStoreById}>
-      <SelectTrigger className="h-9 w-[200px] gap-2 font-medium">
+      <SelectTrigger className="h-10 w-[140px] gap-2 font-medium sm:w-[200px]">
         <StoreIcon className="h-4 w-4 text-muted-foreground" />
         <SelectValue placeholder="Select store" />
       </SelectTrigger>
