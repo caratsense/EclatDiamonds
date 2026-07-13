@@ -1,8 +1,16 @@
 "use client";
 
+import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, Languages, LogOut, Settings, Sparkles } from "lucide-react";
+import {
+  Check,
+  Download,
+  Languages,
+  LogOut,
+  Settings,
+  Sparkles,
+} from "lucide-react";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -14,6 +22,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { OPEN_TOUR_EVENT } from "@/components/onboarding/welcome-tour";
+import { IosInstallDialog } from "@/components/pwa/install-app-button";
+import { usePwaInstall } from "@/components/pwa/use-pwa-install";
 import { setStoredToken, setStoredStoreId } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useLang, useT } from "@/lib/i18n";
@@ -26,6 +36,8 @@ export function UserMenu() {
   const t = useT();
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { status: pwaStatus, promptNative } = usePwaInstall();
+  const [iosOpen, setIosOpen] = React.useState(false);
 
   function signOut() {
     setStoredToken(null);
@@ -36,6 +48,7 @@ export function UserMenu() {
   }
 
   return (
+    <>
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
@@ -66,6 +79,18 @@ export function UserMenu() {
         >
           <Sparkles className="h-4 w-4" /> {t("menu.tour", "Show welcome tour")}
         </DropdownMenuItem>
+        {/* Install app — only shown when installable (native prompt available)
+            or on iOS Safari; hidden once installed / running standalone. */}
+        {pwaStatus !== "hidden" ? (
+          <DropdownMenuItem
+            onSelect={() =>
+              pwaStatus === "ios" ? setIosOpen(true) : promptNative()
+            }
+          >
+            <Download className="h-4 w-4" />{" "}
+            {t("menu.installApp", "Install app")}
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuSeparator />
         {/* Language toggle. Selecting keeps the menu open (preventDefault) so
             the moved check is visible immediately. English is the default. */}
@@ -101,5 +126,7 @@ export function UserMenu() {
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+    <IosInstallDialog open={iosOpen} onOpenChange={setIosOpen} />
+    </>
   );
 }

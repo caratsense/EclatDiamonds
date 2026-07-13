@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Logo } from "@/components/brand/logo";
 import { GoogleSignInButton } from "@/components/auth/google-sign-in-button";
+import { InstallAppButton } from "@/components/pwa/install-app-button";
 import { homeForRole } from "@/lib/navigation";
 import { clearAttendanceHandled } from "@/lib/attendance-gate";
 import { getStoredToken } from "@/lib/api";
@@ -415,6 +416,14 @@ export default function LoginPage() {
               </form>
             </div>
           ) : null}
+
+          {/* Install affordance for phone users — renders only when the app is
+              installable (Android/desktop prompt available) or on iOS Safari;
+              otherwise the component returns null and leaves no gap. */}
+          <InstallAppButton
+            label="Install app on your phone"
+            className="mt-6 w-full"
+          />
 
           <div className="mt-7 rounded-xl border bg-card p-3.5 shadow-xs">
             <p className="mb-2 text-xs font-medium text-muted-foreground">
