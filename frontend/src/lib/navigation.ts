@@ -20,6 +20,7 @@ import {
   Trophy,
   ClipboardCheck,
   GitCompare,
+  UsersRound,
 } from "lucide-react";
 
 import type { Role } from "@/lib/types";
@@ -272,6 +273,15 @@ export const NAV_GROUPS: NavGroup[] = [
           "Add store branches and assign each a store-manager login. Every store gets its own scoped system via the store switcher.",
         primaryAction: "Add Store",
         icon: Store,
+        roles: ["head_office"],
+      },
+      {
+        module: 6,
+        slug: "settings/team",
+        title: "Team",
+        purpose: "Manage staff and assign roles.",
+        primaryAction: "Add Staff",
+        icon: UsersRound,
         roles: ["head_office"],
       },
     ],

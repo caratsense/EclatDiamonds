@@ -38,6 +38,17 @@ function formatTime(iso: string | null): string {
   });
 }
 
+/**
+ * Time-of-day greeting for the current hour: "Good morning" before noon,
+ * "Good afternoon" before 5 pm, otherwise "Good evening".
+ */
+function greeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+
 /** "Wednesday, 8 July" for today's header. */
 function todayLabel(): string {
   return new Date().toLocaleDateString("en-IN", {
@@ -359,11 +370,17 @@ export default function CheckInPage() {
             <div className="space-y-5">
               <div className="rounded-xl border bg-card p-6 text-center">
                 <CheckCircle2 className="mx-auto h-14 w-14 text-success animate-in zoom-in duration-500" />
-                <p className="mt-4 text-lg font-semibold">
+                <p className="mt-4 text-xl font-semibold">
+                  {greeting()}, {firstName}
+                </p>
+                <p className="mt-1 text-sm font-medium text-foreground">
+                  You&apos;re signed in
+                </p>
+                <p className="text-sm text-muted-foreground">
                   Welcome to {storeName}
                 </p>
-                <p className="num mt-1 text-sm text-muted-foreground">
-                  Checked in at {formatTime(lastPunch.checkInAt)}
+                <p className="num mt-3 text-2xl font-semibold">
+                  Signed in at {formatTime(lastPunch.checkInAt)}
                 </p>
                 <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
                   {geoMissed ? (
@@ -398,10 +415,11 @@ export default function CheckInPage() {
             <div className="space-y-5">
               <div className="rounded-xl border bg-card p-5 text-center">
                 <CheckCircle2 className="mx-auto h-9 w-9 text-success" />
-                <p className="mt-3 text-sm text-muted-foreground">
-                  You&apos;re checked in for today
+                <p className="mt-3 text-lg font-semibold">
+                  {greeting()}, {firstName}
                 </p>
-                <p className="num mt-1 text-3xl font-semibold">
+                <p className="num mt-1 text-sm text-muted-foreground">
+                  You&apos;re signed in for today ·{" "}
                   {formatTime(today!.checkInAt)}
                 </p>
                 <div className="mt-3 flex flex-wrap items-center justify-center gap-2">

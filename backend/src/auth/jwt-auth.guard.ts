@@ -10,11 +10,18 @@ import { ConfigService } from '@nestjs/config';
 import { IS_PUBLIC_KEY } from './public.decorator';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuthUser } from '../common/auth-user';
+import { PrismaService } from '../prisma/prisma.service';
 
 /**
  * Global guard. Validates the Bearer JWT, then resolves the caller's full
  * store-scope (UserStore + role rank) and attaches a complete AuthUser to
  * req.user so downstream services can store-scope every query.
+ *
+ * The JWT only proves identity (sub). The caller's CURRENT role + active
+ * status are read fresh from the DB on every request, never trusted from the
+ * token body — so with long-lived (30d) tokens a promotion/demotion/disable
+ * takes effect on the very next request without re-login, and a deactivated
+ * account is locked out immediately (revocation-safe).
  *
  * Routes flagged with @Public() (login) skip auth.
  */
@@ -25,6 +32,7 @@ export class JwtAuthGuard implements CanActivate {
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     private readonly scope: StoreScopeService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -50,12 +58,22 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException('Invalid or expired token');
     }
 
-    const { storeIds, allStores } = await this.scope.resolveScope(payload.sub, payload.role);
+    // Single indexed lookup (User.id PK): the token only carries identity — the
+    // authoritative role + active flag come from the DB every request.
+    const dbUser = await this.prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: { id: true, name: true, email: true, role: true, isActive: true },
+    });
+    if (!dbUser || !dbUser.isActive) {
+      throw new UnauthorizedException('Account is inactive or no longer exists');
+    }
+
+    const { storeIds, allStores } = await this.scope.resolveScope(dbUser.id, dbUser.role);
     const user: AuthUser = {
-      id: payload.sub,
-      email: payload.email,
-      name: payload.name,
-      role: payload.role,
+      id: dbUser.id,
+      email: dbUser.email,
+      name: dbUser.name,
+      role: dbUser.role,
       storeIds,
       allStores,
     };

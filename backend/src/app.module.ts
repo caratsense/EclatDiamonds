@@ -10,6 +10,7 @@ import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { RolesGuard } from './auth/roles.guard';
 
 import { StoresModule } from './stores/stores.module';
+import { UsersModule } from './users/users.module';
 import { LeadsModule } from './leads/leads.module';
 import { ProductsModule } from './products/products.module';
 import { QuotesModule } from './quotes/quotes.module';
@@ -46,6 +47,7 @@ import { HealthController } from './health/health.controller';
     CommonModule,
     AuthModule,
     StoresModule,
+    UsersModule,
     LeadsModule,
     ProductsModule,
     QuotesModule,

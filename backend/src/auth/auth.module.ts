@@ -11,7 +11,11 @@ import { AuthController } from './auth.controller';
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         secret: config.get<string>('JWT_SECRET'),
-        signOptions: { expiresIn: '12h' },
+        // 30d: staff stay signed in for a month. The daily gate is
+        // attendance/geofence (M6), not re-auth. The JWT proves identity only —
+        // role + active status are re-read from the DB on every request
+        // (JwtAuthGuard), so long tokens stay revocation-safe.
+        signOptions: { expiresIn: '30d' },
       }),
     }),
   ],
