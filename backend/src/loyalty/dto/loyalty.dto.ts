@@ -33,7 +33,7 @@ export class EnrollMemberDto {
 }
 
 // ============================================================================
-// MODULE 17 — "Earn with Ratanlall" referral / commission program
+// MODULE 17 — "Earn with Éclat" referral / commission program
 // ============================================================================
 
 /** POST /loyalty/referral-codes — mint a coupon code for a referrer. */

@@ -128,7 +128,7 @@ export default function ApprovalsPage() {
         title={nav?.title ?? "Approvals"}
         purpose={
           nav?.purpose ??
-          "One queue for everything waiting on you — discount, return and leave requests."
+          "Discount, return and leave requests awaiting your approval."
         }
       />
 

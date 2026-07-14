@@ -34,7 +34,7 @@ interface CreateReferralCodeDialogProps {
 }
 
 /**
- * Module 17 — mint an "Earn with Ratanlall" coupon code for a referrer (X).
+ * Module 17 — mint an "Earn with Éclat" coupon code for a referrer (X).
  * The server generates the actual code; we capture the referrer + an optional
  * usage cap (a leaked-code safeguard the owner asked for).
  */
@@ -117,7 +117,7 @@ export function CreateReferralCodeDialog({
             Create referral code
           </DialogTitle>
           <DialogDescription>
-            Mint an “Earn with Ratanlall” code for a referrer. They earn{" "}
+            Mint an “Earn with Éclat” code for a referrer. They earn{" "}
             {REFERRAL_COMMISSION_PCT}% on every referred bill; their referrals
             get {REFERRAL_DIAMOND_DISCOUNT_PCT}% off diamond.
           </DialogDescription>

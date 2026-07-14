@@ -93,7 +93,7 @@ export default function InventoryPage() {
     <>
       <SectionHeader
         title="Inventory & Stock"
-        purpose="Inventory optimization, aging-stock control and scrap recycling."
+        purpose="Stock levels, aging lines and scrap recovery."
         primaryAction="Stock Entry"
         onPrimaryAction={() => setAddOpen(true)}
       />

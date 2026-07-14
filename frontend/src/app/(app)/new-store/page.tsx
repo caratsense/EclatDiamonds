@@ -54,7 +54,7 @@ export default function NewStorePage() {
     <>
       <SectionHeader
         title="New-Store Setup"
-        purpose="Project management for launching new store locations."
+        purpose="Tasks and timelines for opening new stores."
         primaryAction="New Project"
         onPrimaryAction={() => setProjectOpen(true)}
       />

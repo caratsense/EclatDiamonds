@@ -126,7 +126,7 @@ export default function LoyaltyPage() {
       <Tabs defaultValue="scheme" className="space-y-4">
         <TabsList>
           <TabsTrigger value="scheme">Gold savings scheme</TabsTrigger>
-          <TabsTrigger value="referral">Earn with Ratanlall</TabsTrigger>
+          <TabsTrigger value="referral">Earn with Éclat</TabsTrigger>
         </TabsList>
 
         <TabsContent value="scheme" className="space-y-4">

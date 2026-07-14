@@ -39,7 +39,7 @@ interface ApplyReferralDialogProps {
 }
 
 /**
- * Module 17 — apply an "Earn with Ratanlall" code at a sale.
+ * Module 17 — apply an "Earn with Éclat" code at a sale.
  *
  * Referee Y gets {@link REFERRAL_DIAMOND_DISCOUNT_PCT}% off their diamond value;
  * referrer X earns {@link REFERRAL_COMMISSION_PCT}% commission on Y's total

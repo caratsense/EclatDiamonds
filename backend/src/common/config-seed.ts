@@ -81,12 +81,12 @@ export async function seedConfig(prisma: PrismaService): Promise<void> {
   }
 
   // ── M17 demo referral code ──────────────────────────────────────────────────
-  const code = 'RATAN-DEMO';
+  const code = 'ECLAT-DEMO';
   if (!(await prisma.referralCode.findUnique({ where: { code } }))) {
     await prisma.referralCode.create({
       data: {
         code,
-        referrerName: 'Ratanlall Demo Referrer',
+        referrerName: 'Éclat Demo Referrer',
         referrerPhone: '+91 90000 00000',
         storeId: storeId ?? null,
         maxUses: 10,

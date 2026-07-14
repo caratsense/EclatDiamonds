@@ -205,7 +205,7 @@ export function DailyReportSendDialog({
               id="dsr-send-to"
               type={isEmail ? "email" : "tel"}
               inputMode={isEmail ? "email" : "tel"}
-              placeholder={isEmail ? "owner@ratanlall.com" : "9876500000"}
+              placeholder={isEmail ? "owner@eclatdiamonds.in" : "9876500000"}
               value={to}
               onChange={(e) => {
                 setTo(e.target.value);

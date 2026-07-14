@@ -72,7 +72,7 @@ function CopyButton({ value }: { value: string }) {
 }
 
 /**
- * Module 17 — "Earn with Ratanlall" referral / commission program.
+ * Module 17 — "Earn with Éclat" referral / commission program.
  *
  * Referrer X gets a coupon code; referee Y gets 5% off diamond; X earns 5%
  * commission on Y's total bill, redeemable or cashable. Codes can be
@@ -129,7 +129,7 @@ export function ReferralProgram() {
             </span>
             <div className="space-y-1">
               <h3 className="font-display text-lg font-semibold leading-tight">
-                Earn with Ratanlall
+                Earn with Éclat
               </h3>
               <p className="max-w-xl text-sm text-muted-foreground">
                 Referrer earns{" "}
@@ -185,7 +185,7 @@ export function ReferralProgram() {
               <EmptyState
                 icon={Gift}
                 title="No referral codes yet"
-                description="Mint an “Earn with Ratanlall” code so a referrer can share it and earn commission on every referred bill."
+                description="Mint an “Earn with Éclat” code so a referrer can share it and earn commission on every referred bill."
                 actionLabel="New referral code"
                 onAction={() => setCreateOpen(true)}
               />

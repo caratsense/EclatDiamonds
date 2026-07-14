@@ -21,7 +21,7 @@ function num(v: Prisma.Decimal | number | null | undefined): number {
   return v == null ? 0 : Number(v);
 }
 
-// Module 17 "Earn with Ratanlall" defaults (client rules, CLIENT-CALL-2026-07).
+// Module 17 "Earn with Éclat" defaults (client rules, CLIENT-CALL-2026-07).
 /** Diamond discount the referee (Y) receives, as a percent of the bill. */
 const DIAMOND_DISCOUNT_PCT = 5;
 /** Commission the referrer (X) earns, as a percent of the referee's total bill. */
@@ -143,7 +143,7 @@ export class LoyaltyService {
   }
 
   // ==========================================================================
-  // MODULE 17 — "Earn with Ratanlall" referral / commission program
+  // MODULE 17 — "Earn with Éclat" referral / commission program
   // ==========================================================================
 
   /**
@@ -162,7 +162,7 @@ export class LoyaltyService {
     if (storeId) this.scope.assertStoreAllowed(user, storeId);
   }
 
-  /** Readable uppercase slug from the referrer's name, e.g. "Ratan Lall" -> "RATANLALL". */
+  /** Readable uppercase slug from the referrer's name, e.g. "Neha Sharma" -> "NEHASHARMA". */
   private codeSlug(name: string): string {
     const base = name.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);
     return base || 'REF';

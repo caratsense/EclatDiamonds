@@ -101,7 +101,7 @@ export default function SettingsPage() {
           <CardHeader>
             <CardTitle>Preferences</CardTitle>
             <CardDescription>
-              Personalize how CaratSense looks and behaves for you.
+              Theme and default store for this device.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">

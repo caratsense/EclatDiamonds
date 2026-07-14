@@ -288,7 +288,7 @@ export const MOCK_CUSTOM_ORDERS: CustomOrder[] = [
   {
     id: "co-1031",
     ref: "ORD-1031",
-    customer: "Ratanlall — Store stock",
+    customer: "Éclat — Store stock",
     item: "Men's Diamond Rings (stock)",
     kind: "stock",
     category: "ring",

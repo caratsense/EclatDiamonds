@@ -72,7 +72,7 @@ export function useEnrollMember() {
 }
 
 /* -------------------------------------------------------------------------- */
-/*  "Earn with Ratanlall" referral / commission program                       */
+/*  "Earn with Éclat" referral / commission program                       */
 /* -------------------------------------------------------------------------- */
 
 export const referralKeys = {

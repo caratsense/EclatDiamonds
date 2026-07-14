@@ -171,7 +171,7 @@ export function getPlan(planId: string): SchemePlan | undefined {
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Module 17 — "Earn with Ratanlall" referral / commission program           */
+/*  Module 17 — "Earn with Éclat" referral / commission program           */
 /* -------------------------------------------------------------------------- */
 
 /**

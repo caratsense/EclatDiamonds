@@ -129,7 +129,7 @@ export default function PaymentsPage() {
     <>
       <SectionHeader
         title="Sales & Payments"
-        purpose="Record direct sales with advance vs balance and counter photos, plus the payment-collection ledger and bank reconciliation."
+        purpose="Record sales with advance and balance, and track collections and bank reconciliation."
         primaryAction="New Sale"
         onPrimaryAction={() => setSaleOpen(true)}
       />
@@ -295,7 +295,7 @@ export default function PaymentsPage() {
                 Store-reported vs bank statement
               </CardTitle>
               <CardDescription>
-                Reconciliation engine flags variances for review.
+                Variances between store-reported and bank figures, flagged for review.
               </CardDescription>
             </CardHeader>
             <CardContent>

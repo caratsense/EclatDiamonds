@@ -62,7 +62,7 @@ export const NAV_GROUPS: NavGroup[] = [
         slug: "dashboards",
         title: "Dashboards",
         purpose:
-          "Role-specific dashboards and cross-department collaboration.",
+          "Your store's key numbers and shared team tasks.",
         primaryAction: "New Task",
         icon: LayoutDashboard,
         roles: ["store_manager", "area_manager", "head_office"],
@@ -82,7 +82,7 @@ export const NAV_GROUPS: NavGroup[] = [
         slug: "store-comparison",
         title: "Store Comparison",
         purpose:
-          "Compare every store side by side — revenue, orders and staff — without switching stores.",
+          "Revenue, orders and staff across all stores, side by side.",
         primaryAction: "",
         icon: GitCompare,
         roles: ["area_manager", "head_office"],
@@ -97,7 +97,7 @@ export const NAV_GROUPS: NavGroup[] = [
         slug: "crm",
         title: "CRM & Leads",
         purpose:
-          "Single source of truth for all potential customers across every channel.",
+          "Leads and follow-ups for every customer enquiry.",
         primaryAction: "New Lead",
         icon: Users,
       },
@@ -106,7 +106,7 @@ export const NAV_GROUPS: NavGroup[] = [
         slug: "checkins",
         title: "Check-ins & Footfall",
         purpose:
-          "Track customer traffic and sales-rep allocation via check-ins (part of CRM).",
+          "Log walk-ins and assign each customer to a sales rep.",
         primaryAction: "Log Check-in",
         icon: DoorOpen,
       },
@@ -115,7 +115,7 @@ export const NAV_GROUPS: NavGroup[] = [
         slug: "reminders",
         title: "Reminders",
         purpose:
-          "Today's and overdue lead follow-ups, assigned to each store's manager.",
+          "Today's and overdue lead follow-ups.",
         primaryAction: "",
         icon: BellRing,
       },
@@ -124,7 +124,7 @@ export const NAV_GROUPS: NavGroup[] = [
         slug: "quotation",
         title: "Quotation & Orders",
         purpose:
-          "Create a quote or a custom order in one place; custom orders route to the back office and appear on the production timeline.",
+          "Build quotes and custom orders; custom orders route to production.",
         primaryAction: "New Quote",
         icon: FileText,
       },
@@ -133,7 +133,7 @@ export const NAV_GROUPS: NavGroup[] = [
         slug: "catalogue",
         title: "Catalogue",
         purpose:
-          "Unified product index across locations with AI image-based search.",
+          "Browse products across stores; search by photo.",
         primaryAction: "Add Product",
         icon: Gem,
       },
@@ -142,7 +142,7 @@ export const NAV_GROUPS: NavGroup[] = [
         slug: "returns",
         title: "Returns & Exchange",
         purpose:
-          "Standardize returns, exchanges, buyback, repairs and old-gold trade-ins.",
+          "Returns, exchanges, buyback, repairs and old-gold trade-ins.",
         primaryAction: "New Intake",
         icon: RotateCcw,
       },
@@ -150,7 +150,7 @@ export const NAV_GROUPS: NavGroup[] = [
         module: 15,
         slug: "discounts",
         title: "Discounts",
-        purpose: "Control and audit discount approvals with margin previews.",
+        purpose: "Request and approve discounts with live margin checks.",
         primaryAction: "Request Discount",
         icon: Percent,
       },
@@ -159,7 +159,7 @@ export const NAV_GROUPS: NavGroup[] = [
         slug: "loyalty",
         title: "Loyalty & Referral",
         purpose:
-          "Gold-savings schemes plus the referral wallet (5% pre-GST credit).",
+          "Gold-savings schemes and the customer referral wallet.",
         primaryAction: "Enroll Customer",
         icon: PiggyBank,
       },
@@ -167,7 +167,7 @@ export const NAV_GROUPS: NavGroup[] = [
         module: 6,
         slug: "sales-performance",
         title: "Sales Performance",
-        purpose: "Sales leaderboard and editable commission/incentives.",
+        purpose: "Sales leaderboard, commission and incentives.",
         primaryAction: "",
         icon: Trophy,
         roles: ["store_manager", "area_manager", "head_office"],
@@ -182,7 +182,7 @@ export const NAV_GROUPS: NavGroup[] = [
         slug: "inventory",
         title: "Inventory & Stock",
         purpose:
-          "Inventory optimization, aging-stock control and scrap recycling.",
+          "Stock levels, aging lines and scrap recovery.",
         primaryAction: "Stock Entry",
         icon: Boxes,
         roles: ["area_manager", "head_office"],
@@ -197,7 +197,7 @@ export const NAV_GROUPS: NavGroup[] = [
         slug: "hrms",
         title: "HRMS & Attendance",
         purpose:
-          "Self-service geo attendance, rosters, leave and regularization.",
+          "Geo-attendance, rosters, leave and regularization.",
         primaryAction: "Mark Attendance",
         icon: Fingerprint,
       },
@@ -211,7 +211,7 @@ export const NAV_GROUPS: NavGroup[] = [
         slug: "finance",
         title: "Finance & Fund Planning",
         purpose:
-          "End-to-end finance: ledgers, budgets, cash-flow and expansion costs.",
+          "Ledgers, budgets, cash flow and expansion costs.",
         primaryAction: "Add Entry",
         icon: Banknote,
         roles: ["area_manager", "head_office"],
@@ -221,7 +221,7 @@ export const NAV_GROUPS: NavGroup[] = [
         slug: "new-store",
         title: "New-Store Setup",
         purpose:
-          "Project management for launching new store locations.",
+          "Tasks and timelines for opening new stores.",
         primaryAction: "New Project",
         icon: Building2,
         roles: ["area_manager", "head_office"],
@@ -231,7 +231,7 @@ export const NAV_GROUPS: NavGroup[] = [
         slug: "marketing",
         title: "Marketing",
         purpose:
-          "Coordinate external campaigns and agency deliverables.",
+          "Plan campaigns and track agency deliverables.",
         primaryAction: "New Campaign",
         icon: Megaphone,
         roles: ["store_manager", "area_manager", "head_office"],
@@ -246,7 +246,7 @@ export const NAV_GROUPS: NavGroup[] = [
         slug: "approvals",
         title: "Approvals",
         purpose:
-          "One queue for everything waiting on you — discount, return and leave requests.",
+          "Discount, return and leave requests awaiting your approval.",
         primaryAction: "",
         icon: ClipboardCheck,
         roles: ["store_manager", "area_manager", "head_office"],
@@ -256,7 +256,7 @@ export const NAV_GROUPS: NavGroup[] = [
         slug: "ticketing",
         title: "Ticketing",
         purpose:
-          "Internal helpdesk for operational issues, routed to the back office.",
+          "Raise and track operational issues with the back office.",
         primaryAction: "New Ticket",
         icon: LifeBuoy,
       },
@@ -270,7 +270,7 @@ export const NAV_GROUPS: NavGroup[] = [
         slug: "settings/stores",
         title: "Store Setup",
         purpose:
-          "Add store branches and assign each a store-manager login. Every store gets its own scoped system via the store switcher.",
+          "Add store branches and assign each a store-manager login.",
         primaryAction: "Add Store",
         icon: Store,
         roles: ["head_office"],

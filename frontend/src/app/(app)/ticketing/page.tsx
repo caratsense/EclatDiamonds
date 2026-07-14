@@ -83,7 +83,7 @@ export default function TicketingPage() {
     <>
       <SectionHeader
         title="Ticketing"
-        purpose="Internal helpdesk for operational issues with auto-routing."
+        purpose="Raise and track operational issues, routed to the back office."
         primaryAction="New Ticket"
         onPrimaryAction={() => setAddOpen(true)}
       />

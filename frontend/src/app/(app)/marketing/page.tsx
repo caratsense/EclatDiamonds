@@ -101,7 +101,7 @@ export default function MarketingPage() {
     <>
       <SectionHeader
         title="Marketing"
-        purpose="Coordinate external campaigns and agency deliverables."
+        purpose="Plan campaigns and track agency deliverables."
         primaryAction="New Campaign"
         onPrimaryAction={() => setNewOpen(true)}
       />

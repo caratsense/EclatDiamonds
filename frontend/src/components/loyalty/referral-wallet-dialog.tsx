@@ -66,7 +66,7 @@ export function ReferralWalletDialog({
     if (!wallet) return;
     const { code, totals, referrals } = wallet;
     const lines = [
-      "Earn with Ratanlall — Referral wallet",
+      "Earn with Éclat — Referral wallet",
       `Referrer: ${code.referrerName} (${code.code})`,
       `Total wallet: ${formatINR(totals.totalWallet)}`,
       `Redeemed: ${formatINR(totals.redeemed)}`,

@@ -29,7 +29,7 @@ export class LoyaltyController {
     return this.loyalty.enroll(user, dto);
   }
 
-  // --- Module 17: "Earn with Ratanlall" referral / commission program ---
+  // --- Module 17: "Earn with Éclat" referral / commission program ---
 
   @Get('referral-codes')
   referralCodes(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
