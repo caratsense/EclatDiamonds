@@ -153,11 +153,16 @@ export default function InventoryPage() {
                 <ShoppingCart className="h-5 w-5" />
               </div>
               <div>
-                <p className="num text-2xl font-semibold">
-                  {MOCK_REORDER_ALERTS.length}
-                </p>
+                <div className="flex items-center gap-2">
+                  <p className="num text-2xl font-semibold">
+                    {MOCK_REORDER_ALERTS.length}
+                  </p>
+                  <Badge variant="outline" className="text-[10px]">
+                    Sample
+                  </Badge>
+                </div>
                 <p className="text-xs text-muted-foreground">
-                  Auto-reorder alerts
+                  Auto-reorder alerts (sample data)
                 </p>
               </div>
             </CardContent>
@@ -306,12 +311,16 @@ export default function InventoryPage() {
         <TabsContent value="rotation">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base">
+              <CardTitle className="flex items-center gap-2 text-base">
                 Stock rotation suggestions
+                <Badge variant="outline" className="text-[10px] font-normal">
+                  Preview
+                </Badge>
               </CardTitle>
               <CardDescription>
                 Move slow-moving stock to higher-demand stores by regional
-                demand.
+                demand. Sample data — transfers are not yet wired to the
+                backend.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -339,14 +348,19 @@ export default function InventoryPage() {
                     </div>
                     <p className="text-xs text-muted-foreground">{r.reason}</p>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="shrink-0"
-                    onClick={() => toast.success(`Transfer raised for ${r.sku}`)}
-                  >
-                    Raise transfer
-                  </Button>
+                  <div className="flex shrink-0 flex-col items-end gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled
+                      title="Not yet available"
+                    >
+                      Raise transfer
+                    </Button>
+                    <span className="text-[10px] text-muted-foreground">
+                      Coming soon
+                    </span>
+                  </div>
                 </div>
               ))}
             </CardContent>
@@ -359,9 +373,13 @@ export default function InventoryPage() {
               <CardTitle className="flex items-center gap-2 text-base">
                 <Flame className="h-4 w-4" />
                 Melting &amp; scrap workflow
+                <Badge variant="outline" className="text-[10px] font-normal">
+                  Preview
+                </Badge>
               </CardTitle>
               <CardDescription>
-                Items melted / refined into recoverable raw metal.
+                Items melted / refined into recoverable raw metal. Sample data —
+                not yet wired to the backend.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -409,9 +427,15 @@ export default function InventoryPage() {
         <TabsContent value="reorder">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base">Auto-reorder alerts</CardTitle>
+              <CardTitle className="flex items-center gap-2 text-base">
+                Auto-reorder alerts
+                <Badge variant="outline" className="text-[10px] font-normal">
+                  Preview
+                </Badge>
+              </CardTitle>
               <CardDescription>
                 On-hand below threshold — recommended purchase-order quantities.
+                Sample data — not yet wired to the backend.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -448,15 +472,19 @@ export default function InventoryPage() {
                         <span className="num">{a.recommendedQty}</span>
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            toast.success(`PO drafted: ${a.recommendedQty} × ${a.sku}`)
-                          }
-                        >
-                          Create PO
-                        </Button>
+                        <div className="flex flex-col items-end gap-1">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled
+                            title="Not yet available"
+                          >
+                            Create PO
+                          </Button>
+                          <span className="text-[10px] text-muted-foreground">
+                            Coming soon
+                          </span>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}

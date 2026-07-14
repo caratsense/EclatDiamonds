@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
@@ -59,8 +60,13 @@ export class CheckinsService {
 
   /** GET /checkins — footfall log, store-scoped (most recent first). */
   async list(user: AuthUser, headerStore?: string) {
+    const where: Prisma.CheckInWhereInput = {
+      ...this.scope.storeFilter(user, headerStore),
+    };
+    // A salesperson only sees the walk-ins assigned to them; managers see all.
+    if (user.role === 'salesperson') where.repId = user.id;
     const rows = await this.prisma.checkIn.findMany({
-      where: this.scope.storeFilter(user, headerStore),
+      where,
       orderBy: { timeIn: 'desc' },
       take: 200,
     });

@@ -165,6 +165,9 @@ export class LeadsService {
     const where: Prisma.LeadWhereInput = {
       ...this.scope.storeFilter(user, q.storeId ?? headerStore),
     };
+    // A salesperson only ever sees the leads they own (their own customers);
+    // store_manager+ see the whole store. Mirrors the OP-5 leaderboard rule.
+    if (user.role === 'salesperson') where.ownerId = user.id;
     if (q.stage) where.stage = q.stage;
     // Default to open leads so the kanban board keeps showing only active work.
     const outcome = q.outcome ?? 'open';

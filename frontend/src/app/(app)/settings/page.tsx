@@ -96,12 +96,12 @@ export default function SettingsPage() {
         {/* Security — change password (email/password auth only). */}
         <ChangePasswordCard />
 
-        {/* Preferences — theme + default store. */}
-        <Card className="lg:col-span-2">
+        {/* Preferences — theme only (an editable device preference). */}
+        <Card>
           <CardHeader>
             <CardTitle>Preferences</CardTitle>
             <CardDescription>
-              Theme and default store for this device.
+              Display preferences for this device.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -114,12 +114,23 @@ export default function SettingsPage() {
               </div>
               <ThemeToggle />
             </div>
+          </CardContent>
+        </Card>
 
+        {/* Session — read-only current store context (changed via the top bar). */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Session</CardTitle>
+            <CardDescription>
+              The context your screens are currently scoped to.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
             <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/30 px-4 py-3">
               <div>
-                <p className="text-sm font-medium">Default store</p>
+                <p className="text-sm font-medium">Current store</p>
                 <p className="text-xs text-muted-foreground">
-                  The store your screens are scoped to.
+                  Switch stores from the store selector in the top bar.
                 </p>
               </div>
               <span className="inline-flex items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs font-medium text-foreground shadow-xs">

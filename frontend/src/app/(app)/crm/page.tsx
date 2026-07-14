@@ -57,9 +57,9 @@ import { useSession } from "@/store/use-session";
 
 const nav = getNavItem("crm")!;
 
-/** Outcome facet tabs — 'open' reads as "Active" for store staff. */
+/** Outcome facet tabs applied to the list view. */
 const OUTCOME_TABS: { value: LeadOutcomeFilter; label: string }[] = [
-  { value: "open", label: "Active" },
+  { value: "open", label: "Open" },
   { value: "won", label: "Won" },
   { value: "lost", label: "Lost" },
   { value: "all", label: "All" },
@@ -70,17 +70,20 @@ export default function CrmPage() {
   // Date-range filter (inclusive; API returns latest-first).
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
-  // Outcome facet — Active (open) by default; server-side param.
+  // Outcome facet — Open by default. Applied client-side to the LIST only; the
+  // board must show every outcome so a card dragged into "Order Placed" (which
+  // the backend auto-marks won) doesn't silently vanish.
   const [outcome, setOutcome] = useState<LeadOutcomeFilter>("open");
   // Source facet — client-side over the fetched page.
   const [sourceFilter, setSourceFilter] = useState<LeadSource | "all">("all");
-  // Leads come live + already role/store-scoped server-side.
+  // Fetch ALL outcomes; role/store scoping still applies server-side. The
+  // outcome facet is then applied client-side for the list view.
   const {
     data: leads = [],
     isLoading,
     isError,
     refetch,
-  } = useLeads({ from: from || undefined, to: to || undefined, outcome });
+  } = useLeads({ from: from || undefined, to: to || undefined, outcome: "all" });
   const moveStage = useMoveLeadStage();
   const [view, setView] = useState<"board" | "list">("board");
   const [active, setActive] = useState<Lead | null>(null);
@@ -88,11 +91,21 @@ export default function CrmPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
 
-  const scoped =
+  // Source facet applies to both views.
+  const sourceScoped =
     sourceFilter === "all"
       ? leads
       : leads.filter((l) => l.source === sourceFilter);
-  const byStage = (stage: LeadStage) => scoped.filter((l) => l.stage === stage);
+  // The board renders all outcomes so won/lost cards stay put after a drop.
+  const byStage = (stage: LeadStage) =>
+    sourceScoped.filter((l) => l.stage === stage);
+  // The list additionally respects the outcome tab.
+  const listLeads =
+    outcome === "all"
+      ? sourceScoped
+      : sourceScoped.filter((l) => l.outcome === outcome);
+  // Which dataset drives the empty-state / count for the active view.
+  const visible = view === "board" ? sourceScoped : listLeads;
 
   // Keep the open dialog's lead in sync with refetched data; fall back to
   // the last snapshot when the lead drops out of the current facet
@@ -114,7 +127,16 @@ export default function CrmPage() {
       moveStage.mutate(
         { id: lead.id, stage },
         {
-          onSuccess: () => toast.success(`${lead.customer} moved to ${label}`),
+          onSuccess: () => {
+            toast.success(`${lead.customer} moved to ${label}`);
+            // Reaching "Order Placed" auto-closes the lead as Won server-side;
+            // surface that so the state change is visible on the board.
+            if (stage === "order_placed" && lead.outcome !== "won") {
+              toast.success("Lead marked as Won", {
+                description: "Order placed closes the lead as won.",
+              });
+            }
+          },
           onError: () => toast.error("Could not move lead."),
         },
       );
@@ -252,8 +274,11 @@ export default function CrmPage() {
             Retry
           </Button>
         </div>
-      ) : scoped.length === 0 ? (
-        outcome !== "open" || sourceFilter !== "all" || from || to ? (
+      ) : visible.length === 0 ? (
+        (view === "list" && outcome !== "open") ||
+        sourceFilter !== "all" ||
+        from ||
+        to ? (
           <EmptyState
             icon={Users}
             title="No leads match these filters"
@@ -316,11 +341,11 @@ export default function CrmPage() {
                 <TableHead>Customer</TableHead>
                 <TableHead>Source</TableHead>
                 <TableHead>Stage</TableHead>
-                <TableHead>Rep</TableHead>
+                <TableHead>Salesperson</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {scoped.map((lead) => (
+              {listLeads.map((lead) => (
                 <TableRow
                   key={lead.id}
                   className="cursor-pointer"

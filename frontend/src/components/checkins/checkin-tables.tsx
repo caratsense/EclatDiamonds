@@ -123,7 +123,7 @@ export function LiveInStore({
                     onClick={() => onCheckout(c.id)}
                   >
                     <LogOut className="h-3.5 w-3.5" />
-                    {checkingOutId === c.id ? "Checking out…" : "Check out"}
+                    Close visit
                   </Button>
                 ) : null}
               </div>

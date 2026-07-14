@@ -216,9 +216,7 @@ export default function MarketingPage() {
             <CardHeader>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <CardTitle className="text-base">
-                    Shared deliverables
-                  </CardTitle>
+                  <CardTitle className="text-base">Agency tasks</CardTitle>
                   <CardDescription>
                     Tasks shared with external agencies — review and approve
                     submissions.
@@ -231,7 +229,7 @@ export default function MarketingPage() {
                     disabled={campaigns.length === 0}
                     onClick={() => setTaskOpen(true)}
                   >
-                    New agency task
+                    New task
                   </Button>
                 ) : null}
               </div>
@@ -259,7 +257,7 @@ export default function MarketingPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Deliverable</TableHead>
+                      <TableHead>Task</TableHead>
                       <TableHead>Agency</TableHead>
                       <TableHead>Assignee</TableHead>
                       <TableHead>Due</TableHead>
@@ -283,7 +281,7 @@ export default function MarketingPage() {
                           colSpan={canCreateDeliverable ? 6 : 5}
                           className="py-10 text-center text-muted-foreground"
                         >
-                          No agency tasks yet. Share a deliverable to begin.
+                          No agency tasks yet. Create a task to begin.
                         </TableCell>
                       </TableRow>
                     ) : null}
@@ -297,7 +295,7 @@ export default function MarketingPage() {
             <CardHeader>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <CardTitle className="text-base">Shared assets</CardTitle>
+                  <CardTitle className="text-base">Creative assets</CardTitle>
                   <CardDescription>
                     Creative uploaded by agencies for sign-off.
                   </CardDescription>
@@ -309,7 +307,7 @@ export default function MarketingPage() {
                     disabled={campaigns.length === 0}
                     onClick={() => setAssetOpen(true)}
                   >
-                    New deliverable
+                    New asset
                   </Button>
                 ) : null}
               </div>
@@ -333,7 +331,7 @@ export default function MarketingPage() {
                 </div>
               ) : assets.length === 0 ? (
                 <p className="col-span-full py-6 text-center text-sm text-muted-foreground">
-                  No shared assets yet. Agency uploads will appear here.
+                  No creative assets yet. Agency uploads will appear here.
                 </p>
               ) : (
                 assets.map((a) => (
@@ -426,8 +424,8 @@ function AssetTile({
     updateStatus.mutate(
       { id: asset.id, status },
       {
-        onSuccess: () => toast.success(`Deliverable ${label.toLowerCase()}`),
-        onError: () => toast.error("Could not update the deliverable."),
+        onSuccess: () => toast.success(`Asset ${label.toLowerCase()}`),
+        onError: () => toast.error("Could not update the asset."),
       },
     );
   }
@@ -766,7 +764,7 @@ function NewDeliverableDialog({
       return;
     }
     if (!title.trim()) {
-      toast.error("A deliverable title is required.");
+      toast.error("An asset title is required.");
       return;
     }
     createAsset.mutate(
@@ -778,11 +776,11 @@ function NewDeliverableDialog({
       },
       {
         onSuccess: () => {
-          toast.success("Deliverable added");
+          toast.success("Asset added");
           reset();
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not add the deliverable."),
+        onError: () => toast.error("Could not add the asset."),
       },
     );
   }
@@ -791,9 +789,9 @@ function NewDeliverableDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>New deliverable</DialogTitle>
+          <DialogTitle>New asset</DialogTitle>
           <DialogDescription>
-            Attach an agency deliverable to a campaign for sign-off.
+            Attach a creative asset to a campaign for sign-off.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
@@ -853,7 +851,7 @@ function NewDeliverableDialog({
             Cancel
           </Button>
           <Button onClick={save} disabled={createAsset.isPending}>
-            {createAsset.isPending ? "Saving…" : "Add deliverable"}
+            {createAsset.isPending ? "Saving…" : "Add asset"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -914,9 +912,9 @@ function NewAgencyTaskDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>New agency task</DialogTitle>
+          <DialogTitle>New task</DialogTitle>
           <DialogDescription>
-            Brief an agency on a campaign deliverable.
+            Brief an agency on a campaign task.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">

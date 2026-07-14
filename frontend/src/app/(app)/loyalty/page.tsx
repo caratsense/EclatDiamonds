@@ -63,6 +63,23 @@ export default function LoyaltyPage() {
   const { data: plans = [] } = useSchemePlans();
   const enroll = useEnrollMember();
 
+  // Controlled tab so the header action can jump to the enrollment card.
+  const [tab, setTab] = React.useState("scheme");
+  const customerRef = React.useRef<HTMLInputElement>(null);
+
+  // Header primary action: reveal the scheme tab, then scroll to + focus the
+  // enrollment form's first field.
+  function focusEnrollment() {
+    setTab("scheme");
+    setTimeout(() => {
+      customerRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+      customerRef.current?.focus();
+    }, 0);
+  }
+
   // Enrollment form state.
   const [customer, setCustomer] = React.useState("");
   const [phone, setPhone] = React.useState("");
@@ -120,10 +137,10 @@ export default function LoyaltyPage() {
         title={nav?.title ?? "Loyalty & Gold Scheme"}
         purpose={nav?.purpose ?? ""}
         primaryAction={nav?.primaryAction}
-        onPrimaryAction={() => toast.info("Enroll a customer below.")}
+        onPrimaryAction={focusEnrollment}
       />
 
-      <Tabs defaultValue="scheme" className="space-y-4">
+      <Tabs value={tab} onValueChange={setTab} className="space-y-4">
         <TabsList>
           <TabsTrigger value="scheme">Gold savings scheme</TabsTrigger>
           <TabsTrigger value="referral">Earn with Éclat</TabsTrigger>
@@ -144,6 +161,7 @@ export default function LoyaltyPage() {
               <div className="space-y-1.5">
                 <Label htmlFor="cust">Customer</Label>
                 <Input
+                  ref={customerRef}
                   id="cust"
                   placeholder="Name"
                   value={customer}

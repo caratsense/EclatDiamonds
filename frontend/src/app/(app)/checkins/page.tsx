@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { DoorOpen, Users, UserCheck, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 
@@ -44,6 +44,7 @@ import {
   useCheckins,
   useCheckoutCheckin,
   useCreateCheckin,
+  type CheckinOutcomeInput,
 } from "@/lib/queries/checkins";
 
 /** Bucket "HH:mm" into an hour label like "10a" / "1p" for the hourly chart. */
@@ -87,7 +88,8 @@ export default function CheckinsPage() {
 
   const { data: checkins = [], isLoading, isError, refetch } = useCheckins();
   const [addOpen, setAddOpen] = useState(false);
-  const checkout = useCheckoutCheckin();
+  // The visit currently being closed (drives the "Close visit" dialog).
+  const [closing, setClosing] = useState<CheckIn | null>(null);
 
   // Headline numbers derived from the live log. "Week" has no endpoint so we
   // surface today's count for the single-store view.
@@ -122,13 +124,8 @@ export default function CheckinsPage() {
   }, [checkins, isAggregate, stores]);
 
   function handleCheckout(id: string) {
-    checkout.mutate(
-      { id, outcome: "left" },
-      {
-        onSuccess: () => toast.success("Customer checked out"),
-        onError: () => toast.error("Could not check the customer out."),
-      },
-    );
+    const target = checkins.find((c) => c.id === id);
+    if (target) setClosing(target);
   }
 
   return (
@@ -145,8 +142,9 @@ export default function CheckinsPage() {
           tiles={[
             { label: "Footfall today", value: String(today), icon: DoorOpen },
             {
-              label: "Logged total",
-              value: today.toLocaleString("en-IN"),
+              label: "Converted today",
+              value: String(converted),
+              hint: "sale closed",
               icon: Users,
             },
             {
@@ -193,7 +191,7 @@ export default function CheckinsPage() {
             <LiveInStore
               checkins={checkins}
               onCheckout={handleCheckout}
-              checkingOutId={checkout.isPending ? checkout.variables?.id : null}
+              checkingOutId={closing?.id ?? null}
             />
 
             <div className="grid gap-4 lg:grid-cols-2">
@@ -209,7 +207,100 @@ export default function CheckinsPage() {
       </div>
 
       <AddCheckinDialog open={addOpen} onOpenChange={setAddOpen} />
+      <CloseVisitDialog
+        checkin={closing}
+        open={closing != null}
+        onOpenChange={(o) => {
+          if (!o) setClosing(null);
+        }}
+      />
     </>
+  );
+}
+
+/** Outcome options offered when closing a walk-in visit. */
+const CLOSE_OUTCOME_OPTIONS: { value: CheckinOutcomeInput; label: string }[] = [
+  { value: "sale_closed", label: "Sale closed" },
+  { value: "quote_given", label: "Quote given" },
+  { value: "follow_up", label: "Follow-up needed" },
+  { value: "left", label: "Just browsing" },
+];
+
+/** Capture the real visit outcome as a customer leaves the store. */
+function CloseVisitDialog({
+  checkin,
+  open,
+  onOpenChange,
+}: {
+  checkin: CheckIn | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const checkout = useCheckoutCheckin();
+  const [outcome, setOutcome] = useState<CheckinOutcomeInput | "">("");
+
+  // Reset the selection whenever a new visit is opened for closing.
+  useEffect(() => {
+    if (open) setOutcome("");
+  }, [open, checkin?.id]);
+
+  function submit() {
+    if (!checkin) return;
+    if (!outcome) {
+      toast.error("Select the visit outcome.");
+      return;
+    }
+    checkout.mutate(
+      { id: checkin.id, outcome },
+      {
+        onSuccess: () => {
+          toast.success("Visit closed");
+          onOpenChange(false);
+        },
+        onError: () => toast.error("Could not close the visit."),
+      },
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Close visit</DialogTitle>
+          <DialogDescription>
+            {checkin
+              ? `How did ${checkin.customer}'s visit end?`
+              : "Record how the visit ended."}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-1.5">
+          <Label htmlFor="close-outcome">Outcome</Label>
+          <Select
+            value={outcome}
+            onValueChange={(v) => setOutcome(v as CheckinOutcomeInput)}
+          >
+            <SelectTrigger id="close-outcome">
+              <SelectValue placeholder="Select the visit outcome" />
+            </SelectTrigger>
+            <SelectContent>
+              {CLOSE_OUTCOME_OPTIONS.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={checkout.isPending}>
+            {checkout.isPending ? "Closing…" : "Close visit"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

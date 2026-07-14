@@ -96,12 +96,18 @@ export function useApproveDiscount() {
   });
 }
 
-/** PATCH /discounts/:id/reject — decline a request (same role-rank gate). */
+/**
+ * PATCH /discounts/:id/reject — decline a request (same role-rank gate).
+ * Accepts an optional `note` (reason) that populates "Note from approver".
+ */
 export function useRejectDiscount() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) => {
-      const { data } = await api.patch<DiscountRecord>(`/discounts/${id}/reject`);
+    mutationFn: async ({ id, note }: { id: string; note?: string }) => {
+      const { data } = await api.patch<DiscountRecord>(
+        `/discounts/${id}/reject`,
+        note ? { note } : {},
+      );
       return data;
     },
     onSuccess: () => {

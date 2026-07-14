@@ -207,7 +207,7 @@ function ProjectView({
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <SummaryCard label="Active project" value={project.name}>
           <p className="text-xs text-muted-foreground">
-            Lead: {project.leadName || "—"}
+            Project lead: {project.leadName || "—"}
           </p>
         </SummaryCard>
         <SummaryCard
@@ -948,7 +948,7 @@ function NewProjectDialog({
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="proj-lead">Lead name</Label>
+            <Label htmlFor="proj-lead">Project lead</Label>
             <Input
               id="proj-lead"
               placeholder="e.g. Rohan Mehta"

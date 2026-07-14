@@ -131,12 +131,32 @@ const ENTRY_KINDS: { value: LedgerKind; label: string }[] = [
   { value: "income", label: "Income" },
 ];
 
-const ENTRY_STATUSES: { value: string; label: string }[] = [
+/**
+ * Status is two unrelated axes gated by kind:
+ *  - AR / AP  → settlement state of the receivable/payable.
+ *  - expense / income → plan type (realized vs. planned figure).
+ * Gating the options keeps a manager from booking, say, an AR as "budget".
+ */
+const SETTLEMENT_STATUSES: { value: string; label: string }[] = [
+  { value: "open", label: "Open" },
+  { value: "partial", label: "Partially settled" },
+  { value: "cleared", label: "Cleared" },
+  { value: "overdue", label: "Overdue" },
+];
+
+const PLAN_STATUSES: { value: string; label: string }[] = [
   { value: "actual", label: "Actual" },
   { value: "budget", label: "Budget" },
   { value: "forecast", label: "Forecast" },
-  { value: "open", label: "Open" },
 ];
+
+const isSettlementKind = (kind: LedgerKind) => kind === "AR" || kind === "AP";
+
+const statusOptionsForKind = (kind: LedgerKind) =>
+  isSettlementKind(kind) ? SETTLEMENT_STATUSES : PLAN_STATUSES;
+
+const defaultStatusForKind = (kind: LedgerKind) =>
+  isSettlementKind(kind) ? "open" : "actual";
 
 /**
  * Ledger side is derived from the kind so the entry books on the correct
@@ -159,8 +179,15 @@ function AddEntryDialog({
   const { currentStore } = useSession();
   const addEntry = useAddLedgerEntry();
   const [kind, setKind] = useState<LedgerKind>("AR");
-  const [status, setStatus] = useState("actual");
+  const [status, setStatus] = useState(() => defaultStatusForKind("AR"));
   const [amount, setAmount] = useState("");
+
+  // Switching kind resets the status to a sensible default for the new axis
+  // (settlement vs. plan type) so an invalid combination can't be submitted.
+  function changeKind(next: LedgerKind) {
+    setKind(next);
+    setStatus(defaultStatusForKind(next));
+  }
   const [entryDate, setEntryDate] = useState("");
   const [narration, setNarration] = useState("");
 
@@ -170,7 +197,7 @@ function AddEntryDialog({
 
   function reset() {
     setKind("AR");
-    setStatus("actual");
+    setStatus(defaultStatusForKind("AR"));
     setAmount("");
     setEntryDate("");
     setNarration("");
@@ -219,7 +246,7 @@ function AddEntryDialog({
               <Label htmlFor="kind">Kind</Label>
               <Select
                 value={kind}
-                onValueChange={(v) => setKind(v as LedgerKind)}
+                onValueChange={(v) => changeKind(v as LedgerKind)}
               >
                 <SelectTrigger id="kind">
                   <SelectValue />
@@ -234,13 +261,15 @@ function AddEntryDialog({
               </Select>
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="status">Status</Label>
+              <Label htmlFor="status">
+                {isSettlementKind(kind) ? "Settlement status" : "Plan type"}
+              </Label>
               <Select value={status} onValueChange={setStatus}>
                 <SelectTrigger id="status">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {ENTRY_STATUSES.map((s) => (
+                  {statusOptionsForKind(kind).map((s) => (
                     <SelectItem key={s.value} value={s.value}>
                       {s.label}
                     </SelectItem>

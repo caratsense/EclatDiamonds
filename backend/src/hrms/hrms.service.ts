@@ -195,7 +195,11 @@ export class HrmsService {
 
   /** GET /hrms/attendance — today's attendance with geo-verification, store-scoped. */
   async attendance(user: AuthUser, headerStore?: string) {
-    const where = this.scope.storeFilter(user, headerStore);
+    const where: Prisma.AttendanceRecordWhereInput = {
+      ...this.scope.storeFilter(user, headerStore),
+    };
+    // A salesperson only sees their OWN attendance; store_manager+ see the team.
+    if (user.role === 'salesperson') where.staffId = user.id;
     const rows = await this.prisma.attendanceRecord.findMany({
       where,
       include: { store: true },

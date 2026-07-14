@@ -222,9 +222,11 @@ export default function QuotationPage() {
                     <Button
                       variant="ghost"
                       size="sm"
+                      title="WhatsApp sending coming soon"
                       onClick={() =>
-                        toast.success("Quote shared on WhatsApp (mock)", {
-                          description: `${q.ref} sent to ${q.customer}`,
+                        toast("WhatsApp sending isn't configured yet", {
+                          description:
+                            "This will be available once WhatsApp Business is connected.",
                         })
                       }
                     >

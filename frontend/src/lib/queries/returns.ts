@@ -179,12 +179,18 @@ export function useApproveReturn() {
   });
 }
 
-/** PATCH /returns/:id/reject — Head Office only. */
+/**
+ * PATCH /returns/:id/reject — Head Office only. Accepts an optional `note`
+ * (reason) that populates the "Note from approver" line on the record.
+ */
 export function useRejectReturn() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) => {
-      const { data } = await api.patch<ReturnRecord>(`/returns/${id}/reject`);
+    mutationFn: async ({ id, note }: { id: string; note?: string }) => {
+      const { data } = await api.patch<ReturnRecord>(
+        `/returns/${id}/reject`,
+        note ? { note } : {},
+      );
       return data;
     },
     onSuccess: () => {

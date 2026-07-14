@@ -18,6 +18,16 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -76,16 +86,32 @@ export default function ReturnsPage() {
 
   const [calcOpen, setCalcOpen] = React.useState(false);
   const [ratesOpen, setRatesOpen] = React.useState(false);
+  // Id of the return being rejected (drives the reason dialog).
+  const [rejectId, setRejectId] = React.useState<string | null>(null);
+  const [rejectNote, setRejectNote] = React.useState("");
 
   const pending = rows.filter((r) => r.status === "pending_approval").length;
 
-  function decide(id: string, action: "approve" | "reject") {
-    const m = action === "approve" ? approve : reject;
-    m.mutate(id, {
-      onSuccess: () =>
-        toast.success(action === "approve" ? "Return approved" : "Return rejected"),
-      onError: () => toast.error(`Could not ${action} the return.`),
+  function approveRow(id: string) {
+    approve.mutate(id, {
+      onSuccess: () => toast.success("Return approved"),
+      onError: () => toast.error("Could not approve the return."),
     });
+  }
+
+  function confirmReject() {
+    if (!rejectId) return;
+    reject.mutate(
+      { id: rejectId, note: rejectNote.trim() || undefined },
+      {
+        onSuccess: () => {
+          toast.success("Return rejected");
+          setRejectId(null);
+          setRejectNote("");
+        },
+        onError: () => toast.error("Could not reject the return."),
+      },
+    );
   }
 
   return (
@@ -268,7 +294,7 @@ export default function ReturnsPage() {
                                       approve.isPending &&
                                       approve.variables === r.id
                                     }
-                                    onClick={() => decide(r.id, "approve")}
+                                    onClick={() => approveRow(r.id)}
                                   >
                                     <Check className="h-3.5 w-3.5" />
                                     Approve
@@ -279,9 +305,12 @@ export default function ReturnsPage() {
                                     className="text-destructive hover:text-destructive"
                                     disabled={
                                       reject.isPending &&
-                                      reject.variables === r.id
+                                      reject.variables?.id === r.id
                                     }
-                                    onClick={() => decide(r.id, "reject")}
+                                    onClick={() => {
+                                      setRejectNote("");
+                                      setRejectId(r.id);
+                                    }}
                                   >
                                     <X className="h-3.5 w-3.5" />
                                     Reject
@@ -326,6 +355,53 @@ export default function ReturnsPage() {
       {isHeadOffice ? (
         <DiamondRatesDialog open={ratesOpen} onOpenChange={setRatesOpen} />
       ) : null}
+
+      <Dialog
+        open={rejectId != null}
+        onOpenChange={(o) => {
+          if (!o) {
+            setRejectId(null);
+            setRejectNote("");
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reject return</DialogTitle>
+            <DialogDescription>
+              Add an optional reason. It is shared with the store as a note from
+              the approver.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-1.5">
+            <Label htmlFor="return-reject-note">Reason for rejection</Label>
+            <Textarea
+              id="return-reject-note"
+              placeholder="e.g. Piece condition does not match the intake photos."
+              value={rejectNote}
+              onChange={(e) => setRejectNote(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setRejectId(null);
+                setRejectNote("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmReject}
+              disabled={reject.isPending}
+            >
+              {reject.isPending ? "Rejecting…" : "Reject return"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

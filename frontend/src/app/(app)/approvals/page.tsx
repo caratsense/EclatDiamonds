@@ -23,6 +23,16 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatINR, formatPercent } from "@/lib/format";
 import { getNavItem } from "@/lib/navigation";
@@ -86,26 +96,57 @@ export default function ApprovalsPage() {
   const anyError = discountsQ.isError || returnsQ.isError || leaveQ.isError;
   const allClear = !anyLoading && !anyError && total === 0;
 
+  // Reject-with-reason dialog target: which kind of request + its id.
+  const [rejectTarget, setRejectTarget] = React.useState<{
+    kind: "discount" | "return";
+    id: string;
+  } | null>(null);
+  const [rejectNote, setRejectNote] = React.useState("");
+
+  const rejectPending =
+    (rejectTarget?.kind === "discount" && rejectDiscount.isPending) ||
+    (rejectTarget?.kind === "return" && rejectReturn.isPending);
+
+  function openReject(kind: "discount" | "return", id: string) {
+    setRejectNote("");
+    setRejectTarget({ kind, id });
+  }
+
+  function closeReject() {
+    setRejectTarget(null);
+    setRejectNote("");
+  }
+
+  function confirmReject() {
+    if (!rejectTarget) return;
+    const note = rejectNote.trim() || undefined;
+    const label = rejectTarget.kind === "discount" ? "Discount" : "Return";
+    const m = rejectTarget.kind === "discount" ? rejectDiscount : rejectReturn;
+    m.mutate(
+      { id: rejectTarget.id, note },
+      {
+        onSuccess: () => {
+          toast.success(`${label} rejected`);
+          closeReject();
+        },
+        onError: () =>
+          toast.error(`Could not reject this ${label.toLowerCase()}.`),
+      },
+    );
+  }
+
   // ---- Decisions -----------------------------------------------------------
-  function decideDiscount(id: string, action: "approve" | "reject") {
-    const m = action === "approve" ? approveDiscount : rejectDiscount;
-    m.mutate(id, {
-      onSuccess: () =>
-        toast.success(
-          action === "approve" ? "Discount approved" : "Discount rejected",
-        ),
-      onError: () => toast.error(`Could not ${action} this discount.`),
+  function approveDiscountReq(id: string) {
+    approveDiscount.mutate(id, {
+      onSuccess: () => toast.success("Discount approved"),
+      onError: () => toast.error("Could not approve this discount."),
     });
   }
 
-  function decideReturn(id: string, action: "approve" | "reject") {
-    const m = action === "approve" ? approveReturn : rejectReturn;
-    m.mutate(id, {
-      onSuccess: () =>
-        toast.success(
-          action === "approve" ? "Return approved" : "Return rejected",
-        ),
-      onError: () => toast.error(`Could not ${action} the return.`),
+  function approveReturnReq(id: string) {
+    approveReturn.mutate(id, {
+      onSuccess: () => toast.success("Return approved"),
+      onError: () => toast.error("Could not approve the return."),
     });
   }
 
@@ -181,7 +222,8 @@ export default function ApprovalsPage() {
                 const approving =
                   approveDiscount.isPending && approveDiscount.variables === d.id;
                 const rejecting =
-                  rejectDiscount.isPending && rejectDiscount.variables === d.id;
+                  rejectDiscount.isPending &&
+                  rejectDiscount.variables?.id === d.id;
                 return (
                   <ApprovalRow
                     key={d.id}
@@ -189,8 +231,8 @@ export default function ApprovalsPage() {
                       <DecisionButtons
                         approving={approving}
                         rejecting={rejecting}
-                        onApprove={() => decideDiscount(d.id, "approve")}
-                        onReject={() => decideDiscount(d.id, "reject")}
+                        onApprove={() => approveDiscountReq(d.id)}
+                        onReject={() => openReject("discount", d.id)}
                       />
                     }
                   >
@@ -254,7 +296,7 @@ export default function ApprovalsPage() {
                 const approving =
                   approveReturn.isPending && approveReturn.variables === r.id;
                 const rejecting =
-                  rejectReturn.isPending && rejectReturn.variables === r.id;
+                  rejectReturn.isPending && rejectReturn.variables?.id === r.id;
                 const exVal = optionValue(r, "exchange");
                 const bbVal = optionValue(r, "buyback");
                 return (
@@ -264,8 +306,8 @@ export default function ApprovalsPage() {
                       <DecisionButtons
                         approving={approving}
                         rejecting={rejecting}
-                        onApprove={() => decideReturn(r.id, "approve")}
-                        onReject={() => decideReturn(r.id, "reject")}
+                        onApprove={() => approveReturnReq(r.id)}
+                        onReject={() => openReject("return", r.id)}
                       />
                     }
                   >
@@ -361,6 +403,46 @@ export default function ApprovalsPage() {
           </div>
         </>
       )}
+
+      <Dialog
+        open={rejectTarget != null}
+        onOpenChange={(o) => {
+          if (!o) closeReject();
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Reject {rejectTarget?.kind === "return" ? "return" : "discount"}
+            </DialogTitle>
+            <DialogDescription>
+              Add an optional reason. It is shared with the requester as a note
+              from the approver.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-1.5">
+            <Label htmlFor="approval-reject-note">Reason for rejection</Label>
+            <Textarea
+              id="approval-reject-note"
+              placeholder="Explain why this request can't be approved."
+              value={rejectNote}
+              onChange={(e) => setRejectNote(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={closeReject}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmReject}
+              disabled={rejectPending}
+            >
+              {rejectPending ? "Rejecting…" : "Reject request"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

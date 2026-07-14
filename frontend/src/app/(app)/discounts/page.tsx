@@ -16,6 +16,16 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -62,6 +72,9 @@ export default function DiscountsPage() {
   const canSeeCost = isApprover;
 
   const [addOpen, setAddOpen] = React.useState(false);
+  // Id of the request being rejected (drives the reason dialog).
+  const [rejectId, setRejectId] = React.useState<string | null>(null);
+  const [rejectNote, setRejectNote] = React.useState("");
 
   const { data: rows = [], isLoading, isError, refetch } = useDiscounts();
   const approve = useApproveDiscount();
@@ -84,15 +97,26 @@ export default function DiscountsPage() {
     );
   }
 
-  function decide(id: string, action: "approve" | "reject") {
-    const m = action === "approve" ? approve : reject;
-    m.mutate(id, {
-      onSuccess: () =>
-        toast.success(
-          action === "approve" ? "Discount approved" : "Discount rejected",
-        ),
-      onError: () => toast.error(`Could not ${action} this request.`),
+  function approveRow(id: string) {
+    approve.mutate(id, {
+      onSuccess: () => toast.success("Discount approved"),
+      onError: () => toast.error("Could not approve this request."),
     });
+  }
+
+  function confirmReject() {
+    if (!rejectId) return;
+    reject.mutate(
+      { id: rejectId, note: rejectNote.trim() || undefined },
+      {
+        onSuccess: () => {
+          toast.success("Discount rejected");
+          setRejectId(null);
+          setRejectNote("");
+        },
+        onError: () => toast.error("Could not reject this request."),
+      },
+    );
   }
 
   // base cols: request · customer · item · diamond · making · selling · status · required
@@ -305,7 +329,7 @@ export default function DiscountsPage() {
                                 disabled={
                                   approve.isPending && approve.variables === d.id
                                 }
-                                onClick={() => decide(d.id, "approve")}
+                                onClick={() => approveRow(d.id)}
                               >
                                 <Check className="h-3.5 w-3.5" />
                                 Approve
@@ -315,9 +339,13 @@ export default function DiscountsPage() {
                                 variant="ghost"
                                 className="text-destructive hover:text-destructive"
                                 disabled={
-                                  reject.isPending && reject.variables === d.id
+                                  reject.isPending &&
+                                  reject.variables?.id === d.id
                                 }
-                                onClick={() => decide(d.id, "reject")}
+                                onClick={() => {
+                                  setRejectNote("");
+                                  setRejectId(d.id);
+                                }}
                               >
                                 <X className="h-3.5 w-3.5" />
                                 Reject
@@ -343,6 +371,53 @@ export default function DiscountsPage() {
       {isApprover ? <DiscountLimitsCard /> : null}
 
       <DiscountRequestDialog open={addOpen} onOpenChange={setAddOpen} />
+
+      <Dialog
+        open={rejectId != null}
+        onOpenChange={(o) => {
+          if (!o) {
+            setRejectId(null);
+            setRejectNote("");
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reject discount request</DialogTitle>
+            <DialogDescription>
+              Add an optional reason. It is shared with the requester as a note
+              from the approver.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-1.5">
+            <Label htmlFor="discount-reject-note">Reason for rejection</Label>
+            <Textarea
+              id="discount-reject-note"
+              placeholder="e.g. Margin too thin at this price."
+              value={rejectNote}
+              onChange={(e) => setRejectNote(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setRejectId(null);
+                setRejectNote("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmReject}
+              disabled={reject.isPending}
+            >
+              {reject.isPending ? "Rejecting…" : "Reject request"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
