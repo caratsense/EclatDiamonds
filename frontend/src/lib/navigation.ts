@@ -21,6 +21,8 @@ import {
   ClipboardCheck,
   GitCompare,
   UsersRound,
+  ScrollText,
+  Target,
 } from "lucide-react";
 
 import type { Role } from "@/lib/types";
@@ -185,7 +187,8 @@ export const NAV_GROUPS: NavGroup[] = [
           "Stock levels, aging lines and scrap recovery.",
         primaryAction: "Stock Entry",
         icon: Boxes,
-        roles: ["area_manager", "head_office"],
+        // Store managers see their own store's stock; area/HO see all stores.
+        roles: ["store_manager", "area_manager", "head_office"],
       },
     ],
   },
@@ -283,6 +286,26 @@ export const NAV_GROUPS: NavGroup[] = [
         primaryAction: "Add Staff",
         icon: UsersRound,
         roles: ["head_office"],
+      },
+      {
+        module: 10,
+        slug: "settings/targets",
+        title: "Targets",
+        purpose:
+          "Set monthly sales targets per store and track achievement.",
+        primaryAction: "",
+        icon: Target,
+        roles: ["area_manager", "head_office"],
+      },
+      {
+        module: 3,
+        slug: "settings/audit",
+        title: "Audit Log",
+        purpose:
+          "A record of approvals, role changes and other sensitive actions.",
+        primaryAction: "",
+        icon: ScrollText,
+        roles: ["area_manager", "head_office"],
       },
     ],
   },

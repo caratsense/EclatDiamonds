@@ -204,7 +204,16 @@ export default function DiscountsPage() {
                       <TableCell className="font-medium">
                         <span className="num">{d.ref ?? d.id}</span>
                       </TableCell>
-                      <TableCell>{d.customerName}</TableCell>
+                      <TableCell>
+                        <div>{d.customerName}</div>
+                        {d.decisionNote &&
+                        (d.status === "approved" ||
+                          d.status === "rejected") ? (
+                          <p className="mt-0.5 max-w-[220px] text-xs text-muted-foreground">
+                            Note from approver: {d.decisionNote}
+                          </p>
+                        ) : null}
+                      </TableCell>
                       <TableCell className="max-w-[200px] truncate">
                         {d.item || "—"}
                       </TableCell>

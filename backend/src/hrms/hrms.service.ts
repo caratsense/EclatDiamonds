@@ -8,6 +8,7 @@ import { AttendanceStatus, LeaveStatus, LeaveType, Prisma } from '@prisma/client
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
+import { AuditService } from '../common/audit.service';
 import { ROLE_RANK } from '../common/role.util';
 import {
   ApplyLeaveDto,
@@ -189,6 +190,7 @@ export class HrmsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
+    private readonly audit: AuditService,
   ) {}
 
   /** GET /hrms/attendance — today's attendance with geo-verification, store-scoped. */
@@ -403,31 +405,43 @@ export class HrmsService {
     if (!existing) throw new NotFoundException('Leave request not found');
 
     const prevStatus = existing.status;
+    // Idempotency guard: re-applying the same decision is a no-op that would
+    // otherwise double-count the balance. A manager may still CORRECT a decision
+    // (e.g. approved → rejected), which restores the balance below.
+    if (prevStatus === status) {
+      throw new BadRequestException(`Leave already ${status}`);
+    }
+
+    // Balance only moves for paid leave types. Approving consumes the days;
+    // moving OFF an approved state (a correction/reversal) restores them.
     const days = num(existing.days);
-    if (PAID_LEAVE_TYPES.includes(existing.type) && days > 0 && status !== prevStatus) {
+    const paid = PAID_LEAVE_TYPES.includes(existing.type) && days > 0;
+    if (paid && (status === 'approved' || prevStatus === 'approved')) {
       // Key the balance on the request's financial year (Apr–Mar), not calendar year.
       const year = financialYear(existing.fromDate);
-      if (status === 'approved') {
-        // Newly approved: consume balance.
-        await this.ensureLeaveBalances(existing.staffId, year, existing.storeId);
-        await this.prisma.leaveBalance.update({
-          where: { userId_type_year: { userId: existing.staffId, type: existing.type, year } },
-          data: { used: { increment: days } },
-        });
-      } else if (prevStatus === 'approved') {
-        // Leaving an approved state (reject/re-open): restore balance, floored at 0.
-        await this.ensureLeaveBalances(existing.staffId, year, existing.storeId);
-        const bal = await this.prisma.leaveBalance.findUnique({
-          where: { userId_type_year: { userId: existing.staffId, type: existing.type, year } },
-        });
-        await this.prisma.leaveBalance.update({
-          where: { userId_type_year: { userId: existing.staffId, type: existing.type, year } },
-          data: { used: Math.max(0, num(bal?.used) - days) },
-        });
-      }
+      await this.ensureLeaveBalances(existing.staffId, year, existing.storeId);
+      await this.prisma.leaveBalance.update({
+        where: { userId_type_year: { userId: existing.staffId, type: existing.type, year } },
+        data:
+          status === 'approved'
+            ? { used: { increment: days } }
+            : { used: { decrement: days } },
+      });
     }
 
     const row = await this.prisma.leaveRequest.update({ where: { id }, data: { status } });
+
+    await this.audit.record(user, {
+      action: status === 'approved' ? 'leave.approve' : 'leave.reject',
+      entityType: 'LeaveRequest',
+      entityId: row.id,
+      storeId: row.storeId,
+      summary: `${status === 'approved' ? 'Approved' : 'Rejected'} ${row.type} leave for ${
+        row.staffName ?? row.staffId
+      }`,
+      metadata: { from: prevStatus, to: status },
+    });
+
     return this.toLeaveView(row);
   }
 
@@ -1122,12 +1136,23 @@ export class HrmsService {
       }
     }
 
+    const fromRate = num(existing.rate);
     const amount = new Prisma.Decimal(existing.salesValue).mul(rate).div(100);
     const row = await this.prisma.commission.update({
       where: { id },
       data: { rate, amount },
       include: { user: { include: { userStores: true } } },
     });
+
+    await this.audit.record(user, {
+      action: 'commission.rate_change',
+      entityType: 'Commission',
+      entityId: row.id,
+      storeId: row.storeId ?? existing.user.userStores[0]?.storeId ?? null,
+      summary: `Changed ${existing.user.name} commission rate for ${existing.period}: ${fromRate}% → ${rate}%`,
+      metadata: { from: fromRate, to: rate },
+    });
+
     return this.toCommissionView(row);
   }
 
@@ -1167,12 +1192,25 @@ export class HrmsService {
         include: { userStores: true },
       });
       if (!target) throw new NotFoundException('Staff not found');
-      const storeId = this.resolveStoreId(
-        user,
-        headerStore,
-        target.userStores.map((s) => s.storeId),
+      // The action's store must be one the TARGET is actually assigned to AND that
+      // the caller may see. Never trust a header store the target isn't in — else a
+      // manager could act on any user by passing a store they happen to control.
+      const targetStores = target.userStores.map((s) => s.storeId);
+      const inScope = targetStores.filter(
+        (s) => user.allStores || user.storeIds.includes(s),
       );
-      this.scope.assertStoreAllowed(user, storeId);
+      if (inScope.length === 0) {
+        throw new ForbiddenException('Staff is not in your store scope');
+      }
+      let storeId: string;
+      if (headerStore && headerStore !== 'all') {
+        if (!inScope.includes(headerStore)) {
+          throw new ForbiddenException('Staff is not assigned to the selected store');
+        }
+        storeId = headerStore;
+      } else {
+        storeId = inScope[0];
+      }
       return { staffId: target.id, staffName: target.name, storeId };
     }
     const storeId = this.resolveStoreId(user, headerStore, user.storeIds);

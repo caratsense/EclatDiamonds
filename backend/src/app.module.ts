@@ -33,6 +33,9 @@ import { SearchModule } from './search/search.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { SyncModule } from './sync/sync.module';
 import { StorageModule } from './storage/storage.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { AuditModule } from './audit/audit.module';
+import { TargetsModule } from './targets/targets.module';
 import { HealthController } from './health/health.controller';
 
 @Module({
@@ -70,6 +73,9 @@ import { HealthController } from './health/health.controller';
     IntegrationsModule,
     SyncModule,
     StorageModule,
+    NotificationsModule,
+    AuditModule,
+    TargetsModule,
   ],
   controllers: [HealthController],
   providers: [

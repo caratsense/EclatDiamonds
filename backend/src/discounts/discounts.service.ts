@@ -8,6 +8,7 @@ import { DiscountStatus, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
+import { AuditService } from '../common/audit.service';
 import { ROLE_RANK, canSeeCost } from '../common/role.util';
 import {
   CreateDiscountRequestDto,
@@ -36,6 +37,7 @@ function toView(d: any, viewerRole: Role) {
     sellingPrice: d.sellingPrice != null ? Number(d.sellingPrice) : null,
     status: d.status,
     reason: d.reason ?? '',
+    decisionNote: d.decisionNote ?? null,
     requestedRole: d.requestedRole,
     requiredRole: d.requiredRole ?? null,
     approvedRole: d.approvedRole,
@@ -75,6 +77,7 @@ export class DiscountsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
+    private readonly audit: AuditService,
   ) {}
 
   async list(user: AuthUser, headerStore?: string) {
@@ -157,16 +160,22 @@ export class DiscountsService {
   }
 
   /** Approve a pending/escalated request. Only a role ranked >= requiredRole may act. */
-  async approve(user: AuthUser, id: string, reason?: string) {
-    return this.decide(user, id, 'approved', reason);
+  async approve(user: AuthUser, id: string, reason?: string, note?: string) {
+    return this.decide(user, id, 'approved', reason, note);
   }
 
   /** Reject a pending/escalated request. Only a role ranked >= requiredRole may act. */
-  async reject(user: AuthUser, id: string, reason?: string) {
-    return this.decide(user, id, 'rejected', reason);
+  async reject(user: AuthUser, id: string, reason?: string, note?: string) {
+    return this.decide(user, id, 'rejected', reason, note);
   }
 
-  private async decide(user: AuthUser, id: string, decision: DiscountStatus, reason?: string) {
+  private async decide(
+    user: AuthUser,
+    id: string,
+    decision: DiscountStatus,
+    reason?: string,
+    note?: string,
+  ) {
     const row = await this.prisma.discountRequest.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('Discount request not found');
 
@@ -192,8 +201,25 @@ export class DiscountsService {
         approvedRole: user.role,
         decidedAt: new Date(),
         reason: reason ?? row.reason,
+        decisionNote: note ?? row.decisionNote,
       },
     });
+
+    const pct =
+      row.percent != null
+        ? Number(row.percent)
+        : Math.max(Number(row.diamondPercent ?? 0), Number(row.makingPercent ?? 0));
+    await this.audit.record(user, {
+      action: decision === 'approved' ? 'discount.approve' : 'discount.reject',
+      entityType: 'DiscountRequest',
+      entityId: updated.id,
+      storeId: updated.storeId,
+      summary: `${decision === 'approved' ? 'Approved' : 'Rejected'} discount ${
+        updated.ref
+      } (${pct}%) for ${updated.customerName}`,
+      metadata: { note: note ?? null },
+    });
+
     return toView(updated, user.role);
   }
 
@@ -206,7 +232,7 @@ export class DiscountsService {
   }
 
   /** head_office: set/override a global or store-scoped role cap. */
-  async setLimit(dto: SetDiscountLimitDto) {
+  async setLimit(user: AuthUser, dto: SetDiscountLimitDto) {
     const storeId = dto.storeId ?? null;
     const existing = await this.prisma.discountLimit.findFirst({ where: { role: dto.role, storeId } });
 
@@ -214,6 +240,7 @@ export class DiscountsService {
     const making = dto.maxMakingPercent != null ? new Prisma.Decimal(dto.maxMakingPercent) : undefined;
     const amount = dto.maxAmount != null ? new Prisma.Decimal(dto.maxAmount) : undefined;
 
+    let result: ReturnType<typeof limitView>;
     if (existing) {
       const row = await this.prisma.discountLimit.update({
         where: { id: existing.id },
@@ -224,22 +251,39 @@ export class DiscountsService {
           ...(dto.maxPercent != null ? { maxPercent: new Prisma.Decimal(dto.maxPercent) } : {}),
         },
       });
-      return limitView(row);
+      result = limitView(row);
+    } else {
+      // Create requires a non-null maxPercent; default to the larger split cap.
+      const overall = dto.maxPercent ?? Math.max(dto.maxDiamondPercent ?? 0, dto.maxMakingPercent ?? 0);
+      const row = await this.prisma.discountLimit.create({
+        data: {
+          role: dto.role,
+          storeId,
+          maxPercent: new Prisma.Decimal(overall),
+          maxDiamondPercent: diamond,
+          maxMakingPercent: making,
+          maxAmount: amount,
+        },
+      });
+      result = limitView(row);
     }
 
-    // Create requires a non-null maxPercent; default to the larger split cap.
-    const overall = dto.maxPercent ?? Math.max(dto.maxDiamondPercent ?? 0, dto.maxMakingPercent ?? 0);
-    const row = await this.prisma.discountLimit.create({
-      data: {
+    await this.audit.record(user, {
+      action: 'discount_limit.change',
+      entityType: 'DiscountLimit',
+      entityId: result.id,
+      storeId,
+      summary: `Set ${dto.role} discount cap${storeId ? ` for store ${storeId}` : ' (global)'}`,
+      metadata: {
         role: dto.role,
-        storeId,
-        maxPercent: new Prisma.Decimal(overall),
-        maxDiamondPercent: diamond,
-        maxMakingPercent: making,
-        maxAmount: amount,
+        maxDiamondPercent: dto.maxDiamondPercent ?? null,
+        maxMakingPercent: dto.maxMakingPercent ?? null,
+        maxPercent: dto.maxPercent ?? null,
+        maxAmount: dto.maxAmount ?? null,
       },
     });
-    return limitView(row);
+
+    return result;
   }
 
   /**

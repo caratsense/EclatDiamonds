@@ -28,8 +28,8 @@ export class DiscountsController {
   /** head_office: set/override a global or store-scoped role cap. */
   @Roles('head_office')
   @Post('limits')
-  setLimit(@Body() dto: SetDiscountLimitDto) {
-    return this.discounts.setLimit(dto);
+  setLimit(@CurrentUser() user: AuthUser, @Body() dto: SetDiscountLimitDto) {
+    return this.discounts.setLimit(user, dto);
   }
 
   @Post()
@@ -40,12 +40,12 @@ export class DiscountsController {
   /** Approve — only a role ranked >= the request's requiredRole may act (403 otherwise). */
   @Patch(':id/approve')
   approve(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: DecideDiscountDto) {
-    return this.discounts.approve(user, id, dto?.reason);
+    return this.discounts.approve(user, id, dto?.reason, dto?.note);
   }
 
   /** Reject — only a role ranked >= the request's requiredRole may act (403 otherwise). */
   @Patch(':id/reject')
   reject(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: DecideDiscountDto) {
-    return this.discounts.reject(user, id, dto?.reason);
+    return this.discounts.reject(user, id, dto?.reason, dto?.note);
   }
 }

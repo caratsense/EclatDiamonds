@@ -1,6 +1,7 @@
 "use client";
 
 import { GlobalSearch } from "@/components/layout/global-search";
+import { NotificationBell } from "@/components/layout/notification-bell";
 import { RoleBadge } from "@/components/layout/role-badge";
 import { StoreSwitcher } from "@/components/layout/store-switcher";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
@@ -20,6 +21,7 @@ export function Topbar() {
       </div>
 
       <div className="ml-auto flex items-center gap-2">
+        <NotificationBell />
         <RoleBadge />
         <div className="mx-1 hidden h-5 w-px bg-border sm:block" />
         <ThemeToggle />

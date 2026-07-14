@@ -79,6 +79,8 @@ export interface ReturnRecord {
   createdAt: string;
   raisedBy: string;
   photos: IntakePhoto[];
+  /** Optional note the approver left on approve/reject — shown to the requester. */
+  decisionNote?: string | null;
 }
 
 export const RETURN_TYPE_LABELS: Record<ReturnType, string> = {

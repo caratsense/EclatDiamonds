@@ -8,6 +8,8 @@ import { Role } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuthUser } from '../common/auth-user';
+import { AuditService } from '../common/audit.service';
 import { CreateUserDto, UpdateUserRoleDto, UpdateUserStoreDto } from './dto/users.dto';
 
 /** Pull each user's store assignments (for the HO staff list). */
@@ -37,7 +39,10 @@ function last10(phone: string): string | null {
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   /** Public HO list/detail shape. */
   private toView(user: any) {
@@ -117,13 +122,24 @@ export class UsersService {
   }
 
   /** PATCH /users/:id/role — change a user's primary role (never to head_office). */
-  async updateRole(id: string, dto: UpdateUserRoleDto) {
-    await this.getOrThrow(id);
+  async updateRole(actor: AuthUser, id: string, dto: UpdateUserRoleDto) {
+    const existing = await this.getOrThrow(id);
     const user = await this.prisma.user.update({
       where: { id },
       data: { role: dto.role },
       include: USER_INCLUDE,
     });
+
+    if (existing.role !== dto.role) {
+      await this.audit.record(actor, {
+        action: 'user.role_change',
+        entityType: 'User',
+        entityId: id,
+        storeId: null,
+        summary: `Changed ${user.name} role: ${existing.role} → ${dto.role}`,
+        metadata: { from: existing.role, to: dto.role },
+      });
+    }
     return this.toView(user);
   }
 
@@ -131,13 +147,19 @@ export class UsersService {
    * PATCH /users/:id/store — reassign the user's PRIMARY store. Demotes any other
    * primary link and upserts the target as the new primary (keeping existing links).
    */
-  async updateStore(id: string, dto: UpdateUserStoreDto) {
+  async updateStore(actor: AuthUser, id: string, dto: UpdateUserStoreDto) {
     await this.getOrThrow(id);
     const store = await this.prisma.store.findUnique({ where: { id: dto.storeId } });
     if (!store) throw new NotFoundException('Store not found');
     if (store.isAggregate) {
       throw new BadRequestException('Cannot assign a user to the aggregate "All Stores" view');
     }
+
+    // Capture the previous primary store for the audit trail.
+    const prevPrimary = await this.prisma.userStore.findFirst({
+      where: { userId: id, isPrimary: true },
+      select: { storeId: true },
+    });
 
     await this.prisma.$transaction([
       this.prisma.userStore.updateMany({
@@ -155,6 +177,19 @@ export class UsersService {
       where: { id },
       include: USER_INCLUDE,
     });
+
+    if (prevPrimary?.storeId !== dto.storeId) {
+      await this.audit.record(actor, {
+        action: 'user.store_change',
+        entityType: 'User',
+        entityId: id,
+        storeId: dto.storeId,
+        summary: `Reassigned ${user.name} primary store: ${
+          prevPrimary?.storeId ?? 'none'
+        } → ${dto.storeId}`,
+        metadata: { from: prevPrimary?.storeId ?? null, to: dto.storeId },
+      });
+    }
     return this.toView(user);
   }
 

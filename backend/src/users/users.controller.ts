@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { CreateUserDto, UpdateUserRoleDto, UpdateUserStoreDto } from './dto/users.dto';
+import { CurrentUser, AuthUser } from '../common/auth-user';
 import { Roles } from '../auth/roles.decorator';
 
 /**
@@ -27,13 +28,21 @@ export class UsersController {
 
   /** PATCH /users/:id/role — promote/demote (never to head_office). */
   @Patch(':id/role')
-  updateRole(@Param('id') id: string, @Body() dto: UpdateUserRoleDto) {
-    return this.users.updateRole(id, dto);
+  updateRole(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateUserRoleDto,
+  ) {
+    return this.users.updateRole(user, id, dto);
   }
 
   /** PATCH /users/:id/store — reassign the user's primary store. */
   @Patch(':id/store')
-  updateStore(@Param('id') id: string, @Body() dto: UpdateUserStoreDto) {
-    return this.users.updateStore(id, dto);
+  updateStore(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateUserStoreDto,
+  ) {
+    return this.users.updateStore(user, id, dto);
   }
 }

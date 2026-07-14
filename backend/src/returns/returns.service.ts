@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
+import { AuditService } from '../common/audit.service';
 import { CreateDiamondRateDto, CreateReturnDto, ValuateReturnDto } from './dto/return.dto';
 
 function num(v: Prisma.Decimal | number | null | undefined): number {
@@ -52,6 +53,7 @@ function toView(r: any) {
     settlement: r.settlement,
     status: r.status,
     reason: r.reason ?? '',
+    decisionNote: r.decisionNote ?? null,
     entryMode: r.entryMode ?? 'manual',
     invoiceNo: r.invoiceNo ?? undefined,
     createdAt: r.createdAt.toISOString(),
@@ -77,6 +79,7 @@ export class ReturnsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
+    private readonly audit: AuditService,
   ) {}
 
   /** GET /returns — returns/exchanges/buybacks, store-scoped. */
@@ -253,26 +256,49 @@ export class ReturnsService {
   }
 
   /** PATCH /returns/:id/approve — HO signs off; store-access checked. */
-  async approve(user: AuthUser, id: string) {
-    return this.setStatus(user, id, 'approved');
+  async approve(user: AuthUser, id: string, note?: string) {
+    return this.setStatus(user, id, 'approved', note);
   }
 
   /** PATCH /returns/:id/reject — HO declines; store-access checked. */
-  async reject(user: AuthUser, id: string) {
-    return this.setStatus(user, id, 'rejected');
+  async reject(user: AuthUser, id: string, note?: string) {
+    return this.setStatus(user, id, 'rejected', note);
   }
 
-  private async setStatus(user: AuthUser, id: string, status: 'approved' | 'rejected') {
+  private async setStatus(
+    user: AuthUser,
+    id: string,
+    status: 'approved' | 'rejected',
+    note?: string,
+  ) {
     const existing = await this.prisma.returnRecord.findFirst({
       where: { id, ...this.scope.storeFilter(user) },
-      select: { id: true },
+      select: { id: true, status: true },
     });
     if (!existing) throw new NotFoundException('Return not found');
+
+    // Double-decision guard: never flip an already-settled decision.
+    if (['approved', 'rejected', 'settled'].includes(existing.status)) {
+      throw new BadRequestException('Already decided');
+    }
+
     const row = await this.prisma.returnRecord.update({
       where: { id },
-      data: { status },
+      data: { status, ...(note !== undefined ? { decisionNote: note } : {}) },
       include: { photos: true },
     });
+
+    await this.audit.record(user, {
+      action: status === 'approved' ? 'return.approve' : 'return.reject',
+      entityType: 'ReturnRecord',
+      entityId: row.id,
+      storeId: row.storeId,
+      summary: `${status === 'approved' ? 'Approved' : 'Rejected'} return ${row.ref} for ${
+        row.customerName
+      }`,
+      metadata: { note: note ?? null },
+    });
+
     return toView(row);
   }
 

@@ -362,6 +362,7 @@ model Store {
   discountRequests    DiscountRequest[]
   campaignStores      CampaignStore[]
   dailyReports        DailyReport[]
+  salesTargets        SalesTarget[]
 
   @@index([regionId])
 }
@@ -397,6 +398,8 @@ model User {
   assignedTickets   Ticket[]          @relation("TicketAssignee")
   commissions       Commission[]
   leaveBalances     LeaveBalance[]
+  auditLogs         AuditLog[]        @relation("UserAuditLogs")
+  salesTargets      SalesTarget[]     @relation("UserSalesTargets")
 
   @@index([role])
 }
@@ -1520,6 +1523,8 @@ model ReturnRecord {
   settlement   SettlementType @default(credit_note)
   status       ReturnStatus   @default(draft)
   reason       String?
+  /// Approver's note on the approve/reject decision — surfaced back to the requester.
+  decisionNote String?
   raisedBy     String?
 
   // Round 2: By-Invoice vs By-Manual intake toggle.
@@ -1611,6 +1616,8 @@ model DiscountRequest {
   marginImpact   Decimal?       @db.Decimal(14, 2)
   status         DiscountStatus @default(pending)
   reason         String?
+  /// Approver's note on the approve/reject decision — surfaced back to the requester.
+  decisionNote   String?
 
   requestedById String?
   requestedRole Role?
@@ -1844,4 +1851,53 @@ model LegacyRow {
   @@unique([sourceTable, rowKey])
   @@index([sourceTable])
   @@index([sourceTable, legacyUpdatedAt])
+}
+
+// ============================================================================
+// AUDIT LOG — append-only trail of sensitive decisions (approvals, role changes)
+// ============================================================================
+
+/// One immutable audit entry per sensitive mutation (discount/return approvals,
+/// role/store changes, leave decisions, commission-rate + target edits). Written
+/// best-effort by AuditService AFTER the main write; never blocks the mutation.
+model AuditLog {
+  id         String   @id @default(cuid())
+  createdAt  DateTime @default(now())
+  actorId    String
+  actorName  String
+  actorRole  Role
+  action     String
+  entityType String
+  entityId   String
+  storeId    String?
+  summary    String
+  metadata   Json?
+  actor      User     @relation("UserAuditLogs", fields: [actorId], references: [id])
+
+  @@index([createdAt])
+  @@index([entityType, entityId])
+  @@index([storeId])
+}
+
+// ============================================================================
+// SALES TARGETS — per-store (+ optional per-staff) monthly revenue goals
+// ============================================================================
+
+/// A monthly revenue target for a store, optionally narrowed to one staff member.
+/// `staffId = null` is the WHOLE-STORE target used by the dashboard achievement view.
+model SalesTarget {
+  id          String   @id @default(cuid())
+  storeId     String
+  staffId     String?
+  period      String // "YYYY-MM"
+  amount      Decimal  @db.Decimal(14, 2)
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id])
+  staff User? @relation("UserSalesTargets", fields: [staffId], references: [id])
+
+  @@unique([storeId, staffId, period])
+  @@index([period])
 }

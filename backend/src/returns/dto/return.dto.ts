@@ -184,6 +184,13 @@ export class ValuateReturnDto {
   invoiceNo?: string;
 }
 
+/** Optional body on returns approve/reject — decision note shown to the requester. */
+export class DecideReturnDto {
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
 /** POST /returns/diamond-rates — HO sets a diamond rate for a spec/code. */
 export class CreateDiamondRateDto {
   @IsString()

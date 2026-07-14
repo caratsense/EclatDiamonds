@@ -144,12 +144,21 @@ export class DashboardService {
       return { day: WEEKDAY[d.getDay()], sales: total, target: 0 };
     });
 
-    // Per-store comparison (today).
+    // Per-store comparison (today). Target = the whole-store monthly SalesTarget.
     const todayStart = dayStart(0);
-    const stores = await this.prisma.store.findMany({
-      where: { id: { in: storeIds } },
-      select: { id: true, name: true, city: true },
-    });
+    const now = new Date();
+    const currentPeriod = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const [stores, monthTargets] = await Promise.all([
+      this.prisma.store.findMany({
+        where: { id: { in: storeIds } },
+        select: { id: true, name: true, city: true },
+      }),
+      this.prisma.salesTarget.findMany({
+        where: { storeId: { in: storeIds }, staffId: null, period: currentPeriod },
+        select: { storeId: true, amount: true },
+      }),
+    ]);
+    const targetByStore = new Map(monthTargets.map((t) => [t.storeId, num(t.amount)]));
     const storeComparison = await Promise.all(
       stores.map(async (st) => {
         const agg = await this.prisma.sale.aggregate({
@@ -161,7 +170,11 @@ export class DashboardService {
             docDate: { gte: todayStart },
           },
         });
-        return { store: st.city, revenue: num(agg._sum.totalAmount), target: 0 };
+        return {
+          store: st.city,
+          revenue: num(agg._sum.totalAmount),
+          target: targetByStore.get(st.id) ?? 0,
+        };
       }),
     );
 

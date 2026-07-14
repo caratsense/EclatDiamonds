@@ -207,6 +207,13 @@ export default function ReturnsPage() {
                             <div className="text-xs text-muted-foreground">
                               {r.phone}
                             </div>
+                            {r.decisionNote &&
+                            (r.status === "approved" ||
+                              r.status === "rejected") ? (
+                              <p className="mt-0.5 max-w-[220px] text-xs text-muted-foreground">
+                                Note from approver: {r.decisionNote}
+                              </p>
+                            ) : null}
                           </TableCell>
                           <TableCell>
                             <Badge variant="outline">

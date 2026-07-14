@@ -1,6 +1,11 @@
 import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import { ReturnsService } from './returns.service';
-import { CreateDiamondRateDto, CreateReturnDto, ValuateReturnDto } from './dto/return.dto';
+import {
+  CreateDiamondRateDto,
+  CreateReturnDto,
+  DecideReturnDto,
+  ValuateReturnDto,
+} from './dto/return.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
 import { Roles } from '../auth/roles.decorator';
@@ -52,13 +57,13 @@ export class ReturnsController {
   /** HO approval to process the exchange/return. */
   @Roles('head_office')
   @Patch(':id/approve')
-  approve(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.returns.approve(user, id);
+  approve(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: DecideReturnDto) {
+    return this.returns.approve(user, id, dto?.note);
   }
 
   @Roles('head_office')
   @Patch(':id/reject')
-  reject(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.returns.reject(user, id);
+  reject(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: DecideReturnDto) {
+    return this.returns.reject(user, id, dto?.note);
   }
 }

@@ -67,6 +67,11 @@ export class DecideDiscountDto {
   @IsOptional()
   @IsString()
   reason?: string;
+
+  /** Approver's decision note, surfaced back to the original requester. */
+  @IsOptional()
+  @IsString()
+  note?: string;
 }
 
 /** head_office: set/override a per-store or global role cap (Module 15). */

@@ -68,6 +68,8 @@ export interface DiscountRecord {
   approvedRole?: Role | null;
   approvedBy?: string | null;
   createdAt?: string;
+  /** Optional note the approver left on approve/reject — shown to the requester. */
+  decisionNote?: string | null;
 
   /* ---- Role-gated: area_manager / head_office ONLY. ---- */
   /** Landed cost (₹) — never sent to store manager / salesperson. */
