@@ -13,7 +13,6 @@ import type {
   DepartmentKey,
   MilestoneMarker,
   MilestoneState,
-  VendorStatus,
 } from "@/lib/mock/new-store";
 
 /**
@@ -53,8 +52,11 @@ export interface ApiVendor {
   id: string;
   task: string;
   vendor: string;
+  /** Contracted amount (₹); null when not captured. */
+  amount: number | null;
   dueDate: string;
-  status: VendorStatus;
+  /** Free-text lifecycle status from the API (e.g. pending, paid, completed). */
+  status: string;
 }
 
 export interface ApiNewStoreProject {
@@ -118,5 +120,129 @@ export function useCreateProject() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [NEW_STORE_KEY, "projects"] });
     },
+  });
+}
+
+/**
+ * Every mutation below returns the full, freshly-recomputed project view
+ * (readiness / budget / spent), so we simply invalidate the projects query
+ * to re-render the whole page from the source of truth.
+ */
+function useProjectsInvalidation() {
+  const qc = useQueryClient();
+  return () => qc.invalidateQueries({ queryKey: [NEW_STORE_KEY, "projects"] });
+}
+
+export interface AddChecklistItemInput {
+  projectId: string;
+  title: string;
+  dept?: DepartmentKey;
+  status?: ChecklistStatus;
+}
+
+/** POST /new-store/projects/:id/checklist — add a checklist task. */
+export function useAddChecklistItem() {
+  const invalidate = useProjectsInvalidation();
+  return useMutation({
+    mutationFn: async ({ projectId, ...body }: AddChecklistItemInput) => {
+      const { data } = await api.post<ApiNewStoreProject>(
+        `/new-store/projects/${projectId}/checklist`,
+        body,
+      );
+      return data;
+    },
+    onSuccess: () => invalidate(),
+  });
+}
+
+/** PATCH /new-store/checklist/:id — advance a checklist task's status/title. */
+export function useUpdateChecklistItem() {
+  const invalidate = useProjectsInvalidation();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      status,
+      title,
+    }: {
+      id: string;
+      status?: ChecklistStatus;
+      title?: string;
+    }) => {
+      const { data } = await api.patch<ApiNewStoreProject>(
+        `/new-store/checklist/${id}`,
+        { status, title },
+      );
+      return data;
+    },
+    onSuccess: () => invalidate(),
+  });
+}
+
+export interface AddMilestoneInput {
+  projectId: string;
+  title: string;
+  dueDate: string;
+  phase?: string;
+  summary?: string;
+}
+
+/** POST /new-store/projects/:id/milestones — add a launch milestone. */
+export function useAddMilestone() {
+  const invalidate = useProjectsInvalidation();
+  return useMutation({
+    mutationFn: async ({ projectId, ...body }: AddMilestoneInput) => {
+      const { data } = await api.post<ApiNewStoreProject>(
+        `/new-store/projects/${projectId}/milestones`,
+        body,
+      );
+      return data;
+    },
+    onSuccess: () => invalidate(),
+  });
+}
+
+export interface AddVendorInput {
+  projectId: string;
+  name: string;
+  scope: string;
+  status?: string;
+  amount?: number;
+}
+
+/** POST /new-store/projects/:id/vendors — add a vendor (with contracted amount). */
+export function useAddVendor() {
+  const invalidate = useProjectsInvalidation();
+  return useMutation({
+    mutationFn: async ({ projectId, ...body }: AddVendorInput) => {
+      const { data } = await api.post<ApiNewStoreProject>(
+        `/new-store/projects/${projectId}/vendors`,
+        body,
+      );
+      return data;
+    },
+    onSuccess: () => invalidate(),
+  });
+}
+
+/** PATCH /new-store/vendors/:id — update a vendor's status and/or amount. */
+export function useUpdateVendor() {
+  const invalidate = useProjectsInvalidation();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      status,
+      amount,
+    }: {
+      id: string;
+      status?: string;
+      amount?: number;
+    }) => {
+      const { data } = await api.patch<ApiNewStoreProject>(
+        `/new-store/vendors/${id}`,
+        { status, amount },
+      );
+      return data;
+    },
+    onSuccess: () => invalidate(),
   });
 }

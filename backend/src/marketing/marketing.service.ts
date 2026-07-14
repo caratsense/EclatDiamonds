@@ -1,9 +1,16 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
-import { CreateCampaignDto } from './dto/marketing.dto';
+import {
+  CreateAgencyTaskDto,
+  CreateAssetDto,
+  CreateCampaignDto,
+  UpdateAgencyTaskStatusDto,
+  UpdateAssetStatusDto,
+} from './dto/marketing.dto';
 
 function num(v: Prisma.Decimal | number | null | undefined): number {
   return v == null ? 0 : Number(v);
@@ -14,6 +21,7 @@ export class MarketingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
+    private readonly audit: AuditService,
   ) {}
 
   /**
@@ -40,7 +48,7 @@ export class MarketingService {
       owner: c.ownerName ?? '',
       agency: c.agency ?? '',
       stores: (c.stores ?? []).map((s: any) => s.store?.name ?? s.storeId),
-      channels: [],
+      channels: c.channels ?? [],
     };
   }
 
@@ -60,6 +68,12 @@ export class MarketingService {
    * so with no store input we leave them empty (campaign is pan-India by default).
    */
   async create(user: AuthUser, dto: CreateCampaignDto) {
+    // Only target stores inside the creator's scope.
+    const storeIds = [...new Set(dto.storeIds ?? [])];
+    for (const storeId of storeIds) {
+      this.scope.assertStoreAllowed(user, storeId);
+    }
+
     const campaign = await this.prisma.marketingCampaign.create({
       data: {
         name: dto.name,
@@ -70,10 +84,128 @@ export class MarketingService {
         budget: dto.budget != null ? new Prisma.Decimal(dto.budget) : null,
         ownerName: dto.ownerName ?? user.name,
         agency: dto.agency ?? null,
+        channels: dto.channels ?? [],
+        stores: storeIds.length
+          ? { create: storeIds.map((storeId) => ({ storeId })) }
+          : undefined,
       },
       include: { stores: { include: { store: true } } },
     });
     return this.toView(campaign);
+  }
+
+  /** Resolve a campaign the user may touch (in scope). Throws if missing/out of scope. */
+  private async assertCampaignInScope(user: AuthUser, campaignId: string) {
+    const campaign = await this.prisma.marketingCampaign.findFirst({
+      where: { id: campaignId, ...(await this.campaignFilter(user)) },
+      select: { id: true, name: true },
+    });
+    if (!campaign) throw new NotFoundException('Campaign not found');
+    return campaign;
+  }
+
+  /**
+   * POST /marketing/assets — create an agency deliverable on a campaign.
+   * MarketingAsset.campaignId is required by the model, so a campaign must be given.
+   */
+  async createAsset(user: AuthUser, dto: CreateAssetDto) {
+    if (!dto.campaignId) throw new BadRequestException('campaignId is required');
+    await this.assertCampaignInScope(user, dto.campaignId);
+
+    const asset = await this.prisma.marketingAsset.create({
+      data: {
+        campaignId: dto.campaignId,
+        title: dto.title,
+        url: dto.url ?? null,
+        status: 'pending',
+      },
+    });
+    return {
+      id: asset.id,
+      name: asset.title,
+      campaignId: asset.campaignId,
+      type: dto.type,
+      url: asset.url ?? '',
+      status: asset.status,
+    };
+  }
+
+  /** PATCH /marketing/assets/:id — approve/reject a deliverable (area_manager+). */
+  async updateAssetStatus(user: AuthUser, id: string, dto: UpdateAssetStatusDto) {
+    const asset = await this.prisma.marketingAsset.findUnique({ where: { id } });
+    if (!asset) throw new NotFoundException('Asset not found');
+    await this.assertCampaignInScope(user, asset.campaignId);
+
+    const updated = await this.prisma.marketingAsset.update({
+      where: { id },
+      data: { status: dto.status },
+    });
+    await this.audit.record(user, {
+      action: 'marketing.asset_status',
+      entityType: 'MarketingAsset',
+      entityId: id,
+      summary: `Deliverable "${asset.title}" ${asset.status ?? 'pending'} → ${dto.status}`,
+      metadata: { from: asset.status, to: dto.status, campaignId: asset.campaignId },
+    });
+    return {
+      id: updated.id,
+      name: updated.title,
+      campaignId: updated.campaignId,
+      status: updated.status,
+      approved: updated.status === 'approved',
+    };
+  }
+
+  /**
+   * POST /marketing/agency-tasks — create a campaign task. Backed by MarketingAsset
+   * (there is no separate agency-task model). `assignee` is derived from the campaign
+   * owner in the read view, so it is not persisted here.
+   */
+  async createAgencyTask(user: AuthUser, dto: CreateAgencyTaskDto) {
+    if (!dto.campaignId) throw new BadRequestException('campaignId is required');
+    await this.assertCampaignInScope(user, dto.campaignId);
+
+    const task = await this.prisma.marketingAsset.create({
+      data: {
+        campaignId: dto.campaignId,
+        title: dto.title,
+        status: 'pending',
+        dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+      },
+    });
+    return {
+      id: task.id,
+      title: task.title,
+      campaignId: task.campaignId,
+      assignee: dto.assignee ?? '',
+      dueDate: task.dueDate ? task.dueDate.toISOString().slice(0, 10) : '',
+      status: task.status,
+    };
+  }
+
+  /** PATCH /marketing/agency-tasks/:id — progress a task (store_manager+). */
+  async updateAgencyTaskStatus(user: AuthUser, id: string, dto: UpdateAgencyTaskStatusDto) {
+    const task = await this.prisma.marketingAsset.findUnique({ where: { id } });
+    if (!task) throw new NotFoundException('Agency task not found');
+    await this.assertCampaignInScope(user, task.campaignId);
+
+    const updated = await this.prisma.marketingAsset.update({
+      where: { id },
+      data: { status: dto.status },
+    });
+    await this.audit.record(user, {
+      action: 'marketing.task_status',
+      entityType: 'MarketingAsset',
+      entityId: id,
+      summary: `Agency task "${task.title}" ${task.status ?? 'pending'} → ${dto.status}`,
+      metadata: { from: task.status, to: dto.status, campaignId: task.campaignId },
+    });
+    return {
+      id: updated.id,
+      title: updated.title,
+      campaignId: updated.campaignId,
+      status: updated.status,
+    };
   }
 
   /** GET /marketing/assets — agency deliverables / shared assets for in-scope campaigns. */

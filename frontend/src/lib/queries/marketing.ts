@@ -50,6 +50,10 @@ export interface CreateCampaignInput {
   budget?: number;
   ownerName?: string;
   agency?: string;
+  /** Target store ids (in the creator's scope); omit for pan-India. */
+  storeIds?: string[];
+  /** Delivery channels (Instagram, WhatsApp, Email, …). */
+  channels?: string[];
 }
 
 /** POST /marketing/campaigns — create a campaign (planner row). */
@@ -61,6 +65,99 @@ export function useCreateCampaign() {
         "/marketing/campaigns",
         input,
       );
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: marketingKeys.all });
+    },
+  });
+}
+
+/** Raw deliverable/asset lifecycle statuses (assets + agency tasks share one table). */
+export type AssetStatus =
+  | "pending"
+  | "in_progress"
+  | "submitted"
+  | "approved"
+  | "changes_requested"
+  | "rejected";
+
+export interface CreateAssetInput {
+  campaignId: string;
+  title: string;
+  type: string;
+  url?: string;
+}
+
+/** POST /marketing/assets — add an agency deliverable to a campaign (store_manager+). */
+export function useCreateAsset() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: CreateAssetInput) => {
+      const { data } = await api.post("/marketing/assets", input);
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: marketingKeys.all });
+    },
+  });
+}
+
+/** PATCH /marketing/assets/:id — approve / request changes / reject (area_manager+). */
+export function useUpdateAssetStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      status,
+    }: {
+      id: string;
+      status: AssetStatus;
+    }) => {
+      const { data } = await api.patch(`/marketing/assets/${id}`, { status });
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: marketingKeys.all });
+    },
+  });
+}
+
+export interface CreateAgencyTaskInput {
+  campaignId: string;
+  title: string;
+  assignee?: string;
+  dueDate?: string;
+}
+
+/** POST /marketing/agency-tasks — create a campaign task (store_manager+). */
+export function useCreateAgencyTask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: CreateAgencyTaskInput) => {
+      const { data } = await api.post("/marketing/agency-tasks", input);
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: marketingKeys.all });
+    },
+  });
+}
+
+/** PATCH /marketing/agency-tasks/:id — progress a task (store_manager+). */
+export function useUpdateAgencyTask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      status,
+    }: {
+      id: string;
+      status: AssetStatus;
+    }) => {
+      const { data } = await api.patch(`/marketing/agency-tasks/${id}`, {
+        status,
+      });
       return data;
     },
     onSuccess: () => {

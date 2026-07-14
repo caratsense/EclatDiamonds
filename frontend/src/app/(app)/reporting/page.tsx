@@ -8,7 +8,6 @@ import { KpiCard } from "@/components/dashboards/kpi-card";
 import { PaymentPie } from "@/components/reporting/payment-pie";
 import { StoreRevenueTable } from "@/components/reporting/store-revenue-table";
 import { MoversTable } from "@/components/reporting/movers-table";
-import { DsrPushCard } from "@/components/reporting/dsr-push-card";
 import { PeriodRollup } from "@/components/reporting/period-rollup";
 import { SendReportDialog } from "@/components/reporting/send-report-dialog";
 import { DailyReportSection } from "@/components/reporting/daily-report-section";
@@ -21,6 +20,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
 import { formatINR, formatNumber } from "@/lib/format";
@@ -171,8 +172,7 @@ export default function ReportingPage() {
         </>
       )}
 
-      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <DsrPushCard />
+      <div className="mt-4">
         <MoversTable
           data={movers}
           isLoading={moversQuery.isLoading}
@@ -196,19 +196,26 @@ function GenerateDsrDialog({
   isLoading: boolean;
 }) {
   const [sending, setSending] = useState(false);
+  // The recipient is entered/confirmed by the user rather than hardcoded.
+  const [recipient, setRecipient] = useState("");
 
   async function sendToOwner() {
     if (!summary) {
       toast.error("No DSR data to send yet.");
       return;
     }
+    const to = recipient.trim();
+    if (!to) {
+      toast.error("Enter the recipient's WhatsApp number.");
+      return;
+    }
     setSending(true);
     try {
       await api.post("/integrations/whatsapp/send", {
-        to: "9876500000",
+        to,
         body: summary,
       });
-      toast.success("DSR sent to owner's WhatsApp");
+      toast.success("DSR sent over WhatsApp");
       onOpenChange(false);
     } catch {
       toast.error("Could not send the DSR.");
@@ -238,12 +245,26 @@ function GenerateDsrDialog({
             No DSR data available yet.
           </p>
         )}
+        <div className="grid gap-1.5">
+          <Label htmlFor="dsr-recipient">Recipient WhatsApp number</Label>
+          <Input
+            id="dsr-recipient"
+            type="tel"
+            inputMode="numeric"
+            placeholder="e.g. 9876543210"
+            value={recipient}
+            onChange={(e) => setRecipient(e.target.value)}
+          />
+        </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Close
           </Button>
-          <Button onClick={sendToOwner} disabled={sending || !summary}>
-            {sending ? "Sending…" : "Send to owner"}
+          <Button
+            onClick={sendToOwner}
+            disabled={sending || !summary || !recipient.trim()}
+          >
+            {sending ? "Sending…" : "Send DSR"}
           </Button>
         </DialogFooter>
       </DialogContent>

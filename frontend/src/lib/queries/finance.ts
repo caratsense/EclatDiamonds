@@ -15,9 +15,18 @@ import type {
   MisCard,
 } from "@/lib/mock/finance";
 
+/** Full ledger-kind enum accepted by POST /finance/ledger. */
+export type LedgerKind =
+  | "AR"
+  | "AP"
+  | "expense"
+  | "income"
+  | "asset"
+  | "liability";
+
 export interface CreateLedgerEntryInput {
   storeId: string;
-  kind: "AR" | "AP";
+  kind: LedgerKind;
   side: "debit" | "credit";
   amount: number;
   entryDate?: string;
@@ -90,9 +99,12 @@ export function useAddLedgerEntry() {
       return data;
     },
     onSuccess: () => {
-      // New entry shifts the ledger list and the MTD summary cards.
+      // A new entry shifts the ledger list, the MTD summary cards, and (for
+      // budget/forecast/expense rows) the budget-variance and cash-flow charts.
       qc.invalidateQueries({ queryKey: ["finance", "ledger"] });
       qc.invalidateQueries({ queryKey: ["finance", "summary"] });
+      qc.invalidateQueries({ queryKey: ["finance", "budget"] });
+      qc.invalidateQueries({ queryKey: ["finance", "cashflow"] });
     },
   });
 }

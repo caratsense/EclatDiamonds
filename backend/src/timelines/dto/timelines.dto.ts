@@ -10,7 +10,23 @@ import {
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { OrderKind, ProductCategory } from '@prisma/client';
+import { OrderKind, OrderStatus, ProductCategory } from '@prisma/client';
+
+/**
+ * PATCH /timelines/orders/:id/stage — advance a custom order to the next
+ * production stage (Module 8). `stage` is the schema OrderStatus enum
+ * (booked → designing → casting → stone_setting → polishing → qc → ready →
+ * delivered; `cancelled` is the other terminal state).
+ */
+export class AdvanceStageDto {
+  @IsEnum(OrderStatus)
+  stage!: OrderStatus;
+
+  /** Optional note recorded on the stage-change event. */
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
 
 export class CreateWorkflowDto {
   @IsString()

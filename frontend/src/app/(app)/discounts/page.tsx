@@ -30,7 +30,6 @@ import { getNavItem } from "@/lib/navigation";
 import { ROLE_LABELS, ROLE_RANK } from "@/lib/types";
 import {
   DISCOUNT_STATUS_LABELS,
-  STORE_MANAGER_CAPS,
   type DiscountRecord,
   type DiscountStatus,
 } from "@/lib/mock/discounts";
@@ -67,6 +66,14 @@ export default function DiscountsPage() {
   const { data: rows = [], isLoading, isError, refetch } = useDiscounts();
   const approve = useApproveDiscount();
   const reject = useRejectDiscount();
+
+  // Source the banner's store-manager caps from the real limits endpoint so the
+  // helper text can never drift from the server. The limits query is only
+  // enabled for approvers (area/HO); lower roles fall back to neutral phrasing.
+  const { data: limits = [] } = useDiscountLimits();
+  const smCap = limits.find((l) => l.role === "store_manager");
+  const diamondCap = smCap?.diamondPercent ?? null;
+  const makingCap = smCap?.makingPercent ?? null;
 
   /** May the current viewer action this row? Role rank must satisfy requiredRole. */
   function canActOn(row: DiscountRecord): boolean {
@@ -106,11 +113,20 @@ export default function DiscountsPage() {
           <div className="flex items-start gap-2">
             <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
             <span>
-              <strong>Gold carries no discount.</strong> Diamond &amp; making
-              within store-manager caps (Diamond ≤{" "}
-              {formatPercent(STORE_MANAGER_CAPS.diamondPercent)} / Making ≤{" "}
-              {formatPercent(STORE_MANAGER_CAPS.makingPercent)}) auto-approve;
-              higher escalates to Area Manager, then Head Office.
+              <strong>Gold carries no discount.</strong>{" "}
+              {diamondCap != null && makingCap != null ? (
+                <>
+                  Diamond &amp; making within store-manager caps (Diamond ≤{" "}
+                  {formatPercent(diamondCap)} / Making ≤{" "}
+                  {formatPercent(makingCap)}) auto-approve; higher escalates to
+                  Area Manager, then Head Office.
+                </>
+              ) : (
+                <>
+                  Diamond &amp; making within the store-manager caps auto-approve;
+                  higher amounts escalate to Area Manager, then Head Office.
+                </>
+              )}
             </span>
           </div>
           <Badge variant="outline" className="w-fit shrink-0">

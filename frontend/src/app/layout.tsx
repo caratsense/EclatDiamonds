@@ -3,6 +3,7 @@ import { Hanken_Grotesk, Cormorant_Garamond, IBM_Plex_Mono } from "next/font/goo
 import "./globals.css";
 
 import { Providers } from "@/components/providers";
+import { ServiceWorkerRegister } from "@/components/pwa/sw-register";
 
 /**
  * Three faces, three jobs (see docs/DESIGN_SYSTEM.md):
@@ -75,6 +76,7 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body>
+        <ServiceWorkerRegister />
         <Providers>{children}</Providers>
       </body>
     </html>

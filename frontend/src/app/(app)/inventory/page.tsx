@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowRight, Flame, PackageX, ShoppingCart } from "lucide-react";
 import { toast } from "sonner";
 
@@ -26,6 +26,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PaginationBar } from "@/components/ui/pagination-bar";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -53,8 +54,17 @@ import {
   MOCK_ROTATION_SUGGESTIONS,
   type MeltStage,
   type StockStatus,
+  type StockItem,
 } from "@/lib/mock/inventory";
-import { useCreateStock, useStock } from "@/lib/queries/stock";
+import {
+  useAdjustStock,
+  useCreateStock,
+  useStock,
+  STOCK_STATUS_LABELS,
+  STOCK_STATUS_VALUE_BY_LABEL,
+  type StockStatusValue,
+} from "@/lib/queries/stock";
+import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
 
 const STATUS_VARIANT: Record<
@@ -76,6 +86,7 @@ const MELT_VARIANT: Record<MeltStage, "outline" | "secondary" | "default" | "suc
 
 export default function InventoryPage() {
   const [addOpen, setAddOpen] = useState(false);
+  const [adjustItem, setAdjustItem] = useState<StockItem | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
 
@@ -99,6 +110,12 @@ export default function InventoryPage() {
       />
 
       <StockEntryDialog open={addOpen} onOpenChange={setAddOpen} />
+      <StockAdjustDialog
+        item={adjustItem}
+        onOpenChange={(open) => {
+          if (!open) setAdjustItem(null);
+        }}
+      />
 
       {/* Aging distribution + at-a-glance counters */}
       <div className="mb-4 grid gap-4 lg:grid-cols-3">
@@ -169,18 +186,19 @@ export default function InventoryPage() {
                     <TableHead className="text-right">Tag price</TableHead>
                     <TableHead className="text-right">Age</TableHead>
                     <TableHead className="text-right">Status</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {isLoading ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="py-6">
+                      <TableCell colSpan={8} className="py-6">
                         <Skeleton className="h-24 w-full" />
                       </TableCell>
                     </TableRow>
                   ) : isError ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="py-10">
+                      <TableCell colSpan={8} className="py-10">
                         <div className="mx-auto max-w-md rounded-lg border bg-muted/30 p-4 text-center">
                           <p className="text-sm font-medium">
                             Couldn&apos;t load the stock ledger.
@@ -203,7 +221,7 @@ export default function InventoryPage() {
                   ) : rows.length === 0 ? (
                     <TableRow>
                       <TableCell
-                        colSpan={7}
+                        colSpan={8}
                         className="py-10 text-center text-muted-foreground"
                       >
                         No stock entries yet. Add a piece to begin.
@@ -250,6 +268,15 @@ export default function InventoryPage() {
                           <Badge variant={STATUS_VARIANT[s.status]}>
                             {s.status}
                           </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setAdjustItem(s)}
+                          >
+                            Adjust
+                          </Button>
                         </TableCell>
                       </TableRow>
                     );
@@ -584,6 +611,144 @@ function StockEntryDialog({
           </Button>
           <Button onClick={save} disabled={createStock.isPending}>
             {createStock.isPending ? "Saving…" : "Add to stock"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Adjust a stock piece: change its status and — for area_manager+ — transfer
+ * it to another store. A status-only change is store_manager+; the cross-store
+ * transfer control is hidden below that rank (and enforced server-side).
+ */
+function StockAdjustDialog({
+  item,
+  onOpenChange,
+}: {
+  item: StockItem | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const role = useSession((s) => s.role);
+  const stores = useSession((s) => s.stores);
+  const adjust = useAdjustStock();
+  const [status, setStatus] = useState<StockStatusValue>("in_stock");
+  const [transferTo, setTransferTo] = useState("");
+  const [note, setNote] = useState("");
+
+  const canTransfer = ROLE_RANK[role] >= ROLE_RANK.area_manager;
+
+  // Preselect the piece's current status; clear transfer + note each open.
+  useEffect(() => {
+    if (item) {
+      setStatus(STOCK_STATUS_VALUE_BY_LABEL[item.status] ?? "in_stock");
+      setTransferTo("");
+      setNote("");
+    }
+  }, [item]);
+
+  // Real stores only, excluding the piece's current store (can't transfer to self).
+  const transferStores = stores.filter(
+    (s) => !s.isAggregate && s.id !== item?.storeId,
+  );
+
+  function save() {
+    if (!item) return;
+    const isTransfer = canTransfer && !!transferTo && transferTo !== item.storeId;
+    adjust.mutate(
+      {
+        id: item.id,
+        status,
+        storeId: isTransfer ? transferTo : undefined,
+        note: note.trim() || undefined,
+      },
+      {
+        onSuccess: () => {
+          toast.success(isTransfer ? "Stock transferred" : "Stock updated");
+          onOpenChange(false);
+        },
+        onError: () =>
+          toast.error("Could not update the stock item. Please try again."),
+      },
+    );
+  }
+
+  return (
+    <Dialog open={!!item} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Adjust stock</DialogTitle>
+          <DialogDescription>
+            {item ? (
+              <>
+                {item.name} · {item.sku} — {item.storeName}
+              </>
+            ) : null}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="grid gap-1.5">
+            <Label htmlFor="adjust-status">Status</Label>
+            <Select
+              value={status}
+              onValueChange={(v) => setStatus(v as StockStatusValue)}
+            >
+              <SelectTrigger id="adjust-status">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                {(
+                  Object.entries(STOCK_STATUS_LABELS) as [
+                    StockStatusValue,
+                    string,
+                  ][]
+                ).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {canTransfer && transferStores.length > 0 ? (
+            <div className="grid gap-1.5">
+              <Label htmlFor="adjust-transfer">Transfer to store</Label>
+              <Select value={transferTo} onValueChange={setTransferTo}>
+                <SelectTrigger id="adjust-transfer">
+                  <SelectValue placeholder="Keep at current store" />
+                </SelectTrigger>
+                <SelectContent>
+                  {transferStores.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Optional — moves the piece to another branch.
+              </p>
+            </div>
+          ) : null}
+
+          <div className="grid gap-1.5">
+            <Label htmlFor="adjust-note">Note</Label>
+            <Textarea
+              id="adjust-note"
+              placeholder="e.g. Reserved for Priya Sharma, or flagged for melting"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={adjust.isPending}>
+            {adjust.isPending ? "Saving…" : "Save changes"}
           </Button>
         </DialogFooter>
       </DialogContent>

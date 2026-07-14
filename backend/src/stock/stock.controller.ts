@@ -1,6 +1,6 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { StockService } from './stock.service';
-import { CreateStockDto } from './dto/stock.dto';
+import { CreateStockDto, UpdateStockDto } from './dto/stock.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
 import { parsePagination } from '../common/pagination';
@@ -28,5 +28,19 @@ export class StockController {
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateStockDto) {
     return this.stock.create(user, dto);
+  }
+
+  /**
+   * Adjust a stock piece: status change (store_manager+) and/or cross-store
+   * transfer (area_manager+, enforced in the service when storeId differs).
+   */
+  @Roles('store_manager', 'area_manager', 'head_office')
+  @Patch(':id')
+  adjust(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateStockDto,
+  ) {
+    return this.stock.adjust(user, id, dto);
   }
 }

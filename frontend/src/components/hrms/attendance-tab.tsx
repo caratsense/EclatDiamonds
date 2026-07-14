@@ -22,10 +22,8 @@ import {
   Avatar,
   AvatarFallback,
 } from "@/components/ui/avatar";
-import {
-  type AttendanceRecord,
-  type StoreGeofence,
-} from "@/lib/mock/hrms";
+import type { AttendanceRecord } from "@/lib/mock/hrms";
+import type { Geofence } from "@/lib/queries/hrms";
 import { StatTiles } from "@/components/hrms/stat-tiles";
 
 /**
@@ -74,8 +72,12 @@ function FenceBadge({ within }: { within: boolean }) {
 
 interface AttendanceTabProps {
   records: AttendanceRecord[];
-  /** The active store's geofence; undefined for the aggregate view. */
-  fence?: StoreGeofence;
+  /**
+   * The active store's resolved geofence (GET /hrms/geofence); undefined for
+   * the aggregate view. `hasCoords === false` means the store has no
+   * coordinates set — check-ins are recorded but not distance-verified.
+   */
+  fence?: Geofence;
 }
 
 export function AttendanceTab({ records, fence }: AttendanceTabProps) {
@@ -84,6 +86,9 @@ export function AttendanceTab({ records, fence }: AttendanceTabProps) {
   const late = records.filter((r) => r.status === "late").length;
   const breaches = checkedIn.filter((r) => !r.withinFence).length;
   const onLeave = records.filter((r) => r.status === "on_leave").length;
+
+  const hasCoords =
+    !!fence && fence.hasCoords && fence.latitude != null && fence.longitude != null;
 
   return (
     <div className="space-y-4">
@@ -110,33 +115,43 @@ export function AttendanceTab({ records, fence }: AttendanceTabProps) {
             </CardTitle>
             <CardDescription>
               {fence
-                ? `Check-ins are verified against ${fence.label}.`
+                ? `Check-ins are verified against ${fence.storeName}.`
                 : "Select a single store to verify check-ins against its geofence."}
             </CardDescription>
           </div>
-          {fence ? (
+          {hasCoords ? (
             <Badge variant="outline" className="shrink-0">
-              radius <span className="num">{fence.radiusM}</span> m
+              radius <span className="num">{fence!.geofenceRadiusM}</span> m
             </Badge>
           ) : null}
         </CardHeader>
         {fence ? (
-          <CardContent className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
-            <div>
-              <p className="text-xs text-muted-foreground">Centre latitude</p>
-              <p className="num font-medium">{fence.centre.lat.toFixed(4)}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Centre longitude</p>
-              <p className="num font-medium">{fence.centre.lng.toFixed(4)}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Allowed radius</p>
-              <p className="font-medium">
-                <span className="num">{fence.radiusM}</span> metres
+          hasCoords ? (
+            <CardContent className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
+              <div>
+                <p className="text-xs text-muted-foreground">Centre latitude</p>
+                <p className="num font-medium">{fence.latitude!.toFixed(4)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Centre longitude</p>
+                <p className="num font-medium">{fence.longitude!.toFixed(4)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Allowed radius</p>
+                <p className="font-medium">
+                  <span className="num">{fence.geofenceRadiusM}</span> metres
+                </p>
+              </div>
+            </CardContent>
+          ) : (
+            <CardContent>
+              <p className="text-sm text-muted-foreground">
+                This store has no geofence coordinates set. Check-ins are still
+                recorded, but they aren&apos;t distance-verified until the store
+                centre is configured.
               </p>
-            </div>
-          </CardContent>
+            </CardContent>
+          )
         ) : null}
       </Card>
 

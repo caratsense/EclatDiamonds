@@ -1,9 +1,12 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { CalendarClock, Gem, Package, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 
 import { OrderStepper } from "@/components/timelines/order-stepper";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -11,8 +14,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import { assetUrl } from "@/lib/api";
 import { formatINR } from "@/lib/format";
 import {
@@ -26,7 +38,16 @@ import {
   type OrderCategory,
   type TimelineRole,
 } from "@/lib/mock/timelines";
-import { useOrderDetail } from "@/lib/queries/timelines";
+import {
+  ORDER_STATUS_LABELS,
+  ORDER_STATUS_SEQUENCE,
+  TERMINAL_ORDER_STATUSES,
+  useAdvanceOrderStage,
+  useOrderDetail,
+  type OrderStatus,
+} from "@/lib/queries/timelines";
+import { ROLE_RANK } from "@/lib/types";
+import { useSession } from "@/store/use-session";
 
 function prettyDate(iso: string): string {
   if (!iso) return "—";
@@ -70,6 +91,16 @@ export function OrderDetailDialog({
   const { data: detail, isLoading } = useOrderDetail(
     open ? (order?.id ?? null) : null,
   );
+  const role = useSession((s) => s.role);
+  const advanceStage = useAdvanceOrderStage();
+  const [stageSel, setStageSel] = useState("");
+  const [stageNote, setStageNote] = useState("");
+
+  // Reset the advance-stage form whenever a different order opens.
+  useEffect(() => {
+    setStageSel("");
+    setStageNote("");
+  }, [order?.id, open]);
 
   if (!order) return null;
 
@@ -86,6 +117,51 @@ export function OrderDetailDialog({
     o.estimation !== undefined
       ? Math.max(o.estimation - (o.advanceReceived ?? 0), 0)
       : undefined;
+
+  // The newest event's stage is the order's true current stage (createOrder
+  // seeds a `booked` event; each advance appends one). Recovering it here lets
+  // us offer only the forward stages and hide the control once terminal.
+  const currentStage = (events[events.length - 1]?.stage as OrderStatus) ?? null;
+  const isTerminal = currentStage
+    ? TERMINAL_ORDER_STATUSES.includes(currentStage)
+    : false;
+  const stageIdx = currentStage
+    ? ORDER_STATUS_SEQUENCE.indexOf(currentStage)
+    : -1;
+  const nextStages: OrderStatus[] =
+    stageIdx >= 0
+      ? [...ORDER_STATUS_SEQUENCE.slice(stageIdx + 1), "cancelled"]
+      : [];
+  // store_manager and above may move production along.
+  const showAdvance =
+    ROLE_RANK[role] >= ROLE_RANK.store_manager &&
+    !!currentStage &&
+    !isTerminal &&
+    nextStages.length > 0;
+
+  function submitStage() {
+    if (!stageSel) {
+      toast.error("Select a stage to advance to.");
+      return;
+    }
+    advanceStage.mutate(
+      {
+        id: o.id,
+        stage: stageSel as OrderStatus,
+        note: stageNote.trim() || undefined,
+      },
+      {
+        onSuccess: () => {
+          toast.success(
+            `Order advanced to ${ORDER_STATUS_LABELS[stageSel as OrderStatus]}`,
+          );
+          setStageSel("");
+          setStageNote("");
+        },
+        onError: () => toast.error("Could not advance the order stage."),
+      },
+    );
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -245,6 +321,50 @@ export function OrderDetailDialog({
               Details
             </p>
             <p className="text-sm">{o.details}</p>
+          </div>
+        ) : null}
+
+        {/* Advance stage — store_manager+ moves the order to the next stage */}
+        {showAdvance ? (
+          <div className="rounded-lg border bg-muted/20 p-3">
+            <p className="mb-2 text-xs font-medium text-muted-foreground">
+              Advance stage
+            </p>
+            <div className="grid gap-3">
+              <div className="grid gap-1.5">
+                <Label htmlFor="advance-stage">Move to stage</Label>
+                <Select value={stageSel} onValueChange={setStageSel}>
+                  <SelectTrigger id="advance-stage">
+                    <SelectValue placeholder="Select the next stage" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {nextStages.map((s) => (
+                      <SelectItem key={s} value={s}>
+                        {ORDER_STATUS_LABELS[s]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="advance-note">Note (optional)</Label>
+                <Textarea
+                  id="advance-note"
+                  placeholder="e.g. Casting complete, moved to setting bench 3"
+                  value={stageNote}
+                  onChange={(e) => setStageNote(e.target.value)}
+                />
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  size="sm"
+                  onClick={submitStage}
+                  disabled={!stageSel || advanceStage.isPending}
+                >
+                  {advanceStage.isPending ? "Updating…" : "Advance stage"}
+                </Button>
+              </div>
+            </div>
           </div>
         ) : null}
 

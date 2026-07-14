@@ -30,6 +30,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getNavItem } from "@/lib/navigation";
 import { ROLE_RANK } from "@/lib/types";
@@ -39,7 +46,9 @@ import {
   useCharts,
   useTasks,
   useCreateTask,
+  useUpdateTaskStatus,
   type DashboardTask,
+  type TaskStatus,
 } from "@/lib/queries/dashboard";
 
 export default function DashboardsPage() {
@@ -148,29 +157,60 @@ function MyTasksCard({
             No tasks yet
           </p>
         ) : (
-          tasks.map((t) => (
-            <div
-              key={t.id}
-              className="flex items-start justify-between gap-3 rounded-lg border px-3 py-2"
-            >
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium">{t.title}</p>
-                {t.assignee ? (
-                  <p className="text-xs text-muted-foreground">
-                    Assigned to {t.assignee}
-                  </p>
-                ) : null}
-              </div>
-              {t.dueDate ? (
-                <span className="shrink-0 text-xs text-muted-foreground">
-                  Due {formatDue(t.dueDate)}
-                </span>
-              ) : null}
-            </div>
-          ))
+          tasks.map((t) => <TaskRow key={t.id} task={t} />)
         )}
       </CardContent>
     </Card>
+  );
+}
+
+const TASK_STATUS_OPTIONS: { value: TaskStatus; label: string }[] = [
+  { value: "open", label: "Open" },
+  { value: "in_progress", label: "In progress" },
+  { value: "done", label: "Done" },
+];
+
+function TaskRow({ task }: { task: DashboardTask }) {
+  const updateStatus = useUpdateTaskStatus();
+  const status = task.status ?? "open";
+
+  function change(next: TaskStatus) {
+    if (next === status) return;
+    updateStatus.mutate(
+      { id: task.id, status: next },
+      {
+        onSuccess: () => toast.success("Task updated"),
+        onError: () => toast.error("Could not update the task."),
+      },
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium">{task.title}</p>
+        <p className="text-xs text-muted-foreground">
+          {task.assignee ? `Assigned to ${task.assignee}` : "Unassigned"}
+          {task.dueDate ? ` · Due ${formatDue(task.dueDate)}` : ""}
+        </p>
+      </div>
+      <Select
+        value={status}
+        onValueChange={(v) => change(v as TaskStatus)}
+        disabled={updateStatus.isPending}
+      >
+        <SelectTrigger className="h-9 w-36 shrink-0">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {TASK_STATUS_OPTIONS.map((o) => (
+            <SelectItem key={o.value} value={o.value}>
+              {o.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
   );
 }
 

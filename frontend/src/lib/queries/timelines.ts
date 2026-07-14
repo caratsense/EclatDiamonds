@@ -28,6 +28,51 @@ import type {
 
 const TIMELINES_KEY = "timelines";
 
+/**
+ * Schema `OrderStatus` enum in production order (see timelines.dto.ts). The
+ * frontend list/detail views expose only the 5 collapsed `currentStageIndex`
+ * buckets, so the raw stage is recovered from an order's newest event when
+ * advancing.
+ */
+export type OrderStatus =
+  | "booked"
+  | "designing"
+  | "casting"
+  | "stone_setting"
+  | "polishing"
+  | "qc"
+  | "ready"
+  | "delivered"
+  | "cancelled";
+
+/** Linear production path; `cancelled` is a separate terminal branch. */
+export const ORDER_STATUS_SEQUENCE: OrderStatus[] = [
+  "booked",
+  "designing",
+  "casting",
+  "stone_setting",
+  "polishing",
+  "qc",
+  "ready",
+  "delivered",
+];
+
+/** Terminal stages — an order here can no longer be advanced. */
+export const TERMINAL_ORDER_STATUSES: OrderStatus[] = ["delivered", "cancelled"];
+
+/** Humanized stage labels (e.g. `stone_setting` → "Stone Setting"). */
+export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
+  booked: "Booked",
+  designing: "Designing",
+  casting: "Casting",
+  stone_setting: "Stone Setting",
+  polishing: "Polishing",
+  qc: "Quality Check",
+  ready: "Ready",
+  delivered: "Delivered",
+  cancelled: "Cancelled",
+};
+
 /** One production stage event in an order's history (orders/:id only). */
 export interface OrderEvent {
   id: string;
@@ -185,6 +230,37 @@ export function useOrders({ kind = "all", scope = "ongoing" }: UseOrdersParams =
         params: { kind, scope },
       });
       return data;
+    },
+  });
+}
+
+export interface AdvanceStageInput {
+  id: string;
+  /** Stage to advance to (raw OrderStatus enum). */
+  stage: OrderStatus;
+  /** Optional note recorded on the stage-change event. */
+  note?: string;
+}
+
+/**
+ * PATCH /timelines/orders/:id/stage — advance an order to a new production
+ * stage (store_manager+). Returns the updated order detail (order + events);
+ * invalidates the orders list and this order's detail so the stepper and the
+ * event history refresh.
+ */
+export function useAdvanceOrderStage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, stage, note }: AdvanceStageInput) => {
+      const { data } = await api.patch<CustomOrderDetail>(
+        `/timelines/orders/${id}/stage`,
+        { stage, note },
+      );
+      return data;
+    },
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: [TIMELINES_KEY, "orders"] });
+      qc.invalidateQueries({ queryKey: [TIMELINES_KEY, "order", data.id] });
     },
   });
 }

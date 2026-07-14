@@ -1,6 +1,11 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import { DashboardService } from './dashboard.service';
-import { CreateTaskDto } from './dto/dashboard.dto';
+import {
+  CreateHandoffDto,
+  CreateTaskDto,
+  UpdateHandoffStatusDto,
+  UpdateTaskStatusDto,
+} from './dto/dashboard.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
 
@@ -26,5 +31,38 @@ export class DashboardController {
   @Post('tasks')
   createTask(@CurrentUser() user: AuthUser, @Body() dto: CreateTaskDto) {
     return this.dashboard.createTask(user, dto);
+  }
+
+  @Patch('tasks/:id')
+  updateTaskStatus(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateTaskStatusDto,
+  ) {
+    return this.dashboard.updateTaskStatus(user, id, dto);
+  }
+
+  @Get('agenda')
+  agenda(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
+    return this.dashboard.agenda(user, store);
+  }
+
+  @Get('handoffs')
+  handoffs(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
+    return this.dashboard.listHandoffs(user, store);
+  }
+
+  @Post('handoffs')
+  createHandoff(@CurrentUser() user: AuthUser, @Body() dto: CreateHandoffDto) {
+    return this.dashboard.createHandoff(user, dto);
+  }
+
+  @Patch('handoffs/:id')
+  updateHandoffStatus(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateHandoffStatusDto,
+  ) {
+    return this.dashboard.updateHandoffStatus(user, id, dto);
   }
 }

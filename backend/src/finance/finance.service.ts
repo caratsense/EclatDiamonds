@@ -81,33 +81,63 @@ export class FinanceService {
     const monthStart = new Date();
     monthStart.setDate(1);
     monthStart.setHours(0, 0, 0, 0);
+    // Previous full month, for period-over-period deltas.
+    const prevStart = new Date(monthStart);
+    prevStart.setMonth(prevStart.getMonth() - 1);
 
-    const [revenueAgg, expenseAgg, incomeAgg] = await Promise.all([
-      this.prisma.sale.aggregate({
-        _sum: { totalAmount: true },
-        where: { ...storeWhere, isCancelled: false, docType: 'sale', docDate: { gte: monthStart } },
-      }),
-      this.prisma.ledgerEntry.aggregate({
-        _sum: { amount: true },
-        where: { ...storeWhere, kind: 'expense', entryDate: { gte: monthStart } },
-      }),
-      this.prisma.ledgerEntry.aggregate({
-        _sum: { amount: true },
-        where: { ...storeWhere, kind: 'income', entryDate: { gte: monthStart } },
-      }),
-    ]);
+    // Aggregate revenue (sales + income) and expense for one [gte, lt) window.
+    const periodTotals = async (gte: Date, lt: Date) => {
+      const [salesAgg, incomeAgg, expenseAgg] = await Promise.all([
+        this.prisma.sale.aggregate({
+          _sum: { totalAmount: true },
+          where: { ...storeWhere, isCancelled: false, docType: 'sale', docDate: { gte, lt } },
+        }),
+        this.prisma.ledgerEntry.aggregate({
+          _sum: { amount: true },
+          where: { ...storeWhere, kind: 'income', entryDate: { gte, lt } },
+        }),
+        this.prisma.ledgerEntry.aggregate({
+          _sum: { amount: true },
+          where: { ...storeWhere, kind: 'expense', entryDate: { gte, lt } },
+        }),
+      ]);
+      const revenue = num(salesAgg._sum.totalAmount) + num(incomeAgg._sum.amount);
+      const expense = num(expenseAgg._sum.amount);
+      // No separate COGS is modelled (single `expense` ledger bucket), so gross
+      // profit uses total expense as the cost base. Note the caveat for MIS users.
+      const grossProfit = revenue - expense;
+      return { revenue, expense, grossProfit, ebitda: grossProfit - expense };
+    };
 
-    const revenue = num(revenueAgg._sum.totalAmount) + num(incomeAgg._sum.amount);
-    const opex = num(expenseAgg._sum.amount);
-    // Indicative margin model for MIS view.
-    const grossMargin = Math.round(revenue * 0.22);
-    const ebitda = grossMargin - opex;
+    // `now+1ms` so the current, still-open month includes today.
+    const cur = await periodTotals(monthStart, new Date(Date.now() + 1));
+    const prev = await periodTotals(prevStart, monthStart);
+
+    // Period-over-period % change, one decimal; 0 when there's no prior base.
+    const pct = (curVal: number, prevVal: number): number =>
+      prevVal === 0 ? 0 : Math.round(((curVal - prevVal) / prevVal) * 1000) / 10;
+
+    const grossMarginPct =
+      cur.revenue === 0 ? 0 : Math.round((cur.grossProfit / cur.revenue) * 1000) / 10;
 
     return [
-      { id: 'revenue', label: 'Revenue (MTD)', value: revenue, delta: 9.3 },
-      { id: 'gross', label: 'Gross Margin', value: grossMargin, delta: 4.1 },
-      { id: 'opex', label: 'Operating Expense', value: opex, delta: 6.8, invertDelta: true },
-      { id: 'ebitda', label: 'EBITDA', value: ebitda, delta: 11.5 },
+      { id: 'revenue', label: 'Revenue (MTD)', value: cur.revenue, delta: pct(cur.revenue, prev.revenue) },
+      {
+        id: 'gross',
+        label: 'Gross Margin',
+        value: cur.grossProfit,
+        delta: pct(cur.grossProfit, prev.grossProfit),
+        // grossMargin% = grossProfit / revenue (extra, non-breaking field).
+        pct: grossMarginPct,
+      },
+      {
+        id: 'opex',
+        label: 'Operating Expense',
+        value: cur.expense,
+        delta: pct(cur.expense, prev.expense),
+        invertDelta: true,
+      },
+      { id: 'ebitda', label: 'EBITDA', value: cur.ebitda, delta: pct(cur.ebitda, prev.ebitda) },
     ];
   }
 

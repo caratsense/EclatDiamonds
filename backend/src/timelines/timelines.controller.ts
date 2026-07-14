@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Param,
+  Patch,
   Post,
   Query,
   UploadedFile,
@@ -11,6 +12,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { TimelinesService } from './timelines.service';
 import {
+  AdvanceStageDto,
   CreateOrderDto,
   CreateWorkflowDto,
   OrdersQueryDto,
@@ -41,6 +43,17 @@ export class TimelinesController {
   @Post('orders')
   createOrder(@CurrentUser() user: AuthUser, @Body() dto: CreateOrderDto) {
     return this.timelines.createOrder(user, dto);
+  }
+
+  /** Advance an order to a new production stage (Module 8). Managers and above. */
+  @Roles('store_manager')
+  @Patch('orders/:id/stage')
+  advanceStage(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: AdvanceStageDto,
+  ) {
+    return this.timelines.advanceStage(user, id, dto);
   }
 
   /** Attach/replace an order reference image (multipart field `file`). Managers and above. */

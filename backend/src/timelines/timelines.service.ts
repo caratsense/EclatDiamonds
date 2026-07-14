@@ -3,8 +3,17 @@ import { OrderKind, OrderStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
+import { AuditService } from '../common/audit.service';
 import { StorageService } from '../storage/storage.service';
-import { CreateOrderDto, CreateWorkflowDto, OrdersQueryDto } from './dto/timelines.dto';
+import {
+  AdvanceStageDto,
+  CreateOrderDto,
+  CreateWorkflowDto,
+  OrdersQueryDto,
+} from './dto/timelines.dto';
+
+/** Terminal production stages — an order here can no longer be advanced. */
+const TERMINAL_STAGES: OrderStatus[] = [OrderStatus.delivered, OrderStatus.cancelled];
 
 function num(v: Prisma.Decimal | number | null | undefined): number {
   return v == null ? 0 : Number(v);
@@ -33,6 +42,7 @@ export class TimelinesService {
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
     private readonly storage: StorageService,
+    private readonly audit: AuditService,
   ) {}
 
   /**
@@ -82,6 +92,55 @@ export class TimelinesService {
         at: e.occurredAt.toISOString(),
       })),
     };
+  }
+
+  /**
+   * PATCH /timelines/orders/:id/stage — advance an order to a new production
+   * stage (Module 8). Updates CustomOrder.stage AND appends a CustomOrderEvent
+   * mirroring how createOrder seeds the initial `booked` event. Rejects moves on
+   * orders already in a terminal stage (delivered / cancelled). Store-scoped.
+   */
+  async advanceStage(user: AuthUser, id: string, dto: AdvanceStageDto) {
+    const o = await this.prisma.customOrder.findUnique({ where: { id } });
+    if (!o) throw new NotFoundException('Custom order not found');
+    this.scope.assertStoreAllowed(user, o.storeId);
+
+    if (TERMINAL_STAGES.includes(o.stage)) {
+      throw new BadRequestException(
+        `Order is already ${o.stage} and cannot be advanced`,
+      );
+    }
+
+    const from = o.stage;
+    const to = dto.stage;
+
+    await this.prisma.customOrder.update({
+      where: { id },
+      data: {
+        stage: to,
+        events: {
+          create: {
+            stage: to,
+            note: dto.note ?? null,
+            // Stage changes are driven from the back office in this timeline model.
+            byRole: 'back_office',
+            byName: user.name,
+          },
+        },
+      },
+    });
+
+    await this.audit.record(user, {
+      action: 'order.stage_change',
+      entityType: 'CustomOrder',
+      entityId: id,
+      storeId: o.storeId,
+      summary: `Advanced order ${o.ref}: ${from} → ${to}`,
+      metadata: { from, to },
+    });
+
+    // Return the same detail view as GET /timelines/orders/:id.
+    return this.order(user, id);
   }
 
   /**

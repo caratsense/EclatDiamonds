@@ -37,6 +37,7 @@ import {
   useFinanceCashflow,
   useFinanceLedger,
   useFinanceSummary,
+  type LedgerKind,
 } from "@/lib/queries/finance";
 import { useSession } from "@/store/use-session";
 
@@ -123,6 +124,31 @@ export default function FinancePage() {
   );
 }
 
+const ENTRY_KINDS: { value: LedgerKind; label: string }[] = [
+  { value: "AR", label: "AR (Receivable)" },
+  { value: "AP", label: "AP (Payable)" },
+  { value: "expense", label: "Expense" },
+  { value: "income", label: "Income" },
+];
+
+const ENTRY_STATUSES: { value: string; label: string }[] = [
+  { value: "actual", label: "Actual" },
+  { value: "budget", label: "Budget" },
+  { value: "forecast", label: "Forecast" },
+  { value: "open", label: "Open" },
+];
+
+/**
+ * Ledger side is derived from the kind so the entry books on the correct
+ * column without asking the manager to reason about debits/credits:
+ * money coming in (AR / income) is a credit; money going out (AP / expense)
+ * is a debit. The service sums `amount` for income/expense regardless of
+ * side, so this only affects how AR/AP rows render in the ledger.
+ */
+function sideForKind(kind: LedgerKind): "debit" | "credit" {
+  return kind === "AR" || kind === "income" ? "credit" : "debit";
+}
+
 function AddEntryDialog({
   open,
   onOpenChange,
@@ -132,14 +158,23 @@ function AddEntryDialog({
 }) {
   const { currentStore } = useSession();
   const addEntry = useAddLedgerEntry();
-  const [kind, setKind] = useState<"AR" | "AP">("AR");
-  const [side, setSide] = useState<"debit" | "credit">("credit");
+  const [kind, setKind] = useState<LedgerKind>("AR");
+  const [status, setStatus] = useState("actual");
   const [amount, setAmount] = useState("");
+  const [entryDate, setEntryDate] = useState("");
   const [narration, setNarration] = useState("");
 
   // Aggregate ("all") scope has no concrete store to write to — fall back
   // to the first real store id; broad roles normally pick a store first.
   const targetStoreId = currentStore.isAggregate ? "surat-main" : currentStore.id;
+
+  function reset() {
+    setKind("AR");
+    setStatus("actual");
+    setAmount("");
+    setEntryDate("");
+    setNarration("");
+  }
 
   function save() {
     const value = Number(amount);
@@ -151,17 +186,16 @@ function AddEntryDialog({
       {
         storeId: targetStoreId,
         kind,
-        side,
+        side: sideForKind(kind),
         amount: value,
+        status,
+        entryDate: entryDate || undefined,
         narration: narration.trim() || undefined,
       },
       {
         onSuccess: () => {
           toast.success("Ledger entry recorded");
-          setKind("AR");
-          setSide("credit");
-          setAmount("");
-          setNarration("");
+          reset();
           onOpenChange(false);
         },
         onError: () => toast.error("Could not save ledger entry."),
@@ -175,7 +209,7 @@ function AddEntryDialog({
         <DialogHeader>
           <DialogTitle>Add ledger entry</DialogTitle>
           <DialogDescription>
-            New AP/AR entries are recorded against{" "}
+            Book a ledger, budget or forecast row against{" "}
             {currentStore.isAggregate ? "Surat — Main" : currentStore.name}.
           </DialogDescription>
         </DialogHeader>
@@ -183,48 +217,65 @@ function AddEntryDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="kind">Kind</Label>
-              <Select value={kind} onValueChange={(v) => setKind(v as "AR" | "AP")}>
+              <Select
+                value={kind}
+                onValueChange={(v) => setKind(v as LedgerKind)}
+              >
                 <SelectTrigger id="kind">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="AR">AR (Receivable)</SelectItem>
-                  <SelectItem value="AP">AP (Payable)</SelectItem>
+                  {ENTRY_KINDS.map((k) => (
+                    <SelectItem key={k.value} value={k.value}>
+                      {k.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="side">Side</Label>
-              <Select
-                value={side}
-                onValueChange={(v) => setSide(v as "debit" | "credit")}
-              >
-                <SelectTrigger id="side">
+              <Label htmlFor="status">Status</Label>
+              <Select value={status} onValueChange={setStatus}>
+                <SelectTrigger id="status">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="debit">Debit</SelectItem>
-                  <SelectItem value="credit">Credit</SelectItem>
+                  {ENTRY_STATUSES.map((s) => (
+                    <SelectItem key={s.value} value={s.value}>
+                      {s.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
           </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="amount">Amount (₹)</Label>
-            <Input
-              id="amount"
-              type="number"
-              min={0}
-              placeholder="e.g. 250000"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-            />
+          <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="amount">Amount (₹)</Label>
+              <Input
+                id="amount"
+                type="number"
+                min={0}
+                placeholder="e.g. 250000"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="entry-date">Date</Label>
+              <Input
+                id="entry-date"
+                type="date"
+                value={entryDate}
+                onChange={(e) => setEntryDate(e.target.value)}
+              />
+            </div>
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="narration">Narration</Label>
             <Input
               id="narration"
-              placeholder="e.g. Sales — Bridal"
+              placeholder="e.g. Rentals, Salaries, New Store, Sales — Bridal"
               value={narration}
               onChange={(e) => setNarration(e.target.value)}
             />

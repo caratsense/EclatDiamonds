@@ -12,19 +12,53 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { formatINR } from "@/lib/format";
-import { SCHEME_PLANS, getPlan } from "@/lib/mock/loyalty";
+import { useSchemePlans } from "@/lib/queries/loyalty";
+import type { SchemePlan } from "@/lib/mock/loyalty";
 
 /**
  * Maturity calculator (Module 17):
  * customer pays `installment` for `tenureMonths`; the store adds
  * `bonusMonths` worth of installments as buying power at maturity.
+ *
+ * Plans come live from GET /loyalty/plans (useSchemePlans) so the dropdown
+ * always reflects the actual configured schemes — the what-if projection math
+ * is unchanged.
  */
 export function MaturityCalculator() {
-  const [planId, setPlanId] = React.useState(SCHEME_PLANS[0].id);
+  const { data: plans = [], isLoading } = useSchemePlans();
+  const [planId, setPlanId] = React.useState<string>("");
   const [installment, setInstallment] = React.useState(10000);
 
-  const plan = getPlan(planId) ?? SCHEME_PLANS[0];
+  // Default the selection to the first configured plan once plans load.
+  React.useEffect(() => {
+    if (!planId && plans.length > 0) setPlanId(plans[0].id);
+  }, [planId, plans]);
+
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Skeleton className="h-16 w-full" />
+          <Skeleton className="h-16 w-full" />
+        </div>
+        <Skeleton className="h-32 w-full" />
+      </div>
+    );
+  }
+
+  const plan: SchemePlan | undefined =
+    plans.find((p) => p.id === planId) ?? plans[0];
+
+  if (plans.length === 0 || !plan) {
+    return (
+      <p className="rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground">
+        No savings-scheme plans are configured yet. Add a plan to project a
+        member&apos;s maturity value.
+      </p>
+    );
+  }
 
   const paidIn = installment * plan.tenureMonths;
   const bonus = installment * plan.bonusMonths;
@@ -36,19 +70,23 @@ export function MaturityCalculator() {
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label htmlFor="plan">Plan</Label>
-          <Select value={planId} onValueChange={setPlanId}>
+          <Select value={plan.id} onValueChange={setPlanId}>
             <SelectTrigger id="plan">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {SCHEME_PLANS.map((p) => (
+              {plans.map((p) => (
                 <SelectItem key={p.id} value={p.id}>
                   {p.name}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
-          <p className="text-[11px] text-muted-foreground">{plan.bonusLabel}</p>
+          {plan.bonusLabel ? (
+            <p className="text-[11px] text-muted-foreground">
+              {plan.bonusLabel}
+            </p>
+          ) : null}
         </div>
 
         <div className="space-y-1.5">

@@ -1,6 +1,14 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import { NewStoreService } from './new-store.service';
-import { CreateProjectDto } from './dto/new-store.dto';
+import {
+  AddChecklistItemDto,
+  AddMilestoneDto,
+  AddVendorDto,
+  CreateProjectDto,
+  UpdateChecklistItemDto,
+  UpdateMilestoneDto,
+  UpdateVendorDto,
+} from './dto/new-store.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { Roles } from '../auth/roles.decorator';
 
@@ -18,5 +26,59 @@ export class NewStoreController {
   @Post('projects')
   createProject(@CurrentUser() user: AuthUser, @Body() dto: CreateProjectDto) {
     return this.newStore.createProject(user, dto);
+  }
+
+  @Post('projects/:id/checklist')
+  addChecklistItem(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: AddChecklistItemDto,
+  ) {
+    return this.newStore.addChecklistItem(user, id, dto);
+  }
+
+  @Patch('checklist/:id')
+  updateChecklistItem(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateChecklistItemDto,
+  ) {
+    return this.newStore.updateChecklistItem(user, id, dto);
+  }
+
+  @Post('projects/:id/milestones')
+  addMilestone(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: AddMilestoneDto,
+  ) {
+    return this.newStore.addMilestone(user, id, dto);
+  }
+
+  @Patch('milestones/:id')
+  updateMilestone(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateMilestoneDto,
+  ) {
+    return this.newStore.updateMilestone(user, id, dto);
+  }
+
+  @Post('projects/:id/vendors')
+  addVendor(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: AddVendorDto,
+  ) {
+    return this.newStore.addVendor(user, id, dto);
+  }
+
+  @Patch('vendors/:id')
+  updateVendor(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateVendorDto,
+  ) {
+    return this.newStore.updateVendor(user, id, dto);
   }
 }

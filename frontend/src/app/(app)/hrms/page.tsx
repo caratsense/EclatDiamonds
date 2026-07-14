@@ -26,12 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSession } from "@/store/use-session";
 import { getNavItem } from "@/lib/navigation";
-import {
-  ROSTER,
-  STORE_GEOFENCES,
-  type LeaveRequest,
-  type LeaveStatus,
-} from "@/lib/mock/hrms";
+import type { LeaveRequest, LeaveStatus } from "@/lib/mock/hrms";
 import { AttendanceTab } from "@/components/hrms/attendance-tab";
 import { RosterTab } from "@/components/hrms/roster-tab";
 import { ShiftsScheduleTab } from "@/components/hrms/shifts-schedule-tab";
@@ -43,6 +38,7 @@ import { AttendanceReportsTab } from "@/components/hrms/attendance-reports-tab";
 import {
   useAttendance,
   useDecideLeave,
+  useGeofence,
   useHolidays,
   useLateFlags,
   useLeaveRequests,
@@ -82,15 +78,10 @@ export default function HrmsPage() {
   const scheduleLoading = shiftsQuery.isLoading || holidaysQuery.isLoading;
   const scheduleError = shiftsQuery.isError || holidaysQuery.isError;
 
-  // Roster (weekly shift grid) has no backend endpoint yet — keep the mock
-  // roster, scoped to the active store so the grid stays consistent.
-  const roster = useMemo(
-    () => (isAggregate ? ROSTER : ROSTER.filter((r) => r.storeId === currentStore.id)),
-    [currentStore.id, isAggregate],
-  );
-
-  // Store geofence comes from the local geofence registry (single store only).
-  const fence = isAggregate ? undefined : STORE_GEOFENCES[currentStore.id];
+  // Store geofence comes live from GET /hrms/geofence (the caller's resolved
+  // store centre + radius). Single-store only — the aggregate has no fence.
+  const geofenceQuery = useGeofence();
+  const fence = isAggregate ? undefined : geofenceQuery.data;
 
   function handleDecide(req: LeaveRequest, status: LeaveStatus) {
     decideLeave.mutate(
@@ -176,7 +167,7 @@ export default function HrmsPage() {
               />
             ) : (
               <RosterTab
-                roster={roster}
+                shifts={shifts}
                 leave={leave}
                 onDecide={handleDecide}
                 deciding={decideLeave.isPending}

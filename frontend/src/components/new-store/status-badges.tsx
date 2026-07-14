@@ -1,9 +1,5 @@
 import { Badge } from "@/components/ui/badge";
-import type {
-  ChecklistStatus,
-  MilestoneState,
-  VendorStatus,
-} from "@/lib/mock/new-store";
+import type { ChecklistStatus } from "@/lib/mock/new-store";
 
 type BadgeVariant =
   | "default"
@@ -25,26 +21,40 @@ export function ChecklistStatusBadge({ status }: { status: ChecklistStatus }) {
   return <Badge variant={m.variant}>{m.label}</Badge>;
 }
 
-export function VendorStatusBadge({ status }: { status: VendorStatus }) {
-  const map: Record<VendorStatus, { label: string; variant: BadgeVariant }> = {
+/** Humanise an unknown free-text status, e.g. "in_progress" -> "In progress". */
+function humanise(value: string): string {
+  const s = value.replace(/[_-]+/g, " ").trim();
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : "—";
+}
+
+export function VendorStatusBadge({ status }: { status: string }) {
+  // Backend statuses are free text (pending, paid, settled, …) so unknown
+  // values fall back to a neutral badge rather than crashing.
+  const map: Record<string, { label: string; variant: BadgeVariant }> = {
     on_track: { label: "On track", variant: "success" },
     at_risk: { label: "At risk", variant: "warning" },
     delayed: { label: "Delayed", variant: "destructive" },
-    completed: { label: "Completed", variant: "secondary" },
+    completed: { label: "Completed", variant: "success" },
+    complete: { label: "Complete", variant: "success" },
+    settled: { label: "Settled", variant: "success" },
+    paid: { label: "Paid", variant: "success" },
+    pending: { label: "Pending", variant: "secondary" },
+    in_progress: { label: "In progress", variant: "default" },
   };
-  const m = map[status];
+  const m = map[status] ?? { label: humanise(status), variant: "secondary" };
   return <Badge variant={m.variant}>{m.label}</Badge>;
 }
 
-export function MilestoneStateBadge({ state }: { state: MilestoneState }) {
-  const map: Record<MilestoneState, { label: string; variant: BadgeVariant }> =
-    {
-      complete: { label: "Complete", variant: "success" },
-      current: { label: "In progress", variant: "default" },
-      at_risk: { label: "At risk", variant: "warning" },
-      upcoming: { label: "Upcoming", variant: "secondary" },
-    };
-  const m = map[state];
+export function MilestoneStateBadge({ state }: { state: string }) {
+  const map: Record<string, { label: string; variant: BadgeVariant }> = {
+    complete: { label: "Complete", variant: "success" },
+    done: { label: "Complete", variant: "success" },
+    current: { label: "In progress", variant: "default" },
+    active: { label: "In progress", variant: "default" },
+    at_risk: { label: "At risk", variant: "warning" },
+    upcoming: { label: "Upcoming", variant: "secondary" },
+  };
+  const m = map[state] ?? { label: humanise(state), variant: "secondary" };
   return <Badge variant={m.variant}>{m.label}</Badge>;
 }
 

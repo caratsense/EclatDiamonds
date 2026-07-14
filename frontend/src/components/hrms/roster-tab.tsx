@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, X } from "lucide-react";
+import { Check, Clock, Moon, X } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -13,21 +13,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  ROSTER_DAYS,
-  SHIFT_LABELS,
-  type LeaveRequest,
-  type LeaveStatus,
-  type RosterRow,
-  type ShiftAssignment,
-} from "@/lib/mock/hrms";
-
-const SHIFT_STYLES: Record<ShiftAssignment["shift"], string> = {
-  M: "bg-secondary text-secondary-foreground",
-  E: "bg-secondary text-secondary-foreground",
-  O: "bg-muted text-muted-foreground",
-  L: "bg-muted text-muted-foreground",
-};
+import type { LeaveRequest, LeaveStatus, Shift } from "@/lib/mock/hrms";
 
 const LEAVE_STATUS_META: Record<
   LeaveStatus,
@@ -39,19 +25,23 @@ const LEAVE_STATUS_META: Record<
 };
 
 interface RosterTabProps {
-  roster: RosterRow[];
+  /**
+   * The store's configured shifts / batches (GET /hrms/shifts). There is no
+   * per-staff weekly-roster endpoint yet, so we surface the real shift
+   * structure rather than a synthetic weekly grid (see the caption).
+   */
+  shifts: Shift[];
   leave: LeaveRequest[];
   /**
    * Persist a leave decision to the backend (PATCH /hrms/leave/:id). When
-   * omitted the tab falls back to a local optimistic update (e.g. while the
-   * roster grid is still mock-only).
+   * omitted the tab falls back to a local optimistic update.
    */
   onDecide?: (req: LeaveRequest, status: LeaveStatus) => void;
   /** True while a decision mutation is in flight (disables the buttons). */
   deciding?: boolean;
 }
 
-export function RosterTab({ roster, leave, onDecide, deciding }: RosterTabProps) {
+export function RosterTab({ shifts, leave, onDecide, deciding }: RosterTabProps) {
   // Local optimistic fallback when no persistence handler is provided.
   const [decisions, setDecisions] = useState<Record<string, LeaveStatus>>({});
 
@@ -70,63 +60,46 @@ export function RosterTab({ roster, leave, onDecide, deciding }: RosterTabProps)
     <div className="space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle>Weekly shift grid</CardTitle>
+          <CardTitle>Shift structure</CardTitle>
           <CardDescription>
-            Morning / Evening / Off / Leave per staffer for the current week.
+            Configured shifts and batches for this store. Per-staff weekly
+            rostering isn&apos;t available yet — lateness is measured against
+            each shift&apos;s own start time plus its grace window.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="overflow-x-auto">
-            <table className="w-full border-separate border-spacing-1 text-sm">
-              <thead>
-                <tr>
-                  <th className="px-2 py-1 text-left font-medium text-muted-foreground">
-                    Staff
-                  </th>
-                  {ROSTER_DAYS.map((d) => (
-                    <th
-                      key={d}
-                      className="px-2 py-1 text-center font-medium text-muted-foreground"
-                    >
-                      {d}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {roster.map((row) => (
-                  <tr key={row.staffId}>
-                    <td className="px-2 py-1">
-                      <p className="font-medium leading-tight">{row.name}</p>
-                      <p className="text-xs text-muted-foreground">{row.role}</p>
-                    </td>
-                    {row.week.map((a) => (
-                      <td key={a.day} className="px-1 py-1 text-center">
-                        <span
-                          className={`inline-flex h-8 w-full min-w-9 items-center justify-center rounded-md text-xs font-semibold ${SHIFT_STYLES[a.shift]}`}
-                          title={SHIFT_LABELS[a.shift]}
-                        >
-                          {a.shift}
-                        </span>
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-            {(["M", "E", "O", "L"] as const).map((k) => (
-              <span key={k} className="inline-flex items-center gap-1.5">
-                <span
-                  className={`inline-flex h-4 w-4 items-center justify-center rounded text-[10px] font-semibold ${SHIFT_STYLES[k]}`}
-                >
-                  {k}
-                </span>
-                {SHIFT_LABELS[k]}
-              </span>
-            ))}
-          </div>
+        <CardContent className="space-y-2">
+          {shifts.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              No shifts configured for this store yet.
+            </p>
+          ) : (
+            shifts.map((s) => (
+              <div
+                key={s.id}
+                className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="flex items-center gap-2">
+                  {s.isNightBatch ? (
+                    <Moon className="h-4 w-4 text-muted-foreground" />
+                  ) : (
+                    <Clock className="h-4 w-4 text-muted-foreground" />
+                  )}
+                  <span className="font-medium">{s.name}</span>
+                  {s.isNightBatch ? (
+                    <Badge variant="secondary">Night batch</Badge>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+                  <span className="num">
+                    {s.startTime}–{s.endTime}
+                  </span>
+                  <span>
+                    Grace <span className="num">{s.bufferMins}</span> min
+                  </span>
+                </div>
+              </div>
+            ))
+          )}
         </CardContent>
       </Card>
 

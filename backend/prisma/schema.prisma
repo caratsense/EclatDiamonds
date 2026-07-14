@@ -363,6 +363,7 @@ model Store {
   campaignStores      CampaignStore[]
   dailyReports        DailyReport[]
   salesTargets        SalesTarget[]
+  handoffs            Handoff[]
 
   @@index([regionId])
 }
@@ -1653,6 +1654,8 @@ model MarketingCampaign {
   spend     Decimal?       @db.Decimal(14, 2)
   ownerName String?
   agency    String?
+  /// Delivery channels this campaign runs on (whatsapp, sms, email, social, ...).
+  channels  String[]       @default([])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1748,6 +1751,7 @@ model NewStoreVendor {
   name      String
   task      String?
   status    String?   @default("pending")
+  amount    Decimal?  @db.Decimal(14, 2)
   dueDate   DateTime? @db.Date
 
   project NewStoreProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -1798,6 +1802,29 @@ model Task {
   updatedAt DateTime @updatedAt
 
   @@index([storeId, status])
+}
+
+/// Cross-department hand-off (Module 3 collaboration): one team raises a piece of
+/// work for another department (e.g. sales -> workshop). Store-scoped.
+model Handoff {
+  id            String   @id @default(cuid())
+  storeId       String
+  fromDept      String
+  toDept        String
+  title         String
+  note          String?
+  /// "open" | "accepted" | "done"
+  status        String   @default("open")
+  createdById   String
+  createdByName String
+  assignedTo    String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id])
+
+  @@index([storeId])
+  @@index([status])
 }
 
 // ============================================================================

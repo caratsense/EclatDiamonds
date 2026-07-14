@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { differenceInCalendarDays, format, parseISO } from "date-fns";
-import { CalendarClock, Flag, Lock } from "lucide-react";
+import { CalendarClock, Flag, Lock, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { SectionHeader } from "@/components/section/section-header";
@@ -24,7 +24,15 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Table,
   TableBody,
@@ -40,14 +48,46 @@ import {
   VendorStatusBadge,
 } from "@/components/new-store/status-badges";
 import { formatINRCompact } from "@/lib/format";
-import { DEPARTMENTS, departmentProgress } from "@/lib/mock/new-store";
+import { ROLE_RANK } from "@/lib/types";
+import { useSession } from "@/store/use-session";
 import {
+  DEPARTMENTS,
+  departmentProgress,
+  type ChecklistStatus,
+  type DepartmentKey,
+} from "@/lib/mock/new-store";
+import {
+  useAddChecklistItem,
+  useAddMilestone,
+  useAddVendor,
   useCreateProject,
   useNewStoreProjects,
+  useUpdateChecklistItem,
+  useUpdateVendor,
+  type ApiChecklistTask,
+  type ApiDepartmentChecklist,
+  type ApiNewStoreProject,
+  type ApiVendor,
 } from "@/lib/queries/new-store";
+
+const CHECKLIST_STATUS_OPTIONS: { value: ChecklistStatus; label: string }[] = [
+  { value: "todo", label: "To do" },
+  { value: "in_progress", label: "In progress" },
+  { value: "blocked", label: "Blocked" },
+  { value: "done", label: "Done" },
+];
+
+const VENDOR_STATUS_OPTIONS: { value: string; label: string }[] = [
+  { value: "pending", label: "Pending" },
+  { value: "in_progress", label: "In progress" },
+  { value: "paid", label: "Paid" },
+  { value: "completed", label: "Completed" },
+];
 
 export default function NewStorePage() {
   const { data, isLoading, isError, refetch } = useNewStoreProjects();
+  const role = useSession((s) => s.role);
+  const canEdit = ROLE_RANK[role] >= ROLE_RANK.area_manager;
   const [projectOpen, setProjectOpen] = useState(false);
 
   const header = (
@@ -136,6 +176,25 @@ export default function NewStorePage() {
     );
   }
 
+  return (
+    <>
+      {header}
+      <ProjectView project={project} canEdit={canEdit} />
+    </>
+  );
+}
+
+function ProjectView({
+  project,
+  canEdit,
+}: {
+  project: ApiNewStoreProject;
+  canEdit: boolean;
+}) {
+  const [checklistDept, setChecklistDept] = useState<DepartmentKey | null>(null);
+  const [milestoneOpen, setMilestoneOpen] = useState(false);
+  const [vendorOpen, setVendorOpen] = useState(false);
+
   const launch = project.launchDate ? parseISO(project.launchDate) : null;
   const daysToLaunch = launch
     ? differenceInCalendarDays(launch, new Date())
@@ -144,8 +203,6 @@ export default function NewStorePage() {
 
   return (
     <>
-      {header}
-
       {/* Launch summary strip */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <SummaryCard label="Active project" value={project.name}>
@@ -199,7 +256,7 @@ export default function NewStorePage() {
             />
           ) : (
             <p className="text-xs text-muted-foreground">
-              Budget not yet captured
+              Add vendors with amounts to track budget
             </p>
           )}
         </SummaryCard>
@@ -210,46 +267,33 @@ export default function NewStorePage() {
         Five-department launch checklist
       </h2>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
-        {project.checklists.map((list) => {
-          const meta = DEPARTMENTS.find((d) => d.key === list.key);
-          const pct = departmentProgress(list);
-          return (
-            <Card key={list.key}>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-base">
-                    {meta?.label ?? list.key}
-                  </CardTitle>
-                  <span className="num text-sm font-medium text-muted-foreground">
-                    {pct}%
-                  </span>
-                </div>
-                <CardDescription>{meta?.owner ?? ""}</CardDescription>
-                <ProgressBar value={pct} className="mt-1" />
-              </CardHeader>
-              <CardContent className="space-y-2.5">
-                {list.tasks.map((task) => (
-                  <div
-                    key={task.id}
-                    className="flex items-start justify-between gap-3"
-                  >
-                    <div className="text-sm">
-                      <span>{task.label}</span>
-                    </div>
-                    <ChecklistStatusBadge status={task.status} />
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          );
-        })}
+        {project.checklists.map((list) => (
+          <ChecklistCard
+            key={list.key}
+            list={list}
+            canEdit={canEdit}
+            onAddTask={() => setChecklistDept(list.key)}
+          />
+        ))}
       </div>
 
       {/* 30/60/90 milestone timeline */}
-      <h2 className="mb-3 mt-8 flex items-center gap-2 text-lg font-semibold tracking-tight">
-        <Flag className="h-5 w-5 text-muted-foreground" />
-        30/60/90-day launch milestones
-      </h2>
+      <div className="mb-3 mt-8 flex items-center justify-between gap-2">
+        <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
+          <Flag className="h-5 w-5 text-muted-foreground" />
+          30/60/90-day launch milestones
+        </h2>
+        {canEdit ? (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setMilestoneOpen(true)}
+          >
+            <Plus className="h-4 w-4" />
+            Add milestone
+          </Button>
+        ) : null}
+      </div>
       <Card>
         <CardContent className="pt-6">
           {project.milestones.length === 0 ? (
@@ -258,8 +302,8 @@ export default function NewStorePage() {
             </p>
           ) : (
             <ol className="relative space-y-6 border-l border-border pl-6">
-              {project.milestones.map((ms) => (
-                <li key={ms.marker} className="relative">
+              {project.milestones.map((ms, idx) => (
+                <li key={`${ms.marker}-${ms.date}-${idx}`} className="relative">
                   <span className="absolute -left-[31px] flex h-5 w-5 items-center justify-center rounded-full border-2 border-background bg-primary text-primary-foreground">
                     <CalendarClock className="h-3 w-3" />
                   </span>
@@ -273,9 +317,11 @@ export default function NewStorePage() {
                       {ms.date ? format(parseISO(ms.date), "dd MMM yyyy") : "—"}
                     </span>
                   </div>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {ms.summary}
-                  </p>
+                  {ms.summary ? (
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {ms.summary}
+                    </p>
+                  ) : null}
                 </li>
               ))}
             </ol>
@@ -284,9 +330,17 @@ export default function NewStorePage() {
       </Card>
 
       {/* Vendor assignments */}
-      <h2 className="mb-3 mt-8 text-lg font-semibold tracking-tight">
-        Vendor assignments
-      </h2>
+      <div className="mb-3 mt-8 flex items-center justify-between gap-2">
+        <h2 className="text-lg font-semibold tracking-tight">
+          Vendor assignments
+        </h2>
+        {canEdit ? (
+          <Button size="sm" variant="outline" onClick={() => setVendorOpen(true)}>
+            <Plus className="h-4 w-4" />
+            Add vendor
+          </Button>
+        ) : null}
+      </div>
       <Card>
         <CardContent className="pt-6">
           <Table>
@@ -294,31 +348,19 @@ export default function NewStorePage() {
               <TableRow>
                 <TableHead>Task</TableHead>
                 <TableHead>Vendor</TableHead>
+                <TableHead className="text-right">Amount</TableHead>
                 <TableHead className="text-right">Due date</TableHead>
                 <TableHead>Status</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {project.vendors.map((v) => (
-                <TableRow key={v.id}>
-                  <TableCell className="font-medium">{v.task}</TableCell>
-                  <TableCell>{v.vendor}</TableCell>
-                  <TableCell className="text-right">
-                    <span className="num">
-                      {v.dueDate
-                        ? format(parseISO(v.dueDate), "dd MMM yyyy")
-                        : "—"}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <VendorStatusBadge status={v.status} />
-                  </TableCell>
-                </TableRow>
+                <VendorRow key={v.id} vendor={v} canEdit={canEdit} />
               ))}
               {project.vendors.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={4}
+                    colSpan={5}
                     className="py-10 text-center text-muted-foreground"
                   >
                     No vendors assigned yet. Add an assignment to begin.
@@ -329,7 +371,181 @@ export default function NewStorePage() {
           </Table>
         </CardContent>
       </Card>
+
+      <AddChecklistDialog
+        projectId={project.id}
+        dept={checklistDept}
+        onOpenChange={(open) => {
+          if (!open) setChecklistDept(null);
+        }}
+      />
+      <AddMilestoneDialog
+        projectId={project.id}
+        open={milestoneOpen}
+        onOpenChange={setMilestoneOpen}
+      />
+      <AddVendorDialog
+        projectId={project.id}
+        open={vendorOpen}
+        onOpenChange={setVendorOpen}
+      />
     </>
+  );
+}
+
+function ChecklistCard({
+  list,
+  canEdit,
+  onAddTask,
+}: {
+  list: ApiDepartmentChecklist;
+  canEdit: boolean;
+  onAddTask: () => void;
+}) {
+  const meta = DEPARTMENTS.find((d) => d.key === list.key);
+  const pct = departmentProgress(list);
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base">{meta?.label ?? list.key}</CardTitle>
+          <span className="num text-sm font-medium text-muted-foreground">
+            {pct}%
+          </span>
+        </div>
+        <CardDescription>{meta?.owner ?? ""}</CardDescription>
+        <ProgressBar value={pct} className="mt-1" />
+      </CardHeader>
+      <CardContent className="space-y-2.5">
+        {list.tasks.map((task) => (
+          <ChecklistTaskRow key={task.id} task={task} canEdit={canEdit} />
+        ))}
+        {canEdit ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="mt-1 w-full justify-start text-muted-foreground"
+            onClick={onAddTask}
+          >
+            <Plus className="h-4 w-4" />
+            Add task
+          </Button>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ChecklistTaskRow({
+  task,
+  canEdit,
+}: {
+  task: ApiChecklistTask;
+  canEdit: boolean;
+}) {
+  const update = useUpdateChecklistItem();
+
+  function change(status: ChecklistStatus) {
+    if (status === task.status) return;
+    update.mutate(
+      { id: task.id, status },
+      {
+        onSuccess: () => toast.success("Task updated"),
+        onError: () => toast.error("Could not update the task."),
+      },
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-sm">{task.label}</span>
+      {canEdit ? (
+        <Select
+          value={task.status}
+          onValueChange={(v) => change(v as ChecklistStatus)}
+          disabled={update.isPending}
+        >
+          <SelectTrigger className="h-8 w-32 shrink-0">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {CHECKLIST_STATUS_OPTIONS.map((o) => (
+              <SelectItem key={o.value} value={o.value}>
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : (
+        <ChecklistStatusBadge status={task.status} />
+      )}
+    </div>
+  );
+}
+
+function VendorRow({
+  vendor,
+  canEdit,
+}: {
+  vendor: ApiVendor;
+  canEdit: boolean;
+}) {
+  const update = useUpdateVendor();
+
+  function change(status: string) {
+    if (status === vendor.status) return;
+    update.mutate(
+      { id: vendor.id, status },
+      {
+        onSuccess: () => toast.success("Vendor updated"),
+        onError: () => toast.error("Could not update the vendor."),
+      },
+    );
+  }
+
+  return (
+    <TableRow>
+      <TableCell className="font-medium">{vendor.task}</TableCell>
+      <TableCell>{vendor.vendor}</TableCell>
+      <TableCell className="text-right">
+        <span className="num">
+          {vendor.amount != null ? formatINRCompact(vendor.amount) : "—"}
+        </span>
+      </TableCell>
+      <TableCell className="text-right">
+        <span className="num">
+          {vendor.dueDate
+            ? format(parseISO(vendor.dueDate), "dd MMM yyyy")
+            : "—"}
+        </span>
+      </TableCell>
+      <TableCell>
+        {canEdit ? (
+          <Select
+            value={
+              VENDOR_STATUS_OPTIONS.some((o) => o.value === vendor.status)
+                ? vendor.status
+                : undefined
+            }
+            onValueChange={change}
+            disabled={update.isPending}
+          >
+            <SelectTrigger className="h-8 w-36">
+              <SelectValue placeholder={vendor.status} />
+            </SelectTrigger>
+            <SelectContent>
+              {VENDOR_STATUS_OPTIONS.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <VendorStatusBadge status={vendor.status} />
+        )}
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -350,6 +566,308 @@ function SummaryCard({
         {children}
       </CardContent>
     </Card>
+  );
+}
+
+function AddChecklistDialog({
+  projectId,
+  dept,
+  onOpenChange,
+}: {
+  projectId: string;
+  dept: DepartmentKey | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const addTask = useAddChecklistItem();
+  const [title, setTitle] = useState("");
+  const meta = DEPARTMENTS.find((d) => d.key === dept);
+
+  function save() {
+    if (!dept) return;
+    if (!title.trim()) {
+      toast.error("Task title is required.");
+      return;
+    }
+    addTask.mutate(
+      { projectId, dept, title: title.trim() },
+      {
+        onSuccess: () => {
+          toast.success("Task added");
+          setTitle("");
+          onOpenChange(false);
+        },
+        onError: () => toast.error("Could not add the task."),
+      },
+    );
+  }
+
+  return (
+    <Dialog open={dept != null} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add checklist task</DialogTitle>
+          <DialogDescription>
+            New task for {meta?.label ?? "the selected department"}.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="grid gap-1.5">
+            <Label htmlFor="task-title">Task</Label>
+            <Input
+              id="task-title"
+              placeholder="e.g. Configure billing software"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={addTask.isPending}>
+            {addTask.isPending ? "Saving…" : "Add task"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AddMilestoneDialog({
+  projectId,
+  open,
+  onOpenChange,
+}: {
+  projectId: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const addMilestone = useAddMilestone();
+  const [title, setTitle] = useState("");
+  const [phase, setPhase] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [summary, setSummary] = useState("");
+
+  function reset() {
+    setTitle("");
+    setPhase("");
+    setDueDate("");
+    setSummary("");
+  }
+
+  function save() {
+    if (!title.trim()) {
+      toast.error("Milestone title is required.");
+      return;
+    }
+    if (!dueDate) {
+      toast.error("A milestone date is required.");
+      return;
+    }
+    addMilestone.mutate(
+      {
+        projectId,
+        title: title.trim(),
+        dueDate,
+        phase: phase.trim() || undefined,
+        summary: summary.trim() || undefined,
+      },
+      {
+        onSuccess: () => {
+          toast.success("Milestone added");
+          reset();
+          onOpenChange(false);
+        },
+        onError: () => toast.error("Could not add the milestone."),
+      },
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add milestone</DialogTitle>
+          <DialogDescription>
+            Add a checkpoint to the launch timeline.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="grid gap-1.5">
+            <Label htmlFor="ms-title">Title</Label>
+            <Input
+              id="ms-title"
+              placeholder="e.g. Stock & dry-run complete"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="ms-phase">Phase</Label>
+              <Input
+                id="ms-phase"
+                placeholder="e.g. T-30"
+                value={phase}
+                onChange={(e) => setPhase(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="ms-date">Date</Label>
+              <Input
+                id="ms-date"
+                type="date"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="ms-summary">Summary</Label>
+            <Textarea
+              id="ms-summary"
+              placeholder="Optional detail about this checkpoint"
+              value={summary}
+              onChange={(e) => setSummary(e.target.value)}
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={addMilestone.isPending}>
+            {addMilestone.isPending ? "Saving…" : "Add milestone"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AddVendorDialog({
+  projectId,
+  open,
+  onOpenChange,
+}: {
+  projectId: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const addVendor = useAddVendor();
+  const [name, setName] = useState("");
+  const [scope, setScope] = useState("");
+  const [amount, setAmount] = useState("");
+  const [status, setStatus] = useState("pending");
+
+  function reset() {
+    setName("");
+    setScope("");
+    setAmount("");
+    setStatus("pending");
+  }
+
+  function save() {
+    if (!name.trim()) {
+      toast.error("Vendor name is required.");
+      return;
+    }
+    if (!scope.trim()) {
+      toast.error("Vendor scope is required.");
+      return;
+    }
+    const amountNum = amount.trim() ? Number(amount) : undefined;
+    if (amountNum != null && (Number.isNaN(amountNum) || amountNum < 0)) {
+      toast.error("Enter a valid amount.");
+      return;
+    }
+    addVendor.mutate(
+      {
+        projectId,
+        name: name.trim(),
+        scope: scope.trim(),
+        amount: amountNum,
+        status,
+      },
+      {
+        onSuccess: () => {
+          toast.success("Vendor added");
+          reset();
+          onOpenChange(false);
+        },
+        onError: () => toast.error("Could not add the vendor."),
+      },
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add vendor</DialogTitle>
+          <DialogDescription>
+            Engage a vendor and capture the contracted amount.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="grid gap-1.5">
+            <Label htmlFor="vendor-name">Vendor name</Label>
+            <Input
+              id="vendor-name"
+              placeholder="e.g. Shreeji Fixtures Pvt Ltd"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="vendor-scope">Scope</Label>
+            <Input
+              id="vendor-scope"
+              placeholder="e.g. Display showcases & vault"
+              value={scope}
+              onChange={(e) => setScope(e.target.value)}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="vendor-amount">Amount (₹)</Label>
+              <Input
+                id="vendor-amount"
+                type="number"
+                min={0}
+                placeholder="e.g. 3850000"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="vendor-status">Status</Label>
+              <Select value={status} onValueChange={setStatus}>
+                <SelectTrigger id="vendor-status">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {VENDOR_STATUS_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={addVendor.isPending}>
+            {addVendor.isPending ? "Saving…" : "Add vendor"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import { format, parseISO } from "date-fns";
 import {
   FileText,
@@ -43,6 +43,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Table,
   TableBody,
@@ -53,18 +54,53 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatINRCompact } from "@/lib/format";
+import { ROLE_RANK } from "@/lib/types";
+import { useSession } from "@/store/use-session";
 import {
   useAgencyTasks,
   useCampaigns,
+  useCreateAgencyTask,
+  useCreateAsset,
   useCreateCampaign,
   useMarketingAssets,
+  useUpdateAgencyTask,
+  useUpdateAssetStatus,
+  type AssetStatus,
 } from "@/lib/queries/marketing";
 import {
   CAMPAIGN_TYPES,
+  type AgencyTask,
   type Campaign,
   type CampaignType,
   type SharedAsset,
 } from "@/lib/mock/marketing";
+
+/** Marketing delivery channels offered when targeting a campaign. */
+const CHANNEL_OPTIONS = [
+  "Instagram",
+  "WhatsApp",
+  "Email",
+  "SMS",
+  "Print",
+  "Google",
+];
+
+/** Raw deliverable statuses an area manager can set on an asset. */
+const ASSET_TRANSITIONS: { status: AssetStatus; label: string }[] = [
+  { status: "approved", label: "Approve" },
+  { status: "changes_requested", label: "Request changes" },
+  { status: "rejected", label: "Reject" },
+];
+
+/** Statuses a store manager can move an agency task through. */
+const AGENCY_TASK_STATUSES: { value: AssetStatus; label: string }[] = [
+  { value: "pending", label: "Awaiting brief" },
+  { value: "in_progress", label: "In progress" },
+  { value: "submitted", label: "Submitted" },
+  { value: "approved", label: "Approved" },
+  { value: "changes_requested", label: "Changes requested" },
+  { value: "rejected", label: "Rejected" },
+];
 
 const typeLabel = (key: Campaign["type"]) =>
   CAMPAIGN_TYPES.find((t) => t.key === key)?.label ?? key;
@@ -96,17 +132,34 @@ export default function MarketingPage() {
     refetch: refetchAssets,
   } = useMarketingAssets();
   const [newOpen, setNewOpen] = useState(false);
+  const [assetOpen, setAssetOpen] = useState(false);
+  const [taskOpen, setTaskOpen] = useState(false);
+
+  const role = useSession((s) => s.role);
+  const canCreateCampaign = ROLE_RANK[role] >= ROLE_RANK.area_manager;
+  const canCreateDeliverable = ROLE_RANK[role] >= ROLE_RANK.store_manager;
+  const canApprove = ROLE_RANK[role] >= ROLE_RANK.area_manager;
 
   return (
     <>
       <SectionHeader
         title="Marketing"
         purpose="Plan campaigns and track agency deliverables."
-        primaryAction="New Campaign"
+        primaryAction={canCreateCampaign ? "New Campaign" : undefined}
         onPrimaryAction={() => setNewOpen(true)}
       />
 
       <NewCampaignDialog open={newOpen} onOpenChange={setNewOpen} />
+      <NewDeliverableDialog
+        open={assetOpen}
+        onOpenChange={setAssetOpen}
+        campaigns={campaigns}
+      />
+      <NewAgencyTaskDialog
+        open={taskOpen}
+        onOpenChange={setTaskOpen}
+        campaigns={campaigns}
+      />
 
       <Tabs defaultValue="campaigns">
         <TabsList>
@@ -161,11 +214,27 @@ export default function MarketingPage() {
         <TabsContent value="agency" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Shared deliverables</CardTitle>
-              <CardDescription>
-                Tasks shared with external agencies — review and approve
-                submissions.
-              </CardDescription>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <CardTitle className="text-base">
+                    Shared deliverables
+                  </CardTitle>
+                  <CardDescription>
+                    Tasks shared with external agencies — review and approve
+                    submissions.
+                  </CardDescription>
+                </div>
+                {canCreateDeliverable ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={campaigns.length === 0}
+                    onClick={() => setTaskOpen(true)}
+                  >
+                    New agency task
+                  </Button>
+                ) : null}
+              </div>
             </CardHeader>
             <CardContent>
               {tasksLoading ? (
@@ -194,35 +263,24 @@ export default function MarketingPage() {
                       <TableHead>Agency</TableHead>
                       <TableHead>Assignee</TableHead>
                       <TableHead>Due</TableHead>
-                      <TableHead className="text-center">Assets</TableHead>
                       <TableHead>Status</TableHead>
+                      {canCreateDeliverable ? (
+                        <TableHead className="text-right">Update</TableHead>
+                      ) : null}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {tasks.map((t) => (
-                      <TableRow key={t.id}>
-                        <TableCell className="font-medium">{t.title}</TableCell>
-                        <TableCell>{t.agency}</TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {t.assignee}
-                        </TableCell>
-                        <TableCell>
-                          {t.dueDate
-                            ? format(parseISO(t.dueDate), "dd MMM")
-                            : "—"}
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <span className="num">{t.assetCount}</span>
-                        </TableCell>
-                        <TableCell>
-                          <AgencyTaskStatusBadge status={t.status} />
-                        </TableCell>
-                      </TableRow>
+                      <AgencyTaskRow
+                        key={t.id}
+                        task={t}
+                        canUpdate={canCreateDeliverable}
+                      />
                     ))}
                     {tasks.length === 0 ? (
                       <TableRow>
                         <TableCell
-                          colSpan={6}
+                          colSpan={canCreateDeliverable ? 6 : 5}
                           className="py-10 text-center text-muted-foreground"
                         >
                           No agency tasks yet. Share a deliverable to begin.
@@ -237,10 +295,24 @@ export default function MarketingPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Shared assets</CardTitle>
-              <CardDescription>
-                Creative uploaded by agencies for sign-off.
-              </CardDescription>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <CardTitle className="text-base">Shared assets</CardTitle>
+                  <CardDescription>
+                    Creative uploaded by agencies for sign-off.
+                  </CardDescription>
+                </div>
+                {canCreateDeliverable ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={campaigns.length === 0}
+                    onClick={() => setAssetOpen(true)}
+                  >
+                    New deliverable
+                  </Button>
+                ) : null}
+              </div>
             </CardHeader>
             <CardContent className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {assetsLoading ? (
@@ -264,7 +336,9 @@ export default function MarketingPage() {
                   No shared assets yet. Agency uploads will appear here.
                 </p>
               ) : (
-                assets.map((a) => <AssetTile key={a.id} asset={a} />)
+                assets.map((a) => (
+                  <AssetTile key={a.id} asset={a} canApprove={canApprove} />
+                ))
               )}
             </CardContent>
           </Card>
@@ -338,28 +412,150 @@ function CampaignCard({ campaign }: { campaign: Campaign }) {
   );
 }
 
-function AssetTile({ asset }: { asset: SharedAsset }) {
+function AssetTile({
+  asset,
+  canApprove,
+}: {
+  asset: SharedAsset;
+  canApprove: boolean;
+}) {
   const Icon = ASSET_ICON[asset.kind];
+  const updateStatus = useUpdateAssetStatus();
+
+  function setStatus(status: AssetStatus, label: string) {
+    updateStatus.mutate(
+      { id: asset.id, status },
+      {
+        onSuccess: () => toast.success(`Deliverable ${label.toLowerCase()}`),
+        onError: () => toast.error("Could not update the deliverable."),
+      },
+    );
+  }
+
   return (
-    <div className="flex items-start gap-3 rounded-lg border p-3">
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent text-accent-foreground">
-        <Icon className="h-4 w-4" />
+    <div className="flex flex-col gap-2 rounded-lg border p-3">
+      <div className="flex items-start gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent text-accent-foreground">
+          <Icon className="h-4 w-4" />
+        </div>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium">{asset.name}</p>
+          <p className="text-xs text-muted-foreground">
+            {asset.agency}
+            {asset.updatedAt
+              ? ` · ${format(parseISO(asset.updatedAt), "dd MMM")}`
+              : ""}
+          </p>
+          <Badge
+            variant={asset.approved ? "success" : "secondary"}
+            className="mt-1.5 text-xs"
+          >
+            {asset.approved ? "Approved" : "Pending review"}
+          </Badge>
+        </div>
       </div>
-      <div className="min-w-0">
-        <p className="truncate text-sm font-medium">{asset.name}</p>
-        <p className="text-xs text-muted-foreground">
-          {asset.agency}
-          {asset.updatedAt
-            ? ` · ${format(parseISO(asset.updatedAt), "dd MMM")}`
-            : ""}
-        </p>
-        <Badge
-          variant={asset.approved ? "success" : "secondary"}
-          className="mt-1.5 text-xs"
-        >
-          {asset.approved ? "Approved" : "Pending review"}
-        </Badge>
-      </div>
+      {canApprove ? (
+        <div className="flex flex-wrap gap-1.5">
+          {ASSET_TRANSITIONS.map((t) => (
+            <Button
+              key={t.status}
+              size="sm"
+              variant={t.status === "approved" ? "default" : "outline"}
+              disabled={updateStatus.isPending}
+              onClick={() => setStatus(t.status, t.label)}
+            >
+              {t.label}
+            </Button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function AgencyTaskRow({
+  task,
+  canUpdate,
+}: {
+  task: AgencyTask;
+  canUpdate: boolean;
+}) {
+  const updateTask = useUpdateAgencyTask();
+
+  function change(status: AssetStatus) {
+    updateTask.mutate(
+      { id: task.id, status },
+      {
+        onSuccess: () => toast.success("Task updated"),
+        onError: () => toast.error("Could not update the task."),
+      },
+    );
+  }
+
+  return (
+    <TableRow>
+      <TableCell className="font-medium">{task.title}</TableCell>
+      <TableCell>{task.agency}</TableCell>
+      <TableCell className="text-muted-foreground">{task.assignee}</TableCell>
+      <TableCell>
+        {task.dueDate ? format(parseISO(task.dueDate), "dd MMM") : "—"}
+      </TableCell>
+      <TableCell>
+        <AgencyTaskStatusBadge status={task.status} />
+      </TableCell>
+      {canUpdate ? (
+        <TableCell className="text-right">
+          <Select
+            onValueChange={(v) => change(v as AssetStatus)}
+            disabled={updateTask.isPending}
+          >
+            <SelectTrigger className="ml-auto h-8 w-40">
+              <SelectValue placeholder="Set status" />
+            </SelectTrigger>
+            <SelectContent>
+              {AGENCY_TASK_STATUSES.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </TableCell>
+      ) : null}
+    </TableRow>
+  );
+}
+
+/** A wrap of toggleable chips backing a lightweight multi-select. */
+function ChipMultiSelect({
+  options,
+  selected,
+  onToggle,
+}: {
+  options: { value: string; label: string }[];
+  selected: string[];
+  onToggle: (value: string) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {options.map((o) => {
+        const active = selected.includes(o.value);
+        return (
+          <button
+            key={o.value}
+            type="button"
+            onClick={() => onToggle(o.value)}
+            aria-pressed={active}
+            className={
+              active
+                ? "rounded-full border border-primary bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground"
+                : "rounded-full border px-2.5 py-1 text-xs font-medium text-muted-foreground hover:bg-accent"
+            }
+          >
+            {o.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -372,11 +568,26 @@ function NewCampaignDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const createCampaign = useCreateCampaign();
+  // Stores the current user can target (exclude the synthetic "All Stores").
+  const stores = useSession((s) => s.stores).filter((st) => !st.isAggregate);
   const [name, setName] = useState("");
   const [type, setType] = useState<CampaignType>("festive");
   const [budget, setBudget] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [storeIds, setStoreIds] = useState<string[]>([]);
+  const [channels, setChannels] = useState<string[]>([]);
+
+  function toggle(
+    setter: Dispatch<SetStateAction<string[]>>,
+    value: string,
+  ) {
+    setter((prev) =>
+      prev.includes(value)
+        ? prev.filter((v) => v !== value)
+        : [...prev, value],
+    );
+  }
 
   function reset() {
     setName("");
@@ -384,6 +595,8 @@ function NewCampaignDialog({
     setBudget("");
     setStartDate("");
     setEndDate("");
+    setStoreIds([]);
+    setChannels([]);
   }
 
   function save() {
@@ -403,6 +616,8 @@ function NewCampaignDialog({
         budget: budgetNum,
         startDate: startDate || undefined,
         endDate: endDate || undefined,
+        storeIds: storeIds.length ? storeIds : undefined,
+        channels: channels.length ? channels : undefined,
       },
       {
         onSuccess: () => {
@@ -483,6 +698,25 @@ function NewCampaignDialog({
               />
             </div>
           </div>
+          <div className="grid gap-1.5">
+            <Label>Target stores</Label>
+            <ChipMultiSelect
+              options={stores.map((st) => ({ value: st.id, label: st.name }))}
+              selected={storeIds}
+              onToggle={(v) => toggle(setStoreIds, v)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Leave empty for a pan-India campaign.
+            </p>
+          </div>
+          <div className="grid gap-1.5">
+            <Label>Channels</Label>
+            <ChipMultiSelect
+              options={CHANNEL_OPTIONS.map((c) => ({ value: c, label: c }))}
+              selected={channels}
+              onToggle={(v) => toggle(setChannels, v)}
+            />
+          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
@@ -490,6 +724,253 @@ function NewCampaignDialog({
           </Button>
           <Button onClick={save} disabled={createCampaign.isPending}>
             {createCampaign.isPending ? "Saving…" : "Create campaign"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+const DELIVERABLE_TYPES = [
+  { value: "image", label: "Image" },
+  { value: "video", label: "Video" },
+  { value: "pdf", label: "PDF" },
+  { value: "copy", label: "Copy" },
+];
+
+function NewDeliverableDialog({
+  open,
+  onOpenChange,
+  campaigns,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  campaigns: Campaign[];
+}) {
+  const createAsset = useCreateAsset();
+  const [campaignId, setCampaignId] = useState("");
+  const [title, setTitle] = useState("");
+  const [type, setType] = useState("image");
+  const [url, setUrl] = useState("");
+
+  function reset() {
+    setCampaignId("");
+    setTitle("");
+    setType("image");
+    setUrl("");
+  }
+
+  function save() {
+    if (!campaignId) {
+      toast.error("Pick a campaign.");
+      return;
+    }
+    if (!title.trim()) {
+      toast.error("A deliverable title is required.");
+      return;
+    }
+    createAsset.mutate(
+      {
+        campaignId,
+        title: title.trim(),
+        type,
+        url: url.trim() || undefined,
+      },
+      {
+        onSuccess: () => {
+          toast.success("Deliverable added");
+          reset();
+          onOpenChange(false);
+        },
+        onError: () => toast.error("Could not add the deliverable."),
+      },
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>New deliverable</DialogTitle>
+          <DialogDescription>
+            Attach an agency deliverable to a campaign for sign-off.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="grid gap-1.5">
+            <Label htmlFor="asset-campaign">Campaign</Label>
+            <Select value={campaignId} onValueChange={setCampaignId}>
+              <SelectTrigger id="asset-campaign">
+                <SelectValue placeholder="Select a campaign" />
+              </SelectTrigger>
+              <SelectContent>
+                {campaigns.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="asset-title">Title</Label>
+            <Input
+              id="asset-title"
+              placeholder="e.g. bridal_hero_v1.mp4"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="asset-type">Type</Label>
+              <Select value={type} onValueChange={setType}>
+                <SelectTrigger id="asset-type">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {DELIVERABLE_TYPES.map((t) => (
+                    <SelectItem key={t.value} value={t.value}>
+                      {t.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="asset-url">Link</Label>
+              <Input
+                id="asset-url"
+                placeholder="Optional URL"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+              />
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={createAsset.isPending}>
+            {createAsset.isPending ? "Saving…" : "Add deliverable"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function NewAgencyTaskDialog({
+  open,
+  onOpenChange,
+  campaigns,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  campaigns: Campaign[];
+}) {
+  const createTask = useCreateAgencyTask();
+  const [campaignId, setCampaignId] = useState("");
+  const [title, setTitle] = useState("");
+  const [assignee, setAssignee] = useState("");
+  const [dueDate, setDueDate] = useState("");
+
+  function reset() {
+    setCampaignId("");
+    setTitle("");
+    setAssignee("");
+    setDueDate("");
+  }
+
+  function save() {
+    if (!campaignId) {
+      toast.error("Pick a campaign.");
+      return;
+    }
+    if (!title.trim()) {
+      toast.error("A task title is required.");
+      return;
+    }
+    createTask.mutate(
+      {
+        campaignId,
+        title: title.trim(),
+        assignee: assignee.trim() || undefined,
+        dueDate: dueDate || undefined,
+      },
+      {
+        onSuccess: () => {
+          toast.success("Agency task created");
+          reset();
+          onOpenChange(false);
+        },
+        onError: () => toast.error("Could not create the task."),
+      },
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>New agency task</DialogTitle>
+          <DialogDescription>
+            Brief an agency on a campaign deliverable.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="grid gap-1.5">
+            <Label htmlFor="task-campaign">Campaign</Label>
+            <Select value={campaignId} onValueChange={setCampaignId}>
+              <SelectTrigger id="task-campaign">
+                <SelectValue placeholder="Select a campaign" />
+              </SelectTrigger>
+              <SelectContent>
+                {campaigns.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="task-title">Title</Label>
+            <Input
+              id="task-title"
+              placeholder="e.g. Instagram carousel — necklace edit"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="task-assignee">Assignee</Label>
+              <Input
+                id="task-assignee"
+                placeholder="Optional"
+                value={assignee}
+                onChange={(e) => setAssignee(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="task-due">Due date</Label>
+              <Input
+                id="task-due"
+                type="date"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+              />
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={createTask.isPending}>
+            {createTask.isPending ? "Saving…" : "Create task"}
           </Button>
         </DialogFooter>
       </DialogContent>

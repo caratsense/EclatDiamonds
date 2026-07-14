@@ -1,4 +1,4 @@
-import { IsDateString, IsOptional, IsString } from 'class-validator';
+import { IsDateString, IsIn, IsOptional, IsString } from 'class-validator';
 
 export class CreateTaskDto {
   @IsString()
@@ -19,4 +19,37 @@ export class CreateTaskDto {
   @IsOptional()
   @IsString()
   storeId?: string;
+}
+
+export class UpdateTaskStatusDto {
+  @IsIn(['open', 'in_progress', 'done'])
+  status!: string;
+}
+
+export class CreateHandoffDto {
+  @IsOptional()
+  @IsString()
+  storeId?: string;
+
+  @IsString()
+  fromDept!: string;
+
+  @IsString()
+  toDept!: string;
+
+  @IsString()
+  title!: string;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+
+  @IsOptional()
+  @IsString()
+  assignedTo?: string;
+}
+
+export class UpdateHandoffStatusDto {
+  @IsIn(['open', 'accepted', 'done'])
+  status!: string;
 }
