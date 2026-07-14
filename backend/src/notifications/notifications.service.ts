@@ -7,7 +7,7 @@ import { ROLE_RANK } from '../common/role.util';
 
 /** A single actionable-count row surfaced in the notifications bell. */
 interface NotificationItem {
-  type: 'discount' | 'return' | 'leave' | 'reminder';
+  type: 'discount' | 'return' | 'leave' | 'reminder' | 'store_pending';
   label: string;
   count: number;
   href: string;
@@ -87,6 +87,25 @@ export class NotificationsService {
     });
     if (reminder > 0) {
       items.push({ type: 'reminder', label: 'Follow-ups due', count: reminder, href: '/reminders' });
+    }
+
+    // --- Branches awaiting setup (area_manager+; auto-detected pending stores) ---
+    if (rank >= ROLE_RANK.area_manager) {
+      const pending = await this.prisma.store.count({
+        where: {
+          status: 'pending',
+          isAggregate: false,
+          ...(user.allStores ? {} : { id: { in: user.storeIds } }),
+        },
+      });
+      if (pending > 0) {
+        items.push({
+          type: 'store_pending',
+          label: 'Branches to review',
+          count: pending,
+          href: '/settings/stores',
+        });
+      }
     }
 
     const total = items.reduce((sum, i) => sum + i.count, 0);

@@ -1,7 +1,8 @@
 import { Body, Controller, Post } from '@nestjs/common';
 import { Roles } from '../auth/roles.decorator';
+import { CurrentUser, AuthUser } from '../common/auth-user';
 import { SyncService } from './sync.service';
-import { RawSyncDto, SyncBatchDto } from './dto/sync.dto';
+import { RawSyncDto, SyncBatchDto, SyncStoresDto } from './dto/sync.dto';
 
 /**
  * Legacy-sync ingestion (the on-site sync_sjep.py agent's production sink).
@@ -50,6 +51,12 @@ export class SyncController {
   @Post('order-items')
   orderItems(@Body() body: SyncBatchDto) {
     return this.sync.syncOrderItems(body.records);
+  }
+
+  /** Auto-ingest Gati branches: new legacyIds become `pending` stores for HO/AM to set up. */
+  @Post('stores')
+  stores(@CurrentUser() user: AuthUser, @Body() body: SyncStoresDto) {
+    return this.sync.syncStores(user, body.records);
   }
 
   /** Generic full-mirror: ANY legacy table -> LegacyRow (extract-everything-once). */

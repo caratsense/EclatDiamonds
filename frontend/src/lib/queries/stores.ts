@@ -7,22 +7,32 @@ import {
 } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
+import { ROLE_RANK } from "@/lib/types";
+import { useSession } from "@/store/use-session";
 
 /**
- * Store administration (head-office only).
+ * Store administration + lifecycle (area-manager and above).
  *
- * These hooks back the Store Setup page where HO provisions stores and
- * assigns each a store-manager login. Every store the API returns is already
- * a first-class, multi-store-scoped entity — creating one here gives it its
- * own scoped "individual system" via the existing store-switcher + X-Store-Id
- * header. All mutations invalidate ["stores"] so the table stays fresh.
+ * These hooks back the Store Setup page where area managers / HO provision
+ * stores, review pending branches, and move each store through its lifecycle
+ * (pending → active → closed). Every store the API returns is already a
+ * first-class, multi-store-scoped entity — creating one here gives it its own
+ * scoped "individual system" via the existing store-switcher + X-Store-Id
+ * header. All mutations invalidate ["stores"] (and ["stores","pending"]) so
+ * the table stays fresh.
  *
  * Contract (backend):
  *  GET   /stores               → AdminStore[]
- *  POST  /stores               → AdminStore
- *  PATCH /stores/:id           → AdminStore
- *  POST  /stores/:id/manager   → StoreManagerCreated
+ *  GET   /stores/pending       → PendingStore[]   (area_manager+, scoped)
+ *  POST  /stores               → AdminStore        (area_manager+)
+ *  PATCH /stores/:id           → AdminStore        (head_office)
+ *  PATCH /stores/:id/activate  → AdminStore        (area_manager+)
+ *  PATCH /stores/:id/close     → AdminStore        (head_office)
+ *  POST  /stores/:id/manager   → StoreManagerCreated (head_office)
  */
+
+/** Lifecycle state returned on every store. */
+export type StoreStatus = "pending" | "active" | "closed";
 
 export interface StoreManager {
   id: string;
@@ -36,10 +46,30 @@ export interface AdminStore {
   city: string;
   code?: string | null;
   regionId?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  /** Lifecycle state: pending review, live, or soft-closed. */
+  status: StoreStatus;
   isActive: boolean;
   /** true for the synthetic "All Stores" aggregate — not editable. */
   isAggregate: boolean;
   managers: StoreManager[];
+}
+
+/** A pending branch awaiting the details it needs before it can go live. */
+export interface PendingStore {
+  id: string;
+  name: string;
+  city: string;
+  code?: string | null;
+  regionId?: string | null;
+  status: StoreStatus;
+  /** Geofence (lat/lng) still missing — blocks activation. */
+  needsGeo: boolean;
+  /** Region assignment still missing — blocks activation. */
+  needsRegion: boolean;
+  /** No store-manager login yet — does not block activation. */
+  needsManager: boolean;
 }
 
 export interface CreateStoreInput {
@@ -77,12 +107,29 @@ export interface StoreManagerCreated {
   storeId: string;
 }
 
-/** GET /stores — every store with its assigned manager logins (HO view). */
+/** GET /stores — every store with its lifecycle status + manager logins. */
 export function useStoresAdmin() {
   return useQuery({
     queryKey: ["stores"],
     queryFn: async () => {
       const { data } = await api.get<AdminStore[]>("/stores");
+      return data;
+    },
+  });
+}
+
+/**
+ * GET /stores/pending — branches still awaiting geo/region/manager before
+ * they can go live. Scoped by the API to the caller's region; only enabled
+ * for area managers and above (the endpoint 403s below that rank).
+ */
+export function usePendingStores() {
+  const role = useSession((s) => s.role);
+  return useQuery({
+    queryKey: ["stores", "pending"],
+    enabled: ROLE_RANK[role] >= ROLE_RANK.area_manager,
+    queryFn: async () => {
+      const { data } = await api.get<PendingStore[]>("/stores/pending");
       return data;
     },
   });
@@ -98,11 +145,12 @@ export function useCreateStore() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["stores"] });
+      qc.invalidateQueries({ queryKey: ["stores", "pending"] });
     },
   });
 }
 
-/** PATCH /stores/:id — rename, relocate or (de)activate a store. */
+/** PATCH /stores/:id — rename, relocate, set geo/region or (de)activate. */
 export function useUpdateStore() {
   const qc = useQueryClient();
   return useMutation({
@@ -112,6 +160,42 @@ export function useUpdateStore() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["stores"] });
+      qc.invalidateQueries({ queryKey: ["stores", "pending"] });
+    },
+  });
+}
+
+/**
+ * PATCH /stores/:id/activate — flip a pending branch to active.
+ * The server 400s (with a message) if the geofence or region is still
+ * missing, so callers should surface that message and route the user to
+ * set those first.
+ */
+export function useActivateStore() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data } = await api.patch<AdminStore>(`/stores/${id}/activate`);
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["stores"] });
+      qc.invalidateQueries({ queryKey: ["stores", "pending"] });
+    },
+  });
+}
+
+/** PATCH /stores/:id/close — soft-close a branch; its history is preserved. */
+export function useCloseStore() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data } = await api.patch<AdminStore>(`/stores/${id}/close`);
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["stores"] });
+      qc.invalidateQueries({ queryKey: ["stores", "pending"] });
     },
   });
 }

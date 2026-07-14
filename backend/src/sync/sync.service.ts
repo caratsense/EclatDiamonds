@@ -1,6 +1,9 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuthUser } from '../common/auth-user';
+import { AuditService } from '../common/audit.service';
+import { StoreSyncRowDto } from './dto/sync.dto';
 import {
   bool,
   dec,
@@ -40,9 +43,17 @@ export class SyncService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly audit: AuditService,
   ) {}
 
-  /** Single-branch legacy install -> one Eclat store (override via SYNC_DEFAULT_STORE_ID). */
+  /**
+   * Single-branch legacy install -> one Eclat store (override via SYNC_DEFAULT_STORE_ID).
+   * NOTE: the single-defaultStoreId path below is intentionally kept AS-IS so existing
+   * single-branch installs keep working. Multi-store installs will instead stamp each
+   * transaction row's store via `resolveStoreByLegacyId(LocationId)` — the next step is
+   * threading the Gati LocationId onto each synced transaction row so per-row location
+   * stamping can replace this default.
+   */
   private get defaultStoreId(): string {
     return this.config.get<string>('SYNC_DEFAULT_STORE_ID') ?? 'surat-main';
   }
@@ -56,6 +67,77 @@ export class SyncService {
       );
     }
     return id;
+  }
+
+  /**
+   * Map a Gati branch/location legacyId -> Eclat Store id (or null if unmapped).
+   * For future per-row location stamping of transaction rows.
+   */
+  async resolveStoreByLegacyId(legacyId: string | number | null | undefined): Promise<string | null> {
+    if (legacyId == null) return null;
+    const store = await this.prisma.store.findUnique({
+      where: { legacyId: String(legacyId) },
+      select: { id: true },
+    });
+    return store?.id ?? null;
+  }
+
+  // ── Gati branches -> Store (auto-detect new branches) ────────────────────────
+  /**
+   * Upsert Gati branches on `legacyId`. New branches are created `pending`
+   * (isActive=false, no geo/region — HO/AM fills those on activation). Known
+   * branches only refresh name/city/code; their status, geo, region and manager
+   * are never touched, so an activated store can't be reverted by a re-sync.
+   */
+  async syncStores(user: AuthUser, records: StoreSyncRowDto[]) {
+    const created: { id: string; legacyId: string; name: string }[] = [];
+    const updated: { id: string; legacyId: string; name: string }[] = [];
+
+    for (const r of records) {
+      const legacyId = String(r.legacyId);
+      const existing = await this.prisma.store.findUnique({
+        where: { legacyId },
+        select: { id: true },
+      });
+
+      if (existing) {
+        const store = await this.prisma.store.update({
+          where: { legacyId },
+          data: { name: r.name, city: r.city ?? undefined, code: r.code ?? undefined },
+          select: { id: true, name: true },
+        });
+        updated.push({ id: store.id, legacyId, name: store.name });
+      } else {
+        const store = await this.prisma.store.create({
+          data: {
+            legacyId,
+            name: r.name,
+            city: r.city ?? '',
+            code: r.code ?? null,
+            status: 'pending',
+            isActive: false,
+          },
+          select: { id: true, name: true },
+        });
+        created.push({ id: store.id, legacyId, name: store.name });
+        await this.audit.record(user, {
+          action: 'store.auto_detected',
+          entityType: 'store',
+          entityId: store.id,
+          storeId: store.id,
+          summary: `Auto-detected branch ${store.name} from Gati`,
+          metadata: { legacyId, city: r.city ?? null, code: r.code ?? null },
+        });
+      }
+    }
+
+    const pendingCount = await this.prisma.store.count({
+      where: { status: 'pending', isAggregate: false },
+    });
+    this.logger.log(
+      `sync stores: received=${records.length} created=${created.length} updated=${updated.length} pending=${pendingCount}`,
+    );
+    return { created, updated, pendingCount };
   }
 
   // ── PartyMst -> Party ────────────────────────────────────────────────────────

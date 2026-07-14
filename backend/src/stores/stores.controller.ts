@@ -17,11 +17,32 @@ export class StoresController {
     return this.stores.list(user);
   }
 
-  /** POST /stores — provision a new branch (head office only). */
-  @Roles('head_office')
+  /** GET /stores/pending — branches awaiting setup, in the caller's scope (area manager+). */
+  @Roles('area_manager')
+  @Get('pending')
+  pending(@CurrentUser() user: AuthUser) {
+    return this.stores.listPending(user);
+  }
+
+  /** POST /stores — provision a new branch (area manager+; AM limited to their regions). */
+  @Roles('area_manager')
   @Post()
-  create(@Body() dto: CreateStoreDto) {
-    return this.stores.create(dto);
+  create(@CurrentUser() user: AuthUser, @Body() dto: CreateStoreDto) {
+    return this.stores.create(user, dto);
+  }
+
+  /** PATCH /stores/:id/activate — flip a pending branch to active (area manager+, in scope). */
+  @Roles('area_manager')
+  @Patch(':id/activate')
+  activate(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.stores.activate(user, id);
+  }
+
+  /** PATCH /stores/:id/close — soft-close a branch (head office only). */
+  @Roles('head_office')
+  @Patch(':id/close')
+  close(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.stores.close(user, id);
   }
 
   /** PATCH /stores/:id — edit a branch (head office only; aggregate is immutable). */

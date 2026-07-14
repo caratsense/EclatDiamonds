@@ -321,6 +321,9 @@ model Store {
   code        String? @unique
   regionId    String?
   isActive    Boolean @default(true)
+  /// Lifecycle: pending (auto-detected, awaiting HO/AM setup) | active | closed.
+  /// Kept in sync with isActive in code: active => isActive true; pending/closed => false.
+  status      String  @default("active")
   /// true only for the synthetic "All Stores" aggregate the UI shows to broad roles.
   isAggregate Boolean @default(false)
 

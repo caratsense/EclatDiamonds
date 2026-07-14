@@ -273,19 +273,19 @@ export const NAV_GROUPS: NavGroup[] = [
         slug: "settings/stores",
         title: "Store Setup",
         purpose:
-          "Add store branches and assign each a store-manager login.",
+          "Add store branches, review new branches from Gati, and assign logins.",
         primaryAction: "Add Store",
         icon: Store,
-        roles: ["head_office"],
+        roles: ["area_manager", "head_office"],
       },
       {
         module: 6,
         slug: "settings/team",
         title: "Team",
-        purpose: "Manage staff and assign roles.",
+        purpose: "Add staff, assign roles and stores within your scope.",
         primaryAction: "Add Staff",
         icon: UsersRound,
-        roles: ["head_office"],
+        roles: ["store_manager", "area_manager", "head_office"],
       },
       {
         module: 10,

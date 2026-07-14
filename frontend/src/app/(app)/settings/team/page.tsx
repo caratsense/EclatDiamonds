@@ -1,7 +1,19 @@
 "use client";
 
-import { useState } from "react";
-import { KeyRound, Lock, Mail, Phone, UsersRound } from "lucide-react";
+import { useMemo, useState } from "react";
+import {
+  Building2,
+  KeyRound,
+  Lock,
+  Mail,
+  MoreHorizontal,
+  Phone,
+  Shield,
+  Store as StoreIcon,
+  UserCheck,
+  UserMinus,
+  UsersRound,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { SectionHeader } from "@/components/section/section-header";
@@ -15,6 +27,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -36,37 +55,53 @@ import {
 } from "@/components/ui/table";
 import { getNavItem } from "@/lib/navigation";
 import { useResetPassword } from "@/lib/queries/auth";
-import { useStoresAdmin } from "@/lib/queries/stores";
 import {
-  useCreateUser,
-  useUpdateUserRole,
-  useUpdateUserStore,
-  useUsers,
+  useActivateStaff,
+  useCreateStaff,
+  useDeactivateStaff,
+  useStaff,
+  useUnassignedStaff,
+  useUpdateStaffRole,
+  useUpdateStaffStore,
   type StaffRole,
   type StaffUser,
 } from "@/lib/queries/users";
-import { apiErrorMessage } from "@/lib/utils";
+import { ROLE_LABELS, ROLE_RANK, type Role } from "@/lib/types";
+import { apiErrorMessage, cn } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
 const nav = getNavItem("settings/team")!;
 
-/** Roles HO can assign here, in rank order (salesperson is the default). */
-const ROLE_OPTIONS: { value: StaffRole; label: string }[] = [
-  { value: "salesperson", label: "Salesperson" },
-  { value: "store_manager", label: "Store Manager" },
-  { value: "area_manager", label: "Area Manager" },
-];
+/** Roles assignable from this page, in rank order (salesperson is the default). */
+const STAFF_ROLES: StaffRole[] = ["salesperson", "store_manager", "area_manager"];
+
+/**
+ * The roles a given viewer may grant — strictly below their own rank, mirroring
+ * the server rule. store_manager → salesperson; area_manager → +store_manager;
+ * head_office → +area_manager. Keeps the UI from ever offering an illegal role.
+ */
+function assignableRoles(viewer: Role): StaffRole[] {
+  return STAFF_ROLES.filter((r) => ROLE_RANK[r] < ROLE_RANK[viewer]);
+}
+
+function roleBadge(role: StaffRole) {
+  return <Badge variant="secondary">{ROLE_LABELS[role]}</Badge>;
+}
 
 export default function TeamPage() {
-  const role = useSession((s) => s.role);
+  const viewerRole = useSession((s) => s.role);
   const [addOpen, setAddOpen] = useState(false);
-  const [resetUser, setResetUser] = useState<StaffUser | null>(null);
 
-  const { data: users = [], isLoading, isError, refetch } = useUsers();
+  const {
+    data: staff = [],
+    isLoading,
+    isError,
+    refetch,
+  } = useStaff();
 
-  // Head-office only. Nav hides this for other roles; guard the page too so a
-  // direct URL / a demo role switch can't reach the staff controls.
-  if (role !== "head_office") {
+  // store_manager and above. Nav hides this for salespeople; guard the page too
+  // so a direct URL / a demo role switch can't reach the staff controls.
+  if (ROLE_RANK[viewerRole] < ROLE_RANK.store_manager) {
     return (
       <>
         <SectionHeader title={nav.title} purpose={nav.purpose} />
@@ -74,17 +109,16 @@ export default function TeamPage() {
           <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-muted">
             <Lock className="h-5 w-5 text-muted-foreground" />
           </div>
-          <p className="text-sm font-medium">Head Office only</p>
+          <p className="text-sm font-medium">Managers only</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Staff and role assignment are managed by Head Office. Switch to the
-            Head Office view to continue.
+            Staff and role assignment are managed by store managers and above.
           </p>
         </div>
       </>
     );
   }
 
-  const activeCount = users.filter((u) => u.isActive).length;
+  const activeCount = staff.filter((u) => u.isActive).length;
 
   return (
     <>
@@ -98,8 +132,8 @@ export default function TeamPage() {
       <p className="mb-4 text-sm text-muted-foreground">
         {isLoading
           ? "Loading team…"
-          : `${users.length} ${
-              users.length === 1 ? "person" : "people"
+          : `${staff.length} ${
+              staff.length === 1 ? "person" : "people"
             } · ${activeCount} active`}
       </p>
 
@@ -124,7 +158,7 @@ export default function TeamPage() {
             Retry
           </Button>
         </div>
-      ) : users.length === 0 ? (
+      ) : staff.length === 0 ? (
         <EmptyState
           icon={UsersRound}
           title="No staff yet"
@@ -139,17 +173,19 @@ export default function TeamPage() {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Contact</TableHead>
-                <TableHead className="w-[190px]">Role</TableHead>
-                <TableHead className="w-[220px]">Primary store</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead className="w-[150px]">Role</TableHead>
+                <TableHead className="w-[220px]">Stores</TableHead>
+                <TableHead className="w-[110px]">Status</TableHead>
+                <TableHead className="w-[64px] text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {users.map((user) => (
+              {staff.map((user) => (
                 <UserRow
                   key={user.id}
                   user={user}
-                  onReset={() => setResetUser(user)}
+                  viewerRole={viewerRole}
+                  roster={staff}
                 />
               ))}
             </TableBody>
@@ -157,72 +193,60 @@ export default function TeamPage() {
         </div>
       )}
 
-      <AddStaffDialog open={addOpen} onOpenChange={setAddOpen} />
-      <ResetPasswordDialog
-        user={resetUser}
-        onOpenChange={(open) => !open && setResetUser(null)}
+      <PendingAssignment viewerRole={viewerRole} />
+
+      <AddStaffDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        viewerRole={viewerRole}
       />
     </>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* Row — role + store selects live here so each is self-contained     */
+/* Roster row + its action dialogs                                    */
 /* ------------------------------------------------------------------ */
 
 function UserRow({
   user,
-  onReset,
+  viewerRole,
+  roster,
 }: {
   user: StaffUser;
-  onReset: () => void;
+  viewerRole: Role;
+  roster: StaffUser[];
 }) {
-  const updateRole = useUpdateUserRole();
-  const updateStore = useUpdateUserStore();
-  const { data: stores = [] } = useStoresAdmin();
+  const [dialog, setDialog] = useState<
+    "role" | "store" | "deactivate" | "reset" | null
+  >(null);
 
-  // The synthetic "All Stores" aggregate is a view, not an assignable branch.
-  const assignable = stores.filter((s) => !s.isAggregate);
-  const primaryStoreId = user.stores[0]?.id ?? "";
+  const activate = useActivateStaff();
 
-  const rolePending =
-    updateRole.isPending && updateRole.variables?.id === user.id;
-  const storePending =
-    updateStore.isPending && updateStore.variables?.id === user.id;
+  // Never act on a peer or a superior — hide every action in that case.
+  const canManage = ROLE_RANK[user.role] < ROLE_RANK[viewerRole];
+  const canRoleOrStore = ROLE_RANK[viewerRole] >= ROLE_RANK.area_manager;
+  const canDeactivate = ROLE_RANK[viewerRole] >= ROLE_RANK.store_manager;
 
-  function changeRole(role: StaffRole) {
-    if (role === user.role) return;
-    updateRole.mutate(
-      { id: user.id, role },
+  function reactivate() {
+    activate.mutate(
+      { id: user.id },
       {
-        onSuccess: () => toast.success("Role updated"),
+        onSuccess: () => toast.success(`${user.name} reactivated`),
         onError: (err) =>
-          toast.error(apiErrorMessage(err, "Could not update the role.")),
+          toast.error(apiErrorMessage(err, "Could not reactivate this member.")),
       },
     );
   }
 
-  function changeStore(storeId: string) {
-    if (storeId === primaryStoreId) return;
-    updateStore.mutate(
-      { id: user.id, storeId },
-      {
-        onSuccess: () => toast.success("Primary store updated"),
-        onError: (err) =>
-          toast.error(apiErrorMessage(err, "Could not reassign the store.")),
-      },
-    );
-  }
+  const hasAnyAction =
+    canManage &&
+    (canRoleOrStore || canDeactivate);
 
   return (
-    <TableRow>
+    <TableRow className={cn(!user.isActive && "opacity-70")}>
       <TableCell>
-        <div className="flex items-center gap-2">
-          <span className="font-medium">{user.name}</span>
-          {!user.isActive ? (
-            <Badge variant="secondary">Inactive</Badge>
-          ) : null}
-        </div>
+        <span className="font-medium">{user.name}</span>
       </TableCell>
       <TableCell>
         <div className="space-y-0.5 leading-tight">
@@ -243,37 +267,253 @@ function UserRow({
           ) : null}
         </div>
       </TableCell>
+      <TableCell>{roleBadge(user.role)}</TableCell>
       <TableCell>
-        <Select
-          value={user.role}
-          onValueChange={(v) => changeRole(v as StaffRole)}
-          disabled={rolePending}
-        >
-          <SelectTrigger aria-label={`Role for ${user.name}`}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {ROLE_OPTIONS.map((opt) => (
-              <SelectItem key={opt.value} value={opt.value}>
-                {opt.label}
-              </SelectItem>
+        {user.stores.length ? (
+          <div className="flex flex-wrap gap-1">
+            {user.stores.map((s) => (
+              <Badge key={s.id} variant="outline" className="font-normal">
+                {s.name}
+              </Badge>
             ))}
-          </SelectContent>
-        </Select>
+          </div>
+        ) : (
+          <span className="text-xs text-muted-foreground">Unassigned</span>
+        )}
       </TableCell>
       <TableCell>
-        {assignable.length === 0 ? (
-          <span className="text-xs text-muted-foreground">
-            {user.stores[0]?.name ?? "—"}
-          </span>
+        {user.isActive ? (
+          <Badge variant="outline" className="border-emerald-600/30 text-emerald-700">
+            Active
+          </Badge>
         ) : (
-          <Select
-            value={primaryStoreId || undefined}
-            onValueChange={changeStore}
-            disabled={storePending}
-          >
-            <SelectTrigger aria-label={`Primary store for ${user.name}`}>
-              <SelectValue placeholder="Assign store" />
+          <Badge variant="secondary">Inactive</Badge>
+        )}
+      </TableCell>
+      <TableCell className="text-right">
+        {!hasAnyAction ? (
+          <span className="text-xs text-muted-foreground">—</span>
+        ) : (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                aria-label={`Actions for ${user.name}`}
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              {canRoleOrStore ? (
+                <>
+                  <DropdownMenuItem onSelect={() => setDialog("role")}>
+                    <Shield className="h-4 w-4" /> Change role
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setDialog("store")}>
+                    <StoreIcon className="h-4 w-4" /> Reassign store
+                  </DropdownMenuItem>
+                </>
+              ) : null}
+              <DropdownMenuItem onSelect={() => setDialog("reset")}>
+                <KeyRound className="h-4 w-4" /> Reset password
+              </DropdownMenuItem>
+              {canDeactivate ? (
+                <>
+                  <DropdownMenuSeparator />
+                  {user.isActive ? (
+                    <DropdownMenuItem
+                      className="text-destructive focus:text-destructive"
+                      onSelect={() => setDialog("deactivate")}
+                    >
+                      <UserMinus className="h-4 w-4" /> Deactivate
+                    </DropdownMenuItem>
+                  ) : (
+                    <DropdownMenuItem
+                      onSelect={reactivate}
+                      disabled={activate.isPending}
+                    >
+                      <UserCheck className="h-4 w-4" /> Reactivate
+                    </DropdownMenuItem>
+                  )}
+                </>
+              ) : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </TableCell>
+
+      <ChangeRoleDialog
+        user={user}
+        viewerRole={viewerRole}
+        open={dialog === "role"}
+        onOpenChange={(o) => setDialog(o ? "role" : null)}
+      />
+      <ReassignStoreDialog
+        user={user}
+        open={dialog === "store"}
+        onOpenChange={(o) => setDialog(o ? "store" : null)}
+      />
+      <DeactivateDialog
+        user={user}
+        roster={roster}
+        open={dialog === "deactivate"}
+        onOpenChange={(o) => setDialog(o ? "deactivate" : null)}
+      />
+      <ResetPasswordDialog
+        user={dialog === "reset" ? user : null}
+        onOpenChange={(o) => setDialog(o ? "reset" : null)}
+      />
+    </TableRow>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Change role                                                        */
+/* ------------------------------------------------------------------ */
+
+function ChangeRoleDialog({
+  user,
+  viewerRole,
+  open,
+  onOpenChange,
+}: {
+  user: StaffUser;
+  viewerRole: Role;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const updateRole = useUpdateStaffRole();
+  const options = assignableRoles(viewerRole);
+  const [role, setRole] = useState<StaffRole>(user.role);
+
+  function save() {
+    if (role === user.role) {
+      onOpenChange(false);
+      return;
+    }
+    updateRole.mutate(
+      { id: user.id, role },
+      {
+        onSuccess: () => {
+          toast.success(`${user.name} is now ${ROLE_LABELS[role]}`);
+          onOpenChange(false);
+        },
+        onError: (err) =>
+          toast.error(apiErrorMessage(err, "Could not update the role.")),
+      },
+    );
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (o) setRole(user.role);
+        onOpenChange(o);
+      }}
+    >
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Change role</DialogTitle>
+          <DialogDescription>
+            Set the role for {user.name}. You can only grant roles below your
+            own.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-1.5">
+          <Label htmlFor="change-role">Role</Label>
+          <Select value={role} onValueChange={(v) => setRole(v as StaffRole)}>
+            <SelectTrigger id="change-role">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {options.map((r) => (
+                <SelectItem key={r} value={r}>
+                  {ROLE_LABELS[r]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={updateRole.isPending}>
+            {updateRole.isPending ? "Saving…" : "Save role"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Reassign store                                                     */
+/* ------------------------------------------------------------------ */
+
+function ReassignStoreDialog({
+  user,
+  open,
+  onOpenChange,
+}: {
+  user: StaffUser;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const updateStore = useUpdateStaffStore();
+  const stores = useSession((s) => s.stores);
+  const assignable = useMemo(
+    () => stores.filter((s) => !s.isAggregate),
+    [stores],
+  );
+  const primaryStoreId = user.stores[0]?.id ?? "";
+  const [storeId, setStoreId] = useState(primaryStoreId);
+
+  function save() {
+    if (!storeId) {
+      toast.error("Select a store.");
+      return;
+    }
+    if (storeId === primaryStoreId) {
+      onOpenChange(false);
+      return;
+    }
+    updateStore.mutate(
+      { id: user.id, storeId },
+      {
+        onSuccess: () => {
+          toast.success("Store reassigned");
+          onOpenChange(false);
+        },
+        onError: (err) =>
+          toast.error(apiErrorMessage(err, "Could not reassign the store.")),
+      },
+    );
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (o) setStoreId(primaryStoreId);
+        onOpenChange(o);
+      }}
+    >
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Reassign store</DialogTitle>
+          <DialogDescription>
+            Move {user.name} to another store within your scope.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-1.5">
+          <Label htmlFor="reassign-store">Store</Label>
+          <Select value={storeId || undefined} onValueChange={setStoreId}>
+            <SelectTrigger id="reassign-store">
+              <SelectValue placeholder="Select a store" />
             </SelectTrigger>
             <SelectContent>
               {assignable.map((store) => (
@@ -283,19 +523,228 @@ function UserRow({
               ))}
             </SelectContent>
           </Select>
-        )}
-      </TableCell>
-      <TableCell className="text-right">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 px-2 text-xs"
-          onClick={onReset}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={updateStore.isPending}>
+            {updateStore.isPending ? "Saving…" : "Reassign"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Deactivate (with lead / walk-in hand-off)                          */
+/* ------------------------------------------------------------------ */
+
+const NO_HANDOFF = "__none__";
+
+function DeactivateDialog({
+  user,
+  roster,
+  open,
+  onOpenChange,
+}: {
+  user: StaffUser;
+  roster: StaffUser[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const deactivate = useDeactivateStaff();
+  const [reassignToId, setReassignToId] = useState<string>(NO_HANDOFF);
+
+  const leaverStoreId = user.stores[0]?.id;
+  // Other active staff in the same store are eligible to inherit the workload.
+  const candidates = useMemo(
+    () =>
+      roster.filter(
+        (u) =>
+          u.id !== user.id &&
+          u.isActive &&
+          leaverStoreId != null &&
+          u.stores.some((s) => s.id === leaverStoreId),
+      ),
+    [roster, user.id, leaverStoreId],
+  );
+
+  function confirm() {
+    deactivate.mutate(
+      {
+        id: user.id,
+        reassignToId:
+          reassignToId === NO_HANDOFF ? undefined : reassignToId,
+      },
+      {
+        onSuccess: () => {
+          toast.success(`${user.name} deactivated`);
+          onOpenChange(false);
+        },
+        onError: (err) =>
+          toast.error(apiErrorMessage(err, "Could not deactivate this member.")),
+      },
+    );
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (o) setReassignToId(NO_HANDOFF);
+        onOpenChange(o);
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Deactivate {user.name}?</DialogTitle>
+          <DialogDescription>
+            They will lose access immediately. Any open leads and walk-ins they
+            own can be handed off to another team member so nothing is dropped.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-1.5">
+          <Label htmlFor="handoff">Hand off their leads &amp; walk-ins to</Label>
+          <Select value={reassignToId} onValueChange={setReassignToId}>
+            <SelectTrigger id="handoff">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_HANDOFF}>
+                No hand-off (leave unassigned)
+              </SelectItem>
+              {candidates.map((c) => (
+                <SelectItem key={c.id} value={c.id}>
+                  {c.name} · {ROLE_LABELS[c.role]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {candidates.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              No other active staff in this store to hand off to.
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Their open leads and customers will move to this person.
+            </p>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={confirm}
+            disabled={deactivate.isPending}
+          >
+            {deactivate.isPending ? "Deactivating…" : "Deactivate"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Pending assignment — users with no store link yet                  */
+/* ------------------------------------------------------------------ */
+
+function PendingAssignment({ viewerRole }: { viewerRole: Role }) {
+  const { data: pending = [], isLoading } = useUnassignedStaff();
+
+  if (isLoading || pending.length === 0) return null;
+
+  return (
+    <div className="mt-8">
+      <div className="mb-3 flex items-center gap-2">
+        <Building2 className="h-4 w-4 text-muted-foreground" />
+        <h2 className="text-sm font-semibold">Pending assignment</h2>
+        <Badge variant="secondary">{pending.length}</Badge>
+      </div>
+      <p className="mb-3 text-xs text-muted-foreground">
+        These accounts are set up but not yet linked to a store. Assign each to a
+        store so they can start working.
+      </p>
+      <div className="rounded-xl border divide-y">
+        {pending.map((user) => (
+          <PendingRow key={user.id} user={user} viewerRole={viewerRole} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PendingRow({
+  user,
+  viewerRole,
+}: {
+  user: StaffUser;
+  viewerRole: Role;
+}) {
+  const updateStore = useUpdateStaffStore();
+  const stores = useSession((s) => s.stores);
+  const assignable = useMemo(
+    () => stores.filter((s) => !s.isAggregate),
+    [stores],
+  );
+  const [storeId, setStoreId] = useState("");
+
+  function assign(next: string) {
+    setStoreId(next);
+    updateStore.mutate(
+      { id: user.id, storeId: next },
+      {
+        onSuccess: () => toast.success(`${user.name} assigned`),
+        onError: (err) => {
+          setStoreId("");
+          toast.error(apiErrorMessage(err, "Could not assign the store."));
+        },
+      },
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="font-medium">{user.name}</span>
+          {roleBadge(user.role)}
+        </div>
+        <div className="mt-0.5 text-xs text-muted-foreground">
+          {user.phone ? <span className="num">{user.phone}</span> : null}
+          {user.phone && user.email ? " · " : null}
+          {user.email ? <span>{user.email}</span> : null}
+          {!user.phone && !user.email ? "No contact on file" : null}
+        </div>
+      </div>
+      <div className="w-full sm:w-64">
+        <Select
+          value={storeId || undefined}
+          onValueChange={assign}
+          disabled={updateStore.isPending}
         >
-          <KeyRound className="h-3.5 w-3.5" /> Reset password
-        </Button>
-      </TableCell>
-    </TableRow>
+          <SelectTrigger aria-label={`Assign ${user.name} to a store`}>
+            <SelectValue placeholder="Assign to store" />
+          </SelectTrigger>
+          <SelectContent>
+            {assignable.map((store) => (
+              <SelectItem key={store.id} value={store.id}>
+                {store.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {ROLE_RANK[viewerRole] < ROLE_RANK.area_manager ? (
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Store assignment may require an area manager.
+          </p>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -308,13 +757,22 @@ const PHONE_RE = /^\d{10}$/;
 function AddStaffDialog({
   open,
   onOpenChange,
+  viewerRole,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  viewerRole: Role;
 }) {
-  const createUser = useCreateUser();
-  const { data: stores = [] } = useStoresAdmin();
-  const assignable = stores.filter((s) => !s.isAggregate);
+  const createStaff = useCreateStaff();
+  const stores = useSession((s) => s.stores);
+  const assignable = useMemo(
+    () => stores.filter((s) => !s.isAggregate),
+    [stores],
+  );
+  const roleOptions = useMemo(
+    () => assignableRoles(viewerRole),
+    [viewerRole],
+  );
 
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -356,7 +814,7 @@ function AddStaffDialog({
       return;
     }
 
-    createUser.mutate(
+    createStaff.mutate(
       {
         name: name.trim(),
         storeId,
@@ -473,21 +931,27 @@ function AddStaffDialog({
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="staff-role">Role</Label>
-              <Select
-                value={role}
-                onValueChange={(v) => setRole(v as StaffRole)}
-              >
-                <SelectTrigger id="staff-role">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {ROLE_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {roleOptions.length <= 1 ? (
+                <div className="flex h-9 items-center rounded-md border bg-muted/40 px-3 text-sm text-muted-foreground">
+                  {ROLE_LABELS[roleOptions[0] ?? "salesperson"]}
+                </div>
+              ) : (
+                <Select
+                  value={role}
+                  onValueChange={(v) => setRole(v as StaffRole)}
+                >
+                  <SelectTrigger id="staff-role">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {roleOptions.map((r) => (
+                      <SelectItem key={r} value={r}>
+                        {ROLE_LABELS[r]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
           </div>
         </div>
@@ -495,8 +959,8 @@ function AddStaffDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={save} disabled={createUser.isPending}>
-            {createUser.isPending ? "Adding…" : "Add staff"}
+          <Button onClick={save} disabled={createStaff.isPending}>
+            {createStaff.isPending ? "Adding…" : "Add staff"}
           </Button>
         </DialogFooter>
       </DialogContent>

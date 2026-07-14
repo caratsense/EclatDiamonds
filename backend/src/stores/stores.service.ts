@@ -1,12 +1,15 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
+import { StoreScopeService } from '../common/store-scope.service';
+import { AuditService } from '../common/audit.service';
 import {
   CreateManagerDto,
   CreateRegionDto,
@@ -46,7 +49,11 @@ function slugify(input: string): string {
 
 @Injectable()
 export class StoresService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly scope: StoreScopeService,
+    private readonly audit: AuditService,
+  ) {}
 
   /** Public admin/list shape — enriched with assigned store-manager(s). */
   private toView(store: any) {
@@ -59,6 +66,7 @@ export class StoresService {
       city: store.city,
       code: store.code ?? null,
       regionId: store.regionId ?? null,
+      status: store.status,
       isActive: store.isActive,
       isAggregate: store.isAggregate,
       managers,
@@ -79,8 +87,14 @@ export class StoresService {
     return stores.map((s) => this.toView(s));
   }
 
-  /** POST /stores (head office) — provision a new branch. */
-  async create(dto: CreateStoreDto) {
+  /**
+   * POST /stores (area_manager+) — provision a new branch. head_office is
+   * unrestricted; an area_manager may only create in a region they manage.
+   * Manually-created stores are deliberately set up, so start active.
+   */
+  async create(user: AuthUser, dto: CreateStoreDto) {
+    await this.assertCanCreateInRegion(user, dto.regionId);
+
     let slug: string;
     if (dto.code && dto.code.trim()) {
       slug = slugify(dto.code);
@@ -95,6 +109,12 @@ export class StoresService {
 
     await this.assertRegion(dto.regionId);
 
+    // A store may only go live with geofence coords + a region set — the same
+    // invariant activate() enforces. If the creator supplied everything it's
+    // active immediately; otherwise it lands pending until activated (no live
+    // store can exist without a geofence).
+    const hasGeo = dto.latitude != null && dto.longitude != null;
+    const ready = hasGeo && !!dto.regionId;
     const store = await this.prisma.store.create({
       data: {
         id: slug,
@@ -102,13 +122,131 @@ export class StoresService {
         name: dto.name,
         city: dto.city,
         regionId: dto.regionId || null,
-        isActive: true,
+        status: ready ? 'active' : 'pending',
+        isActive: ready,
         latitude: dto.latitude != null ? String(dto.latitude) : null,
         longitude: dto.longitude != null ? String(dto.longitude) : null,
       },
       include: STORE_INCLUDE,
     });
+    await this.audit.record(user, {
+      action: 'store.create',
+      entityType: 'store',
+      entityId: store.id,
+      storeId: store.id,
+      summary: `Created branch ${store.name}`,
+      metadata: { city: store.city, regionId: store.regionId ?? null },
+    });
     return this.toView(store);
+  }
+
+  /**
+   * PATCH /stores/:id/activate (area_manager+, in scope) — flip a pending branch
+   * to active. Geofence coordinates and a region MUST be set first (attendance
+   * geofencing and area rollups depend on them).
+   */
+  async activate(user: AuthUser, id: string) {
+    const store = await this.prisma.store.findUnique({ where: { id } });
+    if (!store) throw new NotFoundException('Store not found');
+    if (store.isAggregate) {
+      throw new BadRequestException('The aggregate "All Stores" view cannot be activated');
+    }
+    this.scope.assertStoreAllowed(user, store.id);
+
+    const missing: string[] = [];
+    if (store.latitude == null || store.longitude == null) missing.push('geofence coordinates');
+    if (!store.regionId) missing.push('region');
+    if (missing.length) {
+      throw new BadRequestException(`Cannot activate: set ${missing.join(' and ')} first`);
+    }
+
+    const updated = await this.prisma.store.update({
+      where: { id },
+      data: { status: 'active', isActive: true },
+      include: STORE_INCLUDE,
+    });
+    await this.audit.record(user, {
+      action: 'store.activate',
+      entityType: 'store',
+      entityId: updated.id,
+      storeId: updated.id,
+      summary: `Activated branch ${updated.name}`,
+    });
+    return this.toView(updated);
+  }
+
+  /**
+   * PATCH /stores/:id/close (head office) — soft-close a branch. Never deletes:
+   * status=closed, isActive=false so history and scoping stay intact.
+   */
+  async close(user: AuthUser, id: string) {
+    const store = await this.prisma.store.findUnique({ where: { id } });
+    if (!store) throw new NotFoundException('Store not found');
+    if (store.isAggregate) {
+      throw new BadRequestException('The aggregate "All Stores" view cannot be closed');
+    }
+
+    const updated = await this.prisma.store.update({
+      where: { id },
+      data: { status: 'closed', isActive: false },
+      include: STORE_INCLUDE,
+    });
+    await this.audit.record(user, {
+      action: 'store.close',
+      entityType: 'store',
+      entityId: updated.id,
+      storeId: updated.id,
+      summary: `Closed branch ${updated.name}`,
+    });
+    return this.toView(updated);
+  }
+
+  /**
+   * GET /stores/pending (area_manager+, store-scoped) — branches awaiting setup
+   * (typically Gati auto-detected), newest first, each flagged with what's still
+   * missing before it can be activated.
+   */
+  async listPending(user: AuthUser) {
+    const stores = await this.prisma.store.findMany({
+      where: {
+        status: 'pending',
+        isAggregate: false,
+        ...(user.allStores ? {} : { id: { in: user.storeIds } }),
+      },
+      orderBy: { createdAt: 'desc' },
+      include: STORE_INCLUDE,
+    });
+    return stores.map((s) => {
+      const view = this.toView(s);
+      return {
+        ...view,
+        needsGeo: s.latitude == null || s.longitude == null,
+        needsRegion: !s.regionId,
+        needsManager: view.managers.length === 0,
+      };
+    });
+  }
+
+  /**
+   * An area_manager may only create a branch in a region they manage. Region
+   * membership is derived from scope: the target region must already contain at
+   * least one store in the AM's effective scope. head_office is unrestricted.
+   */
+  private async assertCanCreateInRegion(
+    user: AuthUser,
+    regionId?: string | null,
+  ): Promise<void> {
+    if (user.allStores) return; // head_office: unrestricted
+    if (!regionId) {
+      throw new ForbiddenException('Select a region you manage for the new branch');
+    }
+    const inRegion = await this.prisma.store.findFirst({
+      where: { regionId, id: { in: user.storeIds } },
+      select: { id: true },
+    });
+    if (!inRegion) {
+      throw new ForbiddenException('You can only create a branch in a region you manage');
+    }
   }
 
   /** PATCH /stores/:id (head office) — edit a branch. Aggregate stores are immutable. */

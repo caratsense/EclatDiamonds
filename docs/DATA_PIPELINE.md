@@ -51,6 +51,7 @@ CLIENT OFFICE PC (where SJE Plus + SQL Server run)
 
 | Extractor | Legacy source | Watermark | Rows (restored copy) |
 |---|---|---|---|
+| `push_stores` | `PartyMst` where `IsLocation`/`IsFactory` | none — full idempotent pull each run | branch/location rows |
 | `extract_parties` | `PartyMst` | `UpdateDate`/`EntryDate` | 564 |
 | `extract_items` | `StyleMst` + `StyleMstSummary` + `ToneMst` | `UpdateDate`/`EntryDate` | 753 |
 | `extract_stock` | `Inward` + `InwardSummary` + `ToneMst` | `UpdateDate`/`EntryDate` | 2,690 |
@@ -61,6 +62,8 @@ CLIENT OFFICE PC (where SJE Plus + SQL Server run)
 | `extract_payments` | `Journal` (day-book) | `EntryDate`/identity `Id` | 475 |
 
 The watermark predicate is `UpdateDate > @since OR (UpdateDate IS NULL AND EntryDate > @since)`, with `@since=''` meaning full backfill. Each extractor returns clean `list[dict]` records.
+
+**Store/branch ingestion (`push_stores`) — added.** Runs FIRST in each per-target cycle (before parties/stock/sales) so a new branch created in the client's Gati exists in Eclat before its transactions arrive. It pulls `PartyMst` rows flagged as a location/branch (`IsLocation`/`IsFactory`), maps each to `{legacyId, name, city?, code?}`, and POSTs `{records:[…]}` to `POST /sync/stores` (head_office / sync-token gated, same auth as the other `/sync/*` pushes). The backend upserts on `legacyId`: new stores land **pending** (awaiting HO/AM activation), existing ones refresh name/city/code. No watermark — the catalog is tiny and pulled in full every run; fully idempotent; non-fatal (a failure logs and the cycle continues). **`# LIVE-DB:`** the branch-detection predicate (which `PartyMst` flag marks a sellable branch vs an internal factory/godown) and the source column names must be confirmed against the client's live schema before first run. Per-row `LocationId → storeId` stamping on transaction rows remains the NEXT step; today transactions still ride the single backend `defaultStoreId`.
 
 **Production sink correction:** the original skeleton POSTed Excel to `/upload/excel` — that route **does not exist** in the Eclat NestJS backend. The module header in `sync_sjep.py` now documents the real target: either (a) a per-entity bulk-upsert **Eclat REST API** route keyed on `legacyId`, or (b) a **direct Postgres load** (same upsert-on-`legacyId` logic as the backfill below). The `/upload/excel` code is retained only as a reference shape and is **not** wired in.
 

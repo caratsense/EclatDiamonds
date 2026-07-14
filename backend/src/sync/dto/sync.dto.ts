@@ -1,4 +1,12 @@
-import { ArrayMaxSize, IsArray, IsString } from 'class-validator';
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsOptional,
+  IsString,
+  MinLength,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
 
 /**
  * One bulk-upsert batch from the on-site sync agent. `records` holds raw legacy
@@ -10,6 +18,38 @@ export class SyncBatchDto {
   @IsArray()
   @ArrayMaxSize(5000)
   records!: Record<string, unknown>[];
+}
+
+/** One Gati branch/location row → upserted into Store on `legacyId`. */
+export class StoreSyncRowDto {
+  @IsString()
+  @MinLength(1)
+  legacyId!: string;
+
+  @IsString()
+  @MinLength(1)
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  city?: string;
+
+  @IsOptional()
+  @IsString()
+  code?: string;
+}
+
+/**
+ * POST /sync/stores — auto-ingest Gati branches. New legacyIds are created as
+ * `pending` (HO/AM fills geo+region on activation); known ones only refresh
+ * name/city/code. Idempotent.
+ */
+export class SyncStoresDto {
+  @IsArray()
+  @ArrayMaxSize(5000)
+  @ValidateNested({ each: true })
+  @Type(() => StoreSyncRowDto)
+  records!: StoreSyncRowDto[];
 }
 
 /**

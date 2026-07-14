@@ -352,6 +352,103 @@ def push_chunked(token, base_url, entity, records, label="sync"):
     return all_ok, watermark
 
 
+def push_stores(cursor, token, base_url):
+    """Push the store/branch CATALOG to POST /sync/stores so a new branch created in
+    the client's Gati (APRS-SJEP) flows into Eclat automatically: new legacyIds land
+    as *pending* stores (awaiting HO/AM activation), existing ones just refresh
+    name/city/code. Idempotent + safe to re-run — the backend upserts keyed on
+    legacyId, same head_office / sync-token auth as the other /sync/* pushes.
+
+    A branch/location in the legacy schema is a PartyMst row flagged as a
+    location/factory (docs/legacy-schema.md role bits: IsLocation / IsFactory).
+    Unlike the transaction extractors this runs its OWN full pull every cycle (no
+    watermark): the store catalog is tiny and must be COMPLETE each run so a branch
+    is never missed. Non-fatal by contract — callers wrap in try/except and continue.
+    """
+    cols = table_columns(cursor, "PartyMst")
+    if not cols:
+        log.warning(f"  [{base_url}] stores: PartyMst not found — skipping")
+        return
+
+    # LIVE-DB: BRANCH-DETECTION PREDICATE — CONFIRM BEFORE FIRST RUN.
+    # The schema notes model a store/branch as a PartyMst row with a location flag
+    # (role bits IsLocation / IsFactory). Confirm on the CLIENT'S LIVE install which
+    # flag actually marks a sellable branch vs an internal factory/godown — some
+    # APRS-SJEP versions set only IsLocation, some also set IsFactory, and the flag
+    # column names can differ by version. Best-effort: match whichever of these
+    # flags exists; if NEITHER exists we bail rather than mass-import every party as
+    # a store. (Also consider excluding cancelled/inactive rows if the live schema
+    # carries an IsActive/IsBlackList flag on locations.)
+    flag_preds = []
+    if "islocation" in cols:
+        flag_preds.append("t.IsLocation = 1")
+    if "isfactory" in cols:
+        flag_preds.append("t.IsFactory = 1")
+    if not flag_preds:
+        log.warning(f"  [{base_url}] stores: no IsLocation/IsFactory flag on PartyMst — "
+                    f"cannot detect branches; skipping (# LIVE-DB: confirm branch flag)")
+        return
+
+    # LIVE-DB: SOURCE COLUMN NAMES — CONFIRM BEFORE FIRST RUN.
+    # PartyNo (varchar PK) -> legacyId; FirmName -> name; FirmCity -> city;
+    # PartyCode -> code. Confirm these are the right columns on the live schema.
+    # We SELECT only columns that actually exist so a version missing PartyCode /
+    # FirmCity never errors (schema-defensive, same as the other extractors).
+    pk_col   = cols.get("partyno")
+    name_col = cols.get("firmname") or cols.get("legalname")
+    city_col = cols.get("firmcity")
+    code_col = cols.get("partycode")
+    if not pk_col or not name_col:
+        log.warning(f"  [{base_url}] stores: PartyMst missing PartyNo/FirmName — skipping")
+        return
+
+    sel = [f"t.{pk_col} AS legacyId", f"t.{name_col} AS name"]
+    if city_col:
+        sel.append(f"t.{city_col} AS city")
+    if code_col:
+        sel.append(f"t.{code_col} AS code")
+    where = " OR ".join(flag_preds)
+    # Best-effort query (READ-ONLY). Marked columns/predicate above pending confirmation.
+    cursor.execute(f"SELECT {', '.join(sel)} FROM PartyMst t WHERE {where}")
+    raw = rows(cursor)
+
+    # Map each location row to the /sync/stores contract: {legacyId, name, city?, code?}
+    records = []
+    for r in raw:
+        lid = r.get("legacyId")
+        if lid is None or str(lid).strip() == "":
+            continue
+        rec = {"legacyId": str(lid).strip(), "name": str(r.get("name") or "").strip()}
+        if r.get("city") is not None and str(r.get("city")).strip():
+            rec["city"] = str(r.get("city")).strip()
+        if r.get("code") is not None and str(r.get("code")).strip():
+            rec["code"] = str(r.get("code")).strip()
+        records.append(rec)
+
+    if not records:
+        log.info(f"  [{base_url}] stores: no branch/location rows matched")
+        return
+
+    url  = f"{base_url}/sync/stores"
+    hdrs = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    try:
+        payload = json.dumps({"records": records}, default=_json_default)
+        log.info(f"  [{base_url}] pushing stores: {len(records)} branch/location rows...")
+        r = requests.post(url, headers=hdrs, data=payload, timeout=120)
+        if 200 <= r.status_code < 300:
+            try:
+                resp = r.json() if isinstance(r.json(), dict) else {}
+            except Exception:
+                resp = {}
+            created = resp.get("created", resp.get("createdCount", "?"))
+            updated = resp.get("updated", resp.get("updatedCount", "?"))
+            log.info(f"  [{base_url}] stores: created={created} updated={updated} (sent {len(records)})")
+        else:
+            log.error(f"  [{base_url}] stores: FAILED {r.status_code}: {r.text[:200]}")
+    except Exception as e:
+        log.error(f"  [{base_url}] stores: error: {e}")
+
+
 def run_test():
     """Verify backend login + SQL Server connect BEFORE scheduling."""
     log.info("=" * 50); log.info("CONNECTION TEST"); ok = True
@@ -487,6 +584,20 @@ def sync_once():
                 continue
             since = state.get(base_url, "")
             log.info(f"  [{base_url}] since: {since or '(full backfill)'}")
+
+            # STORE CATALOG FIRST — a new branch created in the client's Gati must
+            # exist in Eclat BEFORE the parties/stock/sales that reference it sync.
+            # Non-fatal: a store-push failure logs and continues (same reliability
+            # posture as the full mirror below). No watermark — full idempotent
+            # upsert every run.
+            # NEXT STEP (not this change): per-row location -> store stamping. Today
+            # transaction rows still ride the single backend defaultStoreId; once the
+            # branch-detection predicate above is confirmed against the live schema,
+            # stamp each party/stock/sale row with its LocationId -> Eclat storeId.
+            try:
+                push_stores(cursor, token, base_url)
+            except Exception as e:
+                log.error(f"  [{base_url}] stores push error: {e}")
 
             parties = extract_parties(cursor, since)
             items   = extract_items(cursor, since)

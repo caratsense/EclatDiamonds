@@ -42,3 +42,14 @@ export class UpdateUserStoreDto {
   @IsString()
   storeId!: string;
 }
+
+/**
+ * PATCH /users/:id/deactivate — offboard a user, optionally handing off their
+ * open work (owned leads + check-ins) to another active in-scope user.
+ */
+export class DeactivateUserDto {
+  /** If given, the deactivated user's open leads/check-ins are reassigned here. */
+  @IsOptional()
+  @IsString()
+  reassignToId?: string;
+}
