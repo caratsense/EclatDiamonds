@@ -27,6 +27,10 @@ const displayFace = Cormorant_Garamond({
   subsets: ["latin"],
   display: "swap",
   weight: ["500", "600", "700"],
+  // Load the true italic cut too — the landing sets the display serif in italic
+  // ("one place."), and without this the browser fakes a skewed oblique that
+  // looks broken on a serif face.
+  style: ["normal", "italic"],
 });
 
 const mono = IBM_Plex_Mono({
