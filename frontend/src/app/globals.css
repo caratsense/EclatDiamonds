@@ -322,6 +322,105 @@ body {
   }
 }
 
+/* ─────────────────────────────────────────────────────────────────────────
+   LANDING PAGE — scoped premium theme (deep emerald + champagne gold).
+   Everything here lives under `.landing` so it NEVER touches the global
+   :root / .dark porcelain palette the operational app runs on. All tokens
+   are prefixed `--l-` and are only defined on the wrapper.
+   ───────────────────────────────────────────────────────────────────────── */
+.landing {
+  /* landing-only palette */
+  --l-bg: #071e16;
+  --l-surface: #0c261c;
+  --l-hairline: #1b3a2c;
+  --l-gold: #c8a24f;
+  --l-gold-dark: #b8903c;
+  --l-ivory: #f6f3ed;
+  --l-ivory-70: rgba(246, 243, 237, 0.72);
+  --l-ivory-55: rgba(246, 243, 237, 0.55);
+
+  background-color: var(--l-bg);
+  color: var(--l-ivory);
+  overflow-x: clip; /* body must never scroll horizontally */
+}
+
+/* Deep-emerald gradient shared by hero + dark sections. */
+.landing-gradient {
+  background:
+    radial-gradient(900px 520px at 82% -6%, color-mix(in srgb, var(--l-gold) 16%, transparent), transparent 60%),
+    linear-gradient(180deg, #082c20 0%, #031a13 100%);
+}
+
+/* Soft radial gold glow that sits behind the dashboard preview. */
+.landing-glow::before {
+  content: "";
+  position: absolute;
+  inset: -14% -10% auto auto;
+  width: 62%;
+  height: 78%;
+  border-radius: 9999px;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--l-gold) 30%, transparent), transparent 72%);
+  filter: blur(26px);
+  opacity: 0.6;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Gold hairline pill / champagne accents. */
+.landing-pill {
+  border: 1px solid color-mix(in srgb, var(--l-gold) 42%, transparent);
+  background: color-mix(in srgb, var(--l-gold) 8%, transparent);
+  color: var(--l-ivory);
+}
+
+/* Nav links — 14px / 500 / no uppercase / muted ivory → gold on hover. */
+.landing-nav-link {
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--l-ivory-70);
+  transition: color 0.18s ease;
+}
+.landing-nav-link:hover {
+  color: var(--l-gold);
+}
+
+/* Card surfaces on emerald. */
+.landing-card {
+  background: var(--l-surface);
+  border: 1px solid var(--l-hairline);
+}
+
+/* The dashboard preview — perspective/tilt + deep shadow + gold hairline. */
+.dash-3d {
+  transform: perspective(1900px) rotateY(-11deg) rotateX(4deg) rotate(0.4deg);
+  transform-origin: center left;
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.3),
+    0 40px 80px -28px rgba(0, 0, 0, 0.65),
+    0 0 0 1px color-mix(in srgb, var(--l-gold) 22%, transparent);
+  transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.dash-3d:hover {
+  transform: perspective(1900px) rotateY(-7deg) rotateX(2deg);
+}
+/* On narrower viewports, flatten the tilt so nothing clips or overflows. */
+@media (max-width: 1023px) {
+  .dash-3d,
+  .dash-3d:hover {
+    transform: none;
+    box-shadow:
+      0 24px 60px -24px rgba(0, 0, 0, 0.6),
+      0 0 0 1px color-mix(in srgb, var(--l-gold) 20%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dash-3d,
+  .dash-3d:hover {
+    transition: none;
+  }
+}
+
 /*
  * Print helper — used by the referral wallet's "Print / Save PDF" action.
  * Hides the whole app and lays out only the `.print-wallet` section so the
