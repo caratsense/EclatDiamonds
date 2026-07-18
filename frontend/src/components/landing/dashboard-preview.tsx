@@ -201,10 +201,14 @@ export function DashboardPreview() {
         </div>
       </div>
 
-      {/* ── floating stat cards for depth (hidden on small to avoid clipping) ─ */}
+      {/* ── floating stat cards for depth ───────────────────────────────
+          Positioned to hang off the OUTER edges (top-right, bottom-left,
+          bottom-right) so they never cover the mini-sidebar labels or the
+          top-store revenue figures. Decorative + non-interactive; hidden
+          under lg to avoid clipping on small screens. */}
       <div
         aria-hidden
-        className="pointer-events-none absolute -left-4 top-[34%] z-20 hidden rounded-xl border border-[var(--l-hairline)] bg-[color-mix(in_srgb,#000_28%,var(--l-surface))] px-3 py-2 shadow-[0_16px_40px_-14px_rgba(0,0,0,0.7)] backdrop-blur-sm lg:block">
+        className="pointer-events-none absolute -right-6 top-[11%] z-20 hidden rounded-xl border border-[var(--l-hairline)] bg-[color-mix(in_srgb,#000_30%,var(--l-surface))] px-3 py-2 shadow-[0_16px_40px_-14px_rgba(0,0,0,0.7)] backdrop-blur-sm xl:block">
         <div className="text-[9px] uppercase tracking-wide text-[var(--l-ivory-55)]">
           Pending Orders
         </div>
@@ -213,7 +217,7 @@ export function DashboardPreview() {
 
       <div
         aria-hidden
-        className="pointer-events-none absolute -left-2 bottom-[8%] z-20 hidden rounded-xl border border-[color-mix(in_srgb,#e0a857_40%,transparent)] bg-[color-mix(in_srgb,#000_28%,var(--l-surface))] px-3 py-2 shadow-[0_16px_40px_-14px_rgba(0,0,0,0.7)] backdrop-blur-sm lg:block">
+        className="pointer-events-none absolute -left-5 -bottom-4 z-20 hidden rounded-xl border border-[color-mix(in_srgb,#e0a857_40%,transparent)] bg-[color-mix(in_srgb,#000_30%,var(--l-surface))] px-3 py-2 shadow-[0_16px_40px_-14px_rgba(0,0,0,0.7)] backdrop-blur-sm lg:block">
         <div className="text-[9px] uppercase tracking-wide text-[#e0a857]">
           Low Stock Alerts
         </div>
@@ -222,7 +226,7 @@ export function DashboardPreview() {
 
       <div
         aria-hidden
-        className="pointer-events-none absolute -right-3 bottom-[16%] z-20 hidden rounded-xl border border-[var(--l-hairline)] bg-[color-mix(in_srgb,#000_28%,var(--l-surface))] px-3 py-2 shadow-[0_16px_40px_-14px_rgba(0,0,0,0.7)] backdrop-blur-sm lg:block">
+        className="pointer-events-none absolute -right-5 -bottom-5 z-20 hidden rounded-xl border border-[var(--l-hairline)] bg-[color-mix(in_srgb,#000_30%,var(--l-surface))] px-3 py-2 shadow-[0_16px_40px_-14px_rgba(0,0,0,0.7)] backdrop-blur-sm lg:block">
         <div className="text-[9px] uppercase tracking-wide text-[var(--l-ivory-55)]">
           Today&apos;s Appointments
         </div>
