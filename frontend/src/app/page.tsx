@@ -1,29 +1,46 @@
 import Link from "next/link";
 import {
   ArrowRight,
-  Boxes,
+  BarChart3,
   Banknote,
+  Boxes,
+  Building2,
+  Clock,
   Fingerprint,
+  Footprints,
+  HandCoins,
   Layers,
+  LayoutDashboard,
   LockKeyhole,
+  MapPin,
+  MapPinned,
+  Megaphone,
+  Percent,
   PiggyBank,
+  ReceiptText,
+  RefreshCcw,
   ScanSearch,
+  ScrollText,
   ShieldCheck,
   Sparkles,
   Store,
+  Ticket,
+  UserRound,
   Users,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/brand/logo";
 import { DashboardPreview } from "@/components/landing/dashboard-preview";
+import { CrmPreview } from "@/components/landing/crm-preview";
+import { InventoryPreview } from "@/components/landing/inventory-preview";
+import { FinancePreview } from "@/components/landing/finance-preview";
 
 const NAV_LINKS = [
-  { label: "Platform", href: "#features", caret: true },
-  { label: "Modules", href: "#features", caret: false },
-  { label: "Security", href: "#security", caret: false },
-  { label: "Resources", href: "#features", caret: true },
-  { label: "Company", href: "#company", caret: false },
+  { label: "Platform", href: "#platform" },
+  { label: "Modules", href: "#modules" },
+  { label: "Security", href: "#security" },
+  { label: "Company", href: "#company" },
 ];
 
 const CHIPS = [
@@ -67,10 +84,143 @@ const FEATURES = [
   },
 ];
 
+const PLATFORM_PREVIEWS = [
+  {
+    Preview: CrmPreview,
+    eyebrow: "CRM & pipeline",
+    title: "From first enquiry to closed order.",
+    body: "Every walk-in, call and WhatsApp lands on one board. Watch each lead move from inquiry to quotation to order — nothing slips between the counters.",
+  },
+  {
+    Preview: InventoryPreview,
+    eyebrow: "Inventory & aging",
+    title: "Know what's moving — and what isn't.",
+    body: "Live stock across every branch, with aging bands and dead-stock flags surfaced automatically, so capital never quietly sits in a display case.",
+  },
+  {
+    Preview: FinancePreview,
+    eyebrow: "Finance & DSR",
+    title: "The day's numbers, every evening.",
+    body: "A daily sales report that writes itself — gross sales, collections, new orders and target progress, ready before you pull the shutters down.",
+  },
+];
+
+const ROLES = [
+  {
+    icon: UserRound,
+    title: "Salesperson",
+    summary: "Their counter, their customers.",
+    points: [
+      "Own leads & customers",
+      "Build quotes in seconds",
+      "Geo check-in & personal targets",
+    ],
+  },
+  {
+    icon: Store,
+    title: "Store Manager",
+    summary: "The whole store at a glance.",
+    points: [
+      "Store dashboard & approvals",
+      "Team & attendance",
+      "Add & manage salespeople",
+    ],
+  },
+  {
+    icon: MapPinned,
+    title: "Area Manager",
+    summary: "Every store in the region.",
+    points: [
+      "Multi-store comparison",
+      "Provision store managers",
+      "Regional finance & DSR",
+    ],
+  },
+  {
+    icon: Building2,
+    title: "Head Office",
+    summary: "One view of the business.",
+    points: [
+      "Every store, every metric",
+      "Roles, policy & discount caps",
+      "Full audit trail",
+    ],
+  },
+];
+
+const MODULES = [
+  { icon: Users, name: "CRM & Leads" },
+  { icon: ReceiptText, name: "Quotation & Pricing" },
+  { icon: LayoutDashboard, name: "Departmental Dashboards" },
+  { icon: Banknote, name: "Finance & Fund Planning" },
+  { icon: ScanSearch, name: "Catalogue & AI Search" },
+  { icon: Fingerprint, name: "HRMS & Geo-Attendance" },
+  { icon: Footprints, name: "Check-ins & Footfall" },
+  { icon: Clock, name: "Timelines & Status" },
+  { icon: Boxes, name: "Inventory & Stock" },
+  { icon: BarChart3, name: "Reporting & DSR" },
+  { icon: Building2, name: "New-Store Setup" },
+  { icon: HandCoins, name: "Payment Collection" },
+  { icon: Ticket, name: "Ticketing" },
+  { icon: RefreshCcw, name: "Returns & Exchange" },
+  { icon: Percent, name: "Discounts" },
+  { icon: Megaphone, name: "Marketing" },
+  { icon: PiggyBank, name: "Loyalty & Gold Scheme" },
+];
+
+const SECURITY = [
+  {
+    icon: LockKeyhole,
+    title: "Role-based access",
+    body: "Each tier sees only its own scope — from a salesperson's counter up to head office.",
+  },
+  {
+    icon: ScrollText,
+    title: "Complete audit trail",
+    body: "Every approval, edit and override is recorded and attributable to a person.",
+  },
+  {
+    icon: ShieldCheck,
+    title: "Store-scoped isolation",
+    body: "Data stays partitioned by store — no branch ever sees another's books.",
+  },
+  {
+    icon: MapPin,
+    title: "Geo-verified attendance",
+    body: "Check-ins are validated against the store's real location, not just a tap.",
+  },
+];
+
 const STATS = [
   { value: "17", label: "Operational modules" },
   { value: "4", label: "Role tiers, store-scoped" },
   { value: "1", label: "Platform for every counter" },
+];
+
+const FOOTER_COLUMNS = [
+  {
+    heading: "Platform",
+    links: [
+      { label: "Overview", href: "#platform" },
+      { label: "Modules", href: "#modules" },
+      { label: "Security", href: "#security" },
+    ],
+  },
+  {
+    heading: "Company",
+    links: [
+      { label: "About", href: "#platform" },
+      { label: "Contact", href: "mailto:tech@caratsense.in" },
+      { label: "Sign in", href: "/login" },
+    ],
+  },
+  {
+    heading: "Legal",
+    links: [
+      { label: "Privacy", href: "#" },
+      { label: "Terms", href: "#" },
+    ],
+  },
 ];
 
 export default function LandingPage() {
@@ -87,7 +237,6 @@ export default function LandingPage() {
               {NAV_LINKS.map((l) => (
                 <a key={l.label} href={l.href} className="landing-nav-link">
                   {l.label}
-                  {l.caret ? <span className="ml-1 text-[10px]">▾</span> : null}
                 </a>
               ))}
             </nav>
@@ -138,7 +287,7 @@ export default function LandingPage() {
                 size="lg"
                 className="border border-[color-mix(in_srgb,var(--l-ivory)_28%,transparent)] bg-transparent text-[var(--l-ivory)] hover:bg-[color-mix(in_srgb,var(--l-ivory)_8%,transparent)]"
               >
-                <a href="#features">
+                <a href="#platform">
                   Explore the platform <ArrowRight className="h-4 w-4" />
                 </a>
               </Button>
@@ -171,16 +320,101 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── Features ────────────────────────────────────────────────── */}
-      <section
-        id="features"
-        className="bg-[var(--l-bg)] scroll-mt-20"
-      >
+      {/* ── Platform — see it in action ─────────────────────────────── */}
+      <section id="platform" className="scroll-mt-24 bg-[var(--l-bg)]">
         <div className="mx-auto w-full max-w-6xl px-5 py-24 sm:px-8">
           <div className="max-w-2xl">
-            <p className="text-[12px] font-medium uppercase tracking-[0.18em] text-[var(--l-gold)]">
-              One platform, every counter
+            <p className="landing-eyebrow">See it in action</p>
+            <h2 className="mt-3 font-display text-4xl font-semibold tracking-[-0.02em] text-[var(--l-ivory)] sm:text-[2.75rem]">
+              A platform you can actually see the shop floor in.
+            </h2>
+            <p className="mt-4 text-[17px] leading-[1.7] text-[var(--l-ivory-70)]">
+              Not another dashboard of charts nobody reads. Real workflows —
+              the pipeline, the stock room and the day-book — in one calm,
+              connected place.
             </p>
+          </div>
+
+          <div className="mt-16 space-y-20 lg:space-y-24">
+            {PLATFORM_PREVIEWS.map(({ Preview, eyebrow, title, body }, i) => {
+              const textFirst = i % 2 === 1;
+              return (
+                <div
+                  key={eyebrow}
+                  className="grid items-center gap-10 lg:grid-cols-2 lg:gap-16"
+                >
+                  {/* copy */}
+                  <div className={textFirst ? "lg:order-2" : "lg:order-1"}>
+                    <p className="landing-eyebrow">{eyebrow}</p>
+                    <h3 className="mt-3 max-w-md font-display text-[1.9rem] font-semibold leading-[1.15] tracking-[-0.02em] text-[var(--l-ivory)]">
+                      {title}
+                    </h3>
+                    <p className="mt-4 max-w-md text-[16px] leading-[1.7] text-[var(--l-ivory-70)]">
+                      {body}
+                    </p>
+                  </div>
+                  {/* preview */}
+                  <div className={textFirst ? "lg:order-1" : "lg:order-2"}>
+                    <Preview />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Roles — built for every level ───────────────────────────── */}
+      <section className="landing-gradient scroll-mt-24">
+        <div className="mx-auto w-full max-w-6xl px-5 py-24 sm:px-8">
+          <div className="max-w-2xl">
+            <p className="landing-eyebrow">Built for every level</p>
+            <h2 className="mt-3 font-display text-4xl font-semibold tracking-[-0.02em] text-[var(--l-ivory)] sm:text-[2.75rem]">
+              The same screen, tailored to who's looking.
+            </h2>
+            <p className="mt-4 text-[17px] leading-[1.7] text-[var(--l-ivory-70)]">
+              Access follows the hierarchy — each role sees exactly its own
+              scope, and nothing it shouldn't.
+            </p>
+          </div>
+
+          <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+            {ROLES.map((r) => {
+              const Icon = r.icon;
+              return (
+                <div key={r.title} className="landing-card rounded-2xl p-6">
+                  <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[color-mix(in_srgb,var(--l-gold)_14%,transparent)] text-[var(--l-gold)]">
+                    <Icon className="h-5 w-5" />
+                  </span>
+                  <h3 className="mt-4 font-display text-xl font-semibold text-[var(--l-ivory)]">
+                    {r.title}
+                  </h3>
+                  <p className="mt-1 text-[13px] leading-[1.6] text-[var(--l-ivory-55)]">
+                    {r.summary}
+                  </p>
+                  <ul className="mt-4 space-y-2">
+                    {r.points.map((p) => (
+                      <li
+                        key={p}
+                        className="flex items-start gap-2 text-[13.5px] leading-[1.5] text-[var(--l-ivory-70)]"
+                      >
+                        <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-[var(--l-gold)]" />
+                        {p}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Features ────────────────────────────────────────────────── */}
+      <section id="features" className="scroll-mt-24 bg-[var(--l-bg)]">
+        <div className="mx-auto w-full max-w-6xl px-5 py-24 sm:px-8">
+          <div className="max-w-2xl">
+            <p className="landing-eyebrow">One platform, every counter</p>
             <h2 className="mt-3 font-display text-4xl font-semibold tracking-[-0.02em] text-[var(--l-ivory)] sm:text-[2.75rem]">
               The whole business, quietly in order.
             </h2>
@@ -215,8 +449,80 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* ── Modules — all 17 ────────────────────────────────────────── */}
+      <section id="modules" className="landing-gradient scroll-mt-24">
+        <div className="mx-auto w-full max-w-6xl px-5 py-24 sm:px-8">
+          <div className="max-w-2xl">
+            <p className="landing-eyebrow">Everything, in one system</p>
+            <h2 className="mt-3 font-display text-4xl font-semibold tracking-[-0.02em] text-[var(--l-ivory)] sm:text-[2.75rem]">
+              Seventeen modules, one source of truth.
+            </h2>
+            <p className="mt-4 text-[17px] leading-[1.7] text-[var(--l-ivory-70)]">
+              From the shop floor to the back office — sales, people, inventory
+              and finance, all speaking the same language.
+            </p>
+          </div>
+
+          <div className="mt-12 grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-[var(--l-hairline)] bg-[var(--l-hairline)] sm:grid-cols-3 lg:grid-cols-4">
+            {MODULES.map(({ icon: Icon, name }) => (
+              <div
+                key={name}
+                className="flex items-center gap-3 bg-[var(--l-surface)] px-4 py-4 transition-colors hover:bg-[color-mix(in_srgb,var(--l-gold)_7%,var(--l-surface))]"
+              >
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[color-mix(in_srgb,var(--l-gold)_14%,transparent)] text-[var(--l-gold)]">
+                  <Icon className="h-[18px] w-[18px]" />
+                </span>
+                <span className="text-[13.5px] font-medium leading-tight text-[var(--l-ivory)]">
+                  {name}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Security ────────────────────────────────────────────────── */}
+      <section id="security" className="scroll-mt-24 bg-[var(--l-bg)]">
+        <div className="mx-auto w-full max-w-6xl px-5 py-24 sm:px-8">
+          <div className="grid gap-12 lg:grid-cols-[minmax(0,380px)_1fr] lg:gap-16">
+            <div>
+              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[color-mix(in_srgb,var(--l-gold)_14%,transparent)] text-[var(--l-gold)]">
+                <ShieldCheck className="h-5 w-5" />
+              </span>
+              <p className="landing-eyebrow mt-6">Secure by design</p>
+              <h2 className="mt-3 font-display text-4xl font-semibold tracking-[-0.02em] text-[var(--l-ivory)] sm:text-[2.75rem]">
+                Trust, built into the structure.
+              </h2>
+              <p className="mt-4 max-w-md text-[17px] leading-[1.7] text-[var(--l-ivory-70)]">
+                Multi-store retail runs on accountability. Access, records and
+                data isolation are part of the foundation — not an afterthought.
+              </p>
+            </div>
+
+            <div className="grid gap-5 sm:grid-cols-2">
+              {SECURITY.map((s) => {
+                const Icon = s.icon;
+                return (
+                  <div key={s.title} className="landing-card rounded-2xl p-6">
+                    <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-[color-mix(in_srgb,var(--l-gold)_14%,transparent)] text-[var(--l-gold)]">
+                      <Icon className="h-[18px] w-[18px]" />
+                    </span>
+                    <h3 className="mt-4 font-display text-lg font-semibold text-[var(--l-ivory)]">
+                      {s.title}
+                    </h3>
+                    <p className="mt-2 text-[13.5px] leading-[1.65] text-[var(--l-ivory-70)]">
+                      {s.body}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* ── Stats band ──────────────────────────────────────────────── */}
-      <section id="security" className="landing-gradient scroll-mt-20">
+      <section className="landing-gradient">
         <div className="mx-auto grid w-full max-w-6xl gap-8 px-5 py-16 sm:grid-cols-3 sm:px-8">
           {STATS.map((s) => (
             <div key={s.label} className="text-center">
@@ -232,10 +538,7 @@ export default function LandingPage() {
       </section>
 
       {/* ── Closing CTA ─────────────────────────────────────────────── */}
-      <section
-        id="company"
-        className="bg-[var(--l-bg)] scroll-mt-20"
-      >
+      <section className="bg-[var(--l-bg)]">
         <div className="mx-auto w-full max-w-6xl px-5 py-24 text-center sm:px-8">
           <Store className="mx-auto h-7 w-7 text-[var(--l-gold)]" />
           <h2 className="mt-5 font-display text-4xl font-semibold tracking-[-0.02em] text-[var(--l-ivory)]">
@@ -259,13 +562,56 @@ export default function LandingPage() {
       </section>
 
       {/* ── Footer ──────────────────────────────────────────────────── */}
-      <footer className="border-t border-[var(--l-hairline)] bg-[var(--l-bg)]">
-        <div className="mx-auto flex w-full max-w-6xl flex-col items-center justify-between gap-3 px-5 py-8 text-sm text-[var(--l-ivory-55)] sm:flex-row sm:px-8">
-          <span className="flex items-center gap-2.5">
-            <Logo className="h-6 w-auto" />
-            <span>· CaratSense</span>
-          </span>
-          <span>© 2026 Éclat Diamonds. All rights reserved.</span>
+      <footer
+        id="company"
+        className="scroll-mt-24 border-t border-[var(--l-hairline)] bg-[var(--l-bg)]"
+      >
+        <div className="mx-auto w-full max-w-6xl px-5 py-16 sm:px-8">
+          <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-[1.5fr_1fr_1fr_1fr]">
+            {/* brand blurb */}
+            <div className="max-w-xs">
+              <Logo className="h-7 w-auto" />
+              <p className="mt-4 text-[14px] leading-[1.7] text-[var(--l-ivory-70)]">
+                Éclat Diamonds operations, unified — CaratSense.
+              </p>
+            </div>
+
+            {/* link columns */}
+            {FOOTER_COLUMNS.map((col) => (
+              <div key={col.heading}>
+                <h4 className="text-[12px] font-medium uppercase tracking-[0.16em] text-[var(--l-ivory-55)]">
+                  {col.heading}
+                </h4>
+                <ul className="mt-4 space-y-2.5">
+                  {col.links.map((link) => {
+                    const isInternal = link.href.startsWith("/");
+                    const cls =
+                      "text-[14px] text-[var(--l-ivory-70)] transition-colors hover:text-[var(--l-gold)]";
+                    return (
+                      <li key={link.label}>
+                        {isInternal ? (
+                          <Link href={link.href} className={cls}>
+                            {link.label}
+                          </Link>
+                        ) : (
+                          <a href={link.href} className={cls}>
+                            {link.label}
+                          </a>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-12 flex flex-col items-center justify-between gap-3 border-t border-[var(--l-hairline)] pt-6 text-[13px] text-[var(--l-ivory-55)] sm:flex-row">
+            <span>© 2026 Éclat Diamonds. All rights reserved.</span>
+            <span className="flex items-center gap-2">
+              CaratSense · Built for the counter
+            </span>
+          </div>
         </div>
       </footer>
     </div>

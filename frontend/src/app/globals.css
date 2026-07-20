@@ -342,6 +342,21 @@ body {
   background-color: var(--l-bg);
   color: var(--l-ivory);
   overflow-x: clip; /* body must never scroll horizontally */
+  scroll-behavior: smooth; /* nav anchor links glide, not jump */
+}
+@media (prefers-reduced-motion: reduce) {
+  .landing {
+    scroll-behavior: auto;
+  }
+}
+
+/* Section eyebrow — small uppercase gold kicker above section headings. */
+.landing-eyebrow {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--l-gold);
 }
 
 /* Deep-emerald gradient shared by hero + dark sections. */
