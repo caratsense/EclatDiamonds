@@ -98,18 +98,21 @@ export default function LoginPage() {
     );
   }
 
-  function onGoogle(credential: string) {
-    googleLogin.mutate(credential, {
-      onSuccess: finishLogin,
-      onError: (err) => {
-        const status = (err as AxiosError)?.response?.status;
-        toast.error(
-          status === 401
-            ? "No Éclat account for this Google email."
-            : "Google sign-in failed.",
-        );
+  function onGoogle(credential: string, nonce: string) {
+    googleLogin.mutate(
+      { credential, nonce },
+      {
+        onSuccess: finishLogin,
+        onError: (err) => {
+          const status = (err as AxiosError)?.response?.status;
+          toast.error(
+            status === 401
+              ? "No Éclat account for this Google email."
+              : "Google sign-in failed.",
+          );
+        },
       },
-    });
+    );
   }
 
   // Already authenticated? Skip the form.

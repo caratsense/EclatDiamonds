@@ -12,9 +12,11 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { randomInt } from 'crypto';
+import { OAuth2Client, type TokenPayload } from 'google-auth-library';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuthUser } from '../common/auth-user';
+import { AuditService } from '../common/audit.service';
 import { ROLE_RANK } from '../common/role.util';
 import { WhatsAppService } from '../integrations/whatsapp.service';
 
@@ -23,6 +25,9 @@ const OTP_TTL_MS = 5 * 60 * 1000; // code valid 5 minutes
 const OTP_RESEND_COOLDOWN_MS = 60 * 1000; // min gap between requests per phone
 const OTP_MAX_PER_HOUR = 5; // max requests per phone per hour
 const OTP_MAX_ATTEMPTS = 3; // wrong-code tries before the code is dead
+
+/** Google's only valid `iss` values for an ID token. */
+const GOOGLE_ISSUERS = ['accounts.google.com', 'https://accounts.google.com'];
 
 /** Public shape of a store as the frontend expects it. */
 function storeView(s: { id: string; name: string; city: string; isAggregate: boolean }) {
@@ -33,49 +38,123 @@ function storeView(s: { id: string; name: string; city: string; isAggregate: boo
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
 
+  /** Lazily-built Google verifier — caches Google's JWKS across requests. */
+  private googleClient?: OAuth2Client;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly scope: StoreScopeService,
     private readonly config: ConfigService,
     private readonly whatsapp: WhatsAppService,
+    private readonly audit: AuditService,
   ) {}
 
   /**
-   * POST /auth/google — sign in with a Google ID token (from Google Identity
-   * Services on the frontend). We verify the token with Google, then match an
-   * EXISTING active user by email — we never auto-create accounts (an internal
-   * ops tool: the admin provisions users; Google just authenticates them).
-   * Code-complete behind GOOGLE_CLIENT_ID; returns 400 until it's configured.
+   * Verify the ID token locally against Google's JWKS (the library caches the keys
+   * and handles rotation), so login doesn't depend on a call out to Google.
+   * Checks signature/aud/exp; `iss` we assert ourselves.
    */
-  async loginWithGoogle(credential: string) {
-    const clientId = this.config.get<string>('GOOGLE_CLIENT_ID');
-    if (!clientId) throw new BadRequestException('Google sign-in is not configured');
+  private async verifyGoogleToken(credential: string, clientId: string): Promise<TokenPayload> {
+    if (!this.googleClient) this.googleClient = new OAuth2Client(clientId);
 
-    let payload: any;
+    let payload: TokenPayload | undefined;
     try {
-      const res = await fetch(
-        `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`,
-      );
-      if (!res.ok) throw new Error(`tokeninfo ${res.status}`);
-      payload = await res.json();
-    } catch {
+      const ticket = await this.googleClient.verifyIdToken({
+        idToken: credential,
+        audience: clientId,
+      });
+      payload = ticket.getPayload();
+    } catch (err) {
+      this.logger.warn(`Google ID-token verification failed: ${(err as Error)?.message ?? err}`);
       throw new UnauthorizedException('Could not verify Google sign-in');
     }
 
-    const audOk = payload.aud === clientId;
-    const emailVerified = payload.email_verified === true || payload.email_verified === 'true';
-    const email = String(payload.email ?? '').toLowerCase();
-    if (!audOk || !emailVerified || !email) {
+    if (!payload) throw new UnauthorizedException('Could not verify Google sign-in');
+    if (!GOOGLE_ISSUERS.includes(payload.iss)) {
+      throw new UnauthorizedException('Invalid Google sign-in');
+    }
+    return payload;
+  }
+
+  /**
+   * Restrict sign-in to Workspace domains, e.g. GOOGLE_ALLOWED_DOMAINS="caratsense.in".
+   * Skipped while empty — personal Gmail tokens have no `hd` claim, so this only
+   * becomes useful once the OAuth client lives in a Workspace project.
+   */
+  private assertAllowedDomain(payload: TokenPayload) {
+    const raw = this.config.get<string>('GOOGLE_ALLOWED_DOMAINS')?.trim();
+    if (!raw) return;
+
+    const allowed = raw
+      .split(',')
+      .map((d) => d.trim().toLowerCase())
+      .filter(Boolean);
+    if (!allowed.length) return;
+
+    const hd = String(payload.hd ?? '').toLowerCase();
+    if (!hd || !allowed.includes(hd)) {
+      throw new UnauthorizedException('This Google account is not permitted to sign in');
+    }
+  }
+
+  /**
+   * POST /auth/google — sign in with a Google ID token.
+   *
+   * Matches on Google's `sub`, not the email: emails get recycled to new hires and
+   * we'd otherwise hand them the previous owner's role and store scope. Email is
+   * only used once, to link an already-provisioned account on first sign-in.
+   *
+   * Never creates users and never touches role/UserStore — that stays in
+   * UsersService. Returns 400 until GOOGLE_CLIENT_ID is set.
+   */
+  async loginWithGoogle(credential: string, nonce?: string) {
+    const clientId = this.config.get<string>('GOOGLE_CLIENT_ID');
+    if (!clientId) throw new BadRequestException('Google sign-in is not configured');
+
+    const payload = await this.verifyGoogleToken(credential, clientId);
+
+    // Replay guard. Optional so an older frontend build still works.
+    if (nonce && payload.nonce !== nonce) {
       throw new UnauthorizedException('Invalid Google sign-in');
     }
 
-    const user = await this.prisma.user.findUnique({ where: { email } });
-    if (!user || !user.isActive) {
-      throw new UnauthorizedException(
-        'No CaratSense account for this Google email — ask an admin to add you.',
-      );
+    if (payload.email_verified !== true) {
+      throw new UnauthorizedException('Invalid Google sign-in');
     }
+    this.assertAllowedDomain(payload);
+
+    const sub = payload.sub;
+    const email = String(payload.email ?? '').toLowerCase();
+    if (!sub || !email) throw new UnauthorizedException('Invalid Google sign-in');
+
+    // One message for every failure below, so we don't leak which emails exist.
+    const rejected = new UnauthorizedException(
+      'No CaratSense account for this Google email — ask an admin to add you.',
+    );
+
+    let user = await this.prisma.user.findUnique({ where: { googleSub: sub } });
+    let linked = false;
+
+    if (!user) {
+      // First sign-in — link this account to the sub.
+      const byEmail = await this.prisma.user.findUnique({ where: { email } });
+      if (!byEmail || !byEmail.isActive) throw rejected;
+
+      if (byEmail.googleSub && byEmail.googleSub !== sub) {
+        // Address was recycled or is being impersonated — needs a manager to sort out.
+        this.logger.warn(`Google sub mismatch for ${email}`);
+        throw rejected;
+      }
+
+      user = await this.prisma.user.update({
+        where: { id: byEmail.id },
+        data: { googleSub: sub },
+      });
+      linked = true;
+    }
+
+    if (!user.isActive) throw rejected;
 
     const token = await this.jwt.signAsync({
       sub: user.id,
@@ -84,6 +163,31 @@ export class AuthService {
       role: user.role,
     });
     const session = await this.buildSession(user.id, user.role);
+
+    const actor: AuthUser = {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      storeIds: session.stores.filter((s) => !s.isAggregate).map((s) => s.id),
+      allStores: user.role === 'head_office',
+    };
+    if (linked) {
+      await this.audit.record(actor, {
+        action: 'user.google_link',
+        entityType: 'User',
+        entityId: user.id,
+        summary: `Linked Google account to ${user.email}`,
+        metadata: { email },
+      });
+    }
+    await this.audit.record(actor, {
+      action: 'user.google_login',
+      entityType: 'User',
+      entityId: user.id,
+      summary: `${user.name} signed in with Google`,
+    });
+
     return { token, ...session };
   }
 

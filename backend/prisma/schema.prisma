@@ -384,6 +384,10 @@ model User {
   /// Primary role. Cross-store scope is derived from UserStore rows + role rank.
   role Role @default(salesperson)
 
+  /// Google's `sub`, set on first Google sign-in. Matched on instead of email
+  /// because emails get recycled. Null for OTP/password-only users.
+  googleSub String? @unique
+
   // Optional link to the party/staff master row.
   partyId String? @unique
 
