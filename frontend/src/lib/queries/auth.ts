@@ -46,14 +46,15 @@ export function useLogin() {
 
 /**
  * useGoogleLogin — exchanges a Google ID-token credential for an Eclat JWT,
- * persists it, then hydrates the session via /auth/me (mirrors useLogin). The
- * backend matches an existing user by Google email.
+ * persists it, then hydrates the session via /auth/me (mirrors useLogin).
+ * `nonce` is the value handed to GIS, echoed back for the backend to verify.
  */
 export function useGoogleLogin() {
   return useMutation({
-    mutationFn: async (credential: string) => {
+    mutationFn: async (input: { credential: string; nonce?: string }) => {
       const { data } = await api.post<{ token: string }>("/auth/google", {
-        credential,
+        credential: input.credential,
+        ...(input.nonce ? { nonce: input.nonce } : {}),
       });
       setStoredToken(data.token);
       const me = await fetchMe();

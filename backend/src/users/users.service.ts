@@ -377,7 +377,8 @@ export class UsersService {
 
     const user = await this.prisma.user.update({
       where: { id },
-      data: { isActive: false },
+      // Unlink Google so a reactivated user doesn't silently regain access.
+      data: { isActive: false, googleSub: null },
       include: USER_INCLUDE,
     });
 

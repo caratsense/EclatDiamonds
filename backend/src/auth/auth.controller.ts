@@ -20,11 +20,12 @@ export class AuthController {
     return this.auth.login(dto.email, dto.password);
   }
 
-  /** Sign in with a Google ID token (email/password stays available too). */
+  /** Sign in with a Google ID token. Throttled to match otp/verify. */
   @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('google')
   google(@Body() dto: GoogleLoginDto) {
-    return this.auth.loginWithGoogle(dto.credential);
+    return this.auth.loginWithGoogle(dto.credential, dto.nonce);
   }
 
   /**
