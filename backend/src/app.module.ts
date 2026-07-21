@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 
 import { PrismaModule } from './prisma/prisma.module';
@@ -37,6 +37,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { AuditModule } from './audit/audit.module';
 import { TargetsModule } from './targets/targets.module';
 import { HealthController } from './health/health.controller';
+import { AllExceptionsFilter } from './common/all-exceptions.filter';
 
 @Module({
   imports: [
@@ -86,6 +87,9 @@ import { HealthController } from './health/health.controller';
     // IP rate limit (registered last; guards run in registration order, though
     // ordering is not functionally required here — throttling is per-IP, not per-user).
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // Catch-all error handling: structured 5xx logs, no internal leakage to the
+    // client, and optional webhook alerting (ALERT_WEBHOOK_URL).
+    { provide: APP_FILTER, useClass: AllExceptionsFilter },
   ],
 })
 export class AppModule {}
