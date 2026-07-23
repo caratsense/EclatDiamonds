@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -10,11 +11,14 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
 import { ROLE_RANK } from '../common/role.util';
+import { AuditService } from '../common/audit.service';
 import {
   CreateReferralCodeDto,
   CreateReferralDto,
+  CreateSchemePlanDto,
   EnrollMemberDto,
   ReferralPayoutDto,
+  UpdateSchemePlanDto,
 } from './dto/loyalty.dto';
 
 function num(v: Prisma.Decimal | number | null | undefined): number {
@@ -43,21 +47,120 @@ export class LoyaltyService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
+    private readonly audit: AuditService,
   ) {}
 
-  /** GET /loyalty/plans — scheme-plan templates (not store-scoped). */
-  async plans() {
-    const plans = await this.prisma.schemePlan.findMany({
-      where: { isActive: true },
-      orderBy: { createdAt: 'asc' },
-    });
-    return plans.map((p) => ({
+  /** Shape a SchemePlan for the API. */
+  private planView(p: any) {
+    return {
       id: p.id,
       name: p.name,
       tenureMonths: p.tenureMonths,
       bonusMonths: p.bonusMonths,
       bonusLabel: p.bonusLabel ?? '',
-    }));
+      defaultInstallment:
+        p.defaultInstallment != null ? Number(p.defaultInstallment) : null,
+      isActive: p.isActive,
+    };
+  }
+
+  /**
+   * GET /loyalty/plans — the scheme plans this business offers (not store-scoped).
+   * Enrollment only ever offers ACTIVE plans; `includeInactive` is for the Head
+   * Office management screen, which must also see retired ones.
+   */
+  async plans(includeInactive = false) {
+    const plans = await this.prisma.schemePlan.findMany({
+      where: includeInactive ? {} : { isActive: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    return plans.map((p) => this.planView(p));
+  }
+
+  /**
+   * POST /loyalty/plans — Head Office defines a scheme (e.g. "₹5,000 × 11 months,
+   * 12th free"). The UI offers common templates, but they are only pre-filled
+   * values: everything here is client-authored, nothing is seeded.
+   */
+  async createPlan(user: AuthUser, dto: CreateSchemePlanDto) {
+    const plan = await this.prisma.schemePlan.create({
+      data: {
+        name: dto.name.trim(),
+        tenureMonths: dto.tenureMonths,
+        bonusMonths: dto.bonusMonths ?? 0,
+        bonusLabel: dto.bonusLabel?.trim() || null,
+        defaultInstallment: dto.defaultInstallment ?? null,
+        isActive: dto.isActive ?? true,
+      },
+    });
+    await this.audit.record(user, {
+      action: 'scheme_plan.create',
+      entityType: 'SchemePlan',
+      entityId: plan.id,
+      storeId: null,
+      summary: `Created scheme plan "${plan.name}" (${plan.tenureMonths}+${plan.bonusMonths})`,
+      metadata: { tenureMonths: plan.tenureMonths, bonusMonths: plan.bonusMonths },
+    });
+    return this.planView(plan);
+  }
+
+  /** PATCH /loyalty/plans/:id — rename / retune / activate / deactivate a plan. */
+  async updatePlan(user: AuthUser, id: string, dto: UpdateSchemePlanDto) {
+    const existing = await this.prisma.schemePlan.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('Scheme plan not found');
+
+    const plan = await this.prisma.schemePlan.update({
+      where: { id },
+      data: {
+        ...(dto.name != null ? { name: dto.name.trim() } : {}),
+        ...(dto.tenureMonths != null ? { tenureMonths: dto.tenureMonths } : {}),
+        ...(dto.bonusMonths != null ? { bonusMonths: dto.bonusMonths } : {}),
+        ...(dto.bonusLabel !== undefined
+          ? { bonusLabel: dto.bonusLabel?.trim() || null }
+          : {}),
+        ...(dto.defaultInstallment !== undefined
+          ? { defaultInstallment: dto.defaultInstallment }
+          : {}),
+        ...(dto.isActive != null ? { isActive: dto.isActive } : {}),
+      },
+    });
+    await this.audit.record(user, {
+      action: 'scheme_plan.update',
+      entityType: 'SchemePlan',
+      entityId: id,
+      storeId: null,
+      summary: `Updated scheme plan "${plan.name}"`,
+      metadata: { from: existing.name, to: plan.name, isActive: plan.isActive },
+    });
+    return this.planView(plan);
+  }
+
+  /**
+   * DELETE /loyalty/plans/:id — only while nothing is enrolled on it. Once members
+   * exist the plan is part of their history, so we refuse and point at deactivate,
+   * which hides it from new enrollments without rewriting the past.
+   */
+  async deletePlan(user: AuthUser, id: string) {
+    const existing = await this.prisma.schemePlan.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('Scheme plan not found');
+
+    const enrolled = await this.prisma.schemeMember.count({ where: { planId: id } });
+    if (enrolled > 0) {
+      throw new ConflictException(
+        `${enrolled} member(s) are enrolled on this plan. Deactivate it instead so their history is kept.`,
+      );
+    }
+
+    await this.prisma.schemePlan.delete({ where: { id } });
+    await this.audit.record(user, {
+      action: 'scheme_plan.delete',
+      entityType: 'SchemePlan',
+      entityId: id,
+      storeId: null,
+      summary: `Deleted scheme plan "${existing.name}"`,
+      metadata: { name: existing.name },
+    });
+    return { ok: true };
   }
 
   /** GET /loyalty/members — enrolled accounts with paid/missed installments + maturity. */

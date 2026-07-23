@@ -26,6 +26,10 @@ export interface SchemePlan {
   bonusMonths: number;
   /** Equivalent maturity discount, shown to the customer. */
   bonusLabel: string;
+  /** Suggested monthly amount, pre-filled at enrollment (null = per member). */
+  defaultInstallment?: number | null;
+  /** Retired plans stay for history but are hidden from new enrollments. */
+  isActive?: boolean;
 }
 
 export const SCHEME_PLANS: SchemePlan[] = [

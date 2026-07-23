@@ -45,6 +45,7 @@ import {
   useSchemePlans,
 } from "@/lib/queries/loyalty";
 import { useSession } from "@/store/use-session";
+import { SchemePlansManager } from "@/components/loyalty/scheme-plans-manager";
 
 const STATUS_VARIANT: Record<
   SchemeStatus,
@@ -59,6 +60,7 @@ const STATUS_VARIANT: Record<
 export default function LoyaltyPage() {
   const nav = getNavItem("loyalty");
   const { currentStore } = useSession();
+  const role = useSession((s) => s.role);
   const { data: rows = [], isLoading, isError } = useSchemeMembers();
   const { data: plans = [] } = useSchemePlans();
   const enroll = useEnrollMember();
@@ -90,6 +92,13 @@ export default function LoyaltyPage() {
   React.useEffect(() => {
     if (!planId && plans.length > 0) setPlanId(plans[0].id);
   }, [plans, planId]);
+
+  // Pre-fill the monthly amount from the selected plan's suggested installment
+  // (e.g. a "₹5,000 × 11 months" scheme) so staff are not retyping it.
+  React.useEffect(() => {
+    const suggested = plans.find((p) => p.id === planId)?.defaultInstallment;
+    if (suggested != null) setInstallment(suggested);
+  }, [planId, plans]);
 
   const atRisk = rows.filter(
     (m) => m.missedMonths > 0 && m.status !== "matured",
@@ -147,6 +156,8 @@ export default function LoyaltyPage() {
         </TabsList>
 
         <TabsContent value="scheme" className="space-y-4">
+      {/* Head Office defines the business's own scheme plans (Module 17). */}
+      {role === "head_office" ? <SchemePlansManager /> : null}
       <div className="grid gap-4 lg:grid-cols-2">
         {/* enrollment */}
         <Card>

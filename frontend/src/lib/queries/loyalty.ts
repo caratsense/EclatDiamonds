@@ -25,7 +25,7 @@ export const loyaltyKeys = {
   members: (storeId: string) => ["loyalty", "members", storeId] as const,
 };
 
-/** GET /loyalty/plans — scheme-plan templates (not store-scoped). */
+/** GET /loyalty/plans — the scheme plans this business offers. */
 export function useSchemePlans() {
   return useQuery({
     queryKey: loyaltyKeys.plans,
@@ -33,6 +33,76 @@ export function useSchemePlans() {
       const { data } = await api.get<SchemePlan[]>("/loyalty/plans");
       return data;
     },
+  });
+}
+
+/** Head Office management view — includes deactivated (retired) plans. */
+export function useAllSchemePlans(enabled = true) {
+  return useQuery({
+    queryKey: [...loyaltyKeys.plans, "all"] as const,
+    queryFn: async () => {
+      const { data } = await api.get<SchemePlan[]>("/loyalty/plans", {
+        params: { includeInactive: "true" },
+      });
+      return data;
+    },
+    enabled,
+  });
+}
+
+export interface SchemePlanInput {
+  name: string;
+  tenureMonths: number;
+  bonusMonths?: number;
+  bonusLabel?: string;
+  defaultInstallment?: number | null;
+  isActive?: boolean;
+}
+
+/** Invalidate both the enrollment list and the management list. */
+function useInvalidatePlans() {
+  const qc = useQueryClient();
+  return () => {
+    void qc.invalidateQueries({ queryKey: loyaltyKeys.plans });
+  };
+}
+
+/** POST /loyalty/plans — Head Office defines a scheme. */
+export function useCreateSchemePlan() {
+  const invalidate = useInvalidatePlans();
+  return useMutation({
+    mutationFn: async (input: SchemePlanInput) => {
+      const { data } = await api.post<SchemePlan>("/loyalty/plans", input);
+      return data;
+    },
+    onSuccess: invalidate,
+  });
+}
+
+/** PATCH /loyalty/plans/:id — rename / retune / activate / deactivate. */
+export function useUpdateSchemePlan() {
+  const invalidate = useInvalidatePlans();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      ...input
+    }: Partial<SchemePlanInput> & { id: string }) => {
+      const { data } = await api.patch<SchemePlan>(`/loyalty/plans/${id}`, input);
+      return data;
+    },
+    onSuccess: invalidate,
+  });
+}
+
+/** DELETE /loyalty/plans/:id — refused by the API once members are enrolled. */
+export function useDeleteSchemePlan() {
+  const invalidate = useInvalidatePlans();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await api.delete(`/loyalty/plans/${id}`);
+      return id;
+    },
+    onSuccess: invalidate,
   });
 }
 

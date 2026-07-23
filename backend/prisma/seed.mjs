@@ -352,24 +352,12 @@ async function main() {
     },
   });
 
-  // --- Scheme plan + members (Module 17) ---
-  const plan = await prisma.schemePlan.upsert({
-    where: { id: "plan-11" },
-    update: {},
-    create: { id: "plan-11", name: "11+1 Gold Scheme", tenureMonths: 11, bonusMonths: 1, bonusLabel: "1 month free on maturity" },
-  });
-  const members = [
-    { id: "sm-1", ref: "GS-2001", storeId: "surat-main", partyId: "pty-priya-s", customerName: "Priya Sharma", phone: "+91 98250 11234", installment: "10000" },
-    { id: "sm-2", ref: "GS-2002", storeId: "mumbai-bandra", partyId: "pty-neha", customerName: "Neha Kapoor", phone: "+91 98201 33221", installment: "25000" },
-  ];
-  for (const m of members) {
-    const { id, ...rest } = m;
-    await prisma.schemeMember.upsert({
-      where: { id },
-      update: {},
-      create: { id, ...rest, planId: plan.id, tenureMonths: 11, bonusMonths: 1, status: "active", enrolledAt: daysAgo(40) },
-    });
-  }
+  // --- Gold-savings scheme plans (Module 17) ---
+  // Intentionally NOT seeded. The client marked the gold-savings scheme LATER
+  // (deferred) in the discovery call and never supplied plan names or terms, so
+  // seeding invented plans put placeholder branding in front of users. Head
+  // Office now creates the real plan in-app (Loyalty > Scheme plans), optionally
+  // starting from a template. The active Module 17 build is the referral wallet.
 
   // ==========================================================================
   // MODULE 4 — FINANCE: AP/AR ledger, expenses, income, budget + forecast rows
@@ -797,42 +785,6 @@ async function main() {
     await prisma.marketingCampaign.upsert({ where: { id }, update: rest, create: { id, ...rest, startDate: new Date(start), endDate: new Date(end) } });
     for (const sid of stores) await prisma.campaignStore.create({ data: { campaignId: id, storeId: sid } });
     for (const a of assets) await prisma.marketingAsset.create({ data: { id: a.id, campaignId: id, title: a.title, status: a.status, dueDate: new Date(a.dueDate) } });
-  }
-
-  // ==========================================================================
-  // MODULE 17 — LOYALTY: extra plans + members with installment schedules
-  // ==========================================================================
-  const planDefs = [
-    { id: "plan-11p1", name: "11+1 Gold Scheme", tenureMonths: 11, bonusMonths: 1, bonusLabel: "Pay 11, get 12 — one month free" },
-    { id: "plan-11p2", name: "11+2 Gold Scheme", tenureMonths: 11, bonusMonths: 2, bonusLabel: "Pay 11, get 13 — two months bonus" },
-    { id: "plan-24p3", name: "24+3 Gold Scheme", tenureMonths: 24, bonusMonths: 3, bonusLabel: "24 months + 3 bonus installments" },
-  ];
-  for (const p of planDefs) {
-    const { id, ...rest } = p;
-    await prisma.schemePlan.upsert({ where: { id }, update: rest, create: { id, ...rest } });
-  }
-  const schemeMembers = [
-    { id: "gss-3001", ref: "GSS-2026-3001", storeId: "surat-main", partyId: "pty-priya-s", customerName: "Priya Sharma", phone: "+91 98250 11223", planId: "plan-11p1", installment: "10000", tenureMonths: 11, bonusMonths: 1, enrolledMonths: 7, paid: 7, missed: 0, status: "active" },
-    { id: "gss-3002", ref: "GSS-2026-3002", storeId: "surat-main", customerName: "Vikram Joshi", phone: "+91 98980 22110", planId: "plan-11p2", installment: "25000", tenureMonths: 11, bonusMonths: 2, enrolledMonths: 6, paid: 4, missed: 2, status: "active" },
-    { id: "gss-3003", ref: "GSS-2026-3003", storeId: "mumbai-bandra", partyId: "pty-neha", customerName: "Fatima Khan", phone: "+91 98191 77889", planId: "plan-24p3", installment: "15000", tenureMonths: 24, bonusMonths: 3, enrolledMonths: 23, paid: 23, missed: 0, status: "active" },
-    { id: "gss-3004", ref: "GSS-2026-3004", storeId: "ahmedabad-cg", customerName: "Sneha Patel", phone: "+91 97250 33445", planId: "plan-11p1", installment: "5000", tenureMonths: 11, bonusMonths: 1, enrolledMonths: 6, paid: 3, missed: 3, status: "defaulted" },
-    { id: "gss-3005", ref: "GSS-2026-3005", storeId: "mumbai-bandra", customerName: "Rohan Gupta", phone: "+91 99670 88221", planId: "plan-11p1", installment: "20000", tenureMonths: 11, bonusMonths: 1, enrolledMonths: 11, paid: 11, missed: 0, status: "matured" },
-    { id: "gss-3006", ref: "GSS-2026-3006", storeId: "surat-main", customerName: "Tanvi Bhatt", phone: "+91 98765 43210", planId: "plan-11p2", installment: "12000", tenureMonths: 11, bonusMonths: 2, enrolledMonths: 4, paid: 2, missed: 1, status: "active" },
-  ];
-  for (const m of schemeMembers) {
-    const { id, enrolledMonths, paid, missed, ...rest } = m;
-    const enrolledAt = new Date(today.getFullYear(), today.getMonth() - enrolledMonths, 5);
-    await prisma.schemeInstallment.deleteMany({ where: { memberId: id } });
-    await prisma.schemeMember.upsert({ where: { id }, update: { status: m.status }, create: { id, ...rest, status: m.status, enrolledAt } });
-    for (let s = 1; s <= m.tenureMonths; s++) {
-      const dueDate = new Date(enrolledAt.getFullYear(), enrolledAt.getMonth() + (s - 1), 5);
-      let status = "due";
-      if (s <= paid) status = "paid";
-      else if (s <= paid + missed) status = "missed";
-      await prisma.schemeInstallment.create({
-        data: { id: `${id}-i${s}`, memberId: id, sequence: s, dueDate, amount: m.installment, status, paidAt: status === "paid" ? dueDate : null },
-      });
-    }
   }
 
   // ==========================================================================

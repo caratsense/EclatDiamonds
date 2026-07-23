@@ -1,12 +1,16 @@
 import {
+  IsBoolean,
   IsIn,
+  IsInt,
   IsNumber,
   IsOptional,
   IsPositive,
   IsString,
   Matches,
   Max,
+  MaxLength,
   Min,
+  MinLength,
 } from 'class-validator';
 
 /** yyyy-mm-dd (date-only). */
@@ -116,4 +120,79 @@ export class ReferralPayoutDto {
   @IsOptional()
   @IsString()
   invoiceNo?: string;
+}
+
+/**
+ * POST /loyalty/plans — Head Office defines a gold-savings scheme.
+ * Nothing here is seeded: the UI offers common templates, but they only
+ * pre-fill this form, so every live plan is client-authored.
+ */
+export class CreateSchemePlanDto {
+  @IsString()
+  @MinLength(2)
+  @MaxLength(60)
+  name!: string;
+
+  /** Paying months, e.g. 11 for "Rs 5,000 x 11 months". */
+  @IsInt()
+  @Min(1)
+  @Max(120)
+  tenureMonths!: number;
+
+  /** Store-funded bonus installments at maturity (the "+1" in 11+1). */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(24)
+  bonusMonths?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  bonusLabel?: string;
+
+  /** Suggested monthly amount, pre-filled at enrollment. */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  defaultInstallment?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+}
+
+/** PATCH /loyalty/plans/:id — every field optional. */
+export class UpdateSchemePlanDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(60)
+  name?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(120)
+  tenureMonths?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(24)
+  bonusMonths?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  bonusLabel?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  defaultInstallment?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }

@@ -1,10 +1,21 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { LoyaltyService } from './loyalty.service';
 import {
   CreateReferralCodeDto,
   CreateReferralDto,
+  CreateSchemePlanDto,
   EnrollMemberDto,
   ReferralPayoutDto,
+  UpdateSchemePlanDto,
 } from './dto/loyalty.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
@@ -14,9 +25,37 @@ import { Roles } from '../auth/roles.decorator';
 export class LoyaltyController {
   constructor(private readonly loyalty: LoyaltyService) {}
 
+  /**
+   * Scheme plans. Enrollment sees only active plans; the Head Office management
+   * screen passes ?includeInactive=true to also see retired ones.
+   */
   @Get('plans')
-  plans() {
-    return this.loyalty.plans();
+  plans(@Query('includeInactive') includeInactive?: string) {
+    return this.loyalty.plans(includeInactive === 'true');
+  }
+
+  // --- Scheme plan management (Head Office defines the client's own scheme) ---
+
+  @Roles('head_office')
+  @Post('plans')
+  createPlan(@CurrentUser() user: AuthUser, @Body() dto: CreateSchemePlanDto) {
+    return this.loyalty.createPlan(user, dto);
+  }
+
+  @Roles('head_office')
+  @Patch('plans/:id')
+  updatePlan(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateSchemePlanDto,
+  ) {
+    return this.loyalty.updatePlan(user, id, dto);
+  }
+
+  @Roles('head_office')
+  @Delete('plans/:id')
+  deletePlan(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.loyalty.deletePlan(user, id);
   }
 
   @Get('members')

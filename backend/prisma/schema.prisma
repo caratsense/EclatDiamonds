@@ -1338,6 +1338,9 @@ model SchemePlan {
   /// Store-funded bonus expressed as extra installments at maturity.
   bonusMonths  Int     @default(0)
   bonusLabel   String?
+  /// Suggested monthly installment (INR) pre-filled at enrollment, e.g. 5000 for
+  /// the client's "₹5,000 × 11 months" scheme. Null = staff enter it per member.
+  defaultInstallment Decimal? @db.Decimal(14, 2)
   isActive     Boolean @default(true)
 
   createdAt DateTime @default(now())
