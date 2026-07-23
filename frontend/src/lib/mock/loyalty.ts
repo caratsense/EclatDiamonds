@@ -31,21 +31,21 @@ export interface SchemePlan {
 export const SCHEME_PLANS: SchemePlan[] = [
   {
     id: "plan-11p1",
-    name: "Swarna 11+1",
+    name: "11+1 Gold Scheme",
     tenureMonths: 11,
     bonusMonths: 1,
     bonusLabel: "Pay 11, get 12 — one month free",
   },
   {
     id: "plan-11p2",
-    name: "Swarna Plus 11+2",
+    name: "11+2 Gold Scheme",
     tenureMonths: 11,
     bonusMonths: 2,
-    bonusLabel: "Pay 11, get 13 — premium plan",
+    bonusLabel: "Pay 11, get 13 — two months bonus",
   },
   {
     id: "plan-24p3",
-    name: "Deergha 24+3",
+    name: "24+3 Gold Scheme",
     tenureMonths: 24,
     bonusMonths: 3,
     bonusLabel: "24 months + 3 bonus installments",

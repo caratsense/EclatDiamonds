@@ -1,8 +1,20 @@
 "use client";
 
 import * as React from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import {
+  ArrowRight,
+  CheckCircle2,
+  LockKeyhole,
+  Loader2,
+  ShieldCheck,
+  Sparkles,
+  Store,
+  Users,
+  Smartphone,
+  KeyRound,
+} from "lucide-react";
 import { toast } from "sonner";
 import type { AxiosError } from "axios";
 
@@ -22,43 +34,58 @@ import {
   useVerifyOtp,
 } from "@/lib/queries/auth";
 import { useSession } from "@/store/use-session";
+import type { Role } from "@/lib/types";
 
-const DEMO_ACCOUNTS = [
+interface DemoAccount {
+  email: string;
+  phone: string;
+  role: Role;
+  roleTitle: string;
+  storeLabel: string;
+  name: string;
+}
+
+const DEMO_ACCOUNTS: DemoAccount[] = [
   {
-    email: "head.office@caratsense.in",
-    phone: "9100000001",
-    label: "Head Office — all stores",
-  },
-  {
-    email: "neelam.area@caratsense.in",
-    phone: "9100000002",
-    label: "Area Manager — West region",
+    email: "priya.rep@caratsense.in",
+    phone: "9100000004",
+    role: "salesperson",
+    roleTitle: "Salesperson",
+    storeLabel: "Surat — Main",
+    name: "Priya Verma",
   },
   {
     email: "aarav.mehta@caratsense.in",
     phone: "9100000003",
-    label: "Store Manager — Surat",
+    role: "store_manager",
+    roleTitle: "Store Manager",
+    storeLabel: "Surat — Main",
+    name: "Aarav Mehta",
   },
   {
-    email: "priya.rep@caratsense.in",
-    phone: "9100000004",
-    label: "Salesperson — Surat",
+    email: "neelam.area@caratsense.in",
+    phone: "9100000002",
+    role: "area_manager",
+    roleTitle: "Area Manager",
+    storeLabel: "West India Region",
+    name: "Neelam Rao",
+  },
+  {
+    email: "head.office@caratsense.in",
+    phone: "9100000001",
+    role: "head_office",
+    roleTitle: "Head Office",
+    storeLabel: "Pan-India Admin",
+    name: "Head Office",
   },
 ];
 
-/** Surface the backend's 4xx message (NestJS: string or string[]) or fall back. */
 function apiMessage(err: unknown, fallback: string): string {
   const message = (err as AxiosError<{ message?: string | string[] }>)
     ?.response?.data?.message;
   if (Array.isArray(message)) return message[0] ?? fallback;
   return typeof message === "string" && message ? message : fallback;
 }
-
-const HIGHLIGHTS = [
-  "Multi-store sales & daily reports in real time",
-  "Catalogue with AI image-based search",
-  "Role-based access, secure by store",
-];
 
 export default function LoginPage() {
   const router = useRouter();
@@ -68,18 +95,16 @@ export default function LoginPage() {
   const requestOtp = useRequestOtp();
   const verifyOtp = useVerifyOtp();
 
-  const [email, setEmail] = React.useState("head.office@caratsense.in");
+  const [selectedDemo, setSelectedDemo] = React.useState<DemoAccount>(DEMO_ACCOUNTS[0]);
+  const [email, setEmail] = React.useState(DEMO_ACCOUNTS[0].email);
   const [password, setPassword] = React.useState("password123");
 
-  // WhatsApp OTP flow (the primary staff sign-in).
-  const [phone, setPhone] = React.useState("");
+  const [phone, setPhone] = React.useState(DEMO_ACCOUNTS[0].phone);
   const [code, setCode] = React.useState("");
   const [otpStep, setOtpStep] = React.useState<"phone" | "code">("phone");
   const [resendIn, setResendIn] = React.useState(0);
-  // Email/password is a fallback until Google + WhatsApp are configured.
-  const [showPassword, setShowPassword] = React.useState(false);
+  const [authMethod, setAuthMethod] = React.useState<"whatsapp" | "password">("whatsapp");
 
-  // Live resend countdown — ticks down once per second while > 0.
   React.useEffect(() => {
     if (resendIn <= 0) return;
     const t = setTimeout(() => setResendIn((s) => s - 1), 1000);
@@ -89,10 +114,7 @@ export default function LoginPage() {
   function finishLogin(me: Parameters<typeof hydrate>[0]) {
     hydrate(me);
     toast.success(`Welcome, ${me.user.name}`);
-    // Fresh login = a new session/day: re-prompt attendance for salespeople.
     clearAttendanceHandled();
-    // A salesperson lands on the attendance-first check-in; other roles go
-    // straight to their dashboards (salesperson has no Dashboards nav).
     router.replace(
       me.role === "salesperson" ? "/check-in" : homeForRole(me.role),
     );
@@ -115,12 +137,11 @@ export default function LoginPage() {
     );
   }
 
-  // Already authenticated? Skip the form.
   React.useEffect(() => {
     if (getStoredToken()) router.replace("/dashboards");
   }, [router]);
 
-  function onSubmit(e: React.FormEvent) {
+  function onSubmitPassword(e: React.FormEvent) {
     e.preventDefault();
     login.mutate(
       { email, password },
@@ -154,9 +175,6 @@ export default function LoginPage() {
         setCode("");
         setResendIn(60);
       },
-      // 429 (cooldown / hourly cap) and 400 carry a human message in the
-      // body — surface it verbatim. The countdown is deliberately left
-      // untouched on error.
       onError: (err) =>
         toast.error(
           apiMessage(err, "Couldn't send the code. Try again in a moment."),
@@ -187,80 +205,200 @@ export default function LoginPage() {
     );
   }
 
+  function selectDemo(acc: DemoAccount) {
+    setSelectedDemo(acc);
+    setEmail(acc.email);
+    setPhone(acc.phone);
+    setOtpStep("phone");
+    setCode("");
+  }
+
   return (
-    <div className="grid min-h-dvh lg:grid-cols-[1.05fr_1fr]">
-      {/* ── Brand panel ─────────────────────────────────────────────── */}
-      <aside className="emerald-panel relative hidden flex-col justify-between overflow-hidden p-10 lg:flex xl:p-14">
-        <div className="flex items-center">
-          <Logo className="h-14 w-auto" />
+    <div className="grid min-h-dvh bg-[#071e16] text-[#f6f3ed] lg:grid-cols-[1.1fr_1fr]">
+      {/* ── Left Realistic Luxury Showroom Panel ───────────────────── */}
+      <aside className="relative hidden flex-col justify-between overflow-hidden p-10 lg:flex xl:p-14">
+        {/* Rich background image overlay */}
+        <div className="absolute inset-0 z-0 opacity-40">
+          <Image
+            src="/images/luxury_jewelry_hero.png"
+            alt="Éclat Luxury Showroom"
+            fill
+            className="object-cover object-center"
+            priority
+          />
+        </div>
+        {/* Soft luxury emerald gradient overlay */}
+        <div className="absolute inset-0 z-0 bg-gradient-to-b from-[#071e16]/80 via-[#071e16]/95 to-[#031a13]" />
+
+        {/* Top Header */}
+        <div className="relative z-10 flex items-center justify-between">
+          <Logo className="h-10 w-auto" />
+          <span className="inline-flex items-center gap-2 rounded-full border border-[#c8a24f]/30 bg-[#c8a24f]/10 px-3.5 py-1 text-xs font-medium text-[#c8a24f]">
+            <Sparkles className="h-3.5 w-3.5 text-[#c8a24f]" />
+            Live Showroom Platform
+          </span>
         </div>
 
-        <div className="max-w-md">
-          <h1 className="font-display text-4xl font-semibold leading-[1.1] xl:text-5xl">
-            Where dreams meet diamonds.
-          </h1>
-          <p className="mt-5 text-[15px] leading-relaxed text-brand-foreground/75">
-            The unified operations platform behind every Éclat Diamonds store —
-            sales, inventory, finance and people, in one quiet place.
-          </p>
+        {/* Middle Content & Live Glassmorphism Widgets */}
+        <div className="relative z-10 my-auto max-w-lg space-y-7 py-8">
+          <div>
+            <span className="text-xs font-medium uppercase tracking-[0.2em] text-[#c8a24f]">
+              Éclat Diamonds / Ratanlall
+            </span>
+            <h1 className="mt-2 font-display text-4xl font-semibold leading-[1.1] text-[#f6f3ed] xl:text-5xl">
+              Where dreams meet <span className="italic text-[#c8a24f]">diamonds.</span>
+            </h1>
+            <p className="mt-4 text-base leading-relaxed text-[#f6f3ed]/75">
+              The unified front-of-house operations platform behind every Éclat Diamonds store — sales, inventory, finance, and team in one calm place.
+            </p>
+          </div>
 
-          <div className="mt-8 h-px w-28 bg-gradient-to-r from-[var(--gold)] to-transparent" />
+          {/* Live Interactive Widgets */}
+          <div className="grid gap-3.5">
+            {/* Widget 1: Multi-Store Live Pulse */}
+            <div className="flex items-center gap-3.5 rounded-2xl border border-[#1b3a2c] bg-[#0c261c]/80 p-4 shadow-lg backdrop-blur-md">
+              <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#c8a24f]/15 text-[#c8a24f]">
+                <Store className="h-5 w-5" />
+                <span className="absolute -right-0.5 -top-0.5 flex h-3 w-3">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500" />
+                </span>
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold text-[#f6f3ed]">3 Branches Active</p>
+                  <span className="text-[11px] font-mono text-emerald-400">Live Sync</span>
+                </div>
+                <p className="mt-0.5 text-xs text-[#f6f3ed]/65">Surat Main · Mumbai Bandra · Ahmedabad CG</p>
+              </div>
+            </div>
 
-          <ul className="mt-7 space-y-3">
-            {HIGHLIGHTS.map((h) => (
-              <li
-                key={h}
-                className="flex items-center gap-3 text-sm text-brand-foreground/85"
-              >
-                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--gold)]" />
-                {h}
-              </li>
-            ))}
-          </ul>
+            {/* Widget 2: Security & Role Isolation */}
+            <div className="flex items-center gap-3.5 rounded-2xl border border-[#1b3a2c] bg-[#0c261c]/80 p-4 shadow-lg backdrop-blur-md">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#c8a24f]/15 text-[#c8a24f]">
+                <ShieldCheck className="h-5 w-5" />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-[#f6f3ed]">Role-Aware Security & Cost Protection</p>
+                <p className="mt-0.5 text-xs text-[#f6f3ed]/65">Sales staff see selling price only; margins masked automatically.</p>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div className="flex items-center justify-between text-[11px] text-brand-foreground/55">
-          <span className="uppercase tracking-[0.18em]">CaratSense platform</span>
-          <span>© 2026 Éclat Diamonds</span>
+        {/* Bottom Footer */}
+        <div className="relative z-10 flex items-center justify-between border-t border-[#1b3a2c] pt-5 text-xs text-[#f6f3ed]/50">
+          <span className="font-mono uppercase tracking-[0.16em]">CaratSense OS v2.4</span>
+          <span>© 2026 Éclat Diamonds. All rights reserved.</span>
         </div>
       </aside>
 
-      {/* ── Sign-in form ────────────────────────────────────────────── */}
-      <main className="flex items-center justify-center px-5 py-10 sm:px-8">
-        <div className="w-full max-w-sm">
-          {/* compact brand for mobile (panel hidden < lg) — on an emerald chip
-              so the gold logo keeps contrast over the light form background */}
-          <div className="mb-8 lg:hidden">
-            <span className="inline-flex items-center rounded-xl bg-brand px-3.5 py-2.5">
-              <Logo className="h-7 w-auto" />
-            </span>
+      {/* ── Right Live Interactive Sign-in Form ─────────────────────── */}
+      <main className="relative flex flex-col justify-between bg-[#071e16] px-6 py-10 sm:px-12 lg:px-16">
+        <div className="mx-auto w-full max-w-md my-auto space-y-7">
+          {/* Mobile Logo */}
+          <div className="mb-4 lg:hidden">
+            <Logo className="h-9 w-auto" />
           </div>
 
-          <h2 className="font-display text-3xl font-semibold tracking-tight">
-            Sign in
-          </h2>
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            Welcome back. Enter your details to continue.
-          </p>
+          <div>
+            <h2 className="font-display text-3xl font-semibold tracking-tight text-[#f6f3ed]">
+              Sign in to your counter
+            </h2>
+            <p className="mt-1.5 text-sm text-[#f6f3ed]/70">
+              Select your role keycard or enter details to start the session.
+            </p>
+          </div>
 
-          {/* ── Google — one-tap primary (renders once NEXT_PUBLIC_GOOGLE_CLIENT_ID is configured) ── */}
+          {/* Role Keycard Pills — 1-Click Demo Selector */}
+          <div>
+            <Label className="text-xs uppercase tracking-wider text-[#c8a24f] font-mono">
+              Select Employee Keycard
+            </Label>
+            <div className="mt-2.5 grid grid-cols-2 gap-2">
+              {DEMO_ACCOUNTS.map((acc) => {
+                const active = selectedDemo.email === acc.email;
+                return (
+                  <button
+                    key={acc.email}
+                    type="button"
+                    onClick={() => selectDemo(acc)}
+                    className={`group relative flex flex-col items-start rounded-xl border p-3 text-left transition-all ${
+                      active
+                        ? "border-[#c8a24f] bg-[#0c261c] text-[#f6f3ed] shadow-md ring-1 ring-[#c8a24f]"
+                        : "border-[#1b3a2c] bg-[#071e16]/60 text-[#f6f3ed]/70 hover:border-[#c8a24f]/40 hover:bg-[#0c261c]/50"
+                    }`}
+                  >
+                    <div className="flex w-full items-center justify-between">
+                      <span className={`text-xs font-semibold ${active ? "text-[#c8a24f]" : "text-[#f6f3ed]/90"}`}>
+                        {acc.roleTitle}
+                      </span>
+                      {active ? (
+                        <CheckCircle2 className="h-3.5 w-3.5 text-[#c8a24f]" />
+                      ) : null}
+                    </div>
+                    <span className="mt-1 text-[11px] font-medium truncate max-w-[130px]">
+                      {acc.name}
+                    </span>
+                    <span className="text-[10px] text-[#f6f3ed]/50 truncate max-w-[130px]">
+                      {acc.storeLabel}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Auth Method Switcher (WhatsApp OTP vs Email Password) */}
+          <div className="flex rounded-xl border border-[#1b3a2c] bg-[#0c261c] p-1">
+            <button
+              type="button"
+              onClick={() => setAuthMethod("whatsapp")}
+              className={`flex-1 flex items-center justify-center gap-2 rounded-lg py-2 text-xs font-medium transition-colors ${
+                authMethod === "whatsapp"
+                  ? "bg-[#c8a24f] text-[#071e16] font-semibold shadow-xs"
+                  : "text-[#f6f3ed]/70 hover:text-[#f6f3ed]"
+              }`}
+            >
+              <Smartphone className="h-3.5 w-3.5" />
+              WhatsApp OTP
+            </button>
+            <button
+              type="button"
+              onClick={() => setAuthMethod("password")}
+              className={`flex-1 flex items-center justify-center gap-2 rounded-lg py-2 text-xs font-medium transition-colors ${
+                authMethod === "password"
+                  ? "bg-[#c8a24f] text-[#071e16] font-semibold shadow-xs"
+                  : "text-[#f6f3ed]/70 hover:text-[#f6f3ed]"
+              }`}
+            >
+              <KeyRound className="h-3.5 w-3.5" />
+              Password Login
+            </button>
+          </div>
+
+          {/* Google Sign-In if configured */}
           {process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ? (
-            <div className="mt-6">
+            <div>
               <GoogleSignInButton onCredential={onGoogle} />
-              <div className="mt-5 flex items-center gap-3 text-xs text-muted-foreground">
-                <div className="h-px flex-1 bg-border" />
-                or sign in with WhatsApp
-                <div className="h-px flex-1 bg-border" />
+              <div className="mt-4 flex items-center gap-3 text-xs text-[#f6f3ed]/40">
+                <div className="h-px flex-1 bg-[#1b3a2c]" />
+                or continue with credentials
+                <div className="h-px flex-1 bg-[#1b3a2c]" />
               </div>
             </div>
           ) : null}
 
-          {/* ── WhatsApp OTP — primary staff flow ─────────────────── */}
-          <div className="mt-5">
-              {otpStep === "phone" ? (
+          {/* Auth Form Container */}
+          <div className="rounded-2xl border border-[#1b3a2c] bg-[#0c261c]/80 p-5 shadow-xl">
+            {authMethod === "whatsapp" ? (
+              /* WhatsApp OTP Form */
+              otpStep === "phone" ? (
                 <form onSubmit={onSendCode} className="space-y-4">
                   <div className="space-y-1.5">
-                    <Label htmlFor="otp-phone">Mobile number</Label>
+                    <Label htmlFor="otp-phone" className="text-xs text-[#f6f3ed]/80">
+                      Mobile number
+                    </Label>
                     <Input
                       id="otp-phone"
                       type="tel"
@@ -268,50 +406,51 @@ export default function LoginPage() {
                       autoComplete="tel-national"
                       placeholder="10-digit mobile number"
                       maxLength={10}
+                      className="border-[#1b3a2c] bg-[#071e16] text-[#f6f3ed] placeholder:text-[#f6f3ed]/30 focus:border-[#c8a24f] focus:ring-[#c8a24f]"
                       value={phone}
                       onChange={(e) =>
                         setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))
                       }
                       required
                     />
-                    <p className="text-xs text-muted-foreground">
-                      We&apos;ll send a one-time sign-in code to this number on
-                      WhatsApp.
+                    <p className="text-[11px] text-[#f6f3ed]/55">
+                      Sign-in code will be sent to your registered WhatsApp.
                     </p>
                   </div>
                   <Button
                     type="submit"
-                    variant="gold"
-                    size="lg"
-                    className="w-full"
+                    className="w-full bg-[#c8a24f] text-[#071e16] font-semibold hover:bg-[#b8903c]"
                     disabled={requestOtp.isPending}
                   >
                     {requestOtp.isPending ? (
                       <>
-                        <Loader2 className="h-4 w-4 animate-spin" /> Sending…
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" /> Sending OTP…
                       </>
                     ) : (
-                      "Send code"
+                      <>
+                        Send WhatsApp Code <ArrowRight className="h-4 w-4 ml-1" />
+                      </>
                     )}
                   </Button>
                 </form>
               ) : (
                 <form onSubmit={onVerify} className="space-y-4">
-                  <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2 text-sm">
-                    <span>
-                      Code sent to{" "}
-                      <span className="num font-medium">{phone}</span>
+                  <div className="flex items-center justify-between rounded-lg border border-[#1b3a2c] bg-[#071e16] px-3 py-2 text-xs">
+                    <span className="text-[#f6f3ed]/80">
+                      Code sent to <span className="font-mono font-semibold text-[#c8a24f]">{phone}</span>
                     </span>
                     <button
                       type="button"
                       onClick={() => setOtpStep("phone")}
-                      className="text-xs font-medium underline underline-offset-2 hover:text-foreground"
+                      className="text-xs font-medium text-[#c8a24f] hover:underline"
                     >
                       Change
                     </button>
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="otp-code">6-digit code</Label>
+                    <Label htmlFor="otp-code" className="text-xs text-[#f6f3ed]/80">
+                      6-digit verification code
+                    </Label>
                     <Input
                       id="otp-code"
                       inputMode="numeric"
@@ -319,7 +458,7 @@ export default function LoginPage() {
                       placeholder="6-digit code"
                       maxLength={6}
                       autoFocus
-                      className="num tracking-[0.35em]"
+                      className="font-mono tracking-[0.35em] border-[#1b3a2c] bg-[#071e16] text-[#f6f3ed] focus:border-[#c8a24f]"
                       value={code}
                       onChange={(e) =>
                         setCode(e.target.value.replace(/\D/g, "").slice(0, 6))
@@ -329,73 +468,52 @@ export default function LoginPage() {
                   </div>
                   <Button
                     type="submit"
-                    variant="gold"
-                    size="lg"
-                    className="w-full"
+                    className="w-full bg-[#c8a24f] text-[#071e16] font-semibold hover:bg-[#b8903c]"
                     disabled={verifyOtp.isPending}
                   >
                     {verifyOtp.isPending ? (
                       <>
-                        <Loader2 className="h-4 w-4 animate-spin" /> Verifying…
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" /> Verifying…
                       </>
                     ) : (
-                      "Verify & sign in"
+                      "Verify & Sign In"
                     )}
                   </Button>
-                  <p className="text-center text-xs text-muted-foreground">
+                  <p className="text-center text-xs text-[#f6f3ed]/60">
                     Didn&apos;t receive it?{" "}
                     <button
                       type="button"
                       onClick={sendCode}
                       disabled={resendIn > 0 || requestOtp.isPending}
-                      className="font-medium underline underline-offset-2 hover:text-foreground disabled:no-underline disabled:opacity-70"
+                      className="font-medium text-[#c8a24f] hover:underline disabled:opacity-50"
                     >
-                      {resendIn > 0 ? (
-                        <>
-                          Resend in <span className="num">{resendIn}</span>s
-                        </>
-                      ) : (
-                        "Resend code"
-                      )}
+                      {resendIn > 0 ? `Resend in ${resendIn}s` : "Resend code"}
                     </button>
                   </p>
                 </form>
-              )}
-          </div>
-
-          {/* ── Email + password — kept as an administrative fallback until
-                 Google + WhatsApp are fully configured; collapsed by default ── */}
-          <p className="mt-5 text-center">
-            <button
-              type="button"
-              onClick={() => setShowPassword((v) => !v)}
-              className="text-xs font-medium text-muted-foreground underline underline-offset-2 hover:text-foreground"
-            >
-              {showPassword
-                ? "Hide password sign-in"
-                : "Sign in with email and password instead"}
-            </button>
-          </p>
-          {showPassword ? (
-            <div className="mt-4">
-              <form onSubmit={onSubmit} className="space-y-4">
+              )
+            ) : (
+              /* Password Login Form */
+              <form onSubmit={onSubmitPassword} className="space-y-4">
                 <div className="space-y-1.5">
-                  <Label htmlFor="email">Email</Label>
+                  <Label htmlFor="email" className="text-xs text-[#f6f3ed]/80">Email address</Label>
                   <Input
                     id="email"
                     type="email"
                     autoComplete="username"
+                    className="border-[#1b3a2c] bg-[#071e16] text-[#f6f3ed] focus:border-[#c8a24f]"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="password">Password</Label>
+                  <Label htmlFor="password" className="text-xs text-[#f6f3ed]/80">Password</Label>
                   <Input
                     id="password"
                     type="password"
                     autoComplete="current-password"
+                    className="border-[#1b3a2c] bg-[#071e16] text-[#f6f3ed] focus:border-[#c8a24f]"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
@@ -403,60 +521,22 @@ export default function LoginPage() {
                 </div>
                 <Button
                   type="submit"
-                  variant="gold"
-                  size="lg"
-                  className="w-full"
+                  className="w-full bg-[#c8a24f] text-[#071e16] font-semibold hover:bg-[#b8903c]"
                   disabled={login.isPending}
                 >
                   {login.isPending ? (
                     <>
-                      <Loader2 className="h-4 w-4 animate-spin" /> Signing in…
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" /> Authenticating…
                     </>
                   ) : (
-                    "Sign in"
+                    "Sign In"
                   )}
                 </Button>
               </form>
-            </div>
-          ) : null}
-
-          {/* Install affordance for phone users — renders only when the app is
-              installable (Android/desktop prompt available) or on iOS Safari;
-              otherwise the component returns null and leaves no gap. */}
-          <InstallAppButton
-            label="Install app on your phone"
-            className="mt-6 w-full"
-          />
-
-          <div className="mt-7 rounded-xl border bg-card p-3.5 shadow-xs">
-            <p className="mb-2 text-xs font-medium text-muted-foreground">
-              Demo accounts — password{" "}
-              <code className="num rounded bg-muted px-1 py-0.5 text-foreground">
-                password123
-              </code>{" "}
-              · tap one to pre-fill
-            </p>
-            <ul className="space-y-1">
-              {DEMO_ACCOUNTS.map((a) => (
-                <li key={a.email}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEmail(a.email);
-                      setPhone(a.phone);
-                      setOtpStep("phone");
-                    }}
-                    className="w-full rounded-lg px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent"
-                  >
-                    <span className="font-medium">{a.email}</span>
-                    <span className="block text-muted-foreground">
-                      {a.label} · <span className="num">{a.phone}</span>
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
+            )}
           </div>
+
+          <InstallAppButton label="Install App on Phone" className="mt-4 w-full" />
         </div>
       </main>
     </div>

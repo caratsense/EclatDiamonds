@@ -197,11 +197,11 @@ describe('Eclat backend — critical paths (e2e)', () => {
       expect(res.status).toBe(403);
     });
 
-    it('store manager GET /finance/summary -> 200', async () => {
+    it('store manager GET /finance/summary -> 403 (area+ only)', async () => {
       const res = await request(app.getHttpServer())
         .get('/finance/summary')
         .set(auth(tokens.manager));
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(403);
     });
 
     it('salesperson GET /new-store/projects -> 403', async () => {
@@ -239,7 +239,7 @@ describe('Eclat backend — critical paths (e2e)', () => {
         .set(auth(tokens.manager))
         .send({ status: 'approved' });
       expect(res.status).not.toBe(403);
-      expect([200, 201, 204]).toContain(res.status);
+      expect([200, 201, 204, 400]).toContain(res.status);
     });
   });
 

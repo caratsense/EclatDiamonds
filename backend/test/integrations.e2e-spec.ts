@@ -75,7 +75,7 @@ describe('Eclat backend — integrations (e2e)', () => {
         .get('/integrations/status')
         .set(auth(tokens.rep));
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ whatsapp: false, razorpay: false, goldRate: false });
+      expect(res.body).toEqual({ whatsapp: false, razorpay: false, goldRate: false, email: false });
     });
   });
 
@@ -84,7 +84,7 @@ describe('Eclat backend — integrations (e2e)', () => {
     it('send is a dry-run no-op (and normalises the Indian number)', async () => {
       const res = await request(app.getHttpServer())
         .post('/integrations/whatsapp/send')
-        .set(auth(tokens.rep))
+        .set(auth(tokens.manager))
         .send({ to: '9876543210', body: 'Your CaratSense quote is ready.' });
       expect(res.status).toBe(201);
       expect(res.body.dryRun).toBe(true);
@@ -95,7 +95,7 @@ describe('Eclat backend — integrations (e2e)', () => {
     it('rejects unknown body fields (mass-assignment guard)', async () => {
       const res = await request(app.getHttpServer())
         .post('/integrations/whatsapp/send')
-        .set(auth(tokens.rep))
+        .set(auth(tokens.manager))
         .send({ to: '9876543210', body: 'hi', adminOverride: true });
       expect(res.status).toBe(400);
     });

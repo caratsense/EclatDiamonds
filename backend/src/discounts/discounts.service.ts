@@ -98,8 +98,8 @@ export class DiscountsService {
     this.scope.assertStoreAllowed(user, dto.storeId);
 
     const caps = await this.loadCaps(dto.storeId);
-    const diamondPercent = dto.diamondPercent ?? 0;
-    const makingPercent = dto.makingPercent ?? 0;
+    const diamondPercent = dto.diamondPercent ?? dto.percent ?? 0;
+    const makingPercent = dto.makingPercent ?? dto.percent ?? 0;
 
     // Snapshot selling & cost price (from the linked product if given).
     let sellingPrice = dto.sellingPrice ?? null;
