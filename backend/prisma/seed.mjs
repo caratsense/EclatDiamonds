@@ -836,15 +836,15 @@ async function main() {
   }
 
   // ==========================================================================
-  // MODULE 17 — "Earn with Ratanlall" referral / commission program
+  // MODULE 17 — "Earn with Éclat" referral / commission program
   // ==========================================================================
   await prisma.referralCode.upsert({
-    where: { code: "RATAN-DEMO" },
+    where: { code: "ECLAT-DEMO" },
     update: { maxUses: 10 },
     create: {
       id: "ref-code-demo",
-      code: "RATAN-DEMO",
-      referrerName: "Ratanlall Demo Referrer",
+      code: "ECLAT-DEMO",
+      referrerName: "Demo Referrer",
       referrerPhone: "+91 90000 12345",
       storeId: "surat-main",
       maxUses: 10,

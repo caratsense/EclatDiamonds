@@ -633,7 +633,7 @@ export default function LandingPage() {
             </div>
           </div>
           <div className="mt-8 border-t border-[#1b3a2c] pt-6 flex flex-col sm:flex-row items-center justify-between text-xs text-[#f6f3ed]/50 gap-3">
-            <span>© 2026 Éclat Diamonds / Ratanlall Jewellery. All rights reserved.</span>
+            <span>© 2026 Éclat Diamonds. All rights reserved.</span>
             <span className="font-mono">CaratSense Operational System</span>
           </div>
         </div>

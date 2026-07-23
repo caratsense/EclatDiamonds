@@ -243,7 +243,7 @@ export default function LoginPage() {
         <div className="relative z-10 my-auto max-w-lg space-y-7 py-8">
           <div>
             <span className="text-xs font-medium uppercase tracking-[0.2em] text-[#c8a24f]">
-              Éclat Diamonds / Ratanlall
+              Éclat Diamonds
             </span>
             <h1 className="mt-2 font-display text-4xl font-semibold leading-[1.1] text-[#f6f3ed] xl:text-5xl">
               Where dreams meet <span className="italic text-[#c8a24f]">diamonds.</span>

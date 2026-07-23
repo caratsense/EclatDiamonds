@@ -1398,7 +1398,7 @@ model SchemeInstallment {
 }
 
 // ----------------------------------------------------------------------------
-// MODULE 17 — "Earn with Ratanlall" referral / commission program (net-new).
+// MODULE 17 — "Earn with Éclat" referral / commission program (net-new).
 // A referrer X gets a unique coupon code; a referee Y using it gets 5% off on
 // diamond, and X earns 5% commission on Y's total bill, credited to X's balance
 // and redeemable / cashable out. Optional per-code usage cap prevents public

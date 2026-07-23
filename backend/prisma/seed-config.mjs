@@ -110,20 +110,20 @@ async function seedProductCosts() {
 }
 
 async function seedReferral(storeId) {
-  const code = 'RATAN-DEMO';
+  const code = 'ECLAT-DEMO';
   const existing = await prisma.referralCode.findUnique({ where: { code } });
   if (!existing) {
     await prisma.referralCode.create({
       data: {
         code,
-        referrerName: 'Ratanlall Demo Referrer',
+        referrerName: 'Demo Referrer',
         referrerPhone: '+91 90000 00000',
         storeId: storeId ?? null,
         maxUses: 10,
       },
     });
   }
-  console.log('  referral demo code: RATAN-DEMO');
+  console.log('  referral demo code: ECLAT-DEMO');
 }
 
 async function main() {
