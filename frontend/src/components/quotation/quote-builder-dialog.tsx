@@ -76,6 +76,7 @@ interface DiamondRow {
   id: number;
   desc: string;
   carat: string;
+  perCaratRate: string;
   price: string;
 }
 
@@ -120,11 +121,14 @@ export function QuoteBuilderDialog({
   const [isKaccha, setIsKaccha] = useState(false);
 
   // Sale — gold
+  const [category, setCategory] = useState("ring");
   const [saleDesc, setSaleDesc] = useState("");
-  const [karat, setKarat] = useState(22);
+  const [karat, setKarat] = useState(18);
   const [weight, setWeight] = useState("");
   const [rateMode, setRateMode] = useState<"auto" | "manual">("auto");
   const [manualRate, setManualRate] = useState("");
+  const [makingMode, setMakingMode] = useState<"flat" | "per_gram">("flat");
+  const [makingRatePerGram, setMakingRatePerGram] = useState("1500");
   const [making, setMaking] = useState("");
 
   // Sale — diamonds
@@ -186,13 +190,19 @@ export function QuoteBuilderDialog({
   }, [chartFile]);
 
   const weightNum = toNumber(weight) ?? 0;
-  const makingNum = toNumber(making) ?? 0;
+  const makingNum = makingMode === "per_gram" 
+    ? (toNumber(makingRatePerGram) ?? 0) * weightNum 
+    : (toNumber(making) ?? 0);
   const autoRate = GOLD_RATE_PER_GRAM[karat] ?? 7180;
   const goldRate = rateMode === "auto" ? autoRate : toNumber(manualRate) ?? 0;
-  const diamondsTotal = diamonds.reduce(
-    (s, d) => s + (toNumber(d.price) ?? 0),
-    0,
-  );
+  const diamondsTotal = diamonds.reduce((s, d) => {
+    const p = toNumber(d.price);
+    const c = toNumber(d.carat);
+    const r = toNumber(d.perCaratRate);
+    const calcP = r != null && c != null ? r * c : (p ?? 0);
+    return s + calcP;
+  }, 0);
+
   const repairMakingNum = toNumber(repairMaking) ?? 0;
 
   // Quick-mode gold rate: show the live auto rate but let the user overwrite it
@@ -213,9 +223,11 @@ export function QuoteBuilderDialog({
               id: (diamondId.current += 1),
               desc: "",
               carat: "",
+              perCaratRate: "",
               price: "",
               ...patch,
             },
+
           ]
         : d.map((x, i) => (i === 0 ? { ...x, ...patch } : x)),
     );
@@ -278,7 +290,7 @@ export function QuoteBuilderDialog({
   function addDiamond() {
     setDiamonds((d) => [
       ...d,
-      { id: (diamondId.current += 1), desc: "", carat: "", price: "" },
+      { id: (diamondId.current += 1), desc: "", carat: "", perCaratRate: "", price: "" },
     ]);
   }
   function updateDiamond(id: number, patch: Partial<DiamondRow>) {
@@ -373,18 +385,22 @@ export function QuoteBuilderDialog({
     for (const d of diamonds) {
       const price = toNumber(d.price) ?? 0;
       const carat = toNumber(d.carat) ?? 0;
-      if (price > 0 || carat > 0 || d.desc.trim()) {
+      const perCaratRate = toNumber(d.perCaratRate) ?? 0;
+      const calcPrice = perCaratRate > 0 && carat > 0 ? perCaratRate * carat : price;
+      if (calcPrice > 0 || carat > 0 || d.desc.trim()) {
         lines.push({
           description: d.desc.trim() || "Diamond",
           karat: 0,
           weightGrams: 0,
           goldRatePerGram: 0,
           makingCharges: 0,
-          stoneCharges: price,
+          stoneCharges: calcPrice,
           caratWeight: carat,
+          perCaratRate: perCaratRate > 0 ? perCaratRate : undefined,
         });
       }
     }
+
     return lines;
   }
 

@@ -50,7 +50,10 @@ export interface QuoteLine {
   stoneCharges: number;
   /** Stone weight in carats (display only). */
   caratWeight: number;
+  /** Per-carat stone rate in ₹ (optional). */
+  perCaratRate?: number;
 }
+
 
 /** A reference photo attached to a quote (uploaded after creation). */
 export interface QuotePhoto {

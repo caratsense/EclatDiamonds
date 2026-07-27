@@ -3,6 +3,7 @@
 > **▶ RESUMING ON A NEW MACHINE / NEW SESSION? Read [docs/HANDOFF.md](docs/HANDOFF.md) FIRST** — it has the current status and the exact next step. Then continue with this file.
 >
 > Single source of truth for any agent working on this project. Read this first.
+> Maintainers: @caratsense, @adi-caratsense (https://github.com/adi-caratsense)
 
 ## What this is
 **Eclat** (product name **CaratSense**) is a unified operations platform for a **multi-store jewelry retail business**. It consolidates sales, inventory, finance, HR, and customer management across all store branches into one system.

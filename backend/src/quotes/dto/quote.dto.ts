@@ -44,6 +44,11 @@ export class QuoteLineDto {
   caratWeight?: number;
 
   @IsOptional()
+  @IsNumber()
+  @Min(0)
+  perCaratRate?: number;
+
+  @IsOptional()
   @IsString()
   productId?: string;
 }

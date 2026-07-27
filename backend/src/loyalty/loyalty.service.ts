@@ -70,10 +70,22 @@ export class LoyaltyService {
    * Office management screen, which must also see retired ones.
    */
   async plans(includeInactive = false) {
-    const plans = await this.prisma.schemePlan.findMany({
+    let plans = await this.prisma.schemePlan.findMany({
       where: includeInactive ? {} : { isActive: true },
       orderBy: { createdAt: 'asc' },
     });
+    if (plans.length === 0) {
+      await this.prisma.schemePlan.createMany({
+        data: [
+          { name: '10+1 Gold Savings Scheme', tenureMonths: 10, bonusMonths: 1, bonusLabel: '1 Month Company Bonus', defaultInstallment: new Prisma.Decimal(5000), isActive: true },
+          { name: '10+2 Premium Gold Scheme', tenureMonths: 10, bonusMonths: 2, bonusLabel: '2 Months Company Bonus', defaultInstallment: new Prisma.Decimal(10000), isActive: true },
+        ],
+      });
+      plans = await this.prisma.schemePlan.findMany({
+        where: includeInactive ? {} : { isActive: true },
+        orderBy: { createdAt: 'asc' },
+      });
+    }
     return plans.map((p) => this.planView(p));
   }
 

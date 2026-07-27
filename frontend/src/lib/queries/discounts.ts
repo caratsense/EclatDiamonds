@@ -142,3 +142,25 @@ export function useDiscountLimits() {
     },
   });
 }
+
+export interface DiscountPreset {
+  id: string;
+  code: string;
+  name: string;
+  diamondPercent: number;
+  makingPercent: number;
+  overallPercent: number;
+  description: string;
+}
+
+/** GET /discounts/presets — return preset discount codes dropdown list. */
+export function useDiscountPresets() {
+  return useQuery({
+    queryKey: ["discounts", "presets"],
+    queryFn: async () => {
+      const { data } = await api.get<DiscountPreset[]>("/discounts/presets");
+      return data;
+    },
+  });
+}
+

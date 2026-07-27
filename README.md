@@ -21,7 +21,12 @@ The legacy reference archive stays on `E:\Eclat Project\`:
 
 **Why it's safe to leave them behind:** everything we needed from the backups was already extracted — the schema is mapped (`docs/legacy-schema.md`) and the real data was backfilled into Postgres. In production the app syncs from the **client's live SQL Server**, not these backups. Keep the E:\ archive only for re-restore / audit if ever needed.
 
+## Team & Maintainers
+- **Repository**: [caratsense/EclatDiamonds](https://github.com/caratsense/EclatDiamonds)
+- **Maintainers**: `@caratsense`, `@adi-caratsense` (GitHub)
+
 ## First-time setup on a fresh machine
 1. `cd backend && npm install` then `cd ../frontend && npm install`
 2. Ensure local PostgreSQL is running; set `backend/.env` `DATABASE_URL`; `cd backend && npx prisma migrate deploy && node prisma/seed.mjs`
 3. Start backend (`npm run start:dev`) and frontend (`npm run dev`). Log in at /login (see `backend/README.md` for demo accounts).
+

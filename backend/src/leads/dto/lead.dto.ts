@@ -69,6 +69,10 @@ export class CreateLeadDto {
   address?: string;
 
   @IsOptional()
+  @IsString()
+  location?: string;
+
+  @IsOptional()
   @Matches(YMD, { message: 'birthday must be yyyy-mm-dd' })
   birthday?: string;
 
@@ -104,6 +108,10 @@ export class UpdateLeadDto {
   @IsOptional()
   @IsString()
   address?: string;
+
+  @IsOptional()
+  @IsString()
+  location?: string;
 
   @IsOptional()
   @Matches(YMD, { message: 'birthday must be yyyy-mm-dd' })

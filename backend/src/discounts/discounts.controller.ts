@@ -18,6 +18,11 @@ export class DiscountsController {
     return this.discounts.list(user, store);
   }
 
+  @Get('presets')
+  presets() {
+    return this.discounts.listPresets();
+  }
+
   /** Configured per-role caps (area_manager / head_office only). */
   @Roles('area_manager')
   @Get('limits')

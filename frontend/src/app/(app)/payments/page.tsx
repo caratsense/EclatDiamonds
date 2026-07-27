@@ -62,7 +62,9 @@ const MODE_OPTIONS: { value: PaymentMode; label: string }[] = [
   { value: "online", label: "Online" },
   { value: "cheque", label: "Cheque" },
   { value: "gold_exchange", label: "Gold Exchange" },
+  { value: "old_gold", label: "Old Gold" },
 ];
+
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleString("en-IN", {

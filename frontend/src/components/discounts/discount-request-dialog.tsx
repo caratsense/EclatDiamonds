@@ -16,6 +16,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { formatINR, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { ROLE_LABELS } from "@/lib/types";
@@ -23,8 +30,9 @@ import {
   DISCOUNT_STATUS_LABELS,
   STORE_MANAGER_CAPS,
 } from "@/lib/mock/discounts";
-import { useCreateDiscountRequest } from "@/lib/queries/discounts";
+import { useCreateDiscountRequest, useDiscountPresets } from "@/lib/queries/discounts";
 import { useSession } from "@/store/use-session";
+
 
 /** Parse a numeric input into a number, or undefined when blank/invalid. */
 function toNumber(v: string): number | undefined {
@@ -51,6 +59,7 @@ export function DiscountRequestDialog({
 }: DiscountRequestDialogProps) {
   const { currentStore } = useSession();
   const createRequest = useCreateDiscountRequest();
+  const { data: presets = [] } = useDiscountPresets();
 
   // Aggregate ("all") scope has no concrete store to write to — fall back to the
   // first real store id; broad roles normally pick a store first.
@@ -63,6 +72,7 @@ export function DiscountRequestDialog({
 
   const [customer, setCustomer] = React.useState("");
   const [item, setItem] = React.useState("");
+  const [selectedPreset, setSelectedPreset] = React.useState<string>("");
   const [diamond, setDiamond] = React.useState("");
   const [making, setMaking] = React.useState("");
   const [selling, setSelling] = React.useState("");
@@ -182,6 +192,34 @@ export function DiscountRequestDialog({
             <p className="text-[11px] text-muted-foreground">
               Optional — product name or code.
             </p>
+          </div>
+
+          {/* Discount Preset Code Dropdown */}
+          <div className="grid gap-1.5">
+            <Label htmlFor="dr-preset">Preset Discount Code</Label>
+            <Select
+              value={selectedPreset}
+              onValueChange={(code) => {
+                setSelectedPreset(code);
+                const p = presets.find((pr) => pr.code === code);
+                if (p) {
+                  setDiamond(String(p.diamondPercent));
+                  setMaking(String(p.makingPercent));
+                  if (errors.discount) setErrors((prev) => ({ ...prev, discount: "" }));
+                }
+              }}
+            >
+              <SelectTrigger id="dr-preset">
+                <SelectValue placeholder="Select preset code (or enter manually below)" />
+              </SelectTrigger>
+              <SelectContent>
+                {presets.map((p) => (
+                  <SelectItem key={p.code} value={p.code}>
+                    {p.code} — {p.name} ({p.diamondPercent}% Dia / {p.makingPercent}% Making)
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* Gold-no-discount note + the two discountable inputs. */}

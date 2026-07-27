@@ -34,6 +34,7 @@ function toView(q: any) {
       makingCharges: Number(l.makingCharges),
       stoneCharges: Number(l.stoneCharges),
       caratWeight: Number(l.caratWeight),
+      perCaratRate: l.perCaratRate != null ? Number(l.perCaratRate) : null,
     })),
     photos: (q.photos ?? []).map((p: any) => ({
       id: p.id,
@@ -68,7 +69,10 @@ function computeTotals(lines: QuoteLineDto[], kind: QuoteKind = QuoteKind.sale) 
     makingCharges += l.makingCharges ?? 0;
     if (!repair) {
       metalValue += l.weightGrams * l.goldRatePerGram;
-      stoneCharges += l.stoneCharges ?? 0;
+      const computedStone = (l.perCaratRate != null && l.caratWeight != null) 
+        ? l.perCaratRate * l.caratWeight 
+        : (l.stoneCharges ?? 0);
+      stoneCharges += computedStone;
     }
   }
   const taxable = metalValue + makingCharges + stoneCharges;
@@ -149,16 +153,22 @@ export class QuotesService {
         gstAmount: new Prisma.Decimal(t.gst),
         grandTotal: new Prisma.Decimal(t.grandTotal),
         lines: {
-          create: dto.lines.map((l) => ({
-            productId: l.productId,
-            description: l.description,
-            karat: l.karat,
-            weightGrams: new Prisma.Decimal(l.weightGrams),
-            goldRatePerGram: new Prisma.Decimal(l.goldRatePerGram),
-            makingCharges: new Prisma.Decimal(l.makingCharges ?? 0),
-            stoneCharges: new Prisma.Decimal(l.stoneCharges ?? 0),
-            caratWeight: new Prisma.Decimal(l.caratWeight ?? 0),
-          })),
+          create: dto.lines.map((l) => {
+            const stoneCharges = (l.perCaratRate != null && l.caratWeight != null)
+              ? l.perCaratRate * l.caratWeight
+              : (l.stoneCharges ?? 0);
+            return {
+              productId: l.productId,
+              description: l.description,
+              karat: l.karat,
+              weightGrams: new Prisma.Decimal(l.weightGrams),
+              goldRatePerGram: new Prisma.Decimal(l.goldRatePerGram),
+              makingCharges: new Prisma.Decimal(l.makingCharges ?? 0),
+              stoneCharges: new Prisma.Decimal(stoneCharges),
+              caratWeight: new Prisma.Decimal(l.caratWeight ?? 0),
+              perCaratRate: l.perCaratRate != null ? new Prisma.Decimal(l.perCaratRate) : null,
+            };
+          }),
         },
         redeemableStores: { create: redeemable.map((storeId) => ({ storeId })) },
       },

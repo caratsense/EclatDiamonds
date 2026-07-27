@@ -113,21 +113,30 @@ export class ReturnsService {
   async valuate(dto: ValuateReturnDto): Promise<Valuation> {
     const todayGoldRate = await this.resolveGoldRate(dto.storeId, dto.todayGoldRate);
     const todayDiaRate = await this.resolveDiaRate(dto.diaSpec, dto.storeId, dto.todayDiaRate);
-    return this.computeValuation(dto.goldWtG, dto.diaCarat, todayGoldRate, todayDiaRate);
+    return this.computeValuation(
+      dto.goldWtG,
+      dto.diaCarat,
+      todayGoldRate,
+      todayDiaRate,
+      dto.purchaseDiscountType,
+      dto.purchaseDiscountValue,
+    );
   }
 
   /**
    * Core exchange/buyback math (exact, Decimal-safe, whole-rupee rounded):
    *   goldValueToday = goldWeightG × todayGoldRatePerGram        (×100%)
    *   diaValueToday  = diaCarat    × todayDiaRatePerCarat        (100% base)
-   *   EXCHANGE = goldValueToday×100% + diaValueToday×100%   (making 0, GST 0)
-   *   BUYBACK  = goldValueToday×100% + diaValueToday×80%    (making 0, GST 0)
+   *   EXCHANGE = goldValueToday×100% + diaValueToday×100% - purchaseDiscount   (making 0, GST 0)
+   *   BUYBACK  = goldValueToday×100% + diaValueToday×80% - purchaseDiscount    (making 0, GST 0)
    */
   private computeValuation(
     goldWtG: number | undefined,
     diaCarat: number | undefined,
     todayGoldRate: number,
     todayDiaRate: number,
+    purchaseDiscountType?: string,
+    purchaseDiscountValue?: number,
   ): Valuation {
     const goldWt = new Prisma.Decimal(goldWtG ?? 0);
     const goldRate = new Prisma.Decimal(todayGoldRate ?? 0);
@@ -136,8 +145,22 @@ export class ReturnsService {
 
     const goldValueTodayD = goldWt.mul(goldRate).mul(GOLD_PCT).div(100);
     const diaValueTodayD = diaCt.mul(diaRate); // 100% diamond base value
-    const exchangeD = goldValueTodayD.add(diaValueTodayD.mul(EXCHANGE_DIA_PCT).div(100));
-    const buybackD = goldValueTodayD.add(diaValueTodayD.mul(BUYBACK_DIA_PCT).div(100));
+
+    let rawExchange = goldValueTodayD.add(diaValueTodayD.mul(EXCHANGE_DIA_PCT).div(100));
+    let rawBuyback = goldValueTodayD.add(diaValueTodayD.mul(BUYBACK_DIA_PCT).div(100));
+
+    // Deduct purchase discount if specified (e.g. client voice note rule)
+    let discountAmount = new Prisma.Decimal(0);
+    if (purchaseDiscountValue && purchaseDiscountValue > 0) {
+      if (purchaseDiscountType === 'percent') {
+        discountAmount = diaValueTodayD.mul(purchaseDiscountValue).div(100);
+      } else {
+        discountAmount = new Prisma.Decimal(purchaseDiscountValue);
+      }
+    }
+
+    const exchangeD = Prisma.Decimal.max(0, rawExchange.sub(discountAmount));
+    const buybackD = Prisma.Decimal.max(0, rawBuyback.sub(discountAmount));
 
     return {
       todayGoldRate: Number(todayGoldRate ?? 0),
@@ -149,6 +172,7 @@ export class ReturnsService {
       breakdown: { makingReturned: 0, gstReturned: 0 },
     };
   }
+
 
   /**
    * POST /returns — raise a return/exchange/buyback.

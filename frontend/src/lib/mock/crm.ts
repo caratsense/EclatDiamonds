@@ -72,8 +72,11 @@ export interface Lead {
   phone: string;
   /** Postal address (Round-2 — captured on the entry form, echoed by the API). */
   address: string;
+  /** Area/location for sorting and grouping. */
+  location?: string;
   /** Birthday as yyyy-mm-dd, or null when not captured. */
   birthday: string | null;
+
   /** Anniversary as yyyy-mm-dd, or null when not captured. */
   anniversary: string | null;
   /**

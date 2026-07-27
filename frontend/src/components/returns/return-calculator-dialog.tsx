@@ -79,11 +79,14 @@ export function ReturnCalculatorDialog({
   const [phone, setPhone] = React.useState("");
   const [item, setItem] = React.useState("");
   const [goldWtG, setGoldWtG] = React.useState("");
+  const [goldKarat, setGoldKarat] = React.useState("18");
   const [goldRate, setGoldRate] = React.useState("");
   const [diaCarat, setDiaCarat] = React.useState("");
   const [diaSpec, setDiaSpec] = React.useState("");
   const [diaRate, setDiaRate] = React.useState("");
   const [making, setMaking] = React.useState("");
+  const [purchaseDiscountType, setPurchaseDiscountType] = React.useState<"percent" | "value" | "piece">("percent");
+  const [purchaseDiscountValue, setPurchaseDiscountValue] = React.useState("");
   const [chosen, setChosen] = React.useState<ChosenOption>("exchange");
   const [errors, setErrors] = React.useState<Record<string, string>>({});
 

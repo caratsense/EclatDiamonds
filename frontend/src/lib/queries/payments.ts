@@ -40,7 +40,9 @@ export type PaymentMode =
   | "net_banking"
   | "online"
   | "cheque"
-  | "gold_exchange";
+  | "gold_exchange"
+  | "old_gold";
+
 
 export interface RecordPaymentInput {
   storeId: string;

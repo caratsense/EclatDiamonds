@@ -122,6 +122,17 @@ export class CreateReturnDto {
   @Min(0)
   todayDiaRate?: number;
 
+  /** Discount given at purchase time (type: 'percent' | 'value' | 'piece'). */
+  @IsOptional()
+  @IsString()
+  purchaseDiscountType?: string;
+
+  /** Discount amount or percentage given at purchase time to be deducted from exchange. */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  purchaseDiscountValue?: number;
+
   /** Which option the customer took — drives value + type. */
   @IsOptional()
   @IsIn(['exchange', 'buyback'])
@@ -178,6 +189,15 @@ export class ValuateReturnDto {
   @IsOptional()
   @IsIn(['invoice', 'manual'])
   entryMode?: 'invoice' | 'manual';
+
+  @IsOptional()
+  @IsString()
+  purchaseDiscountType?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  purchaseDiscountValue?: number;
 
   @IsOptional()
   @IsString()

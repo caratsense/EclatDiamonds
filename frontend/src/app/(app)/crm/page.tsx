@@ -339,9 +339,11 @@ export default function CrmPage() {
               <TableRow>
                 <TableHead>Lead</TableHead>
                 <TableHead>Customer</TableHead>
+                <TableHead>Location / Area</TableHead>
                 <TableHead>Source</TableHead>
                 <TableHead>Stage</TableHead>
                 <TableHead>Salesperson</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -359,6 +361,11 @@ export default function CrmPage() {
                     </div>
                   </TableCell>
                   <TableCell>
+                    <span className="text-xs font-medium">
+                      {lead.location || lead.address || "—"}
+                    </span>
+                  </TableCell>
+                  <TableCell>
                     <Badge variant="outline">
                       {LEAD_SOURCE_LABELS[lead.source]}
                     </Badge>
@@ -367,9 +374,26 @@ export default function CrmPage() {
                     {LEAD_STAGES.find((s) => s.id === lead.stage)?.label}
                   </TableCell>
                   <TableCell>{lead.assignedRep}</TableCell>
+                  <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      title="WhatsApp Re-engagement"
+                      onClick={() => {
+                        const cleanPhone = lead.phone.replace(/[^0-9]/g, "");
+                        const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(
+                          `Hello ${lead.customer}, following up regarding your enquiry for ${lead.interest || "jewellery"}.`
+                        )}`;
+                        window.open(waUrl, "_blank");
+                      }}
+                    >
+                      WhatsApp
+                    </Button>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
+
           </Table>
         </div>
       )}

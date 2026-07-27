@@ -59,6 +59,30 @@ interface Template {
 
 const TEMPLATES: Template[] = [
   {
+    key: "10+1",
+    label: "10 + 1",
+    hint: "Customer pays 10 months, store funds 1 bonus installment.",
+    values: {
+      name: "10 + 1 Gold Scheme",
+      tenureMonths: 10,
+      bonusMonths: 1,
+      bonusLabel: "Pay 10 months, 1 bonus month on maturity",
+      defaultInstallment: 5000,
+    },
+  },
+  {
+    key: "10+2",
+    label: "10 + 2",
+    hint: "Customer pays 10 months, store funds 2 bonus installments.",
+    values: {
+      name: "10 + 2 Gold Scheme",
+      tenureMonths: 10,
+      bonusMonths: 2,
+      bonusLabel: "Pay 10 months, 2 bonus months on maturity",
+      defaultInstallment: 5000,
+    },
+  },
+  {
     key: "11+1",
     label: "11 + 1",
     hint: "Customer pays 11 months, the store funds the 12th.",
@@ -107,6 +131,7 @@ const TEMPLATES: Template[] = [
     },
   },
 ];
+
 
 const EMPTY: SchemePlanInput = {
   name: "",

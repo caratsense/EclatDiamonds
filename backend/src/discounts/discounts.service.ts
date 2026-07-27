@@ -88,6 +88,43 @@ export class DiscountsService {
     return rows.map((r) => toView(r, user.role));
   }
 
+  /** GET /discounts/presets — return preset discount codes list (seeds default if empty). */
+  async listPresets() {
+    let presets = await this.prisma.discountPreset.findMany({
+      where: { isActive: true },
+      orderBy: { code: 'asc' },
+    });
+    if (presets.length === 0) {
+      const defaults = [
+        { code: 'D10', name: '10% Diamond Discount', diamondPercent: new Prisma.Decimal(10), makingPercent: new Prisma.Decimal(0), description: 'Flat 10% on diamond value' },
+        { code: 'D15', name: '15% Diamond Discount', diamondPercent: new Prisma.Decimal(15), makingPercent: new Prisma.Decimal(0), description: 'Flat 15% on diamond value' },
+        { code: 'D20', name: '20% Diamond Discount', diamondPercent: new Prisma.Decimal(20), makingPercent: new Prisma.Decimal(0), description: 'Flat 20% on diamond value' },
+        { code: 'D25', name: '25% Diamond Discount', diamondPercent: new Prisma.Decimal(25), makingPercent: new Prisma.Decimal(0), description: 'Flat 25% on diamond value' },
+        { code: 'M5', name: '5% Making Charge Discount', diamondPercent: new Prisma.Decimal(0), makingPercent: new Prisma.Decimal(5), description: '5% off making charges' },
+        { code: 'M10', name: '10% Making Charge Discount', diamondPercent: new Prisma.Decimal(0), makingPercent: new Prisma.Decimal(10), description: '10% off making charges' },
+        { code: 'M15', name: '15% Making Charge Discount', diamondPercent: new Prisma.Decimal(0), makingPercent: new Prisma.Decimal(15), description: '15% off making charges' },
+        { code: 'D10_M5', name: '10% Diamond + 5% Making', diamondPercent: new Prisma.Decimal(10), makingPercent: new Prisma.Decimal(5), description: '10% on diamond + 5% on making' },
+        { code: 'D10_M10', name: '10% Diamond + 10% Making', diamondPercent: new Prisma.Decimal(10), makingPercent: new Prisma.Decimal(10), description: '10% on diamond + 10% on making' },
+        { code: 'D15_M10', name: '15% Diamond + 10% Making', diamondPercent: new Prisma.Decimal(15), makingPercent: new Prisma.Decimal(10), description: '15% on diamond + 10% on making' },
+        { code: 'D20_M10', name: '20% Diamond + 10% Making', diamondPercent: new Prisma.Decimal(20), makingPercent: new Prisma.Decimal(10), description: '20% on diamond + 10% on making' },
+      ];
+      await this.prisma.discountPreset.createMany({ data: defaults });
+      presets = await this.prisma.discountPreset.findMany({
+        where: { isActive: true },
+        orderBy: { code: 'asc' },
+      });
+    }
+    return presets.map((p) => ({
+      id: p.id,
+      code: p.code,
+      name: p.name,
+      diamondPercent: p.diamondPercent != null ? Number(p.diamondPercent) : 0,
+      makingPercent: p.makingPercent != null ? Number(p.makingPercent) : 0,
+      overallPercent: p.overallPercent != null ? Number(p.overallPercent) : 0,
+      description: p.description ?? '',
+    }));
+  }
+
   /**
    * Module 15 create. Gold is never discounted — only diamond% and making%.
    * Within the requester role's caps => auto-approved. Over caps => escalated to

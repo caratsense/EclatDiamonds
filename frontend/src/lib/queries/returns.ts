@@ -76,6 +76,8 @@ export interface ValuateInput {
   /** How the piece was entered. Default 'manual'; 'invoice' requires invoiceNo. */
   entryMode?: "invoice" | "manual";
   invoiceNo?: string;
+  purchaseDiscountType?: string;
+  purchaseDiscountValue?: number;
 }
 
 export interface ValuationResult {
@@ -142,6 +144,8 @@ export interface CreateReturnInput {
   /** How the piece was entered. Default 'manual'; 'invoice' requires invoiceNo. */
   entryMode?: "invoice" | "manual";
   invoiceNo?: string;
+  purchaseDiscountType?: string;
+  purchaseDiscountValue?: number;
 }
 
 /**

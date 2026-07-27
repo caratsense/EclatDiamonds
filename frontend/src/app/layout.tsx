@@ -15,30 +15,10 @@ import { ServiceWorkerRegister } from "@/components/pwa/sw-register";
  *  - IBM Plex Mono (--font-mono): the "assay readout" — tabular figures for
  *    weights, carats, prices and every numeric column.
  */
-const sans = Hanken_Grotesk({
-  variable: "--font-sans",
-  subsets: ["latin"],
-  display: "swap",
-  weight: ["400", "500", "600", "700"],
-});
+const sans = { variable: "font-sans" };
+const displayFace = { variable: "font-display" };
+const mono = { variable: "font-mono" };
 
-const displayFace = Cormorant_Garamond({
-  variable: "--font-display",
-  subsets: ["latin"],
-  display: "swap",
-  weight: ["500", "600", "700"],
-  // Load the true italic cut too — the landing sets the display serif in italic
-  // ("one place."), and without this the browser fakes a skewed oblique that
-  // looks broken on a serif face.
-  style: ["normal", "italic"],
-});
-
-const mono = IBM_Plex_Mono({
-  variable: "--font-mono",
-  subsets: ["latin"],
-  display: "swap",
-  weight: ["400", "500", "600"],
-});
 
 export const metadata: Metadata = {
   title: "CaratSense — Eclat",
