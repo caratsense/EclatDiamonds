@@ -77,14 +77,33 @@ export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
 export interface OrderEvent {
   id: string;
   stage: string;
+  stageLabel?: string;
   stageIndex: number;
   note: string;
   byRole: string;
   byName: string;
   at: string;
+  /** Days the order spent in this stage (open-ended for the current one). */
+  durationDays?: number;
+  isCurrent?: boolean;
 }
 
-export type CustomOrderDetail = CustomOrder & { events: OrderEvent[] };
+/** A stage the server will actually accept as the next move for this order. */
+export interface AllowedStage {
+  stage: OrderStatus;
+  label: string;
+}
+
+export type CustomOrderDetail = CustomOrder & {
+  events: OrderEvent[];
+  /**
+   * Exactly where this order may go next, per the server's production state
+   * machine. Drive the stage picker from THIS rather than the full enum: the API
+   * rejects an illegal jump (e.g. booked → delivered) and a backwards move, so
+   * offering them only produces a 400 the user cannot act on.
+   */
+  allowedNextStages: AllowedStage[];
+};
 
 export interface CreateWorkflowInput {
   customer: string;
@@ -236,25 +255,32 @@ export function useOrders({ kind = "all", scope = "ongoing" }: UseOrdersParams =
 
 export interface AdvanceStageInput {
   id: string;
-  /** Stage to advance to (raw OrderStatus enum). */
+  /** Stage to advance to. Must be one of the order's `allowedNextStages`. */
   stage: OrderStatus;
-  /** Optional note recorded on the stage-change event. */
+  /** Note on the stage-change event. REQUIRED when `stage` is `cancelled`. */
   note?: string;
+  /**
+   * Who physically collected the piece. REQUIRED when `stage` is `delivered` —
+   * handover is where the store's liability for the item ends.
+   */
+  deliveredTo?: string;
 }
 
 /**
- * PATCH /timelines/orders/:id/stage — advance an order to a new production
- * stage (store_manager+). Returns the updated order detail (order + events);
- * invalidates the orders list and this order's detail so the stepper and the
- * event history refresh.
+ * PATCH /timelines/orders/:id/stage — move an order through production.
+ *
+ * The server validates the move against its state machine, so this can 400 on a
+ * skipped/backwards stage, on a cancellation with no reason, or on a delivery
+ * with no recipient; and 403 when the stage needs a higher role (delivery is
+ * store_manager+, cancellation is area_manager+). Surface the message.
  */
 export function useAdvanceOrderStage() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, stage, note }: AdvanceStageInput) => {
+    mutationFn: async ({ id, stage, note, deliveredTo }: AdvanceStageInput) => {
       const { data } = await api.patch<CustomOrderDetail>(
         `/timelines/orders/${id}/stage`,
-        { stage, note },
+        { stage, note, ...(deliveredTo ? { deliveredTo } : {}) },
       );
       return data;
     },

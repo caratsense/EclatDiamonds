@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
+import { SequenceService } from '../common/sequence.service';
 import { AuthUser } from '../common/auth-user';
 import {
   CreateActivityDto,
@@ -160,6 +161,7 @@ export class LeadsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
+    private readonly sequence: SequenceService,
   ) {}
 
   async list(user: AuthUser, q: ListLeadsQuery, headerStore?: string) {
@@ -210,10 +212,12 @@ export class LeadsService {
 
   async create(user: AuthUser, dto: CreateLeadDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
-    const count = await this.prisma.lead.count();
+    // Sequence-backed: `count() + 1` handed the same number to two reps
+    // creating a lead at once, and re-used a number after any deletion.
+    const seq = await this.sequence.next('LD:global');
     const lead = await this.prisma.lead.create({
       data: {
-        ref: `LD-${5000 + count + 1}`,
+        ref: `LD-${5000 + seq}`,
         storeId: dto.storeId,
         customerName: dto.customerName,
         phone: dto.phone,

@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ReportingService } from './reporting.service';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
+import { Roles } from '../auth/roles.decorator';
 import {
   CreateDailyReportDto,
   DailyReportQueryDto,
@@ -37,7 +38,15 @@ export class ReportingController {
     return this.reporting.summary(user, query.period ?? 'daily', query.date, store);
   }
 
-  /** POST /reporting/send — compose the summary and deliver it via WhatsApp or email. */
+  /**
+   * POST /reporting/send — compose the summary and deliver it via WhatsApp or email.
+   *
+   * Manager+ only. This endpoint takes an arbitrary `to` (any phone number, any
+   * email address) and sends it the store's revenue, collections and payment
+   * mix. Ungated, it is a one-call data-exfiltration path for anyone with a
+   * login — the sensitivity is in the payload, not the route name.
+   */
+  @Roles('store_manager', 'area_manager', 'head_office')
   @Post('send')
   send(
     @CurrentUser() user: AuthUser,
@@ -69,7 +78,12 @@ export class ReportingController {
     return this.reporting.getDaily(user, id);
   }
 
-  /** POST /reporting/daily/:id/send — deliver the composed DSR via WhatsApp/email. */
+  /**
+   * POST /reporting/daily/:id/send — deliver the composed DSR via WhatsApp/email.
+   * Manager+ for the same reason as `/send`: it ships the day's takings to an
+   * arbitrary external recipient.
+   */
+  @Roles('store_manager', 'area_manager', 'head_office')
   @Post('daily/:id/send')
   sendDaily(
     @CurrentUser() user: AuthUser,

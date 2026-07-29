@@ -34,6 +34,7 @@ const STATUS_META: Record<
   pending: { label: "Pending", variant: "secondary" },
   approved: { label: "Approved", variant: "success" },
   rejected: { label: "Rejected", variant: "destructive" },
+  cancelled: { label: "Cancelled", variant: "secondary" },
 };
 
 /** "Wed 8 Jul" from YYYY-MM-DD (local). */

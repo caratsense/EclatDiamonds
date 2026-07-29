@@ -11,6 +11,7 @@ import { useStoreKey } from "@/lib/queries/keys";
 import type {
   AttendanceRecord,
   AttendanceReport,
+  AttendanceReportSummary,
   CommissionRow,
   Holiday,
   LateFlag,
@@ -41,13 +42,25 @@ import type {
 const HRMS_KEY = "hrms";
 
 /** Attendance status options written by the mark-attendance action. */
-export type AttendanceStatus = "present" | "late" | "absent" | "on_leave";
+export type AttendanceStatus =
+  | "present"
+  | "late"
+  | "half_day"
+  | "absent"
+  | "on_leave";
 
 export interface MarkAttendanceInput {
-  staffName: string;
+  /**
+   * The staff member being marked — REQUIRED. Omitting it used to mint a
+   * throwaway id that no report could attribute; the API now rejects that.
+   */
+  staffId: string;
+  staffName?: string;
   status: AttendanceStatus;
   storeId: string;
   checkInAt?: string;
+  /** Day being marked (YYYY-MM-DD, store-local). Defaults to the store's today. */
+  date?: string;
   /**
    * Shift/batch to measure lateness against. Omitted → backend uses the
    * store's default shift. A 2nd-batch person's lateness is scored against
@@ -97,17 +110,56 @@ export function useLeaveRequests() {
   });
 }
 
-/** PATCH /hrms/leave/:id — approve/reject a leave request (manager+ only). */
+/**
+ * PATCH /hrms/leave/:id — approve/reject a leave request (manager+ only).
+ *
+ * The API refuses a decision on a request the caller raised themselves (403) and
+ * refuses a second decision on one already settled (400) — surface those messages
+ * rather than swallowing them.
+ */
 export function useDecideLeave() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, status }: { id: string; status: LeaveStatus }) => {
+    mutationFn: async ({
+      id,
+      status,
+      note,
+    }: {
+      id: string;
+      status: LeaveStatus;
+      /** Rationale recorded on the request and shown back to the applicant. */
+      note?: string;
+    }) => {
       const { data } = await api.patch<LeaveRequest>(`/hrms/leave/${id}`, {
         status,
+        ...(note ? { note } : {}),
       });
       return data;
     },
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [HRMS_KEY, "leave"] });
+    },
+  });
+}
+
+/**
+ * PATCH /hrms/leave/:id/cancel — withdraw a request.
+ *
+ * The applicant may withdraw their own while it is pending; a manager+ may also
+ * revoke one already approved, which releases the days back to the balance.
+ */
+export function useCancelLeave() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, reason }: { id: string; reason?: string }) => {
+      const { data } = await api.patch<LeaveRequest>(
+        `/hrms/leave/${id}/cancel`,
+        reason ? { reason } : {},
+      );
+      return data;
+    },
+    onSuccess: () => {
+      // Prefix invalidation covers the leave list and the balance rows.
       qc.invalidateQueries({ queryKey: [HRMS_KEY, "leave"] });
     },
   });
@@ -122,6 +174,14 @@ export interface PunchInput {
   lng: number;
   /** Optional shift/batch to score lateness against (check-in only). */
   shiftId?: string;
+  /**
+   * Justification for punching from outside the store geofence. The API REJECTS
+   * an out-of-fence punch without one (400) — the UI must collect it. The punch
+   * itself is never blocked; it just has to be explained.
+   */
+  note?: string;
+  /** The device reported a mock/spoofed location provider (check-in only). */
+  isMockLocation?: boolean;
 }
 
 /**
@@ -137,6 +197,7 @@ export function useMyAttendance(month: string) {
       const { data } = await api.get<{
         today: SelfAttendance | null;
         records: SelfAttendance[];
+        summary: AttendanceReportSummary;
       }>("/hrms/attendance/me", { params: { month } });
       return data;
     },
@@ -165,7 +226,7 @@ export function useCheckIn() {
 export function useCheckOut() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { lat: number; lng: number }) => {
+    mutationFn: async (input: { lat: number; lng: number; note?: string }) => {
       const { data } = await api.post<SelfAttendance>(
         "/hrms/attendance/check-out",
         input,
@@ -192,6 +253,13 @@ export interface Geofence {
   longitude: number | null;
   geofenceRadiusM: number;
   hasCoords: boolean;
+  /** IANA timezone the store's shifts and business days are resolved in. */
+  timezone?: string;
+  /**
+   * When true (always, currently), an out-of-fence punch must carry a `note`.
+   * The client should prompt for one rather than letting the API 400.
+   */
+  requiresReasonOutsideFence?: boolean;
 }
 
 /**
@@ -369,10 +437,18 @@ export function useCreateRegularization() {
 export function useDecideRegularization() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, status }: { id: string; status: LeaveStatus }) => {
+    mutationFn: async ({
+      id,
+      status,
+      note,
+    }: {
+      id: string;
+      status: LeaveStatus;
+      note?: string;
+    }) => {
       const { data } = await api.patch<Regularization>(
         `/hrms/regularize/${id}`,
-        { status },
+        { status, ...(note ? { note } : {}) },
       );
       return data;
     },
@@ -440,12 +516,59 @@ export function useCommission() {
 export interface CreateShiftInput {
   storeId: string;
   name: string;
-  /** HH:MM, 24-hour. */
+  /** HH:MM, 24-hour, in the STORE's timezone. */
   startTime: string;
-  /** HH:MM, 24-hour. */
+  /** HH:MM, 24-hour. May be earlier than startTime for a night batch. */
   endTime: string;
   bufferMins?: number;
   isNightBatch?: boolean;
+  /** Minutes worked for a full day's payroll credit. Defaults to the shift length. */
+  fullDayMins?: number;
+  /** Minutes for a half day's credit. Defaults to half the full-day threshold. */
+  halfDayMins?: number;
+}
+
+/* ------------------------------------------------------------------ */
+/* Day close — end-of-day reconciliation (Module 6)                    */
+/* ------------------------------------------------------------------ */
+
+export interface DayCloseResult {
+  storeId: string;
+  /** YYYY-MM-DD, store-local. */
+  date: string;
+  timezone: string;
+  staffConsidered: number;
+  /** Dangling punches closed at the shift's scheduled end. */
+  autoClosed: number;
+  markedAbsent: number;
+  markedOnLeave: number;
+  /** Week-offs + holidays written so they don't read as absences. */
+  markedNonWorking: number;
+}
+
+/**
+ * POST /hrms/attendance/day-close — close a working day for a store.
+ *
+ * Writes an explicit row for everyone who never punched (absent / on_leave /
+ * week_off / holiday) and closes any dangling punch at the shift's end. Without
+ * this, absence leaves no record at all. Idempotent — safe to re-run.
+ * Defaults to the previous store-local day when `date` is omitted.
+ */
+export function useDayClose() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { storeId: string; date?: string }) => {
+      const { data } = await api.post<DayCloseResult>(
+        "/hrms/attendance/day-close",
+        input,
+      );
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [HRMS_KEY, "attendance"] });
+      qc.invalidateQueries({ queryKey: [HRMS_KEY, "late-flags"] });
+    },
+  });
 }
 
 /** GET /hrms/shifts — store shifts/batches, store-scoped. */

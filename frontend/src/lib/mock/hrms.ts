@@ -15,7 +15,41 @@ export type StaffRole =
   | "Runner"
   | "Store Manager";
 
-export type AttendanceStatus = "present" | "late" | "on_leave" | "absent";
+/**
+ * `half_day` is written when a staffer attended but worked less than the shift's
+ * full-day threshold; `week_off` and `holiday` are written by the end-of-day
+ * close so a non-working day is explicitly recorded rather than looking like an
+ * absence. Use `ATTENDANCE_STATUS_LABELS` for display and `NON_WORKING_STATUSES`
+ * to exclude them from attendance percentages.
+ */
+export type AttendanceStatus =
+  | "present"
+  | "late"
+  | "half_day"
+  | "on_leave"
+  | "absent"
+  | "week_off"
+  | "holiday";
+
+export const ATTENDANCE_STATUS_LABELS: Record<AttendanceStatus, string> = {
+  present: "Present",
+  late: "Late",
+  half_day: "Half day",
+  on_leave: "On leave",
+  absent: "Absent",
+  week_off: "Week off",
+  holiday: "Holiday",
+};
+
+/** Statuses that are NOT a working day — never counted as an absence. */
+export const NON_WORKING_STATUSES: AttendanceStatus[] = [
+  "week_off",
+  "holiday",
+  "on_leave",
+];
+
+/** How an attendance row came to exist. */
+export type AttendanceSource = "self" | "manager" | "regularization" | "auto";
 
 /** A coordinate pair for the store geofence + a check-in ping. */
 export interface GeoPoint {
@@ -35,30 +69,52 @@ export interface AttendanceRecord {
   id: string;
   storeId: string;
   staffId: string;
+  /** YYYY-MM-DD, the store-local business date this punch belongs to. */
+  date?: string;
   name: string;
   initials: string;
-  role: StaffRole;
+  /** The staffer's real role label, resolved from their user record. */
+  role: string;
+  /** The assigned shift's label, or "Unassigned"/"—" when not applicable. */
   shift: string;
-  /** HH:mm, null while still to check in. */
+  /** HH:mm in the STORE's timezone, null while still to check in. */
   checkIn: string | null;
   checkOut: string | null;
   status: AttendanceStatus;
-  /** Where the check-in ping landed. */
-  ping: GeoPoint;
-  /** Metres from the store centre at check-in. */
-  distanceM: number;
+  /** Where the check-in ping landed; null components when no fix was captured. */
+  ping: { lat: number | null; lng: number | null };
+  /** Metres from the store centre at check-in; null when the store has no fence. */
+  distanceM: number | null;
   /** Derived: ping within the store geofence radius. */
   withinFence: boolean;
   /** Shift/batch this check-in was measured against (Module 6). */
   shiftId?: string | null;
   /**
    * Derived server-side: check-in landed later than the assigned shift's
-   * startTime + bufferMins. A 2nd-batch person is NOT late for a morning
-   * shift's start — lateness is always relative to their own shift.
+   * startTime + bufferMins, measured in the STORE's timezone. A 2nd-batch person
+   * is NOT late for a morning shift's start — lateness is always relative to
+   * their own shift, and night shifts crossing midnight are handled.
    */
   isLate?: boolean;
   /** Minutes past (shift start + buffer) at check-in; 0/undefined when on time. */
   lateMinutes?: number;
+  workedMins?: number | null;
+  /** Minutes worked beyond the shift's scheduled length. */
+  overtimeMins?: number | null;
+  /** Minutes the staffer left before the shift's scheduled end. */
+  earlyOutMinutes?: number | null;
+  /** Payroll credit for the day: 1 = full, 0.5 = half, 0 = none. */
+  dayFraction?: number | null;
+  /** Device reported a mock/spoofed GPS provider at punch time. */
+  isMockLocation?: boolean;
+  /** Justification supplied for an out-of-fence punch. */
+  checkInNote?: string | null;
+  checkOutNote?: string | null;
+  source?: AttendanceSource;
+  /** The day-close job closed a dangling punch at the shift's end. */
+  autoClosed?: boolean;
+  /** Server-flagged: off-site punch, spoofed GPS, or an auto-closed day. */
+  needsReview?: boolean;
 }
 
 export interface ShiftAssignment {
@@ -98,7 +154,7 @@ export const LEAVE_TYPE_ORDER: LeaveType[] = [
   "festival",
 ];
 
-export type LeaveStatus = "pending" | "approved" | "rejected";
+export type LeaveStatus = "pending" | "approved" | "rejected" | "cancelled";
 
 export interface LeaveRequest {
   id: string;
@@ -111,13 +167,22 @@ export interface LeaveRequest {
    * (LeaveType) is used only on the apply body + balance rows.
    */
   type: string;
+  /** Raw enum key matching LeaveType. */
+  typeCode?: LeaveType;
   from: string;
   to: string;
+  /** YYYY-MM-DD forms of the same range, for date maths. */
+  fromDate?: string;
+  toDate?: string;
   days: number;
   /** Half-day request (counts as 0.5 day). */
   halfDay?: boolean;
   reason: string;
   status: LeaveStatus;
+  /** Who decided it — required for any audit of an approval. */
+  decidedBy?: string | null;
+  decidedAt?: string | null;
+  decisionNote?: string | null;
 }
 
 export interface LeaderboardRow {
@@ -172,14 +237,38 @@ export interface SelfAttendance {
   /** ISO datetime, or null before the punch lands. */
   checkInAt: string | null;
   checkOutAt: string | null;
+  /**
+   * HH:mm already rendered in the STORE's timezone. Prefer these over formatting
+   * `checkInAt` on the device: a staffer whose phone is on another zone (or set
+   * manually) would otherwise see a time their store never ran on.
+   */
+  checkInLocal?: string | null;
+  checkOutLocal?: string | null;
+  /** IANA timezone the punch times are expressed in. */
+  timezone?: string;
   /** Metres from the store centre at check-in; null if the store has no coords. */
   checkInDistanceM: number | null;
+  checkOutDistanceM?: number | null;
   withinFence: boolean;
+  checkOutWithinFence?: boolean;
   /** Minutes worked once checked out; null while still checked in. */
   workedMins: number | null;
+  /** Minutes beyond the shift's scheduled length. */
+  overtimeMins?: number | null;
+  /** Minutes short of the shift's scheduled end. */
+  earlyOutMinutes?: number | null;
+  /** Payroll credit for the day: 1 = full, 0.5 = half, 0 = none. */
+  dayFraction?: number | null;
   isLate: boolean;
   lateMinutes: number | null;
   shiftId: string | null;
+  /** Reason given for punching outside the store geofence. */
+  checkInNote?: string | null;
+  checkOutNote?: string | null;
+  isMockLocation?: boolean;
+  /** Closed by the end-of-day job because no check-out was recorded. */
+  autoClosed?: boolean;
+  source?: AttendanceSource;
 }
 
 /** A per-staff, per-type, per-year leave balance (GET /hrms/leave/balances). */
@@ -189,7 +278,18 @@ export interface LeaveBalance {
   year: number;
   allocated: number;
   used: number;
+  /** Days locked up in requests still awaiting a decision. */
+  pending?: number;
+  /** allocated − used. */
   balance: number;
+  /**
+   * What can actually still be applied for: `balance − pending`. Prefer this over
+   * `balance` when showing a staffer what they may book — otherwise the number
+   * double-counts days already committed to an undecided request.
+   */
+  available?: number;
+  /** Display label for the type, e.g. "Casual". */
+  label?: string;
   /** Financial-year display label, e.g. "2026–27". Present on newer rows. */
   financialYearLabel?: string;
 }
@@ -211,8 +311,15 @@ export interface AttendanceReportRow {
   /** ISO datetime, or null. */
   checkInAt: string | null;
   checkOutAt: string | null;
+  /** HH:mm pre-rendered in the store's timezone. */
+  checkInLocal?: string | null;
+  checkOutLocal?: string | null;
   /** Minutes worked once checked out; null while open / absent. */
   workedMins: number | null;
+  overtimeMins?: number | null;
+  earlyOutMinutes?: number | null;
+  /** Payroll credit for the day: 1 / 0.5 / 0. */
+  dayFraction?: number | null;
   isLate: boolean;
   lateMinutes: number | null;
   checkInLat: number | null;
@@ -220,17 +327,32 @@ export interface AttendanceReportRow {
   /** Metres from the store centre at check-in; null if no coords. */
   checkInDistanceM: number | null;
   withinFence: boolean;
+  checkInNote?: string | null;
+  isMockLocation?: boolean;
+  autoClosed?: boolean;
+  source?: AttendanceSource;
   shiftId: string | null;
 }
 
 /** Roll-up totals for a date-range attendance report. */
 export interface AttendanceReportSummary {
   present: number;
+  /** Days attended but short of the full-day threshold. */
+  halfDay?: number;
   late: number;
   absent: number;
   onLeave: number;
+  /** Week-offs + holidays. Excluded from the attendance percentage denominator. */
+  nonWorking?: number;
   totalWorkedMins: number;
+  totalOvertimeMins?: number;
   avgWorkedMins: number;
+  /** Sum of day credits — the number payroll should consume. */
+  payableDays?: number;
+  /** Attended ÷ scheduled days, 0–100. */
+  attendancePct?: number;
+  /** On-time ÷ attended days, 0–100. */
+  punctualityPct?: number;
 }
 
 /** A staffer's attendance over a date range, records newest-first. */
@@ -256,13 +378,23 @@ export interface TeamPunch {
   status: AttendanceStatus;
   checkInAt: string | null;
   checkOutAt: string | null;
+  /** HH:mm pre-rendered in the store's timezone. */
+  checkInLocal?: string | null;
+  checkOutLocal?: string | null;
   workedMins: number | null;
+  overtimeMins?: number | null;
   isLate: boolean;
   lateMinutes: number | null;
   checkInLat: number | null;
   checkInLng: number | null;
   checkInDistanceM: number | null;
   withinFence: boolean;
+  /** Reason the staffer gave for an out-of-fence punch. */
+  checkInNote?: string | null;
+  isMockLocation?: boolean;
+  autoClosed?: boolean;
+  /** Server-flagged: worth a manager's eyes (off-site, spoofed, or auto-closed). */
+  needsReview?: boolean;
 }
 
 /**
@@ -282,6 +414,10 @@ export interface Regularization {
   requestedCheckOut: string | null;
   reason: string | null;
   status: LeaveStatus;
+  /** Who decided it — required for any audit of an approval. */
+  decidedBy?: string | null;
+  decidedAt?: string | null;
+  decisionNote?: string | null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -306,6 +442,14 @@ export interface Shift {
   bufferMins: number;
   /** Night / 2nd batch — surfaced with a distinct chip; never late for AM start. */
   isNightBatch: boolean;
+  /** Scheduled length in minutes, midnight-crossing aware. */
+  scheduledMins?: number;
+  /** Minutes that must be worked for a full day's payroll credit. */
+  fullDayMins?: number;
+  /** Minutes for a half day's credit; below this the day scores zero. */
+  halfDayMins?: number;
+  /** "Morning · 10:00–19:00" convenience label. */
+  label?: string;
 }
 
 /** A store holiday. Configured per store by HO/head office. */
@@ -326,6 +470,10 @@ export interface LateFlag {
   staffName: string;
   storeId: string;
   lateCount: number;
+  /** Days actually attended in the month — the punctuality denominator. */
+  attendedDays?: number;
+  /** Share of attended days the staffer arrived on time, 0–100. */
+  punctualityPct?: number;
   flagged: boolean;
 }
 

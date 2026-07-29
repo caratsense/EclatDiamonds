@@ -235,7 +235,7 @@ export function OrdersTimelineView() {
                             : ""}
                           {" · "}
                           <span className="num">×{active.qty ?? 1}</span>
-                          {active.grams > 0 ? (
+                          {active.grams ? (
                             <>
                               {" · "}
                               <span className="num">

@@ -1,23 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
+import { AuditService } from '../common/audit.service';
+import { paymentModeLabel } from '../common/payment-mode.util';
 import { CreatePaymentDto } from './dto/payment.dto';
 
 function num(v: Prisma.Decimal | number | null | undefined): number {
   return v == null ? 0 : Number(v);
 }
-
-const MODE_LABEL: Record<string, string> = {
-  cash: 'Cash',
-  card: 'Card',
-  upi: 'UPI',
-  net_banking: 'Net Banking',
-  online: 'Online',
-  cheque: 'Cheque',
-  gold_exchange: 'Gold Exchange',
-};
 
 /** Shape a Payment row (with party/store/sale included) into a CollectionRow. */
 function toRow(p: any) {
@@ -26,10 +18,15 @@ function toRow(p: any) {
     date: p.paidAt.toISOString(),
     customer: p.party?.name ?? 'Walk-in',
     ref: p.reference ?? p.sale?.docNo ?? '—',
-    mode: MODE_LABEL[p.mode] ?? p.mode,
+    mode: paymentModeLabel(p.mode),
     amount: num(p.amount),
     storeId: p.storeId,
     storeName: p.store?.name ?? '',
+    /// Who took the money. Surfaced on the ledger so a till dispute has a name
+    /// against every line rather than an anonymous amount.
+    recordedBy: p.recordedByName ?? null,
+    recordedById: p.recordedById ?? null,
+    reconciled: p.reconciled ?? false,
   };
 }
 
@@ -38,6 +35,7 @@ export class PaymentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
+    private readonly audit: AuditService,
   ) {}
 
   /** GET /payments — collections ledger from Payment, store-scoped. */
@@ -51,9 +49,57 @@ export class PaymentsService {
     return rows.map(toRow);
   }
 
-  /** POST /payments — record a collection against a store. */
+  /**
+   * POST /payments — record a collection against a store.
+   *
+   * Hardened over the original, which accepted any amount against any sale from
+   * any authenticated user and left no record of who entered it:
+   *  - the collection is stamped with the recording user;
+   *  - a payment against a sale cannot take the sale past its total;
+   *  - a future-dated collection is refused (money cannot arrive tomorrow);
+   *  - every entry is written to the audit trail.
+   */
   async create(user: AuthUser, dto: CreatePaymentDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
+
+    const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
+    // A small grace window absorbs clock skew between a store tablet and the
+    // server without allowing a genuinely post-dated receipt.
+    if (paidAt.getTime() > Date.now() + 5 * 60_000) {
+      throw new BadRequestException('A collection cannot be dated in the future');
+    }
+
+    if (dto.saleId) {
+      const sale = await this.prisma.sale.findUnique({
+        where: { id: dto.saleId },
+        select: { id: true, storeId: true, totalAmount: true, docNo: true, isCancelled: true },
+      });
+      if (!sale) throw new NotFoundException('Sale not found');
+      // The sale must belong to the store the payment is being booked against,
+      // or a collection could be parked on a branch that never made the sale.
+      if (sale.storeId !== dto.storeId) {
+        throw new BadRequestException('That sale belongs to a different store');
+      }
+      if (sale.isCancelled) {
+        throw new BadRequestException('Cannot record a collection against a cancelled sale');
+      }
+
+      const alreadyPaid = await this.prisma.payment.aggregate({
+        where: { saleId: dto.saleId },
+        _sum: { amount: true },
+      });
+      const total = num(sale.totalAmount);
+      const outstanding = total - num(alreadyPaid._sum.amount);
+      // Rounding tolerance: cash settlements are routinely a rupee off.
+      if (total > 0 && dto.amount > outstanding + 1) {
+        throw new BadRequestException(
+          `That exceeds the balance on ${sale.docNo ?? 'this sale'}: ₹${outstanding.toFixed(
+            2,
+          )} outstanding, ₹${dto.amount.toFixed(2)} offered`,
+        );
+      }
+    }
+
     const created = await this.prisma.payment.create({
       data: {
         storeId: dto.storeId,
@@ -62,14 +108,33 @@ export class PaymentsService {
         reference: dto.reference,
         mode: dto.mode,
         amount: new Prisma.Decimal(dto.amount),
-        paidAt: dto.paidAt ? new Date(dto.paidAt) : new Date(),
+        paidAt,
         reconciled: false,
+        recordedById: user.id,
+        recordedByName: user.name,
       },
     });
     const payment = await this.prisma.payment.findUniqueOrThrow({
       where: { id: created.id },
       include: { party: true, store: true, sale: true },
     });
+
+    await this.audit.record(user, {
+      action: 'payment.record',
+      entityType: 'Payment',
+      entityId: payment.id,
+      storeId: payment.storeId,
+      summary: `Recorded ₹${num(payment.amount)} ${paymentModeLabel(payment.mode)} from ${
+        payment.party?.name ?? 'walk-in'
+      }`,
+      metadata: {
+        amount: num(payment.amount),
+        mode: payment.mode,
+        saleId: dto.saleId ?? null,
+        reference: dto.reference ?? null,
+      },
+    });
+
     return toRow(payment);
   }
 
@@ -100,7 +165,7 @@ export class PaymentsService {
       const row: any = {
         id: b.id,
         date: b.entryDate.toISOString().slice(0, 10),
-        mode: MODE_LABEL[mode] ?? mode,
+        mode: paymentModeLabel(mode),
         storeName: b.store?.name ?? '',
         storeReported,
         status,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Sparkles,
@@ -14,6 +14,10 @@ import {
   BarChart3,
   GitCompare,
   Search,
+  ArrowRight,
+  ChevronDown,
+  ChevronUp,
+  X,
   type LucideIcon,
 } from "lucide-react";
 
@@ -21,50 +25,57 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { type Role } from "@/lib/types";
-import { homeForRole } from "@/lib/navigation";
 import { useSession } from "@/store/use-session";
+import {
+  useFinishTour,
+  useRecordTourView,
+  useTourState,
+} from "@/lib/queries/onboarding";
 
 /**
- * Fired by the user menu ("Show welcome tour") to re-open this tour on demand.
- * The menu dispatches a bare `window` Event with this name; the tour listens.
+ * Fired by the user menu ("Show the quick guide") to reopen this on demand.
+ * The menu dispatches a bare `window` Event with this name; the guide listens.
  * Keep this string in sync with the handler in components/layout/user-menu.tsx.
  */
 export const OPEN_TOUR_EVENT = "eclat:open-tour";
 
-/** Once dismissed, the tour never auto-opens again (re-open is manual). */
-const SEEN_KEY = "eclat.tourSeen";
+/** How long to let the page settle before the guide slides in. */
+const OPEN_DELAY_MS = 1200;
 
 interface TourStep {
-  /** Short topic name — the heading of the step. */
-  topic: string;
-  /** One to two lines describing what the page behind the card does. */
-  description: string;
-  /** Real route pushed on entering the step, so the page loads behind. */
-  route: string;
+  /** Plain-English promise — what this page does for you. */
+  title: string;
+  /** The menu name, so the step is findable again after the guide is gone. */
+  where: string;
+  /** Two or three short sentences, no system jargon. */
+  body: string;
+  /** Page this step is about. Only ever opened when the user asks. */
+  route?: string;
   icon: LucideIcon;
 }
 
 /**
- * Build the role-aware step list. Each step names a topic, describes the
- * screen, and carries the real route the tour navigates to. Only routes the
- * role can actually see are included (mirrors nav visibility in navigation.ts).
+ * Build the step list for a role. Only pages the role can actually open are
+ * included, so nobody is shown a door they cannot walk through.
+ *
+ * House style for the copy: say what the person gets, in the words they would
+ * use at the counter. No "geofence", "funnel", "single source of truth", "DSR"
+ * on its own, or "unified index" — those are our words, not theirs.
  */
 function buildSteps(role: Role, firstName: string): TourStep[] {
-  const home = homeForRole(role);
-
   const welcome: TourStep = {
-    topic: `Welcome to CaratSense, ${firstName}`,
-    description:
-      "CaratSense brings your store's sales, customers, orders and attendance together in one workspace. This short tour walks you through the pages you will use most.",
-    route: home,
+    title: `Hello ${firstName} — welcome to CaratSense`,
+    where: "Everywhere",
+    body:
+      "Everything the shop does in a day — sales, customers, orders and staff attendance — is kept here in one place, instead of across registers and phones. This guide points out the handful of pages you will actually use. It takes about a minute, and you can close it whenever you like.",
     icon: Sparkles,
   };
 
   const searchTip: TourStep = {
-    topic: "Search anything",
-    description:
-      "Press Ctrl or Cmd + K at any time to search customers, products and orders from anywhere in the app. You can reopen this tour from the menu under your avatar.",
-    route: home,
+    title: "Finding things quickly",
+    where: "The search box at the top",
+    body:
+      "Hold Ctrl and press K (on a Mac, Command and K) from any page to jump straight to a customer, a piece or an order — no need to hunt through menus. You can open this guide again whenever you want from your name in the top-right corner.",
     icon: Search,
   };
 
@@ -72,37 +83,42 @@ function buildSteps(role: Role, firstName: string): TourStep[] {
     return [
       welcome,
       {
-        topic: "Attendance",
-        description:
-          "Mark your attendance by confirming you are at the store. Your location is checked against the store's geofence before the day begins.",
+        title: "Start your day by marking attendance",
+        where: "HRMS & Attendance",
+        body:
+          "One tap to say you have reached the shop — no register to sign. Your phone confirms you are at the shop when you do it, so your hours are recorded correctly and your day can begin.",
         route: "/check-in",
         icon: Fingerprint,
       },
       {
-        topic: "CRM & Leads",
-        description:
-          "Capture and track every prospective customer — walk-ins, calls and referrals — in a single funnel, so no follow-up is lost.",
+        title: "Keep every customer in one list",
+        where: "CRM & Leads",
+        body:
+          "Save everyone who walks in, calls, or is sent by a friend. The app then tells you who is due for a call back today, so a customer is never forgotten because the note was on a different pad.",
         route: "/crm",
         icon: Users,
       },
       {
-        topic: "Quotation & Orders",
-        description:
-          "Build a price quote or place a custom order in one place. Custom orders route to the back office and appear on the production timeline.",
+        title: "Give a price, or take a made-to-order piece",
+        where: "Quotation & Orders",
+        body:
+          "Put together a price for a customer in a few taps, or book a piece to be made specially for them. Made-to-order pieces go to the workshop by themselves, and you can see how far along the work is at any time.",
         route: "/quotation",
         icon: FileText,
       },
       {
-        topic: "Catalogue",
-        description:
-          "Browse the unified product index across locations, with AI image search to find a piece directly from a photo.",
+        title: "See what is in stock, anywhere",
+        where: "Catalogue",
+        body:
+          "Look through the pieces at every one of our shops, not just yours. If a customer shows you a photo of something they like, upload it and the app finds the closest pieces we have.",
         route: "/catalogue",
         icon: Gem,
       },
       {
-        topic: "Loyalty & Referral",
-        description:
-          "Enroll customers in gold-savings schemes and manage the referral wallet credit against their purchases.",
+        title: "Savings plans and customer referrals",
+        where: "Loyalty & Referral",
+        body:
+          "Sign customers up for a monthly gold savings plan and see how much they have put in so far. It also tracks the credit a customer has earned for sending friends to us.",
         route: "/loyalty",
         icon: PiggyBank,
       },
@@ -110,41 +126,46 @@ function buildSteps(role: Role, firstName: string): TourStep[] {
     ];
   }
 
-  // Manager and above: store_manager, area_manager, head_office.
+  // Store manager and above.
   const steps: TourStep[] = [
     welcome,
     {
-      topic: "Dashboards",
-      description:
-        "Your role dashboard shows store performance at a glance, with tasks and cross-department collaboration in one view.",
+      title: "Your day at a glance",
+      where: "Dashboards",
+      body:
+        "The page you land on. Today's sales, how the team is doing against target, and anything that needs you — all without opening five different reports.",
       route: "/dashboards",
       icon: LayoutDashboard,
     },
     {
-      topic: "CRM & Leads",
-      description:
-        "The single source of truth for every prospective customer across channels, with each store's funnel and follow-ups in one place.",
+      title: "Every customer enquiry, in one list",
+      where: "CRM & Leads",
+      body:
+        "Walk-ins, phone calls and referrals from all your shops together. You can see at a glance who has been followed up and who has been left waiting.",
       route: "/crm",
       icon: Users,
     },
     {
-      topic: "Quotation & Orders",
-      description:
-        "Review quotes and custom orders raised by your team. Custom orders flow to the back office and the production timeline.",
+      title: "Prices and made-to-order pieces",
+      where: "Quotation & Orders",
+      body:
+        "Look through the prices your team has quoted and the pieces customers have ordered specially. Made-to-order pieces go to the workshop and you can follow them stage by stage, so you always have an honest answer when a customer asks when it will be ready.",
       route: "/quotation",
       icon: FileText,
     },
     {
-      topic: "Approvals",
-      description:
-        "One queue for everything awaiting your decision — discount, return and leave requests — with the context to act on each.",
+      title: "Everything waiting on your yes or no",
+      where: "Approvals",
+      body:
+        "Discounts, returns and staff leave all queue up here in one list, each with the background you need. No more decisions made over the phone with half the facts.",
       route: "/approvals",
       icon: ClipboardCheck,
     },
     {
-      topic: "Reporting & DSR",
-      description:
-        "Automated daily sales reports and store analytics, ready to review, export or share with your team.",
+      title: "Your daily sales report, written for you",
+      where: "Reporting & DSR",
+      body:
+        "The day's sales summary is prepared automatically. Read it, download it, or send it on to your team over WhatsApp or email without typing it out again.",
       route: "/reporting",
       icon: BarChart3,
     },
@@ -152,9 +173,10 @@ function buildSteps(role: Role, firstName: string): TourStep[] {
 
   if (role === "area_manager" || role === "head_office") {
     steps.push({
-      topic: "Store Comparison",
-      description:
-        "Compare every store side by side on revenue, orders and staff — without switching the active store.",
+      title: "Put the shops side by side",
+      where: "Store Comparison",
+      body:
+        "Compare every shop on sales, orders and staff on one screen, instead of opening each one in turn. Your current shop selection stays as it is.",
       route: "/store-comparison",
       icon: GitCompare,
     });
@@ -165,85 +187,167 @@ function buildSteps(role: Role, firstName: string): TourStep[] {
 }
 
 /**
- * First-run welcome tour (Module: onboarding). An interactive, role-aware
- * guide that navigates through the real pages as you advance. It renders as a
- * compact, non-blocking card pinned to the bottom of the screen — the page it
- * describes loads and stays fully visible behind it. No tour library: plain
- * step state, `router.push` per step, and a shadcn Card.
+ * The welcome guide — a short, role-aware orientation for someone's first days.
  *
- * Triggers (unchanged): opens once on the first authenticated visit via
- * localStorage["eclat.tourSeen"], and re-opens on the `eclat:open-tour` event
- * dispatched by the user menu.
+ * ## What it deliberately does NOT do
+ *
+ * It does not drive. The earlier version pushed you through six or seven pages
+ * as you clicked Next, which meant opening the app in the morning could take the
+ * counter staff away from what they were doing; the guide was steering and the
+ * user was a passenger. Now each step describes a page and offers to open it —
+ * navigation only ever happens because someone asked for it.
+ *
+ * It is also not a wall. It sits in the corner (clear of the mobile tab bar),
+ * leaves the page behind it fully usable, closes on Escape, moves on the arrow
+ * keys, and can be folded down to a small bar while you carry on working.
+ *
+ * ## When it shows up
+ *
+ * Ten automatic openings per ACCOUNT, then it retires itself — long enough to
+ * learn the app, short enough that it never becomes furniture. Progress lives on
+ * the server (`/onboarding/tour`), not in the browser, because shop tablets are
+ * shared: a browser flag let the first person to close it hide it from everyone
+ * who signed in afterwards. Reopening it by hand from the user menu is always
+ * free and never counts against the ten.
  */
 export function WelcomeTour() {
-  const { user, role } = useSession();
+  const { user, role, authenticated } = useSession();
   const router = useRouter();
   const pathname = usePathname();
+
+  const { data: tour } = useTourState(authenticated);
+  const recordView = useRecordTourView();
+  const finishTour = useFinishTour();
+
   const [open, setOpen] = useState(false);
+  const [minimized, setMinimized] = useState(false);
   const [step, setStep] = useState(0);
+  /** True when reopened from the user menu — a free refresher, not one of the ten. */
+  const [manual, setManual] = useState(false);
+
+  /** Auto-open fires once per page load, never again on a re-render. */
+  const autoOpened = useRef(false);
 
   const firstName = user.name.split(" ")[0] || user.name;
   const steps = useMemo(() => buildSteps(role, firstName), [role, firstName]);
 
-  // Keep the step index in range if the role (and therefore step count) changes.
+  // Derived, not stored: the role (and so the step count) can change under us.
   const safeStep = Math.min(step, steps.length - 1);
   const current = steps[safeStep];
   const isLast = safeStep === steps.length - 1;
 
-  // First authenticated visit: open once, unless already dismissed.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (localStorage.getItem(SEEN_KEY) !== "1") {
-      setStep(0);
-      setOpen(true);
-    }
+  const close = useCallback(() => {
+    setOpen(false);
+    setMinimized(false);
   }, []);
 
-  // Let the user menu ("Show welcome tour") re-open the tour any time,
-  // always restarting from step 0.
+  /** "Don't show this again" — retire it for this account, right now. */
+  const retire = useCallback(() => {
+    finishTour.mutate();
+    close();
+  }, [finishTour, close]);
+
+  // Open by itself on the first visits, after a beat so the page has settled and
+  // the guide slides into a finished screen rather than a half-drawn one.
+  useEffect(() => {
+    if (!tour?.autoOpen || autoOpened.current) return;
+    autoOpened.current = true;
+    const timer = setTimeout(() => {
+      setStep(0);
+      setManual(false);
+      setMinimized(false);
+      setOpen(true);
+      recordView.mutate();
+    }, OPEN_DELAY_MS);
+    return () => clearTimeout(timer);
+    // recordView is a stable mutation object; re-running on it would re-arm the timer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tour?.autoOpen]);
+
+  // Reopening from the user menu: always allowed, always from the start, and
+  // never counted — someone asking for a reminder should not be penalised.
   useEffect(() => {
     function reopen() {
       setStep(0);
+      setManual(true);
+      setMinimized(false);
       setOpen(true);
     }
     window.addEventListener(OPEN_TOUR_EVENT, reopen);
     return () => window.removeEventListener(OPEN_TOUR_EVENT, reopen);
   }, []);
 
-  // On entering a step, navigate to its real page so it loads behind the card.
-  // Guarded on pathname so a completed navigation does not re-push (no loop).
+  // Escape closes; the arrow keys step through. Skipped while folded down so the
+  // keys belong to the page again.
   useEffect(() => {
-    if (!open) return;
-    const route = steps[safeStep]?.route;
-    if (route && route !== pathname) {
-      router.push(route);
+    if (!open || minimized) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        close();
+      } else if (e.key === "ArrowRight") {
+        setStep((s) => Math.min(steps.length - 1, s + 1));
+      } else if (e.key === "ArrowLeft") {
+        setStep((s) => Math.max(0, s - 1));
+      }
     }
-  }, [open, safeStep, steps, pathname, router]);
-
-  function dismiss() {
-    if (typeof window !== "undefined") {
-      localStorage.setItem(SEEN_KEY, "1");
-    }
-    setOpen(false);
-  }
-
-  function finish() {
-    router.push(homeForRole(role));
-    dismiss();
-  }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, minimized, steps.length, close]);
 
   if (!open || !current) return null;
 
   const StepIcon = current.icon;
+  const alreadyHere = current.route ? pathname === current.route : false;
+
+  // Sits above the mobile tab bar (h-16) and clear of the phone's home
+  // indicator; drops to the bottom-right corner once the desktop sidebar takes
+  // over. The wrapper ignores clicks so the page behind stays fully usable.
+  const anchor = cn(
+    "pointer-events-none fixed inset-x-0 bottom-0 z-50 px-4",
+    "pb-[calc(4rem+env(safe-area-inset-bottom)+0.75rem)]",
+    "md:inset-x-auto md:right-6 md:px-0 md:pb-[calc(env(safe-area-inset-bottom)+1.5rem)]",
+  );
+
+  if (minimized) {
+    return (
+      <div className={anchor}>
+        <div className="pointer-events-auto mx-auto flex w-full max-w-sm items-center gap-2 rounded-full border border-border/80 bg-card px-3 py-2 shadow-lg md:mx-0 duration-200 animate-in fade-in slide-in-from-bottom-2">
+          <Sparkles className="h-4 w-4 shrink-0 text-gold-strong" />
+          <button
+            type="button"
+            onClick={() => setMinimized(false)}
+            className="min-w-0 flex-1 truncate text-left text-xs font-medium"
+          >
+            Quick guide — step {safeStep + 1} of {steps.length}
+          </button>
+          <button
+            type="button"
+            onClick={() => setMinimized(false)}
+            aria-label="Open the guide again"
+            className="rounded-full p-1 text-muted-foreground hover:text-foreground"
+          >
+            <ChevronUp className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={close}
+            aria-label="Close the guide"
+            className="rounded-full p-1 text-muted-foreground hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    // Outer layer spans the screen but lets clicks pass through, so the page
-    // behind stays fully interactive. Only the card itself captures pointers.
-    <div className="pointer-events-none fixed inset-x-0 bottom-6 z-50 px-4">
+    <div className={anchor}>
       <Card
         role="dialog"
-        aria-label="Welcome tour"
-        className="pointer-events-auto mx-auto w-full max-w-md border-border/80 p-5 shadow-2xl"
+        aria-label="Quick guide"
+        className="pointer-events-auto mx-auto w-full max-w-sm border-border/80 p-5 shadow-2xl md:mx-0 duration-300 animate-in fade-in slide-in-from-bottom-3"
       >
         <div className="flex items-start gap-3">
           <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--gold)_12%,transparent)] text-gold-strong">
@@ -253,15 +357,50 @@ export function WelcomeTour() {
             <p className="text-xs font-medium text-muted-foreground">
               Step {safeStep + 1} of {steps.length}
             </p>
-            <h2 className="mt-0.5 font-display text-lg font-semibold leading-tight tracking-tight">
-              {current.topic}
+            <h2 className="mt-0.5 font-display text-base font-semibold leading-tight tracking-tight">
+              {current.title}
             </h2>
+          </div>
+          {/* Fold away / close. Both always reachable, so the guide is never
+              something you have to finish before you can get back to work. */}
+          <div className="flex shrink-0 items-center gap-0.5">
+            <button
+              type="button"
+              onClick={() => setMinimized(true)}
+              aria-label="Fold the guide down"
+              className="rounded-md p-1 text-muted-foreground hover:text-foreground"
+            >
+              <ChevronDown className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={close}
+              aria-label="Close the guide"
+              className="rounded-md p-1 text-muted-foreground hover:text-foreground"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
         </div>
 
-        <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-          {current.description}
+        <p className="mt-2 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+          Where to find it: {current.where}
         </p>
+
+        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+          {current.body}
+        </p>
+
+        {/* Opening the page is the user's call, never the guide's. */}
+        {current.route && !alreadyHere ? (
+          <button
+            type="button"
+            onClick={() => router.push(current.route!)}
+            className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-gold-strong underline-offset-4 hover:underline"
+          >
+            Open this page <ArrowRight className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
 
         <div className="mt-4 flex items-center gap-1.5" aria-hidden="true">
           {steps.map((_, i) => (
@@ -277,13 +416,13 @@ export function WelcomeTour() {
           ))}
         </div>
 
-        <div className="mt-4 flex items-center justify-between">
+        <div className="mt-4 flex items-center justify-between gap-2">
           <button
             type="button"
-            onClick={dismiss}
+            onClick={retire}
             className="text-xs font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
           >
-            Skip tour
+            Don&apos;t show this again
           </button>
           <div className="flex gap-2">
             {safeStep > 0 ? (
@@ -296,8 +435,11 @@ export function WelcomeTour() {
               </Button>
             ) : null}
             {isLast ? (
-              <Button size="sm" onClick={finish}>
-                Get started
+              // Finishing just closes it. Reaching the end is not the same as
+              // saying "never again" — that is the link on the left, and the ten
+              // automatic openings run their course either way.
+              <Button size="sm" onClick={close}>
+                Done
               </Button>
             ) : (
               <Button
@@ -311,6 +453,18 @@ export function WelcomeTour() {
             )}
           </div>
         </div>
+
+        {/* Say plainly that this stops on its own — otherwise "will this nag me
+            forever?" is a fair thing to wonder, and the honest answer is no. */}
+        {!manual && tour && !tour.done ? (
+          <p className="mt-3 border-t border-border/60 pt-3 text-[11px] leading-relaxed text-muted-foreground">
+            {tour.viewsLeft > 0
+              ? `This guide opens by itself ${tour.viewsLeft} more ${
+                  tour.viewsLeft === 1 ? "time" : "times"
+                }, then stops on its own. You can always bring it back from your name in the top-right corner.`
+              : "That was the last time this opens by itself. You can always bring it back from your name in the top-right corner."}
+          </p>
+        ) : null}
       </Card>
     </div>
   );

@@ -4,7 +4,17 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuditService } from '../common/audit.service';
+import { SequenceService } from '../common/sequence.service';
 import { StorageService } from '../storage/storage.service';
+import {
+  assertStageRoleAllowed,
+  assertTransitionAllowed,
+  nextStages,
+  STAGE_INDEX,
+  STAGE_LABELS,
+  STAGE_SLA_DAYS,
+  TERMINAL_STAGES,
+} from './order-stages';
 import {
   AdvanceStageDto,
   CreateOrderDto,
@@ -12,29 +22,17 @@ import {
   OrdersQueryDto,
 } from './dto/timelines.dto';
 
-/** Terminal production stages — an order here can no longer be advanced. */
-const TERMINAL_STAGES: OrderStatus[] = [OrderStatus.delivered, OrderStatus.cancelled];
-
 function num(v: Prisma.Decimal | number | null | undefined): number {
   return v == null ? 0 : Number(v);
 }
 
-/**
- * Frontend ORDER_STAGES (mock/timelines.ts) are 5 collapsed stages:
- *   0 Gold melting · 1 Designing · 2 Stone setting · 3 Polishing · 4 Ready for collection
- * Map the schema's finer OrderStatus enum onto that index.
- */
-const STAGE_INDEX: Record<OrderStatus, number> = {
-  booked: 0,
-  casting: 0,
-  designing: 1,
-  stone_setting: 2,
-  polishing: 3,
-  qc: 3,
-  ready: 4,
-  delivered: 4,
-  cancelled: 4,
-};
+const DAY_MS = 86_400_000;
+
+/** Whole days elapsed since an instant (0 when it is in the future or unknown). */
+function daysSince(from: Date | null | undefined): number | null {
+  if (!from) return null;
+  return Math.max(0, Math.floor((Date.now() - from.getTime()) / DAY_MS));
+}
 
 @Injectable()
 export class TimelinesService {
@@ -43,6 +41,7 @@ export class TimelinesService {
     private readonly scope: StoreScopeService,
     private readonly storage: StorageService,
     private readonly audit: AuditService,
+    private readonly sequence: SequenceService,
   ) {}
 
   /**
@@ -57,7 +56,7 @@ export class TimelinesService {
 
     const scope = query.scope ?? 'ongoing';
     if (scope === 'ongoing') {
-      where.stage = { notIn: [OrderStatus.delivered, OrderStatus.cancelled] };
+      where.stage = { notIn: [...TERMINAL_STAGES] };
     }
 
     const kind = query.kind ?? 'all';
@@ -80,86 +79,157 @@ export class TimelinesService {
       include: { store: true, events: { orderBy: { occurredAt: 'asc' } } },
     });
     if (!o) throw new NotFoundException('Custom order not found');
-    return {
-      ...this.toView(o),
-      events: o.events.map((e) => ({
+
+    // Time actually spent in each stage, derived from consecutive events. This is
+    // what makes a bottleneck visible: "polishing took 9 days" rather than just
+    // "the order is late".
+    const events = o.events.map((e, i, all) => {
+      const nextAt = all[i + 1]?.occurredAt ?? null;
+      const endedAt = nextAt ?? new Date();
+      return {
         id: e.id,
         stage: e.stage,
+        stageLabel: STAGE_LABELS[e.stage],
         stageIndex: STAGE_INDEX[e.stage],
         note: e.note ?? '',
         byRole: e.byRole,
         byName: e.byName ?? '',
         at: e.occurredAt.toISOString(),
+        durationDays: Math.max(
+          0,
+          Math.round(((endedAt.getTime() - e.occurredAt.getTime()) / DAY_MS) * 10) / 10,
+        ),
+        isCurrent: nextAt == null,
+      };
+    });
+
+    return {
+      ...this.toView(o),
+      events,
+      /// Exactly where this order may go next — the UI should offer these and
+      /// nothing else, mirroring what the API will accept.
+      allowedNextStages: nextStages(o.stage).map((s) => ({
+        stage: s,
+        label: STAGE_LABELS[s],
       })),
     };
   }
 
   /**
-   * PATCH /timelines/orders/:id/stage — advance an order to a new production
-   * stage (Module 8). Updates CustomOrder.stage AND appends a CustomOrderEvent
-   * mirroring how createOrder seeds the initial `booked` event. Rejects moves on
-   * orders already in a terminal stage (delivered / cancelled). Store-scoped.
+   * PATCH /timelines/orders/:id/stage — move an order through production.
+   *
+   * Every move is now validated against the state machine in `order-stages.ts`:
+   * an order can only reach a stage that legitimately follows the one it is in,
+   * delivery and cancellation carry their own minimum roles, and cancelling
+   * requires a written reason. The stage clock (`stageEnteredAt`) is reset on
+   * every move so time-in-stage and SLA breaches are measurable.
    */
   async advanceStage(user: AuthUser, id: string, dto: AdvanceStageDto) {
     const o = await this.prisma.customOrder.findUnique({ where: { id } });
     if (!o) throw new NotFoundException('Custom order not found');
     this.scope.assertStoreAllowed(user, o.storeId);
 
-    if (TERMINAL_STAGES.includes(o.stage)) {
-      throw new BadRequestException(
-        `Order is already ${o.stage} and cannot be advanced`,
-      );
-    }
-
     const from = o.stage;
     const to = dto.stage;
 
-    await this.prisma.customOrder.update({
+    assertTransitionAllowed(from, to);
+    assertStageRoleAllowed(user.role, to);
+
+    // Cancelling writes off a booked order — and, where an advance was taken,
+    // implies a refund. It must say why.
+    if (to === OrderStatus.cancelled && !dto.note?.trim()) {
+      throw new BadRequestException('A reason is required to cancel an order');
+    }
+    // Handover is a physical event: record who took the piece.
+    if (to === OrderStatus.delivered && !dto.deliveredTo?.trim()) {
+      throw new BadRequestException(
+        'Record who collected the piece to mark this order delivered',
+      );
+    }
+
+    const now = new Date();
+    const balanceDue = Math.max(0, num(o.value) - num(o.advanceReceived));
+
+    const updated = await this.prisma.customOrder.update({
       where: { id },
       data: {
         stage: to,
+        stageEnteredAt: now,
+        ...(to === OrderStatus.cancelled
+          ? { cancelReason: dto.note!.trim(), cancelledAt: now }
+          : {}),
+        ...(to === OrderStatus.delivered
+          ? { deliveredTo: dto.deliveredTo!.trim(), deliveredAt: now }
+          : {}),
         events: {
           create: {
             stage: to,
-            note: dto.note ?? null,
-            // Stage changes are driven from the back office in this timeline model.
-            byRole: 'back_office',
+            note: dto.note?.trim() || null,
+            // Production moves are driven from the back office; handover and
+            // cancellation are recorded against the person who performed them.
+            byRole: to === OrderStatus.delivered ? 'salesperson' : 'back_office',
             byName: user.name,
           },
         },
       },
+      include: { store: true },
     });
 
     await this.audit.record(user, {
-      action: 'order.stage_change',
+      action:
+        to === OrderStatus.cancelled
+          ? 'order.cancel'
+          : to === OrderStatus.delivered
+            ? 'order.deliver'
+            : 'order.stage_change',
       entityType: 'CustomOrder',
       entityId: id,
       storeId: o.storeId,
-      summary: `Advanced order ${o.ref}: ${from} → ${to}`,
-      metadata: { from, to },
+      summary:
+        to === OrderStatus.cancelled
+          ? `Cancelled order ${o.ref}: ${dto.note!.trim()}`
+          : to === OrderStatus.delivered
+            ? `Delivered order ${o.ref} to ${dto.deliveredTo!.trim()}${
+                balanceDue > 0 ? ` (balance due ₹${balanceDue})` : ''
+              }`
+            : `Advanced order ${o.ref}: ${STAGE_LABELS[from]} → ${STAGE_LABELS[to]}`,
+      metadata: {
+        from,
+        to,
+        note: dto.note ?? null,
+        deliveredTo: dto.deliveredTo ?? null,
+        // Delivering with money still outstanding is legitimate in jewellery
+        // retail, but it should be visible in the trail rather than inferred.
+        balanceDue: to === OrderStatus.delivered ? balanceDue : undefined,
+      },
     });
 
     // Return the same detail view as GET /timelines/orders/:id.
-    return this.order(user, id);
+    return this.order(user, updated.id);
   }
 
   /**
    * POST /timelines/workflows — open a new custom-order workflow at the earliest
-   * stage (booked → "Gold melting", stage index 0), owned by the salesperson role.
+   * stage, owned by the salesperson role.
    */
   async createWorkflow(user: AuthUser, dto: CreateWorkflowDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
+    const now = new Date();
 
     const order = await this.prisma.customOrder.create({
       data: {
-        ref: `CO-${Date.now()}`,
+        ref: await this.mintRef('CO', dto.storeId),
         storeId: dto.storeId,
         customerName: dto.customer,
         item: dto.item,
         stage: OrderStatus.booked,
+        stageEnteredAt: now,
         ownerRole: 'salesperson',
         ownerName: user.name,
-        bookedOn: new Date(),
+        bookedOn: now,
+        events: {
+          create: { stage: OrderStatus.booked, byRole: 'salesperson', byName: user.name },
+        },
       },
       include: { store: true },
     });
@@ -169,8 +239,7 @@ export class TimelinesService {
   /**
    * POST /timelines/orders — Module 2 order booking. Books either a customer
    * custom order (`kind: 'custom'`, ref `CO-…`) or a stock/replenishment order
-   * (`kind: 'stock'`, ref `SO-…`, 21-day default timeline). Enters the timeline
-   * at stage `booked`, owned by the salesperson role, and seeds an initial event.
+   * (`kind: 'stock'`, ref `SO-…`, 21-day default timeline).
    */
   async createOrder(user: AuthUser, dto: CreateOrderDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
@@ -187,9 +256,19 @@ export class TimelinesService {
       eta.setDate(eta.getDate() + 21);
     }
 
+    // An advance cannot exceed the quoted value — that is a data-entry slip, and
+    // left unchecked it silently produces a negative balance on the order.
+    const estimation = dto.estimation ?? null;
+    const advance = dto.advanceReceived ?? null;
+    if (estimation != null && advance != null && advance > estimation) {
+      throw new BadRequestException(
+        `Advance (₹${advance}) cannot exceed the estimated value (₹${estimation})`,
+      );
+    }
+
     const order = await this.prisma.customOrder.create({
       data: {
-        ref: `${prefix}-${Date.now()}`,
+        ref: await this.mintRef(prefix, dto.storeId),
         storeId: dto.storeId,
         customerName: dto.customerName,
         kind,
@@ -197,14 +276,15 @@ export class TimelinesService {
         qty: dto.qty ?? 1,
         details: dto.details ?? null,
         item,
-        value: dto.estimation ?? null,
-        advanceReceived: dto.advanceReceived ?? null,
+        value: estimation,
+        advanceReceived: advance,
         ringSize: dto.ringSize ?? null,
         bangleSize: dto.bangleSize ?? null,
         metalColor: dto.metalColor ?? null,
         advanceMode: dto.advanceMode ?? null,
         deliveryDate: dto.deliveryDate ? new Date(dto.deliveryDate) : null,
         stage: OrderStatus.booked,
+        stageEnteredAt: bookedOn,
         ownerRole: 'salesperson',
         ownerName: user.name,
         bookedOn,
@@ -219,34 +299,53 @@ export class TimelinesService {
       },
       include: { store: true },
     });
+
+    await this.audit.record(user, {
+      action: 'order.book',
+      entityType: 'CustomOrder',
+      entityId: order.id,
+      storeId: order.storeId,
+      summary: `Booked ${kind} order ${order.ref} for ${order.customerName}`,
+      metadata: { kind, estimation, advance, eta: eta?.toISOString() ?? null },
+    });
+
     return this.toView(order);
   }
 
   /**
+   * A human-readable, per-store, per-month order reference —
+   * e.g. `CO-BAN-2607-0042`.
+   *
+   * Replaces `CO-${Date.now()}`, which produced a 13-digit epoch that means
+   * nothing to a customer on a receipt, sorts by nothing useful, is identical
+   * across every branch, and collides outright when two orders are booked inside
+   * the same millisecond.
+   */
+  private async mintRef(prefix: string, storeId: string): Promise<string> {
+    const store = await this.prisma.store.findUnique({
+      where: { id: storeId },
+      select: { code: true },
+    });
+    const now = new Date();
+    const period = `${String(now.getUTCFullYear()).slice(2)}${String(
+      now.getUTCMonth() + 1,
+    ).padStart(2, '0')}`;
+    const branch = (store?.code ?? storeId.slice(-4)).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    return this.sequence.nextRef(prefix, `${branch}-${period}`);
+  }
+
+  /**
    * POST /timelines/orders/:id/image — attach a reference image to an order.
-   * Reuses the shared StorageService (same provider as product images), storing
-   * only the returned public URL on CustomOrder.imageUrl. Store-scoped.
    */
   async setOrderImage(
     user: AuthUser,
     id: string,
     file?: { buffer?: Buffer; originalname?: string; mimetype?: string },
   ) {
-    if (!file?.buffer?.length) throw new BadRequestException('No image file uploaded');
-    if (file.mimetype && !file.mimetype.startsWith('image/')) {
-      throw new BadRequestException('Uploaded file is not an image');
-    }
-
-    const o = await this.prisma.customOrder.findUnique({ where: { id } });
-    if (!o) throw new NotFoundException('Custom order not found');
-    this.scope.assertStoreAllowed(user, o.storeId);
-
-    const ext = (file.originalname?.split('.').pop() || 'jpg')
-      .toLowerCase()
-      .replace(/[^a-z0-9]/g, '');
-    const imageUrl = await this.storage.save('orders', `${id}.${ext}`, file.buffer);
+    const o = await this.assertImageTarget(user, id, file);
+    const imageUrl = await this.storage.save('orders', `${id}.${this.extOf(file!)}`, file!.buffer!);
     const updated = await this.prisma.customOrder.update({
-      where: { id },
+      where: { id: o.id },
       data: { imageUrl },
       include: { store: true },
     });
@@ -255,43 +354,61 @@ export class TimelinesService {
 
   /**
    * POST /timelines/orders/:id/receipt — attach the advance-payment receipt photo
-   * to an order. Mirrors setOrderImage but writes CustomOrder.advanceReceiptUrl
-   * (separate from imageUrl, which is the design reference). Store-scoped.
+   * (separate from imageUrl, which is the design reference).
    */
   async setOrderReceipt(
     user: AuthUser,
     id: string,
     file?: { buffer?: Buffer; originalname?: string; mimetype?: string },
   ) {
-    if (!file?.buffer?.length) throw new BadRequestException('No image file uploaded');
-    if (file.mimetype && !file.mimetype.startsWith('image/')) {
-      throw new BadRequestException('Uploaded file is not an image');
-    }
-
-    const o = await this.prisma.customOrder.findUnique({ where: { id } });
-    if (!o) throw new NotFoundException('Custom order not found');
-    this.scope.assertStoreAllowed(user, o.storeId);
-
-    const ext = (file.originalname?.split('.').pop() || 'jpg')
-      .toLowerCase()
-      .replace(/[^a-z0-9]/g, '');
+    const o = await this.assertImageTarget(user, id, file);
     const advanceReceiptUrl = await this.storage.save(
       'orders',
-      `${id}-receipt.${ext}`,
-      file.buffer,
+      `${id}-receipt.${this.extOf(file!)}`,
+      file!.buffer!,
     );
     const updated = await this.prisma.customOrder.update({
-      where: { id },
+      where: { id: o.id },
       data: { advanceReceiptUrl },
       include: { store: true },
     });
     return this.toView(updated);
   }
 
+  /** Shared validation for both image uploads: real image, real order, in scope. */
+  private async assertImageTarget(
+    user: AuthUser,
+    id: string,
+    file?: { buffer?: Buffer; mimetype?: string },
+  ) {
+    if (!file?.buffer?.length) throw new BadRequestException('No image file uploaded');
+    if (file.mimetype && !file.mimetype.startsWith('image/')) {
+      throw new BadRequestException('Uploaded file is not an image');
+    }
+    const o = await this.prisma.customOrder.findUnique({ where: { id } });
+    if (!o) throw new NotFoundException('Custom order not found');
+    this.scope.assertStoreAllowed(user, o.storeId);
+    return o;
+  }
+
+  private extOf(file: { originalname?: string }): string {
+    return (file.originalname?.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '');
+  }
+
   private toView(o: any) {
     const eta: Date | null = o.eta ?? null;
-    const delayed =
-      !!eta && eta.getTime() < Date.now() && !['ready', 'delivered'].includes(o.stage);
+    const isOpen = !TERMINAL_STAGES.includes(o.stage);
+    const delayed = !!eta && eta.getTime() < Date.now() && isOpen && o.stage !== OrderStatus.ready;
+
+    // Time-in-stage vs the stage's own budget: a piece can be inside its overall
+    // ETA and still be stuck, which is exactly when intervening still helps.
+    const daysInStage = daysSince(o.stageEnteredAt ?? o.createdAt);
+    const slaDays = STAGE_SLA_DAYS[o.stage as OrderStatus] ?? null;
+    const stageOverdue = isOpen && slaDays != null && daysInStage != null && daysInStage > slaDays;
+
+    const value = num(o.value);
+    const advance = num(o.advanceReceived);
+
     return {
       id: o.id,
       ref: o.ref,
@@ -302,23 +419,36 @@ export class TimelinesService {
       qty: o.qty,
       details: o.details ?? null,
       imageUrl: o.imageUrl ?? null,
-      estimation: num(o.value),
-      advanceReceived: o.advanceReceived == null ? null : Number(o.advanceReceived),
+      estimation: value,
+      advanceReceived: o.advanceReceived == null ? null : advance,
+      /// What the customer still owes at handover.
+      balanceDue: value > 0 ? Math.max(0, value - advance) : 0,
       ringSize: o.ringSize ?? null,
       bangleSize: o.bangleSize ?? null,
       metalColor: o.metalColor ?? null,
       advanceMode: o.advanceMode ?? null,
       advanceReceiptUrl: o.advanceReceiptUrl ?? null,
       deliveryDate: o.deliveryDate ? o.deliveryDate.toISOString().slice(0, 10) : '',
-      grams: num(o.value) > 0 ? 0 : 0, // grams not modelled on CustomOrder; see flags.
       storeId: o.storeId,
       storeName: o.store?.name ?? '',
+      stage: o.stage,
+      stageLabel: STAGE_LABELS[o.stage as OrderStatus],
       currentStageIndex: STAGE_INDEX[o.stage as OrderStatus],
       ownerRole: o.ownerRole,
       ownerName: o.ownerName ?? '',
       bookedOn: o.bookedOn.toISOString().slice(0, 10),
       eta: eta ? eta.toISOString().slice(0, 10) : '',
       delayed,
+      /// Days the order has been sitting in its CURRENT stage, and whether that
+      /// exceeds the stage's budget.
+      daysInStage,
+      stageSlaDays: slaDays,
+      stageOverdue,
+      ageDays: daysSince(o.bookedOn),
+      cancelReason: o.cancelReason ?? null,
+      cancelledAt: o.cancelledAt ? o.cancelledAt.toISOString() : null,
+      deliveredTo: o.deliveredTo ?? null,
+      deliveredAt: o.deliveredAt ? o.deliveredAt.toISOString() : null,
     };
   }
 

@@ -4,6 +4,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuditService } from '../common/audit.service';
+import { SequenceService } from '../common/sequence.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { assertNotSelfApproval, assertUndecided } from '../common/approval.util';
 import { CreateDiamondRateDto, CreateReturnDto, ValuateReturnDto } from './dto/return.dto';
 
 function num(v: Prisma.Decimal | number | null | undefined): number {
@@ -80,6 +83,8 @@ export class ReturnsService {
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
     private readonly audit: AuditService,
+    private readonly sequence: SequenceService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /** GET /returns — returns/exchanges/buybacks, store-scoped. */
@@ -191,9 +196,10 @@ export class ReturnsService {
       throw new BadRequestException('invoiceNo is required when entryMode is "invoice"');
     }
 
+    // Sequence-backed ref. `count()`-derived numbers collide when two stores
+    // raise a return in the same instant, and re-use a number after a deletion.
     const year = new Date().getFullYear();
-    const count = await this.prisma.returnRecord.count();
-    const ref = `RTN-${year}-${1001 + count}`;
+    const ref = `RTN-${year}-${1000 + (await this.sequence.next(`RTN:${year}`))}`;
 
     // --- Module 14 exchange/buyback calculator branch ---
     if (dto.chosenOption) {
@@ -218,6 +224,7 @@ export class ReturnsService {
           status: 'pending_approval',
           reason: dto.reason,
           raisedBy: user.name,
+          raisedById: user.id,
           entryMode: dto.entryMode,
           invoiceNo: dto.invoiceNo,
           // Purchase snapshot + computed option values.
@@ -237,6 +244,7 @@ export class ReturnsService {
         },
         include: { photos: true },
       });
+      await this.notifyReturnRaised(user, row);
       return toView(row);
     }
 
@@ -271,12 +279,41 @@ export class ReturnsService {
         status: 'pending_approval',
         reason: dto.reason,
         raisedBy: user.name,
+        raisedById: user.id,
         entryMode: dto.entryMode,
         invoiceNo: dto.invoiceNo,
       },
       include: { photos: true },
     });
+    await this.notifyReturnRaised(user, row);
     return toView(row);
+  }
+
+  /**
+   * Tell head office a return is waiting. Returns are HO-approved and move money
+   * out of the business, so they should never depend on someone thinking to
+   * check the approvals screen.
+   */
+  private async notifyReturnRaised(user: AuthUser, row: any) {
+    await this.notifications.emitToApprovers(
+      row.storeId,
+      'head_office',
+      {
+        kind: 'return_request',
+        title: `${row.type === 'exchange' ? 'Exchange' : 'Return'} awaiting approval — ${row.ref}`,
+        body: `${row.customerName} · ₹${num(row.value)}${row.reason ? ` — ${row.reason}` : ''}`,
+        href: '/approvals',
+        storeId: row.storeId,
+        entityType: 'ReturnRecord',
+        entityId: row.id,
+        priority: 'high',
+        actorId: user.id,
+        actorName: user.name,
+        dedupeKey: `return:${row.id}:raised`,
+        metadata: { ref: row.ref, value: num(row.value), type: row.type },
+      },
+      user.id,
+    );
   }
 
   /** PATCH /returns/:id/approve — HO signs off; store-access checked. */
@@ -297,14 +334,17 @@ export class ReturnsService {
   ) {
     const existing = await this.prisma.returnRecord.findFirst({
       where: { id, ...this.scope.storeFilter(user) },
-      select: { id: true, status: true },
+      select: { id: true, status: true, raisedById: true },
     });
     if (!existing) throw new NotFoundException('Return not found');
 
     // Double-decision guard: never flip an already-settled decision.
-    if (['approved', 'rejected', 'settled'].includes(existing.status)) {
-      throw new BadRequestException('Already decided');
-    }
+    assertUndecided(existing.status, ['approved', 'rejected', 'settled'], 'return');
+
+    // Separation of duties. Returns are approved by head_office, so a head_office
+    // user raising one would otherwise be able to sign off their own buyback —
+    // the exact transaction that pays cash out against goods coming back in.
+    assertNotSelfApproval(user, existing.raisedById, 'return');
 
     const row = await this.prisma.returnRecord.update({
       where: { id },
@@ -322,6 +362,25 @@ export class ReturnsService {
       }`,
       metadata: { note: note ?? null },
     });
+
+    if (row.raisedById) {
+      await this.notifications.emit([row.raisedById], {
+        kind: 'return_request',
+        title: `${row.ref} ${status}`,
+        body: `${row.customerName} · ₹${num(row.value)} — ${status} by ${user.name}${
+          note?.trim() ? `: ${note.trim()}` : ''
+        }`,
+        href: '/returns',
+        storeId: row.storeId,
+        entityType: 'ReturnRecord',
+        entityId: row.id,
+        priority: status === 'rejected' ? 'high' : 'normal',
+        actorId: user.id,
+        actorName: user.name,
+        dedupeKey: `return:${row.id}:decided`,
+        metadata: { status },
+      });
+    }
 
     return toView(row);
   }

@@ -3,6 +3,15 @@ import { PaymentMode, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
+import { AuditService } from '../common/audit.service';
+import { paymentModeLabel } from '../common/payment-mode.util';
+import {
+  businessDate,
+  dateOnly,
+  instantFromLocalTime,
+  startOfDayAgoInTz,
+  startOfDayInTz,
+} from '../common/tz.util';
 import { WhatsAppService } from '../integrations/whatsapp.service';
 import { EmailService } from '../integrations/email.service';
 import {
@@ -21,22 +30,38 @@ function num(v: Prisma.Decimal | number | null | undefined): number {
   return v == null ? 0 : Number(v);
 }
 
-function dayStart(daysAgo = 0): Date {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  d.setDate(d.getDate() - daysAgo);
-  return d;
+/**
+ * Partially mask a phone number or email for the audit trail.
+ *
+ * The trail needs to show WHERE the store's takings went; it does not need to
+ * become a searchable copy of everyone's contact details. Enough characters are
+ * kept to recognise a recipient you already know, not to reconstruct one.
+ */
+function maskRecipient(to: string): string {
+  const v = (to ?? '').trim();
+  if (!v) return '—';
+  const at = v.indexOf('@');
+  if (at > 0) {
+    const name = v.slice(0, at);
+    const head = name.slice(0, 2);
+    return `${head}${'*'.repeat(Math.max(1, name.length - 2))}${v.slice(at)}`;
+  }
+  const digits = v.replace(/\D/g, '');
+  if (digits.length < 4) return '*'.repeat(v.length);
+  return `${'*'.repeat(digits.length - 4)}${digits.slice(-4)}`;
 }
 
-const MODE_LABEL: Record<string, string> = {
-  cash: 'Cash',
-  card: 'Card',
-  upi: 'UPI',
-  net_banking: 'Net Banking',
-  online: 'Online',
-  cheque: 'Cheque',
-  gold_exchange: 'Gold Exchange',
-};
+/**
+ * Every report window in this file is anchored to the STORE's day, not the API
+ * server's.
+ *
+ * `new Date().setHours(0,0,0,0)` reads the server's timezone, which is an
+ * environment variable rather than a business fact: the same "today's sales"
+ * query then covers a different slice of the day depending on where the
+ * container runs, and silently changes meaning if that ever gets configured.
+ * The store's own `timezone` column is the only defensible anchor, and it is
+ * already what attendance uses.
+ */
 
 const PERIOD_LABEL: Record<ReportPeriod, string> = {
   daily: 'Daily',
@@ -47,44 +72,59 @@ const PERIOD_LABEL: Record<ReportPeriod, string> = {
 /** Every PaymentMode enum value, so `byMode` always has a stable, complete shape. */
 const ALL_MODES = Object.values(PaymentMode) as PaymentMode[];
 
-/** Parse a YYYY-MM-DD anchor into a LOCAL midnight Date (today when omitted). */
-function anchorDate(date?: string): Date {
+/**
+ * Resolve the anchor day as a store-local calendar date (a UTC-midnight stand-in,
+ * matching the `@db.Date` convention). Defaults to today AT THE STORE.
+ */
+function anchorDay(date: string | undefined, tz: string): Date {
   if (date) {
     const [y, m, d] = date.split('-').map(Number);
-    return new Date(y, (m ?? 1) - 1, d ?? 1);
+    return new Date(Date.UTC(y, (m ?? 1) - 1, d ?? 1));
   }
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return businessDate(new Date(), tz);
 }
 
 /**
- * The [from, toExclusive) range for the day / ISO-week (Mon–Sun) / calendar-month
- * that CONTAINS `base`. All local-time; JS Date normalises out-of-range day args
- * so month/year rollovers are handled automatically.
+ * The [from, toExclusive) instant range for the day / ISO-week (Mon–Sun) /
+ * calendar-month that CONTAINS the store-local day `base`.
+ *
+ * `base` is a UTC-midnight stand-in for a local calendar date, so the arithmetic
+ * is done on UTC components and only the final boundaries are converted back to
+ * real instants in the store's zone. `Date.UTC` normalises out-of-range day
+ * arguments, so month and year rollovers need no special case.
  */
-function periodRange(period: ReportPeriod, base: Date): { from: Date; toExclusive: Date } {
-  const y = base.getFullYear();
-  const m = base.getMonth();
-  const d = base.getDate();
-  if (period === 'weekly') {
-    const backToMonday = (base.getDay() + 6) % 7; // 0=Sun..6=Sat -> days since Monday
-    return {
-      from: new Date(y, m, d - backToMonday),
-      toExclusive: new Date(y, m, d - backToMonday + 7),
-    };
-  }
-  if (period === 'monthly') {
-    return { from: new Date(y, m, 1), toExclusive: new Date(y, m + 1, 1) };
-  }
-  return { from: new Date(y, m, d), toExclusive: new Date(y, m, d + 1) };
-}
+function periodRange(
+  period: ReportPeriod,
+  base: Date,
+  tz: string,
+): { from: Date; toExclusive: Date; fromDay: Date; toDayInclusive: Date } {
+  const y = base.getUTCFullYear();
+  const m = base.getUTCMonth();
+  const d = base.getUTCDate();
 
-/** Local YYYY-MM-DD (avoids the UTC shift of Date.toISOString). */
-function fmtDate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  let fromDay: Date;
+  let toDayExclusive: Date;
+  if (period === 'weekly') {
+    const backToMonday = (base.getUTCDay() + 6) % 7; // 0=Sun..6=Sat -> days since Monday
+    fromDay = new Date(Date.UTC(y, m, d - backToMonday));
+    toDayExclusive = new Date(Date.UTC(y, m, d - backToMonday + 7));
+  } else if (period === 'monthly') {
+    fromDay = new Date(Date.UTC(y, m, 1));
+    toDayExclusive = new Date(Date.UTC(y, m + 1, 1));
+  } else {
+    fromDay = new Date(Date.UTC(y, m, d));
+    toDayExclusive = new Date(Date.UTC(y, m, d + 1));
+  }
+
+  const toDayInclusive = new Date(toDayExclusive);
+  toDayInclusive.setUTCDate(toDayInclusive.getUTCDate() - 1);
+
+  return {
+    from: instantFromLocalTime(fromDay, 0, tz),
+    toExclusive: instantFromLocalTime(toDayExclusive, 0, tz),
+    fromDay,
+    toDayInclusive,
+  };
 }
 
 /** Format an amount as INR with Indian digit grouping (rounded to the rupee). */
@@ -135,6 +175,7 @@ export class ReportingService {
     private readonly scope: StoreScopeService,
     private readonly whatsapp: WhatsAppService,
     private readonly email: EmailService,
+    private readonly audit: AuditService,
   ) {}
 
   /** GET /reporting/dsr — Daily Sales Report, fully derived (not stored), store-scoped. */
@@ -143,8 +184,11 @@ export class ReportingService {
     if (storeIds.length === 0) {
       return { headline: [], paymentSources: [], storeRevenue: [] };
     }
-    const todayStart = dayStart(0);
-    const yestStart = dayStart(1);
+    // "Today" and "yesterday" at the STORE, not at the API server.
+    const tz = await this.scope.resolveTimezone(user, headerStore);
+    const now = new Date();
+    const todayStart = startOfDayInTz(now, tz);
+    const yestStart = startOfDayAgoInTz(now, tz, 1);
     const storeWhere = { storeId: { in: storeIds } };
 
     const [
@@ -196,7 +240,7 @@ export class ReportingService {
     ];
 
     const paymentSources = paymentsToday
-      .map((p) => ({ source: MODE_LABEL[p.mode] ?? p.mode, amount: num(p._sum.amount) }))
+      .map((p) => ({ source: paymentModeLabel(p.mode), amount: num(p._sum.amount) }))
       .filter((p) => p.amount > 0);
 
     const storeRevenue = await Promise.all(
@@ -233,7 +277,8 @@ export class ReportingService {
     const storeIds = this.scope.effectiveStoreIds(user, headerStore);
     if (storeIds.length === 0) return [];
 
-    const since = dayStart(30);
+    const tz = await this.scope.resolveTimezone(user, headerStore);
+    const since = startOfDayAgoInTz(new Date(), tz, 30);
     // Units sold per category in the last 30 days.
     const soldLines = await this.prisma.saleLine.findMany({
       where: {
@@ -302,10 +347,16 @@ export class ReportingService {
     headerStore?: string,
   ): Promise<ReportSummary> {
     const storeIds = this.scope.effectiveStoreIds(user, headerStore);
-    const { from, toExclusive } = periodRange(period, anchorDate(date));
-    const fromStr = fmtDate(from);
-    // Inclusive last day of the window for human-readable output (toExclusive - 1d).
-    const toStr = fmtDate(new Date(toExclusive.getTime() - 1));
+    const tz = await this.scope.resolveTimezone(user, headerStore);
+    const { from, toExclusive, fromDay, toDayInclusive } = periodRange(
+      period,
+      anchorDay(date, tz),
+      tz,
+    );
+    // The labels come from the store-local calendar days, so a report headed
+    // "29 Jul" always means the store's 29 Jul — never a UTC-shifted boundary.
+    const fromStr = dateOnly(fromDay);
+    const toStr = dateOnly(toDayInclusive);
 
     const scopeOut = { storeIds, count: storeIds.length };
 
@@ -388,21 +439,40 @@ export class ReportingService {
     const summary = await this.summary(user, dto.period, dto.date, headerStore);
     const preview = this.composeReport(summary);
 
+    let sent = false;
+    let disabled = false;
     if (dto.channel === 'whatsapp') {
-      if (!this.whatsapp.enabled) {
-        return { sent: false, channel: 'whatsapp', disabled: true, preview };
-      }
-      const res = await this.whatsapp.sendText(dto.to, preview);
-      return { sent: res.delivered, channel: 'whatsapp', preview };
+      if (this.whatsapp.enabled) sent = (await this.whatsapp.sendText(dto.to, preview)).delivered;
+      else disabled = true;
+    } else if (this.email.enabled) {
+      const subject = `CaratSense ${PERIOD_LABEL[dto.period]} Report — ${summary.from} to ${summary.to}`;
+      sent = (await this.email.send(dto.to, subject, preview)).sent;
+    } else {
+      disabled = true;
     }
 
-    // email
-    if (!this.email.enabled) {
-      return { sent: false, channel: 'email', disabled: true, preview };
-    }
-    const subject = `CaratSense ${PERIOD_LABEL[dto.period]} Report — ${summary.from} to ${summary.to}`;
-    const res = await this.email.send(dto.to, subject, preview);
-    return { sent: res.sent, channel: 'email', preview };
+    // Sending the store's takings OUT of the platform is a disclosure, so the
+    // recipient goes in the trail. `to` is masked: the log should show that a
+    // number was used without becoming a copy of the contact book.
+    await this.audit.record(user, {
+      action: 'report.send',
+      entityType: 'Report',
+      entityId: `${dto.period}:${summary.from}..${summary.to}`,
+      storeId: headerStore && headerStore !== 'all' ? headerStore : null,
+      summary: `Sent ${PERIOD_LABEL[dto.period]} report (${summary.from} → ${summary.to}) via ${dto.channel} to ${maskRecipient(dto.to)}`,
+      metadata: {
+        channel: dto.channel,
+        to: maskRecipient(dto.to),
+        period: dto.period,
+        storeCount: summary.storeScope.count,
+        sent,
+        disabled,
+      },
+    });
+
+    return disabled
+      ? { sent: false, channel: dto.channel, disabled: true, preview }
+      : { sent, channel: dto.channel, preview };
   }
 
   /** All payment modes zero-initialised — keeps the `byMode` shape stable. */
@@ -417,7 +487,7 @@ export class ReportingService {
     const modeLine =
       Object.entries(s.payments.byMode)
         .filter(([, amt]) => amt > 0)
-        .map(([mode, amt]) => `${MODE_LABEL[mode] ?? mode} ${inr(amt)}`)
+        .map(([mode, amt]) => `${paymentModeLabel(mode)} ${inr(amt)}`)
         .join(' · ') || '—';
 
     const stores = s.storeScope.count === 1 ? '1 store' : `${s.storeScope.count} stores`;
@@ -514,21 +584,32 @@ export class ReportingService {
     const report = await this.loadScopedDaily(user, id);
     const preview = this.composeDsrText(report);
 
+    let sent = false;
+    let disabled = false;
     if (dto.channel === 'whatsapp') {
-      if (!this.whatsapp.enabled) {
-        return { sent: false, channel: 'whatsapp', disabled: true, preview };
-      }
-      const res = await this.whatsapp.sendText(dto.to, preview);
-      return { sent: res.delivered, channel: 'whatsapp', preview };
+      if (this.whatsapp.enabled) sent = (await this.whatsapp.sendText(dto.to, preview)).delivered;
+      else disabled = true;
+    } else if (this.email.enabled) {
+      const subject = `Daily Sales Report — ${report.store?.name ?? 'Store'} — ${fmtDMY(report.reportDate)}`;
+      sent = (await this.email.send(dto.to, subject, preview)).sent;
+    } else {
+      disabled = true;
     }
 
-    // email
-    if (!this.email.enabled) {
-      return { sent: false, channel: 'email', disabled: true, preview };
-    }
-    const subject = `Daily Sales Report — ${report.store?.name ?? 'Store'} — ${fmtDMY(report.reportDate)}`;
-    const res = await this.email.send(dto.to, subject, preview);
-    return { sent: res.sent, channel: 'email', preview };
+    await this.audit.record(user, {
+      action: 'report.send_dsr',
+      entityType: 'DailyReport',
+      entityId: report.id,
+      storeId: report.storeId,
+      summary: `Sent DSR for ${report.store?.name ?? 'store'} (${fmtDMY(
+        report.reportDate,
+      )}) via ${dto.channel} to ${maskRecipient(dto.to)}`,
+      metadata: { channel: dto.channel, to: maskRecipient(dto.to), sent, disabled },
+    });
+
+    return disabled
+      ? { sent: false, channel: dto.channel, disabled: true, preview }
+      : { sent, channel: dto.channel, preview };
   }
 
   /** Fetch a DSR by id and assert it is within the caller's store scope. */

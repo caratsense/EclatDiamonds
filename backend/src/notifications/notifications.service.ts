@@ -1,16 +1,39 @@
-import { Injectable } from '@nestjs/common';
-import { Role } from '@prisma/client';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { NotificationKind, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
 import { ROLE_RANK } from '../common/role.util';
+import { NotificationBus, NotificationEvent } from './notification-bus';
+import { FeedQueryDto } from './dto/notifications.dto';
 
-/** A single actionable-count row surfaced in the notifications bell. */
+/** A single actionable-count row surfaced alongside the feed. */
 interface NotificationItem {
-  type: 'discount' | 'return' | 'leave' | 'reminder' | 'store_pending';
+  type: 'discount' | 'return' | 'leave' | 'reminder' | 'store_pending' | 'special_request';
   label: string;
   count: number;
   href: string;
+}
+
+/** What a caller hands to {@link NotificationsService.emit}. */
+export interface EmitInput {
+  kind: NotificationKind;
+  title: string;
+  body?: string | null;
+  href?: string | null;
+  storeId?: string | null;
+  entityType?: string;
+  entityId?: string;
+  priority?: 'normal' | 'high';
+  actorId?: string | null;
+  actorName?: string | null;
+  metadata?: Prisma.InputJsonValue;
+  /**
+   * Idempotency key, unique per recipient. Supply it whenever the same business
+   * event could be emitted twice (a retry, a re-run job) — the second emit
+   * updates the row in place instead of stacking a duplicate in the bell.
+   */
+  dedupeKey?: string;
 }
 
 /** End-of-today as a UTC instant — inclusive upper bound for `@db.Date` dueDate. */
@@ -21,15 +44,274 @@ function endOfTodayUtc(): Date {
 
 @Injectable()
 export class NotificationsService {
+  private readonly logger = new Logger(NotificationsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
+    private readonly bus: NotificationBus,
   ) {}
+
+  // ==========================================================================
+  // Emission
+  // ==========================================================================
+
+  /**
+   * Persist a notification for each recipient, then push it to any connection
+   * they currently hold.
+   *
+   * Persist-then-push, in that order and never the reverse: a user with no open
+   * tab must still find the notification waiting when they next load the app.
+   * The push is the optimisation; the row is the guarantee.
+   *
+   * Best-effort by contract — a notification failure must never roll back the
+   * business action that triggered it, so everything here is caught and logged.
+   * Call it AFTER the primary write has committed.
+   */
+  async emit(userIds: string[], input: EmitInput): Promise<void> {
+    const recipients = [...new Set(userIds.filter(Boolean))];
+    if (recipients.length === 0) return;
+
+    await Promise.all(
+      recipients.map(async (userId) => {
+        try {
+          const data = {
+            userId,
+            kind: input.kind,
+            title: input.title,
+            body: input.body ?? null,
+            href: input.href ?? null,
+            storeId: input.storeId ?? null,
+            entityType: input.entityType ?? null,
+            entityId: input.entityId ?? null,
+            priority: input.priority ?? 'normal',
+            actorId: input.actorId ?? null,
+            actorName: input.actorName ?? null,
+            metadata: input.metadata,
+            dedupeKey: input.dedupeKey ?? null,
+          };
+
+          // With a dedupe key the emit is idempotent: re-firing refreshes the
+          // existing row (and un-reads it, because the situation changed) rather
+          // than filling the bell with copies of one event.
+          const row = input.dedupeKey
+            ? await this.prisma.notification.upsert({
+                where: { userId_dedupeKey: { userId, dedupeKey: input.dedupeKey } },
+                update: { ...data, readAt: null, dismissedAt: null, createdAt: new Date() },
+                create: data,
+              })
+            : await this.prisma.notification.create({ data });
+
+          const unreadCount = await this.prisma.notification.count({
+            where: { userId, readAt: null, dismissedAt: null },
+          });
+
+          const event: NotificationEvent = {
+            id: row.id,
+            userId,
+            kind: row.kind,
+            title: row.title,
+            body: row.body,
+            href: row.href,
+            priority: row.priority,
+            storeId: row.storeId,
+            entityType: row.entityType,
+            entityId: row.entityId,
+            actorName: row.actorName,
+            createdAt: row.createdAt.toISOString(),
+            unreadCount,
+          };
+          this.bus.publish(event);
+        } catch (err) {
+          this.logger.warn(
+            `notification emit failed for ${userId} (${input.kind}): ${
+              (err as Error)?.message ?? err
+            }`,
+          );
+        }
+      }),
+    );
+  }
+
+  /**
+   * Everyone who could act on something needing `requiredRole` at `storeId`.
+   *
+   * Resolved by walking UP from the required rank: a request needing a store
+   * manager also reaches the area manager and head office, because either of
+   * them can decide it and a request should never stall waiting on one person.
+   *
+   * `excludeUserId` drops the requester — nobody is notified of their own
+   * request, and they could not approve it anyway (see `approval.util.ts`).
+   */
+  async recipientsFor(
+    storeId: string | null,
+    requiredRole: Role,
+    excludeUserId?: string,
+  ): Promise<string[]> {
+    const minRank = ROLE_RANK[requiredRole];
+    const eligibleRoles = (Object.keys(ROLE_RANK) as Role[]).filter(
+      (r) => ROLE_RANK[r] >= minRank,
+    );
+
+    const users = await this.prisma.user.findMany({
+      where: {
+        isActive: true,
+        role: { in: eligibleRoles },
+        ...(excludeUserId ? { id: { not: excludeUserId } } : {}),
+        // head_office sees every store, so it is reached regardless of the
+        // store link; everyone else must actually be attached to this branch.
+        ...(storeId
+          ? { OR: [{ role: Role.head_office }, { userStores: { some: { storeId } } }] }
+          : {}),
+      },
+      select: { id: true },
+    });
+    return users.map((u) => u.id);
+  }
+
+  /** Convenience: emit to whoever can act on `requiredRole` at a store. */
+  async emitToApprovers(
+    storeId: string | null,
+    requiredRole: Role,
+    input: EmitInput,
+    excludeUserId?: string,
+  ): Promise<void> {
+    const recipients = await this.recipientsFor(storeId, requiredRole, excludeUserId);
+    await this.emit(recipients, input);
+  }
+
+  // ==========================================================================
+  // Feed + read/clear state
+  // ==========================================================================
+
+  /**
+   * GET /notifications — the caller's own feed, newest first.
+   *
+   * Dismissed rows are excluded unless `includeDismissed` is set, so "clear" is
+   * reversible from the history view rather than destroying the record.
+   */
+  async feed(user: AuthUser, query: FeedQueryDto = {}) {
+    const take = Math.min(query.limit ?? 50, 200);
+    const where: Prisma.NotificationWhereInput = {
+      userId: user.id,
+      ...(query.includeDismissed ? {} : { dismissedAt: null }),
+      ...(query.unreadOnly ? { readAt: null } : {}),
+      ...(query.kind ? { kind: query.kind } : {}),
+    };
+
+    const [rows, unreadCount, total] = await Promise.all([
+      this.prisma.notification.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }],
+        take,
+      }),
+      this.prisma.notification.count({
+        where: { userId: user.id, readAt: null, dismissedAt: null },
+      }),
+      this.prisma.notification.count({ where }),
+    ]);
+
+    return { unreadCount, total, items: rows.map((r) => this.toView(r)) };
+  }
+
+  private toView(r: any) {
+    return {
+      id: r.id,
+      kind: r.kind,
+      title: r.title,
+      body: r.body,
+      href: r.href,
+      storeId: r.storeId,
+      entityType: r.entityType,
+      entityId: r.entityId,
+      priority: r.priority,
+      actorName: r.actorName,
+      read: r.readAt != null,
+      dismissed: r.dismissedAt != null,
+      createdAt: r.createdAt.toISOString(),
+      metadata: r.metadata ?? null,
+    };
+  }
+
+  /** PATCH /notifications/:id/read — mark one read/unread (own rows only). */
+  async markRead(user: AuthUser, id: string, read = true) {
+    const existing = await this.prisma.notification.findFirst({
+      where: { id, userId: user.id },
+    });
+    if (!existing) throw new NotFoundException('Notification not found');
+    const row = await this.prisma.notification.update({
+      where: { id },
+      data: { readAt: read ? (existing.readAt ?? new Date()) : null },
+    });
+    return this.toView(row);
+  }
+
+  /** POST /notifications/read-all — mark every unread one read. */
+  async markAllRead(user: AuthUser) {
+    const { count } = await this.prisma.notification.updateMany({
+      where: { userId: user.id, readAt: null, dismissedAt: null },
+      data: { readAt: new Date() },
+    });
+    return { marked: count };
+  }
+
+  /**
+   * DELETE /notifications/:id — clear one from the bell.
+   *
+   * A soft dismiss, not a delete: the row stays so the history view and the
+   * assistant can still answer "what was I told about this order last week".
+   */
+  async dismiss(user: AuthUser, id: string) {
+    const existing = await this.prisma.notification.findFirst({
+      where: { id, userId: user.id },
+    });
+    if (!existing) throw new NotFoundException('Notification not found');
+    const row = await this.prisma.notification.update({
+      where: { id },
+      data: { dismissedAt: new Date(), readAt: existing.readAt ?? new Date() },
+    });
+    return this.toView(row);
+  }
+
+  /**
+   * DELETE /notifications — clear all.
+   *
+   * `onlyRead` clears just the ones already seen, which is the safer default for
+   * a "Clear all" button: it cannot bury something the user never looked at.
+   */
+  async dismissAll(user: AuthUser, onlyRead = false) {
+    const now = new Date();
+    const { count } = await this.prisma.notification.updateMany({
+      where: {
+        userId: user.id,
+        dismissedAt: null,
+        ...(onlyRead ? { readAt: { not: null } } : {}),
+      },
+      data: { dismissedAt: now, readAt: now },
+    });
+    return { cleared: count };
+  }
+
+  // ==========================================================================
+  // Live stream
+  // ==========================================================================
+
+  /** The caller's push stream, consumed by the SSE endpoint. */
+  stream(userId: string) {
+    return this.bus.subscribe(userId);
+  }
+
+  // ==========================================================================
+  // Actionable counts (the original derived summary — still the work queue)
+  // ==========================================================================
 
   /**
    * GET /notifications/summary — role-aware, store-scoped actionable counts.
-   * Every count is computed server-side with Prisma count() (no rows fetched);
-   * only items with count > 0 are returned.
+   *
+   * Kept alongside the persisted feed and serving a different purpose: the feed
+   * says what HAPPENED, this says what is still OPEN. Every count is recomputed
+   * from the source tables on each call, so it cannot drift the way a cleared
+   * notification can — clearing a notification must never hide live work.
    */
   async summary(user: AuthUser, headerStore?: string) {
     const storeWhere = this.scope.storeFilter(user, headerStore);
@@ -46,6 +328,9 @@ export class NotificationsService {
         where: {
           ...storeWhere,
           status: { in: ['pending', 'escalated'] },
+          // Never count something the user cannot decide because they raised it
+          // — self-approval is refused at the service layer.
+          requestedById: { not: user.id },
           OR: [
             { requiredRole: { in: actable } },
             // Legacy rows without requiredRole fall back to requestedRole, then HO.
@@ -58,6 +343,24 @@ export class NotificationsService {
       });
       if (discount > 0) {
         items.push({ type: 'discount', label: 'Discount approvals', count: discount, href: '/approvals' });
+      }
+
+      // --- Special requests raised by branches (store_manager+) ---
+      const special = await this.prisma.specialRequest.count({
+        where: {
+          ...storeWhere,
+          status: { in: ['pending', 'escalated'] },
+          requiredRole: { in: actable },
+          requestedById: { not: user.id },
+        },
+      });
+      if (special > 0) {
+        items.push({
+          type: 'special_request',
+          label: 'Branch requests',
+          count: special,
+          href: '/requests',
+        });
       }
     }
 
@@ -74,7 +377,7 @@ export class NotificationsService {
     // --- Leave requests (store_manager+) ---
     if (rank >= ROLE_RANK.store_manager) {
       const leave = await this.prisma.leaveRequest.count({
-        where: { ...storeWhere, status: 'pending' },
+        where: { ...storeWhere, status: 'pending', staffId: { not: user.id } },
       });
       if (leave > 0) {
         items.push({ type: 'leave', label: 'Leave requests', count: leave, href: '/approvals' });
@@ -109,6 +412,9 @@ export class NotificationsService {
     }
 
     const total = items.reduce((sum, i) => sum + i.count, 0);
-    return { total, items };
+    const unreadCount = await this.prisma.notification.count({
+      where: { userId: user.id, readAt: null, dismissedAt: null },
+    });
+    return { total, items, unreadCount };
   }
 }

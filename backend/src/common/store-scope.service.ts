@@ -3,6 +3,7 @@ import { Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from './auth-user';
 import { isAllStoreRole } from './role.util';
+import { DEFAULT_TZ, resolveTz } from './tz.util';
 
 /**
  * StoreScopeService — THE store-scoping mechanism (CLAUDE.md rule #1).
@@ -83,6 +84,32 @@ export class StoreScopeService {
       return [requestedStoreId];
     }
     return user.storeIds;
+  }
+
+  /**
+   * The timezone a report window should be anchored to.
+   *
+   * Report periods ("today", "this month") are business days at a STORE, not
+   * wall-clock windows at whichever datacentre the API happens to run in. This
+   * resolves the selected store's zone, falling back to the first store in the
+   * caller's scope and finally to the platform default.
+   *
+   * Known limitation: a roll-up spanning stores in DIFFERENT zones is anchored
+   * to one of them. That is correct today (every branch is in Asia/Kolkata) and
+   * is the point at which a genuinely multi-zone roll-up would need per-store
+   * windows summed together rather than one shared range.
+   */
+  async resolveTimezone(user: AuthUser, requestedStoreId?: string): Promise<string> {
+    const storeId =
+      requestedStoreId && requestedStoreId !== 'all'
+        ? requestedStoreId
+        : user.storeIds[0];
+    if (!storeId) return DEFAULT_TZ;
+    const store = await this.prisma.store.findUnique({
+      where: { id: storeId },
+      select: { timezone: true },
+    });
+    return resolveTz(store?.timezone);
   }
 
   /** Gate a write to a specific store. Throws if out of scope. */

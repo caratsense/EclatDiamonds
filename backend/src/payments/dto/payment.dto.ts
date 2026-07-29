@@ -12,8 +12,13 @@ export class CreatePaymentDto {
   @IsString()
   storeId!: string;
 
-  @IsNumber()
-  @Min(0)
+  /**
+   * Collection amount in INR. Strictly positive — a zero-rupee "collection" is
+   * not a payment, it is a ledger row that inflates the count and reconciles
+   * against nothing. Refunds go through Module 14 returns, not a negative here.
+   */
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.01)
   amount!: number;
 
   @IsEnum(PaymentMode)

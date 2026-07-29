@@ -3,11 +3,13 @@ import { HrmsService } from './hrms.service';
 import {
   ApplyLeaveDto,
   AttendanceReportQueryDto,
+  CancelLeaveDto,
   CheckInDto,
   CheckOutDto,
   CreateHolidayDto,
   CreateRegularizationDto,
   CreateShiftDto,
+  DayCloseDto,
   DecideLeaveDto,
   DecideRegularizationDto,
   MarkAttendanceDto,
@@ -105,6 +107,19 @@ export class HrmsController {
     return this.hrms.markAttendance(user, dto);
   }
 
+  /**
+   * End-of-day reconciliation for a store: auto-close dangling punches and write
+   * an explicit row (absent / on_leave / week_off / holiday) for everyone who
+   * never punched. Without this, absence simply has no record.
+   *
+   * Idempotent, so a nightly scheduler may hit it repeatedly. Manager+ only.
+   */
+  @Roles('store_manager', 'area_manager', 'head_office')
+  @Post('attendance/day-close')
+  dayClose(@CurrentUser() user: AuthUser, @Body() dto: DayCloseDto) {
+    return this.hrms.dayClose(user, dto);
+  }
+
   // --- Leave ----------------------------------------------------------------
 
   @Get('leave')
@@ -132,6 +147,20 @@ export class HrmsController {
     return this.hrms.applyLeave(user, dto, store);
   }
 
+  /**
+   * Withdraw a leave request. The applicant may withdraw their own while it is
+   * pending; a manager+ may also revoke one already approved, which releases the
+   * days back to the balance. Declared BEFORE `leave/:id` so it isn't shadowed.
+   */
+  @Patch('leave/:id/cancel')
+  cancelLeave(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: CancelLeaveDto,
+  ) {
+    return this.hrms.cancelLeave(user, id, dto?.reason);
+  }
+
   /** Approving/rejecting leave is a manager+ action (role hierarchy, CLAUDE.md rule #2). */
   @Roles('store_manager', 'area_manager', 'head_office')
   @Patch('leave/:id')
@@ -140,7 +169,7 @@ export class HrmsController {
     @Param('id') id: string,
     @Body() dto: DecideLeaveDto,
   ) {
-    return this.hrms.decideLeave(user, id, dto.status);
+    return this.hrms.decideLeave(user, id, dto.status, dto.note);
   }
 
   // --- Regularization -------------------------------------------------------
@@ -169,7 +198,7 @@ export class HrmsController {
     @Param('id') id: string,
     @Body() dto: DecideRegularizationDto,
   ) {
-    return this.hrms.decideRegularization(user, id, dto.status);
+    return this.hrms.decideRegularization(user, id, dto.status, dto.note);
   }
 
   // --- Shifts / holidays / week-off -----------------------------------------

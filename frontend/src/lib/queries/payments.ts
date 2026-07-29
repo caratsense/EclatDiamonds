@@ -30,6 +30,14 @@ export interface CollectionRow {
   amount: number;
   storeId: string;
   storeName: string;
+  /**
+   * Who recorded the collection. Null on rows imported by the legacy SJEP sync,
+   * which have no Eclat user behind them. This is the field that makes a till
+   * dispute answerable — without it a line is just an anonymous amount.
+   */
+  recordedBy?: string | null;
+  recordedById?: string | null;
+  reconciled?: boolean;
 }
 
 /** Mirrors the backend `PaymentMode` enum (snake-case enum values). */

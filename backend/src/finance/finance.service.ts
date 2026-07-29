@@ -3,6 +3,8 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
+import { AuditService } from '../common/audit.service';
+import { startOfMonthAgoInTz, startOfMonthInTz } from '../common/tz.util';
 import { CreateLedgerEntryDto } from './dto/finance.dto';
 
 function num(v: Prisma.Decimal | number | null | undefined): number {
@@ -34,6 +36,7 @@ export class FinanceService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
+    private readonly audit: AuditService,
   ) {}
 
   /** GET /finance/ledger — AP/AR general-ledger rows, store-scoped. */
@@ -69,6 +72,27 @@ export class FinanceService {
       where: { id: created.id },
       include: { party: true, store: true },
     });
+
+    // A hand-written ledger entry moves money on the books without a sale, a
+    // payment or a return behind it — the one write in finance that has no other
+    // paper trail, so it needs this one.
+    await this.audit.record(user, {
+      action: 'ledger.create',
+      entityType: 'LedgerEntry',
+      entityId: created.id,
+      storeId: dto.storeId,
+      summary: `Posted ${dto.side} ${dto.kind} of ₹${dto.amount}${
+        entry?.party?.name ? ` for ${entry.party.name}` : ''
+      }${dto.narration ? ` — ${dto.narration}` : ''}`,
+      metadata: {
+        kind: dto.kind,
+        side: dto.side,
+        amount: dto.amount,
+        status: dto.status ?? null,
+        partyId: dto.partyId ?? null,
+      },
+    });
+
     return toLedgerView(entry);
   }
 
@@ -78,12 +102,14 @@ export class FinanceService {
     if (storeIds.length === 0) return [];
     const storeWhere = { storeId: { in: storeIds } };
 
-    const monthStart = new Date();
-    monthStart.setDate(1);
-    monthStart.setHours(0, 0, 0, 0);
+    // Month boundaries at the STORE, not at the API server — see the note on
+    // `startOfMonthInTz`. Otherwise "this month's revenue" quietly means a
+    // different window depending on where the container runs.
+    const tz = await this.scope.resolveTimezone(user, headerStore);
+    const now = new Date();
+    const monthStart = startOfMonthInTz(now, tz);
     // Previous full month, for period-over-period deltas.
-    const prevStart = new Date(monthStart);
-    prevStart.setMonth(prevStart.getMonth() - 1);
+    const prevStart = startOfMonthAgoInTz(now, tz, 1);
 
     // Aggregate revenue (sales + income) and expense for one [gte, lt) window.
     const periodTotals = async (gte: Date, lt: Date) => {
@@ -145,9 +171,10 @@ export class FinanceService {
   async budget(user: AuthUser, headerStore?: string) {
     const storeIds = this.scope.effectiveStoreIds(user, headerStore);
     if (storeIds.length === 0) return [];
-    const monthStart = new Date();
-    monthStart.setDate(1);
-    monthStart.setHours(0, 0, 0, 0);
+    const monthStart = startOfMonthInTz(
+      new Date(),
+      await this.scope.resolveTimezone(user, headerStore),
+    );
 
     const stores = await this.prisma.store.findMany({
       where: { id: { in: storeIds } },

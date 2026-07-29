@@ -23,6 +23,7 @@ import {
   UsersRound,
   ScrollText,
   Target,
+  MessageSquarePlus,
 } from "lucide-react";
 
 import type { Role } from "@/lib/types";
@@ -253,6 +254,18 @@ export const NAV_GROUPS: NavGroup[] = [
         primaryAction: "",
         icon: ClipboardCheck,
         roles: ["store_manager", "area_manager", "head_office"],
+      },
+      {
+        module: 3,
+        slug: "requests",
+        title: "Branch Requests",
+        // Visible to every role: a salesperson at the counter is often the one
+        // who needs a diamond rate approved, and their view is filtered to their
+        // own requests server-side.
+        purpose:
+          "Ask your manager, area office or head office for a decision — diamond rates, price overrides, transfers and more.",
+        primaryAction: "New Request",
+        icon: MessageSquarePlus,
       },
       {
         module: 13,

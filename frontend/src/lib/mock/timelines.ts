@@ -130,13 +130,25 @@ export interface CustomOrder {
   advanceMode: string | null;
   /** Uploaded advance-receipt image path, if captured. */
   advanceReceiptUrl: string | null;
+  /** Balance the customer still owes at handover (estimation − advance). */
+  balanceDue?: number;
   /** Promised delivery date, yyyy-mm-dd, or "" when unset. */
   deliveryDate: string;
-  /** Approx gross weight in grams. */
-  grams: number;
+  /**
+   * Approx gross weight in grams. Not modelled on CustomOrder server-side, so
+   * the API omits it — treat as unknown rather than zero.
+   */
+  grams?: number;
   storeId: string;
   storeName: string;
-  /** Index into ORDER_STAGES of the stage currently in progress. */
+  /** Raw production stage (OrderStatus enum) and its display label. */
+  stage?: string;
+  stageLabel?: string;
+  /**
+   * Index into ORDER_STAGES of the stage currently in progress. `-1` for a
+   * cancelled order — it used to share index 4 with "ready for collection", so a
+   * written-off order rendered as complete in the stepper.
+   */
   currentStageIndex: number;
   /** Whoever currently holds the order. */
   ownerRole: TimelineRole;
@@ -147,6 +159,22 @@ export interface CustomOrder {
   eta: string;
   /** True if ETA has passed and not yet ready. */
   delayed: boolean;
+  /** Days the order has been sitting in its CURRENT stage. */
+  daysInStage?: number | null;
+  /** Working-day budget for the current stage, when one is defined. */
+  stageSlaDays?: number | null;
+  /**
+   * The order has overrun its current stage's budget. Distinct from `delayed`:
+   * a piece can still be inside its overall ETA and be stuck in one stage —
+   * which is exactly when stepping in still helps.
+   */
+  stageOverdue?: boolean;
+  /** Days since the order was booked. */
+  ageDays?: number | null;
+  cancelReason?: string | null;
+  cancelledAt?: string | null;
+  deliveredTo?: string | null;
+  deliveredAt?: string | null;
 }
 
 export const MOCK_CUSTOM_ORDERS: CustomOrder[] = [

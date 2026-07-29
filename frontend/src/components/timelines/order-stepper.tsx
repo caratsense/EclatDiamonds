@@ -4,7 +4,11 @@ import { cn } from "@/lib/utils";
 import { ORDER_STAGES } from "@/lib/mock/timelines";
 
 interface OrderStepperProps {
-  /** Index of the stage currently in progress. */
+  /**
+   * Index of the stage currently in progress, or `-1` for a cancelled order.
+   * Cancelled used to share index 4 with "Ready for collection", so a written-off
+   * order rendered as fully complete here.
+   */
   currentStageIndex: number;
   delayed?: boolean;
 }
@@ -13,10 +17,18 @@ interface OrderStepperProps {
  * Horizontal stage progression for a custom order:
  * Gold melting → Designing → Stone setting → Polishing → Ready for collection.
  * Completed stages are filled, the current stage is ringed, future stages muted.
+ * A cancelled order renders the whole track struck through and dimmed.
  */
 export function OrderStepper({ currentStageIndex, delayed }: OrderStepperProps) {
+  const cancelled = currentStageIndex < 0;
   return (
-    <ol className="flex w-full items-start">
+    <ol
+      className={cn(
+        "flex w-full items-start",
+        cancelled && "opacity-50 line-through",
+      )}
+      aria-label={cancelled ? "Order cancelled" : undefined}
+    >
       {ORDER_STAGES.map((stage, i) => {
         const isComplete = i < currentStageIndex;
         const isCurrent = i === currentStageIndex;

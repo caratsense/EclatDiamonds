@@ -34,8 +34,11 @@ import { IntegrationsModule } from './integrations/integrations.module';
 import { SyncModule } from './sync/sync.module';
 import { StorageModule } from './storage/storage.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { SpecialRequestsModule } from './special-requests/special-requests.module';
+import { AssistantModule } from './assistant/assistant.module';
 import { AuditModule } from './audit/audit.module';
 import { TargetsModule } from './targets/targets.module';
+import { OnboardingModule } from './onboarding/onboarding.module';
 import { HealthController } from './health/health.controller';
 import { AllExceptionsFilter } from './common/all-exceptions.filter';
 
@@ -75,9 +78,11 @@ import { AllExceptionsFilter } from './common/all-exceptions.filter';
     SyncModule,
     StorageModule,
     NotificationsModule,
+    SpecialRequestsModule,
+    AssistantModule,
     AuditModule,
     TargetsModule,
-  ],
+    OnboardingModule,  ],
   controllers: [HealthController],
   providers: [
     // Global auth: every route requires a valid JWT unless marked @Public().

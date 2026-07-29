@@ -3,6 +3,7 @@ import { PaymentsService } from './payments.service';
 import { CreatePaymentDto } from './dto/payment.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
+import { Roles } from '../auth/roles.decorator';
 
 @Controller('payments')
 export class PaymentsController {
@@ -18,6 +19,11 @@ export class PaymentsController {
     return this.payments.create(user, dto);
   }
 
+  /**
+   * Bank-vs-till reconciliation exposes where the branch's takings are short.
+   * That is a management view, not a counter one.
+   */
+  @Roles('store_manager', 'area_manager', 'head_office')
   @Get('reconciliation')
   reconciliation(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.payments.reconciliation(user, store);

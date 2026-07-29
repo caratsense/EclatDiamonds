@@ -171,6 +171,9 @@ export default function PaymentsPage() {
                       <TableHead>Ref</TableHead>
                       <TableHead>Mode</TableHead>
                       <TableHead>Store</TableHead>
+                      {/* Who took the money — the field that makes a till
+                          dispute answerable rather than an anonymous amount. */}
+                      <TableHead>Recorded by</TableHead>
                       <TableHead className="text-right">Amount</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -178,14 +181,14 @@ export default function PaymentsPage() {
                     {paymentsQuery.isLoading ? (
                       Array.from({ length: 6 }).map((_, i) => (
                         <TableRow key={i}>
-                          <TableCell colSpan={6}>
+                          <TableCell colSpan={7}>
                             <Skeleton className="h-5 w-full" />
                           </TableCell>
                         </TableRow>
                       ))
                     ) : paymentsQuery.isError ? (
                       <TableRow>
-                        <TableCell colSpan={6} className="py-10 text-center">
+                        <TableCell colSpan={7} className="py-10 text-center">
                           <div className="mx-auto max-w-sm rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-muted-foreground">
                             Couldn&apos;t load collections. Check your connection
                             and try again.
@@ -195,7 +198,7 @@ export default function PaymentsPage() {
                     ) : ledger.length === 0 ? (
                       <TableRow>
                         <TableCell
-                          colSpan={6}
+                          colSpan={7}
                           className="py-10 text-center text-sm text-muted-foreground"
                         >
                           No payments yet. Record a payment to begin.
@@ -219,6 +222,13 @@ export default function PaymentsPage() {
                           <TableCell className="text-muted-foreground">
                             {c.storeName}
                           </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {c.recordedBy ?? (
+                              <span title="Imported from the legacy system — no Eclat user behind it">
+                                Imported
+                              </span>
+                            )}
+                          </TableCell>
                           <TableCell className="text-right font-medium">
                             <span className="num">{formatINR(c.amount)}</span>
                           </TableCell>
@@ -228,7 +238,7 @@ export default function PaymentsPage() {
                   </TableBody>
                   <TableFooter>
                     <TableRow>
-                      <TableCell colSpan={5}>Total collected</TableCell>
+                      <TableCell colSpan={6}>Total collected</TableCell>
                       <TableCell className="text-right">
                         <span className="num">{formatINR(total)}</span>
                       </TableCell>

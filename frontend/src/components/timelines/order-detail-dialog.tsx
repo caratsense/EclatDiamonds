@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { CalendarClock, Gem, Package, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
@@ -14,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -27,6 +28,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { assetUrl } from "@/lib/api";
 import { formatINR } from "@/lib/format";
+import { apiErrorMessage } from "@/lib/utils";
 import {
   ADVANCE_MODE_LABELS,
   ORDER_CATEGORY_LABELS,
@@ -95,12 +97,20 @@ export function OrderDetailDialog({
   const advanceStage = useAdvanceOrderStage();
   const [stageSel, setStageSel] = useState("");
   const [stageNote, setStageNote] = useState("");
+  const [deliveredTo, setDeliveredTo] = useState("");
 
-  // Reset the advance-stage form whenever a different order opens.
-  useEffect(() => {
+  // Reset the stage form whenever a different order opens. Adjusted during
+  // render (React's documented "state derived from props" pattern) rather than
+  // in an effect — an effect would paint the previous order's half-filled
+  // cancellation reason for a frame before clearing it.
+  const formKey = `${order?.id ?? ""}:${open}`;
+  const [lastFormKey, setLastFormKey] = useState(formKey);
+  if (lastFormKey !== formKey) {
+    setLastFormKey(formKey);
     setStageSel("");
     setStageNote("");
-  }, [order?.id, open]);
+    setDeliveredTo("");
+  }
 
   if (!order) return null;
 
@@ -118,30 +128,54 @@ export function OrderDetailDialog({
       ? Math.max(o.estimation - (o.advanceReceived ?? 0), 0)
       : undefined;
 
-  // The newest event's stage is the order's true current stage (createOrder
-  // seeds a `booked` event; each advance appends one). Recovering it here lets
-  // us offer only the forward stages and hide the control once terminal.
-  const currentStage = (events[events.length - 1]?.stage as OrderStatus) ?? null;
+  // The server's production state machine decides where an order may go next.
+  // Offering the whole remaining enum (as this used to) surfaces moves the API
+  // rejects — skipping QC, or dropping a `ready` piece back to `designing` —
+  // which reads to the user as a broken button rather than a rule.
+  const currentStage =
+    (detail?.stage as OrderStatus | undefined) ??
+    (events[events.length - 1]?.stage as OrderStatus) ??
+    null;
   const isTerminal = currentStage
     ? TERMINAL_ORDER_STATUSES.includes(currentStage)
     : false;
-  const stageIdx = currentStage
-    ? ORDER_STATUS_SEQUENCE.indexOf(currentStage)
-    : -1;
-  const nextStages: OrderStatus[] =
-    stageIdx >= 0
-      ? [...ORDER_STATUS_SEQUENCE.slice(stageIdx + 1), "cancelled"]
-      : [];
-  // store_manager and above may move production along.
+  // Fall back to the linear path only while the detail fetch is in flight.
+  const allowed =
+    detail?.allowedNextStages ??
+    (currentStage && !isTerminal
+      ? ORDER_STATUS_SEQUENCE.slice(
+          ORDER_STATUS_SEQUENCE.indexOf(currentStage) + 1,
+          ORDER_STATUS_SEQUENCE.indexOf(currentStage) + 2,
+        ).map((s) => ({ stage: s, label: ORDER_STATUS_LABELS[s] }))
+      : []);
+  // store_manager and above may move production along. Delivery additionally
+  // needs store_manager and cancellation needs area_manager; the server enforces
+  // those and returns a message naming the required role, which the error toast
+  // surfaces verbatim.
   const showAdvance =
     ROLE_RANK[role] >= ROLE_RANK.store_manager &&
     !!currentStage &&
     !isTerminal &&
-    nextStages.length > 0;
+    allowed.length > 0;
+
+  const needsReason = stageSel === "cancelled";
+  const needsRecipient = stageSel === "delivered";
+  const canSubmit =
+    !!stageSel &&
+    (!needsReason || !!stageNote.trim()) &&
+    (!needsRecipient || !!deliveredTo.trim());
 
   function submitStage() {
     if (!stageSel) {
-      toast.error("Select a stage to advance to.");
+      toast.error("Select a stage to move to.");
+      return;
+    }
+    if (needsReason && !stageNote.trim()) {
+      toast.error("A reason is required to cancel an order.");
+      return;
+    }
+    if (needsRecipient && !deliveredTo.trim()) {
+      toast.error("Record who collected the piece.");
       return;
     }
     advanceStage.mutate(
@@ -149,16 +183,21 @@ export function OrderDetailDialog({
         id: o.id,
         stage: stageSel as OrderStatus,
         note: stageNote.trim() || undefined,
+        deliveredTo: deliveredTo.trim() || undefined,
       },
       {
         onSuccess: () => {
           toast.success(
-            `Order advanced to ${ORDER_STATUS_LABELS[stageSel as OrderStatus]}`,
+            stageSel === "cancelled"
+              ? `Order ${o.ref} cancelled`
+              : `Order moved to ${ORDER_STATUS_LABELS[stageSel as OrderStatus]}`,
           );
           setStageSel("");
           setStageNote("");
+          setDeliveredTo("");
         },
-        onError: () => toast.error("Could not advance the order stage."),
+        onError: (err: unknown) =>
+          toast.error(apiErrorMessage(err, "Could not move the order stage.")),
       },
     );
   }
@@ -205,16 +244,45 @@ export function OrderDetailDialog({
         </div>
 
         {/* Status + stepper */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-sm text-muted-foreground">
-            Stage: {ORDER_STAGES[o.currentStageIndex]}
+            Stage:{" "}
+            {o.stageLabel ?? ORDER_STAGES[o.currentStageIndex] ?? "Cancelled"}
+            {o.daysInStage != null ? (
+              <span className="num"> · {o.daysInStage}d here</span>
+            ) : null}
           </span>
-          {o.delayed ? (
-            <Badge variant="destructive">Delayed</Badge>
-          ) : (
-            <Badge variant="success">On track</Badge>
-          )}
+          <div className="flex flex-wrap items-center gap-1.5">
+            {/* Stage overrun is separate from ETA delay: a piece can be inside
+                its promised date and still be stuck at one bench, which is the
+                point at which stepping in still changes the outcome. */}
+            {o.stageOverdue ? (
+              <Badge variant="warning">
+                Stuck in stage{o.stageSlaDays ? ` (>${o.stageSlaDays}d)` : ""}
+              </Badge>
+            ) : null}
+            {o.delayed ? (
+              <Badge variant="destructive">Delayed</Badge>
+            ) : isTerminal ? (
+              <Badge variant="secondary">
+                {currentStage === "cancelled" ? "Cancelled" : "Delivered"}
+              </Badge>
+            ) : (
+              <Badge variant="success">On track</Badge>
+            )}
+          </div>
         </div>
+        {o.cancelReason ? (
+          <p className="rounded-lg border border-destructive/30 bg-destructive/5 p-2 text-xs">
+            <span className="font-medium">Cancelled:</span> {o.cancelReason}
+          </p>
+        ) : null}
+        {o.deliveredTo ? (
+          <p className="rounded-lg border bg-muted/30 p-2 text-xs">
+            <span className="font-medium">Collected by:</span> {o.deliveredTo}
+            {o.deliveredAt ? ` · ${prettyDate(o.deliveredAt)}` : ""}
+          </p>
+        ) : null}
         <OrderStepper
           currentStageIndex={o.currentStageIndex}
           delayed={o.delayed}
@@ -328,7 +396,7 @@ export function OrderDetailDialog({
         {showAdvance ? (
           <div className="rounded-lg border bg-muted/20 p-3">
             <p className="mb-2 text-xs font-medium text-muted-foreground">
-              Advance stage
+              Move stage
             </p>
             <div className="grid gap-3">
               <div className="grid gap-1.5">
@@ -338,19 +406,46 @@ export function OrderDetailDialog({
                     <SelectValue placeholder="Select the next stage" />
                   </SelectTrigger>
                   <SelectContent>
-                    {nextStages.map((s) => (
-                      <SelectItem key={s} value={s}>
-                        {ORDER_STATUS_LABELS[s]}
+                    {allowed.map((s) => (
+                      <SelectItem key={s.stage} value={s.stage}>
+                        {s.label}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                <p className="text-xs text-muted-foreground">
+                  Only the moves that follow{" "}
+                  {currentStage ? ORDER_STATUS_LABELS[currentStage] : "this stage"}{" "}
+                  on the shop floor are offered.
+                </p>
               </div>
+              {needsRecipient ? (
+                <div className="grid gap-1.5">
+                  <Label htmlFor="delivered-to">Collected by</Label>
+                  <Input
+                    id="delivered-to"
+                    placeholder="Name of whoever took the piece"
+                    value={deliveredTo}
+                    onChange={(e) => setDeliveredTo(e.target.value)}
+                  />
+                  {balance !== undefined && balance > 0 ? (
+                    <p className="text-xs text-warning">
+                      {formatINR(balance)} is still outstanding on this order.
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
               <div className="grid gap-1.5">
-                <Label htmlFor="advance-note">Note (optional)</Label>
+                <Label htmlFor="advance-note">
+                  {needsReason ? "Reason for cancelling" : "Note (optional)"}
+                </Label>
                 <Textarea
                   id="advance-note"
-                  placeholder="e.g. Casting complete, moved to setting bench 3"
+                  placeholder={
+                    needsReason
+                      ? "e.g. Customer changed their mind — advance refunded via UPI"
+                      : "e.g. Casting complete, moved to setting bench 3"
+                  }
                   value={stageNote}
                   onChange={(e) => setStageNote(e.target.value)}
                 />
@@ -358,10 +453,15 @@ export function OrderDetailDialog({
               <div className="flex justify-end">
                 <Button
                   size="sm"
+                  variant={needsReason ? "destructive" : "default"}
                   onClick={submitStage}
-                  disabled={!stageSel || advanceStage.isPending}
+                  disabled={!canSubmit || advanceStage.isPending}
                 >
-                  {advanceStage.isPending ? "Updating…" : "Advance stage"}
+                  {advanceStage.isPending
+                    ? "Updating…"
+                    : needsReason
+                      ? "Cancel order"
+                      : "Move stage"}
                 </Button>
               </div>
             </div>
@@ -391,9 +491,16 @@ export function OrderDetailDialog({
                   <div className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-primary" />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-baseline justify-between gap-x-2">
-                      <span className="text-sm font-medium">{ev.stage}</span>
+                      <span className="text-sm font-medium">
+                        {ev.stageLabel ?? ev.stage}
+                      </span>
                       <span className="num text-xs text-muted-foreground">
                         {prettyDate(ev.at)}
+                        {/* Time spent AT this stage — what turns the history
+                            into something that shows where the piece stalls. */}
+                        {ev.durationDays != null
+                          ? ` · ${ev.durationDays}d${ev.isCurrent ? " so far" : ""}`
+                          : ""}
                       </span>
                     </div>
                     {ev.note ? (

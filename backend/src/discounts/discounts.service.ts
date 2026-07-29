@@ -9,7 +9,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuditService } from '../common/audit.service';
-import { ROLE_RANK, canSeeCost } from '../common/role.util';
+import { SequenceService } from '../common/sequence.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { assertNotSelfApproval, assertUndecided, decisionStamp } from '../common/approval.util';
+import { ROLE_LABELS, ROLE_RANK, canSeeCost } from '../common/role.util';
 import {
   CreateDiscountRequestDto,
   SetDiscountLimitDto,
@@ -78,6 +81,8 @@ export class DiscountsService {
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
     private readonly audit: AuditService,
+    private readonly sequence: SequenceService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async list(user: AuthUser, headerStore?: string) {
@@ -169,10 +174,12 @@ export class DiscountsService {
       requiredRole = this.findApprover(user.role, diamondPercent, makingPercent, caps);
     }
 
-    const count = await this.prisma.discountRequest.count();
+    // Sequence-backed ref: `count() + 1` handed the same number to two
+    // salespeople approving concurrently, and re-used numbers after a deletion.
+    const seq = await this.sequence.next('DR:global');
     const row = await this.prisma.discountRequest.create({
       data: {
-        ref: `DR-${1000 + count + 1}`,
+        ref: `DR-${1000 + seq}`,
         storeId: dto.storeId,
         customerName: dto.customerName,
         item: dto.item,
@@ -193,6 +200,30 @@ export class DiscountsService {
         decidedAt: status === 'approved' ? new Date() : null,
       },
     });
+
+    // An escalated request that nobody is told about is a request that sits.
+    if (status === 'escalated') {
+      await this.notifications.emitToApprovers(
+        dto.storeId,
+        requiredRole,
+        {
+          kind: 'discount_request',
+          title: `Discount approval needed — ${row.ref}`,
+          body: `${user.name} requested ${diamondPercent}% diamond / ${makingPercent}% making for ${dto.customerName}`,
+          href: '/approvals',
+          storeId: dto.storeId,
+          entityType: 'DiscountRequest',
+          entityId: row.id,
+          priority: 'high',
+          actorId: user.id,
+          actorName: user.name,
+          dedupeKey: `discount:${row.id}:raised`,
+          metadata: { ref: row.ref, diamondPercent, makingPercent, requiredRole },
+        },
+        user.id,
+      );
+    }
+
     return toView(row, user.role);
   }
 
@@ -217,9 +248,7 @@ export class DiscountsService {
     if (!row) throw new NotFoundException('Discount request not found');
 
     // Only undecided requests may be decided — no flipping a settled decision.
-    if (row.status !== 'pending' && row.status !== 'escalated') {
-      throw new BadRequestException('This request has already been decided');
-    }
+    assertUndecided(row.status, ['approved', 'rejected'], 'discount request');
 
     // Store-scoping: the approver must have this store in scope.
     this.scope.assertStoreAllowed(user, row.storeId);
@@ -229,6 +258,11 @@ export class DiscountsService {
     if (ROLE_RANK[user.role] < ROLE_RANK[required]) {
       throw new ForbiddenException(`This request requires ${required} approval`);
     }
+
+    // Separation of duties. The escalation ladder alone does not guarantee this:
+    // a head_office requester escalates to head_office (there is nothing above
+    // it) and would otherwise sign off their own margin give-away.
+    assertNotSelfApproval(user, row.requestedById, 'discount request');
 
     const updated = await this.prisma.discountRequest.update({
       where: { id },
@@ -256,6 +290,27 @@ export class DiscountsService {
       } (${pct}%) for ${updated.customerName}`,
       metadata: { note: note ?? null },
     });
+
+    // Close the loop with whoever raised it — previously they only found out by
+    // re-opening the approvals screen and noticing the row had moved.
+    if (row.requestedById) {
+      await this.notifications.emit([row.requestedById], {
+        kind: 'discount_request',
+        title: `Discount ${updated.ref} ${decision}`,
+        body: `${pct}% for ${updated.customerName} — ${decision} by ${user.name} (${
+          ROLE_LABELS[user.role]
+        })${note?.trim() ? `: ${note.trim()}` : ''}`,
+        href: '/approvals',
+        storeId: updated.storeId,
+        entityType: 'DiscountRequest',
+        entityId: updated.id,
+        priority: decision === 'rejected' ? 'high' : 'normal',
+        actorId: user.id,
+        actorName: user.name,
+        dedupeKey: `discount:${updated.id}:decided`,
+        metadata: { status: decision },
+      });
+    }
 
     return toView(updated, user.role);
   }

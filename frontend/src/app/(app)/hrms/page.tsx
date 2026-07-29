@@ -26,6 +26,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSession } from "@/store/use-session";
 import { getNavItem } from "@/lib/navigation";
+import { apiErrorMessage } from "@/lib/utils";
+import { useStaff } from "@/lib/queries/users";
 import type { LeaveRequest, LeaveStatus } from "@/lib/mock/hrms";
 import { AttendanceTab } from "@/components/hrms/attendance-tab";
 import { RosterTab } from "@/components/hrms/roster-tab";
@@ -198,7 +200,7 @@ function MarkAttendanceDialog({
   const { currentStore } = useSession();
   const markAttendance = useMarkAttendance();
   const { data: shifts = [] } = useShifts();
-  const [staffName, setStaffName] = useState("");
+  const [staffId, setStaffId] = useState("");
   const [status, setStatus] = useState<AttendanceStatus>("present");
   const [checkInTime, setCheckInTime] = useState("");
   const [shiftId, setShiftId] = useState<string>("");
@@ -206,10 +208,14 @@ function MarkAttendanceDialog({
   // Aggregate ("all") scope has no concrete store to write to — fall back
   // to the first real store id; broad roles normally pick a store first.
   const targetStoreId = currentStore.isAggregate ? "surat-main" : currentStore.id;
+  // The roster for the target store. Attendance must be attributed to a REAL
+  // staff record: a typed-in name produced a throwaway id that no report or
+  // payroll run could ever reconcile, so the picker is the only way in now.
+  const { data: staff = [] } = useStaff(targetStoreId);
 
   function save() {
-    if (!staffName.trim()) {
-      toast.error("Staff name is required.");
+    if (!staffId) {
+      toast.error("Choose the staff member.");
       return;
     }
 
@@ -224,7 +230,7 @@ function MarkAttendanceDialog({
 
     markAttendance.mutate(
       {
-        staffName: staffName.trim(),
+        staffId,
         status,
         storeId: targetStoreId,
         checkInAt,
@@ -237,13 +243,14 @@ function MarkAttendanceDialog({
               currentStore.isAggregate ? "Surat — Main" : currentStore.name
             }.`,
           });
-          setStaffName("");
+          setStaffId("");
           setStatus("present");
           setCheckInTime("");
           setShiftId("");
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not mark attendance."),
+        onError: (err: unknown) =>
+          toast.error(apiErrorMessage(err, "Could not mark attendance.")),
       },
     );
   }
@@ -260,13 +267,27 @@ function MarkAttendanceDialog({
         </DialogHeader>
         <div className="grid gap-3">
           <div className="grid gap-1.5">
-            <Label htmlFor="staff-name">Staff name</Label>
-            <Input
-              id="staff-name"
-              placeholder="e.g. Anita Desai"
-              value={staffName}
-              onChange={(e) => setStaffName(e.target.value)}
-            />
+            <Label htmlFor="staff-pick">Staff member</Label>
+            <Select value={staffId} onValueChange={setStaffId}>
+              <SelectTrigger id="staff-pick">
+                <SelectValue
+                  placeholder={
+                    staff.length ? "Select staff" : "No staff assigned to this store"
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {staff.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>
+                    {s.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Attendance is attributed to a real staff record, so it reconciles
+              with reports and payroll.
+            </p>
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="att-status">Status</Label>

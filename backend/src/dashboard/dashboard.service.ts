@@ -11,6 +11,12 @@ import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
 import { ROLE_RANK } from '../common/role.util';
 import {
+  businessDate,
+  dateOnly,
+  formatHHMMInTz,
+  startOfDayAgoInTz,
+} from '../common/tz.util';
+import {
   CreateHandoffDto,
   CreateTaskDto,
   UpdateHandoffStatusDto,
@@ -21,17 +27,21 @@ function num(v: Prisma.Decimal | number | null | undefined): number {
   return v == null ? 0 : Number(v);
 }
 
-/** Start of day N days ago (local). */
-function dayStart(daysAgo = 0): Date {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  d.setDate(d.getDate() - daysAgo);
-  return d;
+/**
+ * Start of the day N days ago, AT THE STORE.
+ *
+ * The previous version used the API server's timezone, so every "today" figure
+ * on the dashboard covered whatever slice of the day the container's clock
+ * happened to define. A negative `daysAgo` yields a future boundary (used for
+ * "before tomorrow" ranges).
+ */
+function dayStartInTz(tz: string, daysAgo = 0): Date {
+  return startOfDayAgoInTz(new Date(), tz, daysAgo);
 }
 
-/** Local HH:MM for an agenda timestamp. */
-function hhmm(d: Date): string {
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+/** Store-local HH:MM for an agenda timestamp. */
+function hhmm(d: Date, tz: string): string {
+  return formatHHMMInTz(d, tz) ?? '--:--';
 }
 
 const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -49,8 +59,9 @@ export class DashboardService {
     const storeIds = this.scope.effectiveStoreIds(user, headerStore);
     if (storeIds.length === 0) return [];
     const storeWhere = { storeId: { in: storeIds } };
-    const todayStart = dayStart(0);
-    const yestStart = dayStart(1);
+    const tz = await this.scope.resolveTimezone(user, headerStore);
+    const todayStart = dayStartInTz(tz, 0);
+    const yestStart = dayStartInTz(tz, 1);
     const isBroad = ROLE_RANK[user.role] >= ROLE_RANK.store_manager;
 
     const [salesToday, salesYest, footfall, pending, collections, mySalesToday] =
@@ -131,7 +142,8 @@ export class DashboardService {
     const storeIds = this.scope.effectiveStoreIds(user, headerStore);
     if (storeIds.length === 0) return { salesTrend: [], storeComparison: [] };
 
-    const since = dayStart(6);
+    const tz = await this.scope.resolveTimezone(user, headerStore);
+    const since = dayStartInTz(tz, 6);
     const sales = await this.prisma.sale.findMany({
       where: {
         storeId: { in: storeIds },
@@ -143,26 +155,25 @@ export class DashboardService {
     });
 
     // 7-day trend.
+    // Bucket by the store-local calendar day (YYYY-MM-DD) rather than by a
+    // server-local `toDateString()`. A sale at 23:00 store time was otherwise
+    // liable to land in the neighbouring bucket, which is exactly the kind of
+    // off-by-one that makes a trend chart quietly disagree with the DSR.
     const trendMap = new Map<string, number>();
     for (let i = 6; i >= 0; i--) {
-      const d = dayStart(i);
-      trendMap.set(d.toDateString(), 0);
+      trendMap.set(dateOnly(businessDate(dayStartInTz(tz, i), tz)), 0);
     }
     for (const s of sales) {
-      const key = new Date(
-        s.docDate.getFullYear(),
-        s.docDate.getMonth(),
-        s.docDate.getDate(),
-      ).toDateString();
+      const key = dateOnly(businessDate(s.docDate, tz));
       if (trendMap.has(key)) trendMap.set(key, (trendMap.get(key) ?? 0) + num(s.totalAmount));
     }
-    const salesTrend = [...trendMap.entries()].map(([dateStr, total]) => {
-      const d = new Date(dateStr);
-      return { day: WEEKDAY[d.getDay()], sales: total, target: 0 };
+    const salesTrend = [...trendMap.entries()].map(([ymd, total]) => {
+      const [y, m, d] = ymd.split('-').map(Number);
+      return { day: WEEKDAY[new Date(Date.UTC(y, m - 1, d)).getUTCDay()], sales: total, target: 0 };
     });
 
     // Per-store comparison (today). Target = the whole-store monthly SalesTarget.
-    const todayStart = dayStart(0);
+    const todayStart = dayStartInTz(tz, 0);
     const now = new Date();
     const currentPeriod = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     const [stores, monthTargets] = await Promise.all([
@@ -278,8 +289,9 @@ export class DashboardService {
    */
   async agenda(user: AuthUser, headerStore?: string) {
     const filter = this.scope.storeFilter(user, headerStore);
-    const todayStart = dayStart(0);
-    const tomorrowStart = dayStart(-1);
+    const tz = await this.scope.resolveTimezone(user, headerStore);
+    const todayStart = dayStartInTz(tz, 0);
+    const tomorrowStart = dayStartInTz(tz, -1);
     const today = { gte: todayStart, lt: tomorrowStart };
 
     const [followUps, tasks, checkIns] = await Promise.all([
@@ -327,7 +339,7 @@ export class DashboardService {
     for (const c of checkIns) {
       items.push({
         id: `checkin-${c.id}`,
-        time: hhmm(c.timeIn),
+        time: hhmm(c.timeIn, tz),
         title: `Check-in: ${c.customerName}`,
         type: 'checkin',
         href: '/checkins',

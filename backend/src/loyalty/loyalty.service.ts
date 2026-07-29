@@ -10,6 +10,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
+import { SequenceService } from '../common/sequence.service';
 import { ROLE_RANK } from '../common/role.util';
 import { AuditService } from '../common/audit.service';
 import {
@@ -48,6 +49,7 @@ export class LoyaltyService {
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
     private readonly audit: AuditService,
+    private readonly sequence: SequenceService,
   ) {}
 
   /** Shape a SchemePlan for the API. */
@@ -213,12 +215,14 @@ export class LoyaltyService {
     if (!plan) throw new NotFoundException('Scheme plan not found');
 
     const year = new Date().getFullYear();
-    const count = await this.prisma.schemeMember.count();
+    // Sequence-backed per year: a scheme ref is printed on the customer's
+    // passbook, so two members must never be handed the same one.
+    const seq = await this.sequence.next(`GSS:${year}`);
     const enrolledAt = new Date();
 
     const member = await this.prisma.schemeMember.create({
       data: {
-        ref: `GSS-${year}-${3001 + count}`,
+        ref: `GSS-${year}-${3000 + seq}`,
         storeId: dto.storeId,
         customerName: dto.customerName,
         phone: dto.phone,

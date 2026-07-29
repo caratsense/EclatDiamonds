@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsString,
   Matches,
+  MaxLength,
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -22,10 +23,25 @@ export class AdvanceStageDto {
   @IsEnum(OrderStatus)
   stage!: OrderStatus;
 
-  /** Optional note recorded on the stage-change event. */
+  /**
+   * Note recorded on the stage-change event. REQUIRED when cancelling — writing
+   * off a booked order without stating why leaves nothing to reconcile the
+   * customer's advance against.
+   */
   @IsOptional()
   @IsString()
+  @MaxLength(500)
   note?: string;
+
+  /**
+   * Who physically collected the piece. REQUIRED for the `delivered` transition:
+   * handover is the point the store's liability for the item ends, so the record
+   * needs to name the person it went to.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  deliveredTo?: string;
 }
 
 export class CreateWorkflowDto {

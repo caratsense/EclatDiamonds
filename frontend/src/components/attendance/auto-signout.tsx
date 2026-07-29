@@ -144,7 +144,15 @@ export function AutoSignOut() {
 
     const pos = await getPositionQuick();
     checkOutRef.current.mutate(
-      { lat: pos?.lat ?? 0, lng: pos?.lng ?? 0 },
+      {
+        lat: pos?.lat ?? 0,
+        lng: pos?.lng ?? 0,
+        // Always send a note. It explains the punch on the attendance record,
+        // and it doubles as the justification the API requires when the fix
+        // lands outside the store geofence — without it an off-site idle
+        // timeout would be rejected and the check-out silently lost.
+        note: "Auto sign-out after inactivity",
+      },
       {
         // Whether or not the punch API succeeds, end the local attendance
         // session and go back to /check-in. The AUTH TOKEN is left intact.

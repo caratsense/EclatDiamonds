@@ -8,6 +8,7 @@ import {
   IsString,
   Matches,
   Max,
+  MaxLength,
   Min,
 } from 'class-validator';
 import { AttendanceStatus, LeaveStatus, LeaveType } from '@prisma/client';
@@ -15,11 +16,35 @@ import { AttendanceStatus, LeaveStatus, LeaveType } from '@prisma/client';
 export class DecideLeaveDto {
   @IsEnum(LeaveStatus)
   status!: LeaveStatus;
+
+  /** Rationale recorded on the request and shown back to the applicant. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+}
+
+/** PATCH /hrms/leave/:id/cancel — withdraw (owner) or revoke (manager+) a request. */
+export class CancelLeaveDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
 }
 
 export class MarkAttendanceDto {
+  /**
+   * The staff member being marked. REQUIRED: it used to be optional, and omitting
+   * it minted a synthetic `att-<timestamp>` id, creating an untraceable ghost
+   * staff row that no report could ever attribute or reconcile.
+   */
   @IsString()
-  staffName!: string;
+  staffId!: string;
+
+  /** Display name; ignored in favour of the resolved user's real name. */
+  @IsOptional()
+  @IsString()
+  staffName?: string;
 
   @IsEnum(AttendanceStatus)
   status!: AttendanceStatus;
@@ -31,6 +56,11 @@ export class MarkAttendanceDto {
   @IsDateString()
   checkInAt?: string;
 
+  /** Day being marked (YYYY-MM-DD, store-local). Defaults to the store's today. */
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'date must be YYYY-MM-DD' })
+  date?: string;
+
   /**
    * Assigned shift for this check-in. When present, lateness is computed against
    * this shift's start + buffer and `status` is overridden to `late`/`present`.
@@ -38,14 +68,20 @@ export class MarkAttendanceDto {
   @IsOptional()
   @IsString()
   shiftId?: string;
+}
 
-  /**
-   * Stable staff identity (so per-person monthly late counts aggregate). Optional
-   * for back-compat: if omitted a per-ping id is generated as before.
-   */
-  @IsOptional()
+/**
+ * POST /hrms/attendance/day-close — end-of-day reconciliation for a store
+ * (absence marking + dangling-punch cleanup). Safe to call repeatedly.
+ */
+export class DayCloseDto {
   @IsString()
-  staffId?: string;
+  storeId!: string;
+
+  /** Day to close (YYYY-MM-DD, store-local). Defaults to the previous local day. */
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'date must be YYYY-MM-DD' })
+  date?: string;
 }
 
 /** POST /hrms/shifts — create a store shift/batch (Module 6). */
@@ -73,6 +109,23 @@ export class CreateShiftDto {
   @IsOptional()
   @IsBoolean()
   isNightBatch?: boolean;
+
+  /**
+   * Minutes that must be worked to earn a FULL day's payroll credit. Omit to use
+   * the shift's own scheduled length.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(1440)
+  fullDayMins?: number;
+
+  /** Minutes for a HALF day's credit. Omit for 50% of the full-day threshold. */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(1440)
+  halfDayMins?: number;
 }
 
 /** POST /hrms/holidays — configure a per-store holiday (Module 6). */
@@ -122,6 +175,26 @@ export class CheckInDto {
   @IsOptional()
   @IsString()
   shiftId?: string;
+
+  /**
+   * Justification for punching from outside the store geofence. The API REJECTS
+   * an out-of-fence punch that carries no reason — the punch is still allowed
+   * (staff are never locked out by a GPS drift), but it must be explained, and it
+   * is surfaced to the manager's review queue.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  note?: string;
+
+  /**
+   * The device reported a mock/spoofed location provider. Recorded and trailed
+   * rather than blocked, because a false positive must never stop someone
+   * clocking in for their shift.
+   */
+  @IsOptional()
+  @IsBoolean()
+  isMockLocation?: boolean;
 }
 
 /** POST /hrms/attendance/check-out — self-service geo check-out (Module 6). */
@@ -135,6 +208,12 @@ export class CheckOutDto {
   @Min(-180)
   @Max(180)
   lng!: number;
+
+  /** Justification when the check-out lands outside the store geofence. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  note?: string;
 }
 
 /**
@@ -200,6 +279,12 @@ export class CreateRegularizationDto {
 export class DecideRegularizationDto {
   @IsEnum(LeaveStatus)
   status!: LeaveStatus;
+
+  /** Rationale recorded on the request and shown back to the applicant. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
 }
 
 /**

@@ -7,6 +7,7 @@ import { TicketCategory } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
+import { SequenceService } from '../common/sequence.service';
 import { ROLE_RANK } from '../common/role.util';
 import {
   CreateTicketDto,
@@ -48,6 +49,7 @@ export class TicketingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
+    private readonly sequence: SequenceService,
   ) {}
 
   /**
@@ -92,7 +94,9 @@ export class TicketingService {
   /** POST /tickets — raise a ticket; auto-routes to the resolver team for the category. */
   async create(user: AuthUser, dto: CreateTicketDto) {
     if (dto.storeId) this.scope.assertStoreAllowed(user, dto.storeId);
-    const count = await this.prisma.ticket.count();
+    // Sequence-backed: two branches raising a ticket in the same instant used
+    // to receive an identical ref.
+    const seq = await this.sequence.next('TKT:global');
     // Category is optional (Round 2): default the stored category to `maintenance`
     // and route omitted tickets to the general Back Office bucket.
     const category = dto.category ?? 'maintenance';
@@ -100,7 +104,7 @@ export class TicketingService {
 
     const ticket = await this.prisma.ticket.create({
       data: {
-        ref: `TKT-${2061 + count + 1}`,
+        ref: `TKT-${2061 + seq}`,
         storeId: dto.storeId ?? null,
         subject: dto.subject,
         category,
