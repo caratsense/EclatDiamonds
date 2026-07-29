@@ -25,6 +25,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import { ChannelStatusNotice } from "@/components/integrations/channel-status-notice";
 import { formatINR, formatNumber } from "@/lib/format";
 import {
   REPORT_PERIODS,
@@ -227,6 +228,9 @@ export function SendReportDialog({
               />
             </div>
           </div>
+
+          {/* Warn before the number is typed, not after the send returns. */}
+          <ChannelStatusNotice channel={isEmail ? "email" : "whatsapp"} />
 
           <div className="grid gap-1.5">
             <Label htmlFor="report-recipient">

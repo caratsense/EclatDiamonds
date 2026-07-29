@@ -54,6 +54,7 @@ import {
   useCreateQuote,
   useUploadQuotePhoto,
 } from "@/lib/queries/quotes";
+import { useMetalRates } from "@/lib/queries/integrations";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
@@ -102,6 +103,7 @@ export function QuoteBuilderDialog({
 }: QuoteBuilderDialogProps) {
   const { currentStore } = useSession();
   const createQuote = useCreateQuote();
+  const metalRates = useMetalRates();
   const uploadPhoto = useUploadQuotePhoto();
   const convertToOrder = useConvertQuoteToOrder();
 
@@ -193,7 +195,14 @@ export function QuoteBuilderDialog({
   const makingNum = makingMode === "per_gram" 
     ? (toNumber(makingRatePerGram) ?? 0) * weightNum 
     : (toNumber(making) ?? 0);
-  const autoRate = GOLD_RATE_PER_GRAM[karat] ?? 7180;
+  // "Auto" now means the rate on record for this store, not a constant baked
+  // into the repo. GOLD_RATE_PER_GRAM survives only as the last-resort fallback
+  // for a fresh deployment with no MetalRate rows yet — every quote priced off
+  // it was otherwise using whatever gold cost the day that file was written.
+  const liveRate = metalRates.rateFor(karat);
+  const autoRate = liveRate?.ratePerGram ?? GOLD_RATE_PER_GRAM[karat] ?? 7180;
+  const rateIsStale = liveRate?.stale ?? false;
+  const rateIsFallback = liveRate == null;
   const goldRate = rateMode === "auto" ? autoRate : toNumber(manualRate) ?? 0;
   const diamondsTotal = diamonds.reduce((s, d) => {
     const p = toNumber(d.price);
@@ -538,7 +547,10 @@ export function QuoteBuilderDialog({
         });
       } else {
         const html = summaryHtml(quote.ref);
-        toast.success(`Quote ${quote.ref} created & shared`, {
+        // "created", not "created & shared" — nothing is sent from here. The
+        // sharing action lives on the quote itself; saying it had already gone
+        // out meant a rep could walk away believing the customer had the price.
+        toast.success(`Quote ${quote.ref} created`, {
           description: `${formatINR(preview.grand)} · ready for ${name}.`,
           action: { label: "Print", onClick: () => printSummary(html) },
         });
@@ -872,19 +884,39 @@ export function QuoteBuilderDialog({
                       </Tabs>
                     </div>
                     {rateMode === "auto" ? (
-                      <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm">
+                      <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm">
                         <span className="num font-medium">
                           {formatINR(autoRate)}/g
                         </span>
-                        <Badge variant="outline" className="text-[10px]">
-                          {karat}K feed
-                        </Badge>
-                        {GOLD_RATE_PER_GRAM[karat] === undefined ? (
-                          <span className="text-xs text-muted-foreground">
-                            No live {karat}K rate — using default. Switch to
-                            manual to override.
-                          </span>
-                        ) : null}
+                        {/* Say where the number came from. A rate that is stale
+                            or a built-in default looks identical to a fresh one
+                            on the total, and the difference is real money. */}
+                        {rateIsFallback ? (
+                          <>
+                            <Badge variant="destructive" className="text-[10px]">
+                              No rate on record
+                            </Badge>
+                            <span className="text-xs text-muted-foreground">
+                              Using a built-in default — check today&apos;s rate
+                              and switch to Manual.
+                            </span>
+                          </>
+                        ) : rateIsStale ? (
+                          <>
+                            <Badge variant="destructive" className="text-[10px]">
+                              {karat}K · out of date
+                            </Badge>
+                            <span className="text-xs text-muted-foreground">
+                              Last updated{" "}
+                              {Math.round((liveRate?.ageHours ?? 0) / 24)} day(s)
+                              ago. Confirm today&apos;s rate before quoting.
+                            </span>
+                          </>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px]">
+                            {karat}K · today&apos;s rate
+                          </Badge>
+                        )}
                       </div>
                     ) : (
                       <Input

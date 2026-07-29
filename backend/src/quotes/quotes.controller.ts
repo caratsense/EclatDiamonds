@@ -53,6 +53,16 @@ export class QuotesController {
     return this.quotes.addPhoto(user, id, file, body.label);
   }
 
+  /**
+   * Send this quote to its own customer on WhatsApp. Open to any role that can
+   * already see the quote — the recipient comes from the record, not the caller,
+   * so this is not a general-purpose "message anyone" route.
+   */
+  @Post(':id/share')
+  share(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.quotes.share(user, id);
+  }
+
   /** Fork a custom order (timeline) from this quote and mark it accepted. */
   @Post(':id/convert-to-order')
   convertToOrder(

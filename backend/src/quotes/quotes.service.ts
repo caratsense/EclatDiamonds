@@ -4,7 +4,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
 import { isAllStoreRole } from '../common/role.util';
+import { SequenceService } from '../common/sequence.service';
 import { StorageService } from '../storage/storage.service';
+import { WhatsAppService } from '../integrations/whatsapp.service';
 import { ConvertToOrderDto, CreateQuoteDto, QuoteLineDto } from './dto/quote.dto';
 
 const GST_RATE = 0.03;
@@ -86,7 +88,60 @@ export class QuotesService {
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
     private readonly storage: StorageService,
+    private readonly sequence: SequenceService,
+    private readonly whatsapp: WhatsAppService,
   ) {}
+
+  /**
+   * POST /quotes/:id/share — send this quote to ITS OWN customer on WhatsApp.
+   *
+   * Deliberately not routed through `POST /integrations/whatsapp/send`, which is
+   * manager-and-above precisely because it will send arbitrary text to an
+   * arbitrary number. Here the recipient is read off the quote record, so the
+   * caller chooses nothing: a salesperson can send a customer their own price
+   * without that also being a way to send anything to anyone.
+   *
+   * Returns the true outcome rather than a bare 200 — `delivered: false` with
+   * `dryRun: true` means WhatsApp is not connected on this deployment and the
+   * customer received nothing.
+   */
+  async share(user: AuthUser, id: string) {
+    const quote = await this.get(user, id); // scope + kaccha checks live here
+    if (!quote.phone) {
+      throw new BadRequestException('This quote has no phone number to send to');
+    }
+
+    const store = await this.prisma.store.findUnique({
+      where: { id: quote.originStoreId },
+      select: { name: true },
+    });
+
+    const body = [
+      store?.name ?? 'CaratSense',
+      `Quote ${quote.ref}`,
+      quote.customer,
+      '',
+      `Total: ${new Intl.NumberFormat('en-IN', {
+        style: 'currency',
+        currency: 'INR',
+        maximumFractionDigits: 0,
+      }).format(quote.totals.grandTotal)}${quote.isKaccha ? ' (estimate, excl. GST)' : ''}`,
+      quote.validUntil ? `Valid until ${quote.validUntil}` : '',
+      '',
+      'Thank you for visiting us.',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    const result = await this.whatsapp.sendText(quote.phone, body);
+    return {
+      delivered: result.delivered,
+      dryRun: result.dryRun,
+      ref: quote.ref,
+      to: result.to,
+      ...(result.error ? { error: result.error } : {}),
+    };
+  }
 
   async list(user: AuthUser, headerStore?: string, includeKaccha = false) {
     // "@" kaccha provision: rough no-GST estimates are hidden from the normal
@@ -128,12 +183,13 @@ export class QuotesService {
       t.gst = 0;
       t.grandTotal = t.taxable;
     }
-    const count = await this.prisma.quote.count();
+    // Sequence-backed, same reason as the order refs this service also mints.
+    const seq = await this.sequence.next('QT:global');
     const redeemable = [...new Set([dto.storeId, ...(dto.redeemableStoreIds ?? [])])];
 
     const quote = await this.prisma.quote.create({
       data: {
-        ref: `QT-${2000 + count + 1}`,
+        ref: `QT-${2000 + seq}`,
         storeId: dto.storeId,
         leadId: dto.leadId,
         assignedRepId: user.id,
@@ -226,18 +282,34 @@ export class QuotesService {
 
     const item = q.lines[0]?.description ?? 'Custom piece';
 
+    // Same store-scoped, sequence-backed ref format the timelines module mints,
+    // so an order looks identical whether it was booked directly or converted
+    // from a quote. (`CO-${Date.now()}` collided under concurrency and told the
+    // customer nothing.)
+    const store = await this.prisma.store.findUnique({
+      where: { id: q.storeId },
+      select: { code: true },
+    });
+    const now = new Date();
+    const period = `${String(now.getUTCFullYear()).slice(2)}${String(
+      now.getUTCMonth() + 1,
+    ).padStart(2, '0')}`;
+    const branch = (store?.code ?? q.storeId.slice(-4)).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const ref = await this.sequence.nextRef('CO', `${branch}-${period}`);
+
     const order = await this.prisma.customOrder.create({
       data: {
-        ref: `CO-${Date.now()}`,
+        ref,
         storeId: q.storeId,
         partyId: q.partyId,
         customerName: q.customerName,
         value: q.grandTotal,
         item,
         stage: OrderStatus.booked,
+        stageEnteredAt: now,
         ownerRole: 'salesperson',
         ownerName: user.name,
-        bookedOn: new Date(),
+        bookedOn: now,
         ringSize: dto.ringSize ?? null,
         bangleSize: dto.bangleSize ?? null,
         metalColor: dto.metalColor ?? null,

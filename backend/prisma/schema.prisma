@@ -440,6 +440,32 @@ model User {
 
 /// User <-> Store assignment. A salesperson maps to one store; area/HO map to many
 /// (or to a Region) so their dashboards roll up. RBAC + store-scoping (see eclat-schema.md).
+/// One row per scheduled-job execution, and the guard that keeps it to one.
+///
+/// The unique key is the whole point: the cron fires on every API instance, so
+/// two replicas would otherwise both close the same day. Whoever inserts the row
+/// first owns the run; the loser gets a unique-violation and skips. It doubles as
+/// the answer to "did last night's day-close actually happen?", which previously
+/// had no record anywhere.
+model ScheduledJobRun {
+  id     String @id @default(cuid())
+  /// Job name, e.g. "attendance.day-close".
+  job    String
+  /// What it ran for — a storeId, or "global" for jobs that are not per-store.
+  scope  String
+  /// The business key that must run at most once, e.g. the store-local date.
+  runKey String
+
+  /// running | ok | failed
+  status    String    @default("running")
+  detail    String?
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+
+  @@unique([job, scope, runKey])
+  @@index([job, startedAt])
+}
+
 model UserStore {
   id        String  @id @default(cuid())
   userId    String

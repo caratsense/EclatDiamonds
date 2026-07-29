@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { MessageCircle, Store as StoreIcon, Wrench } from "lucide-react";
 import { toast } from "sonner";
 
@@ -14,7 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
-import { assetUrl } from "@/lib/api";
+import { api, assetUrl } from "@/lib/api";
 import {
   formatCarats,
   formatGrams,
@@ -32,6 +33,7 @@ import {
   type Quote,
 } from "@/lib/mock/quotation";
 import { useSession } from "@/store/use-session";
+import { ChannelStatusNotice } from "@/components/integrations/channel-status-notice";
 
 interface QuoteDetailDialogProps {
   quote: Quote | null;
@@ -50,6 +52,7 @@ export function QuoteDetailDialog({
   onOpenChange,
 }: QuoteDetailDialogProps) {
   const { stores, currentStore } = useSession();
+  const [sharing, setSharing] = useState(false);
   if (!quote) return null;
 
   const isRepair = quote.kind === "repair";
@@ -69,6 +72,49 @@ export function QuoteDetailDialog({
     !currentStore.isAggregate &&
     currentStore.id !== quote.originStoreId &&
     quote.redeemableStoreIds.includes(currentStore.id);
+
+  /**
+   * Send the quote to the customer on WhatsApp.
+   *
+   * This button used to fire a success toast and nothing else — no request was
+   * ever made. A rep could tell a customer standing at the counter that the price
+   * was on its way to their phone, and it never was. It now actually sends, and
+   * distinguishes the three real outcomes: delivered, WhatsApp not connected on
+   * this deployment, or refused by WhatsApp.
+   */
+  async function shareOnWhatsApp() {
+    if (!quote) return;
+    if (!quote.phone) {
+      toast.error("This quote has no phone number to send to.");
+      return;
+    }
+    setSharing(true);
+    try {
+      // /quotes/:id/share, not /integrations/whatsapp/send — the latter is
+      // manager-only because it sends arbitrary text anywhere, which a
+      // salesperson sharing a price should not need (and must not have).
+      const { data } = await api.post<{ delivered: boolean; dryRun?: boolean }>(
+        `/quotes/${quote.id}/share`,
+      );
+      if (data?.delivered) {
+        toast.success(`Quote ${quote.ref} sent on WhatsApp`, {
+          description: `${quote.customer} · ${quote.phone}`,
+        });
+      } else if (data?.dryRun) {
+        toast.warning("WhatsApp is not connected yet — nothing was sent.", {
+          description:
+            "Print or read out the quote for now, and ask your administrator to connect WhatsApp.",
+          duration: 8000,
+        });
+      } else {
+        toast.error("WhatsApp refused the message — the quote was not sent.");
+      }
+    } catch {
+      toast.error("Could not send the quote. Please try again.");
+    } finally {
+      setSharing(false);
+    }
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -272,17 +318,12 @@ export function QuoteDetailDialog({
           </div>
         </div>
 
+        <ChannelStatusNotice channel="whatsapp" className="mt-2" />
+
         <DialogFooter>
-          <Button
-            variant="outline"
-            onClick={() =>
-              toast.success("Quote shared on WhatsApp (mock)", {
-                description: `${quote.ref} sent to ${quote.customer} · ${quote.phone}`,
-              })
-            }
-          >
+          <Button variant="outline" disabled={sharing} onClick={shareOnWhatsApp}>
             <MessageCircle className="h-4 w-4" />
-            Share on WhatsApp
+            {sharing ? "Sending…" : "Share on WhatsApp"}
           </Button>
         </DialogFooter>
       </DialogContent>

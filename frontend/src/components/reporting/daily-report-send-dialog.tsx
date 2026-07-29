@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { ChannelStatusNotice } from "@/components/integrations/channel-status-notice";
 import {
   composeDailyReportText,
   type DailyReport,
@@ -195,6 +196,9 @@ export function DailyReportSendDialog({
               />
             </div>
           </div>
+
+          {/* Warn before the number is typed, not after the send returns. */}
+          <ChannelStatusNotice channel={isEmail ? "email" : "whatsapp"} />
 
           {/* Recipient */}
           <div className="grid gap-1.5">

@@ -28,6 +28,7 @@ import { formatINR, formatNumber } from "@/lib/format";
 import { getNavItem } from "@/lib/navigation";
 import type { DsrResponse, ReportPeriod } from "@/lib/queries/reporting";
 import { useDsr, useMovers } from "@/lib/queries/reporting";
+import { ChannelStatusNotice } from "@/components/integrations/channel-status-notice";
 
 /** Build a plain-text DSR summary from the data already on the page. */
 function buildDsrSummary(dsr?: DsrResponse): string {
@@ -211,12 +212,26 @@ function GenerateDsrDialog({
     }
     setSending(true);
     try {
-      await api.post("/integrations/whatsapp/send", {
-        to,
-        body: summary,
-      });
-      toast.success("DSR sent over WhatsApp");
-      onOpenChange(false);
+      // The API answers 200 even when WhatsApp is not connected — the send is a
+      // logged no-op in that case. Claiming "sent" off the status code alone told
+      // a manager their owner had the day's takings when nothing had left the
+      // building, so read the result and say which of the two happened.
+      const { data } = await api.post<{ delivered: boolean; dryRun?: boolean }>(
+        "/integrations/whatsapp/send",
+        { to, body: summary },
+      );
+      if (data?.delivered) {
+        toast.success("DSR sent over WhatsApp");
+        onOpenChange(false);
+      } else if (data?.dryRun) {
+        toast.warning("WhatsApp is not connected yet — the DSR was NOT sent.", {
+          description:
+            "Copy the text and send it by hand for now. Ask your administrator to connect WhatsApp.",
+          duration: 8000,
+        });
+      } else {
+        toast.error("WhatsApp rejected the message — the DSR was not sent.");
+      }
     } catch {
       toast.error("Could not send the DSR.");
     } finally {
@@ -245,6 +260,7 @@ function GenerateDsrDialog({
             No DSR data available yet.
           </p>
         )}
+        <ChannelStatusNotice channel="whatsapp" />
         <div className="grid gap-1.5">
           <Label htmlFor="dsr-recipient">Recipient WhatsApp number</Label>
           <Input

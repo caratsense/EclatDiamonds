@@ -39,6 +39,7 @@ import { AssistantModule } from './assistant/assistant.module';
 import { AuditModule } from './audit/audit.module';
 import { TargetsModule } from './targets/targets.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
+import { SchedulerModule } from './scheduler/scheduler.module';
 import { HealthController } from './health/health.controller';
 import { AllExceptionsFilter } from './common/all-exceptions.filter';
 
@@ -82,7 +83,10 @@ import { AllExceptionsFilter } from './common/all-exceptions.filter';
     AssistantModule,
     AuditModule,
     TargetsModule,
-    OnboardingModule,  ],
+    OnboardingModule,
+    // Last: its jobs drive the modules above.
+    SchedulerModule,
+  ],
   controllers: [HealthController],
   providers: [
     // Global auth: every route requires a valid JWT unless marked @Public().

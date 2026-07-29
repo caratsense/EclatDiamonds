@@ -43,31 +43,68 @@ export class GoldRateService {
   }
 
   /**
-   * Latest stored rate (INR/g) for a metal. A store-specific override wins over a
-   * global (storeId null) rate; returns null if nothing is on record yet.
+   * A rate older than this is reported as stale. Gold moves daily; quoting off a
+   * price from last week is how a jeweller sells below cost without noticing.
    */
-  async getLatestRate(metal: MetalKind, storeId?: string): Promise<number | null> {
+  private get staleAfterHours(): number {
+    const raw = Number(this.config.get<string>('GOLD_RATE_STALE_HOURS'));
+    return Number.isFinite(raw) && raw > 0 ? raw : 24;
+  }
+
+  /** Latest stored row for a metal — store-specific override wins over global. */
+  private async latestRow(metal: MetalKind, storeId?: string) {
     const scoped = storeId && storeId !== 'all' ? storeId : undefined;
-    const row = await this.prisma.metalRate.findFirst({
+    return this.prisma.metalRate.findFirst({
       where: { metal, ...(scoped ? { OR: [{ storeId: scoped }, { storeId: null }] } : {}) },
       // store-specific first (nulls last), then most recent.
       orderBy: [{ storeId: 'desc' }, { effectiveFrom: 'desc' }, { createdAt: 'desc' }],
     });
+  }
+
+  /**
+   * Latest stored rate (INR/g) for a metal. A store-specific override wins over a
+   * global (storeId null) rate; returns null if nothing is on record yet.
+   */
+  async getLatestRate(metal: MetalKind, storeId?: string): Promise<number | null> {
+    const row = await this.latestRow(metal, storeId);
     return row ? Number(row.ratePerGram) : null;
   }
 
-  /** Current rate for every metal that has one on record (latest per metal). */
-  async currentRates(storeId?: string): Promise<Array<{ metal: MetalKind; ratePerGram: number }>> {
+  /**
+   * Current rate for every metal that has one on record, WITH its age.
+   *
+   * The age is not decoration. With no feed configured the service silently falls
+   * back to the last stored rate, so a quote built here can be priced off a
+   * week-old number and look exactly like a fresh one. `stale` gives the UI
+   * something to warn on instead of the staff having to remember to check.
+   */
+  async currentRates(storeId?: string): Promise<
+    Array<{
+      metal: MetalKind;
+      ratePerGram: number;
+      effectiveFrom: string;
+      ageHours: number;
+      stale: boolean;
+    }>
+  > {
     const metals = Object.values(MetalKind);
-    const rates = await Promise.all(
-      metals.map(async (metal) => ({
-        metal,
-        ratePerGram: await this.getLatestRate(metal, storeId),
-      })),
+    const now = Date.now();
+    const rows = await Promise.all(
+      metals.map(async (metal) => ({ metal, row: await this.latestRow(metal, storeId) })),
     );
-    return rates.filter(
-      (r): r is { metal: MetalKind; ratePerGram: number } => r.ratePerGram != null,
-    );
+    return rows
+      .filter((r) => r.row != null)
+      .map(({ metal, row }) => {
+        const effectiveFrom = row!.effectiveFrom ?? row!.createdAt;
+        const ageHours = Math.max(0, (now - effectiveFrom.getTime()) / 3_600_000);
+        return {
+          metal,
+          ratePerGram: Number(row!.ratePerGram),
+          effectiveFrom: effectiveFrom.toISOString(),
+          ageHours: Math.round(ageHours * 10) / 10,
+          stale: ageHours > this.staleAfterHours,
+        };
+      });
   }
 
   /**
