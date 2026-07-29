@@ -10,7 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { ProductCard } from "@/components/catalogue/product-card";
 import { CATEGORY_LABELS, METAL_LABELS, type Product } from "@/lib/mock/catalogue";
 import { useImageSearch, type ImageSearchResult } from "@/lib/queries/products";
-import { cn } from "@/lib/utils";
+import { cn, apiErrorMessage } from "@/lib/utils";
 
 interface ImageSearchProps {
   onOpenProduct: (product: Product) => void;
@@ -41,7 +41,7 @@ export function ImageSearch({ onOpenProduct }: ImageSearchProps) {
           { description: `${data.results.length} matches for "${f.name}"` },
         );
       },
-      onError: () => toast.error("Image search failed — try another image."),
+      onError: (err) => toast.error(apiErrorMessage(err, "Image search failed — try another image.")),
     });
   }
 

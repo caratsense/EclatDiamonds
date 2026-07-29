@@ -50,6 +50,7 @@ import {
   useRejectDiscount,
 } from "@/lib/queries/discounts";
 import { useSession } from "@/store/use-session";
+import { apiErrorMessage } from "@/lib/utils";
 
 const STATUS_VARIANT: Record<
   DiscountStatus,
@@ -100,7 +101,7 @@ export default function DiscountsPage() {
   function approveRow(id: string) {
     approve.mutate(id, {
       onSuccess: () => toast.success("Discount approved"),
-      onError: () => toast.error("Could not approve this request."),
+      onError: (err) => toast.error(apiErrorMessage(err, "Could not approve this request.")),
     });
   }
 
@@ -114,7 +115,7 @@ export default function DiscountsPage() {
           setRejectId(null);
           setRejectNote("");
         },
-        onError: () => toast.error("Could not reject this request."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not reject this request.")),
       },
     );
   }

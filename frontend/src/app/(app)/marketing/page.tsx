@@ -74,6 +74,7 @@ import {
   type CampaignType,
   type SharedAsset,
 } from "@/lib/mock/marketing";
+import { apiErrorMessage } from "@/lib/utils";
 
 /** Marketing delivery channels offered when targeting a campaign. */
 const CHANNEL_OPTIONS = [
@@ -425,7 +426,7 @@ function AssetTile({
       { id: asset.id, status },
       {
         onSuccess: () => toast.success(`Asset ${label.toLowerCase()}`),
-        onError: () => toast.error("Could not update the asset."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not update the asset.")),
       },
     );
   }
@@ -485,7 +486,7 @@ function AgencyTaskRow({
       { id: task.id, status },
       {
         onSuccess: () => toast.success("Task updated"),
-        onError: () => toast.error("Could not update the task."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not update the task.")),
       },
     );
   }
@@ -623,7 +624,7 @@ function NewCampaignDialog({
           reset();
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not create campaign."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not create campaign.")),
       },
     );
   }
@@ -780,7 +781,7 @@ function NewDeliverableDialog({
           reset();
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not add the asset."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not add the asset.")),
       },
     );
   }
@@ -903,7 +904,7 @@ function NewAgencyTaskDialog({
           reset();
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not create the task."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not create the task.")),
       },
     );
   }

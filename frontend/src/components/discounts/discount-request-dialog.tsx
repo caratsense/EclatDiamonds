@@ -24,7 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatINR, formatPercent } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import { cn, apiErrorMessage } from "@/lib/utils";
 import { ROLE_LABELS } from "@/lib/types";
 import {
   DISCOUNT_STATUS_LABELS,
@@ -139,7 +139,7 @@ export function DiscountRequestDialog({
           reset();
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not submit the discount request."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not submit the discount request.")),
       },
     );
   }

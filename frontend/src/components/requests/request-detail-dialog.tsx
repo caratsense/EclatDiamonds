@@ -23,7 +23,6 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { formatINR } from "@/lib/format";
-import { apiErrorMessage } from "@/lib/utils";
 import {
   useAddRequestMessage,
   useCancelSpecialRequest,
@@ -31,6 +30,7 @@ import {
   useEscalateSpecialRequest,
   useSpecialRequest,
 } from "@/lib/queries/special-requests";
+import { apiErrorMessage } from "@/lib/utils";
 
 function prettyDateTime(iso: string): string {
   return new Date(iso).toLocaleString("en-IN", {

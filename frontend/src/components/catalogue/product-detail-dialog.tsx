@@ -28,6 +28,7 @@ import {
 import { useUploadProductImage } from "@/lib/queries/products";
 import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
+import { apiErrorMessage } from "@/lib/utils";
 
 interface ProductDetailDialogProps {
   product: Product | null;
@@ -57,7 +58,7 @@ export function ProductDetailDialog({
       { id: product.id, file },
       {
         onSuccess: () => toast.success("Photo uploaded"),
-        onError: () => toast.error("Upload failed — managers only, image ≤ 8MB"),
+        onError: (err) => toast.error(apiErrorMessage(err, "Upload failed — managers only, image ≤ 8MB")),
       },
     );
     e.target.value = "";

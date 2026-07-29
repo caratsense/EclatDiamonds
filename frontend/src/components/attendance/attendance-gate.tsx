@@ -31,17 +31,20 @@ export function AttendanceGate() {
 
   const isSalesperson = role === "salesperson";
   const onCheckIn = pathname === "/check-in";
-  // Read once per mount; the flag only ever flips to "handled" within a session.
-  const alreadyHandled = useMemo(() => isAttendanceHandled(), []);
 
   // Only fetch when the gate could actually act — avoids extra load for managers.
-  const active =
-    authenticated && isSalesperson && !onCheckIn && !alreadyHandled;
+  const active = authenticated && isSalesperson && !onCheckIn;
   const month = useMemo(() => new Date().toISOString().slice(0, 7), []);
   const { data, isSuccess } = useMyAttendance(month);
 
   useEffect(() => {
     if (!active || !isSuccess) return;
+    // Re-read the flag on EVERY run. It used to be memoized at mount, which made
+    // "Skip for now" useless: skip set the flag and navigated away, but this
+    // component never unmounts, so it still held the stale `false`, saw no punch
+    // for today, and replaced the user straight back to /check-in. The salesperson
+    // — the only role this gate applies to — could not get past the screen.
+    if (isAttendanceHandled()) return;
     if (data?.today) {
       // Already checked in today — mark handled so we stop checking.
       markAttendanceHandled();
@@ -49,7 +52,7 @@ export function AttendanceGate() {
     }
     // Not checked in yet — send them to the attendance-first screen.
     router.replace("/check-in");
-  }, [active, isSuccess, data, router]);
+  }, [active, isSuccess, data, router, pathname]);
 
   return null;
 }

@@ -46,6 +46,7 @@ import {
 } from "@/lib/queries/loyalty";
 import { useSession } from "@/store/use-session";
 import { SchemePlansManager } from "@/components/loyalty/scheme-plans-manager";
+import { apiErrorMessage } from "@/lib/utils";
 
 const STATUS_VARIANT: Record<
   SchemeStatus,
@@ -135,7 +136,7 @@ export default function LoyaltyPage() {
           setCustomer("");
           setPhone("");
         },
-        onError: () => toast.error("Could not enroll customer."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not enroll customer.")),
       },
     );
   }

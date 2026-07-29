@@ -40,6 +40,7 @@ import {
   type LedgerKind,
 } from "@/lib/queries/finance";
 import { useSession } from "@/store/use-session";
+import { apiErrorMessage } from "@/lib/utils";
 
 export default function FinancePage() {
   const item = getNavItem("finance");
@@ -225,7 +226,7 @@ function AddEntryDialog({
           reset();
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not save ledger entry."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not save ledger entry.")),
       },
     );
   }

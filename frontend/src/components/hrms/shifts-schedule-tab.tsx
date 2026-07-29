@@ -29,7 +29,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { cn } from "@/lib/utils";
+import { cn, apiErrorMessage } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 import {
   MOCK_WEEK_OFF,
@@ -206,7 +206,7 @@ function WeekOffCard({
             description: `Applies to ${storeName}.`,
           });
         },
-        onError: () => toast.error("Could not update the weekly off."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not update the weekly off.")),
       },
     );
   }
@@ -294,7 +294,7 @@ function HolidaysCard({
           setDate("");
           setLabel("");
         },
-        onError: () => toast.error("Could not add the holiday."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not add the holiday.")),
       },
     );
   }
@@ -423,7 +423,7 @@ function AddShiftDialog({
           reset();
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not add the shift."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not add the shift.")),
       },
     );
   }

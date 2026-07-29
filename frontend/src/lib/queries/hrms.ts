@@ -170,8 +170,14 @@ export function useCancelLeave() {
 /* ------------------------------------------------------------------ */
 
 export interface PunchInput {
-  lat: number;
-  lng: number;
+  /**
+   * Coordinates at the moment of the punch. Leave BOTH undefined when the device
+   * gave no fix — never send 0/0 as a stand-in. Null Island is a real place
+   * ~8,200 km from Mumbai, so the server reads it as a punch from the far side of
+   * the world and demands an explanation for a user who simply had no GPS.
+   */
+  lat?: number;
+  lng?: number;
   /** Optional shift/batch to score lateness against (check-in only). */
   shiftId?: string;
   /**

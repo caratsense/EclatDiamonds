@@ -54,6 +54,7 @@ import {
 } from "@/lib/queries/stores";
 import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
+import { apiErrorMessage } from "@/lib/utils";
 
 const nav = getNavItem("settings/stores")!;
 
@@ -881,8 +882,7 @@ function AddManagerDialog({
           toast.success("Manager login created");
           setCreatedEmail(created.email);
         },
-        onError: () =>
-          toast.error("Could not create the login — the email may be in use."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not create the login — the email may be in use.")),
       },
     );
   }

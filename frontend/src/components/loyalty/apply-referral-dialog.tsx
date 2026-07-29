@@ -16,7 +16,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatINR, formatPercent } from "@/lib/format";
-import { apiErrorMessage } from "@/lib/utils";
 import {
   REFERRAL_COMMISSION_PCT,
   REFERRAL_DIAMOND_DISCOUNT_PCT,
@@ -24,6 +23,7 @@ import {
 } from "@/lib/mock/loyalty";
 import { useApplyReferral } from "@/lib/queries/loyalty";
 import { useSession } from "@/store/use-session";
+import { apiErrorMessage } from "@/lib/utils";
 
 /** Parse a numeric input into a number, or undefined when blank/invalid. */
 function toNumber(v: string): number | undefined {

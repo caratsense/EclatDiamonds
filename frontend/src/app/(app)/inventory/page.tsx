@@ -66,6 +66,7 @@ import {
 } from "@/lib/queries/stock";
 import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
+import { apiErrorMessage } from "@/lib/utils";
 
 const STATUS_VARIANT: Record<
   StockStatus,
@@ -547,7 +548,7 @@ function StockEntryDialog({
           setTagPrice("");
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not add stock item."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not add stock item.")),
       },
     );
   }
@@ -696,8 +697,7 @@ function StockAdjustDialog({
           toast.success(isTransfer ? "Stock transferred" : "Stock updated");
           onOpenChange(false);
         },
-        onError: () =>
-          toast.error("Could not update the stock item. Please try again."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not update the stock item. Please try again.")),
       },
     );
   }

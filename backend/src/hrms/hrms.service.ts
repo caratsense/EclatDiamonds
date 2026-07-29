@@ -230,11 +230,24 @@ export class HrmsService {
    */
   private evaluateFence(
     store: StoreCtx,
-    lat: number,
-    lng: number,
+    lat: number | undefined,
+    lng: number | undefined,
     note: string | undefined,
     kind: 'check-in' | 'check-out',
   ): { distanceM: number | null; withinFence: boolean } {
+    if (lat == null || lng == null) {
+      // The device produced no fix. There is nothing to measure, and "my GPS
+      // wasn't working" is exactly how a buddy punch would be dressed up — so it
+      // is recorded, but it has to be explained. Clients must OMIT the
+      // coordinates here rather than sending 0/0: Null Island is a real place
+      // 8,200 km from Mumbai, and it reads as a wildly out-of-fence punch.
+      if (!note?.trim()) {
+        throw new BadRequestException(
+          `Your location is unavailable, so this ${kind} can't be checked against ${store.name}. Add a reason to record it — your manager will review it.`,
+        );
+      }
+      return { distanceM: null, withinFence: false };
+    }
     if (store.latitude == null || store.longitude == null) {
       // No geofence configured for this store — nothing to verify against.
       return { distanceM: null, withinFence: false };

@@ -53,6 +53,7 @@ import {
   type PaymentMode,
 } from "@/lib/queries/payments";
 import { useSession } from "@/store/use-session";
+import { apiErrorMessage } from "@/lib/utils";
 
 const MODE_OPTIONS: { value: PaymentMode; label: string }[] = [
   { value: "cash", label: "Cash" },
@@ -467,7 +468,7 @@ function AddPaymentDialog({
           setReference("");
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not record payment."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not record payment.")),
       },
     );
   }

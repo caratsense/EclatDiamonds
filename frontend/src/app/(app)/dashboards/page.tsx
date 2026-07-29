@@ -50,6 +50,7 @@ import {
   type DashboardTask,
   type TaskStatus,
 } from "@/lib/queries/dashboard";
+import { apiErrorMessage } from "@/lib/utils";
 
 export default function DashboardsPage() {
   const item = getNavItem("dashboards");
@@ -180,7 +181,7 @@ function TaskRow({ task }: { task: DashboardTask }) {
       { id: task.id, status: next },
       {
         onSuccess: () => toast.success("Task updated"),
-        onError: () => toast.error("Could not update the task."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not update the task.")),
       },
     );
   }
@@ -262,7 +263,7 @@ function AddTaskDialog({
           setDueDate("");
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not create task."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not create task.")),
       },
     );
   }

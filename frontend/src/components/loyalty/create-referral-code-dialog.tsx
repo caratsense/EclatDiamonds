@@ -21,6 +21,7 @@ import {
 } from "@/lib/mock/loyalty";
 import { useCreateReferralCode } from "@/lib/queries/loyalty";
 import { useSession } from "@/store/use-session";
+import { apiErrorMessage } from "@/lib/utils";
 
 /** Parse a numeric input into a positive integer, or undefined when blank. */
 function toMaxUses(v: string): number | undefined {
@@ -97,7 +98,7 @@ export function CreateReferralCodeDialog({
           reset();
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not create the referral code."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not create the referral code.")),
       },
     );
   }

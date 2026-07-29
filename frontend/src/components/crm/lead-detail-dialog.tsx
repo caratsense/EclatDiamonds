@@ -42,6 +42,7 @@ import {
   useSetOutcome,
 } from "@/lib/queries/leads";
 import { useSession } from "@/store/use-session";
+import { apiErrorMessage } from "@/lib/utils";
 
 interface LeadDetailDialogProps {
   lead: Lead | null;
@@ -161,7 +162,7 @@ function LeadDetailBody({
           setLogText("");
           onLeadChange?.(updated);
         },
-        onError: () => toast.error("Could not log the activity."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not log the activity.")),
       },
     );
   }
@@ -177,7 +178,7 @@ function LeadDetailBody({
           setFuDate("");
           setFuNote("");
         },
-        onError: () => toast.error("Could not schedule the follow-up."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not schedule the follow-up.")),
       },
     );
   }
@@ -193,7 +194,7 @@ function LeadDetailBody({
           setLostReason("");
           onLeadChange?.(updated);
         },
-        onError: () => toast.error("Could not update the lead."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not update the lead.")),
       },
     );
   }
@@ -206,7 +207,7 @@ function LeadDetailBody({
           toast.success("Lead reopened.");
           onLeadChange?.(updated);
         },
-        onError: () => toast.error("Could not update the lead."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not update the lead.")),
       },
     );
   }

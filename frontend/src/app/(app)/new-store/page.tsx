@@ -69,6 +69,7 @@ import {
   type ApiNewStoreProject,
   type ApiVendor,
 } from "@/lib/queries/new-store";
+import { apiErrorMessage } from "@/lib/utils";
 
 const CHECKLIST_STATUS_OPTIONS: { value: ChecklistStatus; label: string }[] = [
   { value: "todo", label: "To do" },
@@ -451,7 +452,7 @@ function ChecklistTaskRow({
       { id: task.id, status },
       {
         onSuccess: () => toast.success("Task updated"),
-        onError: () => toast.error("Could not update the task."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not update the task.")),
       },
     );
   }
@@ -498,7 +499,7 @@ function VendorRow({
       { id: vendor.id, status },
       {
         onSuccess: () => toast.success("Vendor updated"),
-        onError: () => toast.error("Could not update the vendor."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not update the vendor.")),
       },
     );
   }
@@ -596,7 +597,7 @@ function AddChecklistDialog({
           setTitle("");
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not add the task."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not add the task.")),
       },
     );
   }
@@ -679,7 +680,7 @@ function AddMilestoneDialog({
           reset();
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not add the milestone."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not add the milestone.")),
       },
     );
   }
@@ -796,7 +797,7 @@ function AddVendorDialog({
           reset();
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not add the vendor."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not add the vendor.")),
       },
     );
   }
@@ -905,7 +906,7 @@ function NewProjectDialog({
           setLeadName("");
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not create the project."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not create the project.")),
       },
     );
   }

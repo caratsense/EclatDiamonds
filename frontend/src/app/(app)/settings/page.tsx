@@ -19,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { ROLE_LABELS } from "@/lib/types";
 import { useChangePassword } from "@/lib/queries/auth";
 import { useSession } from "@/store/use-session";
+import { apiErrorMessage } from "@/lib/utils";
 
 export default function SettingsPage() {
   const { user, role, currentStore, stores } = useSession();
@@ -174,9 +175,7 @@ function ChangePasswordCard() {
           toast.success("Password updated");
           clearFields();
         },
-        onError: () =>
-          toast.error(
-            "Could not update password — check your current password",
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not update password — check your current password"),
           ),
       },
     );

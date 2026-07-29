@@ -31,7 +31,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { apiErrorMessage } from "@/lib/utils";
 import {
   useAllSchemePlans,
   useCreateSchemePlan,
@@ -40,6 +39,7 @@ import {
   type SchemePlanInput,
 } from "@/lib/queries/loyalty";
 import type { SchemePlan } from "@/lib/mock/loyalty";
+import { apiErrorMessage } from "@/lib/utils";
 
 /**
  * Head-Office management for gold-savings scheme plans (Module 17).

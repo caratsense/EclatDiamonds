@@ -22,7 +22,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { cn } from "@/lib/utils";
+import { cn, apiErrorMessage } from "@/lib/utils";
 import { ChannelStatusNotice } from "@/components/integrations/channel-status-notice";
 import {
   composeDailyReportText,
@@ -124,7 +124,7 @@ export function DailyReportSendDialog({
             toast.success(`${channelName} report sent`);
           }
         },
-        onError: () => toast.error("Could not send the report."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not send the report.")),
       },
     );
   }

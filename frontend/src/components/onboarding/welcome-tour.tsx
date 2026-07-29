@@ -42,6 +42,17 @@ export const OPEN_TOUR_EVENT = "eclat:open-tour";
 /** How long to let the page settle before the guide slides in. */
 const OPEN_DELAY_MS = 1200;
 
+/**
+ * Screens the guide must never open itself on.
+ *
+ * `/check-in` is a gate with exactly one job — mark attendance and move on — and
+ * its controls sit low on the card. On a phone the guide covered "Skip for now"
+ * outright and swallowed the click, so the one screen a salesperson must get
+ * past every morning became the one screen the guide could trap them on.
+ * Reopening by hand from the user menu still works anywhere.
+ */
+const NO_AUTO_OPEN = ["/check-in"];
+
 interface TourStep {
   /** Plain-English promise — what this page does for you. */
   title: string;
@@ -227,6 +238,8 @@ export function WelcomeTour() {
 
   /** Auto-open fires once per page load, never again on a re-render. */
   const autoOpened = useRef(false);
+  /** The card itself, measured so the page can leave room for it. */
+  const cardRef = useRef<HTMLDivElement | null>(null);
 
   const firstName = user.name.split(" ")[0] || user.name;
   const steps = useMemo(() => buildSteps(role, firstName), [role, firstName]);
@@ -251,6 +264,7 @@ export function WelcomeTour() {
   // the guide slides into a finished screen rather than a half-drawn one.
   useEffect(() => {
     if (!tour?.autoOpen || autoOpened.current) return;
+    if (NO_AUTO_OPEN.includes(pathname)) return;
     autoOpened.current = true;
     const timer = setTimeout(() => {
       setStep(0);
@@ -261,8 +275,11 @@ export function WelcomeTour() {
     }, OPEN_DELAY_MS);
     return () => clearTimeout(timer);
     // recordView is a stable mutation object; re-running on it would re-arm the timer.
+    // `pathname` is included so that landing on a suppressed screen first (e.g.
+    // /check-in) only defers the guide — it opens on the next page, rather than
+    // being lost for the session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tour?.autoOpen]);
+  }, [tour?.autoOpen, pathname]);
 
   // Reopening from the user menu: always allowed, always from the start, and
   // never counted — someone asking for a reminder should not be penalised.
@@ -276,6 +293,34 @@ export function WelcomeTour() {
     window.addEventListener(OPEN_TOUR_EVENT, reopen);
     return () => window.removeEventListener(OPEN_TOUR_EVENT, reopen);
   }, []);
+
+  /**
+   * Publish the card's height as `--tour-inset` so the app shell can pad the
+   * page by exactly that much while the guide is on screen.
+   *
+   * Without this the card is a fixed overlay sitting on top of whatever happens
+   * to be at the bottom of the page — and on a phone it covered the check-in
+   * screen's "Skip for now" button outright, swallowing the click. A guide that
+   * blocks the control the user is reaching for is worse than no guide.
+   */
+  useEffect(() => {
+    const root = document.documentElement;
+    if (!open) {
+      root.style.removeProperty("--tour-inset");
+      return;
+    }
+    const el = cardRef.current;
+    if (!el) return;
+    const publish = () =>
+      root.style.setProperty("--tour-inset", `${el.offsetHeight + 24}px`);
+    publish();
+    const ro = new ResizeObserver(publish);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      root.style.removeProperty("--tour-inset");
+    };
+  }, [open, minimized, safeStep]);
 
   // Escape closes; the arrow keys step through. Skipped while folded down so the
   // keys belong to the page again.
@@ -312,7 +357,10 @@ export function WelcomeTour() {
   if (minimized) {
     return (
       <div className={anchor}>
-        <div className="pointer-events-auto mx-auto flex w-full max-w-sm items-center gap-2 rounded-full border border-border/80 bg-card px-3 py-2 shadow-lg md:mx-0 duration-200 animate-in fade-in slide-in-from-bottom-2">
+        <div
+          ref={cardRef}
+          className="pointer-events-auto mx-auto flex w-full max-w-sm items-center gap-2 rounded-full border border-border/80 bg-card px-3 py-2 shadow-lg md:mx-0 duration-200 animate-in fade-in slide-in-from-bottom-2"
+        >
           <Sparkles className="h-4 w-4 shrink-0 text-gold-strong" />
           <button
             type="button"
@@ -345,6 +393,7 @@ export function WelcomeTour() {
   return (
     <div className={anchor}>
       <Card
+        ref={cardRef}
         role="dialog"
         aria-label="Quick guide"
         className="pointer-events-auto mx-auto w-full max-w-sm border-border/80 p-5 shadow-2xl md:mx-0 duration-300 animate-in fade-in slide-in-from-bottom-3"

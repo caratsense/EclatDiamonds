@@ -46,6 +46,7 @@ import {
   useCreateCheckin,
   type CheckinOutcomeInput,
 } from "@/lib/queries/checkins";
+import { apiErrorMessage } from "@/lib/utils";
 
 /** Bucket "HH:mm" into an hour label like "10a" / "1p" for the hourly chart. */
 function hourLabel(timeIn: string | null): string | null {
@@ -257,7 +258,7 @@ function CloseVisitDialog({
           toast.success("Visit closed");
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not close the visit."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not close the visit.")),
       },
     );
   }
@@ -351,7 +352,7 @@ function AddCheckinDialog({
           setPurpose("Browsing");
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not log the walk-in."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not log the walk-in.")),
       },
     );
   }

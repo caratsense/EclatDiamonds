@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/table";
 import { formatINR } from "@/lib/format";
 import { useAddDiamondRate, useDiamondRates } from "@/lib/queries/returns";
+import { apiErrorMessage } from "@/lib/utils";
 
 interface DiamondRatesDialogProps {
   open: boolean;
@@ -67,7 +68,7 @@ export function DiamondRatesDialog({
           setSpec("");
           setRate("");
         },
-        onError: () => toast.error("Could not save the rate."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not save the rate.")),
       },
     );
   }

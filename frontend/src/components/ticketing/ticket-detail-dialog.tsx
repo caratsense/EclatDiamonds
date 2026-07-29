@@ -41,6 +41,7 @@ import {
   type TicketStatus,
 } from "@/lib/mock/ticketing";
 import { useSession } from "@/store/use-session";
+import { apiErrorMessage } from "@/lib/utils";
 
 const STATUS_OPTIONS: { value: TicketStatus; label: string }[] = [
   { value: "open", label: "Open" },
@@ -77,7 +78,7 @@ export function TicketDetailDialog({
           setBody("");
           toast.success("Reply sent");
         },
-        onError: () => toast.error("Could not send reply."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not send reply.")),
       },
     );
   }
@@ -91,7 +92,7 @@ export function TicketDetailDialog({
           toast.success(
             `Status updated to ${STATUS_OPTIONS.find((s) => s.value === status)?.label}`,
           ),
-        onError: () => toast.error("Could not update status."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not update status.")),
       },
     );
   }
@@ -100,7 +101,7 @@ export function TicketDetailDialog({
     if (!ticketId) return;
     closeTicket.mutate(ticketId, {
       onSuccess: () => toast.success("Ticket closed"),
-      onError: () => toast.error("Could not close the ticket."),
+      onError: (err) => toast.error(apiErrorMessage(err, "Could not close the ticket.")),
     });
   }
 

@@ -22,12 +22,15 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import { homeForRole } from "@/lib/navigation";
 import { markAttendanceHandled } from "@/lib/attendance-gate";
 import { useSession } from "@/store/use-session";
 import type { SelfAttendance } from "@/lib/mock/hrms";
 import { useCheckIn, useGeofence, useMyAttendance } from "@/lib/queries/hrms";
+import { apiErrorMessage } from "@/lib/utils";
 
 /** HH:mm from an ISO instant, or an em-dash. */
 function formatTime(iso: string | null): string {
@@ -153,6 +156,15 @@ export default function CheckInPage() {
   );
   // True once the browser denies permission / geolocation is unsupported.
   const [geoDenied, setGeoDenied] = useState(false);
+  // An off-site punch needs a written reason before the API will record it, so
+  // "Check in anyway" opens this instead of firing a request that must fail.
+  const [reasonOpen, setReasonOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  // Coordinates captured for the punch waiting on that reason (null = no fix).
+  const [pendingPos, setPendingPos] = useState<{
+    lat: number;
+    lng: number;
+  } | null>(null);
 
   // watchPosition handle, so we can clearWatch on unmount / after a punch.
   const watchIdRef = useRef<number | null>(null);
@@ -193,6 +205,22 @@ export default function CheckInPage() {
 
   const inRange = distanceM != null && distanceM <= radius;
 
+  /** Is a specific fix inside the fence? Used by the manual punch, which has its
+   *  own freshly-read position rather than the watched one. */
+  function inRangeOf(pos: { lat: number; lng: number }): boolean {
+    if (
+      !geofence?.hasCoords ||
+      geofence.latitude == null ||
+      geofence.longitude == null
+    ) {
+      return false;
+    }
+    return (
+      haversineM(pos.lat, pos.lng, geofence.latitude, geofence.longitude) <=
+      radius
+    );
+  }
+
   /** Stop the geofence watcher if one is running. */
   function clearWatcher() {
     if (
@@ -214,16 +242,29 @@ export default function CheckInPage() {
     }.`;
   }
 
-  /** The single check-in path — shared by the auto-punch and the manual button. */
-  function runCheckIn(pos: { lat: number; lng: number } | null) {
+  /**
+   * The single check-in path — shared by the auto-punch and the manual button.
+   *
+   * `note` explains a punch the server cannot verify (outside the fence, or no
+   * GPS fix at all). The API rejects those without one, so the UI collects it
+   * first; see {@link startManual}.
+   */
+  function runCheckIn(
+    pos: { lat: number; lng: number } | null,
+    note?: string,
+  ) {
     const captured = pos != null;
     setGeoMissed(!captured);
     checkIn.mutate(
-      { lat: pos?.lat ?? 0, lng: pos?.lng ?? 0 },
+      // Omit the coordinates entirely when there is no fix. Sending 0/0 put the
+      // punch at Null Island, 8,200 km away, and the server rightly refused it.
+      { ...(pos ? { lat: pos.lat, lng: pos.lng } : {}), ...(note ? { note } : {}) },
       {
         onSuccess: (row) => {
           clearWatcher(); // clear the watch immediately after a successful punch
           setLastPunch(row);
+          setReasonOpen(false);
+          setReason("");
           markAttendanceHandled();
           toast.success("Attendance marked", {
             description: describePunch(row, captured),
@@ -231,10 +272,15 @@ export default function CheckInPage() {
           // Auto-advance to the salesperson's home shortly after the welcome shows.
           redirectRef.current = setTimeout(() => router.replace(home), 1800);
         },
-        onError: () => {
+        onError: (err) => {
           // Allow the watcher (still running) to retry on a later fix.
           punchedRef.current = false;
-          toast.error("Could not mark attendance. Please try again.");
+          // Show what the server actually said. "Please try again" was both
+          // wrong and unhelpful here: retrying an unexplained off-site punch
+          // fails identically every time, and the real message says why.
+          toast.error(
+            apiErrorMessage(err, "Could not mark attendance. Please try again."),
+          );
         },
       },
     );
@@ -316,12 +362,31 @@ export default function CheckInPage() {
     router.replace(home);
   }
 
-  /** Manual lenient punch (the "Check in anyway" / no-geo fallback button). */
-  async function handleManual() {
+  /**
+   * "Check in anyway" — the deliberate off-site punch.
+   *
+   * By definition this is either outside the fence or has no fix, both of which
+   * the server records only WITH a reason. So the button opens the reason box
+   * rather than firing a request that is certain to be refused.
+   */
+  async function startManual() {
     if (checkIn.isPending) return;
     punchedRef.current = true; // stop the watcher from also firing
     const pos = await getPosition();
-    runCheckIn(pos);
+    setPendingPos(pos);
+    // A fix that turns out to be inside the fence needs no explanation.
+    if (pos && inRangeOf(pos)) {
+      runCheckIn(pos);
+      return;
+    }
+    setReasonOpen(true);
+  }
+
+  /** Send the off-site punch once the reason has been written. */
+  function submitWithReason() {
+    const note = reason.trim();
+    if (!note) return;
+    runCheckIn(pendingPos, note);
   }
 
   return (
@@ -339,7 +404,71 @@ export default function CheckInPage() {
         </CardHeader>
 
         <CardContent className="space-y-5">
-          {isLoading ? (
+          {reasonOpen ? (
+            /* ── Off-site punch: collect the reason the API requires ──────
+               Without this the button fired a request that could only 400,
+               and the page reported "please try again" — which never helps,
+               because an unexplained off-site punch fails identically every
+               time. */
+            <div className="space-y-4">
+              <div className="rounded-xl border border-warning/40 bg-warning/10 p-4">
+                <p className="text-sm font-medium">
+                  {pendingPos
+                    ? "You're not at the store"
+                    : "We couldn't read your location"}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Your attendance will still be recorded. Tell your manager why
+                  you&apos;re checking in from here — they&apos;ll see this note
+                  when they review the day.
+                </p>
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="checkin-reason">Reason</Label>
+                <Textarea
+                  id="checkin-reason"
+                  rows={3}
+                  maxLength={300}
+                  autoFocus
+                  placeholder="e.g. Visiting a client before the shop opens"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                />
+              </div>
+              <Button
+                variant="gold"
+                size="lg"
+                className="h-12 w-full text-base"
+                disabled={checkIn.isPending || !reason.trim()}
+                onClick={submitWithReason}
+              >
+                {checkIn.isPending ? (
+                  <>
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    Marking…
+                  </>
+                ) : (
+                  <>
+                    <LogIn className="h-5 w-5" />
+                    Record check-in
+                  </>
+                )}
+              </Button>
+              <div className="text-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReasonOpen(false);
+                    setReason("");
+                    punchedRef.current = false; // let the watcher try again
+                  }}
+                  className="text-sm font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                >
+                  Back
+                </button>
+              </div>
+            </div>
+          ) : isLoading ? (
             <div className="space-y-3">
               <Skeleton className="h-24 rounded-xl" />
               <Skeleton className="h-14 rounded-xl" />
@@ -463,7 +592,7 @@ export default function CheckInPage() {
                 size="lg"
                 className="h-14 w-full text-base"
                 disabled={checkIn.isPending}
-                onClick={handleManual}
+                onClick={startManual}
               >
                 {checkIn.isPending ? (
                   <>
@@ -508,7 +637,7 @@ export default function CheckInPage() {
                 size="lg"
                 className="h-14 w-full text-base"
                 disabled={checkIn.isPending}
-                onClick={handleManual}
+                onClick={startManual}
               >
                 {checkIn.isPending ? (
                   <>
@@ -582,7 +711,7 @@ export default function CheckInPage() {
                 size="lg"
                 className="h-12 w-full text-base"
                 disabled={checkIn.isPending}
-                onClick={handleManual}
+                onClick={startManual}
               >
                 {checkIn.isPending ? (
                   <>

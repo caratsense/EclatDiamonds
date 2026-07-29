@@ -54,6 +54,7 @@ import {
   useReturns,
 } from "@/lib/queries/returns";
 import { useSession } from "@/store/use-session";
+import { apiErrorMessage } from "@/lib/utils";
 
 const STATUS_VARIANT: Record<
   ReturnStatus,
@@ -95,7 +96,7 @@ export default function ReturnsPage() {
   function approveRow(id: string) {
     approve.mutate(id, {
       onSuccess: () => toast.success("Return approved"),
-      onError: () => toast.error("Could not approve the return."),
+      onError: (err) => toast.error(apiErrorMessage(err, "Could not approve the return.")),
     });
   }
 
@@ -109,7 +110,7 @@ export default function ReturnsPage() {
           setRejectId(null);
           setRejectNote("");
         },
-        onError: () => toast.error("Could not reject the return."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not reject the return.")),
       },
     );
   }

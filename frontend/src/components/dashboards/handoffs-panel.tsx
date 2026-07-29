@@ -39,6 +39,7 @@ import {
   type Handoff,
   type HandoffStatus,
 } from "@/lib/queries/dashboard";
+import { apiErrorMessage } from "@/lib/utils";
 
 const DEPARTMENTS = [
   "Sales",
@@ -77,7 +78,7 @@ export function HandoffsPanel() {
           toast.success(
             status === "done" ? "Hand-off marked done" : "Hand-off accepted",
           ),
-        onError: () => toast.error("Could not update the hand-off."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not update the hand-off.")),
       },
     );
   }
@@ -213,7 +214,7 @@ function NewHandoffDialog({
           reset();
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not raise the hand-off."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not raise the hand-off.")),
       },
     );
   }

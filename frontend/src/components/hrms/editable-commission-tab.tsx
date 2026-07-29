@@ -26,6 +26,7 @@ import {
 import { formatINR, formatINRCompact, formatPercent } from "@/lib/format";
 import type { CommissionRow } from "@/lib/mock/hrms";
 import { useUpdateCommissionRate } from "@/lib/queries/hrms";
+import { apiErrorMessage } from "@/lib/utils";
 
 function AchievementBar({ pct }: { pct: number }) {
   const capped = Math.min(pct, 100);
@@ -90,8 +91,8 @@ function CommissionTableRow({
               updated.incentive,
             )}.`,
           }),
-        onError: () => {
-          toast.error("Could not update the rate.");
+        onError: (err) => {
+          toast.error(apiErrorMessage(err, "Could not update the rate."));
           setPct(String(persistedPct));
         },
       },

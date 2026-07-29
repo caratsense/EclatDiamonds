@@ -16,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatINR } from "@/lib/format";
 import { saleModeLabel, saleModeVariant, type SaleDocType } from "@/lib/mock/sales";
 import { useSaleDetail, useUploadSaleDoc } from "@/lib/queries/sales";
+import { apiErrorMessage } from "@/lib/utils";
 
 function prettyDate(iso?: string): string {
   if (!iso) return "—";
@@ -55,7 +56,7 @@ export function SaleDetailDialog({
       { id: saleId, doc, file },
       {
         onSuccess: () => toast.success("Photo uploaded"),
-        onError: () => toast.error("Could not upload the photo."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not upload the photo.")),
       },
     );
   }

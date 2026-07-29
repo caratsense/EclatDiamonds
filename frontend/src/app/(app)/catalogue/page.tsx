@@ -38,6 +38,7 @@ import {
 } from "@/lib/mock/catalogue";
 import { useCreateProduct, useProducts } from "@/lib/queries/products";
 import { useSession } from "@/store/use-session";
+import { apiErrorMessage } from "@/lib/utils";
 
 const nav = getNavItem("catalogue")!;
 
@@ -293,7 +294,7 @@ function AddProductDialog({
           reset();
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not add product."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not add product.")),
       },
     );
   }

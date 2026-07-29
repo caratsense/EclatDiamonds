@@ -60,6 +60,7 @@ import {
   type TicketCategory,
   type TicketPriority,
 } from "@/lib/mock/ticketing";
+import { apiErrorMessage } from "@/lib/utils";
 
 export default function TicketingPage() {
   const { data, isLoading, isError, refetch } = useTickets();
@@ -304,7 +305,7 @@ function NewTicketDialog({
           setPriority("medium");
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not raise ticket."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not raise ticket.")),
       },
     );
   }

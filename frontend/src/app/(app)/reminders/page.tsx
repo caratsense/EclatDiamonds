@@ -38,6 +38,7 @@ import {
   type ReminderItem,
 } from "@/lib/queries/reminders";
 import { useSession } from "@/store/use-session";
+import { apiErrorMessage } from "@/lib/utils";
 
 const nav = getNavItem("reminders")!;
 
@@ -209,9 +210,9 @@ function ReminderRow({
       { id: item.id, dueDate: draft },
       {
         onSuccess: () => toast.success(`Follow-up moved to ${fmtDate(draft)}`),
-        onError: () => {
+        onError: (err) => {
           setDraft(item.dueDate);
-          toast.error("Could not reschedule.");
+          toast.error(apiErrorMessage(err, "Could not reschedule."));
         },
       },
     );
@@ -325,7 +326,7 @@ function CompleteDialog({
           setNote("");
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not mark done."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not mark done.")),
       },
     );
   }

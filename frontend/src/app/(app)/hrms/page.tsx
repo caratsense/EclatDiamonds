@@ -26,7 +26,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSession } from "@/store/use-session";
 import { getNavItem } from "@/lib/navigation";
-import { apiErrorMessage } from "@/lib/utils";
 import { useStaff } from "@/lib/queries/users";
 import type { LeaveRequest, LeaveStatus } from "@/lib/mock/hrms";
 import { AttendanceTab } from "@/components/hrms/attendance-tab";
@@ -48,6 +47,7 @@ import {
   useShifts,
   type AttendanceStatus,
 } from "@/lib/queries/hrms";
+import { apiErrorMessage } from "@/lib/utils";
 
 const ATTENDANCE_STATUSES: { value: AttendanceStatus; label: string }[] = [
   { value: "present", label: "Present" },
@@ -93,7 +93,7 @@ export default function HrmsPage() {
           toast.success(
             `${status === "approved" ? "Approved" : "Rejected"} ${req.type.toLowerCase()} leave for ${req.name}`,
           ),
-        onError: () => toast.error("Could not update the leave request."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not update the leave request.")),
       },
     );
   }

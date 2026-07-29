@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useCreateRegularization } from "@/lib/queries/hrms";
+import { apiErrorMessage } from "@/lib/utils";
 
 /** Combine a YYYY-MM-DD date + HH:mm time into an ISO instant (local tz). */
 function toISO(date: string, time: string): string | undefined {
@@ -73,7 +74,7 @@ export function RegularizeDialog({
           reset();
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not submit the request."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not submit the request.")),
       },
     );
   }

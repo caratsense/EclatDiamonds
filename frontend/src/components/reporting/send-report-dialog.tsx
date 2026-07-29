@@ -24,7 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { cn } from "@/lib/utils";
+import { cn, apiErrorMessage } from "@/lib/utils";
 import { ChannelStatusNotice } from "@/components/integrations/channel-status-notice";
 import { formatINR, formatNumber } from "@/lib/format";
 import {
@@ -167,7 +167,7 @@ export function SendReportDialog({
             toast.success(`${channelName} report sent`);
           }
         },
-        onError: () => toast.error("Could not send the report."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not send the report.")),
       },
     );
   }

@@ -159,17 +159,24 @@ export class SetWeekOffDto {
  * The puncher is the current user; the browser sends its GPS coordinates.
  */
 export class CheckInDto {
-  /** Browser-reported latitude at the moment of the punch. */
+  /**
+   * Browser-reported latitude at the moment of the punch. OMIT when the device
+   * could not produce a fix — do not substitute 0, which is a real coordinate
+   * (Null Island, ~8,200 km from Mumbai) and is indistinguishable from someone
+   * punching in from the other side of the planet.
+   */
+  @IsOptional()
   @IsNumber()
   @Min(-90)
   @Max(90)
-  lat!: number;
+  lat?: number;
 
-  /** Browser-reported longitude at the moment of the punch. */
+  /** Browser-reported longitude. Omit when unavailable — see `lat`. */
+  @IsOptional()
   @IsNumber()
   @Min(-180)
   @Max(180)
-  lng!: number;
+  lng?: number;
 
   /** Assigned shift for this punch. When omitted the store's first shift is used. */
   @IsOptional()
@@ -199,15 +206,18 @@ export class CheckInDto {
 
 /** POST /hrms/attendance/check-out — self-service geo check-out (Module 6). */
 export class CheckOutDto {
+  /** Omit when the device has no fix — see the note on {@link CheckInDto.lat}. */
+  @IsOptional()
   @IsNumber()
   @Min(-90)
   @Max(90)
-  lat!: number;
+  lat?: number;
 
+  @IsOptional()
   @IsNumber()
   @Min(-180)
   @Max(180)
-  lng!: number;
+  lng?: number;
 
   /** Justification when the check-out lands outside the store geofence. */
   @IsOptional()

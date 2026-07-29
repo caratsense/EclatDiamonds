@@ -54,6 +54,7 @@ import {
   type LeadOutcomeFilter,
 } from "@/lib/queries/leads";
 import { useSession } from "@/store/use-session";
+import { apiErrorMessage } from "@/lib/utils";
 
 const nav = getNavItem("crm")!;
 
@@ -137,7 +138,7 @@ export default function CrmPage() {
               });
             }
           },
-          onError: () => toast.error("Could not move lead."),
+          onError: (err) => toast.error(apiErrorMessage(err, "Could not move lead.")),
         },
       );
     }
@@ -482,7 +483,7 @@ function AddLeadDialog({
           reset();
           onOpenChange(false);
         },
-        onError: () => toast.error("Could not save lead."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not save lead.")),
       },
     );
   }

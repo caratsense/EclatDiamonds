@@ -53,6 +53,7 @@ import {
   useReturns,
 } from "@/lib/queries/returns";
 import { useDecideLeave, useLeaveRequests } from "@/lib/queries/hrms";
+import { apiErrorMessage } from "@/lib/utils";
 
 /** Prefer the server-computed value; fall back to the legacy creditValue. */
 function optionValue(
@@ -139,14 +140,14 @@ export default function ApprovalsPage() {
   function approveDiscountReq(id: string) {
     approveDiscount.mutate(id, {
       onSuccess: () => toast.success("Discount approved"),
-      onError: () => toast.error("Could not approve this discount."),
+      onError: (err) => toast.error(apiErrorMessage(err, "Could not approve this discount.")),
     });
   }
 
   function approveReturnReq(id: string) {
     approveReturn.mutate(id, {
       onSuccess: () => toast.success("Return approved"),
-      onError: () => toast.error("Could not approve the return."),
+      onError: (err) => toast.error(apiErrorMessage(err, "Could not approve the return.")),
     });
   }
 

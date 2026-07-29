@@ -26,6 +26,7 @@ import {
   useRegularizations,
 } from "@/lib/queries/hrms";
 import { RegularizeDialog } from "@/components/hrms/regularize-dialog";
+import { apiErrorMessage } from "@/lib/utils";
 
 const STATUS_META: Record<
   LeaveStatus,
@@ -71,7 +72,7 @@ export function RegularizationTab() {
           toast.success(
             `${status === "approved" ? "Approved" : "Rejected"} attendance fix for ${row.name}`,
           ),
-        onError: () => toast.error("Could not update the request."),
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not update the request.")),
       },
     );
   }

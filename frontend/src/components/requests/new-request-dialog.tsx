@@ -22,7 +22,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { apiErrorMessage } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 import {
   REQUEST_KIND_LABELS,
@@ -31,6 +30,7 @@ import {
   type RequestPriority,
   type SpecialRequestKind,
 } from "@/lib/queries/special-requests";
+import { apiErrorMessage } from "@/lib/utils";
 
 const PRIORITIES: RequestPriority[] = ["low", "medium", "high", "urgent"];
 
