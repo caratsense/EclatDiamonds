@@ -1,0 +1,9 @@
+# Eclat / CaratSense on-site sync agent — Python dependencies.
+# Install with:  pip install -r requirements.txt
+# Pinned for reproducibility on the client's office PC.
+
+# Unpinned so pip grabs a prebuilt wheel for the installed Python (e.g. 3.14),
+# avoiding a source build that would need Visual C++ Build Tools.
+pyodbc                 # read-only connection to the live SJE Plus / APRS SQL Server
+requests               # push extracted rows to the Eclat backend API
+openpyxl               # optional (legacy xlsx payload path)

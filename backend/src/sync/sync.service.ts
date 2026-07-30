@@ -774,8 +774,24 @@ export class SyncService {
    * worst outcome: everything quietly landing on the default store is exactly the
    * bug this replaces, and it looks identical to "this client has one branch".
    */
+  /**
+   * Entities that are company-wide by nature rather than owned by a branch.
+   *
+   * The design catalogue (`StyleMst`) is the case that matters: a ring design is
+   * not "Mumbai's design", every shop sells from the same book. Confirmed against
+   * the client's restored database, where 753 of 753 designs carry no branch at
+   * all — correctly, because the column does not mean anything there.
+   *
+   * These fall back to the default store instead of the "Unassigned" holding
+   * store, so the whole catalogue does not get parked in a quarantine bucket and
+   * flagged as a problem it isn't.
+   */
+  private static readonly GLOBAL_ENTITIES = new Set(['products']);
+
   private async branchResolver(entity: string) {
-    const fallbackStoreId = await this.unattributedStoreId();
+    const fallbackStoreId = SyncService.GLOBAL_ENTITIES.has(entity)
+      ? await this.assertStore()
+      : await this.unattributedStoreId();
     const columns = this.branchColumnsFor(entity);
     const cache = new Map<string, string | null>();
     let attributed = 0;
