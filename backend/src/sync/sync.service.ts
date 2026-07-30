@@ -29,6 +29,24 @@ export interface SyncResult {
 type Rec = Record<string, any>;
 
 /**
+ * Production order of the OrderStatus enum, used to decide whether a bag
+ * movement moves an order FORWARD. Rework sends a bag back to an earlier
+ * department all the time; that must not un-finish an order that is further on.
+ * `cancelled` is deliberately -1 so it never wins a "furthest stage" comparison.
+ */
+const STAGE_RANK: Record<string, number> = {
+  booked: 0,
+  designing: 1,
+  casting: 2,
+  stone_setting: 3,
+  polishing: 4,
+  qc: 5,
+  ready: 6,
+  delivered: 7,
+  cancelled: -1,
+};
+
+/**
  * Live legacy-sync sink (the production target the on-site sync_sjep.py agent
  * pushes to). Each method bulk-upserts one entity on its unique `legacyId`, using
  * the SAME mapping as the one-time backfill — so live sync and backfill converge
@@ -383,8 +401,14 @@ export class SyncService {
         partyId,
         orderNo: `${str(r.OrderPrefix) || ''}${r.OrderNo ?? r.OrderId}`,
         orderDate: dt(r.OrderDate) || new Date(),
-        // Legacy OrderStatus is an int code (decode TBD) — map all to "booked" for now.
-        status: 'booked' as any,
+        // `EclatStage` is decoded agent-side from the install's own OrderStatus
+        // codes (stage_map.json) — those ints are per-install, so guessing them
+        // here would silently mislabel every order. Absent or unrecognised, the
+        // order stays "booked" and the bag sync below advances it from the actual
+        // shop-floor movements, which are far more reliable than the header int.
+        status: (STAGE_RANK[str(r.EclatStage) ?? ''] != null
+          ? str(r.EclatStage)
+          : 'booked') as any,
         amount: dec(r.Amount ?? r.GrossAmount) ?? '0',
         poNo: str(r.PoNo),
         legacyUpdatedAt: dt(r.UpdateDate),
@@ -479,6 +503,131 @@ export class SyncService {
    * Build a legacyId -> Eclat id map for a model, batched to avoid huge `IN`
    * clauses. Used to resolve foreign keys against already-synced entities.
    */
+  // ── SPM_BagMaster -> ProductionBag (the manufacturing timeline) ─────────────
+  /**
+   * Shop-floor bags are what actually moves through the factory, so their
+   * department + status IS the manufacturing timeline. `Spm_MfgOrder.OrderStatus`
+   * is a single int on the header and says nothing about where a piece has got
+   * to; the bag rows do.
+   *
+   * The agent has already decoded `DepartmentId` to a department NAME and mapped
+   * it to an Eclat stage (see stage_map.json on the agent side) — the codes are
+   * per-install, so that decode is configuration, not something to hardcode here.
+   * `stage` is optional: an unmapped department still records the movement, it
+   * just doesn't advance the order.
+   */
+  async syncBags(records: Rec[]): Promise<SyncResult> {
+    const orderByLegacy = await this.idMap(
+      'manufacturingOrder',
+      records.map((r) => r.OrderId),
+    );
+    let upserted = 0;
+    let skipped = 0;
+    /** Furthest stage seen per order, so the header can follow the shop floor. */
+    const furthest = new Map<string, { stage: string; at: Date | null }>();
+
+    for (const r of records) {
+      if (r.BagId == null) {
+        skipped++;
+        continue;
+      }
+      const orderId = orderByLegacy.get(String(r.OrderId)) ?? null;
+      const bagDate = dt(r.BagDate);
+      const data = {
+        orderId,
+        bagNo: str(r.BagNo) || String(r.BagId),
+        barcode: str(r.BagBarcode),
+        department: str(r.DepartmentName) || str(r.DepartmentId),
+        status: str(r.BagStatus),
+        grossWeight: dec(r.GrossWt),
+        netWeight: dec(r.NetWt),
+        isComplete: bool(r.IsBagComplete) ?? false,
+        bagDate,
+        legacyUpdatedAt: dt(r.UpdateDate),
+      };
+      const legacyId = String(r.BagId);
+      await this.prisma.productionBag.upsert({
+        where: { legacyId },
+        create: { legacyId, ...data },
+        update: data,
+      });
+      upserted++;
+
+      const stage = str(r.EclatStage);
+      if (orderId && stage && STAGE_RANK[stage] != null) {
+        const seen = furthest.get(orderId);
+        if (!seen || STAGE_RANK[stage] > STAGE_RANK[seen.stage]) {
+          furthest.set(orderId, { stage, at: bagDate });
+        }
+      }
+    }
+
+    // Advance each order header to the furthest stage its bags have reached.
+    // Never moves an order BACKWARDS — a bag returning to an earlier department
+    // for rework must not un-finish an order that is already further along.
+    for (const [orderId, { stage, at }] of furthest) {
+      const current = await this.prisma.manufacturingOrder.findUnique({
+        where: { id: orderId },
+        select: { status: true },
+      });
+      const currentRank = current ? (STAGE_RANK[current.status] ?? -1) : -1;
+      if (STAGE_RANK[stage] > currentRank) {
+        await this.prisma.manufacturingOrder.update({
+          where: { id: orderId },
+          data: { status: stage as any, expectedDelivery: undefined },
+        });
+        this.logger.log(`order ${orderId} -> ${stage}${at ? ` (${at.toISOString()})` : ''}`);
+      }
+    }
+
+    return this.result('bags', records, upserted, skipped);
+  }
+
+  // ── Inward.ImageName / StyleMst image -> Product.imageUrl, StockItem photo ───
+  /**
+   * Attach already-uploaded image URLs to the rows they belong to.
+   *
+   * Deliberately takes URLs, not bytes: the agent uploads each photo straight
+   * from the shop PC to Cloudinary and sends only the resulting link. Routing
+   * tens of GB of catalogue photography through the API would be slow, would
+   * count twice against Railway egress, and would run into request-size limits.
+   *
+   * `kind` selects the target table because the legacy image lives on both the
+   * design master (StyleMst -> Product) and the physical piece (Inward -> StockItem).
+   */
+  async syncProductImages(records: Rec[]): Promise<SyncResult> {
+    let upserted = 0;
+    let skipped = 0;
+    for (const r of records) {
+      const legacyId = r.legacyId == null ? null : String(r.legacyId);
+      const url = str(r.imageUrl);
+      if (!legacyId || !url) {
+        skipped++;
+        continue;
+      }
+      const kind = str(r.kind) === 'stock' ? 'stock' : 'product';
+      try {
+        if (kind === 'product') {
+          await this.prisma.product.update({
+            where: { legacyId },
+            data: { imageUrl: url, ...(str(r.stlUrl) ? { stlUrl: str(r.stlUrl) } : {}) },
+          });
+        } else {
+          await this.prisma.stockItem.update({
+            where: { legacyId },
+            data: { imageUrl: url },
+          });
+        }
+        upserted++;
+      } catch {
+        // The row hasn't been synced yet (images can run ahead of a full pull).
+        // Skipping is correct: the next media run re-sends it.
+        skipped++;
+      }
+    }
+    return this.result('product-images', records, upserted, skipped);
+  }
+
   private async idMap(
     model: 'party' | 'product' | 'stockItem' | 'sale' | 'manufacturingOrder',
     legacyValues: unknown[],

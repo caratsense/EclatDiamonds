@@ -14,3 +14,18 @@ set SJEP_SQL_DB=APRSSJEP
 REM Leave USER blank to use Windows authentication:
 set SJEP_SQL_USER=
 set SJEP_SQL_PASS=
+
+REM ── CATALOGUE PHOTOS ────────────────────────────────────────────────────────
+REM The folder holding the jewellery photographs. The database stores only the
+REM FILE NAMES, so we have to be told where the files themselves live.
+REM Don't guess: run discover.bat, which hunts for the folder and prints the
+REM exact line to paste here.
+set SJEP_IMAGE_ROOT=
+
+REM ── CLOUDINARY (where the photos are uploaded) ──────────────────────────────
+REM Cloudinary dashboard -> Settings -> API Keys.
+REM Photos go STRAIGHT from this PC to Cloudinary; they never pass through the
+REM Eclat backend. Leave blank to skip photo sync entirely.
+set CLOUDINARY_CLOUD_NAME=
+set CLOUDINARY_API_KEY=
+set CLOUDINARY_API_SECRET=

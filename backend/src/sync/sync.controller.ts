@@ -53,6 +53,25 @@ export class SyncController {
     return this.sync.syncOrderItems(body.records);
   }
 
+  /**
+   * SPM_BagMaster -> ProductionBag. The shop-floor bag movements ARE the
+   * manufacturing timeline; this also advances each order header to the furthest
+   * stage its bags have reached.
+   */
+  @Post('bags')
+  bags(@Body() body: SyncBatchDto) {
+    return this.sync.syncBags(body.records);
+  }
+
+  /**
+   * Attach catalogue/piece photo URLs. Takes URLs, not bytes — the agent uploads
+   * straight from the shop PC to Cloudinary and sends only the link.
+   */
+  @Post('product-images')
+  productImages(@Body() body: SyncBatchDto) {
+    return this.sync.syncProductImages(body.records);
+  }
+
   /** Auto-ingest Gati branches: new legacyIds become `pending` stores for HO/AM to set up. */
   @Post('stores')
   stores(@CurrentUser() user: AuthUser, @Body() body: SyncStoresDto) {

@@ -292,6 +292,94 @@ def extract_order_items(cursor, order_ids):
     return rows(cursor)
 
 
+# ── Manufacturing timeline ────────────────────────────────────────────────────
+# The order header's `OrderStatus` is one int and says nothing about where a piece
+# has actually got to. What moves through the factory is a BAG, and SPM_BagMaster
+# carries its department + status — so the bag rows ARE the timeline.
+#
+# Both the OrderStatus ints and the DepartmentIds are per-install, so the decode
+# lives in stage_map.json (written by discover.py, confirmed by a human) rather
+# than being hardcoded here. Anything unmapped is still recorded; it just doesn't
+# move the order, which is the safe direction to be wrong in.
+_STAGE_MAP_CACHE = None
+
+
+def stage_map():
+    """Load stage_map.json once. Absent => everything stays 'booked'."""
+    global _STAGE_MAP_CACHE
+    if _STAGE_MAP_CACHE is not None:
+        return _STAGE_MAP_CACHE
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stage_map.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            _STAGE_MAP_CACHE = json.load(f)
+        log.info(f"  stage_map.json loaded "
+                 f"({len(_STAGE_MAP_CACHE.get('departmentToStage', {}))} departments, "
+                 f"{len(_STAGE_MAP_CACHE.get('orderStatusToStage', {}))} order codes)")
+    except FileNotFoundError:
+        log.warning("  stage_map.json not found — orders stay at 'booked'. "
+                    "Run discover.bat, confirm stage_map.suggested.json, save it as stage_map.json.")
+        _STAGE_MAP_CACHE = {}
+    except Exception as e:
+        log.error(f"  stage_map.json unreadable ({e}) — orders stay at 'booked'.")
+        _STAGE_MAP_CACHE = {}
+    return _STAGE_MAP_CACHE
+
+
+def _stage_for(section, code):
+    if code is None:
+        return None
+    entry = stage_map().get(section, {}).get(str(code))
+    if isinstance(entry, dict):
+        return entry.get("stage")
+    return entry if isinstance(entry, str) else None
+
+
+def decorate_orders_with_stage(orders):
+    """Stamp each order with the Eclat stage its OrderStatus decodes to."""
+    for o in orders:
+        stage = _stage_for("orderStatusToStage", o.get("OrderStatus"))
+        if stage:
+            o["EclatStage"] = stage
+    return orders
+
+
+def extract_bags(cursor, since=""):
+    """Shop-floor bags = SPM_BagMaster (→ Eclat ProductionBag).
+
+    Joined to SPM_DepartmentMst so Eclat stores a department NAME ("Polishing")
+    rather than an opaque id, and stamped with the mapped Eclat stage so the
+    backend can advance each order to the furthest point its bags have reached.
+    """
+    if not table_columns(cursor, "SPM_BagMaster"):
+        log.info("  SPM_BagMaster not present — no manufacturing timeline on this install")
+        return []
+    bags = _base(cursor, "SPM_BagMaster", since)
+
+    # Department id -> name, so the timeline reads in words.
+    names = {}
+    if table_columns(cursor, "SPM_DepartmentMst"):
+        try:
+            cursor.execute("SELECT * FROM SPM_DepartmentMst")
+            for r in rows(cursor):
+                did = r.get("DepartmentId") or r.get("Id")
+                nm = (r.get("DepartmentName") or r.get("Department")
+                      or r.get("Name") or r.get("Descr"))
+                if did is not None and nm:
+                    names[str(did)] = str(nm).strip()
+        except Exception as e:
+            log.warning(f"  department names unavailable: {e}")
+
+    for b in bags:
+        did = b.get("DepartmentId")
+        if did is not None and str(did) in names:
+            b["DepartmentName"] = names[str(did)]
+        stage = _stage_for("departmentToStage", did)
+        if stage:
+            b["EclatStage"] = stage
+    return bags
+
+
 def extract_payments(cursor, since=""):
     """Day-book ledger movements = Journal (→ Eclat Payment / LedgerEntry). Double
     entry: DrAccountNo / CrAccountNo are PartyMst ledger accounts. Append-heavy, no
@@ -604,12 +692,14 @@ def sync_once():
             stock   = extract_stock(cursor, since)
             sales   = extract_sales(cursor, since)
             lines   = extract_sale_lines(cursor, [s["JewelTransId"] for s in sales])
-            orders  = extract_orders(cursor, since)
+            orders  = decorate_orders_with_stage(extract_orders(cursor, since))
             oitems  = extract_order_items(cursor, [o["OrderId"] for o in orders])
+            bags    = extract_bags(cursor, since)
             payments = extract_payments(cursor, since)
             log.info(f"  [{base_url}] extracted: parties={len(parties)} items={len(items)} "
                      f"stock={len(stock)} sales={len(sales)}({len(lines)} lines) "
-                     f"orders={len(orders)}({len(oitems)} items) payments={len(payments)}")
+                     f"orders={len(orders)}({len(oitems)} items) bags={len(bags)} "
+                     f"payments={len(payments)}")
 
             # Masters before rows that reference them (FK resolution on the backend).
             batches = [
@@ -620,6 +710,9 @@ def sync_once():
                 ("sale-lines", lines),
                 ("orders", orders),
                 ("order-items", oitems),
+                # Last: bags advance the order headers pushed just above, so the
+                # orders must already exist for the backend to resolve them.
+                ("bags", bags),
             ]
             all_ok, new_wm = True, since
             for entity, recs in batches:
