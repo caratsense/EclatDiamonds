@@ -1,6 +1,7 @@
 "use client";
 
 import { GlobalSearch } from "@/components/layout/global-search";
+import { SEARCH_ENABLED } from "@/lib/features";
 import { NotificationBell } from "@/components/layout/notification-bell";
 import { RoleBadge } from "@/components/layout/role-badge";
 import { StoreSwitcher } from "@/components/layout/store-switcher";
@@ -15,9 +16,11 @@ export function Topbar() {
       {/* Multi-store context is always present. */}
       <StoreSwitcher />
 
-      {/* Global search — Ctrl/Cmd+K. Full field on desktop, icon on mobile. */}
+      {/* Global search — Ctrl/Cmd+K. Hidden until there is a search index behind
+          it (see lib/features). The spacer stays either way so the store
+          switcher keeps its position and the right-hand cluster stays flush. */}
       <div className="flex flex-1 justify-center md:px-4">
-        <GlobalSearch />
+        {SEARCH_ENABLED ? <GlobalSearch /> : null}
       </div>
 
       <div className="ml-auto flex items-center gap-2">

@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { MessageCircleQuestion, Send, Sparkles, X } from "lucide-react";
+import { Bot, MessageCircleQuestion, Send, Sparkles, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -99,21 +99,52 @@ export function AssistantPanel() {
 
   if (!open) {
     return (
-      <Button
-        variant="gold"
-        size="lg"
-        onClick={() => setOpen(true)}
-        className="fixed bottom-5 right-5 z-40 h-12 rounded-full shadow-lg"
-        aria-label="Open assistant"
+      /*
+       * The POSITIONING lives on this wrapper, not on the Button.
+       *
+       * Putting `fixed` on the Button silently did nothing: the `gold` variant
+       * carries `.facet-top`, and that rule sets `position: relative` from
+       * globals.css, which beats Tailwind's `.fixed` utility. The launcher was
+       * therefore never floating at all — it sat in normal page flow near the
+       * end of the document. A wrapper sidesteps the specificity fight entirely
+       * and keeps working whatever variant the button uses.
+       *
+       * Offsets: the mobile tab bar is `fixed bottom-0 h-16` at this same z-40,
+       * so below `md` the button lifts 5rem clear of it (plus the device
+       * safe-area inset for gesture bars) and drops back to 1.25rem on desktop
+       * where there is no tab bar. `--tour-inset` keeps it clear of the welcome
+       * guide while that is open.
+       */
+      <div
+        style={{
+          bottom:
+            "calc(var(--assistant-offset, 5rem) + env(safe-area-inset-bottom, 0px) + var(--tour-inset, 0px))",
+        }}
+        className="fixed right-5 z-40 md:[--assistant-offset:1.25rem]"
       >
-        <Sparkles className="h-4 w-4" />
-        Ask
-      </Button>
+        <Button
+          variant="gold"
+          size="icon"
+          onClick={() => setOpen(true)}
+          className="h-12 w-12 rounded-full shadow-lg"
+          aria-label="Open assistant"
+        >
+          <Bot className="h-5 w-5" />
+        </Button>
+      </div>
     );
   }
 
   return (
-    <div className="fixed bottom-5 right-5 z-40 flex h-[32rem] w-[min(24rem,calc(100vw-2.5rem))] flex-col overflow-hidden rounded-xl border bg-card shadow-2xl">
+    <div
+      /* Same clearance as the launcher, and the height is capped against the
+         viewport so the panel can't run off the top of a short screen. */
+      style={{
+        bottom:
+          "calc(var(--assistant-offset, 5rem) + env(safe-area-inset-bottom, 0px) + var(--tour-inset, 0px))",
+      }}
+      className="fixed right-5 z-40 flex h-[min(32rem,calc(100dvh-9rem))] w-[min(24rem,calc(100vw-2.5rem))] flex-col overflow-hidden rounded-xl border bg-card shadow-2xl md:h-[min(32rem,calc(100dvh-6rem))] md:[--assistant-offset:1.25rem]"
+    >
       <div className="flex items-center justify-between border-b px-3 py-2.5">
         <p className="flex items-center gap-1.5 text-sm font-medium">
           <Sparkles className="h-4 w-4 text-gold-strong" />

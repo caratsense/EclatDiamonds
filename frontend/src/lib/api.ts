@@ -30,6 +30,34 @@ export function setStoredToken(token: string | null) {
   else window.localStorage.removeItem(TOKEN_KEY);
 }
 
+/**
+ * Is there a stored token that has not expired?
+ *
+ * Distinct from `getStoredToken()`, which only says whether a string is present.
+ * A leftover token from a previous session stays in localStorage until something
+ * clears it, so "a token exists" is not the same as "the user is signed in" —
+ * treating them as equivalent is what made the login page unreachable.
+ *
+ * Only the `exp` claim is read, and only to decide what to show; the server
+ * re-verifies the signature on every request, so nothing here is a trust
+ * decision. Anything unparseable counts as invalid.
+ */
+export function hasValidSession(): boolean {
+  const token = getStoredToken();
+  if (!token) return false;
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return false;
+    const json = JSON.parse(
+      atob(payload.replace(/-/g, "+").replace(/_/g, "/")),
+    ) as { exp?: number };
+    if (typeof json.exp !== "number") return false;
+    return json.exp * 1000 > Date.now();
+  } catch {
+    return false;
+  }
+}
+
 /** Persist / read the active store id used for the X-Store-Id header. */
 export function getStoredStoreId(): string | null {
   if (typeof window === "undefined") return null;
