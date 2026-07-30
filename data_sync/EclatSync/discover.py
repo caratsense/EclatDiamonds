@@ -133,6 +133,45 @@ def list_databases_on(server):
         return None
 
 
+def probe_database(server, db):
+    """(stock piece count, newest transaction date) for one database.
+
+    Returns (None, None) if it has no `Inward` table — i.e. it is not a jewellery
+    database at all. This is what tells a live system apart from last year's copy
+    sitting next to it: the row count says which is fuller, the newest date says
+    which is still being used.
+    """
+    try:
+        import pyodbc
+        drivers = [d for d in pyodbc.drivers() if "SQL Server" in d]
+        if not drivers:
+            return None, None
+        auth = f"UID={SQL_USER};PWD={SQL_PASS};" if SQL_USER else "Trusted_Connection=yes;"
+        cs = (f"DRIVER={{{drivers[-1]}}};SERVER={server};DATABASE={db};{auth}"
+              "TrustServerCertificate=yes;")
+        c = pyodbc.connect(cs, readonly=True, timeout=8)
+        cur = c.cursor()
+        cur.execute("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='Inward'")
+        if cur.fetchone()[0] == 0:
+            c.close()
+            return None, None
+        cur.execute("SELECT COUNT(*) FROM [Inward]")
+        pieces = cur.fetchone()[0]
+        latest = None
+        for table, col in (("JewelTrans", "JewelTransDate"), ("Inward", "InwardDate")):
+            try:
+                cur.execute(f"SELECT MAX([{col}]) FROM [{table}]")
+                v = cur.fetchone()[0]
+                if v and (latest is None or v > latest):
+                    latest = v
+            except Exception:
+                pass
+        c.close()
+        return pieces, latest
+    except Exception:
+        return None, None
+
+
 def diagnose_connection(err):
     """Turn a connection failure into the next thing to type.
 
@@ -172,6 +211,7 @@ def diagnose_connection(err):
         return
 
     out(f"  SQL SERVER INSTANCES ON THIS COMPUTER ({len(instances)}):")
+    best = (None, None, -1)   # (server, database, score)
     for name in instances:
         dbs = list_databases_on(name)
         if dbs is None:
@@ -179,25 +219,34 @@ def diagnose_connection(err):
             continue
         out(f"    {name:<28} reachable, {len(dbs)} database(s):")
         for d in dbs:
-            star = "   <-- looks like the jewellery database" if (
-                "aprs" in d.lower() or "sjep" in d.lower()) else ""
-            out(f"      - {d}{star}")
+            # Name-matching alone is useless here: a shop typically has the live
+            # database, an old one, and a restored backup, and they are ALL named
+            # something like APRS/SJEP. What separates them is how much data they
+            # hold and how recently anything happened — so measure that.
+            pieces, latest = probe_database(name, d)
+            if pieces is None:
+                out(f"      - {d:<22} (not a jewellery database)")
+                continue
+            when = f", newest entry {str(latest)[:10]}" if latest else ", no dated records"
+            out(f"      - {d:<22} {pieces:,} stock pieces{when}")
+            score = pieces + (1_000_000 if latest else 0)
+            if score > best[2]:
+                best = (name, d, score)
 
     out("")
-    out("  WHAT TO DO NEXT")
-    out("    Pick the server name and database from the list above, then run")
-    out("    2_configure.bat and enter them. For example:")
-    best = instances[0]
-    bestdb = None
-    for name in instances:
-        for d in (list_databases_on(name) or []):
-            if "aprs" in d.lower() or "sjep" in d.lower():
-                best, bestdb = name, d
-                break
-        if bestdb:
-            break
-    out(f"      SQL Server   : {best}")
-    out(f"      Database name: {bestdb or '(pick from the list above)'}")
+    if best[1]:
+        out("  MOST LIKELY THE LIVE ONE:")
+        out(f"      SQL Server   : {best[0]}")
+        out(f"      Database name: {best[1]}")
+        out("")
+        out("    Picked because it holds the most stock and has the most recent")
+        out("    activity. CONFIRM WITH THE CLIENT before syncing — only they know")
+        out("    which one they actually bill from today.")
+    else:
+        out("  None of these look like a jewellery database.")
+        out("    Ask the client which one their software uses.")
+    out("")
+    out("  Then run 2_configure.bat, enter those two values, and run this again.")
 
 
 def table_exists(cur, name):
