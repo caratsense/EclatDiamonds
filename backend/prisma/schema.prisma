@@ -349,6 +349,23 @@ model Store {
   /// without going through `common/tz.util.ts`.
   timezone        String   @default("Asia/Kolkata")
 
+  // Office address + contact, imported from the PartyMst branch row.
+  //
+  // Held on Store rather than looked up through Party because a branch's own
+  // address is operational data the app prints on documents and shows on the
+  // store profile — it must survive even if the party link is later re-pointed.
+  // Note the legacy system has NO coordinates anywhere, so latitude/longitude
+  // above cannot be imported and must be set per store before geo-attendance
+  // works; `GET /stores/geo-readiness` reports which are still missing.
+  addressLine1 String?
+  addressLine2 String?
+  state        String?
+  pincode      String?
+  country      String?
+  phone        String?
+  email        String?
+  gstin        String?
+
   // Legacy provenance (PartyMst branch/location row).
   legacyId        String?   @unique
   legacyUpdatedAt DateTime?
@@ -406,6 +423,17 @@ model User {
 
   // Optional link to the party/staff master row.
   partyId String? @unique
+
+  /// Legacy provenance for staff imported from the client's system (a PartyMst
+  /// row with IsSalesMan, or an SPM_Users login). Set only on imported staff.
+  ///
+  /// Imported staff arrive **inactive and without a passwordHash** — they can be
+  /// seen and assigned, but cannot sign in until head office activates them and
+  /// issues credentials. Auto-creating working logins from legacy rows would mint
+  /// accounts whose role mapping is guessed and whose owner may have left the
+  /// business years ago.
+  legacyId        String?   @unique
+  legacyUpdatedAt DateTime?
 
   /// Welcome-guide progress, held per ACCOUNT rather than per browser so it
   /// follows the person to the shop tablet and back. `tourViews` counts how many

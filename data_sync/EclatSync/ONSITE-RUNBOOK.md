@@ -14,6 +14,8 @@ or locks the client's live database.
 | Their system | Becomes in Eclat |
 |---|---|
 | `PartyMst` | Customers, suppliers, salespeople, branches |
+| `PartyMst` (`IsLocation`/`IsFactory`) | **Branches**, with address, phone, email, GSTIN |
+| `PartyMst` (`IsSalesMan`) | **Staff** — imported inactive, cannot sign in until activated |
 | `StyleMst` | Catalogue products (the design master) |
 | `Inward` | Stock — every physical piece |
 | `JewelTrans` (+ lines) | Sales / invoices |
@@ -21,9 +23,28 @@ or locks the client's live database.
 | `SPM_BagMaster` + `SPM_DepartmentMst` | **The manufacturing timeline — where each piece has got to** |
 | `Journal` | Payments / ledger |
 | `ImageName` files on disk | Catalogue photographs (via Cloudflare R2) |
+| *every other table* | Mirrored verbatim into `LegacyRow` via `/sync/raw` |
 
-Two things are **specific to each install** and must be read off their machine
-rather than assumed:
+That last row matters: the full mirror means nothing is lost even for tables we
+have not modelled yet, so a field the client asks about in three months is
+already in Eclat without another site visit.
+
+### Two things the sync CANNOT bring across
+
+1. **Store coordinates.** There is no latitude/longitude anywhere in the legacy
+   schema. Geo-attendance silently refuses to work for a store without them, so
+   after the first sync every branch must have its coordinates set (Stores →
+   edit, or read them off Google Maps). `POST /sync/stores` returns a
+   `missingGeo` list and the agent logs a warning naming each branch — do not
+   leave the call without going through it.
+2. **Working logins.** Staff are imported **inactive with no password**. They can
+   be seen and assigned to a branch, but nobody can sign in until head office
+   activates them and issues credentials. This is deliberate: minting live
+   accounts from a legacy master would create logins whose role is guessed and
+   whose owner may have left years ago.
+
+Two further things are **specific to each install** and must be read off their
+machine rather than assumed:
 
 1. **`Spm_MfgOrder.OrderStatus` is an int** whose meaning nobody has written down,
    and the shop-floor **department ids** likewise. Guess them and every order
@@ -165,10 +186,48 @@ refreshes rather than duplicating.
 
 ---
 
+## After the sync: switching off the demo data
+
+Eclat ships seeded with demo stores, staff and transactions so it can be shown
+before any real data exists. Once the client's data is flowing, clear it:
+
+```
+POST /sync/purge-demo          -> dry run: tells you exactly what it would delete
+POST /sync/purge-demo
+  { "confirm": "DELETE DEMO DATA" }   -> actually deletes
+```
+
+Head office only. **Read the dry run before arming it.** What it will and will
+not touch:
+
+| | |
+|---|---|
+| Deleted | Seeded transactions, leads, quotes, tickets, campaigns, check-ins — anything without a `legacyId`, plus demo staff logins and demo branches |
+| **Kept** | Everything imported (every synced row carries a `legacyId`) |
+| **Kept** | The account you are calling with, and every head-office account — otherwise the cleanup can lock everyone out |
+| **Kept** | Any branch holding imported records, *including the sync target branch* |
+
+That last one surprises people. All imported transactions are currently stamped
+with the single sync-target store (`SYNC_DEFAULT_STORE_ID`, default
+`surat-main`), which is itself a seeded branch. Deleting it would take every
+record that just synced with it, so the purge refuses and reports it as kept.
+Rename it to the client's real branch name rather than expecting it to disappear.
+
+It also **refuses to run at all** until real data exists — purging first would
+leave the client staring at an empty system.
+
+Run it once, after you have eyeballed the catalogue, inventory and orders and are
+satisfied the import is right. It is not reversible.
+
+---
+
 ## What this never does
 
 - No writes to SQL Server. The connection is opened `readonly=True` with
   `ApplicationIntent=ReadOnly`.
 - No inbound network access to the client's PC — outbound HTTPS only.
-- No deletions in Eclat. Legacy cancellations are soft (`isCancel`), so rows are
-  re-pulled and updated, never removed.
+- No deletions in Eclat **from the sync agent**. Legacy cancellations are soft
+  (`isCancel`), so rows are re-pulled and updated, never removed. The only thing
+  that deletes anything is the demo purge above, which you run by hand.
+- No working logins created from their data — imported staff cannot sign in until
+  head office activates them.

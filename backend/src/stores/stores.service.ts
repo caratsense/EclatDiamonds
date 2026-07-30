@@ -69,6 +69,27 @@ export class StoresService {
       status: store.status,
       isActive: store.isActive,
       isAggregate: store.isAggregate,
+      /// Which branch in the client's own system this is — the link head office
+      /// needs to reconcile an Eclat branch against Gati. Null for branches
+      /// created directly in Eclat.
+      legacyId: store.legacyId ?? null,
+      // Office address + contact, imported from the client's branch master.
+      // Exposed so head office can check what came across and correct it —
+      // legacy address data is frequently stale, and it ends up on documents.
+      addressLine1: store.addressLine1 ?? null,
+      addressLine2: store.addressLine2 ?? null,
+      state: store.state ?? null,
+      pincode: store.pincode ?? null,
+      country: store.country ?? null,
+      phone: store.phone ?? null,
+      email: store.email ?? null,
+      gstin: store.gstin ?? null,
+      // Geofence centre. Null here means geo-attendance cannot work for this
+      // branch; the legacy system has no coordinates, so these are always set by
+      // hand after import.
+      latitude: store.latitude != null ? Number(store.latitude) : null,
+      longitude: store.longitude != null ? Number(store.longitude) : null,
+      geofenceRadiusM: store.geofenceRadiusM ?? null,
       managers,
     };
   }
@@ -271,6 +292,21 @@ export class StoresService {
       const regionId = dto.regionId || null;
       await this.assertRegion(regionId);
       data.regionId = regionId;
+    }
+    // Address/contact: an explicitly-sent empty string clears the field, while an
+    // omitted key leaves it alone — so a manager can delete a wrong value without
+    // every partial edit wiping the rest.
+    for (const f of [
+      'addressLine1',
+      'addressLine2',
+      'state',
+      'pincode',
+      'country',
+      'phone',
+      'email',
+      'gstin',
+    ] as const) {
+      if (dto[f] !== undefined) data[f] = dto[f] || null;
     }
     if (dto.code !== undefined) {
       const newCode = dto.code ? slugify(dto.code) : null;

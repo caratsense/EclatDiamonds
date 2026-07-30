@@ -37,6 +37,101 @@ export class StoreSyncRowDto {
   @IsOptional()
   @IsString()
   code?: string;
+
+  // Office address + contact, from the PartyMst branch row. All optional: a
+  // branch may have none of it filled in, and a blank field must never fail the
+  // whole batch.
+  @IsOptional()
+  @IsString()
+  addressLine1?: string;
+
+  @IsOptional()
+  @IsString()
+  addressLine2?: string;
+
+  @IsOptional()
+  @IsString()
+  state?: string;
+
+  @IsOptional()
+  @IsString()
+  pincode?: string;
+
+  @IsOptional()
+  @IsString()
+  country?: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  gstin?: string;
+}
+
+/**
+ * POST /sync/staff — import the client's people.
+ *
+ * `legacyId` is the PartyMst `PartyNo` (a salesperson row) or the SPM_Users id.
+ * `email` is optional because the legacy master frequently has none; a synthetic
+ * placeholder is generated so the row can exist, and head office replaces it when
+ * activating the person.
+ */
+export class StaffSyncRowDto {
+  @IsString()
+  @MinLength(1)
+  legacyId!: string;
+
+  @IsString()
+  @MinLength(1)
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  /** legacyId of the branch this person belongs to, if the source records one. */
+  @IsOptional()
+  @IsString()
+  storeLegacyId?: string;
+
+  /** Free-text role/designation from the source, kept for the activation review. */
+  @IsOptional()
+  @IsString()
+  designation?: string;
+
+  @IsOptional()
+  @IsString()
+  updatedAt?: string;
+}
+
+export class SyncStaffDto {
+  @IsArray()
+  @ArrayMaxSize(5000)
+  @ValidateNested({ each: true })
+  @Type(() => StaffSyncRowDto)
+  records!: StaffSyncRowDto[];
+}
+
+/**
+ * POST /sync/purge-demo — remove seeded demo data once real data has landed.
+ *
+ * Destructive and irreversible, so it is dry-run unless `confirm` carries the
+ * exact phrase. See SyncService.purgeDemo for the guards.
+ */
+export class PurgeDemoDto {
+  @IsOptional()
+  @IsString()
+  confirm?: string;
 }
 
 /**

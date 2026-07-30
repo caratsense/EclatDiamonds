@@ -1,9 +1,10 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
-import { StoreSyncRowDto } from './dto/sync.dto';
+import { StaffSyncRowDto, StoreSyncRowDto } from './dto/sync.dto';
 import {
   bool,
   dec,
@@ -104,8 +105,14 @@ export class SyncService {
   /**
    * Upsert Gati branches on `legacyId`. New branches are created `pending`
    * (isActive=false, no geo/region — HO/AM fills those on activation). Known
-   * branches only refresh name/city/code; their status, geo, region and manager
-   * are never touched, so an activated store can't be reverted by a re-sync.
+   * branches refresh their name/address/contact; their status, geo, region and
+   * manager are never touched, so an activated store can't be reverted by a
+   * re-sync.
+   *
+   * The response carries `missingGeo` because the legacy system holds no
+   * coordinates at all. Geo-attendance silently refuses to work for a store
+   * without them, so the sync has to say so out loud rather than let someone
+   * discover it when a salesperson can't clock in.
    */
   async syncStores(user: AuthUser, records: StoreSyncRowDto[]) {
     const created: { id: string; legacyId: string; name: string }[] = [];
@@ -118,10 +125,29 @@ export class SyncService {
         select: { id: true },
       });
 
+      // `?? undefined` (not `?? null`) throughout: a field the source omits must
+      // leave the stored value alone, not blank out something a manager typed in
+      // by hand. Only a value actually present in the feed overwrites.
+      const details = {
+        addressLine1: r.addressLine1 ?? undefined,
+        addressLine2: r.addressLine2 ?? undefined,
+        state: r.state ?? undefined,
+        pincode: r.pincode ?? undefined,
+        country: r.country ?? undefined,
+        phone: r.phone ?? undefined,
+        email: r.email ?? undefined,
+        gstin: r.gstin ?? undefined,
+      };
+
       if (existing) {
         const store = await this.prisma.store.update({
           where: { legacyId },
-          data: { name: r.name, city: r.city ?? undefined, code: r.code ?? undefined },
+          data: {
+            name: r.name,
+            city: r.city ?? undefined,
+            code: r.code ?? undefined,
+            ...details,
+          },
           select: { id: true, name: true },
         });
         updated.push({ id: store.id, legacyId, name: store.name });
@@ -134,6 +160,7 @@ export class SyncService {
             code: r.code ?? null,
             status: 'pending',
             isActive: false,
+            ...details,
           },
           select: { id: true, name: true },
         });
@@ -152,10 +179,475 @@ export class SyncService {
     const pendingCount = await this.prisma.store.count({
       where: { status: 'pending', isAggregate: false },
     });
+
+    // Real branches still missing a geofence centre. Excludes the synthetic
+    // "All Stores" aggregate, which has no physical location by definition.
+    const missingGeo = await this.prisma.store.findMany({
+      where: {
+        isAggregate: false,
+        OR: [{ latitude: null }, { longitude: null }],
+      },
+      select: { id: true, name: true, city: true, addressLine1: true, pincode: true },
+      orderBy: { name: 'asc' },
+    });
+
     this.logger.log(
-      `sync stores: received=${records.length} created=${created.length} updated=${updated.length} pending=${pendingCount}`,
+      `sync stores: received=${records.length} created=${created.length} ` +
+        `updated=${updated.length} pending=${pendingCount} missingGeo=${missingGeo.length}`,
     );
-    return { created, updated, pendingCount };
+    if (missingGeo.length) {
+      this.logger.warn(
+        `${missingGeo.length} store(s) have no latitude/longitude — geo-attendance ` +
+          `will not work for them until coordinates are set: ` +
+          missingGeo.map((s) => s.name).join(', '),
+      );
+    }
+    return { created, updated, pendingCount, missingGeo };
+  }
+
+  // ── Staff import ────────────────────────────────────────────────────────────
+  /**
+   * Import the client's people (PartyMst salesmen / SPM_Users logins) as User
+   * rows, upserted on `legacyId`.
+   *
+   * Imported staff are deliberately created **inactive with no passwordHash**:
+   * they can be seen, reviewed and assigned to a store, but cannot sign in until
+   * head office activates them and issues credentials. Minting working logins
+   * straight from a legacy master would create accounts whose role is guessed and
+   * whose owner may have left the business years ago — a standing security hole
+   * in exchange for saving a few minutes of setup.
+   *
+   * Re-running only refreshes name/phone/store on already-imported people. An
+   * activated account is never deactivated, re-roled, or stripped of its password
+   * by a later sync.
+   */
+  async syncStaff(user: AuthUser, records: StaffSyncRowDto[]) {
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+    const conflicts: { legacyId: string; reason: string }[] = [];
+
+    for (const r of records) {
+      const legacyId = String(r.legacyId).trim();
+      const name = String(r.name ?? '').trim();
+      if (!legacyId || !name) {
+        skipped++;
+        continue;
+      }
+
+      const storeId = r.storeLegacyId
+        ? (
+            await this.prisma.store.findUnique({
+              where: { legacyId: String(r.storeLegacyId) },
+              select: { id: true },
+            })
+          )?.id ?? null
+        : null;
+
+      const existing = await this.prisma.user.findUnique({
+        where: { legacyId },
+        select: { id: true, isActive: true },
+      });
+
+      if (existing) {
+        await this.prisma.user.update({
+          where: { legacyId },
+          data: {
+            name,
+            phone: r.phone ?? undefined,
+            legacyUpdatedAt: r.updatedAt ? new Date(r.updatedAt) : undefined,
+          },
+        });
+        if (storeId) await this.linkUserStore(existing.id, storeId);
+        updated++;
+        continue;
+      }
+
+      // Email is the login identity and is unique. The legacy master often has
+      // none, and the ones it does have are frequently shared or stale — so an
+      // address already in use belongs to a different person and must not be
+      // hijacked. Report it and move on rather than merging two humans.
+      const email = (r.email ?? '').trim().toLowerCase();
+      if (email) {
+        const clash = await this.prisma.user.findUnique({
+          where: { email },
+          select: { id: true, legacyId: true },
+        });
+        if (clash) {
+          conflicts.push({
+            legacyId,
+            reason: `email ${email} already belongs to another account`,
+          });
+          skipped++;
+          continue;
+        }
+      }
+
+      // Synthetic placeholder when the source has no email: the row must exist to
+      // be reviewed, and head office sets a real address on activation. The
+      // `imported.invalid` domain cannot receive mail, so it can never silently
+      // become a working login.
+      const loginEmail = email || `staff-${legacyId}@imported.invalid`;
+
+      const createdUser = await this.prisma.user.create({
+        data: {
+          legacyId,
+          legacyUpdatedAt: r.updatedAt ? new Date(r.updatedAt) : null,
+          name,
+          email: loginEmail,
+          phone: r.phone ?? null,
+          role: 'salesperson',
+          isActive: false,
+          passwordHash: null,
+        },
+        select: { id: true, name: true },
+      });
+      if (storeId) await this.linkUserStore(createdUser.id, storeId);
+      created++;
+
+      await this.audit.record(user, {
+        action: 'staff.imported',
+        entityType: 'user',
+        entityId: createdUser.id,
+        storeId: storeId ?? undefined,
+        summary: `Imported staff ${createdUser.name} from Gati (inactive, no login)`,
+        metadata: {
+          legacyId,
+          designation: r.designation ?? null,
+          emailSource: email ? 'legacy' : 'placeholder',
+        },
+      });
+    }
+
+    const pendingStaff = await this.prisma.user.count({
+      where: { legacyId: { not: null }, isActive: false },
+    });
+
+    this.logger.log(
+      `sync staff: received=${records.length} created=${created} updated=${updated} ` +
+        `skipped=${skipped} pendingActivation=${pendingStaff}`,
+    );
+    return { received: records.length, created, updated, skipped, conflicts, pendingStaff };
+  }
+
+  // ── Demo-data purge ─────────────────────────────────────────────────────────
+  /**
+   * Remove seeded demo data once the client's real data has landed.
+   *
+   * Provenance is the whole basis: every synced row carries a `legacyId`, seeded
+   * rows do not. So "demo" means `legacyId IS NULL` in a mirrored table, plus the
+   * net-new tables the sync never fills at all.
+   *
+   * Destructive and irreversible, so four guards stand in front of it:
+   *
+   *  1. **Dry run by default.** Nothing is deleted unless `confirm` is exactly
+   *     PURGE_CONFIRM_PHRASE. Without it you get the plan and counts.
+   *  2. **Refuses to run before real data exists.** Purging an empty system would
+   *     leave the client staring at nothing and blame the migration.
+   *  3. **Never deletes a store that holds real rows.** This is the sharp edge:
+   *     synced transactions are all stamped with SYNC_DEFAULT_STORE_ID (default
+   *     `surat-main`), which is itself a seeded store with no legacyId. Deleting
+   *     "demo stores" naively would cascade every record that just synced into
+   *     oblivion. Such stores are kept and reported.
+   *  4. **Never deletes the caller, and never deletes a head_office account** —
+   *     otherwise the operation can lock everyone out of the system it just
+   *     cleaned.
+   */
+  async purgeDemo(user: AuthUser, confirm?: string) {
+    const PURGE_CONFIRM_PHRASE = 'DELETE DEMO DATA';
+    const armed = confirm === PURGE_CONFIRM_PHRASE;
+
+    // Guard 2 — is there any real data at all?
+    const realCounts = {
+      parties: await this.prisma.party.count({ where: { legacyId: { not: null } } }),
+      products: await this.prisma.product.count({ where: { legacyId: { not: null } } }),
+      stockItems: await this.prisma.stockItem.count({ where: { legacyId: { not: null } } }),
+      sales: await this.prisma.sale.count({ where: { legacyId: { not: null } } }),
+      orders: await this.prisma.manufacturingOrder.count({ where: { legacyId: { not: null } } }),
+    };
+    const realTotal = Object.values(realCounts).reduce((a, b) => a + b, 0);
+    if (realTotal === 0) {
+      throw new BadRequestException(
+        'No synced data found, so there is nothing to switch over to. Run the sync ' +
+          'agent first — purging now would leave the system empty.',
+      );
+    }
+
+    // Net-new tables the sync never populates: everything in them is demo.
+    // Children first so foreign keys stay satisfied.
+    const demoOnlyTables = [
+      'leadNote',
+      'leadFollowUp',
+      'occasionReminder',
+      'lead',
+      'quoteLine',
+      'quote',
+      'checkIn',
+      'attendanceRecord',
+      'leaveRequest',
+      'commission',
+      'ticketMessage',
+      'ticket',
+      'returnPhoto',
+      'returnRecord',
+      'discountRequest',
+      'marketingAsset',
+      'campaignStore',
+      'marketingCampaign',
+      'newStoreChecklistItem',
+      'newStoreMilestone',
+      'newStoreVendor',
+      'newStoreProject',
+      'schemeInstallment',
+      'schemeMember',
+      'customOrderEvent',
+      'customOrder',
+      'task',
+      'payment',
+      'ledgerEntry',
+    ] as const;
+
+    // Mirrored tables: drop the seeded rows, keep everything with a legacyId.
+    const mirroredTables = [
+      'saleLine',
+      'sale',
+      'manufacturingOrderItem',
+      'manufacturingOrder',
+      'stockMovement',
+      'stockItem',
+      'product',
+      'party',
+      'metalRate',
+    ] as const;
+
+    // Guard 3 — which seeded stores are safe to remove?
+    //
+    // The set of store-scoped tables is derived from the Prisma schema rather
+    // than hand-listed: 27 models carry a storeId today, several with RESTRICT
+    // foreign keys, and a hand-maintained list would silently rot the first time
+    // someone adds a model — turning this into a 500 mid-cutover.
+    const storeScoped = this.storeScopedModels();
+    const demoStores = await this.prisma.store.findMany({
+      where: { legacyId: null, isAggregate: false },
+      select: { id: true, name: true },
+    });
+    const storesToDelete: { id: string; name: string }[] = [];
+    const storesKept: { id: string; name: string; reason: string }[] = [];
+    for (const s of demoStores) {
+      if (s.id === this.defaultStoreId) {
+        storesKept.push({ ...s, reason: 'it is the sync target for all imported data' });
+        continue;
+      }
+      // Any imported row anywhere under this store makes it untouchable.
+      let holdsReal = 0;
+      for (const { model, hasLegacyId } of storeScoped) {
+        if (!hasLegacyId) continue;
+        const m = (this.prisma as any)[model];
+        if (!m) continue;
+        try {
+          holdsReal += await m.count({ where: { storeId: s.id, legacyId: { not: null } } });
+        } catch {
+          /* model without the expected shape — ignore */
+        }
+        if (holdsReal > 0) break;
+      }
+      if (holdsReal > 0) {
+        storesKept.push({ ...s, reason: `holds ${holdsReal} imported record(s)` });
+      } else {
+        storesToDelete.push(s);
+      }
+    }
+
+    // Guard 4 — which seeded users are safe to remove?
+    const demoUsers = await this.prisma.user.findMany({
+      where: { legacyId: null },
+      select: { id: true, name: true, email: true, role: true },
+    });
+    const usersToDelete: { id: string; name: string; email: string }[] = [];
+    const usersKept: { id: string; email: string; reason: string }[] = [];
+    for (const u of demoUsers) {
+      if (u.id === user.id) {
+        usersKept.push({ id: u.id, email: u.email, reason: 'this is you' });
+      } else if (u.role === 'head_office') {
+        usersKept.push({ id: u.id, email: u.email, reason: 'head office account' });
+      } else {
+        usersToDelete.push({ id: u.id, name: u.name, email: u.email });
+      }
+    }
+
+    // Build the plan (counts only — no writes yet).
+    const plan: Record<string, number> = {};
+    for (const m of demoOnlyTables) {
+      const model = (this.prisma as any)[m];
+      if (!model) continue;
+      try {
+        plan[m] = await model.count({});
+      } catch {
+        /* model absent in this schema version — skip silently */
+      }
+    }
+    for (const m of mirroredTables) {
+      const model = (this.prisma as any)[m];
+      if (!model) continue;
+      try {
+        plan[m] = await model.count({ where: { legacyId: null } });
+      } catch {
+        /* ignore */
+      }
+    }
+    plan['store'] = storesToDelete.length;
+    plan['user'] = usersToDelete.length;
+
+    const totalToDelete = Object.values(plan).reduce((a, b) => a + b, 0);
+
+    if (!armed) {
+      return {
+        dryRun: true,
+        message:
+          `This would delete ${totalToDelete} demo record(s). Nothing has been ` +
+          `changed. To go ahead, send { "confirm": "${PURGE_CONFIRM_PHRASE}" }.`,
+        realDataFound: realCounts,
+        wouldDelete: plan,
+        storesToDelete,
+        storesKept,
+        usersToDelete: usersToDelete.map((u) => u.email),
+        usersKept,
+      };
+    }
+
+    // ── Armed: execute, children before parents. ──
+    const deleted: Record<string, number> = {};
+    for (const m of demoOnlyTables) {
+      const model = (this.prisma as any)[m];
+      if (!model) continue;
+      try {
+        deleted[m] = (await model.deleteMany({})).count;
+      } catch (err) {
+        this.logger.warn(`purge: skipped ${m}: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+    for (const m of mirroredTables) {
+      const model = (this.prisma as any)[m];
+      if (!model) continue;
+      try {
+        deleted[m] = (await model.deleteMany({ where: { legacyId: null } })).count;
+      } catch (err) {
+        this.logger.warn(`purge: skipped ${m}: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+
+    if (usersToDelete.length) {
+      deleted['user'] = (
+        await this.prisma.user.deleteMany({
+          where: { id: { in: usersToDelete.map((u) => u.id) } },
+        })
+      ).count;
+    }
+
+    if (storesToDelete.length) {
+      const doomed = storesToDelete.map((s) => s.id);
+
+      // Clear everything still hanging off the doomed stores — shifts, holidays,
+      // targets, rosters and the like. Several of these have RESTRICT foreign
+      // keys, so the store delete fails outright unless they go first.
+      //
+      // Order is resolved by repeated passes rather than a hand-written
+      // dependency graph: a table that fails because something still references
+      // it is retried on the next pass, and we stop as soon as a pass makes no
+      // progress. That stays correct as the schema grows.
+      let remaining = storeScoped.map((m) => m.model);
+      for (let pass = 0; pass < 5 && remaining.length; pass++) {
+        const stillFailing: string[] = [];
+        for (const model of remaining) {
+          const m = (this.prisma as any)[model];
+          if (!m) continue;
+          try {
+            const n = (await m.deleteMany({ where: { storeId: { in: doomed } } })).count;
+            if (n) deleted[model] = (deleted[model] ?? 0) + n;
+          } catch {
+            stillFailing.push(model);
+          }
+        }
+        if (stillFailing.length === remaining.length) break; // no progress — give up
+        remaining = stillFailing;
+      }
+      if (remaining.length) {
+        this.logger.warn(
+          `purge: could not clear ${remaining.join(', ')} for demo stores — ` +
+            `those stores will be kept rather than half-deleted.`,
+        );
+      }
+
+      try {
+        deleted['store'] = (
+          await this.prisma.store.deleteMany({ where: { id: { in: doomed } } })
+        ).count;
+      } catch (err) {
+        // Better a demo store lingering than a partly-deleted one.
+        this.logger.error(
+          `purge: store delete failed, leaving them in place: ` +
+            (err instanceof Error ? err.message : String(err)),
+        );
+        deleted['store'] = 0;
+      }
+    }
+
+    const totalDeleted = Object.values(deleted).reduce((a, b) => a + b, 0);
+    await this.audit.record(user, {
+      action: 'demo.purged',
+      entityType: 'system',
+      entityId: 'demo-purge',
+      summary: `Purged ${totalDeleted} demo record(s) after go-live`,
+      metadata: {
+        deleted,
+        storesKept,
+        usersKept,
+        realDataFound: realCounts,
+      },
+    });
+    this.logger.warn(`DEMO PURGE by ${user.id}: removed ${totalDeleted} record(s)`);
+
+    return {
+      dryRun: false,
+      message: `Removed ${totalDeleted} demo record(s).`,
+      deleted,
+      storesKept,
+      usersKept,
+      realDataFound: realCounts,
+    };
+  }
+
+  /**
+   * Every model carrying a `storeId`, read off the generated Prisma schema, with
+   * whether it also has a `legacyId` (i.e. can hold imported rows).
+   *
+   * Derived rather than hand-listed so the purge keeps working as models are
+   * added — see the note in purgeDemo.
+   */
+  private storeScopedModels(): { model: string; hasLegacyId: boolean }[] {
+    const models = (Prisma as any)?.dmmf?.datamodel?.models ?? [];
+    return models
+      .filter((m: any) => m.fields?.some((f: any) => f.name === 'storeId'))
+      .map((m: any) => ({
+        model: m.name.charAt(0).toLowerCase() + m.name.slice(1),
+        hasLegacyId: m.fields.some((f: any) => f.name === 'legacyId'),
+      }));
+  }
+
+  /** Idempotent user↔store link; the composite unique makes a re-run a no-op. */
+  private async linkUserStore(userId: string, storeId: string): Promise<void> {
+    try {
+      await this.prisma.userStore.upsert({
+        where: { userId_storeId: { userId, storeId } },
+        create: { userId, storeId },
+        update: {},
+      });
+    } catch (err) {
+      this.logger.warn(
+        `could not link user ${userId} to store ${storeId}: ` +
+          (err instanceof Error ? err.message : String(err)),
+      );
+    }
   }
 
   // ── PartyMst -> Party ────────────────────────────────────────────────────────

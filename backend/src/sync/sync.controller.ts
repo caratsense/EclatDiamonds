@@ -2,7 +2,13 @@ import { Body, Controller, Post } from '@nestjs/common';
 import { Roles } from '../auth/roles.decorator';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { SyncService } from './sync.service';
-import { RawSyncDto, SyncBatchDto, SyncStoresDto } from './dto/sync.dto';
+import {
+  PurgeDemoDto,
+  RawSyncDto,
+  SyncBatchDto,
+  SyncStaffDto,
+  SyncStoresDto,
+} from './dto/sync.dto';
 
 /**
  * Legacy-sync ingestion (the on-site sync_sjep.py agent's production sink).
@@ -76,6 +82,21 @@ export class SyncController {
   @Post('stores')
   stores(@CurrentUser() user: AuthUser, @Body() body: SyncStoresDto) {
     return this.sync.syncStores(user, body.records);
+  }
+
+  /** Import the client's people as inactive, no-login users pending activation. */
+  @Post('staff')
+  staff(@CurrentUser() user: AuthUser, @Body() body: SyncStaffDto) {
+    return this.sync.syncStaff(user, body.records);
+  }
+
+  /**
+   * Remove seeded demo data once real data has arrived. Dry-run unless the body
+   * carries `{"confirm":"DELETE DEMO DATA"}` — see SyncService.purgeDemo.
+   */
+  @Post('purge-demo')
+  purgeDemo(@CurrentUser() user: AuthUser, @Body() body: PurgeDemoDto) {
+    return this.sync.purgeDemo(user, body.confirm);
   }
 
   /** Generic full-mirror: ANY legacy table -> LegacyRow (extract-everything-once). */

@@ -495,22 +495,60 @@ def push_stores(cursor, token, base_url):
         sel.append(f"t.{city_col} AS city")
     if code_col:
         sel.append(f"t.{code_col} AS code")
+
+    # OFFICE ADDRESS + CONTACT. Each is selected only if the column exists on this
+    # install, so a version missing (say) FirmState never errors the whole pull.
+    # These land on the Eclat Store row and are what the app prints on documents
+    # and shows on the store profile.
+    detail_map = {
+        "firmadd1":    "addressLine1",
+        "firmadd2":    "addressLine2",
+        "firmstate":   "state",
+        "pincode":     "pincode",
+        "firmcountry": "country",
+        "firmtele":    "phone",
+        "firmemail":   "email",
+        "accgst":      "gstin",
+    }
+    present_details = {}
+    for src, dest in detail_map.items():
+        col = cols.get(src)
+        if col:
+            sel.append(f"t.{col} AS {dest}")
+            present_details[dest] = True
+    # FirmAdd3 folds into line 2 when both exist — Eclat holds two address lines
+    # and dropping the third silently would lose part of the address.
+    add3_col = cols.get("firmadd3")
+    if add3_col:
+        sel.append(f"t.{add3_col} AS addressLine3")
+    # A mobile is more use than a landline for a branch; taken only if FirmTele
+    # is absent, so we never overwrite the office number with someone's mobile.
+    mobile_col = cols.get("ownermobile") or cols.get("whatsappno")
+    if mobile_col and "phone" not in present_details:
+        sel.append(f"t.{mobile_col} AS phone")
+
     where = " OR ".join(flag_preds)
     # Best-effort query (READ-ONLY). Marked columns/predicate above pending confirmation.
     cursor.execute(f"SELECT {', '.join(sel)} FROM PartyMst t WHERE {where}")
     raw = rows(cursor)
 
-    # Map each location row to the /sync/stores contract: {legacyId, name, city?, code?}
+    # Map each location row to the /sync/stores contract.
+    text_fields = ["city", "code", "addressLine1", "addressLine2", "state",
+                   "pincode", "country", "phone", "email", "gstin"]
     records = []
     for r in raw:
         lid = r.get("legacyId")
         if lid is None or str(lid).strip() == "":
             continue
         rec = {"legacyId": str(lid).strip(), "name": str(r.get("name") or "").strip()}
-        if r.get("city") is not None and str(r.get("city")).strip():
-            rec["city"] = str(r.get("city")).strip()
-        if r.get("code") is not None and str(r.get("code")).strip():
-            rec["code"] = str(r.get("code")).strip()
+        for f in text_fields:
+            v = r.get(f)
+            if v is not None and str(v).strip():
+                rec[f] = str(v).strip()
+        add3 = r.get("addressLine3")
+        if add3 is not None and str(add3).strip():
+            extra = str(add3).strip()
+            rec["addressLine2"] = f"{rec['addressLine2']}, {extra}" if rec.get("addressLine2") else extra
         records.append(rec)
 
     if not records:
@@ -535,6 +573,98 @@ def push_stores(cursor, token, base_url):
             log.error(f"  [{base_url}] stores: FAILED {r.status_code}: {r.text[:200]}")
     except Exception as e:
         log.error(f"  [{base_url}] stores: error: {e}")
+
+
+def push_staff(cursor, token, base_url):
+    """Push the client's PEOPLE to POST /sync/staff.
+
+    Source is `PartyMst` rows flagged `IsSalesMan` — in this schema a salesperson
+    is a party, not a separate employee table (the legacy HR tables exist but are
+    empty, see docs/legacy-schema.md module 6). Where an `SPM_Users` login table
+    exists we also read designation/role text from it for the activation review.
+
+    Imported people arrive in Eclat **inactive and unable to sign in** until head
+    office activates them. That is a backend guarantee, not a convention here.
+
+    Like the store catalog this runs a full pull every cycle (the roster is tiny
+    and must be complete) and is non-fatal by contract.
+    """
+    cols = table_columns(cursor, "PartyMst")
+    if not cols:
+        log.warning(f"  [{base_url}] staff: PartyMst not found — skipping")
+        return
+    if "issalesman" not in cols:
+        log.warning(f"  [{base_url}] staff: no IsSalesMan flag on PartyMst — skipping "
+                    f"(# LIVE-DB: confirm how staff are marked on this install)")
+        return
+
+    pk_col   = cols.get("partyno")
+    name_col = cols.get("firmname") or cols.get("legalname")
+    if not pk_col or not name_col:
+        log.warning(f"  [{base_url}] staff: PartyMst missing PartyNo/FirmName — skipping")
+        return
+
+    sel = [f"t.{pk_col} AS legacyId", f"t.{name_col} AS name"]
+    for src, dest in [("firmemail", "email"), ("ownermobile", "phone"),
+                      ("updatedate", "updatedAt")]:
+        col = cols.get(src)
+        if col:
+            sel.append(f"t.{col} AS {dest}")
+    if "phone" not in [s.split(" AS ")[-1] for s in sel]:
+        alt = cols.get("whatsappno") or cols.get("firmtele")
+        if alt:
+            sel.append(f"t.{alt} AS phone")
+    # Which branch the person belongs to, so Eclat can pre-assign their store.
+    branch_col = cols.get("branchno") or cols.get("locationid")
+    if branch_col:
+        sel.append(f"t.{branch_col} AS storeLegacyId")
+
+    cursor.execute(f"SELECT {', '.join(sel)} FROM PartyMst t WHERE t.IsSalesMan = 1")
+    raw = rows(cursor)
+
+    records = []
+    for r in raw:
+        lid = r.get("legacyId")
+        name = str(r.get("name") or "").strip()
+        if lid is None or str(lid).strip() == "" or not name:
+            continue
+        rec = {"legacyId": str(lid).strip(), "name": name}
+        for f in ("email", "phone", "storeLegacyId"):
+            v = r.get(f)
+            if v is not None and str(v).strip():
+                rec[f] = str(v).strip()
+        upd = r.get("updatedAt")
+        if upd is not None:
+            rec["updatedAt"] = _json_default(upd) if not isinstance(upd, str) else upd
+        records.append(rec)
+
+    if not records:
+        log.info(f"  [{base_url}] staff: no salesperson rows matched")
+        return
+
+    url  = f"{base_url}/sync/staff"
+    hdrs = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    try:
+        payload = json.dumps({"records": records}, default=_json_default)
+        log.info(f"  [{base_url}] pushing staff: {len(records)} people...")
+        r = requests.post(url, headers=hdrs, data=payload, timeout=120)
+        if 200 <= r.status_code < 300:
+            try:
+                resp = r.json() if isinstance(r.json(), dict) else {}
+            except Exception:
+                resp = {}
+            log.info(f"  [{base_url}] staff: created={resp.get('created','?')} "
+                     f"updated={resp.get('updated','?')} skipped={resp.get('skipped','?')}")
+            pending = resp.get("pendingActivation")
+            if pending:
+                log.info(f"  [{base_url}] staff: {pending} awaiting activation in Eclat "
+                         f"(they cannot sign in until head office activates them)")
+            for c in (resp.get("conflicts") or [])[:10]:
+                log.warning(f"  [{base_url}] staff conflict: {c}")
+        else:
+            log.error(f"  [{base_url}] staff: FAILED {r.status_code}: {r.text[:200]}")
+    except Exception as e:
+        log.error(f"  [{base_url}] staff: error: {e}")
 
 
 def run_test():
@@ -686,6 +816,13 @@ def sync_once():
                 push_stores(cursor, token, base_url)
             except Exception as e:
                 log.error(f"  [{base_url}] stores push error: {e}")
+
+            # Staff AFTER stores: a person carries their branch legacyId, and the
+            # backend can only pre-assign them to a store that already exists.
+            try:
+                push_staff(cursor, token, base_url)
+            except Exception as e:
+                log.error(f"  [{base_url}] staff push error: {e}")
 
             parties = extract_parties(cursor, since)
             items   = extract_items(cursor, since)

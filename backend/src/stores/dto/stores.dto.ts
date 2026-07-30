@@ -67,6 +67,41 @@ export class UpdateStoreDto {
   @IsOptional()
   @IsNumber()
   longitude?: number;
+
+  // Office address + contact. Editable because what the sync imports is only as
+  // good as the client's branch master, which is often years out of date, and
+  // these values print on customer-facing documents.
+  @IsOptional()
+  @IsString()
+  addressLine1?: string;
+
+  @IsOptional()
+  @IsString()
+  addressLine2?: string;
+
+  @IsOptional()
+  @IsString()
+  state?: string;
+
+  @IsOptional()
+  @IsString()
+  pincode?: string;
+
+  @IsOptional()
+  @IsString()
+  country?: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  gstin?: string;
 }
 
 /** POST /stores/:id/manager — create (or link) the store-manager login for a branch. */
