@@ -128,7 +128,7 @@ export function ReferralProgram() {
               <Ticket className="h-5 w-5" />
             </span>
             <div className="space-y-1">
-              <h3 className="font-display text-lg font-semibold leading-tight">
+              <h3 className="font-display text-lg font-bold leading-tight">
                 Earn with Éclat
               </h3>
               <p className="max-w-xl text-sm text-muted-foreground">

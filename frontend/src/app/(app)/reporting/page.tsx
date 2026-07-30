@@ -118,7 +118,7 @@ export default function ReportingPage() {
 
       <div className="my-6 h-px bg-gradient-to-r from-border via-border to-transparent" />
 
-      <h2 className="mb-4 font-display text-lg font-semibold tracking-tight text-foreground">
+      <h2 className="mb-4 font-display text-lg font-bold tracking-tight text-foreground">
         Today&apos;s DSR
       </h2>
 

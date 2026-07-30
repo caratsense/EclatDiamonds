@@ -135,7 +135,7 @@ export function MobileNav() {
       <Dialog open={moreOpen} onOpenChange={setMoreOpen}>
         <DialogContent className="max-h-[80dvh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="font-display text-xl font-semibold">
+            <DialogTitle className="font-display text-xl font-bold">
               All sections
             </DialogTitle>
           </DialogHeader>

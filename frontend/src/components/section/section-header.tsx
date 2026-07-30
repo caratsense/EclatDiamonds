@@ -32,7 +32,7 @@ export function SectionHeader({
     <div className="mb-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-2">
-          <h1 className="font-display text-[30px] font-semibold leading-tight tracking-tight text-foreground">
+          <h1 className="font-display text-[30px] font-bold leading-tight tracking-tight text-foreground">
             {title}
           </h1>
           <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">

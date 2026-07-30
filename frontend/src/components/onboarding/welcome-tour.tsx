@@ -406,7 +406,7 @@ export function WelcomeTour() {
             <p className="text-xs font-medium text-muted-foreground">
               Step {safeStep + 1} of {steps.length}
             </p>
-            <h2 className="mt-0.5 font-display text-base font-semibold leading-tight tracking-tight">
+            <h2 className="mt-0.5 font-display text-base font-bold leading-tight tracking-tight">
               {current.title}
             </h2>
           </div>

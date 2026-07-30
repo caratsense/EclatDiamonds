@@ -55,14 +55,30 @@ split-screen sign-in at `/login`.
 
 | Role | Face | Used for | Notes |
 |---|---|---|---|
-| Display | **Cormorant Garamond** (classical high-contrast serif) | Page titles — **words only, never digits** | The jewellery-house register (Garamond lineage). Rendered at 600 ("semibold") — its 500 is too delicate on Windows. Its figures are oldstyle (hanging) and bounce off the baseline, so **numeric heroes wear the mono readout (`.num`), not the serif** (a `.font-display` CSS rule forces `lining-nums` as a safety net). Replaced Fraunces (2026-07): Fraunces's soft "wonk" read playful/AI-default. |
+| Display | **Fraunces** (high-contrast serif, `wght` axis only) | Page titles — **words only, never digits** | The jewellery-house register. Rendered at **700 (bold)**. Its figures can be oldstyle (hanging) and bounce off the baseline, so **numeric heroes wear the mono readout (`.num`), not the serif** (a `.font-display` CSS rule forces `lining-nums` as a safety net). **History:** Fraunces → Cormorant Garamond (2026-07, "Fraunces's soft *wonk* read playful/AI-default") → Fraunces again (2026-07-29). Two reasons for the reversal: (1) headings were asked to be genuinely **bold**, and Cormorant is delicate by design — it stays wispy even at 700, which is the opposite of a bold heading; (2) the original objection was to Fraunces's `WONK` axis, and `next/font` loads only the `wght` axis by default, so `WONK` sits at 0 and the playful letterforms never appear. If the serif is revisited, judge it in the browser — **neither face was actually loading** when the earlier call was made (see below). |
 | UI | **Hanken Grotesk** | All dense operational data, chrome, forms, body | Premium grotesk workhorse. Replaced Inter (2026-07): Inter is the generic-AI-dashboard tell. |
 | Tabular | **IBM Plex Mono** (`.num`) | Weights, carats, prices, every numeric column | The "assay readout" — `tabular-nums lining-nums` so columns align like a scale. Replaced Geist Mono (Vercel default). |
 
-**Scale** (line-height in parens): Hero figure 28 (1.0) Plex Mono 600 (`.num`) · H1 30 (1.1) Cormorant 600 ·
-H2 22 (1.2) Cormorant 600 · Card title 18 (1.2) Hanken 600 · Body 14 (1.43) Hanken 400 ·
+**Scale** (line-height in parens): Hero figure 28 (1.0) Plex Mono 600 (`.num`) · H1 30 (1.1) Fraunces **700** ·
+H2 22 (1.2) Fraunces **700** · Card title 18 (1.2) Hanken 600 · Body 14 (1.43) Hanken 400 ·
 Body-strong 14 Hanken 600 · Meta 12.5 Hanken 500 stone · Overline 11 Hanken 600 uppercase +0.1em stone ·
 Numeric 13 Plex Mono 500 tnum.
+
+Only the display-face headings went to 700 (2026-07-29). Card titles stay at Hanken 600 and
+every body/meta size is unchanged — the hierarchy is carried by the face change, not by
+thickening everything.
+
+> ### ⚠ The faces were not loading at all until 2026-07-29
+> `app/layout.tsx` declared `const sans = { variable: "font-sans" }` — plain objects holding
+> literal Tailwind class names. The three `next/font/google` imports were never called, so no
+> `@font-face` was ever emitted. `globals.css` then defined the theme token as
+> `--font-sans: var(--font-sans), …`, a **self-reference** that resolves to nothing and falls
+> through to `ui-sans-serif, system-ui`. Net effect: the whole app rendered in the OS default
+> (Segoe UI on Windows, San Francisco on macOS) and the serif fell back to Georgia — for every
+> screenshot and every design judgement made in that window. Fixed by calling the loaders
+> properly and giving them their own `--font-*-face` variable names, distinct from the theme
+> tokens so the self-reference cannot recur. **Verify a font change in the browser**
+> (`getComputedStyle(document.body).fontFamily` + `document.fonts`), never by reading the code.
 
 ### Spacing / radius / elevation
 

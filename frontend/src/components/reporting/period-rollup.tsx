@@ -125,7 +125,7 @@ export function PeriodRollup({
     <section className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="font-display text-lg font-semibold tracking-tight text-foreground">
+          <h2 className="font-display text-lg font-bold tracking-tight text-foreground">
             Period rollup
           </h2>
           <p className="text-sm text-muted-foreground">

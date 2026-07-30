@@ -245,7 +245,7 @@ export default function LoginPage() {
             <span className="text-xs font-medium uppercase tracking-[0.2em] text-[#c8a24f]">
               Éclat Diamonds
             </span>
-            <h1 className="mt-2 font-display text-4xl font-semibold leading-[1.1] text-[#f6f3ed] xl:text-5xl">
+            <h1 className="mt-2 font-display text-4xl font-bold leading-[1.1] text-[#f6f3ed] xl:text-5xl">
               Where dreams meet <span className="italic text-[#c8a24f]">diamonds.</span>
             </h1>
             <p className="mt-4 text-base leading-relaxed text-[#f6f3ed]/75">
@@ -302,7 +302,7 @@ export default function LoginPage() {
           </div>
 
           <div>
-            <h2 className="font-display text-3xl font-semibold tracking-tight text-[#f6f3ed]">
+            <h2 className="font-display text-3xl font-bold tracking-tight text-[#f6f3ed]">
               Sign in to your counter
             </h2>
             <p className="mt-1.5 text-sm text-[#f6f3ed]/70">

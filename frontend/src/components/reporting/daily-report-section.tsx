@@ -12,7 +12,7 @@ export function DailyReportSection() {
   return (
     <section className="space-y-4">
       <div>
-        <h2 className="font-display text-lg font-semibold tracking-tight text-foreground">
+        <h2 className="font-display text-lg font-bold tracking-tight text-foreground">
           Daily Report (DSR)
         </h2>
         <p className="text-sm text-muted-foreground">

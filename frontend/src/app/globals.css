@@ -196,11 +196,15 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  /* three faces, three jobs */
-  --font-sans: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
-  --font-display: var(--font-display), ui-serif, Georgia, "Times New Roman", serif;
-  --font-serif: var(--font-display), ui-serif, Georgia, serif;
-  --font-mono: var(--font-mono), ui-monospace, "SFMono-Regular", monospace;
+  /* Three faces, three jobs. The right-hand names are the next/font loader
+     variables from app/layout.tsx and are intentionally distinct from these
+     theme tokens: when both sides were called `--font-sans`, the declaration
+     referenced itself, resolved to nothing, and the whole app quietly rendered
+     in the OS default face. */
+  --font-sans: var(--font-sans-face), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-display-face), ui-serif, Georgia, "Times New Roman", serif;
+  --font-serif: var(--font-display-face), ui-serif, Georgia, serif;
+  --font-mono: var(--font-mono-face), ui-monospace, "SFMono-Regular", monospace;
 
   /* soft, warm, layered elevation — light on a polished surface, not heavy drops */
   --shadow-xs: 0 1px 2px 0 rgba(26, 24, 22, 0.05);
@@ -276,9 +280,9 @@ body {
   letter-spacing: -0.01em;
 }
 
-/* Safety: the display serif (Cormorant) defaults to oldstyle (hanging) figures
-   that bounce off the baseline. Numeric heroes use .num instead, but if a digit
-   ever lands inside a display-face title, force lining, equal-width figures. */
+/* Safety: a display serif can default to oldstyle (hanging) figures that bounce
+   off the baseline. Numeric heroes use .num instead, but if a digit ever lands
+   inside a display-face title, force lining, equal-width figures. */
 .font-display {
   font-variant-numeric: lining-nums tabular-nums;
 }

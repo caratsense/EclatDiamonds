@@ -105,7 +105,7 @@ export function DashboardPreview() {
             <div className="min-w-0 flex-1 space-y-3 p-3.5">
               <div className="flex items-center justify-between gap-2">
                 <div>
-                  <div className="font-display text-[15px] font-semibold leading-tight">
+                  <div className="font-display text-[15px] font-bold leading-tight">
                     Good morning, Admin
                   </div>
                   <div className="text-[10px] text-[var(--l-ivory-55)]">

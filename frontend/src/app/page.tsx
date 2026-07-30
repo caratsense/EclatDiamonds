@@ -308,7 +308,7 @@ export default function LandingPage() {
                 ÉCLAT DIAMONDS · CARATSENSE OPERATING SYSTEM
               </span>
 
-              <h1 className="font-display text-4xl font-semibold leading-[1.05] tracking-[-0.02em] text-[#f6f3ed] sm:text-6xl lg:text-7xl">
+              <h1 className="font-display text-4xl font-bold leading-[1.05] tracking-[-0.02em] text-[#f6f3ed] sm:text-6xl lg:text-7xl">
                 delicate <br />
                 <span className="italic text-[#c8a24f] font-serif">jewelry</span> & operations.
               </h1>
@@ -421,7 +421,7 @@ export default function LandingPage() {
               <span className="text-xs font-mono uppercase tracking-[0.2em] text-[#c8a24f]">
                 Featured Masterpieces
               </span>
-              <h2 className="mt-2 font-display text-3xl sm:text-4xl font-semibold text-[#f6f3ed]">
+              <h2 className="mt-2 font-display text-3xl sm:text-4xl font-bold text-[#f6f3ed]">
                 Diamond & Gold <span className="italic text-[#c8a24f]">Collections</span>
               </h2>
             </div>
@@ -459,7 +459,7 @@ export default function LandingPage() {
 
                 {/* Content */}
                 <div className="mt-4 space-y-1">
-                  <h3 className="font-display text-lg font-semibold text-[#f6f3ed]">
+                  <h3 className="font-display text-lg font-bold text-[#f6f3ed]">
                     {item.name}
                   </h3>
                   <p className="text-xs text-[#f6f3ed]/60">{item.metal}</p>
@@ -503,7 +503,7 @@ export default function LandingPage() {
             <span className="text-xs font-mono uppercase tracking-[0.2em] text-[#c8a24f]">
               Shop Floor Parity
             </span>
-            <h2 className="mt-2 font-display text-3xl sm:text-4xl font-semibold text-[#f6f3ed]">
+            <h2 className="mt-2 font-display text-3xl sm:text-4xl font-bold text-[#f6f3ed]">
               A platform built for every counter.
             </h2>
             <p className="mt-3 text-base text-[#f6f3ed]/70">
@@ -527,7 +527,7 @@ export default function LandingPage() {
                     <span className="text-xs font-mono uppercase tracking-wider text-[#c8a24f]">
                       {eyebrow}
                     </span>
-                    <h3 className="mt-2 font-display text-2xl font-semibold leading-snug text-[#f6f3ed]">
+                    <h3 className="mt-2 font-display text-2xl font-bold leading-snug text-[#f6f3ed]">
                       {title}
                     </h3>
                     <p className="mt-3 text-sm leading-relaxed text-[#f6f3ed]/70">
@@ -551,7 +551,7 @@ export default function LandingPage() {
             <span className="text-xs font-mono uppercase tracking-[0.2em] text-[#c8a24f]">
               Role-Based Access Control
             </span>
-            <h2 className="mt-2 font-display text-3xl sm:text-4xl font-semibold text-[#f6f3ed]">
+            <h2 className="mt-2 font-display text-3xl sm:text-4xl font-bold text-[#f6f3ed]">
               Tailored to who is looking.
             </h2>
             <p className="mt-3 text-sm text-[#f6f3ed]/70">
@@ -570,7 +570,7 @@ export default function LandingPage() {
                   <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#c8a24f]/15 text-[#c8a24f]">
                     <Icon className="h-5 w-5" />
                   </span>
-                  <h3 className="mt-4 font-display text-xl font-semibold text-[#f6f3ed]">
+                  <h3 className="mt-4 font-display text-xl font-bold text-[#f6f3ed]">
                     {r.title}
                   </h3>
                   <p className="mt-1 text-xs text-[#f6f3ed]/60">{r.summary}</p>
@@ -599,7 +599,7 @@ export default function LandingPage() {
             <span className="text-xs font-mono uppercase tracking-[0.2em] text-[#c8a24f]">
               Full System Scope
             </span>
-            <h2 className="mt-2 font-display text-3xl sm:text-4xl font-semibold text-[#f6f3ed]">
+            <h2 className="mt-2 font-display text-3xl sm:text-4xl font-bold text-[#f6f3ed]">
               Seventeen modules, one source of truth.
             </h2>
           </div>
