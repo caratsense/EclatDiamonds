@@ -76,6 +76,130 @@ def connect():
     return pyodbc.connect(cs, readonly=True, timeout=30), driver
 
 
+def find_sql_instances():
+    """Every SQL Server instance installed on THIS machine, from the registry.
+
+    More reliable than `sqlcmd -L`, which broadcasts on the network and quietly
+    returns nothing when the Browser service is off — the usual state on a
+    locked-down server. The registry entry is written by the installer, so if SQL
+    Server is here at all, it is listed here.
+    """
+    names = []
+    try:
+        import winreg
+        for view in (winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY):
+            try:
+                k = winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE,
+                    r"SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL",
+                    0, winreg.KEY_READ | view)
+            except OSError:
+                continue
+            try:
+                i = 0
+                while True:
+                    inst = winreg.EnumValue(k, i)[0]
+                    # MSSQLSERVER is the DEFAULT instance and is addressed by the
+                    # machine name alone — "HOST\MSSQLSERVER" does not work.
+                    names.append("localhost" if inst == "MSSQLSERVER"
+                                 else f"localhost\\{inst}")
+                    i += 1
+            except OSError:
+                pass
+            finally:
+                winreg.CloseKey(k)
+    except Exception:
+        pass
+    return sorted(set(names))
+
+
+def list_databases_on(server):
+    """Database names on `server`, or None if it cannot be reached."""
+    try:
+        import pyodbc
+        drivers = [d for d in pyodbc.drivers() if "SQL Server" in d]
+        if not drivers:
+            return None
+        auth = f"UID={SQL_USER};PWD={SQL_PASS};" if SQL_USER else "Trusted_Connection=yes;"
+        cs = (f"DRIVER={{{drivers[-1]}}};SERVER={server};DATABASE=master;{auth}"
+              "TrustServerCertificate=yes;")
+        c = pyodbc.connect(cs, readonly=True, timeout=8)
+        cur = c.cursor()
+        cur.execute("SELECT name FROM sys.databases WHERE database_id > 4 ORDER BY name")
+        out_ = [r[0] for r in cur.fetchall()]
+        c.close()
+        return out_
+    except Exception:
+        return None
+
+
+def diagnose_connection(err):
+    """Turn a connection failure into the next thing to type.
+
+    A raw ODBC error tells an operator nothing actionable, and they are usually
+    standing in someone else's office with the client watching. So: work out
+    what is actually installed and print the exact setting to use.
+    """
+    low = err.lower()
+    out("")
+    out("  WHAT THIS MEANS")
+    # Check the DATABASE error first. When the database name is wrong, SQL Server
+    # reports BOTH 4060 and a generic 18456 "login failed" — so testing for the
+    # login error first blames the password for what is really a wrong name, and
+    # sends the operator off to bother IT for no reason.
+    if "cannot open database" in low or "4060" in err:
+        out("    The server was reached, but that DATABASE name does not exist")
+        out("    (or this login cannot see it). The real names are listed below.")
+    elif "login failed" in low or "18456" in err:
+        out("    The server was reached, but the login was refused.")
+        out("    -> Ask IT to run create_readonly_login.sql and use that username")
+        out("       and password (run 2_configure.bat again to enter them).")
+    else:
+        out("    The SQL Server could not be reached at that name.")
+        out("    Usually the instance name is wrong, not the password.")
+
+    instances = find_sql_instances()
+    out("")
+    if not instances:
+        out("  SQL SERVER INSTANCES ON THIS COMPUTER: none found.")
+        out("")
+        out("    SQL Server does not appear to be installed on THIS machine.")
+        out("    If the jewellery software runs somewhere else — another PC, or a")
+        out("    virtual machine on this one — then this agent must be installed")
+        out("    THERE, or pointed at it over the network.")
+        out("    Ask: 'which computer actually holds the database?'")
+        _save()
+        return
+
+    out(f"  SQL SERVER INSTANCES ON THIS COMPUTER ({len(instances)}):")
+    for name in instances:
+        dbs = list_databases_on(name)
+        if dbs is None:
+            out(f"    {name:<28} (could not connect — service stopped, or no permission)")
+            continue
+        out(f"    {name:<28} reachable, {len(dbs)} database(s):")
+        for d in dbs:
+            star = "   <-- looks like the jewellery database" if (
+                "aprs" in d.lower() or "sjep" in d.lower()) else ""
+            out(f"      - {d}{star}")
+
+    out("")
+    out("  WHAT TO DO NEXT")
+    out("    Pick the server name and database from the list above, then run")
+    out("    2_configure.bat and enter them. For example:")
+    best = instances[0]
+    bestdb = None
+    for name in instances:
+        for d in (list_databases_on(name) or []):
+            if "aprs" in d.lower() or "sjep" in d.lower():
+                best, bestdb = name, d
+                break
+        if bestdb:
+            break
+    out(f"      SQL Server   : {best}")
+    out(f"      Database name: {bestdb or '(pick from the list above)'}")
+
+
 def table_exists(cur, name):
     cur.execute(
         "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = ?", name
@@ -110,8 +234,8 @@ def main():
     try:
         conn, driver = connect()
     except Exception as e:
-        out(f"\n[FATAL] Could not connect: {e}")
-        out("\nCheck: SQL Server running? instance name right? login allowed?")
+        out(f"\n[COULD NOT CONNECT] {e}")
+        diagnose_connection(str(e))
         _save()
         sys.exit(1)
     out(f"odbc driver   : {driver}")
