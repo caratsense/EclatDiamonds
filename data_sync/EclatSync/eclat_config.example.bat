@@ -4,23 +4,23 @@ REM Never commit the real eclat_config.bat (it holds passwords).
 
 REM Eclat dashboard backend(s). Comma-separate to push to several at once, e.g.
 REM   set ECLAT_BASE_URL=http://localhost:4000,https://your-eclat-backend.up.railway.app
-set ECLAT_BASE_URL=https://your-eclat-backend.up.railway.app
-set ECLAT_EMAIL=sync@yourjewelryclient.com
-set ECLAT_PASSWORD=CHANGE_ME
+set "ECLAT_BASE_URL=https://your-eclat-backend.up.railway.app"
+set "ECLAT_EMAIL=sync@yourjewelryclient.com"
+set "ECLAT_PASSWORD=CHANGE_ME"
 
 REM Live SJE Plus / APRS SQL Server (READ-ONLY login recommended)
-set SJEP_SQL_SERVER=localhost\SQLEXPRESS
-set SJEP_SQL_DB=APRSSJEP
+set "SJEP_SQL_SERVER=localhost\SQLEXPRESS"
+set "SJEP_SQL_DB=APRSSJEP"
 REM Leave USER blank to use Windows authentication:
-set SJEP_SQL_USER=
-set SJEP_SQL_PASS=
+set "SJEP_SQL_USER="
+set "SJEP_SQL_PASS="
 
 REM ── CATALOGUE PHOTOS ────────────────────────────────────────────────────────
 REM The folder holding the jewellery photographs. The database stores only the
 REM FILE NAMES, so we have to be told where the files themselves live.
 REM Don't guess: run discover.bat, which hunts for the folder and prints the
 REM exact line to paste here.
-set SJEP_IMAGE_ROOT=
+set "SJEP_IMAGE_ROOT="
 
 REM ── CLOUDFLARE R2 (where the photos are uploaded) ───────────────────────────
 REM Photos go STRAIGHT from this PC to R2; they never pass through the Eclat
@@ -35,16 +35,16 @@ REM   R2_PUBLIC_BASE_URL   bucket -> Settings -> Public access. Either the
 REM                        r2.dev dev URL (https://pub-xxxx.r2.dev) or your
 REM                        custom domain (https://images.yourshop.com).
 REM                        NO trailing slash.
-set R2_ACCOUNT_ID=
-set R2_ACCESS_KEY_ID=
-set R2_SECRET_ACCESS_KEY=
-set R2_BUCKET=
-set R2_PUBLIC_BASE_URL=
+set "R2_ACCOUNT_ID="
+set "R2_ACCESS_KEY_ID="
+set "R2_SECRET_ACCESS_KEY="
+set "R2_BUCKET="
+set "R2_PUBLIC_BASE_URL="
 
 REM Optional: only if your bucket uses a jurisdiction-specific endpoint (EU/FedRAMP).
 REM set R2_ENDPOINT=https://<account-id>.eu.r2.cloudflarestorage.com
 
 REM ── CLOUDINARY (alternative to R2 — leave blank if using R2) ────────────────
-set CLOUDINARY_CLOUD_NAME=
-set CLOUDINARY_API_KEY=
-set CLOUDINARY_API_SECRET=
+set "CLOUDINARY_CLOUD_NAME="
+set "CLOUDINARY_API_KEY="
+set "CLOUDINARY_API_SECRET="

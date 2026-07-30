@@ -43,7 +43,9 @@ SQL_DB     = os.getenv("SJEP_SQL_DB", "APRSSJEP")
 SQL_USER   = os.getenv("SJEP_SQL_USER", "")
 SQL_PASS   = os.getenv("SJEP_SQL_PASS", "")
 
-IMAGE_ROOT = os.getenv("SJEP_IMAGE_ROOT", "")
+# .strip() because this path routinely contains spaces ("SJEP IMAGES") and a
+# stray trailing one from a hand-edited config would make the folder "missing".
+IMAGE_ROOT = os.getenv("SJEP_IMAGE_ROOT", "").strip().strip('"')
 
 # Cloudflare R2 (preferred)
 R2_ACCOUNT = os.getenv("R2_ACCOUNT_ID", "")

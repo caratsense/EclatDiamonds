@@ -84,19 +84,19 @@ set /p R2URL="  R2 public address: "
 REM Written fresh each time so a half-edited old file cannot leak through.
 > "eclat_config.bat" echo @echo off
 >>"eclat_config.bat" echo REM Written by 2_configure.bat - contains passwords, keep private.
->>"eclat_config.bat" echo set ECLAT_BASE_URL=%ECURL%
->>"eclat_config.bat" echo set ECLAT_EMAIL=%ECMAIL%
->>"eclat_config.bat" echo set ECLAT_PASSWORD=%ECPASS%
->>"eclat_config.bat" echo set SJEP_SQL_SERVER=%SQLSRV%
->>"eclat_config.bat" echo set SJEP_SQL_DB=%SQLDB%
->>"eclat_config.bat" echo set SJEP_SQL_USER=%SQLUSER%
->>"eclat_config.bat" echo set SJEP_SQL_PASS=%SQLPASS%
->>"eclat_config.bat" echo set SJEP_IMAGE_ROOT=%IMGROOT%
->>"eclat_config.bat" echo set R2_ACCOUNT_ID=%R2ACC%
->>"eclat_config.bat" echo set R2_ACCESS_KEY_ID=%R2KEY%
->>"eclat_config.bat" echo set R2_SECRET_ACCESS_KEY=%R2SEC%
->>"eclat_config.bat" echo set R2_BUCKET=%R2BUCKET%
->>"eclat_config.bat" echo set R2_PUBLIC_BASE_URL=%R2URL%
+>>"eclat_config.bat" echo set "ECLAT_BASE_URL=%ECURL%"
+>>"eclat_config.bat" echo set "ECLAT_EMAIL=%ECMAIL%"
+>>"eclat_config.bat" echo set "ECLAT_PASSWORD=%ECPASS%"
+>>"eclat_config.bat" echo set "SJEP_SQL_SERVER=%SQLSRV%"
+>>"eclat_config.bat" echo set "SJEP_SQL_DB=%SQLDB%"
+>>"eclat_config.bat" echo set "SJEP_SQL_USER=%SQLUSER%"
+>>"eclat_config.bat" echo set "SJEP_SQL_PASS=%SQLPASS%"
+>>"eclat_config.bat" echo set "SJEP_IMAGE_ROOT=%IMGROOT%"
+>>"eclat_config.bat" echo set "R2_ACCOUNT_ID=%R2ACC%"
+>>"eclat_config.bat" echo set "R2_ACCESS_KEY_ID=%R2KEY%"
+>>"eclat_config.bat" echo set "R2_SECRET_ACCESS_KEY=%R2SEC%"
+>>"eclat_config.bat" echo set "R2_BUCKET=%R2BUCKET%"
+>>"eclat_config.bat" echo set "R2_PUBLIC_BASE_URL=%R2URL%"
 
 echo.
 echo Settings saved.
