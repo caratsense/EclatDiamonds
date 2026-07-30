@@ -649,6 +649,28 @@ def profile_branch_attribution(cur):
     out("  or whether everything piles into one store. Read it with the client.")
     out("")
 
+    # Every party name, not just the ones flagged as locations.
+    #
+    # Learned the hard way on the live database: the columns that DO look like
+    # branch keys (Inward.BranchNo, BookMaster.BranchNo) point at party rows that
+    # are NOT flagged IsLocation — so a report restricted to flagged rows showed
+    # "values are not in the branch list" for the very column that is the answer,
+    # and listed nine "branches" that were mostly supplier firms and a row called
+    # "abc". Naming every value regardless of flag is what makes the real
+    # structure visible.
+    all_parties = {}
+    if table_exists(cur, "PartyMst"):
+        try:
+            cur.execute("SELECT TOP 0 * FROM PartyMst")
+            pc = {str(d[0]).lower(): str(d[0]) for d in cur.description}
+            pk, nm = pc.get("partyno"), (pc.get("firmname") or pc.get("legalname"))
+            if pk and nm:
+                cur.execute(f"SELECT {pk} AS id, {nm} AS name FROM PartyMst")
+                for r in rows(cur):
+                    all_parties[str(r["id"]).strip()] = str(r.get("name") or "").strip()
+        except Exception:
+            pass
+
     # 1. How many branches are there, and what are they called?
     branches = {}
     if table_exists(cur, "PartyMst"):
@@ -708,10 +730,10 @@ def profile_branch_attribution(cur):
                     f"SELECT TOP 10 {col} AS v, COUNT(*) AS n FROM {table} "
                     f"WHERE {col} IS NOT NULL GROUP BY {col} ORDER BY COUNT(*) DESC")
                 top = rows(cur)
-                known = sum(1 for t in top if str(t["v"]).strip() in branches)
+                known = sum(1 for t in top if str(t["v"]).strip() in all_parties)
                 spread = ", ".join(
                     f"{str(t['v']).strip()}"
-                    + (f"={branches[str(t['v']).strip()]}" if str(t['v']).strip() in branches else "")
+                    + (f"={all_parties[str(t['v']).strip()]}" if str(t['v']).strip() in all_parties else "")
                     + f" ({t['n']})"
                     for t in top[:5])
                 verdict = ""
@@ -722,8 +744,8 @@ def profile_branch_attribution(cur):
                     # it against the branch list always "fails". It is meant to be
                     # resolved one hop further, through BookMaster — see below.
                     verdict = "  <- document series; resolved via BookMaster (see below)"
-                elif branches and known == 0:
-                    verdict = "  <- values are not in the branch list above"
+                elif all_parties and known == 0:
+                    verdict = "  <- values do not match any party record"
                 elif pct < 50:
                     verdict = f"  <- only {pct}% of rows have it"
                 out(f"    {col:<18} filled {pct:>3}%  distinct {distinct:<5}{verdict}")

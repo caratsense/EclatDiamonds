@@ -513,7 +513,10 @@ BRANCH_CANDIDATES = {
     "parties":  ["EclatBranchId", "BranchNo", "LocationId"],
     # products deliberately absent: the design catalogue is company-wide, so
     # "no branch" is the correct state and must not be reported as a problem.
-    "stock":    ["EclatBranchId", "LocationId", "BranchNo", "FirstLocationId", "CompanyId"],
+    # CompanyId excluded on purpose — see the note on DEFAULT_BRANCH_COLUMNS in
+    # the backend. Its values are legal entities and suppliers, not shops, so
+    # including it gives 100% "coverage" that is mostly wrong.
+    "stock":    ["EclatBranchId", "BranchNo", "LocationId", "FirstLocationId"],
     "sales":    ["EclatBranchId", "BranchNo", "LocationId"],
     "orders":   ["EclatBranchId", "BranchNo", "LocationId"],
 }

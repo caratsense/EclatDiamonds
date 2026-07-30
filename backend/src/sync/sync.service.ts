@@ -691,7 +691,20 @@ export class SyncService {
   private static readonly DEFAULT_BRANCH_COLUMNS: Record<string, string[]> = {
     parties: ['EclatBranchId', 'BranchNo', 'LocationId'],
     products: ['EclatBranchId', 'BranchNo', 'LocationId'],
-    stock: ['EclatBranchId', 'LocationId', 'BranchNo', 'FirstLocationId', 'CompanyId'],
+    // `BranchNo` before `LocationId`, and **`CompanyId` deliberately absent**.
+    //
+    // Measured against the client's live database: LocationId and
+    // FirstLocationId are 0% populated, while BranchNo resolves to real shops
+    // (MUMBAI BANDRA, DELHI ROHINI, UDAIPUR ASHOK NAGAR …). CompanyId is 100%
+    // populated, which makes it tempting — but its values are legal entities and
+    // suppliers (APRS HO, DIAGEMCO, HARSH PRECIOUS PVT LTD), not shops. Including
+    // it would have attributed every piece lacking a BranchNo to a supplier as
+    // though it were a branch: 100% coverage, most of it wrong, and wrong in a
+    // way that looks perfectly reasonable on a dashboard.
+    //
+    // Stock with no BranchNo therefore lands in "Unassigned", which is the
+    // truthful answer — that stock genuinely is not recorded against a shop.
+    stock: ['EclatBranchId', 'BranchNo', 'LocationId', 'FirstLocationId'],
     sales: ['EclatBranchId', 'BranchNo', 'LocationId'],
     orders: ['EclatBranchId', 'BranchNo', 'LocationId'],
     // No `bags` entry on purpose: ProductionBag has no storeId of its own and
