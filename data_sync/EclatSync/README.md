@@ -78,15 +78,19 @@ piece instead of a grey box.
 
 1. Run **`discover.bat`** first (see below) — it finds the folder your photos are
    kept in and prints the exact line to paste into `eclat_config.bat`.
-2. Add your **Cloudinary** details to `eclat_config.bat` (cloud name, API key,
-   API secret — from your Cloudinary dashboard under Settings → API Keys).
+2. Add your **Cloudflare R2** details to `eclat_config.bat` (account ID, access
+   key, secret, bucket, public URL — the file says where each one comes from).
 3. Try a small batch: **`sync_media.bat 25`**. Check those 25 appear.
 4. Then run **`sync_media.bat`** for the rest.
 
 The first full run can take a few hours if you have thousands of photos. That is
 normal. You can stop it and start it again — it carries on from where it stopped
 and never re-uploads the same photo twice. Photos go straight from this PC to
-Cloudinary.
+Cloudflare; they never pass through the Eclat servers.
+
+Before uploading anything, the agent makes one test request to check the keys and
+bucket are right, so a wrong setting is reported in seconds rather than after a
+long run.
 
 ---
 
@@ -111,6 +115,8 @@ Send that file to the Eclat team.
 | `discover.py` | The survey program. |
 | `sync_sjep.py` | The sync program (sales, stock, orders, manufacturing, payments). |
 | `sync_media.bat` / `sync_media.py` | Uploads catalogue photographs. |
+| `eclat_r2.py` | Cloudflare R2 upload helper (used by the photo sync). |
+| `test_sigv4.py` | Self-check for the R2 signing code. Not needed day to day. |
 | `setup.bat` | One-time installer (run as administrator). |
 | `run_sync.bat` | Runs one sync cycle (used by the schedule; also manual). |
 | `eclat_config.example.bat` | Template for your connection details. |

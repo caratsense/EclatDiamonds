@@ -22,10 +22,29 @@ REM Don't guess: run discover.bat, which hunts for the folder and prints the
 REM exact line to paste here.
 set SJEP_IMAGE_ROOT=
 
-REM ── CLOUDINARY (where the photos are uploaded) ──────────────────────────────
-REM Cloudinary dashboard -> Settings -> API Keys.
-REM Photos go STRAIGHT from this PC to Cloudinary; they never pass through the
-REM Eclat backend. Leave blank to skip photo sync entirely.
+REM ── CLOUDFLARE R2 (where the photos are uploaded) ───────────────────────────
+REM Photos go STRAIGHT from this PC to R2; they never pass through the Eclat
+REM backend. Leave blank to skip photo sync entirely.
+REM
+REM Where each value comes from (Cloudflare dashboard -> R2):
+REM   R2_ACCOUNT_ID        R2 -> Overview, the "Account ID" on the right.
+REM   R2_ACCESS_KEY_ID     R2 -> API -> Manage API Tokens -> Create Token
+REM   R2_SECRET_ACCESS_KEY (shown ONCE when the token is created — copy it then)
+REM   R2_BUCKET            the bucket name you created, e.g. eclat-media
+REM   R2_PUBLIC_BASE_URL   bucket -> Settings -> Public access. Either the
+REM                        r2.dev dev URL (https://pub-xxxx.r2.dev) or your
+REM                        custom domain (https://images.yourshop.com).
+REM                        NO trailing slash.
+set R2_ACCOUNT_ID=
+set R2_ACCESS_KEY_ID=
+set R2_SECRET_ACCESS_KEY=
+set R2_BUCKET=
+set R2_PUBLIC_BASE_URL=
+
+REM Optional: only if your bucket uses a jurisdiction-specific endpoint (EU/FedRAMP).
+REM set R2_ENDPOINT=https://<account-id>.eu.r2.cloudflarestorage.com
+
+REM ── CLOUDINARY (alternative to R2 — leave blank if using R2) ────────────────
 set CLOUDINARY_CLOUD_NAME=
 set CLOUDINARY_API_KEY=
 set CLOUDINARY_API_SECRET=
