@@ -29,6 +29,45 @@ That last row matters: the full mirror means nothing is lost even for tables we
 have not modelled yet, so a field the client asks about in three months is
 already in Eclat without another site visit.
 
+### Multiple branches: read this before syncing
+
+If the client runs more than one shop, **the discovery report's "BRANCH
+ATTRIBUTION" section is the most important thing on the call.** It tells you
+which column says where a row belongs, measured against their live data rather
+than assumed.
+
+What to look for, per table: a column with a **high fill %**, **more than one
+distinct value**, and values that **are actually branch ids**. The report flags
+each failure explicitly (`SAME VALUE EVERYWHERE`, `values are NOT branch ids`,
+`only N% of rows have it`).
+
+Two specific traps:
+
+- **`Inward` has four candidates** — `LocationId`, `BranchNo`, `FirstLocationId`,
+  `CompanyId`. We try `LocationId` first, on the reading that for stock the
+  question is "where is this piece now". If the client's install means something
+  different by it, set `SYNC_BRANCH_COLUMNS` on the backend instead of changing
+  code — it is a JSON map of entity to an ordered column list.
+- **Sales and orders have NO location column at all.** Their only link to a place
+  is `BookNo` → `BookMaster`, which assumes each branch keeps its own invoice
+  series. The report checks that assumption. **If BookMaster has no branch
+  column, or every book points at one branch, per-branch revenue cannot be
+  derived from this data** — say so on the call rather than shipping a report
+  that silently puts every sale in one shop.
+
+After the first sync, check the agent log. Every batch reports how many rows were
+attributed and how many were not:
+
+```
+sync stock: received=2690 upserted=2690 skipped=0 attributed=2612 default=78
+```
+
+A high `default=` count means attribution is not working — go back to the report.
+Rows that cannot be attributed are parked in an **"Unassigned — needs a branch"**
+store rather than being dumped into a real branch, so no shop's figures are ever
+quietly inflated. That store appearing with a lot in it is a signal, not a bug.
+(On a single-branch client it is never created.)
+
 ### Two things the sync CANNOT bring across
 
 1. **Store coordinates.** There is no latitude/longitude anywhere in the legacy

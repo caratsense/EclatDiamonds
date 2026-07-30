@@ -25,6 +25,17 @@ export interface SyncResult {
   skipped: number;
   /** Highest legacy UpdateDate/EntryDate in this batch (the agent's next watermark). */
   watermark: string | null;
+  /**
+   * How many rows were attributed to a real branch vs. fell back to the default
+   * store. Surfaced so a multi-branch install can see at a glance that its data
+   * is actually being split, rather than all landing in one place unnoticed.
+   */
+  attribution?: {
+    attributed: number;
+    fellBackToDefault: number;
+    unknownBranchIds: string[];
+    branchColumns: string[];
+  };
 }
 
 type Rec = Record<string, any>;
@@ -66,12 +77,15 @@ export class SyncService {
   ) {}
 
   /**
-   * Single-branch legacy install -> one Eclat store (override via SYNC_DEFAULT_STORE_ID).
-   * NOTE: the single-defaultStoreId path below is intentionally kept AS-IS so existing
-   * single-branch installs keep working. Multi-store installs will instead stamp each
-   * transaction row's store via `resolveStoreByLegacyId(LocationId)` — the next step is
-   * threading the Gati LocationId onto each synced transaction row so per-row location
-   * stamping can replace this default.
+   * The store a row lands in when it names no branch we recognise.
+   *
+   * This is now a FALLBACK, not the destination: rows are stamped per-row by
+   * `branchResolver`, so a multi-branch install splits correctly. It still
+   * matters for two cases — a single-branch install where no row carries a
+   * location, and a row whose branch has not synced yet — and for those the
+   * fallback keeps data flowing rather than rejecting it. Every use is counted
+   * and reported as `attribution.fellBackToDefault` so it can never be the silent
+   * default it used to be.
    */
   private get defaultStoreId(): string {
     return this.config.get<string>('SYNC_DEFAULT_STORE_ID') ?? 'surat-main';
@@ -650,9 +664,174 @@ export class SyncService {
     }
   }
 
+  // ── Per-row branch attribution ──────────────────────────────────────────────
+  /**
+   * Which legacy column names a row's branch, per entity.
+   *
+   * Ordered — the first column present and non-null on the row wins. The order
+   * matters and is not arbitrary:
+   *
+   *  - `Inward` (stock) carries FOUR branch-ish columns. `LocationId` is tried
+   *    first because for stock the question people actually ask is "where is
+   *    this piece now", which is what location tracks; `BranchNo` (the owning
+   *    branch) is the fallback, then `FirstLocationId` (where it first landed).
+   *    `CompanyId` is the legal entity, not a shop, so it is last.
+   *  - `JewelTrans` (sales) and `Spm_MfgOrder` (orders) have NO location column
+   *    at all. In this schema every transaction hangs off `BookNo` -> BookMaster,
+   *    and document series are kept per branch — so the agent resolves the book's
+   *    branch on its side and sends it as `EclatBranchId`. That synthetic field
+   *    is checked first everywhere, which also lets an install override the
+   *    column choice without a backend change.
+   *
+   * Overridable per install via SYNC_BRANCH_COLUMNS, a JSON object of
+   * entity -> string[], because these column names and their meaning vary
+   * between APRS versions and must be confirmed against the live database
+   * (discover.py profiles them).
+   */
+  private static readonly DEFAULT_BRANCH_COLUMNS: Record<string, string[]> = {
+    parties: ['EclatBranchId', 'BranchNo', 'LocationId'],
+    products: ['EclatBranchId', 'BranchNo', 'LocationId'],
+    stock: ['EclatBranchId', 'LocationId', 'BranchNo', 'FirstLocationId', 'CompanyId'],
+    sales: ['EclatBranchId', 'BranchNo', 'LocationId'],
+    orders: ['EclatBranchId', 'BranchNo', 'LocationId'],
+    // No `bags` entry on purpose: ProductionBag has no storeId of its own and
+    // hangs off ManufacturingOrder, so a bag inherits whichever branch its order
+    // was attributed to. Listing it here would imply a stamping that never runs.
+  };
+
+  private branchColumnsFor(entity: string): string[] {
+    const raw = this.config.get<string>('SYNC_BRANCH_COLUMNS');
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as Record<string, string[]>;
+        if (Array.isArray(parsed[entity])) return parsed[entity];
+      } catch {
+        this.logger.warn('SYNC_BRANCH_COLUMNS is not valid JSON — using defaults.');
+      }
+    }
+    return SyncService.DEFAULT_BRANCH_COLUMNS[entity] ?? ['EclatBranchId'];
+  }
+
+  /** Stable id of the holding store for rows we cannot attribute to a branch. */
+  static readonly UNASSIGNED_STORE_ID = 'unassigned';
+
+  /**
+   * Where a row goes when it names no branch we recognise.
+   *
+   * On a MULTI-BRANCH install this is a dedicated holding store, not one of the
+   * real shops. The reasoning is the same as a suspense account in bookkeeping:
+   * a wrong number that looks right is worse than a visibly missing one. Orphans
+   * dumped into (say) Mumbai just make Mumbai read high, and nobody investigates
+   * a plausible figure. Sitting in "Unassigned", they are obviously wrong and get
+   * fixed — and no real branch's sales or stock are ever inflated by rows that
+   * may belong to a different shop.
+   *
+   * On a SINGLE-BRANCH install the opposite is true: no row carries a location,
+   * so everything would land in a holding store and the client would see an empty
+   * shop next to a full "Unassigned". So the holding store is used only once more
+   * than one real (synced) branch exists. Set SYNC_UNATTRIBUTED=default to force
+   * the old behaviour.
+   *
+   * Created lazily — an install that attributes everything never grows the extra
+   * store.
+   */
+  private async unattributedStoreId(): Promise<string> {
+    const mode = (this.config.get<string>('SYNC_UNATTRIBUTED') ?? 'holding').toLowerCase();
+    if (mode === 'default') return this.assertStore();
+
+    const realBranches = await this.prisma.store.count({
+      where: { legacyId: { not: null }, isAggregate: false },
+    });
+    if (realBranches <= 1) return this.assertStore();
+
+    const id = SyncService.UNASSIGNED_STORE_ID;
+    const existing = await this.prisma.store.findUnique({ where: { id }, select: { id: true } });
+    if (existing) return id;
+
+    // Deliberately has no legacyId: it is ours, not a branch of theirs, so the
+    // demo purge treats it as non-imported and the sync never tries to update it.
+    await this.prisma.store.create({
+      data: {
+        id,
+        name: 'Unassigned — needs a branch',
+        city: '',
+        status: 'pending',
+        isActive: false,
+      },
+    });
+    this.logger.warn(
+      'Created the "Unassigned" holding store: some imported rows name no branch ' +
+        'we recognise. They are parked there rather than inflating a real branch.',
+    );
+    return id;
+  }
+
+  /**
+   * Resolve one batch's rows to store ids, caching lookups.
+   *
+   * Returns a resolver plus counters, so a caller can both stamp rows and report
+   * how much of the batch was actually attributed. Silence here would be the
+   * worst outcome: everything quietly landing on the default store is exactly the
+   * bug this replaces, and it looks identical to "this client has one branch".
+   */
+  private async branchResolver(entity: string) {
+    const fallbackStoreId = await this.unattributedStoreId();
+    const columns = this.branchColumnsFor(entity);
+    const cache = new Map<string, string | null>();
+    let attributed = 0;
+    let fellBack = 0;
+    const unknownBranchIds = new Set<string>();
+
+    const resolve = async (r: Rec): Promise<string> => {
+      for (const col of columns) {
+        const raw = r[col];
+        if (raw == null || String(raw).trim() === '') continue;
+        const key = String(raw).trim();
+        if (!cache.has(key)) {
+          cache.set(key, await this.resolveStoreByLegacyId(key));
+        }
+        const hit = cache.get(key);
+        if (hit) {
+          attributed++;
+          return hit;
+        }
+        // A branch id we have never seen as a Store. Record it rather than
+        // silently pretending the row belongs to the default branch — an
+        // unsynced branch is a fixable problem, but only if someone is told.
+        unknownBranchIds.add(key);
+      }
+      fellBack++;
+      return fallbackStoreId;
+    };
+
+    const report = () => ({
+      attributed,
+      fellBackToDefault: fellBack,
+      unknownBranchIds: [...unknownBranchIds].slice(0, 20),
+      branchColumns: columns,
+    });
+
+    return { resolve, report };
+  }
+
+  /** Log + shape the attribution summary consistently across entities. */
+  private logAttribution(entity: string, report: ReturnType<Awaited<ReturnType<SyncService['branchResolver']>>['report']>) {
+    if (report.fellBackToDefault > 0 || report.unknownBranchIds.length > 0) {
+      this.logger.warn(
+        `sync ${entity}: ${report.fellBackToDefault} row(s) had no usable branch and ` +
+          `went to the default store` +
+          (report.unknownBranchIds.length
+            ? `; unknown branch ids: ${report.unknownBranchIds.join(', ')}`
+            : '') +
+          ` (columns tried: ${report.branchColumns.join(' -> ')})`,
+      );
+    }
+    return report;
+  }
+
   // ── PartyMst -> Party ────────────────────────────────────────────────────────
   async syncParties(records: Rec[]): Promise<SyncResult> {
-    const storeId = await this.assertStore();
+    const branch = await this.branchResolver('parties');
     let upserted = 0;
     let skipped = 0;
     for (const r of records) {
@@ -667,6 +846,7 @@ export class SyncService {
       if (bool(r.IsLocation) || bool(r.IsFactory)) types.push('branch');
       if (bool(r.IsAccount)) types.push('account');
 
+      const storeId = await branch.resolve(r);
       const data = {
         storeId,
         name: str(r.FirmName) || str(r.LegalName) || str(r.PartyCode) || String(r.PartyNo),
@@ -699,12 +879,12 @@ export class SyncService {
       });
       upserted++;
     }
-    return this.result('parties', records, upserted, skipped);
+    return this.result('parties', records, upserted, skipped, branch.report());
   }
 
   // ── StyleMst (+Summary) -> Product ───────────────────────────────────────────
   async syncProducts(records: Rec[]): Promise<SyncResult> {
-    const storeId = await this.assertStore();
+    const branch = await this.branchResolver('products');
     let upserted = 0;
     let skipped = 0;
     for (const r of records) {
@@ -714,6 +894,7 @@ export class SyncService {
       }
       const metal = metalFromTone(r.ToneFor, r.ToneCode);
       const sku = str(r.StyleSKUNo) || str(r.StyleCode) || `STYLE-${r.StyleId}`;
+      const storeId = await branch.resolve(r);
       const data = {
         storeId,
         sku,
@@ -734,12 +915,12 @@ export class SyncService {
       });
       upserted++;
     }
-    return this.result('products', records, upserted, skipped);
+    return this.result('products', records, upserted, skipped, branch.report());
   }
 
   // ── Inward (+Summary) -> StockItem ───────────────────────────────────────────
   async syncStock(records: Rec[]): Promise<SyncResult> {
-    const storeId = await this.assertStore();
+    const branch = await this.branchResolver('stock');
     const productByStyle = await this.idMap(
       'product',
       records.map((r) => r.StyleId),
@@ -752,6 +933,7 @@ export class SyncService {
         continue;
       }
       const metal = metalFromTone(r.ToneFor, r.ToneCode);
+      const storeId = await branch.resolve(r);
       const data = {
         storeId,
         productId: productByStyle.get(String(r.StyleId)) ?? null,
@@ -788,12 +970,12 @@ export class SyncService {
       });
       upserted++;
     }
-    return this.result('stock', records, upserted, skipped);
+    return this.result('stock', records, upserted, skipped, branch.report());
   }
 
   // ── JewelTrans -> Sale ───────────────────────────────────────────────────────
   async syncSales(records: Rec[]): Promise<SyncResult> {
-    const storeId = await this.assertStore();
+    const branch = await this.branchResolver('sales');
     const partyByLegacy = await this.idMap(
       'party',
       records.map((r) => r.PartyNo),
@@ -808,6 +990,7 @@ export class SyncService {
       const docType = docTypeFromTranType(r.TranType);
       const baseNo = `${str(r.JewelTransPrefix) || ''}${r.JewelTransNo ?? r.JewelTransId}`;
       const docNo = `${baseNo}#${r.JewelTransId}`;
+      const storeId = await branch.resolve(r);
       const data = {
         storeId,
         partyId: partyByLegacy.get(String(r.PartyNo)) ?? null,
@@ -828,7 +1011,7 @@ export class SyncService {
       });
       upserted++;
     }
-    return this.result('sales', records, upserted, skipped);
+    return this.result('sales', records, upserted, skipped, branch.report());
   }
 
   // ── JewelTransInward (+Summary) -> SaleLine ──────────────────────────────────
@@ -872,7 +1055,7 @@ export class SyncService {
 
   // ── Spm_MfgOrder -> ManufacturingOrder ───────────────────────────────────────
   async syncOrders(records: Rec[]): Promise<SyncResult> {
-    const storeId = await this.assertStore();
+    const branch = await this.branchResolver('orders');
     const partyByLegacy = await this.idMap(
       'party',
       records.flatMap((r) => [r.MadeFor_PartyNo, r.CustomerId]),
@@ -888,6 +1071,7 @@ export class SyncService {
         partyByLegacy.get(String(r.MadeFor_PartyNo)) ??
         partyByLegacy.get(String(r.CustomerId)) ??
         null;
+      const storeId = await branch.resolve(r);
       const data = {
         storeId,
         partyId,
@@ -913,7 +1097,7 @@ export class SyncService {
       });
       upserted++;
     }
-    return this.result('orders', records, upserted, skipped);
+    return this.result('orders', records, upserted, skipped, branch.report());
   }
 
   // ── SPM_MfgOrderItem -> ManufacturingOrderItem ───────────────────────────────
@@ -1141,10 +1325,28 @@ export class SyncService {
     return map;
   }
 
-  private result(entity: string, records: Rec[], upserted: number, skipped: number): SyncResult {
+  private result(
+    entity: string,
+    records: Rec[],
+    upserted: number,
+    skipped: number,
+    /** Branch-attribution summary, when the entity is store-scoped. */
+    attribution?: ReturnType<Awaited<ReturnType<SyncService['branchResolver']>>['report']>,
+  ): SyncResult {
     this.logger.log(
-      `sync ${entity}: received=${records.length} upserted=${upserted} skipped=${skipped}`,
+      `sync ${entity}: received=${records.length} upserted=${upserted} skipped=${skipped}` +
+        (attribution
+          ? ` attributed=${attribution.attributed} default=${attribution.fellBackToDefault}`
+          : ''),
     );
-    return { entity, received: records.length, upserted, skipped, watermark: maxWatermark(records) };
+    if (attribution) this.logAttribution(entity, attribution);
+    return {
+      entity,
+      received: records.length,
+      upserted,
+      skipped,
+      watermark: maxWatermark(records),
+      ...(attribution ? { attribution } : {}),
+    };
   }
 }

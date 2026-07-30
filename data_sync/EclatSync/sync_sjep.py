@@ -282,6 +282,85 @@ def extract_orders(cursor, since=""):
     return _base(cursor, "Spm_MfgOrder", since)
 
 
+def build_book_branch_map(cursor):
+    """BookNo -> branch PartyNo, read off `BookMaster`.
+
+    Why this exists: `JewelTrans` (sales) and `Spm_MfgOrder` (orders) carry NO
+    location column at all — the only thing tying a transaction to a place is its
+    document book (`BookNo` -> BookMaster), and in this family of systems each
+    branch keeps its own invoice/order series. So the book IS the branch, one hop
+    away.
+
+    Schema-defensive because the branch column's NAME varies by install: we take
+    whichever of the usual candidates exists. Returns {} when BookMaster has no
+    branch-ish column, in which case sales/orders simply carry no EclatBranchId
+    and the backend reports them as unattributed rather than guessing.
+
+    # LIVE-DB: confirm against discovery_report.txt which column BookMaster
+    # actually uses, and that books really are per-branch on this install — some
+    # shops keep one series across all branches, in which case transactions
+    # cannot be split this way and need a different source.
+    """
+    cols = table_columns(cursor, "BookMaster")
+    if not cols:
+        return {}
+    pk = cols.get("bookno")
+    if not pk:
+        return {}
+    branch_col = None
+    for cand in ("branchno", "locationid", "companyid", "branchid", "partyno"):
+        if cand in cols:
+            branch_col = cols[cand]
+            break
+    if not branch_col:
+        log.warning("  BookMaster has no branch column — sales/orders cannot be "
+                    "attributed to a branch this way (# LIVE-DB: confirm)")
+        return {}
+
+    cursor.execute(f"SELECT {pk} AS BookNo, {branch_col} AS BranchNo FROM BookMaster")
+    mapping = {}
+    for r in rows(cursor):
+        b, br = r.get("BookNo"), r.get("BranchNo")
+        if b is not None and br is not None and str(br).strip():
+            mapping[str(b).strip()] = str(br).strip()
+    log.info(f"  BookMaster: {len(mapping)} book(s) map to a branch via {branch_col}")
+    return mapping
+
+
+def stamp_branch(records, book_branch, label=""):
+    """Add `EclatBranchId` to rows that have no direct location column.
+
+    The backend checks `EclatBranchId` first for every entity, so this is also the
+    hook for overriding attribution on an install whose columns mean something
+    unusual — without changing backend code.
+    """
+    if not records:
+        return records
+    stamped = 0
+    for r in records:
+        if r.get("EclatBranchId"):
+            continue
+        # A direct location on the row always beats the book's branch: it is the
+        # more specific fact. Only fill the gap.
+        for direct in ("LocationId", "BranchNo"):
+            v = r.get(direct)
+            if v is not None and str(v).strip():
+                r["EclatBranchId"] = str(v).strip()
+                stamped += 1
+                break
+        else:
+            bn = r.get("BookNo")
+            if bn is not None and str(bn).strip():
+                hit = book_branch.get(str(bn).strip())
+                if hit:
+                    r["EclatBranchId"] = hit
+                    stamped += 1
+    if label:
+        missing = len(records) - sum(1 for r in records if r.get("EclatBranchId"))
+        log.info(f"  {label}: {stamped} row(s) tagged with a branch, {missing} without")
+    return records
+
+
 def extract_order_items(cursor, order_ids):
     """Line items for a set of OrderIds: SPM_MfgOrderItem (→ ManufacturingOrderItem).
     Inward_JewelId = the produced piece once made."""
@@ -833,6 +912,14 @@ def sync_once():
             oitems  = extract_order_items(cursor, [o["OrderId"] for o in orders])
             bags    = extract_bags(cursor, since)
             payments = extract_payments(cursor, since)
+
+            # Branch attribution. Stock and parties already carry a location
+            # column (the extractors SELECT *), so the backend reads those
+            # directly; sales and orders carry none and are tagged here via their
+            # document book. Cheap — BookMaster is a few hundred rows.
+            book_branch = build_book_branch_map(cursor)
+            stamp_branch(sales, book_branch, "sales")
+            stamp_branch(orders, book_branch, "orders")
             log.info(f"  [{base_url}] extracted: parties={len(parties)} items={len(items)} "
                      f"stock={len(stock)} sales={len(sales)}({len(lines)} lines) "
                      f"orders={len(orders)}({len(oitems)} items) bags={len(bags)} "

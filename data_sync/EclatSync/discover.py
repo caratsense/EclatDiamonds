@@ -301,12 +301,162 @@ def main():
     out("  A human must confirm each one, then save the file as stage_map.json.")
     out("  Anything left null simply records the movement without moving the order.")
 
+    profile_branch_attribution(cur)
+
     out("\n" + "=" * 72)
     out("DISCOVERY COMPLETE — nothing was changed, nothing was uploaded.")
     out(f"Send this file to the Eclat team: {REPORT}")
     out("=" * 72)
     conn.close()
     _save()
+
+
+# ── Branch attribution ────────────────────────────────────────────────────────
+# Which column says "this row belongs to THIS shop"? Get it wrong and every
+# per-branch number in the product is wrong in a way that looks plausible, so this
+# is measured rather than assumed.
+#
+# The tables split into two kinds:
+#   * Inward / PartyMst carry location columns directly (often several).
+#   * JewelTrans / Spm_MfgOrder carry none — their only link to a place is
+#     BookNo -> BookMaster, on the assumption that each branch keeps its own
+#     document series. That assumption is exactly what this checks.
+
+BRANCH_CANDIDATES = {
+    "Inward":       ["LocationId", "BranchNo", "FirstLocationId", "CompanyId"],
+    "PartyMst":     ["BranchNo", "LocationId"],
+    "JewelTrans":   ["BranchNo", "LocationId", "BookNo"],
+    "Spm_MfgOrder": ["BranchNo", "LocationId", "BookNo"],
+    "SPM_BagMaster": ["CompanyId", "BranchNo"],
+    "Journal":      ["BranchNo", "LocationId", "BookNo"],
+}
+
+
+def profile_branch_attribution(cur):
+    out("\n" + "=" * 72)
+    out("BRANCH ATTRIBUTION — which column tells us the shop?")
+    out("=" * 72)
+    out("")
+    out("  This decides whether each branch gets its own sales, stock and orders,")
+    out("  or whether everything piles into one store. Read it with the client.")
+    out("")
+
+    # 1. How many branches are there, and what are they called?
+    branches = {}
+    if table_exists(cur, "PartyMst"):
+        cur.execute("SELECT TOP 0 * FROM PartyMst")
+        cols = {str(d[0]).lower(): str(d[0]) for d in cur.description}
+        flags = [c for c in ("islocation", "isfactory") if c in cols]
+        name_col = cols.get("firmname") or cols.get("legalname")
+        pk = cols.get("partyno")
+        if flags and name_col and pk:
+            where = " OR ".join(f"{cols[f]} = 1" for f in flags)
+            cur.execute(f"SELECT {pk} AS id, {name_col} AS name FROM PartyMst WHERE {where}")
+            for r in rows(cur):
+                branches[str(r["id"]).strip()] = str(r.get("name") or "").strip()
+            out(f"  Branch/location rows in PartyMst: {len(branches)}")
+            for bid, bname in list(branches.items())[:25]:
+                out(f"    - [{bid}] {bname}")
+            if len(branches) > 25:
+                out(f"    ... and {len(branches) - 25} more")
+        else:
+            out("  ! PartyMst has no IsLocation/IsFactory flag — branches cannot be "
+                "detected automatically.")
+    out("")
+
+    if len(branches) <= 1:
+        out("  >> Only one branch found. Per-branch reporting is not meaningful here;")
+        out("     everything will sit in a single store. If the client says they run")
+        out("     several shops, this flag is wrong — ASK before syncing.")
+        out("")
+
+    # 2. For each table, how well does each candidate column actually cover it?
+    for table, cands in BRANCH_CANDIDATES.items():
+        if not table_exists(cur, table):
+            continue
+        cur.execute(f"SELECT TOP 0 * FROM {table}")
+        cols = {str(d[0]).lower(): str(d[0]) for d in cur.description}
+        total = count(cur, table)
+        # count() returns None (missing table) or an "error: ..." string on
+        # failure; only a real integer can be divided by below.
+        if not isinstance(total, int) or total == 0:
+            continue
+        out(f"  {table} ({total} rows)")
+        found_any = False
+        for cand in cands:
+            col = cols.get(cand.lower())
+            if not col:
+                continue
+            found_any = True
+            try:
+                cur.execute(
+                    f"SELECT COUNT(*) AS filled, COUNT(DISTINCT {col}) AS distinct_vals "
+                    f"FROM {table} WHERE {col} IS NOT NULL")
+                r = rows(cur)[0]
+                filled, distinct = r["filled"], r["distinct_vals"]
+                pct = (filled * 100 // total) if total else 0
+                # Does it point at things we believe are branches?
+                cur.execute(
+                    f"SELECT TOP 10 {col} AS v, COUNT(*) AS n FROM {table} "
+                    f"WHERE {col} IS NOT NULL GROUP BY {col} ORDER BY COUNT(*) DESC")
+                top = rows(cur)
+                known = sum(1 for t in top if str(t["v"]).strip() in branches)
+                spread = ", ".join(
+                    f"{str(t['v']).strip()}"
+                    + (f"={branches[str(t['v']).strip()]}" if str(t['v']).strip() in branches else "")
+                    + f" ({t['n']})"
+                    for t in top[:5])
+                verdict = ""
+                if distinct <= 1:
+                    verdict = "  <- SAME VALUE EVERYWHERE, useless for splitting"
+                elif branches and known == 0:
+                    verdict = "  <- values are NOT branch ids"
+                elif pct < 50:
+                    verdict = f"  <- only {pct}% of rows have it"
+                out(f"    {col:<18} filled {pct:>3}%  distinct {distinct:<5}{verdict}")
+                if spread:
+                    out(f"      top: {spread}")
+            except Exception as e:
+                out(f"    {col:<18} could not profile: {str(e)[:60]}")
+        if not found_any:
+            out("    (no direct branch column — must go through BookMaster, see below)")
+        out("")
+
+    # 3. Is the document book per-branch? This is what sales/orders rely on.
+    out("  BookMaster — the fallback path for sales and orders")
+    if not table_exists(cur, "BookMaster"):
+        out("    ! BookMaster not found. Sales/orders cannot be split by branch.")
+    else:
+        cur.execute("SELECT TOP 0 * FROM BookMaster")
+        cols = {str(d[0]).lower(): str(d[0]) for d in cur.description}
+        branch_col = next((cols[c] for c in
+                           ("branchno", "locationid", "companyid", "branchid", "partyno")
+                           if c in cols), None)
+        if not branch_col:
+            out("    ! BookMaster has NO branch column "
+                f"(has: {', '.join(sorted(cols.values()))[:200]})")
+            out("    >> Sales and orders CANNOT be attributed to a branch on this")
+            out("       install. They will all land in the default store. Raise this")
+            out("       with the client before syncing — it may mean per-branch sales")
+            out("       figures are not achievable from this data.")
+        else:
+            cur.execute(f"SELECT COUNT(*) AS n, COUNT(DISTINCT {branch_col}) AS d "
+                        f"FROM BookMaster WHERE {branch_col} IS NOT NULL")
+            r = rows(cur)[0]
+            out(f"    branch column: {branch_col} — {r['n']} books, "
+                f"{r['d']} distinct branch value(s)")
+            if r["d"] <= 1:
+                out("    >> Every book points at the SAME branch, so books cannot")
+                out("       separate the shops. Sales/orders will not split.")
+            else:
+                out("    >> Books look per-branch. Sales and orders can be attributed.")
+    out("")
+    out("  WHAT THE ECLAT TEAM NEEDS FROM THIS:")
+    out("    1. The number of branches above must match what the client actually runs.")
+    out("    2. For each table, the column with high fill %, >1 distinct value, and")
+    out("       values that ARE branch ids is the one to use.")
+    out("    3. If nothing qualifies for sales/orders, say so out loud — per-branch")
+    out("       revenue then cannot come from this system without new data entry.")
 
 
 # Eclat's production stages, in order.
