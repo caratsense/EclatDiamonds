@@ -112,6 +112,16 @@ export class SyncController {
     return this.sync.resetSyncedData(user, body.confirm);
   }
 
+  /**
+   * Remove imported branches that hold no data and were never activated — the
+   * suppliers and holding companies a location flag wrongly identified as shops.
+   * Dry-run unless the body carries `{"confirm":"DELETE EMPTY BRANCHES"}`.
+   */
+  @Post('prune-stores')
+  pruneStores(@CurrentUser() user: AuthUser, @Body() body: PurgeDemoDto) {
+    return this.sync.pruneEmptyStores(user, body.confirm);
+  }
+
   /** Generic full-mirror: ANY legacy table -> LegacyRow (extract-everything-once). */
   @Post('raw')
   raw(@Body() body: RawSyncDto) {

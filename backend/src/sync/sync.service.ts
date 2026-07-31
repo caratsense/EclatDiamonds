@@ -654,6 +654,102 @@ export class SyncService {
     };
   }
 
+  /**
+   * Remove imported branches that turned out not to be branches.
+   *
+   * The client's `PartyMst.IsLocation` flag returns supplier firms, two holding
+   * companies and a test row called "abc". A branch on this install is a party
+   * the data actually records against, and the agent now identifies them that
+   * way — but a run that used the old rule leaves the wrong ones behind, and a
+   * store picker offering "APRS HO" is how someone files a sale against a
+   * supplier. This has now needed clearing up twice, so it is a callable
+   * operation rather than a third one-shot migration.
+   *
+   * Only ever removes a store that is **still pending** (never activated) and
+   * holds **no row that belongs to it**. "Belongs to" means a foreign key: a
+   * table with an FK to Store holds the branch's real data, whereas a bare
+   * `storeId` with no FK — an audit entry, a notification — is a note *about* a
+   * store and must not keep it alive. Counting those was why the first attempt
+   * deleted nothing: creating a store writes an audit entry, so every store
+   * protected itself by existing.
+   *
+   * Nothing is lost: these are upserted on their original id, so anything that
+   * really is a branch comes straight back on the next sync.
+   */
+  async pruneEmptyStores(user: AuthUser, confirm?: string) {
+    const PRUNE_CONFIRM_PHRASE = 'DELETE EMPTY BRANCHES';
+    const armed = confirm === PRUNE_CONFIRM_PHRASE;
+
+    // Tables holding rows that belong to a store, discovered from the schema so
+    // a model added later is covered without anyone remembering to add it.
+    const owning: { table: string; column: string }[] = await this.prisma.$queryRaw`
+      SELECT DISTINCT kcu.table_name AS "table", kcu.column_name AS "column"
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.key_column_usage kcu
+        ON kcu.constraint_name = tc.constraint_name
+       AND kcu.constraint_schema = tc.constraint_schema
+      JOIN information_schema.constraint_column_usage ccu
+        ON ccu.constraint_name = tc.constraint_name
+       AND ccu.constraint_schema = tc.constraint_schema
+      WHERE tc.constraint_type = 'FOREIGN KEY'
+        AND tc.table_schema = current_schema()
+        AND ccu.table_name = 'Store'`;
+
+    const candidates = await this.prisma.store.findMany({
+      where: { legacyId: { not: null }, isAggregate: false, status: 'pending' },
+      select: { id: true, name: true, legacyId: true },
+      orderBy: { name: 'asc' },
+    });
+
+    const empty: typeof candidates = [];
+    const inUse: { name: string; legacyId: string | null; rows: number }[] = [];
+    for (const s of candidates) {
+      let rows = 0;
+      for (const o of owning) {
+        const [{ n }] = await this.prisma.$queryRawUnsafe<{ n: bigint }[]>(
+          `SELECT count(*)::int AS n FROM "${o.table}" WHERE "${o.column}" = $1`,
+          s.id,
+        );
+        rows += Number(n);
+        if (rows > 0) break;
+      }
+      if (rows > 0) inUse.push({ name: s.name, legacyId: s.legacyId, rows });
+      else empty.push(s);
+    }
+
+    if (!armed) {
+      return {
+        dryRun: true,
+        message:
+          `${empty.length} pending branch(es) hold no data and would be removed; ` +
+          `${inUse.length} hold real data and would be kept. To go ahead, send ` +
+          `{ "confirm": "${PRUNE_CONFIRM_PHRASE}" }.`,
+        wouldDelete: empty.map((s) => ({ name: s.name, legacyId: s.legacyId })),
+        wouldKeep: inUse,
+      };
+    }
+
+    const ids = empty.map((s) => s.id);
+    const deleted = ids.length
+      ? (await this.prisma.store.deleteMany({ where: { id: { in: ids } } })).count
+      : 0;
+
+    await this.audit.record(user, {
+      action: 'store.pruned_empty',
+      entityType: 'system',
+      entityId: 'store-prune',
+      summary: `Removed ${deleted} imported branch(es) that held no data`,
+      metadata: { removed: empty.map((s) => `${s.name} (${s.legacyId})`), kept: inUse.length },
+    });
+
+    return {
+      dryRun: false,
+      message: `Removed ${deleted} empty imported branch(es).`,
+      removed: empty.map((s) => ({ name: s.name, legacyId: s.legacyId })),
+      kept: inUse,
+    };
+  }
+
   async purgeDemo(user: AuthUser, confirm?: string) {
     const PURGE_CONFIRM_PHRASE = 'DELETE DEMO DATA';
     const armed = confirm === PURGE_CONFIRM_PHRASE;

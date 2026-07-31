@@ -669,9 +669,17 @@ def push_stores(cursor, token, base_url):
     # "Unassigned" and each shop would have opened Eclat to an empty inventory.
     #
     # So the definition is inverted: a branch is a party that something is
-    # RECORDED AGAINST. Ids referenced as a BranchNo anywhere are collected
-    # first, the flagged rows are added on top (harmless when the flag is used
-    # properly, as on some installs), and the union is what becomes a store.
+    # RECORDED AGAINST — ids referenced as a BranchNo anywhere in the data.
+    #
+    # The flags are a FALLBACK ONLY, used when nothing is referenced at all (a
+    # brand-new install with no transactions yet, or a schema where the branch
+    # column is named something we do not check). They are deliberately NOT
+    # unioned in when referenced ids exist: doing exactly that re-created all
+    # nine junk stores on the run of 2026-07-31 — 19 rows sent where 10 were
+    # real — because "add the flag rows on top, harmless when the flag is used
+    # properly" assumes a property this install does not have. On a database
+    # where the flag is wrong, the union is wrong, and the referenced ids are
+    # already the complete and correct answer.
     referenced = set()
     for table, col in (("Inward", "BranchNo"), ("PartyMst", "BranchNo"),
                        ("BookMaster", "BranchNo"), ("Inward", "LocationId"),
@@ -752,13 +760,22 @@ def push_stores(cursor, token, base_url):
     if mobile_col and "phone" not in present_details:
         sel.append(f"t.{mobile_col} AS phone")
 
-    clauses = list(flag_preds)
+    # Referenced ids win outright. The flags are consulted only when the data
+    # names no branch at all — see the note above; unioning the two is what put
+    # "APRS HO" and "abc" in the store picker.
     params = []
     if referenced:
         ph = ",".join("?" for _ in referenced)
-        clauses.append(f"t.{pk_col} IN ({ph})")
+        where = f"t.{pk_col} IN ({ph})"
         params = sorted(referenced)
-    where = " OR ".join(clauses)
+        if flag_preds:
+            log.info(f"  ignoring {len(flag_preds)} location flag(s) — the data "
+                     f"already names its branches")
+    else:
+        where = " OR ".join(flag_preds)
+        log.warning("  no branch is referenced by any record — falling back to the "
+                    "IsLocation/IsFactory flags. CHECK THE RESULT: on some installs "
+                    "those flags return suppliers and holding companies, not shops.")
     # Best-effort query (READ-ONLY). Marked columns/predicate above pending confirmation.
     cursor.execute(f"SELECT {', '.join(sel)} FROM PartyMst t WHERE {where}", *params)
     raw = rows(cursor)
