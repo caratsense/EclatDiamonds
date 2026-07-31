@@ -802,16 +802,26 @@ export class SyncService {
   private static readonly GLOBAL_ENTITIES = new Set(['products']);
 
   private async branchResolver(entity: string) {
-    const fallbackStoreId = SyncService.GLOBAL_ENTITIES.has(entity)
-      ? await this.assertStore()
-      : await this.unattributedStoreId();
+    // A global entity resolves to NULL, not to a store.
+    //
+    // `Product.storeId` is nullable precisely to mean "the whole company sells
+    // this", and the catalogue query treats null as visible everywhere. Stamping
+    // designs onto the default branch instead made them invisible to every other
+    // branch — a salesperson in Bandra could not see the design book at all,
+    // which is the opposite of what a catalogue is for.
+    //
+    // Whether a design can be SOLD today is a separate question, answered per
+    // store from actual stock (see ProductsService.stockPresence). Ownership and
+    // availability are different things and only availability varies by branch.
+    const isGlobal = SyncService.GLOBAL_ENTITIES.has(entity);
+    const fallbackStoreId = isGlobal ? null : await this.unattributedStoreId();
     const columns = this.branchColumnsFor(entity);
     const cache = new Map<string, string | null>();
     let attributed = 0;
     let fellBack = 0;
     const unknownBranchIds = new Set<string>();
 
-    const resolve = async (r: Rec): Promise<string> => {
+    const resolve = async (r: Rec): Promise<string | null> => {
       for (const col of columns) {
         const raw = r[col];
         if (raw == null || String(raw).trim() === '') continue;
@@ -833,6 +843,24 @@ export class SyncService {
       return fallbackStoreId;
     };
 
+    /**
+     * For entities that MUST live in a store. Only global entities (the design
+     * catalogue) may resolve to null, so this asserts what the caller already
+     * knows and keeps the nullable case out of their types.
+     */
+    const resolveRequired = async (r: Rec): Promise<string> => {
+      const id = await resolve(r);
+      if (id === null) {
+        // Unreachable unless someone adds an entity to GLOBAL_ENTITIES without
+        // making its Prisma storeId nullable — better a clear error than a
+        // silent null landing in the database.
+        throw new BadRequestException(
+          `Internal: '${entity}' resolved to no store, but its rows require one.`,
+        );
+      }
+      return id;
+    };
+
     const report = () => ({
       attributed,
       fellBackToDefault: fellBack,
@@ -840,7 +868,7 @@ export class SyncService {
       branchColumns: columns,
     });
 
-    return { resolve, report };
+    return { resolve, resolveRequired, report };
   }
 
   /** Log + shape the attribution summary consistently across entities. */
@@ -875,7 +903,7 @@ export class SyncService {
       if (bool(r.IsLocation) || bool(r.IsFactory)) types.push('branch');
       if (bool(r.IsAccount)) types.push('account');
 
-      const storeId = await branch.resolve(r);
+      const storeId = await branch.resolveRequired(r);
       const data = {
         storeId,
         name: str(r.FirmName) || str(r.LegalName) || str(r.PartyCode) || String(r.PartyNo),
@@ -962,7 +990,7 @@ export class SyncService {
         continue;
       }
       const metal = metalFromTone(r.ToneFor, r.ToneCode);
-      const storeId = await branch.resolve(r);
+      const storeId = await branch.resolveRequired(r);
       const data = {
         storeId,
         productId: productByStyle.get(String(r.StyleId)) ?? null,
@@ -1019,7 +1047,7 @@ export class SyncService {
       const docType = docTypeFromTranType(r.TranType);
       const baseNo = `${str(r.JewelTransPrefix) || ''}${r.JewelTransNo ?? r.JewelTransId}`;
       const docNo = `${baseNo}#${r.JewelTransId}`;
-      const storeId = await branch.resolve(r);
+      const storeId = await branch.resolveRequired(r);
       const data = {
         storeId,
         partyId: partyByLegacy.get(String(r.PartyNo)) ?? null,
@@ -1100,7 +1128,7 @@ export class SyncService {
         partyByLegacy.get(String(r.MadeFor_PartyNo)) ??
         partyByLegacy.get(String(r.CustomerId)) ??
         null;
-      const storeId = await branch.resolve(r);
+      const storeId = await branch.resolveRequired(r);
       const data = {
         storeId,
         partyId,

@@ -12,7 +12,31 @@ import { PageRequest, Paginated } from '../common/pagination';
 import { StorageService } from '../storage/storage.service';
 import { CreateProductDto } from './dto/product.dto';
 
-function toView(p: any) {
+/**
+ * Where a design can actually be had, from the viewer's counter.
+ *
+ * Derived from StockItem rather than stored on Product, because "is it
+ * available" has no single answer — it depends entirely on who is asking and
+ * where they are standing. The same ring is "on the shelf" in Bandra and "three
+ * days away" in Udaipur, and a flag on the design cannot say both.
+ */
+export interface StockPresence {
+  /** Pieces on hand in the store the viewer is looking at. */
+  hereCount: number;
+  /** Pieces in other branches, newest-first by count. */
+  elsewhere: { storeId: string; storeName: string; count: number }[];
+  /** Everything on hand across the branches the viewer may see. */
+  totalCount: number;
+  /**
+   * What a salesperson should say out loud:
+   *   here      — "I can show it to you now"
+   *   elsewhere — "I can have it brought from Kala Ghoda"
+   *   made      — "we can make it for you" (in the catalogue, nobody stocks it)
+   */
+  where: 'here' | 'elsewhere' | 'made';
+}
+
+function toView(p: any, presence?: StockPresence) {
   return {
     id: p.id,
     sku: p.sku,
@@ -29,6 +53,7 @@ function toView(p: any) {
     description: p.description ?? '',
     imageUrl: p.imageUrl ?? undefined,
     bestSeller: p.bestSeller,
+    ...(presence ? { stock: presence } : {}),
   };
 }
 
@@ -46,6 +71,79 @@ export class ProductsService {
     private readonly scope: StoreScopeService,
     private readonly storage: StorageService,
   ) {}
+
+  /**
+   * Stock presence for a page of designs, in ONE query.
+   *
+   * Deliberately a groupBy over the whole page rather than a count per product:
+   * a catalogue grid shows 50 designs at a time, and the per-product version is
+   * 50 round trips that get slower as the client's stock grows.
+   *
+   * `viewerStoreId` is the counter the person is standing at. When they are head
+   * office looking at "all stores" there is no "here", so everything reads as
+   * elsewhere — which is the honest answer for someone who is not at a counter.
+   */
+  private async stockPresence(
+    productIds: string[],
+    viewerStoreId: string | null,
+    visibleStoreIds: string[] | null,
+  ): Promise<Map<string, StockPresence>> {
+    const result = new Map<string, StockPresence>();
+    if (!productIds.length) return result;
+
+    const rows = await this.prisma.stockItem.groupBy({
+      by: ['productId', 'storeId'],
+      where: {
+        productId: { in: productIds },
+        // Sold and returned pieces are not on the shelf; only countable stock is.
+        status: { in: ['in_stock', 'aging', 'dead_stock'] },
+        ...(visibleStoreIds ? { storeId: { in: visibleStoreIds } } : {}),
+      },
+      _count: { _all: true },
+    });
+    if (!rows.length) {
+      for (const id of productIds) {
+        result.set(id, { hereCount: 0, elsewhere: [], totalCount: 0, where: 'made' });
+      }
+      return result;
+    }
+
+    // Name the branches once, so the answer is readable without another lookup.
+    const storeIds = [...new Set(rows.map((r) => r.storeId))];
+    const stores = await this.prisma.store.findMany({
+      where: { id: { in: storeIds } },
+      select: { id: true, name: true },
+    });
+    const nameOf = new Map(stores.map((s) => [s.id, s.name]));
+
+    for (const id of productIds) {
+      const mine = rows.filter((r) => r.productId === id);
+      const hereCount = viewerStoreId
+        ? mine.find((r) => r.storeId === viewerStoreId)?._count._all ?? 0
+        : 0;
+      const elsewhere = mine
+        .filter((r) => r.storeId !== viewerStoreId)
+        .map((r) => ({
+          storeId: r.storeId,
+          storeName: nameOf.get(r.storeId) ?? r.storeId,
+          count: r._count._all,
+        }))
+        .sort((a, b) => b.count - a.count);
+      const totalCount = mine.reduce((n, r) => n + r._count._all, 0);
+      result.set(id, {
+        hereCount,
+        elsewhere,
+        totalCount,
+        where: hereCount > 0 ? 'here' : elsewhere.length ? 'elsewhere' : 'made',
+      });
+    }
+    return result;
+  }
+
+  /** The stores whose stock this user is allowed to see at all. */
+  private visibleStoreIds(user: AuthUser): string[] | null {
+    return user.allStores ? null : user.storeIds;
+  }
 
   async list(
     user: AuthUser,
@@ -69,10 +167,19 @@ export class ProductsService {
 
     const orderBy: Prisma.ProductOrderByWithRelationInput = { createdAt: 'desc' };
 
+    // Which counter is this person standing at? "all" means none in particular.
+    const viewerStore = requested && requested !== 'all' ? requested : null;
+    const visible = this.visibleStoreIds(user);
+
     // No page/pageSize → legacy plain-array response (existing frontend shape).
     if (!pagination) {
       const products = await this.prisma.product.findMany({ where, orderBy });
-      return products.map(toView);
+      const presence = await this.stockPresence(
+        products.map((p) => p.id),
+        viewerStore,
+        visible,
+      );
+      return products.map((p) => toView(p, presence.get(p.id)));
     }
 
     const { page, pageSize } = pagination;
@@ -85,13 +192,22 @@ export class ProductsService {
         take: pageSize,
       }),
     ]);
-    return { items: rows.map(toView), total, page, pageSize };
+    const presence = await this.stockPresence(rows.map((p) => p.id), viewerStore, visible);
+    return {
+      items: rows.map((p) => toView(p, presence.get(p.id))),
+      total,
+      page,
+      pageSize,
+    };
   }
 
-  async get(_user: AuthUser, id: string) {
+  async get(user: AuthUser, id: string, headerStore?: string) {
     const p = await this.prisma.product.findUnique({ where: { id } });
     if (!p) throw new NotFoundException('Product not found');
-    return toView(p);
+    const viewerStore = headerStore && headerStore !== 'all' ? headerStore : null;
+    if (viewerStore) this.scope.assertStoreAllowed(user, viewerStore);
+    const presence = await this.stockPresence([p.id], viewerStore, this.visibleStoreIds(user));
+    return toView(p, presence.get(p.id));
   }
 
   /** Create a catalogue product. Managers and above (store-scoped if storeId given). */

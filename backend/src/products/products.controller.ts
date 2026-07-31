@@ -67,8 +67,12 @@ export class ProductsController {
   }
 
   @Get(':id')
-  get(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.products.get(user, id);
+  get(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @StoreHeader() store?: string,
+  ) {
+    return this.products.get(user, id, store);
   }
 
   /** Upload/replace a product photo (multipart field `file`). Managers and above. */
