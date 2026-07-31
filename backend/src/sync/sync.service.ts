@@ -507,6 +507,153 @@ export class SyncService {
    *     otherwise the operation can lock everyone out of the system it just
    *     cleaned.
    */
+  /**
+   * Throw away everything the sync has ever imported, so the next run can
+   * rebuild it from scratch.
+   *
+   * Needed because a mapping bug is not repairable by a normal sync. The agent
+   * is incremental: it only re-sends rows whose `UpdateDate` has moved since its
+   * watermark, so rows already imported under a wrong rule are never revisited
+   * and stay wrong forever. That is exactly what happened here — 4,071 pieces
+   * were written before per-branch attribution worked, so every one of them
+   * landed in the fallback store, and all of them were marked in_stock because
+   * the status letters had not been decoded yet. Both bugs are fixed; neither
+   * fix reaches a row that is never sent again.
+   *
+   * It also clears rows that no longer exist upstream. Testing against a copy of
+   * the client's database left ~600 stock rows in Eclat with no counterpart in
+   * the live one: they carry a `legacyId`, so `purgeDemo` correctly refuses to
+   * touch them, and no sync will ever refresh or remove them. A reset is the
+   * only thing that can.
+   *
+   * Deliberately the mirror image of `purgeDemo`: that one keeps everything with
+   * a `legacyId` and drops the rest; this one drops everything with a `legacyId`
+   * and keeps the rest. Seeded demo data is untouched — the two operations
+   * compose, in either order.
+   *
+   * Nothing here is unrecoverable: every row deleted came from the client's own
+   * system and is upserted back on its original id by the next full sync. What
+   * IS destroyed is anything a person typed in Eclat *about* a synced row, which
+   * is why it needs the confirm phrase and reports first.
+   *
+   * Stores are never deleted — they hold the branch links, geofences and staff
+   * assignments that were set up by hand. Their `legacyUpdatedAt` is cleared so
+   * the next sync refreshes them, and their `legacyId` is kept so the link
+   * survives.
+   */
+  async resetSyncedData(user: AuthUser, confirm?: string) {
+    const RESET_CONFIRM_PHRASE = 'DELETE SYNCED DATA';
+    const armed = confirm === RESET_CONFIRM_PHRASE;
+
+    // Children before parents, so foreign keys stay satisfied at every step.
+    // Payments and ledger entries hang off sales; bags hang off orders.
+    const tables = [
+      'payment',
+      'ledgerEntry',
+      'saleLine',
+      'sale',
+      'productionBag',
+      'manufacturingOrderItem',
+      'manufacturingOrder',
+      'stockMovement',
+      'stockItem',
+      'product',
+      'party',
+    ] as const;
+
+    const counts: Record<string, number> = {};
+    for (const t of tables) {
+      const model = (this.prisma as any)[t];
+      if (!model?.count) continue; // model renamed or not in this build
+      try {
+        counts[t] = await model.count({ where: { legacyId: { not: null } } });
+      } catch {
+        // Not every table has a legacyId column; those simply do not apply.
+      }
+    }
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+
+    if (!armed) {
+      return {
+        dryRun: true,
+        message:
+          `This would delete ${total} imported record(s) — everything the sync has ` +
+          `ever brought in. Demo/seeded data is NOT touched, and stores are kept ` +
+          `(their Gati link, geofence and staff assignments survive). The next full ` +
+          `sync rebuilds all of it from the client's system. To go ahead, send ` +
+          `{ "confirm": "${RESET_CONFIRM_PHRASE}" }.`,
+        wouldDelete: counts,
+        afterwards:
+          'Delete sync_state.json on the sync agent so it re-pulls from the ' +
+          'beginning, then run: 5_first_sync.bat all',
+      };
+    }
+
+    // One transaction for the whole thing. A synced row can be referenced by a
+    // row this list does not delete — a demo quote naming an imported product, a
+    // return against an imported sale — and that reference makes the delete fail
+    // partway through. Half-cleared is the one state worse than either end of
+    // this operation: the counts would be wrong in a way nobody could see, and
+    // the obvious response (run it again) would not fix it.
+    //
+    // Timeout raised well past the default 5s because this is thousands of rows
+    // on a shared instance, and a reset that times out halfway is exactly the
+    // failure the transaction exists to prevent.
+    let deleted: Record<string, number> = {};
+    let storesReset = 0;
+    try {
+      const outcome = await this.prisma.$transaction(
+        async (tx) => {
+          const d: Record<string, number> = {};
+          for (const t of tables) {
+            const model = (tx as any)[t];
+            if (!model?.deleteMany) continue;
+            d[t] = (await model.deleteMany({ where: { legacyId: { not: null } } })).count;
+          }
+          // Stores survive — they hold the branch links, geofences and staff
+          // assignments set up by hand — but must look un-synced so the next run
+          // refreshes them.
+          const s = await tx.store.updateMany({
+            where: { legacyId: { not: null } },
+            data: { legacyUpdatedAt: null },
+          });
+          return { d, s: s.count };
+        },
+        { timeout: 120_000, maxWait: 20_000 },
+      );
+      deleted = outcome.d;
+      storesReset = outcome.s;
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      this.logger.error(`reset: rolled back, nothing deleted: ${detail}`);
+      throw new BadRequestException(
+        'Reset was rolled back — NOTHING was deleted. Something still refers to ' +
+          'the imported rows; the usual cause is demo data pointing at real ' +
+          'records, so run POST /sync/purge-demo first and try again. ' +
+          `Database said: ${detail.split('\n').slice(0, 3).join(' ')}`,
+      );
+    }
+
+    const totalDeleted = Object.values(deleted).reduce((a, b) => a + b, 0);
+    await this.audit.record(user, {
+      action: 'sync.reset',
+      entityType: 'system',
+      entityId: 'sync-reset',
+      summary: `Cleared ${totalDeleted} imported record(s) for a clean re-sync`,
+      metadata: { deleted, storesReset },
+    });
+    this.logger.warn(`SYNC RESET by ${user.id}: removed ${totalDeleted} record(s)`);
+
+    return {
+      dryRun: false,
+      message: `Cleared ${totalDeleted} imported record(s). Stores kept and unstamped.`,
+      deleted,
+      storesReset,
+      next:
+        'On the sync agent: delete sync_state.json, then run 5_first_sync.bat all',
+    };
+  }
+
   async purgeDemo(user: AuthUser, confirm?: string) {
     const PURGE_CONFIRM_PHRASE = 'DELETE DEMO DATA';
     const armed = confirm === PURGE_CONFIRM_PHRASE;

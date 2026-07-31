@@ -99,6 +99,19 @@ export class SyncController {
     return this.sync.purgeDemo(user, body.confirm);
   }
 
+  /**
+   * Throw away everything the sync has imported so the next run rebuilds it.
+   * Dry-run unless the body carries `{"confirm":"DELETE SYNCED DATA"}`.
+   *
+   * The repair for a mapping bug: the agent is incremental, so rows already
+   * imported under a wrong rule are never re-sent and stay wrong. Demo data and
+   * stores are left alone — see SyncService.resetSyncedData.
+   */
+  @Post('reset')
+  reset(@CurrentUser() user: AuthUser, @Body() body: PurgeDemoDto) {
+    return this.sync.resetSyncedData(user, body.confirm);
+  }
+
   /** Generic full-mirror: ANY legacy table -> LegacyRow (extract-everything-once). */
   @Post('raw')
   raw(@Body() body: RawSyncDto) {
