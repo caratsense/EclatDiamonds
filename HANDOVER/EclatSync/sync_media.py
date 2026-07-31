@@ -20,7 +20,9 @@ egress twice, and would hit request-size limits. Eclat only receives the link.
 Safe to re-run. An `uploaded_media.json` ledger records what has already gone up,
 so a second run only does what is new. Delete that file to force a full re-upload.
 
-Run:  sync_media.bat        (or: python sync_media.py [--limit N] [--dry-run])
+Run:  sync_media.bat --folders   see which folders hold photos, and choose
+      sync_media.bat 25          upload a small batch first
+      sync_media.bat             upload the rest
 """
 import os
 import sys
@@ -71,6 +73,13 @@ logging.basicConfig(
     handlers=[logging.FileHandler(LOG_FILE, encoding="utf-8"), logging.StreamHandler(sys.stdout)],
 )
 log = logging.getLogger("eclat-media")
+
+# The Windows console is cp1252 and turns any non-ASCII into "?", which reads
+# as corruption in a log someone is watching on a call.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
 
 DRY_RUN = "--dry-run" in sys.argv
 LIMIT = None
@@ -220,6 +229,65 @@ def collect_targets(cur):
     return targets
 
 
+def _folder_filters():
+    """Which folders to take photos from, and which to leave alone.
+
+    A jewellery photo library is not all photographs. Alongside the shots a
+    customer should see there are technical images with the measurements printed
+    across them — "18.5 mm", overall size, a description burnt into the picture.
+    Those are for the workshop, not the shop floor, and putting them in a
+    customer-facing catalogue is worse than having no photo at all.
+
+    They cannot be told apart by filename or size, but they are almost always
+    kept in their own folders, so the folder is the honest filter:
+
+        set "SJEP_IMAGE_ONLY_FOLDERS=LIVE IMAGES"     take ONLY these
+        set "SJEP_IMAGE_SKIP_FOLDERS=STL,MEASUREMENT" take everything except
+
+    Matching is case-insensitive on any part of the path below the root, so
+    "LIVE IMAGES" catches "SJEP IMAGES\\LIVE IMAGES\\rings". Use
+    `sync_media.bat --folders` to list what is actually there before choosing.
+    """
+    only = [s.strip().lower() for s in os.getenv("SJEP_IMAGE_ONLY_FOLDERS", "").split(",") if s.strip()]
+    skip = [s.strip().lower() for s in os.getenv("SJEP_IMAGE_SKIP_FOLDERS", "").split(",") if s.strip()]
+    return only, skip
+
+
+def _folder_allowed(rel_dir, only, skip):
+    low = rel_dir.replace("\\", "/").lower()
+    parts = [p for p in low.split("/") if p]
+    if any(s in low or s in parts for s in skip):
+        return False
+    if only:
+        return any(o in low or o in parts for o in only)
+    return True
+
+
+def list_image_folders(root):
+    """Show every folder holding images, so a human can choose. Uploads nothing."""
+    log.info(f"Photo folders under {root}:\n")
+    per = {}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        imgs = [f for f in filenames if os.path.splitext(f)[1].lower() in IMAGE_EXTS]
+        if imgs:
+            rel = os.path.relpath(dirpath, root)
+            per[rel] = (len(imgs), sorted(imgs)[:3])
+    if not per:
+        log.info("  (no images found)")
+        return
+    for rel, (n, sample) in sorted(per.items(), key=lambda kv: -kv[1][0]):
+        log.info(f"  {rel:<44} {n:>6} images")
+        log.info(f"      e.g. {', '.join(sample)}")
+    log.info("")
+    log.info("  Open a few from each folder and look at them. Any folder whose")
+    log.info("  pictures have measurements or descriptions printed ON the image")
+    log.info("  should NOT go in the catalogue. Then set one of these in")
+    log.info("  eclat_config.bat:")
+    log.info('    set "SJEP_IMAGE_ONLY_FOLDERS=LIVE IMAGES"    (take only these)')
+    log.info('    set "SJEP_IMAGE_SKIP_FOLDERS=STL,SIZE"       (skip these)')
+
+
 def build_file_index(root):
     """One walk of the photo folder -> {lowercase filename: full path}.
 
@@ -227,16 +295,34 @@ def build_file_index(root):
     rows and the folder is often on a slow or network disk, so one pass is the
     difference between minutes and hours.
     """
-    log.info(f"Indexing photos under {root} ...")
+    only, skip = _folder_filters()
+    if only:
+        log.info(f"Indexing photos under {root} — ONLY folders matching: {', '.join(only)}")
+    elif skip:
+        log.info(f"Indexing photos under {root} — skipping folders matching: {', '.join(skip)}")
+    else:
+        log.info(f"Indexing photos under {root} ...")
+
     index = {}
     count = 0
+    skipped = 0
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        rel = os.path.relpath(dirpath, root)
+        allowed = _folder_allowed("" if rel == "." else rel, only, skip)
         for fn in filenames:
-            if os.path.splitext(fn)[1].lower() in IMAGE_EXTS:
-                index.setdefault(fn.lower(), os.path.join(dirpath, fn))
-                count += 1
+            if os.path.splitext(fn)[1].lower() not in IMAGE_EXTS:
+                continue
+            if not allowed:
+                skipped += 1
+                continue
+            # First match wins, so a folder listed earlier in ONLY_FOLDERS takes
+            # precedence when the same filename exists in several places.
+            index.setdefault(fn.lower(), os.path.join(dirpath, fn))
+            count += 1
     log.info(f"  indexed {count} image files ({len(index)} distinct names)")
+    if skipped:
+        log.info(f"  skipped {skipped} image(s) in excluded folders")
     return index
 
 
@@ -326,6 +412,13 @@ def main():
     log.info("=" * 66)
     log.info("ECLAT CATALOGUE PHOTO SYNC")
     log.info("=" * 66)
+
+    if "--folders" in sys.argv:
+        if not IMAGE_ROOT or not os.path.isdir(IMAGE_ROOT):
+            fail(f"SJEP_IMAGE_ROOT is not set or does not exist ({IMAGE_ROOT!r}).")
+        list_image_folders(IMAGE_ROOT)
+        return 0
+
     provider, client = check_config()
 
     conn = connect_sql()

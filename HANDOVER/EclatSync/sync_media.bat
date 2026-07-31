@@ -21,7 +21,12 @@ call eclat_config.bat
 
 if exist "_pyexe.bat" (call "_pyexe.bat") else (set "PYEXE=python")
 
-if "%~1"=="" (
+REM --folders lists the photo folders so a human can decide which ones belong in
+REM a customer-facing catalogue. Many jewellery libraries keep technical shots
+REM with measurements printed across the picture; those must not go in.
+if /I "%~1"=="--folders" (
+  "%PYEXE%" sync_media.py --folders
+) else if "%~1"=="" (
   "%PYEXE%" sync_media.py
 ) else (
   echo Running a limited batch of %~1 photos...

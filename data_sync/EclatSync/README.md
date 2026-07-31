@@ -144,8 +144,28 @@ Do this after the data sync is working.
 
 1. Put the photo folder path from step 1 into `eclat_config.bat`
    (`SJEP_IMAGE_ROOT`).
-2. Try a few: `sync_media.bat 25`. Check they appear in the catalogue.
-3. Then `sync_media.bat` for the rest.
+
+2. **Choose which folders to use** — `sync_media.bat --folders`
+
+   This lists every folder holding pictures. **Open a few from each and look at
+   them.** Photo libraries usually hold two very different kinds of image: the
+   shots a customer should see, and technical ones with the measurements and
+   description printed across the picture. Only the first belong in a catalogue —
+   a customer shown a photo with "18.5 mm" written over it is worse than a
+   customer shown nothing.
+
+   Then set ONE of these in `eclat_config.bat`:
+
+   ```
+   set "SJEP_IMAGE_ONLY_FOLDERS=LIVE IMAGES"      use only these
+   set "SJEP_IMAGE_SKIP_FOLDERS=STL,SIZE,DETAIL"  use everything except these
+   ```
+
+   Leave both blank to take everything.
+
+3. Try a few: `sync_media.bat 25`. Check they appear in the catalogue, and that
+   none of them have writing on the picture.
+4. Then `sync_media.bat` for the rest.
 
 Thousands of photos take a few hours. That is normal. You can stop it and start
 it again — it remembers what is done and never uploads the same photo twice. The

@@ -22,6 +22,17 @@ REM Don't guess: run discover.bat, which hunts for the folder and prints the
 REM exact line to paste here.
 set "SJEP_IMAGE_ROOT="
 
+REM Which folders inside it to actually use.
+REM A jewellery photo library usually holds two kinds of picture: the shots a
+REM customer should see, and technical ones with the measurements printed across
+REM them. Only the first belong in a catalogue.
+REM Run  sync_media.bat --folders  to list what is there, look at a few, then set
+REM ONE of these (leave both blank to take everything):
+REM   set "SJEP_IMAGE_ONLY_FOLDERS=LIVE IMAGES"      take only these
+REM   set "SJEP_IMAGE_SKIP_FOLDERS=STL,SIZE,DETAIL"  take everything except these
+set "SJEP_IMAGE_ONLY_FOLDERS="
+set "SJEP_IMAGE_SKIP_FOLDERS="
+
 REM ── CLOUDFLARE R2 (where the photos are uploaded) ───────────────────────────
 REM Photos go STRAIGHT from this PC to R2; they never pass through the Eclat
 REM backend. Leave blank to skip photo sync entirely.
