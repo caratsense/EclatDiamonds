@@ -1231,14 +1231,25 @@ if __name__ == "__main__":
     LIMIT = max(0, args.limit)
     ONLY = [e.strip() for e in args.only.split(",") if e.strip()]
 
-    if args.test:
-        sys.exit(0 if run_test() else 1)
-    if args.loop > 0:
-        log.info(f"Auto Sync — every {args.loop} min. Ctrl+C to stop.")
-        while True:
-            try: sync_once()
-            except Exception as e: log.error(f"Error: {e}")
-            log.info(f"Next sync in {args.loop} min...")
-            time.sleep(args.loop * 60)
-    else:
-        sync_once()
+    # Ctrl+C is a normal way to end this program — the shop data is pushed and
+    # its watermark advanced long before the slow full mirror starts, so stopping
+    # during the mirror is expected rather than exceptional. Without this, Python
+    # prints forty lines of stack trace ending in KeyboardInterrupt, which to
+    # anyone standing at the machine reads as "I have broken something".
+    try:
+        if args.test:
+            sys.exit(0 if run_test() else 1)
+        if args.loop > 0:
+            log.info(f"Auto Sync — every {args.loop} min. Ctrl+C to stop.")
+            while True:
+                try: sync_once()
+                except Exception as e: log.error(f"Error: {e}")
+                log.info(f"Next sync in {args.loop} min...")
+                time.sleep(args.loop * 60)
+        else:
+            sync_once()
+    except KeyboardInterrupt:
+        print()
+        log.info("Stopped by you (Ctrl+C). Nothing is broken.")
+        log.info("Anything already sent is saved; the rest is picked up next run.")
+        sys.exit(0)
