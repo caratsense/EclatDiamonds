@@ -132,12 +132,36 @@ export class SyncService {
     const created: { id: string; legacyId: string; name: string }[] = [];
     const updated: { id: string; legacyId: string; name: string }[] = [];
 
+    const adoptions = await this.planAdoptions(records);
+    const adopted: { id: string; legacyId: string; name: string; was: string }[] = [];
+
     for (const r of records) {
       const legacyId = String(r.legacyId);
-      const existing = await this.prisma.store.findUnique({
+      let existing = await this.prisma.store.findUnique({
         where: { legacyId },
         select: { id: true },
       });
+
+      // Not known by legacyId, but an existing Eclat branch is plainly the same
+      // shop — claim it rather than creating a second one. See planAdoptions().
+      const adopt = !existing ? adoptions.get(legacyId) : undefined;
+      if (adopt) {
+        const claimed = await this.prisma.store.update({
+          where: { id: adopt.storeId },
+          data: { legacyId },
+          select: { id: true },
+        });
+        existing = claimed;
+        adopted.push({ id: adopt.storeId, legacyId, name: r.name, was: adopt.wasNamed });
+        await this.audit.record(user, {
+          action: 'store.linked_to_gati',
+          entityType: 'store',
+          entityId: adopt.storeId,
+          storeId: adopt.storeId,
+          summary: `Linked existing branch "${adopt.wasNamed}" to Gati branch "${r.name}"`,
+          metadata: { legacyId, matchedOn: adopt.why },
+        });
+      }
 
       // `?? undefined` (not `?? null`) throughout: a field the source omits must
       // leave the stored value alone, not blank out something a manager typed in
@@ -216,7 +240,109 @@ export class SyncService {
           missingGeo.map((s) => s.name).join(', '),
       );
     }
-    return { created, updated, pendingCount, missingGeo };
+    if (adopted.length) {
+      this.logger.log(
+        `sync stores: linked ${adopted.length} existing branch(es) to Gati — ` +
+          adopted.map((a) => `"${a.was}" -> "${a.name}"`).join(', '),
+      );
+    }
+    return { created, updated, adopted, pendingCount, missingGeo };
+  }
+
+  /**
+   * Decide which incoming Gati branches are branches Eclat ALREADY has under a
+   * different name, so they update that store instead of creating a twin.
+   *
+   * This exists because the two systems name the same shop differently. Eclat was
+   * set up with "Mumbai — Bandra"; Gati calls it "MUMBAI BANDRA". Matching on
+   * legacyId alone, the sync creates a second Bandra — and then the salespeople
+   * who are assigned to the first one open the app on go-live morning and see an
+   * empty shop, while their stock sits in a store nobody is looking at. Every
+   * number still adds up, which is what makes it the dangerous kind of wrong.
+   *
+   * The match is on words, not characters, so punctuation and spacing differences
+   * ("Mumbai - Kala Ghoda" vs "MUMBAI KALAGHODA") do not matter — but note that
+   * concatenation is handled by comparing the joined form too. A branch is
+   * adopted when the existing store's words are all present in the Gati name:
+   * "Delhi" is adopted by "DELHI ROHINI" because Gati simply says which Delhi.
+   *
+   * Two deliberate restraints:
+   *   - Only stores with NO legacyId are candidates. A store already linked to a
+   *     Gati branch is never re-pointed; that would silently move a shop's data.
+   *   - Each store is claimed once, best match first. "MUMBAI BANDRA" and
+   *     "MUMBAI BANDRA BROADWAY" both fit "Mumbai — Bandra"; the exact one wins
+   *     and Broadway is created as the separate branch it is.
+   * Anything ambiguous is left alone and arrives as a new pending store, which a
+   * human then looks at. Guessing wrong here is worse than an extra row.
+   */
+  private async planAdoptions(
+    records: StoreSyncRowDto[],
+  ): Promise<Map<string, { storeId: string; wasNamed: string; why: string }>> {
+    const words = (s: string): string[] =>
+      (s || '')
+        .toUpperCase()
+        .split(/[^A-Z0-9]+/)
+        .filter(Boolean);
+
+    const candidates = (
+      await this.prisma.store.findMany({
+        where: { legacyId: null, isAggregate: false },
+        select: { id: true, name: true },
+      })
+    ).map((s) => ({ ...s, words: words(s.name), joined: words(s.name).join('') }));
+    if (!candidates.length) return new Map();
+
+    const knownLegacyIds = new Set(
+      (
+        await this.prisma.store.findMany({
+          where: { legacyId: { not: null } },
+          select: { legacyId: true },
+        })
+      ).map((s) => s.legacyId as string),
+    );
+
+    type Proposal = { legacyId: string; storeId: string; wasNamed: string; why: string; score: number };
+    const proposals: Proposal[] = [];
+
+    for (const r of records) {
+      const legacyId = String(r.legacyId);
+      if (knownLegacyIds.has(legacyId)) continue; // already linked to its own store
+      const incoming = words(r.name);
+      if (!incoming.length) continue;
+      const incomingJoined = incoming.join('');
+
+      for (const c of candidates) {
+        if (!c.words.length) continue;
+        // Exact same words (order-insensitive), or the same string once spacing
+        // is removed — "MUMBAI KALAGHODA" vs "Mumbai - Kala Ghoda".
+        const exact =
+          c.joined === incomingJoined ||
+          (c.words.length === incoming.length &&
+            [...c.words].sort().join('|') === [...incoming].sort().join('|'));
+        // Otherwise: every word of the existing store appears in the Gati name.
+        const subset = c.words.every((w) => incoming.includes(w));
+        if (!exact && !subset) continue;
+        proposals.push({
+          legacyId,
+          storeId: c.id,
+          wasNamed: c.name,
+          why: exact ? `name matches "${r.name}"` : `"${c.name}" is contained in "${r.name}"`,
+          // Exact wins outright. Among partial matches, prefer the one that
+          // leaves fewest unexplained words, so the closest name wins the store.
+          score: exact ? 1000 : 100 - (incoming.length - c.words.length),
+        });
+      }
+    }
+
+    proposals.sort((a, b) => b.score - a.score || a.legacyId.localeCompare(b.legacyId));
+    const takenStores = new Set<string>();
+    const plan = new Map<string, { storeId: string; wasNamed: string; why: string }>();
+    for (const p of proposals) {
+      if (plan.has(p.legacyId) || takenStores.has(p.storeId)) continue;
+      plan.set(p.legacyId, { storeId: p.storeId, wasNamed: p.wasNamed, why: p.why });
+      takenStores.add(p.storeId);
+    }
+    return plan;
   }
 
   // ── Staff import ────────────────────────────────────────────────────────────
