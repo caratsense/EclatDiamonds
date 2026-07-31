@@ -17,6 +17,7 @@ Reads only. Opens no file's contents except to measure it. Uploads nothing.
 Run:  inspect_files.bat        (or: python inspect_files.py [folder])
 """
 import os
+import shutil
 import sys
 from collections import defaultdict
 from datetime import datetime
@@ -71,6 +72,34 @@ MEANING = {
     ".rar":  "Archive",
     ".log":  "Program log",
 }
+
+
+# Folders that belong to the SOFTWARE rather than to the stock. A jewellery
+# system ships its own web front end, and that front end is full of JPEGs.
+ASSET_DIRS = {"assets", "bin", "views", "node_modules", "content", "scripts",
+              "styles", "css", "js", "fonts", "themes", "obj", "debug", "release"}
+
+
+def is_jewellery_folder(path, count, total_bytes):
+    """Is this folder photographs of jewellery, or the application's own artwork?
+
+    Both live under the same tree, and the difference matters: point the upload
+    at the parent of both and the catalogue fills up with button icons and
+    dashboard screenshots sitting next to the rings.
+
+    Two signals, and the second is the reliable one:
+
+      * the path says so — anything under assets/ bin/ views/ node_modules/ is
+        part of a web application, not a stock room;
+      * the FILE SIZE says so. A photograph of a ring is a few hundred KB. An
+        icon is a few. Measured on this client's disk the real folders average
+        ~350 KB per image and the web-asset folders ~10 KB — a 30x gap, which is
+        far too wide to be a coincidence or a close call.
+    """
+    parts = {p.lower() for p in path.replace("/", os.sep).split(os.sep)}
+    if parts & ASSET_DIRS:
+        return False
+    return (total_bytes / max(count, 1)) >= 40 * 1024
 
 
 def walk(root):
@@ -182,23 +211,61 @@ def main():
         out(f"  Estimated storage: {human(pbytes)}  "
             f"(R2 free tier is 10 GB, then about $0.015/GB/month)")
 
-        # Where they live, so nobody has to guess the folder again.
-        out("\n  Which folders hold them:")
+        # Where they live, so nobody has to guess the folder again — and, more
+        # importantly, which of those folders are photographs of jewellery at all.
         per_photo_dir = defaultdict(lambda: [0, 0])
         for f, s, _ in photos:
-            d = os.path.relpath(os.path.dirname(f), ROOT)
+            d = os.path.dirname(f)
             per_photo_dir[d][0] += 1
             per_photo_dir[d][1] += s
-        for d, (n, b) in sorted(per_photo_dir.items(), key=lambda kv: -kv[1][0])[:15]:
-            out(f"    {d:<40} {n:>7,} images  {human(b):>11}")
-        if len(per_photo_dir) > 15:
-            out(f"    ... and {len(per_photo_dir) - 15} more folders")
 
-        common = os.path.commonpath([os.path.dirname(f) for f, _, _ in photos]) \
-            if len(photos) > 1 else os.path.dirname(photos[0][0])
+        jewellery, assets = {}, {}
+        for d, (n, b) in per_photo_dir.items():
+            jewellery[d] = (n, b) if is_jewellery_folder(d, n, b) else None
+            if jewellery[d] is None:
+                assets[d] = (n, b)
+                del jewellery[d]
+
+        def show(title, mapping, limit=15):
+            out(f"\n  {title}")
+            if not mapping:
+                out("    (none)")
+                return
+            for d, (n, b) in sorted(mapping.items(), key=lambda kv: -kv[1][0])[:limit]:
+                rel = os.path.relpath(d, ROOT)
+                out(f"    {rel:<52} {n:>6,} images  {human(b):>11}")
+            if len(mapping) > limit:
+                out(f"    ... and {len(mapping) - limit} more folders")
+
+        show("JEWELLERY PHOTOGRAPHS — these belong in the catalogue:", jewellery)
+        # Named, not silently dropped: the operator must be able to disagree.
+        show("NOT jewellery — the software's own icons and screenshots:", assets, limit=8)
+
+        if assets:
+            an = sum(n for n, _ in assets.values())
+            out(f"\n  {an:,} of the {len(photos):,} images are part of the SOFTWARE, not the")
+            out("  stock — button icons, dashboard screenshots, web page furniture.")
+            out("  They sit in the same tree as the real photographs, so pointing the")
+            out("  upload at the whole folder would put them in the catalogue next to")
+            out("  the rings. Use the setting below, not the folder you typed.")
+
+        pool = jewellery or per_photo_dir
+        common = (os.path.commonpath(list(pool)) if len(pool) > 1
+                  else list(pool)[0])
         out("")
         out("  SETTING TO USE (paste into eclat_config.bat):")
         out(f'    set "SJEP_IMAGE_ROOT={common}"')
+
+        # If the jewellery lives in named sub-folders (ALR, AER, APD …), give the
+        # exact allow-list too — it is the difference between uploading the stock
+        # and uploading the stock plus everything else that happens to be a JPEG.
+        subs = sorted({os.path.relpath(d, common).split(os.sep)[0]
+                       for d in pool if os.path.relpath(d, common) != "."})
+        if subs and len(subs) <= 40:
+            out(f'    set "SJEP_IMAGE_ONLY_FOLDERS={",".join(subs)}"')
+        out("")
+        out("  Then LOOK at a few from each folder before uploading. A photo with")
+        out("  the measurements printed across it is worse than no photo at all.")
 
     # ── Backups and live database files ───────────────────────────────────────
     out("\n" + "-" * 74)
@@ -231,6 +298,37 @@ def main():
             out("  >> No recent backup. Worth mentioning to the client: this is their")
             out("     safety net, and it is stale. Not our problem to fix, but they")
             out("     should know before anyone touches anything.")
+
+        # The opposite failure, and the more likely one here: backups that are
+        # never deleted. Nobody notices until the disk fills, and a full disk
+        # stops the shop's own software — which, on a go-live weekend, would look
+        # very much like something we did.
+        if baks:
+            bak_bytes = sum(s for _, s, _ in baks)
+            free = None
+            try:
+                free = shutil.disk_usage(ROOT).free
+            except Exception:
+                pass
+            out("")
+            out(f"  {len(baks):,} backup files, {human(bak_bytes)} in total.")
+            per_day = {}
+            for _, s, m in baks:
+                per_day.setdefault(datetime.fromtimestamp(m).strftime("%Y-%m-%d"), 0)
+                per_day[datetime.fromtimestamp(m).strftime("%Y-%m-%d")] += s
+            if len(per_day) >= 2:
+                daily = bak_bytes / len(per_day)
+                out(f"  Roughly {human(daily)} added per day, over {len(per_day)} days.")
+                if free is not None:
+                    out(f"  Free space on this drive: {human(free)}"
+                        + (f"  (~{int(free / daily)} days at that rate)" if daily else ""))
+                    if free < daily * 30:
+                        out("")
+                        out("  >> THIS DRIVE WILL FILL UP. Old backups are not being removed.")
+                        out("     Tell the client before go-live: when it fills, THEIR")
+                        out("     jewellery software stops, and it will look like our doing.")
+                        out("     They need a retention rule (keep N days) — this is a")
+                        out("     five-minute job for whoever set up the backup.")
 
     # ── Anything that may hold a password ─────────────────────────────────────
     out("\n" + "-" * 74)

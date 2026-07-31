@@ -154,27 +154,48 @@ def main():
                and base(p["productCode"]) not in gati_base]
 
     pct = len(exact) * 100 // len(web)
-    out("")
-    out("-" * 74)
-    out("  HOW WELL THEY LINE UP")
-    out("-" * 74)
-    out(f"    exact code match           {len(exact):>5}  ({pct}% of the website)")
-    out(f"    same design, other size    {len(loose):>5}")
-    out(f"    on the website only        {len(missing):>5}")
+    matched_codes = {p["productCode"].strip().upper() for p in exact}
+    shop_only = len({c.strip().upper() for c in codes} - matched_codes)
 
     out("")
-    if pct >= 80:
-        out("  >> GOOD. The codes line up. The website's prices and details can be")
-        out("     imported straight onto the designs already in the system.")
-    elif pct >= 40:
-        out("  >> PARTLY. A useful share lines up, but a real number do not.")
-        out("     Ask the client whether the website is kept in step with the shop")
-        out("     system, or maintained separately.")
+    out("-" * 74)
+    out("  THE THREE BUCKETS")
+    out("-" * 74)
+    out(f"    on BOTH — website price fits an existing design   {len(exact):>5}"
+        f"  ({pct}% of the website)")
+    out(f"    same design, other size                          {len(loose):>5}")
+    out(f"    WEBSITE ONLY — not a design the shop has held    {len(missing):>5}")
+    out(f"    SHOP ONLY — held in store, not sold online       {shop_only:>5}")
+    out(f"    catalogue would therefore carry                  "
+        f"{len(codes) + len(missing):>5} designs")
+
+    out("")
+    # Deliberately not a pass/fail grade. "Website only" is not a defect for a
+    # jeweller — it is the showroom-vs-online split, and it is exactly what the
+    # request-to-head-office flow exists to serve. The only genuinely bad case
+    # is NO overlap, which would mean the two systems number their designs
+    # independently and nothing can be joined without a person deciding.
+    if len(exact) + len(loose) == 0:
+        out("  >> NOTHING JOINS. The two systems appear to number their designs")
+        out("     independently, so no website price can be attached to a design")
+        out("     in the shop system with any confidence. Joining them would be a")
+        out("     manual exercise — raise this before committing to a date.")
     else:
-        out("  >> POOR. The two lists barely overlap. Either the website carries")
-        out("     designs the shop system has never held, or the codes are assigned")
-        out("     independently. Joining them would be a manual exercise — raise")
-        out("     this before committing to a date.")
+        out("  >> USABLE. The codes are shared, so the overlap is real and not a")
+        out("     coincidence; the website's price and description can be attached")
+        out("     to those designs directly.")
+        out("")
+        out("     The rest is NOT a problem to be fixed. It is the split every")
+        out("     jeweller has:")
+        out(f"       - the {len(missing)} website-only designs become catalogue entries a")
+        out("         salesperson can show and then RAISE A REQUEST for — visible,")
+        out("         priced, honestly marked as not in stock;")
+        out(f"       - the {shop_only} shop-only designs are what the branches actually")
+        out("         hold, priced from the stock record rather than the website.")
+        out("")
+        out("     Worth asking the client once: is the website meant to mirror the")
+        out("     shop, or is it a separate online range? The answer changes")
+        out("     nothing technically — it changes what staff should be told.")
 
     if missing:
         out("")
