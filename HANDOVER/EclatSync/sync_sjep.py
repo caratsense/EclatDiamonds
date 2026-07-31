@@ -658,15 +658,49 @@ def push_stores(cursor, token, base_url):
     # flags exists; if NEITHER exists we bail rather than mass-import every party as
     # a store. (Also consider excluding cancelled/inactive rows if the live schema
     # carries an IsActive/IsBlackList flag on locations.)
+    # WHICH PARTIES ARE ACTUALLY BRANCHES?
+    #
+    # NOT the ones flagged IsLocation/IsFactory. Measured on the client's live
+    # database, that flag returns supplier firms, two holding companies and a
+    # test row called "abc" — while the party ids the STOCK actually points at
+    # (Inward.BranchNo) are a completely different set, and the overlap between
+    # the two was exactly zero. Trusting the flag created nine stores that no
+    # record referenced, so every piece of stock would have landed in
+    # "Unassigned" and each shop would have opened Eclat to an empty inventory.
+    #
+    # So the definition is inverted: a branch is a party that something is
+    # RECORDED AGAINST. Ids referenced as a BranchNo anywhere are collected
+    # first, the flagged rows are added on top (harmless when the flag is used
+    # properly, as on some installs), and the union is what becomes a store.
+    referenced = set()
+    for table, col in (("Inward", "BranchNo"), ("PartyMst", "BranchNo"),
+                       ("BookMaster", "BranchNo"), ("Inward", "LocationId"),
+                       ("JewelTrans", "BranchNo")):
+        tcols = table_columns(cursor, table)
+        if not tcols or col.lower() not in tcols:
+            continue
+        try:
+            cursor.execute(
+                f"SELECT DISTINCT [{tcols[col.lower()]}] AS v FROM [{table}] "
+                f"WHERE [{tcols[col.lower()]}] IS NOT NULL")
+            for r in rows(cursor):
+                v = str(r.get("v") or "").strip()
+                if v:
+                    referenced.add(v)
+        except Exception as e:
+            log.warning(f"  branch ids from {table}.{col}: {e}")
+
     flag_preds = []
     if "islocation" in cols:
         flag_preds.append("t.IsLocation = 1")
     if "isfactory" in cols:
         flag_preds.append("t.IsFactory = 1")
-    if not flag_preds:
-        log.warning(f"  [{base_url}] stores: no IsLocation/IsFactory flag on PartyMst — "
-                    f"cannot detect branches; skipping (# LIVE-DB: confirm branch flag)")
+
+    if not referenced and not flag_preds:
+        log.warning(f"  [{base_url}] stores: nothing identifies a branch on this "
+                    f"install — skipping (# LIVE-DB: confirm branch column)")
         return
+    log.info(f"  {len(referenced)} party id(s) are referenced as a branch by the data")
 
     # LIVE-DB: SOURCE COLUMN NAMES — CONFIRM BEFORE FIRST RUN.
     # PartyNo (varchar PK) -> legacyId; FirmName -> name; FirmCity -> city;
@@ -718,9 +752,15 @@ def push_stores(cursor, token, base_url):
     if mobile_col and "phone" not in present_details:
         sel.append(f"t.{mobile_col} AS phone")
 
-    where = " OR ".join(flag_preds)
+    clauses = list(flag_preds)
+    params = []
+    if referenced:
+        ph = ",".join("?" for _ in referenced)
+        clauses.append(f"t.{pk_col} IN ({ph})")
+        params = sorted(referenced)
+    where = " OR ".join(clauses)
     # Best-effort query (READ-ONLY). Marked columns/predicate above pending confirmation.
-    cursor.execute(f"SELECT {', '.join(sel)} FROM PartyMst t WHERE {where}")
+    cursor.execute(f"SELECT {', '.join(sel)} FROM PartyMst t WHERE {where}", *params)
     raw = rows(cursor)
 
     # Map each location row to the /sync/stores contract.
@@ -1105,12 +1145,14 @@ def sync_once():
 
             # A capped or filtered run has NOT seen all the data, so advancing the
             # watermark would permanently skip whatever was left behind.
-            if LIMIT or ONLY:
-                log.warning("  Partial run (--limit/--only): watermark NOT advanced, "
-                            "so the full run still picks everything up.")
-                all_ok = False
+            partial = bool(LIMIT or ONLY)
+            if partial:
+                log.info("  Partial run (--limit/--only): watermark deliberately NOT "
+                         "advanced, so the full run still picks everything up.")
 
-            if all_ok:
+            if partial:
+                pass   # nothing to say; the line above already explained it
+            elif all_ok:
                 if new_wm and new_wm != since:
                     state[base_url] = new_wm
                     save_state(state)
