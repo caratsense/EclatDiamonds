@@ -1182,8 +1182,25 @@ def sync_once():
             # FULL RAW MIRROR — dump every table so ANY field is available later,
             # with no code change. Independent of the mapped sync above; its own
             # per-table watermarks mean it only ships changed rows after the first run.
+            #
+            # Skippable, because the first run of it is long and almost entirely
+            # not about jewellery: on this client it scans 1,136 tables, the
+            # largest being 72,830 rows of international port codes. The
+            # shop-facing sync above has already finished and advanced its
+            # watermark by this point, so stopping here costs nothing the shop
+            # can see — which also means it is safe to Ctrl+C.
+            #
+            #   sync_sjep.py --no-mirror     one run
+            #   set SJEP_SKIP_MIRROR=1       every run
+            skip_mirror = ("--no-mirror" in sys.argv
+                           or os.getenv("SJEP_SKIP_MIRROR", "").strip().lower()
+                           in ("1", "true", "yes"))
             try:
-                if not DRY_RUN and not ONLY and not LIMIT:
+                if skip_mirror:
+                    log.info(f"  [{base_url}] full mirror skipped (--no-mirror). The "
+                             f"shop data above is complete; the mirror is the "
+                             f"keep-everything backup and can run any time.")
+                elif not DRY_RUN and not ONLY and not LIMIT:
                     dump_all(cursor, token, base_url, state)
             except Exception as e:
                 log.error(f"  [{base_url}] full mirror error: {e}")
