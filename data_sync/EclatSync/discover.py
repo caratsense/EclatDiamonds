@@ -316,8 +316,7 @@ def diagnose_connection(err):
         out("    virtual machine on this one — then this agent must be installed")
         out("    THERE, or pointed at it over the network.")
         out("    Ask: 'which computer actually holds the database?'")
-        _save()
-        return
+        return None
 
     out(f"  SQL SERVER INSTANCES ON THIS COMPUTER ({len(instances)}):")
     best = (None, None, -1)   # (server, database, score)
@@ -351,11 +350,12 @@ def diagnose_connection(err):
         out("    Picked because it holds the most stock and has the most recent")
         out("    activity. CONFIRM WITH THE CLIENT before syncing — only they know")
         out("    which one they actually bill from today.")
+        out("")
+        out("    Put these two into 2_configure.bat before any data is SENT.")
     else:
         out("  None of these look like a jewellery database.")
         out("    Ask the client which one their software uses.")
-    out("")
-    out("  Then run 2_configure.bat, enter those two values, and run this again.")
+    return (best[0], best[1]) if best[1] else None
 
 
 def table_exists(cur, name):
@@ -381,6 +381,9 @@ def rows(cur):
 
 
 def main():
+    # Rebound below if the configured name is wrong and the right one is found.
+    global SQL_SERVER, SQL_DB
+
     out("=" * 72)
     out("ECLAT / CARATSENSE — ON-SITE DISCOVERY (read-only)")
     out(f"run at        : {datetime.now().isoformat(timespec='seconds')}")
@@ -393,9 +396,33 @@ def main():
         conn, driver = connect()
     except Exception as e:
         out(f"\n[COULD NOT CONNECT] {e}")
-        diagnose_connection(str(e))
-        _save()
-        sys.exit(1)
+        found = diagnose_connection(str(e))
+        # Having just worked out which server and database this shop uses, do not
+        # stop and ask the operator to type it back in. This step SENDS NOTHING —
+        # the worst case of guessing wrong is a report about the wrong database,
+        # which is obvious on reading it and costs nothing. Making someone
+        # re-enter a value the script is already holding costs a round trip, and
+        # on a client's machine over a remote session that is the expensive thing.
+        #
+        # It stays a suggestion for anything that WRITES: the settings file is
+        # still where the sync reads from, and 2_configure.bat is still where the
+        # confirmed answer goes.
+        if found:
+            SQL_SERVER, SQL_DB = found
+            out("")
+            out("=" * 72)
+            out(f"  Continuing the report against {SQL_SERVER} / {SQL_DB}.")
+            out("  Nothing is sent by this step, so there is no risk in looking.")
+            out("=" * 72)
+            try:
+                conn, driver = connect()
+            except Exception as e2:
+                out(f"\n[STILL COULD NOT CONNECT] {str(e2)[:200]}")
+                _save()
+                sys.exit(1)
+        else:
+            _save()
+            sys.exit(1)
     out(f"odbc driver   : {driver}")
     cur = conn.cursor()
 
