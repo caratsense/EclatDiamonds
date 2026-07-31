@@ -77,9 +77,77 @@ export function docTypeFromTranType(tt: unknown): string {
   return 'sale';
 }
 
-/** Legacy Inward.Status/SaleId -> Eclat StockStatus. */
-export function stockStatusFromInward(row: { SaleId?: unknown }): string {
-  return row.SaleId ? 'sold' : 'in_stock';
+/**
+ * Legacy `Inward.Status` -> Eclat `StockStatus`.
+ *
+ * The letters are not ours to invent: they are the rows of the legacy system's
+ * own `Const_InwardStatus` master, read off the client's live database.
+ *
+ *   A On Hand              B Broken                C Memo
+ *   D Repair Issue         E Reversal Issue        G Merge Issue
+ *   I Inward Repair Issue  J Jewellery Merge In Bag
+ *   K Memo Split Issue     L Lost                  M Tobe Memo
+ *   P Purchase Return      R Memo In Return        S Tobe Sold
+ *   T Split Issue          U Branch Memo Issue     V Branch Issue
+ *   X Sold
+ *
+ * This used to read `row.SaleId ? 'sold' : 'in_stock'` — a column that is not
+ * even present on this install, so **every** piece imported as in_stock. On the
+ * client's live data only 46% are actually On Hand: the rest are sold, lost,
+ * broken, out on memo with a customer, or issued to another branch. Eclat would
+ * have shown roughly twice the stock that exists, and a salesperson would have
+ * promised a customer a ring that was sold last month.
+ *
+ * Only **A** is sellable. Everything else must land outside
+ * `in_stock`/`aging`/`dead_stock`, which is the set the catalogue counts as
+ * available (see `ProductsService.stockPresence`).
+ *
+ * Two judgement calls worth stating:
+ *   - `Lost` and `Broken` have no exact Eclat equivalent. They are recorded as
+ *     `melted` — not because either was melted, but because that is the bucket
+ *     meaning "this piece is not coming back", and the alternative is a label
+ *     that lets it be sold.
+ *   - An UNKNOWN letter is treated as not-sellable, not as in_stock. Wrongly
+ *     hiding a piece costs a sale the staff can see on the shelf; wrongly
+ *     showing one costs a promise to a customer that cannot be kept. Unknown
+ *     letters are counted and reported by the caller so they never stay unknown.
+ */
+const INWARD_STATUS: Record<string, string> = {
+  A: 'in_stock', // On Hand — the only sellable state
+  X: 'sold',
+
+  // Committed to someone: out on approval, or marked to go.
+  C: 'reserved', // Memo
+  M: 'reserved', // Tobe Memo
+  K: 'reserved', // Memo Split Issue
+  S: 'reserved', // Tobe Sold
+
+  // Physically gone from this location.
+  V: 'transferred', // Branch Issue
+  U: 'transferred', // Branch Memo Issue
+  D: 'transferred', // Repair Issue
+  E: 'transferred', // Reversal Issue
+  G: 'transferred', // Merge Issue
+  I: 'transferred', // Inward Repair Issue
+  J: 'transferred', // Jewellery Merge In Bag
+  T: 'transferred', // Split Issue
+  P: 'transferred', // Purchase Return
+  R: 'transferred', // Memo In Return
+
+  B: 'melted', // Broken
+  L: 'melted', // Lost
+};
+
+/** The letters above, for callers that want to report what they did not know. */
+export const KNOWN_INWARD_STATUSES = new Set(Object.keys(INWARD_STATUS));
+
+export function stockStatusFromInward(row: { SaleId?: unknown; Status?: unknown }): string {
+  // A sale reference, where the install has one, is decisive — a piece attached
+  // to a bill is sold whatever the status letter still says.
+  if (row.SaleId) return 'sold';
+  const code = String(row.Status ?? '').trim().toUpperCase();
+  if (!code) return 'in_stock'; // no status column at all: the old behaviour
+  return INWARD_STATUS[code] ?? 'transferred';
 }
 
 /** Highest legacy watermark (UpdateDate else EntryDate) across a record set, as ISO. */

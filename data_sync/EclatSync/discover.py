@@ -1028,10 +1028,47 @@ def find_image_root(samples):
                 lower = {f.lower() for f in filenames}
                 hit = wanted & lower
                 if hit:
-                    return dirpath, sorted(hit)[0]
+                    return climb_to_library(dirpath, wanted), sorted(hit)[0]
         except (PermissionError, OSError):
             continue
     return None, None
+
+
+def climb_to_library(found_dir, wanted):
+    """Return the folder that holds the WHOLE library, not the first hit's folder.
+
+    Shops file photographs by category — ALR, AER, APD, ABR, ANK — so the first
+    filename that matches is almost always inside one of those, and reporting
+    that folder as the photo root is how a catalogue ends up containing nothing
+    but earrings. Measured on the client's disk: the search matched `10780er.jpg`
+    in `SJEP IMAGES\\AER` and duly recommended `...\\AER`, which is 289 of their
+    1,098 pictures.
+
+    So climb: if the parent contains matches in more than one sub-folder, the
+    parent is the library. Keep climbing while that stays true, and stop as soon
+    as it does not — one level too high sweeps in the software's own artwork,
+    which is the opposite mistake and just as bad.
+    """
+    current = found_dir
+    for _ in range(4):  # a photo library is not nested deeper than this
+        parent = os.path.dirname(current.rstrip("\\/"))
+        if not parent or parent == current or len(parent) <= 3:
+            break
+        matched_dirs = set()
+        try:
+            for dirpath, dirnames, filenames in os.walk(parent):
+                # One level of sub-folders under the parent is enough to tell.
+                if dirpath.count(os.sep) - parent.count(os.sep) > 1:
+                    dirnames[:] = []
+                    continue
+                if wanted & {f.lower() for f in filenames}:
+                    matched_dirs.add(dirpath)
+        except (PermissionError, OSError):
+            break
+        if len(matched_dirs) <= 1:
+            break  # the parent adds nothing — stay where we are
+        current = parent
+    return current
 
 
 def _save():

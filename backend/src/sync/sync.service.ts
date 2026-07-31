@@ -15,6 +15,7 @@ import {
   maxWatermark,
   metalFromTone,
   str,
+  KNOWN_INWARD_STATUSES,
   stockStatusFromInward,
 } from './sync.util';
 
@@ -36,6 +37,19 @@ export interface SyncResult {
     unknownBranchIds: string[];
     branchColumns: string[];
   };
+  /**
+   * Stock only — how many pieces landed in each Eclat status. "How much stock is
+   * there" is the first number the client checks and the one a wrong status
+   * mapping silently doubles, so the batch reports it rather than leaving it to
+   * be discovered on the shop floor.
+   */
+  availability?: Record<string, number>;
+  /**
+   * Stock only — `Inward.Status` letters this build does not recognise, with
+   * counts. Their pieces are deliberately withheld from the available set, and
+   * this is how that decision surfaces instead of quietly hiding stock.
+   */
+  unknownStatuses?: Record<string, number>;
 }
 
 type Rec = Record<string, any>;
@@ -1110,6 +1124,14 @@ export class SyncService {
     );
     let upserted = 0;
     let skipped = 0;
+    // What each batch decided about availability, because "how much stock is
+    // there" is the number the client will check first and the one a wrong
+    // status silently doubles. Also collects any status letter this build does
+    // not know, so an install with an extra code is noticed rather than quietly
+    // having its pieces hidden.
+    const byStatus: Record<string, number> = {};
+    const unknownStatuses: Record<string, number> = {};
+
     for (const r of records) {
       if (r.JewelId == null) {
         skipped++;
@@ -1117,6 +1139,12 @@ export class SyncService {
       }
       const metal = metalFromTone(r.ToneFor, r.ToneCode);
       const storeId = await branch.resolveRequired(r);
+      const rawStatus = String(r.Status ?? '').trim().toUpperCase();
+      if (rawStatus && !KNOWN_INWARD_STATUSES.has(rawStatus)) {
+        unknownStatuses[rawStatus] = (unknownStatuses[rawStatus] ?? 0) + 1;
+      }
+      const stockStatus = stockStatusFromInward(r);
+      byStatus[stockStatus] = (byStatus[stockStatus] ?? 0) + 1;
       const data = {
         storeId,
         productId: productByStyle.get(String(r.StyleId)) ?? null,
@@ -1124,7 +1152,7 @@ export class SyncService {
         name: str(r.JewelCode),
         metal: metal as any,
         karat: karatFromMetal(metal),
-        status: stockStatusFromInward(r) as any,
+        status: stockStatus as any,
         grossWeight: dec(r.GrossWt),
         netWeight: dec(r.NetWt),
         pureWeight: dec(r.PureWt),
@@ -1153,7 +1181,32 @@ export class SyncService {
       });
       upserted++;
     }
-    return this.result('stock', records, upserted, skipped, branch.report());
+
+    if (Object.keys(unknownStatuses).length) {
+      this.logger.warn(
+        `sync stock: unrecognised Inward.Status code(s) — ` +
+          Object.entries(unknownStatuses)
+            .map(([c, n]) => `${c}=${n}`)
+            .join(', ') +
+          `. These pieces are deliberately NOT shown as available; add them to ` +
+          `INWARD_STATUS in sync.util.ts once their meaning is confirmed against ` +
+          `the client's Const_InwardStatus table.`,
+      );
+    }
+    this.logger.log(
+      `sync stock: ${Object.entries(byStatus)
+        .map(([s, n]) => `${s}=${n}`)
+        .join(' ')}`,
+    );
+
+    return {
+      ...this.result('stock', records, upserted, skipped, branch.report()),
+      // Surfaced rather than logged only: "how many pieces do we actually have"
+      // is the first thing the client checks, and the number that a wrong status
+      // mapping silently doubles.
+      availability: byStatus,
+      unknownStatuses,
+    };
   }
 
   // ── JewelTrans -> Sale ───────────────────────────────────────────────────────
