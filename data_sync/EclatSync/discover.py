@@ -172,6 +172,115 @@ def probe_database(server, db):
         return None, None
 
 
+def survey_other_databases(cur):
+    """Look inside every OTHER database on this server, not just the configured one.
+
+    A jewellery install is rarely one database. This client's server carries
+    APRSSJEP alongside SJEPlus and APRSLog, and until something opens them all
+    they are three names on a list — which is exactly the position from which
+    somebody says "the sync covers everything" and is wrong.
+
+    Each one is either the live system, an old copy, or a different part of the
+    product, and the difference is visible in seconds: how many tables it has,
+    which are the big ones, and when it was last written to. A database with
+    Inward rows and a recent date is a jewellery system somebody is still using.
+    One with the same tables and a date from last year is a backup restore.
+
+    Reads catalog views and row counts only — no table contents, nothing written.
+    """
+    out("\n" + "-" * 72)
+    out("0b. THE OTHER DATABASES ON THIS SERVER")
+    out("    (so 'we looked at everything' is a fact rather than a hope)")
+    out("-" * 72)
+
+    try:
+        cur.execute("SELECT name FROM sys.databases WHERE database_id > 4 "
+                    "AND state_desc = 'ONLINE' ORDER BY name")
+        names = [r[0] for r in cur.fetchall()]
+    except Exception as e:
+        out(f"  (could not list databases: {str(e)[:70]})")
+        return
+
+    others = [n for n in names if n != SQL_DB]
+    if not others:
+        out("  None — this server holds only the database we are using.")
+        return
+
+    for db in others:
+        out(f"\n  === {db} ===")
+        # Fully-qualified catalog reads, so no USE and no second connection: the
+        # login may legitimately have no rights here, and that is worth reporting
+        # rather than crashing on.
+        try:
+            cur.execute(f"SELECT COUNT(*) FROM [{db}].INFORMATION_SCHEMA.TABLES "
+                        "WHERE TABLE_TYPE='BASE TABLE'")
+            ntables = cur.fetchone()[0]
+        except Exception as e:
+            msg = str(e)
+            if "permission" in msg.lower() or "denied" in msg.lower():
+                out("    Cannot read it — this login has no rights to this database.")
+                out("    Ask IT whether the shop uses it; if so, grant the read-only")
+                out("    login access and run this again.")
+            else:
+                out(f"    Cannot read it: {msg[:90]}")
+            continue
+
+        out(f"    Tables: {ntables}")
+        if not ntables:
+            out("    Empty — nothing to import.")
+            continue
+
+        # Is this a jewellery database at all, and is anyone still using it?
+        looks_jewellery = False
+        for probe in ("Inward", "StyleMst", "PartyMst"):
+            try:
+                cur.execute(f"SELECT COUNT(*) FROM [{db}].INFORMATION_SCHEMA.TABLES "
+                            f"WHERE TABLE_NAME='{probe}'")
+                if cur.fetchone()[0]:
+                    looks_jewellery = True
+                    break
+            except Exception:
+                pass
+
+        try:
+            cur.execute(f"""
+                SELECT TOP 12 t.name AS table_name, SUM(p.rows) AS row_count
+                FROM [{db}].sys.tables t
+                JOIN [{db}].sys.partitions p
+                  ON t.object_id = p.object_id AND p.index_id IN (0,1)
+                GROUP BY t.name HAVING SUM(p.rows) > 0
+                ORDER BY SUM(p.rows) DESC""")
+            big = rows(cur)
+            if big:
+                out("    Largest tables:")
+                for r in big:
+                    out(f"      {r['table_name']:<32} {r['row_count']:>10,}")
+            else:
+                out("    Every table is empty — a structure with no data in it.")
+        except Exception as e:
+            out(f"    (could not measure tables: {str(e)[:70]})")
+
+        if looks_jewellery:
+            latest = None
+            for table, col in (("JewelTrans", "JewelTransDate"),
+                               ("Inward", "InwardDate"),
+                               ("Spm_MfgOrder", "OrderDate")):
+                try:
+                    cur.execute(f"SELECT MAX([{col}]) FROM [{db}].[dbo].[{table}]")
+                    v = cur.fetchone()[0]
+                    if v and (latest is None or v > latest):
+                        latest = v
+                except Exception:
+                    pass
+            out(f"    This is ALSO a jewellery database. Last activity: "
+                f"{str(latest)[:10] if latest else 'none found'}")
+            out("    -> Confirm with the client which one the shop actually uses.")
+            out("       Importing from the wrong one imports last year's shop.")
+        else:
+            out("    Not a jewellery database (no Inward/StyleMst/PartyMst) —")
+            out("    logging, licensing or a different product. Nothing to import.")
+
+
 def diagnose_connection(err):
     """Turn a connection failure into the next thing to type.
 
@@ -344,6 +453,8 @@ def main():
             out(f"    {r['table_name']:<34} {r['row_count']:>10,}")
     except Exception as e:
         out(f"    (unavailable: {str(e)[:60]})")
+
+    survey_other_databases(cur)
 
     # ── 1. How much data is actually here ──────────────────────────────────────
     out("\n" + "-" * 72)

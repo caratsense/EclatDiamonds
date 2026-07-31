@@ -1,0 +1,251 @@
+========================================================================
+ECLAT / CARATSENSE — ON-SITE DISCOVERY (read-only)
+run at        : 2026-07-31T15:55:25
+sql server    : localhost\SQLEXPRESS
+database      : APRSSJEP_eclat
+auth          : Windows (trusted)
+========================================================================
+odbc driver   : ODBC Driver 17 for SQL Server
+
+------------------------------------------------------------------------
+0. THE SERVER AND DATABASE
+------------------------------------------------------------------------
+  SQL Server : Microsoft SQL Server 2022 (RTM-GDR) (KB5102334) - 16.0.1190.2 (X64) 
+  Database   : APRSSJEP_eclat
+  Connected as: Shreyansh\Shrey
+
+  Other databases on this server (1):
+    APRSSJEP_eclat               created 2026-06-16  ONLINE  <-- we are using this
+
+  Tables in this database: 1102
+
+  Largest tables by row count:
+    Const_PortCode                         72,830
+    BookMasterConfigurationValue           19,482
+    JewelTransInwardDetail                 14,507
+    JewelTransInwardExploration            13,800
+    InwardCatch                            13,162
+    InwardDetail                           11,685
+    SPM_MaterialStock                       9,754
+    InwardHistory                           7,175
+    SPM_MfgOrderItemDetail                  4,973
+    SPM_MaterialTransDetail                 4,168
+    SPM_BagMaterial                         3,738
+    SPM_BagMaterialView                     3,738
+    SPM_BagTransaction                      3,716
+    SPM_BagTransactionSummary               3,716
+    InwardExploration                       3,673
+
+------------------------------------------------------------------------
+0b. THE OTHER DATABASES ON THIS SERVER
+    (so 'we looked at everything' is a fact rather than a hope)
+------------------------------------------------------------------------
+  None — this server holds only the database we are using.
+
+------------------------------------------------------------------------
+1. ROW COUNTS (what we would be importing)
+------------------------------------------------------------------------
+  PartyMst                 564
+  StyleMst                 753
+  Inward                   2690
+  InwardHistory            7175
+  JewelTrans               239
+  Spm_MfgOrder             121
+  SPM_MfgOrderItem         1220
+  OrderProceed             109
+  OrderProceedItem         1109
+  SPM_BagMaster            1102
+  SPM_BagTransaction       3716
+  SPM_DepartmentMst        1
+  Journal                  475
+
+------------------------------------------------------------------------
+2. Spm_MfgOrder.OrderStatus — THE CODES THIS INSTALL ACTUALLY USES
+   (a human must say what each number means)
+------------------------------------------------------------------------
+  OrderStatus = 0         109 orders   2026-02-01 .. 2026-06-08
+  OrderStatus = None       12 orders   2026-03-31 .. 2026-05-30
+
+------------------------------------------------------------------------
+3. SHOP-FLOOR DEPARTMENTS — these become the manufacturing timeline
+------------------------------------------------------------------------
+  DepartmentId = 1      Self
+
+  Bags currently sitting in each department:
+    DepartmentId = 1       1102 bags
+
+  Distinct BagStatus values:
+    BagStatus = C            842
+    BagStatus = O            260
+
+  Order-to-delivery bridge (OrderProceedItem.OrderProceedStatus):
+    OrderProceedStatus = M         1108
+    OrderProceedStatus = S            1
+
+  Bag movements over time (SPM_BagTransaction):
+    3716 rows
+
+  --- CAN THIS INSTALL SHOW A MANUFACTURING TIMELINE? ---
+    PARTLY — there are no real shop-floor departments (only a placeholder),
+    but OrderProceedItem has 2 distinct status codes. Ask how
+    the client tracks work-in-progress; that field may be the timeline.
+
+------------------------------------------------------------------------
+4. CATALOGUE PHOTOS
+------------------------------------------------------------------------
+  Inward: 2690 of 2690 rows name an image
+      e.g. 11980PD.jpg
+      e.g. ABR001.jpg
+      e.g. 11019ER.jpg
+      e.g. 11007RG.jpg
+      e.g. 10913RG.jpg
+      e.g. 11254RG.jpg
+      e.g. 11294RG.jpg
+      e.g. 10884RG.jpg
+  StyleMst: 753 of 753 rows name an image
+      e.g. 11980PD.jpg
+      e.g. ABR001.jpg
+      e.g. 11019ER.jpg
+      e.g. 11007RG.jpg
+      e.g. 10913RG.jpg
+      e.g. 11254RG.jpg
+      e.g. 11294RG.jpg
+      e.g. 10884RG.jpg
+
+  Looking for the folder these files live in...
+  [NOT FOUND] Could not locate the photo folder automatically.
+  Ask the shop: 'where are the jewellery photos kept?' Then set
+  SJEP_IMAGE_ROOT in eclat_config.bat to that folder and re-run.
+  (Searched the common install paths; a network drive or a custom
+   folder will not be found automatically.)
+
+------------------------------------------------------------------------
+5. DRAFT STAGE MAP
+------------------------------------------------------------------------
+  Written to: C:\Users\Shrey\Eclat\data_sync\EclatSync\reports\stage_map.suggested.json
+  Every entry guessed from the department NAME is marked "guess": true.
+  A human must confirm each one, then save the file as stage_map.json.
+  Anything left null simply records the movement without moving the order.
+
+========================================================================
+BRANCH ATTRIBUTION — which column tells us the shop?
+========================================================================
+
+  This decides whether each branch gets its own sales, stock and orders,
+  or whether everything piles into one store. Read it with the client.
+
+  Branch/location rows in PartyMst: 6
+    - [0001000001] APRS HO
+    - [0001000118] HARSH PRECIOUS PVT LTD
+    - [0001000120] 01 MUBD
+    - [0002000001] Deshana Creation
+    - [0002000044] 01 DLPV
+    - [0002000077] SONANI JEWELS
+
+  Inward (2690 rows)
+    LocationId         filled   0%  distinct 0      <- SAME VALUE EVERYWHERE, useless for splitting
+    BranchNo           filled  46%  distinct 7      <- only 46% of rows have it
+      top: 0001000023=MUMBAI BANDRA (339), 0001000026=MUMBAI KALAGHODA (196), 0001000029=UDAIPUR ASHOK NAGAR (165), 0001000027=DELHI ROHINI (164), 0001000028=DELHI PASCHIM VIHAR (154)
+    FirstLocationId    filled   0%  distinct 0      <- SAME VALUE EVERYWHERE, useless for splitting
+    CompanyId          filled 100%  distinct 13   
+      top: 0001000121=DIAGEMCO (532), 0001000118=HARSH PRECIOUS PVT LTD (485), 0002000001=Deshana Creation (357), 0001000024=APRS HO (339), 0001000041=APRS HO (196)
+
+  PartyMst (564 rows)
+    BranchNo           filled  88%  distinct 8    
+      top: 0001000023=MUMBAI BANDRA (90), 0001000027=DELHI ROHINI (81), 0001000026=MUMBAI KALAGHODA (77), 0001000025=MUMBAI BORIVALI (59), 0001000028=DELHI PASCHIM VIHAR (55)
+    LocationId         filled   0%  distinct 0      <- SAME VALUE EVERYWHERE, useless for splitting
+
+  JewelTrans (239 rows)
+    LocationId         filled   0%  distinct 0      <- SAME VALUE EVERYWHERE, useless for splitting
+    BookNo             filled 100%  distinct 26     <- document series; resolved via BookMaster (see below)
+      top: 57 (45), 30 (34), 242 (27), 17=(As Per Detail) (22), 60 (17)
+
+  Spm_MfgOrder (121 rows)
+    BookNo             filled 100%  distinct 8      <- document series; resolved via BookMaster (see below)
+      top: 13=MATERIAL SALE RETURN A/c (79), 105 (23), 161 (8), 204 (6), 16=MATERIAL PAYMENT SETTELMENT A/c (2)
+
+  SPM_BagMaster (1102 rows)
+    CompanyId          filled 100%  distinct 3    
+      top: 0001000118=HARSH PRECIOUS PVT LTD (578), 0002000001=Deshana Creation (523), 0001000001=APRS HO (1)
+
+  Journal (475 rows)
+    BookNo             filled 100%  distinct 29     <- document series; resolved via BookMaster (see below)
+      top: 30 (117), 242 (63), 17=(As Per Detail) (50), 66 (43), 11=MATERIAL SALE A/c (36)
+
+  BookMaster — the fallback path for sales and orders
+    branch column: BranchNo — 199 books, 8 distinct branch value(s)
+    >> Books look per-branch. Sales and orders can be attributed.
+
+  WHAT THE ECLAT TEAM NEEDS FROM THIS:
+    1. The number of branches above must match what the client actually runs.
+    2. For each table, the column with high fill %, >1 distinct value, and
+       values that ARE branch ids is the one to use.
+    3. If nothing qualifies for sales/orders, say so out loud — per-branch
+       revenue then cannot come from this system without new data entry.
+
+========================================================================
+SAMPLE RECORDS — does the data look like what we think it is?
+========================================================================
+
+  Read these with the client. Look for: blank names, zero amounts,
+  dates that make no sense, codes nobody recognises.
+
+  PartyMst  —  showing 5 row(s), 7 of 125 columns
+    PartyNo                 FirmName                FirmCity                IsCustomer              IsSalesMan              IsLocation              BranchNo              
+    ----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+    0001000001              APRS HO                                         True                    False                   False                   NULL                  
+    0001000002              Bank A/C                                        False                   False                   False                   NULL                  
+    0001000003              Diamond Purchase A/C                            False                   False                   False                   NULL                  
+    0001000004              Dimaond Purchase GST A…                          False                   False                   False                   NULL                  
+    0001000005              Metal Purchase A/C                              False                   False                   False                   NULL                  
+
+  StyleMst  —  showing 5 row(s), 4 of 96 columns
+    StyleId                 StyleCode               StyleSKUNo              ImageName             
+    ----------------------------------------------------------------------------------------------
+    1                       10880RG                 10880RG-G-14KT-YG-LG-V…  10880RG               
+    3                       10886RG                 10886RG-G-18KT-YG-LG-V…  10886RG               
+    4                       09987RG                 09987RG-G-14KT-YG-LG-V…  09987RG               
+    5                       09987RG-050             09987RG-050-G-14KT-YG-…  09987RG-050           
+    6                       09995RG                 09995RG-G-14KT-YG-LG-V…  09995RG               
+
+  Inward  —  showing 5 row(s), 9 of 108 columns
+    JewelId                 JewelCode               InwardSKUNo             StyleId                 LocationId              BranchNo                InwardDate              Status                  ImageName             
+    ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+    24                      A00001                  10987RG-G-14KT-YG-LS-V…  85                      NULL                    NULL                    2026-03-30 00:00:00     V                       10987RG               
+    25                      A00002                  10882RG-G-14KT-YG-LS-V…  31                      NULL                    NULL                    2026-03-30 00:00:00     V                       10882RG               
+    27                      A00004                  11006ARG-G-14KT-WG-LG-…  34                      NULL                    NULL                    2026-03-30 00:00:00     V                       11006ARG              
+    28                      A00005                  11021RG-G-14KT-YG-LG-V…  26                      NULL                    NULL                    2026-03-30 00:00:00     V                       11021RG               
+    29                      A00006                  10885RG-G-14KT-YG-LG-V…  72                      NULL                    NULL                    2026-03-30 00:00:00     V                       10885RG               
+
+  JewelTrans  —  showing 5 row(s), 8 of 57 columns
+    JewelTransId            JewelTransNo            JewelTransDate          PartyNo                 BookNo                  Amount                  TranType                isCancel              
+    ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+    29                      0001                    2026-04-13 00:00:00     0001000029              17                      4276182.0000            BJWSL                   NULL                  
+    30                      0002                    2026-04-20 00:00:00     0001000028              17                      3255969.0000            BJWSL                   NULL                  
+    31                      0001                    2026-04-13 00:00:00     0001000059              98                      4151633.0000            BJWPH                   NULL                  
+    33                      0001                    2026-04-20 00:00:00     0001000053              177                     3161135.0000            BJWPH                   NULL                  
+    45                      0003                    2026-04-23 00:00:00     0001000027              17                      1386221.0000            BJWSL                   NULL                  
+
+  Spm_MfgOrder  —  showing 5 row(s), 7 of 47 columns
+    OrderId                 OrderNo                 OrderDate               OrderStatus             BookNo                  CustomerId              Amount                
+    ----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+    3                       0001                    2026-03-23 00:00:00     0                       105                     0001000029              5547175.0000          
+    5                       0001                    2026-03-10 00:00:00     0                       13                      0001000025              0.0000                
+    6                       0002                    2026-03-10 00:00:00     0                       13                      0001000025              0.0000                
+    7                       0003                    2026-03-31 00:00:00     0                       13                      0001000025              23120.0000            
+    10                      0002                    2026-03-31 00:00:00     NULL                    105                     0001000028              3321326.0000          
+
+  SPM_BagMaster  —  showing 5 row(s), 6 of 50 columns
+    BagId                   BagNo                   OrderId                 DepartmentId            BagStatus               BagDate               
+    ----------------------------------------------------------------------------------------------------------------------------------------------
+    300                     1                       3                       1                       C                       2026-03-25 00:00:00   
+    301                     2                       3                       1                       C                       2026-03-25 00:00:00   
+    302                     3                       3                       1                       C                       2026-03-25 00:00:00   
+    303                     4                       3                       1                       C                       2026-03-25 00:00:00   
+    304                     5                       3                       1                       C                       2026-03-25 00:00:00   
+
+
+========================================================================
+DISCOVERY COMPLETE — nothing was changed, nothing was uploaded.
+Send this file to the Eclat team: C:\Users\Shrey\Eclat\data_sync\EclatSync\reports\discovery_report.txt
+========================================================================

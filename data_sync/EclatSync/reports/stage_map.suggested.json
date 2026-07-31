@@ -1,0 +1,22 @@
+{
+  "_README": [
+    "Maps this install's own codes to Eclat's manufacturing stages.",
+    "Confirm every entry, then save this file as stage_map.json.",
+    "Valid stages: booked, designing, casting, stone_setting, polishing, qc, ready, delivered",
+    "null = record the movement but do not advance the order."
+  ],
+  "orderStatusToStage": {
+    "0": {
+      "stage": null,
+      "guess": false,
+      "note": "confirm with the client"
+    }
+  },
+  "departmentToStage": {
+    "1": {
+      "name": "Self",
+      "stage": null,
+      "guess": false
+    }
+  }
+}
