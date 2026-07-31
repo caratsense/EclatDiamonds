@@ -6,3 +6,11 @@ auto_sync.log          # local run logs
 *.log
 __pycache__/
 *.pyc
+
+# Run OUTPUT. A discovery report is a readable extract of the client's own
+# business — branch names, party counts, document series — produced by pointing
+# the tool at their database. It belongs in the engagement, not in the source
+# tree, and it is regenerated in two minutes by anyone who needs it.
+reports/*
+!reports/readme.txt
+uploaded_media.json
