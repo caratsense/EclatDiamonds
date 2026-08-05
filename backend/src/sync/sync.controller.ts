@@ -78,6 +78,17 @@ export class SyncController {
     return this.sync.syncProductImages(body.records);
   }
 
+  /**
+   * Designs from the client's own website. Brings the two things the shop system
+   * cannot: a clean customer-facing photograph (Gati's library has measurements
+   * printed across the pictures) and a price for designs no branch stocks.
+   * Matched designs are only enriched; unmatched ones are created made-to-order.
+   */
+  @Post('website-products')
+  websiteProducts(@Body() body: SyncBatchDto) {
+    return this.sync.syncWebsiteProducts(body.records);
+  }
+
   /** Auto-ingest Gati branches: new legacyIds become `pending` stores for HO/AM to set up. */
   @Post('stores')
   stores(@CurrentUser() user: AuthUser, @Body() body: SyncStoresDto) {

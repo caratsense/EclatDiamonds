@@ -44,6 +44,9 @@ export interface SyncResult {
    * be discovered on the shop floor.
    */
   availability?: Record<string, number>;
+  /** Website import only — designs newly added vs. existing ones given a photo/price. */
+  created?: number;
+  enriched?: number;
   /**
    * Stock only — `Inward.Status` letters this build does not recognise, with
    * counts. Their pieces are deliberately withheld from the available set, and
@@ -1750,6 +1753,131 @@ export class SyncService {
    * `kind` selects the target table because the legacy image lives on both the
    * design master (StyleMst -> Product) and the physical piece (Inward -> StockItem).
    */
+  /**
+   * Designs from the client's own website -> Product.
+   *
+   * Two things the shop system cannot give us:
+   *
+   *   - A CLEAN PHOTOGRAPH. Gati's picture folder is the working library, and a
+   *     large share of it has the measurements and specification printed across
+   *     the image. That is right for the workshop and wrong for a customer: a
+   *     buyer shown "18.5 mm" written over a ring learns nothing and trusts it
+   *     less. The website photos are the retouched shots the client already
+   *     publishes, and they are already on a public CDN — so we store the URL
+   *     and upload nothing.
+   *
+   *   - A PRICE for designs held as stock nowhere. `StyleMstSummary.MRP` is
+   *     filled on under half the designs, while every website design carries
+   *     one.
+   *
+   * Matching is on the design code (website `productCode` == Gati `StyleCode`,
+   * which is what `Product.name` holds), falling back to the SKU prefix, since
+   * Gati's SKU is the code plus a specification tail:
+   *   09987RG-050  ->  09987RG-050-G-14KT-YG-LG-VVS-VS-E-F
+   *
+   * A design that matches is only ENRICHED — its photo and web price are added,
+   * and nothing that came from the shop system is overwritten, because Gati is
+   * the authority on anything it actually holds. A design that matches nothing
+   * is created as company-wide (`storeId: null`, like every other design) and
+   * `made_to_order`, which is the honest state: the shop sells it, no branch has
+   * one on the shelf, and a salesperson can raise it to head office.
+   */
+  async syncWebsiteProducts(records: Rec[]): Promise<SyncResult> {
+    // Website taxonomy -> our enum. Ordered: the first hit wins, so
+    // "Pendants & Necklace" resolves before the looser "necklace" test.
+    const CATEGORY: [RegExp, string][] = [
+      [/mangalsutra|necklace/i, 'necklace'],
+      [/pendant/i, 'pendant'],
+      [/earring|stud/i, 'earrings'],
+      [/bangle/i, 'bangle'],
+      [/bracelet/i, 'bracelet'],
+      [/chain/i, 'chain'],
+      [/ring|solitaire/i, 'ring'],
+    ];
+    // Karat -> MetalKind. 9k and 14k have no member of their own; they are gold
+    // and the karat number is kept exactly on Product.karat, so nothing is lost
+    // by filing them under the nearest bucket.
+    const METAL: Record<string, string> = {
+      '24': 'gold_24k',
+      '22': 'gold_22k',
+      '18': 'gold_18k',
+      '14': 'gold_18k',
+      '9': 'gold_18k',
+    };
+
+    let upserted = 0;
+    let skipped = 0;
+    let created = 0;
+    let enriched = 0;
+
+    for (const r of records) {
+      const code = str(r.productCode);
+      if (!code) {
+        skipped++;
+        continue;
+      }
+      const imageUrl = str(r.imageUrl) || null;
+      const price = dec(r.price);
+      const karat = int(r.karat) ?? 0;
+
+      const existing =
+        (await this.prisma.product.findFirst({
+          where: { name: code },
+          select: { id: true, imageUrl: true, price: true },
+        })) ??
+        (await this.prisma.product.findFirst({
+          where: { sku: { startsWith: `${code}-` } },
+          select: { id: true, imageUrl: true, price: true },
+        }));
+
+      if (existing) {
+        // Only fill gaps. A photo already set by the media sync, or a price
+        // Gati supplied, is left exactly as it is.
+        const data: Record<string, unknown> = {};
+        if (imageUrl && !existing.imageUrl) data.imageUrl = imageUrl;
+        if (price != null && Number(existing.price) === 0) data.price = price;
+        if (str(r.description)) data.description = str(r.description);
+        if (Object.keys(data).length) {
+          await this.prisma.product.update({ where: { id: existing.id }, data });
+          enriched++;
+          upserted++;
+        } else {
+          skipped++;
+        }
+        continue;
+      }
+
+      const cat = CATEGORY.find(([re]) => re.test(str(r.category) + ' ' + str(r.name)));
+      await this.prisma.product.create({
+        data: {
+          sku: code,
+          name: str(r.name) || code,
+          category: (cat?.[1] ?? 'other') as any,
+          metal: (METAL[String(karat)] ?? 'gold_18k') as any,
+          karat,
+          price: price ?? 0,
+          caratWeight: dec(r.caratWeight) ?? 0,
+          description: str(r.description) || null,
+          imageUrl,
+          // No branch holds one. Says so, rather than implying a shelf.
+          availability: 'made_to_order' as any,
+          storeId: null,
+        },
+      });
+      created++;
+      upserted++;
+    }
+
+    this.logger.log(
+      `sync website-products: created=${created} enriched=${enriched} skipped=${skipped}`,
+    );
+    return {
+      ...this.result('website-products', records, upserted, skipped),
+      created,
+      enriched,
+    };
+  }
+
   async syncProductImages(records: Rec[]): Promise<SyncResult> {
     let upserted = 0;
     let skipped = 0;
