@@ -1859,8 +1859,10 @@ export class SyncService {
           caratWeight: dec(r.caratWeight) ?? 0,
           description: str(r.description) || null,
           imageUrl,
-          // No branch holds one. Says so, rather than implying a shelf.
-          availability: 'made_to_order' as any,
+          // `lead_time` is the enum's existing word for "we sell it, nobody has
+          // one on the shelf" — the only other value is in_stock, which would be
+          // a lie about every one of these.
+          availability: 'lead_time' as any,
           storeId: null,
         },
       });
