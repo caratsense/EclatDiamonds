@@ -108,6 +108,16 @@ export class StoresService {
     return stores.map((s) => this.toView(s));
   }
 
+  /** Public store picker (self-signup). Minimal fields, real trading branches only. */
+  async directory() {
+    const stores = await this.prisma.store.findMany({
+      where: { isAggregate: false, status: { not: 'closed' } },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true, city: true },
+    });
+    return stores;
+  }
+
   /**
    * POST /stores (area_manager+) — provision a new branch. head_office is
    * unrestricted; an area_manager may only create in a region they manage.

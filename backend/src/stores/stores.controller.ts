@@ -3,10 +3,23 @@ import { StoresService } from './stores.service';
 import { CreateManagerDto, CreateStoreDto, UpdateStoreDto } from './dto/stores.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { Roles } from '../auth/roles.decorator';
+import { Public } from '../auth/public.decorator';
 
 @Controller('stores')
 export class StoresController {
   constructor(private readonly stores: StoresService) {}
+
+  /**
+   * GET /stores/directory — public list of branches (id/name/city only) for the
+   * self-signup store picker, before the applicant has any session. Store names
+   * and cities are already public (they are on the company website), so this
+   * exposes nothing sensitive; it deliberately omits everything operational.
+   */
+  @Public()
+  @Get('directory')
+  directory() {
+    return this.stores.directory();
+  }
 
   /**
    * GET /stores — the stores in the caller's scope (store-scoped, all roles),

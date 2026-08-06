@@ -62,11 +62,90 @@ export interface CreateStaffInput {
 
 const USERS_KEY = ["users"] as const;
 const UNASSIGNED_KEY = ["users", "unassigned"] as const;
+const PENDING_KEY = ["users", "pending"] as const;
 
-/** Invalidate both the roster and the pending-assignment list. */
+/** Invalidate the roster, the pending-assignment list, and the signup queue. */
 function invalidateUsers(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: USERS_KEY });
   qc.invalidateQueries({ queryKey: UNASSIGNED_KEY });
+  qc.invalidateQueries({ queryKey: PENDING_KEY });
+}
+
+/** A self-signup awaiting approval (GET /users/pending). */
+export interface PendingSignup {
+  id: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  requestedRole: StaffRole;
+  requestedStore: { id: string; name: string } | null;
+  createdAt: string;
+}
+
+/** GET /users/pending — the self-signup approval queue (scoped server-side). */
+export function usePendingSignups() {
+  return useQuery({
+    queryKey: PENDING_KEY,
+    queryFn: async () => {
+      const { data } = await api.get<PendingSignup[]>("/users/pending");
+      return data;
+    },
+  });
+}
+
+/** POST /users/:id/approve — grant a pending signup (optional role/store override). */
+export function useApproveSignup() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      role,
+      storeId,
+    }: {
+      id: string;
+      role?: StaffRole;
+      storeId?: string;
+    }) => {
+      const { data } = await api.post<StaffUser>(`/users/${id}/approve`, {
+        role,
+        storeId,
+      });
+      return data;
+    },
+    onSuccess: () => invalidateUsers(qc),
+  });
+}
+
+/** POST /users/:id/reject — decline a pending signup. */
+export function useRejectSignup() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, reason }: { id: string; reason?: string }) => {
+      const { data } = await api.post<StaffUser>(`/users/${id}/reject`, {
+        reason,
+      });
+      return data;
+    },
+    onSuccess: () => invalidateUsers(qc),
+  });
+}
+
+/** PATCH /users/:id/leave-allocation — set a staff member's yearly leave quota. */
+export function useSetLeaveAllocation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      id: string;
+      type: "casual" | "sick" | "earned" | "festival";
+      year: number;
+      allocated: number;
+    }) => {
+      const { id, ...body } = input;
+      const { data } = await api.patch(`/users/${id}/leave-allocation`, body);
+      return data;
+    },
+    onSuccess: () => invalidateUsers(qc),
+  });
 }
 
 /** GET /users — the staff roster, store-scoped server-side. Pass a storeId to

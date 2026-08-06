@@ -35,6 +35,16 @@ enum Role {
   head_office
 }
 
+/// Self-signup approval lifecycle. `approved` is the default so every existing
+/// and manager-provisioned user is unaffected — only self-signups start `pending`
+/// and are gated OUT of login until an authorised approver acts. This is distinct
+/// from `isActive` (offboarding) and from imported-staff activation.
+enum ApprovalStatus {
+  approved
+  pending
+  rejected
+}
+
 enum PartyType {
   customer
   supplier
@@ -408,7 +418,14 @@ model Store {
 model User {
   id           String  @id @default(cuid())
   name         String
+  /// The LOGIN identifier and unique handle. For self-signups this is generated
+  /// as `firstname.storeslug@eclatdiamonds.in` (see users.util.uniqueEmailHandle)
+  /// so it is unique even when two people share a personal inbox or a first name.
   email        String  @unique
+  /// The personal/contact email the person actually gave. NOT unique — two people
+  /// may legitimately share one (a family inbox, a store address) — and never used
+  /// to sign in. Purely for reaching them.
+  contactEmail String?
   initials     String?
   phone        String?
   passwordHash String?
@@ -416,6 +433,20 @@ model User {
 
   /// Primary role. Cross-store scope is derived from UserStore rows + role rank.
   role Role @default(salesperson)
+
+  /// Self-signup approval workflow. Self-registered users start `pending` +
+  /// `isActive=false` and hold NO role/store until an authorised approver grants
+  /// it: the requested role/store are only a request, never access. `head_office`
+  /// approves store/area-manager requests; a store/area manager approves the
+  /// salesperson requests inside their own scope (strictly-below-rank rule).
+  approvalStatus   ApprovalStatus @default(approved)
+  /// The role the signup asked for (never granted until approval). Placeholder
+  /// `role` stays `salesperson` meanwhile so a bug can never leak privilege.
+  requestedRole    Role?
+  /// The store the signup asked to join (validated + scope-checked at approval).
+  requestedStoreId String?
+  approvedById     String?
+  approvedAt       DateTime?
 
   /// Google's `sub`, set on first Google sign-in. Matched on instead of email
   /// because emails get recycled. Null for OTP/password-only users.

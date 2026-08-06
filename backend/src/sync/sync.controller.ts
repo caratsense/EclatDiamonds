@@ -150,6 +150,17 @@ export class SyncController {
     return this.sync.pruneEmptyStores(user, body.confirm);
   }
 
+  /**
+   * Clean slate for go-live: delete every account except head office (everyone
+   * else then self-signs-up and is approved). Dry-run unless the body carries
+   * `{"confirm":"DELETE ALL USERS EXCEPT HEAD OFFICE"}`. Atomic — see
+   * SyncService.resetToHeadOffice.
+   */
+  @Post('reset-users')
+  resetUsers(@CurrentUser() user: AuthUser, @Body() body: PurgeDemoDto) {
+    return this.sync.resetToHeadOffice(user, body.confirm);
+  }
+
   /** Generic full-mirror: ANY legacy table -> LegacyRow (extract-everything-once). */
   @Post('raw')
   raw(@Body() body: RawSyncDto) {

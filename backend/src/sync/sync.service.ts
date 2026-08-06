@@ -1051,6 +1051,111 @@ export class SyncService {
   }
 
   /**
+   * POST /sync/reset-users — clean slate for go-live: remove EVERY account except
+   * head office, so the client starts with one login and everyone else self-signs
+   * up. Dry-run unless the body carries `{"confirm":"DELETE ALL USERS EXCEPT HEAD
+   * OFFICE"}`.
+   *
+   * Removing a user requires clearing the Eclat-only rows that foreign-key to them
+   * (leads, quotes, attendance, leave, tickets, targets, …) — all of which are
+   * demo data at go-live. Synced data (parties/products/stock/sales, keyed on
+   * legacyId) never references a user and is left untouched. HO's own audit trail,
+   * notifications and store links are preserved.
+   *
+   * The whole thing runs in ONE transaction: it either fully succeeds or rolls
+   * back. It can never half-run and strand the database (the bug purgeDemo hit).
+   */
+  async resetToHeadOffice(actor: AuthUser, confirm?: string) {
+    const CONFIRM = 'DELETE ALL USERS EXCEPT HEAD OFFICE';
+    const keep = await this.prisma.user.findMany({
+      where: { role: 'head_office' },
+      select: { id: true, name: true, email: true },
+    });
+    const keepIds = keep.map((u) => u.id);
+    const doomed = await this.prisma.user.findMany({
+      where: { id: { notIn: keepIds } },
+      select: { name: true, email: true, role: true },
+    });
+
+    if (confirm !== CONFIRM) {
+      return {
+        dryRun: true,
+        confirmPhrase: CONFIRM,
+        wouldDelete: doomed.length,
+        wouldKeep: keep.map((k) => k.email),
+        sample: doomed.slice(0, 25),
+      };
+    }
+    if (keepIds.length === 0) {
+      throw new BadRequestException(
+        'No head_office account exists — refusing to delete every user and lock everyone out.',
+      );
+    }
+    if (doomed.length === 0) {
+      return { dryRun: false, deletedUsers: 0, message: 'Only head office exists already.' };
+    }
+
+    // Eclat-only tables that FK to the users being removed. Cleared entirely
+    // (all demo at go-live), CHILDREN BEFORE PARENTS so foreign keys stay valid.
+    const clearEntirely = [
+      'leadNote', 'leadFollowUp', 'occasionReminder', 'lead',
+      'quoteLine', 'quote',
+      'checkIn',
+      'attendanceRegularization', 'attendanceRecord',
+      'leaveBalance', 'leaveRequest',
+      'specialRequestMessage', 'specialRequest',
+      'handoff', 'dailyReport',
+      'salesTarget', 'commission',
+      'ticketMessage', 'ticket',
+      'returnPhoto', 'returnRecord',
+      'discountRequest',
+      'customOrderEvent', 'customOrder',
+      'task',
+    ];
+
+    const deleted: Record<string, number> = {};
+    await this.prisma.$transaction(
+      async (tx) => {
+        for (const m of clearEntirely) {
+          const model = (tx as any)[m];
+          if (!model) continue;
+          deleted[m] = (await model.deleteMany({})).count;
+        }
+        // Shared with head office — scope to the doomed users so HO keeps its own.
+        deleted['notification'] = (
+          await tx.notification.deleteMany({ where: { userId: { notIn: keepIds } } })
+        ).count;
+        deleted['auditLog'] = (
+          await tx.auditLog.deleteMany({ where: { actorId: { notIn: keepIds } } })
+        ).count;
+        deleted['userStore'] = (
+          await tx.userStore.deleteMany({ where: { userId: { notIn: keepIds } } })
+        ).count;
+        deleted['user'] = (
+          await tx.user.deleteMany({ where: { id: { notIn: keepIds } } })
+        ).count;
+      },
+      { timeout: 120_000, maxWait: 20_000 },
+    );
+
+    await this.audit.record(actor, {
+      action: 'users.reset_to_head_office',
+      entityType: 'system',
+      entityId: 'user-reset',
+      summary: `Removed ${deleted['user']} account(s); kept head office only`,
+      metadata: { deleted, kept: keep.map((k) => k.email) },
+    });
+    this.logger.warn(`USER RESET by ${actor.id}: removed ${deleted['user']} account(s)`);
+
+    return {
+      dryRun: false,
+      deletedUsers: deleted['user'],
+      deleted,
+      kept: keep.map((k) => k.email),
+    };
+  }
+
+  /**
    * Every model carrying a `storeId`, read off the generated Prisma schema, with
    * whether it also has a `legacyId` (i.e. can hold imported rows).
    *

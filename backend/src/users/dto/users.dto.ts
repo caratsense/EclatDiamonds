@@ -1,5 +1,14 @@
-import { IsEmail, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
-import { Role } from '@prisma/client';
+import {
+  IsEmail,
+  IsIn,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+  MinLength,
+} from 'class-validator';
+import { LeaveType, Role } from '@prisma/client';
 
 /** Roles a head-office admin may assign here — never `head_office` (HO cannot mint another HO). */
 export const ASSIGNABLE_ROLES: Role[] = ['salesperson', 'store_manager', 'area_manager'];
@@ -52,4 +61,46 @@ export class DeactivateUserDto {
   @IsOptional()
   @IsString()
   reassignToId?: string;
+}
+
+/**
+ * POST /users/:id/approve — grant a pending self-signup. Both fields optional:
+ * the approver may correct the requested role/store, otherwise the request's own
+ * values are used. The strictly-below-rank + in-scope rules still apply, so a
+ * store manager can only ever approve a salesperson into a store they own, and
+ * only head office can approve a store/area manager.
+ */
+export class ApproveUserDto {
+  @IsOptional()
+  @IsIn(ASSIGNABLE_ROLES)
+  role?: Role;
+
+  @IsOptional()
+  @IsString()
+  storeId?: string;
+}
+
+/** POST /users/:id/reject — decline a pending self-signup (stays inactive). */
+export class RejectUserDto {
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
+
+/**
+ * PATCH /users/:id/leave-allocation — a manager sets how many days of a leave
+ * type a staff member may take in a year (the "holidays allowed" quota). Upserts
+ * the LeaveBalance row; `used` is untouched.
+ */
+export class SetLeaveAllocationDto {
+  @IsIn(['casual', 'sick', 'earned', 'festival'])
+  type!: LeaveType;
+
+  @IsInt()
+  @Min(2000)
+  year!: number;
+
+  @IsNumber()
+  @Min(0)
+  allocated!: number;
 }

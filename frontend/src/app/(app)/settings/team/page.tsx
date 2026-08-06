@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 import {
   Building2,
+  CalendarDays,
+  Check,
   KeyRound,
   Lock,
   Mail,
@@ -12,7 +14,9 @@ import {
   Store as StoreIcon,
   UserCheck,
   UserMinus,
+  UserPlus,
   UsersRound,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -57,12 +61,17 @@ import { getNavItem } from "@/lib/navigation";
 import { useResetPassword } from "@/lib/queries/auth";
 import {
   useActivateStaff,
+  useApproveSignup,
   useCreateStaff,
   useDeactivateStaff,
+  usePendingSignups,
+  useRejectSignup,
+  useSetLeaveAllocation,
   useStaff,
   useUnassignedStaff,
   useUpdateStaffRole,
   useUpdateStaffStore,
+  type PendingSignup,
   type StaffRole,
   type StaffUser,
 } from "@/lib/queries/users";
@@ -193,6 +202,8 @@ export default function TeamPage() {
         </div>
       )}
 
+      <PendingSignups />
+
       <PendingAssignment viewerRole={viewerRole} />
 
       <AddStaffDialog
@@ -218,7 +229,7 @@ function UserRow({
   roster: StaffUser[];
 }) {
   const [dialog, setDialog] = useState<
-    "role" | "store" | "deactivate" | "reset" | null
+    "role" | "store" | "deactivate" | "reset" | "leave" | null
   >(null);
 
   const activate = useActivateStaff();
@@ -316,6 +327,9 @@ function UserRow({
                   </DropdownMenuItem>
                 </>
               ) : null}
+              <DropdownMenuItem onSelect={() => setDialog("leave")}>
+                <CalendarDays className="h-4 w-4" /> Set leave quota
+              </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setDialog("reset")}>
                 <KeyRound className="h-4 w-4" /> Reset password
               </DropdownMenuItem>
@@ -365,7 +379,114 @@ function UserRow({
         user={dialog === "reset" ? user : null}
         onOpenChange={(o) => setDialog(o ? "reset" : null)}
       />
+      <LeaveQuotaDialog
+        user={user}
+        open={dialog === "leave"}
+        onOpenChange={(o) => setDialog(o ? "leave" : null)}
+      />
     </TableRow>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Leave quota (yearly entitlement per leave type)                    */
+/* ------------------------------------------------------------------ */
+
+const LEAVE_TYPES: { value: "casual" | "sick" | "earned" | "festival"; label: string }[] = [
+  { value: "casual", label: "Casual" },
+  { value: "sick", label: "Sick" },
+  { value: "earned", label: "Earned" },
+  { value: "festival", label: "Festival" },
+];
+
+function LeaveQuotaDialog({
+  user,
+  open,
+  onOpenChange,
+}: {
+  user: StaffUser;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const setQuota = useSetLeaveAllocation();
+  const year = new Date().getFullYear();
+  const [type, setType] =
+    useState<"casual" | "sick" | "earned" | "festival">("casual");
+  const [days, setDays] = useState("12");
+
+  function save() {
+    const allocated = Number(days);
+    if (!Number.isFinite(allocated) || allocated < 0) {
+      toast.error("Enter a valid number of days.");
+      return;
+    }
+    setQuota.mutate(
+      { id: user.id, type, year, allocated },
+      {
+        onSuccess: () => {
+          toast.success(`${user.name}: ${allocated} ${type} day(s) for ${year}`);
+          onOpenChange(false);
+        },
+        onError: (err) =>
+          toast.error(apiErrorMessage(err, "Could not set the leave quota.")),
+      },
+    );
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (o) {
+          setType("casual");
+          setDays("12");
+        }
+        onOpenChange(o);
+      }}
+    >
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Leave quota</DialogTitle>
+          <DialogDescription>
+            Set how many days of a leave type {user.name} may take in {year}.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="grid gap-1.5">
+            <Label htmlFor="leave-type">Leave type</Label>
+            <Select value={type} onValueChange={(v) => setType(v as typeof type)}>
+              <SelectTrigger id="leave-type">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {LEAVE_TYPES.map((t) => (
+                  <SelectItem key={t.value} value={t.value}>
+                    {t.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="leave-days">Days allowed in {year}</Label>
+            <Input
+              id="leave-days"
+              inputMode="numeric"
+              value={days}
+              onChange={(e) => setDays(e.target.value.replace(/[^\d.]/g, ""))}
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={setQuota.isPending}>
+            {setQuota.isPending ? "Saving…" : "Save quota"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -749,6 +870,102 @@ function PendingRow({
 }
 
 /* ------------------------------------------------------------------ */
+/* Self-signup approval queue                                         */
+/* ------------------------------------------------------------------ */
+
+function PendingSignups() {
+  const { data: pending = [], isLoading } = usePendingSignups();
+
+  if (isLoading || pending.length === 0) return null;
+
+  return (
+    <div className="mt-8">
+      <div className="mb-3 flex items-center gap-2">
+        <UserPlus className="h-4 w-4 text-muted-foreground" />
+        <h2 className="text-sm font-semibold">Account requests</h2>
+        <Badge variant="secondary">{pending.length}</Badge>
+      </div>
+      <p className="mb-3 text-xs text-muted-foreground">
+        People who signed up and are waiting for approval. Approving grants the
+        requested role and links them to their store; they can then sign in.
+      </p>
+      <div className="rounded-xl border divide-y">
+        {pending.map((p) => (
+          <SignupRequestRow key={p.id} req={p} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SignupRequestRow({ req }: { req: PendingSignup }) {
+  const approve = useApproveSignup();
+  const reject = useRejectSignup();
+  const busy = approve.isPending || reject.isPending;
+
+  function onApprove() {
+    approve.mutate(
+      { id: req.id },
+      {
+        onSuccess: () => toast.success(`${req.name} approved`),
+        onError: (err) =>
+          toast.error(apiErrorMessage(err, "Could not approve this request.")),
+      },
+    );
+  }
+
+  function onReject() {
+    reject.mutate(
+      { id: req.id },
+      {
+        onSuccess: () => toast.success(`${req.name}'s request declined`),
+        onError: (err) =>
+          toast.error(apiErrorMessage(err, "Could not decline this request.")),
+      },
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-medium">{req.name}</span>
+          {roleBadge(req.requestedRole)}
+          {req.requestedStore ? (
+            <Badge variant="outline" className="font-normal">
+              {req.requestedStore.name}
+            </Badge>
+          ) : null}
+        </div>
+        <div className="mt-0.5 text-xs text-muted-foreground">
+          <span>{req.email}</span>
+          {req.phone ? (
+            <>
+              {" · "}
+              <span className="num">{req.phone}</span>
+            </>
+          ) : null}
+        </div>
+      </div>
+      <div className="flex shrink-0 gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onReject}
+          disabled={busy}
+          className="text-destructive hover:text-destructive"
+        >
+          <X className="h-4 w-4" /> Decline
+        </Button>
+        <Button size="sm" onClick={onApprove} disabled={busy}>
+          <Check className="h-4 w-4" /> Approve
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Add staff                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -823,10 +1040,8 @@ function AddStaffDialog({
         role,
       },
       {
-        onSuccess: () => {
-          toast.success(
-            "Staff added — they can sign in with WhatsApp OTP using their phone.",
-          );
+        onSuccess: (created) => {
+          toast.success(`Staff added — their login is ${created.email}`);
           reset();
           onOpenChange(false);
         },
@@ -853,8 +1068,9 @@ function AddStaffDialog({
         <DialogHeader>
           <DialogTitle>Add staff</DialogTitle>
           <DialogDescription>
-            New staff default to Salesperson. Provide a phone number so they can
-            sign in with a WhatsApp OTP, and you can promote them later.
+            New staff default to Salesperson. We generate their unique login
+            (firstname.store@eclatdiamonds.in); a phone also lets them sign in
+            with a WhatsApp OTP. You can promote them later.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
@@ -883,7 +1099,7 @@ function AddStaffDialog({
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="staff-email">Email</Label>
+              <Label htmlFor="staff-email">Personal email</Label>
               <Input
                 id="staff-email"
                 type="email"

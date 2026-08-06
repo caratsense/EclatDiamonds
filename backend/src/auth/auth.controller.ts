@@ -2,6 +2,7 @@ import { Body, Controller, Get, Post } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
+import { SignupDto } from './dto/signup.dto';
 import { GoogleLoginDto } from './dto/google-login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { RequestOtpDto, VerifyOtpDto } from './dto/otp.dto';
@@ -18,6 +19,18 @@ export class AuthController {
   @Post('login')
   login(@Body() dto: LoginDto) {
     return this.auth.login(dto.email, dto.password);
+  }
+
+  /**
+   * Self-registration. Throttled (belt-and-braces against pending-queue spam) and
+   * creates only a powerless pending request — see AuthService.signup. Approval is
+   * a separate, authenticated step (POST /users/:id/approve).
+   */
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('signup')
+  signup(@Body() dto: SignupDto) {
+    return this.auth.signup(dto);
   }
 
   /** Sign in with a Google ID token. Throttled to match otp/verify. */

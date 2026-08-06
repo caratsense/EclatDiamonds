@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 
 import { api, setStoredToken, setStoredStoreId } from "@/lib/api";
 import type { Role, Store, User } from "@/lib/types";
@@ -60,6 +60,54 @@ export function useGoogleLogin() {
       const me = await fetchMe();
       setStoredStoreId(me.currentStore.id);
       return me;
+    },
+  });
+}
+
+export interface SignupInput {
+  name: string;
+  email: string;
+  password: string;
+  phone?: string;
+  requestedRole: "salesperson" | "store_manager" | "area_manager";
+  requestedStoreId: string;
+}
+
+export interface SignupStore {
+  id: string;
+  name: string;
+  city: string;
+}
+
+/**
+ * useSignupStores — the PUBLIC store directory (no auth) that populates the
+ * store picker on the signup form. Names/cities only.
+ */
+export function useSignupStores() {
+  return useQuery({
+    queryKey: ["signup-stores"],
+    queryFn: async () => {
+      const { data } = await api.get<SignupStore[]>("/stores/directory");
+      return data;
+    },
+  });
+}
+
+/**
+ * useSignup — self-registration. Creates a PENDING request, never a live
+ * session: the response is `{ pending: true, message }` and the applicant
+ * cannot sign in until an authorised approver grants the account. No token is
+ * stored here on purpose.
+ */
+export function useSignup() {
+  return useMutation({
+    mutationFn: async (input: SignupInput) => {
+      const { data } = await api.post<{
+        pending: boolean;
+        message: string;
+        loginEmail: string;
+      }>("/auth/signup", input);
+      return data;
     },
   });
 }

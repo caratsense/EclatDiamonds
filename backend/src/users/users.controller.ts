@@ -1,8 +1,11 @@
 import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { UsersService } from './users.service';
 import {
+  ApproveUserDto,
   CreateUserDto,
   DeactivateUserDto,
+  RejectUserDto,
+  SetLeaveAllocationDto,
   UpdateUserRoleDto,
   UpdateUserStoreDto,
 } from './dto/users.dto';
@@ -40,6 +43,46 @@ export class UsersController {
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateUserDto) {
     return this.users.create(user, dto);
+  }
+
+  /** GET /users/pending — self-signup approval queue (scoped to what the caller may grant). */
+  @Roles('store_manager')
+  @Get('pending')
+  listPending(@CurrentUser() user: AuthUser) {
+    return this.users.listPending(user);
+  }
+
+  /** POST /users/:id/approve — grant a pending signup (delegation-gated). */
+  @Roles('store_manager')
+  @Post(':id/approve')
+  approve(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: ApproveUserDto,
+  ) {
+    return this.users.approve(user, id, dto);
+  }
+
+  /** POST /users/:id/reject — decline a pending signup (delegation-gated). */
+  @Roles('store_manager')
+  @Post(':id/reject')
+  reject(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: RejectUserDto,
+  ) {
+    return this.users.reject(user, id, dto.reason);
+  }
+
+  /** PATCH /users/:id/leave-allocation — set a staff member's yearly leave quota. */
+  @Roles('store_manager')
+  @Patch(':id/leave-allocation')
+  setLeaveAllocation(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: SetLeaveAllocationDto,
+  ) {
+    return this.users.setLeaveAllocation(user, id, dto);
   }
 
   /** PATCH /users/:id/role — delegated promote/demote (never to/at the caller's rank). */

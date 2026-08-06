@@ -19,6 +19,8 @@ import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
 import { ROLE_RANK } from '../common/role.util';
 import { WhatsAppService } from '../integrations/whatsapp.service';
+import { SignupDto } from './dto/signup.dto';
+import { uniqueEmailHandle } from '../users/users.util';
 
 /** OTP policy — one place to tune. */
 const OTP_TTL_MS = 5 * 60 * 1000; // code valid 5 minutes
@@ -191,9 +193,63 @@ export class AuthService {
     return { token, ...session };
   }
 
+  /**
+   * POST /auth/signup — self-registration. Creates a POWERLESS pending request,
+   * never an account with access: `isActive=false`, `approvalStatus=pending`,
+   * real `role=salesperson`, no store link. The requested role/store are recorded
+   * for the approver and only granted when an authorised approver acts. So opening
+   * signup to the public never widens privilege — the invite-only security posture
+   * is preserved; a pending row can do nothing until approved.
+   */
+  async signup(dto: SignupDto) {
+    const contactEmail = dto.email?.trim().toLowerCase() || null;
+    const phone = dto.phone?.trim() || null;
+
+    const store = await this.prisma.store.findUnique({ where: { id: dto.requestedStoreId } });
+    if (!store || store.isAggregate) {
+      throw new BadRequestException('Choose a valid store');
+    }
+
+    // The LOGIN identity is a generated, unique handle — never the personal email
+    // (which is optional and may be shared). "shreyansh.mumbaibandra@eclatdiamonds.in".
+    const email = await uniqueEmailHandle(dto.name, store.name, async (candidate) =>
+      !!(await this.prisma.user.findUnique({ where: { email: candidate }, select: { id: true } })),
+    );
+
+    const passwordHash = await bcrypt.hash(dto.password, 10);
+    await this.prisma.user.create({
+      data: {
+        name: dto.name.trim(),
+        email,
+        contactEmail,
+        phone,
+        initials: dto.name.trim().slice(0, 2).toUpperCase(),
+        // NEVER the requested role — a pending row is powerless until approved.
+        role: 'salesperson',
+        passwordHash,
+        isActive: false,
+        approvalStatus: 'pending',
+        requestedRole: dto.requestedRole,
+        requestedStoreId: dto.requestedStoreId,
+      },
+    });
+
+    return {
+      pending: true,
+      loginEmail: email,
+      message:
+        dto.requestedRole === 'salesperson'
+          ? 'Request sent. Your store manager will approve your account.'
+          : 'Request sent. Head office will approve your account.',
+    };
+  }
+
   async login(email: string, password: string) {
     const user = await this.prisma.user.findUnique({ where: { email: email.toLowerCase() } });
-    if (!user || !user.passwordHash || !user.isActive) {
+    // isActive already blocks pending/rejected (both are isActive=false); the
+    // explicit approvalStatus check is defence-in-depth. Same generic message
+    // for every case so login never reveals which emails exist or their status.
+    if (!user || !user.passwordHash || !user.isActive || user.approvalStatus !== 'approved') {
       throw new UnauthorizedException('Invalid credentials');
     }
     const ok = await bcrypt.compare(password, user.passwordHash);

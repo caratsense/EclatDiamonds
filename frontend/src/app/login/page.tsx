@@ -5,13 +5,13 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import {
   ArrowRight,
-  CheckCircle2,
-  LockKeyhole,
+  ArrowLeft,
   Loader2,
+  MailCheck,
   ShieldCheck,
   Sparkles,
   Store,
-  Users,
+  UserPlus,
   Smartphone,
   KeyRound,
 } from "lucide-react";
@@ -32,59 +32,233 @@ import {
   useGoogleLogin,
   useRequestOtp,
   useVerifyOtp,
+  useSignup,
+  useSignupStores,
 } from "@/lib/queries/auth";
 import { useSession } from "@/store/use-session";
 import type { Role } from "@/lib/types";
-
-interface DemoAccount {
-  email: string;
-  phone: string;
-  role: Role;
-  roleTitle: string;
-  storeLabel: string;
-  name: string;
-}
-
-const DEMO_ACCOUNTS: DemoAccount[] = [
-  {
-    email: "priya.rep@caratsense.in",
-    phone: "9100000004",
-    role: "salesperson",
-    roleTitle: "Salesperson",
-    storeLabel: "Surat — Main",
-    name: "Priya Verma",
-  },
-  {
-    email: "aarav.mehta@caratsense.in",
-    phone: "9100000003",
-    role: "store_manager",
-    roleTitle: "Store Manager",
-    storeLabel: "Surat — Main",
-    name: "Aarav Mehta",
-  },
-  {
-    email: "neelam.area@caratsense.in",
-    phone: "9100000002",
-    role: "area_manager",
-    roleTitle: "Area Manager",
-    storeLabel: "West India Region",
-    name: "Neelam Rao",
-  },
-  {
-    email: "head.office@caratsense.in",
-    phone: "9100000001",
-    role: "head_office",
-    roleTitle: "Head Office",
-    storeLabel: "Pan-India Admin",
-    name: "Head Office",
-  },
-];
 
 function apiMessage(err: unknown, fallback: string): string {
   const message = (err as AxiosError<{ message?: string | string[] }>)
     ?.response?.data?.message;
   if (Array.isArray(message)) return message[0] ?? fallback;
   return typeof message === "string" && message ? message : fallback;
+}
+
+const SIGNUP_ROLES: { value: Role; label: string; hint: string }[] = [
+  {
+    value: "salesperson",
+    label: "Salesperson",
+    hint: "Join an existing store. Your store manager approves you.",
+  },
+  {
+    value: "store_manager",
+    label: "Store Manager",
+    hint: "Run a store. Head office approves you.",
+  },
+  {
+    value: "area_manager",
+    label: "Area Manager",
+    hint: "Oversee a region. Head office approves you.",
+  },
+];
+
+const inputCls =
+  "w-full rounded-md border border-[#1b3a2c] bg-[#071e16] px-3 py-2 text-sm text-[#f6f3ed] placeholder:text-[#f6f3ed]/30 focus:border-[#c8a24f] focus:outline-none focus:ring-1 focus:ring-[#c8a24f]";
+
+/**
+ * Self-registration card. Creates a PENDING request (never a live session): the
+ * applicant picks a store + the role they are asking for, and on submit sees a
+ * "waiting for approval" screen. Head office approves store/area managers; a
+ * store/area manager approves salespeople in their store. The backend grants no
+ * access until then.
+ */
+function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
+  const signup = useSignup();
+  const storesQuery = useSignupStores();
+  const stores = storesQuery.data ?? [];
+
+  const [name, setName] = React.useState("");
+  const [email, setEmail] = React.useState("");
+  const [password, setPassword] = React.useState("");
+  const [phone, setPhone] = React.useState("");
+  const [requestedRole, setRequestedRole] = React.useState<Role>("salesperson");
+  const [requestedStoreId, setRequestedStoreId] = React.useState("");
+  const [done, setDone] = React.useState<
+    { message: string; loginEmail: string } | null
+  >(null);
+
+  const roleHint = SIGNUP_ROLES.find((r) => r.value === requestedRole)?.hint;
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (name.trim().length < 2) return toast.error("Enter your full name.");
+    if (email && !/^\S+@\S+\.\S+$/.test(email))
+      return toast.error("That email doesn't look right (or leave it blank).");
+    if (password.length < 8)
+      return toast.error("Password must be at least 8 characters.");
+    if (!requestedStoreId) return toast.error("Choose your store.");
+
+    signup.mutate(
+      {
+        name: name.trim(),
+        email: email.trim(),
+        password,
+        phone: phone.trim() || undefined,
+        requestedRole: requestedRole as
+          | "salesperson"
+          | "store_manager"
+          | "area_manager",
+        requestedStoreId,
+      },
+      {
+        onSuccess: (res) =>
+          setDone({ message: res.message, loginEmail: res.loginEmail }),
+        onError: (err) =>
+          toast.error(apiMessage(err, "Couldn't create your account. Try again.")),
+      },
+    );
+  }
+
+  if (done) {
+    return (
+      <div className="rounded-2xl border border-[#c8a24f]/40 bg-[#0c261c]/80 p-6 text-center shadow-xl">
+        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[#c8a24f]/15 text-[#c8a24f]">
+          <MailCheck className="h-6 w-6" />
+        </div>
+        <h3 className="text-lg font-semibold text-[#f6f3ed]">Request sent</h3>
+        <p className="mt-2 text-sm text-[#f6f3ed]/75">{done.message}</p>
+        <div className="mt-4 rounded-lg border border-[#1b3a2c] bg-[#071e16] p-3 text-left">
+          <p className="text-[11px] uppercase tracking-wider text-[#c8a24f]">
+            Your sign-in email
+          </p>
+          <p className="mt-0.5 break-all font-mono text-sm text-[#f6f3ed]">
+            {done.loginEmail}
+          </p>
+        </div>
+        <p className="mt-3 text-xs text-[#f6f3ed]/50">
+          Save this — you&apos;ll sign in with this email and your password once
+          approved.
+        </p>
+        <Button
+          type="button"
+          onClick={onBackToSignin}
+          className="mt-5 w-full bg-[#c8a24f] text-[#071e16] font-semibold hover:bg-[#b8903c]"
+        >
+          Back to sign in
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <form
+      onSubmit={submit}
+      className="space-y-3.5 rounded-2xl border border-[#1b3a2c] bg-[#0c261c]/80 p-5 shadow-xl"
+    >
+      <div className="space-y-1.5">
+        <Label className="text-xs text-[#f6f3ed]/80">Full name</Label>
+        <input
+          className={inputCls}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. Aarav Shah"
+          required
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs text-[#f6f3ed]/80">
+          Personal email <span className="text-[#f6f3ed]/40">(optional)</span>
+        </Label>
+        <input
+          type="email"
+          autoComplete="email"
+          className={inputCls}
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="name@email.com"
+        />
+        <p className="text-[11px] text-[#f6f3ed]/45">
+          For contact only. We create your unique sign-in email for you.
+        </p>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label className="text-xs text-[#f6f3ed]/80">Password</Label>
+          <input
+            type="password"
+            autoComplete="new-password"
+            className={inputCls}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="8+ characters"
+            required
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs text-[#f6f3ed]/80">Phone (optional)</Label>
+          <input
+            inputMode="numeric"
+            className={inputCls}
+            value={phone}
+            onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
+            placeholder="10-digit mobile"
+          />
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs text-[#f6f3ed]/80">I am a…</Label>
+        <select
+          className={inputCls}
+          value={requestedRole}
+          onChange={(e) => setRequestedRole(e.target.value as Role)}
+        >
+          {SIGNUP_ROLES.map((r) => (
+            <option key={r.value} value={r.value} className="bg-[#071e16]">
+              {r.label}
+            </option>
+          ))}
+        </select>
+        {roleHint ? (
+          <p className="text-[11px] text-[#f6f3ed]/55">{roleHint}</p>
+        ) : null}
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs text-[#f6f3ed]/80">Store</Label>
+        <select
+          className={inputCls}
+          value={requestedStoreId}
+          onChange={(e) => setRequestedStoreId(e.target.value)}
+          required
+        >
+          <option value="" className="bg-[#071e16]">
+            {storesQuery.isLoading ? "Loading stores…" : "Select your store"}
+          </option>
+          {stores.map((s) => (
+            <option key={s.id} value={s.id} className="bg-[#071e16]">
+              {s.name}
+              {s.city ? ` — ${s.city}` : ""}
+            </option>
+          ))}
+        </select>
+      </div>
+      <Button
+        type="submit"
+        className="w-full bg-[#c8a24f] text-[#071e16] font-semibold hover:bg-[#b8903c]"
+        disabled={signup.isPending}
+      >
+        {signup.isPending ? (
+          <>
+            <Loader2 className="h-4 w-4 animate-spin mr-2" /> Sending request…
+          </>
+        ) : (
+          <>
+            Create account <ArrowRight className="h-4 w-4 ml-1" />
+          </>
+        )}
+      </Button>
+    </form>
+  );
 }
 
 export default function LoginPage() {
@@ -95,15 +269,15 @@ export default function LoginPage() {
   const requestOtp = useRequestOtp();
   const verifyOtp = useVerifyOtp();
 
-  const [selectedDemo, setSelectedDemo] = React.useState<DemoAccount>(DEMO_ACCOUNTS[0]);
-  const [email, setEmail] = React.useState(DEMO_ACCOUNTS[0].email);
-  const [password, setPassword] = React.useState("password123");
+  const [email, setEmail] = React.useState("");
+  const [password, setPassword] = React.useState("");
 
-  const [phone, setPhone] = React.useState(DEMO_ACCOUNTS[0].phone);
+  const [phone, setPhone] = React.useState("");
   const [code, setCode] = React.useState("");
   const [otpStep, setOtpStep] = React.useState<"phone" | "code">("phone");
   const [resendIn, setResendIn] = React.useState(0);
-  const [authMethod, setAuthMethod] = React.useState<"whatsapp" | "password">("whatsapp");
+  const [authMethod, setAuthMethod] = React.useState<"whatsapp" | "password">("password");
+  const [mode, setMode] = React.useState<"signin" | "signup">("signin");
 
   React.useEffect(() => {
     if (resendIn <= 0) return;
@@ -218,14 +392,6 @@ export default function LoginPage() {
     );
   }
 
-  function selectDemo(acc: DemoAccount) {
-    setSelectedDemo(acc);
-    setEmail(acc.email);
-    setPhone(acc.phone);
-    setOtpStep("phone");
-    setCode("");
-  }
-
   return (
     <div className="grid min-h-dvh bg-[#071e16] text-[#f6f3ed] lg:grid-cols-[1.1fr_1fr]">
       {/* ── Left Realistic Luxury Showroom Panel ───────────────────── */}
@@ -316,10 +482,12 @@ export default function LoginPage() {
 
           <div>
             <h2 className="font-display text-3xl font-bold tracking-tight text-[#f6f3ed]">
-              Sign in to your counter
+              {mode === "signup" ? "Create your account" : "Sign in to your counter"}
             </h2>
             <p className="mt-1.5 text-sm text-[#f6f3ed]/70">
-              Select your role keycard or enter details to start the session.
+              {mode === "signup"
+                ? "Register and request access. A manager or head office will approve you."
+                : "Select your role keycard or enter details to start the session."}
             </p>
           </div>
 
@@ -355,45 +523,8 @@ export default function LoginPage() {
             </div>
           ) : null}
 
-          {/* Role Keycard Pills — 1-Click Demo Selector */}
-          <div>
-            <Label className="text-xs uppercase tracking-wider text-[#c8a24f] font-mono">
-              Select Employee Keycard
-            </Label>
-            <div className="mt-2.5 grid grid-cols-2 gap-2">
-              {DEMO_ACCOUNTS.map((acc) => {
-                const active = selectedDemo.email === acc.email;
-                return (
-                  <button
-                    key={acc.email}
-                    type="button"
-                    onClick={() => selectDemo(acc)}
-                    className={`group relative flex flex-col items-start rounded-xl border p-3 text-left transition-all ${
-                      active
-                        ? "border-[#c8a24f] bg-[#0c261c] text-[#f6f3ed] shadow-md ring-1 ring-[#c8a24f]"
-                        : "border-[#1b3a2c] bg-[#071e16]/60 text-[#f6f3ed]/70 hover:border-[#c8a24f]/40 hover:bg-[#0c261c]/50"
-                    }`}
-                  >
-                    <div className="flex w-full items-center justify-between">
-                      <span className={`text-xs font-semibold ${active ? "text-[#c8a24f]" : "text-[#f6f3ed]/90"}`}>
-                        {acc.roleTitle}
-                      </span>
-                      {active ? (
-                        <CheckCircle2 className="h-3.5 w-3.5 text-[#c8a24f]" />
-                      ) : null}
-                    </div>
-                    <span className="mt-1 text-[11px] font-medium truncate max-w-[130px]">
-                      {acc.name}
-                    </span>
-                    <span className="text-[10px] text-[#f6f3ed]/50 truncate max-w-[130px]">
-                      {acc.storeLabel}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
+          {mode === "signin" ? (
+          <>
           {/* Auth Method Switcher (WhatsApp OTP vs Email Password) */}
           <div className="flex rounded-xl border border-[#1b3a2c] bg-[#0c261c] p-1">
             <button
@@ -580,6 +711,28 @@ export default function LoginPage() {
               </form>
             )}
           </div>
+
+          </>
+          ) : (
+            <SignupCard onBackToSignin={() => setMode("signin")} />
+          )}
+
+          {/* Sign in ⇄ Create account toggle */}
+          <button
+            type="button"
+            onClick={() => setMode((m) => (m === "signin" ? "signup" : "signin"))}
+            className="flex w-full items-center justify-center gap-1.5 text-sm text-[#f6f3ed]/70 transition-colors hover:text-[#c8a24f]"
+          >
+            {mode === "signin" ? (
+              <>
+                <UserPlus className="h-3.5 w-3.5" /> New here? Create an account
+              </>
+            ) : (
+              <>
+                <ArrowLeft className="h-3.5 w-3.5" /> Already have an account? Sign in
+              </>
+            )}
+          </button>
 
           <InstallAppButton label="Install App on Phone" className="mt-4 w-full" />
         </div>

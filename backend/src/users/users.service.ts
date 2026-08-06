@@ -3,7 +3,6 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
-  ConflictException,
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
@@ -13,9 +12,12 @@ import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { ROLE_RANK } from '../common/role.util';
+import { canApproveSignup, uniqueEmailHandle } from './users.util';
 import {
+  ApproveUserDto,
   CreateUserDto,
   DeactivateUserDto,
+  SetLeaveAllocationDto,
   UpdateUserRoleDto,
   UpdateUserStoreDto,
 } from './dto/users.dto';
@@ -175,11 +177,10 @@ export class UsersService {
     this.scope.assertStoreAllowed(actor, dto.storeId);
 
     const phone = dto.phone?.trim() || null;
-    const rawEmail = dto.email?.trim().toLowerCase() || null;
+    // The provided email is CONTACT ONLY now (optional, not unique) — the same
+    // shape as self-signup. The login identity is a generated handle below.
+    const contactEmail = dto.email?.trim().toLowerCase() || null;
 
-    if (!phone && !rawEmail) {
-      throw new BadRequestException('Provide a phone number and/or an email so the user can sign in');
-    }
     if (phone && !last10(phone)) {
       throw new BadRequestException('Enter a valid 10-digit mobile number');
     }
@@ -190,20 +191,22 @@ export class UsersService {
       throw new BadRequestException('Cannot assign a user to the aggregate "All Stores" view');
     }
 
-    // Email is a required unique column. When only a phone is given, synthesize a
-    // stable placeholder so OTP-by-phone remains the real login identifier.
-    const email = rawEmail ?? `${last10(phone!)}@staff.local`;
+    // Login identity: a generated, unique handle — matches self-signup so every
+    // account, however created, is `firstname.storeslug@eclatdiamonds.in`. The
+    // person signs in with a phone OTP or, after a manager sets one, this + a
+    // password.
+    const email = await uniqueEmailHandle(dto.name, store.name, async (candidate) =>
+      !!(await this.prisma.user.findUnique({ where: { email: candidate }, select: { id: true } })),
+    );
 
-    const clash = await this.prisma.user.findUnique({ where: { email } });
-    if (clash) throw new ConflictException(`A user with email "${email}" already exists`);
-
-    // Random password — the user logs in via OTP, never with this.
+    // Random password — the user logs in via OTP, or a manager resets it to share one.
     const passwordHash = await bcrypt.hash(randomBytes(24).toString('hex'), 10);
 
     const user = await this.prisma.user.create({
       data: {
         name: dto.name,
         email,
+        contactEmail,
         phone,
         initials: initialsOf(dto.name),
         role,
@@ -427,6 +430,177 @@ export class UsersService {
     });
 
     return this.toView(user);
+  }
+
+  // ── Self-signup approval queue ──────────────────────────────────────────────
+
+  /** Public shape for a pending signup (adds requested role/store to the view). */
+  private async toPendingView(user: any) {
+    const store = user.requestedStoreId
+      ? await this.prisma.store.findUnique({
+          where: { id: user.requestedStoreId },
+          select: { id: true, name: true },
+        })
+      : null;
+    return {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone ?? null,
+      requestedRole: (user.requestedRole ?? 'salesperson') as Role,
+      requestedStore: store,
+      createdAt: user.createdAt,
+    };
+  }
+
+  /**
+   * GET /users/pending — the approval queue. An approver only sees requests they
+   * are entitled to act on: requested role strictly BELOW their own rank AND (for
+   * scoped managers) requested store inside their scope. head_office sees all.
+   */
+  async listPending(actor: AuthUser) {
+    const pending = await this.prisma.user.findMany({
+      where: { approvalStatus: 'pending' },
+      orderBy: { createdAt: 'asc' },
+    });
+    const visible = pending.filter((u) =>
+      canApproveSignup(actor, (u.requestedRole ?? 'salesperson') as Role, u.requestedStoreId),
+    );
+    return Promise.all(visible.map((u) => this.toPendingView(u)));
+  }
+
+  /**
+   * POST /users/:id/approve — grant a pending signup. The approver may override
+   * the requested role/store; either way the strictly-below-rank + in-scope rules
+   * decide what is allowed, so this can never mint a peer/superior or place a user
+   * in a store the approver does not own.
+   */
+  async approve(actor: AuthUser, id: string, dto: ApproveUserDto) {
+    const target = await this.getOrThrow(id);
+    if (target.approvalStatus !== 'pending') {
+      throw new BadRequestException('This account is not awaiting approval');
+    }
+
+    const role: Role = dto.role ?? (target.requestedRole as Role) ?? 'salesperson';
+    const storeId = dto.storeId ?? target.requestedStoreId ?? null;
+    if (!storeId) throw new BadRequestException('A store is required to approve this account');
+
+    // Escalation + scope gate (same guards as manual provisioning).
+    this.assertAssignableRole(actor, role);
+    const store = await this.prisma.store.findUnique({ where: { id: storeId } });
+    if (!store) throw new NotFoundException('Store not found');
+    if (store.isAggregate) {
+      throw new BadRequestException('Cannot assign a user to the aggregate "All Stores" view');
+    }
+    this.scope.assertStoreAllowed(actor, storeId);
+
+    // If the approver moved them to a DIFFERENT store than they signed up for,
+    // regenerate the login handle so it matches the real store (e.g. a
+    // "…mumbaibandra" handle must not survive a reassignment to Udaipur).
+    let email: string | undefined;
+    if (target.requestedStoreId && storeId !== target.requestedStoreId) {
+      email = await uniqueEmailHandle(target.name, store.name, async (candidate) =>
+        !!(await this.prisma.user.findFirst({
+          where: { email: candidate, id: { not: id } },
+          select: { id: true },
+        })),
+      );
+    }
+
+    const user = await this.prisma.user.update({
+      where: { id },
+      data: {
+        role,
+        isActive: true,
+        approvalStatus: 'approved',
+        approvedById: actor.id,
+        approvedAt: new Date(),
+        ...(email ? { email } : {}),
+        userStores: {
+          upsert: {
+            where: { userId_storeId: { userId: id, storeId } },
+            update: { isPrimary: true },
+            create: { storeId, isPrimary: true },
+          },
+        },
+      },
+      include: USER_INCLUDE,
+    });
+
+    await this.audit.record(actor, {
+      action: 'user.approve',
+      entityType: 'User',
+      entityId: id,
+      storeId,
+      summary: `Approved ${user.name} as ${role}`,
+      metadata: { role, storeId },
+    });
+    return this.toView(user);
+  }
+
+  /**
+   * POST /users/:id/reject — decline a pending signup. Gated exactly like approve
+   * (you can only reject a request you could have approved), so a store manager
+   * cannot reject a manager-level request — only head office can.
+   */
+  async reject(actor: AuthUser, id: string, reason?: string) {
+    const target = await this.getOrThrow(id);
+    if (target.approvalStatus !== 'pending') {
+      throw new BadRequestException('This account is not awaiting approval');
+    }
+    const role: Role = (target.requestedRole as Role) ?? 'salesperson';
+    this.assertAssignableRole(actor, role);
+    if (!actor.allStores && target.requestedStoreId) {
+      this.scope.assertStoreAllowed(actor, target.requestedStoreId);
+    }
+
+    const user = await this.prisma.user.update({
+      where: { id },
+      data: { approvalStatus: 'rejected', isActive: false },
+      include: USER_INCLUDE,
+    });
+    await this.audit.record(actor, {
+      action: 'user.reject',
+      entityType: 'User',
+      entityId: id,
+      storeId: target.requestedStoreId,
+      summary: `Rejected signup for ${user.name}`,
+      metadata: { reason: reason ?? null },
+    });
+    return this.toView(user);
+  }
+
+  /**
+   * PATCH /users/:id/leave-allocation — set a staff member's yearly leave quota
+   * (the "holidays allowed" rule) for one leave type. Manager-gated: strictly
+   * below the actor's rank and in scope. `used` is preserved.
+   */
+  async setLeaveAllocation(actor: AuthUser, id: string, dto: SetLeaveAllocationDto) {
+    const target = await this.getOrThrow(id);
+    const storeId = await this.primaryStoreId(id);
+    this.assertCanManage(actor, target.role, storeId);
+
+    const balance = await this.prisma.leaveBalance.upsert({
+      where: { userId_type_year: { userId: id, type: dto.type, year: dto.year } },
+      update: { allocated: dto.allocated },
+      create: { userId: id, storeId, type: dto.type, year: dto.year, allocated: dto.allocated },
+    });
+
+    await this.audit.record(actor, {
+      action: 'user.leave_allocation',
+      entityType: 'User',
+      entityId: id,
+      storeId,
+      summary: `Set ${dto.type} leave for ${target.name}: ${dto.allocated} day(s) in ${dto.year}`,
+      metadata: { type: dto.type, year: dto.year, allocated: dto.allocated },
+    });
+    return {
+      userId: id,
+      type: balance.type,
+      year: balance.year,
+      allocated: Number(balance.allocated),
+      used: Number(balance.used),
+    };
   }
 
   private async getOrThrow(id: string) {
