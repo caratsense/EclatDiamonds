@@ -64,6 +64,20 @@ function buildDsrSummary(dsr?: DsrResponse): string {
   return lines.join("\n");
 }
 
+/** Where each DSR headline tile drills to when tapped. */
+function dsrKpiHref(id: string): string | undefined {
+  switch (id) {
+    case "sales":
+    case "bills":
+    case "atv":
+      return "/sales-performance";
+    case "walkins":
+      return "/checkins";
+    default:
+      return undefined;
+  }
+}
+
 export default function ReportingPage() {
   const item = getNavItem("reporting");
   const [dsrOpen, setDsrOpen] = useState(false);
@@ -151,6 +165,7 @@ export default function ReportingPage() {
                     value={k.value}
                     format={k.format}
                     delta={k.delta}
+                    href={dsrKpiHref(k.id)}
                   />
                 ))}
           </div>

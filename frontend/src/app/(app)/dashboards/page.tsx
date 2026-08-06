@@ -122,9 +122,9 @@ export default function DashboardsPage() {
       ) : (
         <>
           <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <SalesTrendChart data={trend} />
+            <SalesTrendChart data={trend} href="/sales-performance" />
             {isMultiStore ? (
-              <StoreComparisonChart data={storeComparison} />
+              <StoreComparisonChart data={storeComparison} href="/store-comparison" />
             ) : (
               <AgendaPanel />
             )}
@@ -135,7 +135,7 @@ export default function DashboardsPage() {
             {isMultiStore ? (
               <HandoffsPanel />
             ) : (
-              <StoreComparisonChart data={storeComparison} />
+              <StoreComparisonChart data={storeComparison} href="/store-comparison" />
             )}
           </div>
         </>

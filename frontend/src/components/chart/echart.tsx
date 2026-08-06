@@ -228,6 +228,38 @@ export function EChart({
 /* Preset wrappers                                                     */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Placeholder shown instead of a chart when there is nothing to plot. Without it,
+ * an all-zero series makes ECharts default the value axis to a max of 1, which
+ * renders a misleading "₹1" tick — so an empty period looked like a ₹1 day.
+ */
+function ChartEmpty({
+  height = 280,
+  className,
+  message = "No data for this period",
+}: {
+  height?: number | string;
+  className?: string;
+  message?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex items-center justify-center rounded-lg text-sm text-muted-foreground",
+        className,
+      )}
+      style={{ height }}
+    >
+      {message}
+    </div>
+  );
+}
+
+/** True when at least one series carries a non-zero value worth plotting. */
+function hasPlottableData(series: { data: number[] }[]): boolean {
+  return series.some((s) => s.data.some((v) => Math.abs(Number(v) || 0) > 0));
+}
+
 /** A named numeric series for the cartesian presets. */
 export interface ChartSeries {
   name: string;
@@ -323,6 +355,9 @@ export function AreaChart({
     };
   }, [categories, series, t, valueFormatter, legend]);
 
+  if (!categories.length || !hasPlottableData(series)) {
+    return <ChartEmpty height={height} className={className} />;
+  }
   return <EChart option={option} height={height} className={className} notMerge />;
 }
 
@@ -372,6 +407,9 @@ export function BarChart({
     };
   }, [categories, series, t, valueFormatter, legend]);
 
+  if (!categories.length || !hasPlottableData(series)) {
+    return <ChartEmpty height={height} className={className} />;
+  }
   return <EChart option={option} height={height} className={className} notMerge />;
 }
 
@@ -456,6 +494,9 @@ export function DonutChart({
     };
   }, [data, t, valueFormatter, centerLabel, centerValue, showLegend]);
 
+  if (!data.some((d) => Math.abs(Number(d.value) || 0) > 0)) {
+    return <ChartEmpty height={height} className={className} />;
+  }
   return <EChart option={option} height={height} className={className} notMerge />;
 }
 
