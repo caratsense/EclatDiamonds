@@ -12,8 +12,6 @@ import {
   Sparkles,
   Store,
   UserPlus,
-  Smartphone,
-  KeyRound,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { AxiosError } from "axios";
@@ -30,8 +28,6 @@ import { getStoredToken, hasValidSession, setStoredToken } from "@/lib/api";
 import {
   useLogin,
   useGoogleLogin,
-  useRequestOtp,
-  useVerifyOtp,
   useSignup,
   useSignupStores,
 } from "@/lib/queries/auth";
@@ -266,24 +262,10 @@ export default function LoginPage() {
   const hydrate = useSession((s) => s.hydrate);
   const login = useLogin();
   const googleLogin = useGoogleLogin();
-  const requestOtp = useRequestOtp();
-  const verifyOtp = useVerifyOtp();
 
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
-
-  const [phone, setPhone] = React.useState("");
-  const [code, setCode] = React.useState("");
-  const [otpStep, setOtpStep] = React.useState<"phone" | "code">("phone");
-  const [resendIn, setResendIn] = React.useState(0);
-  const [authMethod, setAuthMethod] = React.useState<"whatsapp" | "password">("password");
   const [mode, setMode] = React.useState<"signin" | "signup">("signin");
-
-  React.useEffect(() => {
-    if (resendIn <= 0) return;
-    const t = setTimeout(() => setResendIn((s) => s - 1), 1000);
-    return () => clearTimeout(t);
-  }, [resendIn]);
 
   function finishLogin(me: Parameters<typeof hydrate>[0]) {
     hydrate(me);
@@ -346,51 +328,6 @@ export default function LoginPage() {
     );
   }
 
-  function sendCode() {
-    if (!/^\d{10}$/.test(phone)) {
-      toast.error("Enter a valid 10-digit mobile number.");
-      return;
-    }
-    requestOtp.mutate(phone, {
-      onSuccess: (res) => {
-        toast.success(
-          res.dryRun
-            ? "Code sent (test mode — ask your administrator)."
-            : "Code sent on WhatsApp.",
-        );
-        setOtpStep("code");
-        setCode("");
-        setResendIn(60);
-      },
-      onError: (err) =>
-        toast.error(
-          apiMessage(err, "Couldn't send the code. Try again in a moment."),
-        ),
-    });
-  }
-
-  function onSendCode(e: React.FormEvent) {
-    e.preventDefault();
-    sendCode();
-  }
-
-  function onVerify(e: React.FormEvent) {
-    e.preventDefault();
-    if (!/^\d{6}$/.test(code)) {
-      toast.error("Enter the 6-digit code.");
-      return;
-    }
-    verifyOtp.mutate(
-      { phone, code },
-      {
-        onSuccess: finishLogin,
-        onError: (err) =>
-          toast.error(
-            apiMessage(err, "Couldn't verify the code. Try again."),
-          ),
-      },
-    );
-  }
 
   return (
     <div className="grid min-h-dvh bg-[#071e16] text-[#f6f3ed] lg:grid-cols-[1.1fr_1fr]">
@@ -525,34 +462,6 @@ export default function LoginPage() {
 
           {mode === "signin" ? (
           <>
-          {/* Auth Method Switcher (WhatsApp OTP vs Email Password) */}
-          <div className="flex rounded-xl border border-[#1b3a2c] bg-[#0c261c] p-1">
-            <button
-              type="button"
-              onClick={() => setAuthMethod("whatsapp")}
-              className={`flex-1 flex items-center justify-center gap-2 rounded-lg py-2 text-xs font-medium transition-colors ${
-                authMethod === "whatsapp"
-                  ? "bg-[#c8a24f] text-[#071e16] font-semibold shadow-xs"
-                  : "text-[#f6f3ed]/70 hover:text-[#f6f3ed]"
-              }`}
-            >
-              <Smartphone className="h-3.5 w-3.5" />
-              WhatsApp OTP
-            </button>
-            <button
-              type="button"
-              onClick={() => setAuthMethod("password")}
-              className={`flex-1 flex items-center justify-center gap-2 rounded-lg py-2 text-xs font-medium transition-colors ${
-                authMethod === "password"
-                  ? "bg-[#c8a24f] text-[#071e16] font-semibold shadow-xs"
-                  : "text-[#f6f3ed]/70 hover:text-[#f6f3ed]"
-              }`}
-            >
-              <KeyRound className="h-3.5 w-3.5" />
-              Password Login
-            </button>
-          </div>
-
           {/* Google Sign-In if configured */}
           {process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ? (
             <div>
@@ -567,110 +476,7 @@ export default function LoginPage() {
 
           {/* Auth Form Container */}
           <div className="rounded-2xl border border-[#1b3a2c] bg-[#0c261c]/80 p-5 shadow-xl">
-            {authMethod === "whatsapp" ? (
-              /* WhatsApp OTP Form */
-              otpStep === "phone" ? (
-                <form onSubmit={onSendCode} className="space-y-4">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="otp-phone" className="text-xs text-[#f6f3ed]/80">
-                      Mobile number
-                    </Label>
-                    <Input
-                      id="otp-phone"
-                      type="tel"
-                      inputMode="numeric"
-                      autoComplete="tel-national"
-                      placeholder="10-digit mobile number"
-                      maxLength={10}
-                      className="border-[#1b3a2c] bg-[#071e16] text-[#f6f3ed] placeholder:text-[#f6f3ed]/30 focus:border-[#c8a24f] focus:ring-[#c8a24f]"
-                      value={phone}
-                      onChange={(e) =>
-                        setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))
-                      }
-                      required
-                    />
-                    <p className="text-[11px] text-[#f6f3ed]/55">
-                      Sign-in code will be sent to your registered WhatsApp.
-                    </p>
-                  </div>
-                  <Button
-                    type="submit"
-                    className="w-full bg-[#c8a24f] text-[#071e16] font-semibold hover:bg-[#b8903c]"
-                    disabled={requestOtp.isPending}
-                  >
-                    {requestOtp.isPending ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin mr-2" /> Sending OTP…
-                      </>
-                    ) : (
-                      <>
-                        Send WhatsApp Code <ArrowRight className="h-4 w-4 ml-1" />
-                      </>
-                    )}
-                  </Button>
-                </form>
-              ) : (
-                <form onSubmit={onVerify} className="space-y-4">
-                  <div className="flex items-center justify-between rounded-lg border border-[#1b3a2c] bg-[#071e16] px-3 py-2 text-xs">
-                    <span className="text-[#f6f3ed]/80">
-                      Code sent to <span className="font-mono font-semibold text-[#c8a24f]">{phone}</span>
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setOtpStep("phone")}
-                      className="text-xs font-medium text-[#c8a24f] hover:underline"
-                    >
-                      Change
-                    </button>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="otp-code" className="text-xs text-[#f6f3ed]/80">
-                      6-digit verification code
-                    </Label>
-                    <Input
-                      id="otp-code"
-                      inputMode="numeric"
-                      autoComplete="one-time-code"
-                      placeholder="6-digit code"
-                      maxLength={6}
-                      autoFocus
-                      className="font-mono tracking-[0.35em] border-[#1b3a2c] bg-[#071e16] text-[#f6f3ed] focus:border-[#c8a24f]"
-                      value={code}
-                      onChange={(e) =>
-                        setCode(e.target.value.replace(/\D/g, "").slice(0, 6))
-                      }
-                      required
-                    />
-                  </div>
-                  <Button
-                    type="submit"
-                    className="w-full bg-[#c8a24f] text-[#071e16] font-semibold hover:bg-[#b8903c]"
-                    disabled={verifyOtp.isPending}
-                  >
-                    {verifyOtp.isPending ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin mr-2" /> Verifying…
-                      </>
-                    ) : (
-                      "Verify & Sign In"
-                    )}
-                  </Button>
-                  <p className="text-center text-xs text-[#f6f3ed]/60">
-                    Didn&apos;t receive it?{" "}
-                    <button
-                      type="button"
-                      onClick={sendCode}
-                      disabled={resendIn > 0 || requestOtp.isPending}
-                      className="font-medium text-[#c8a24f] hover:underline disabled:opacity-50"
-                    >
-                      {resendIn > 0 ? `Resend in ${resendIn}s` : "Resend code"}
-                    </button>
-                  </p>
-                </form>
-              )
-            ) : (
-              /* Password Login Form */
-              <form onSubmit={onSubmitPassword} className="space-y-4">
+            <form onSubmit={onSubmitPassword} className="space-y-4">
                 <div className="space-y-1.5">
                   <Label htmlFor="email" className="text-xs text-[#f6f3ed]/80">Email address</Label>
                   <Input
@@ -709,7 +515,6 @@ export default function LoginPage() {
                   )}
                 </Button>
               </form>
-            )}
           </div>
 
           </>
