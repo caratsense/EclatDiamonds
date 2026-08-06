@@ -32,8 +32,18 @@ import hashlib
 import logging
 from datetime import datetime, date
 from decimal import Decimal
+import tempfile
 
 import requests
+
+# Pillow is optional. When present, each photo is resized + compressed before
+# upload (a 3 MB shop PNG becomes ~200 KB), which is what makes the catalogue
+# load fast and keeps R2 tiny. Missing? originals upload unchanged and a one-line
+# hint is logged. Install with:  pip install Pillow
+try:
+    from PIL import Image as _PILImage
+except Exception:
+    _PILImage = None
 
 # ── Config (from eclat_config.bat) ────────────────────────────────────────────
 BACKENDS   = [u.strip().rstrip("/") for u in os.getenv("ECLAT_BASE_URL", "").split(",") if u.strip()]
@@ -48,6 +58,11 @@ SQL_PASS   = os.getenv("SJEP_SQL_PASS", "")
 # .strip() because this path routinely contains spaces ("SJEP IMAGES") and a
 # stray trailing one from a hand-edited config would make the folder "missing".
 IMAGE_ROOT = os.getenv("SJEP_IMAGE_ROOT", "").strip().strip('"')
+
+# Longest edge (px) the uploaded photo is shrunk to — aspect ratio kept, only
+# ever shrinks, never enlarges. 1000 is plenty for a catalogue tile + detail.
+# Set SJEP_IMAGE_MAX_DIM=0 to upload originals unchanged.
+IMAGE_MAX_DIM = int(os.getenv("SJEP_IMAGE_MAX_DIM", "1000") or "0")
 
 # Cloudflare R2 (preferred)
 R2_ACCOUNT = os.getenv("R2_ACCOUNT_ID", "")
@@ -326,6 +341,26 @@ def build_file_index(root):
     return index
 
 
+def resized_copy(path):
+    """Resize + compress a photo to a temp JPEG (longest edge = IMAGE_MAX_DIM) and
+    return (upload_path, temp_to_delete). Falls back to the original when Pillow
+    is missing, resizing is disabled, or the file can't be read — a bad image
+    never blocks the sync."""
+    if _PILImage is None or IMAGE_MAX_DIM <= 0:
+        return path, None
+    try:
+        img = _PILImage.open(path)
+        img = img.convert("RGB")  # flatten alpha so JPEG is valid
+        img.thumbnail((IMAGE_MAX_DIM, IMAGE_MAX_DIM))  # only shrinks, keeps aspect
+        fd, tmp = tempfile.mkstemp(suffix=".jpg")
+        os.close(fd)
+        img.save(tmp, "JPEG", quality=82, optimize=True)
+        return tmp, tmp
+    except Exception as e:
+        log.warning(f"  resize skipped for {os.path.basename(path)}: {e}")
+        return path, None
+
+
 def resolve(index, filename):
     """Find a file, tolerating a missing/incorrect extension in the DB."""
     direct = index.get(filename.lower())
@@ -451,15 +486,16 @@ def main():
         if DRY_RUN:
             log.info(f"  [dry-run] would upload {path}")
             continue
+        upload_path, tmp = resized_copy(path)
         try:
             public_id = f"{t['kind']}_{t['legacyId']}"
             if provider == "r2":
-                # Keep the real extension so R2 serves the right Content-Type and
-                # the URL is recognisable when someone opens the bucket.
-                ext = os.path.splitext(path)[1].lower() or ".jpg"
-                url = client.upload_file(path, f"catalogue/{public_id}{ext}")
+                # A resized copy is always JPEG; otherwise keep the real extension
+                # so R2 serves the right Content-Type.
+                ext = ".jpg" if tmp else (os.path.splitext(path)[1].lower() or ".jpg")
+                url = client.upload_file(upload_path, f"catalogue/{public_id}{ext}")
             else:
-                url = cloudinary_upload(path, public_id)
+                url = cloudinary_upload(upload_path, public_id)
             ledger[key] = {"url": url, "file": t["filename"], "at": datetime.now().isoformat(timespec="seconds")}
             uploaded.append({"kind": t["kind"], "legacyId": t["legacyId"], "imageUrl": url})
             if n % 25 == 0:
@@ -468,6 +504,12 @@ def main():
         except Exception as e:
             failed += 1
             log.error(f"  upload failed for {t['filename']}: {e}")
+        finally:
+            if tmp:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
 
     if not DRY_RUN:
         save_ledger(ledger)

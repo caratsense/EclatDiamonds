@@ -7,3 +7,4 @@
 pyodbc                 # read-only connection to the live SJE Plus / APRS SQL Server
 requests               # push extracted rows to the Eclat backend API
 openpyxl               # optional (legacy xlsx payload path)
+Pillow>=10.0

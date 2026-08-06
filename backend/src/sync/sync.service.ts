@@ -58,6 +58,32 @@ export interface SyncResult {
 type Rec = Record<string, any>;
 
 /**
+ * Design category from whatever text a row carries. Gati's StyleMst has no clean
+ * category column, so we scan every field (item type, group, name, code, web
+ * description) for a keyword — Indian-retail synonyms included (jhumka=earrings,
+ * kada/kangan=bangle, mangalsutra=necklace). Used by BOTH the Gati product sync
+ * and the website import so `ring`/`necklace`/… actually separate in the
+ * catalogue instead of everything landing in `other`.
+ */
+const CATEGORY_RULES: [RegExp, string][] = [
+  [/mangalsutra|necklace|haar|rani\s*haar/i, 'necklace'],
+  [/pendant|locket/i, 'pendant'],
+  [/earring|ear\s*ring|stud|jhumk|bali|bugadi|kaanphool/i, 'earrings'],
+  [/bangle|bengal|kada|kangan|kadaa|noa/i, 'bangle'],
+  [/bracelet|lace|loose\s*chain\s*bracelet/i, 'bracelet'],
+  [/chain|rope\s*chain|box\s*chain/i, 'chain'],
+  [/ring|solitaire|\bband\b|finger\s*ring/i, 'ring'],
+];
+
+/** First matching category across all of a row's text values; `other` if none. */
+function categoryFromRow(r: Rec): string {
+  const hay = Object.values(r)
+    .map((v) => String(v ?? ''))
+    .join(' ');
+  return CATEGORY_RULES.find(([re]) => re.test(hay))?.[1] ?? 'other';
+}
+
+/**
  * Production order of the OrderStatus enum, used to decide whether a bag
  * movement moves an order FORWARD. Rework sends a bag back to an earlier
  * department all the time; that must not un-finish an order that is further on.
@@ -1486,6 +1512,7 @@ export class SyncService {
         storeId,
         sku,
         name: str(r.StyleCode) || sku,
+        category: categoryFromRow(r) as any,
         metal: metal as any,
         karat: karatFromMetal(metal),
         weightGrams: dec(r.GrossWt ?? r.ModelWt) ?? '0',
@@ -1929,15 +1956,6 @@ export class SyncService {
   async syncWebsiteProducts(records: Rec[]): Promise<SyncResult> {
     // Website taxonomy -> our enum. Ordered: the first hit wins, so
     // "Pendants & Necklace" resolves before the looser "necklace" test.
-    const CATEGORY: [RegExp, string][] = [
-      [/mangalsutra|necklace/i, 'necklace'],
-      [/pendant/i, 'pendant'],
-      [/earring|stud/i, 'earrings'],
-      [/bangle/i, 'bangle'],
-      [/bracelet/i, 'bracelet'],
-      [/chain/i, 'chain'],
-      [/ring|solitaire/i, 'ring'],
-    ];
     // Karat -> MetalKind. 9k and 14k have no member of their own; they are gold
     // and the karat number is kept exactly on Product.karat, so nothing is lost
     // by filing them under the nearest bucket.
@@ -2000,7 +2018,6 @@ export class SyncService {
         continue;
       }
 
-      const cat = CATEGORY.find(([re]) => re.test(str(r.category) + ' ' + str(r.name)));
       await this.prisma.product.create({
         data: {
           // Provenance, and it has to be set. `purgeDemo` decides what is seeded
@@ -2011,7 +2028,7 @@ export class SyncService {
           legacyId: `WEB-${code}`,
           sku: code,
           name: str(r.name) || code,
-          category: (cat?.[1] ?? 'other') as any,
+          category: categoryFromRow(r) as any,
           metal: (METAL[String(karat)] ?? 'gold_18k') as any,
           karat,
           price: price ?? 0,
