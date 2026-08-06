@@ -293,6 +293,7 @@ export default function LandingPage() {
             src="/images/luxury_jewelry_hero.png"
             alt="Jewelry backdrop"
             fill
+            sizes="100vw"
             className="object-cover object-center"
             priority
           />
@@ -347,6 +348,7 @@ export default function LandingPage() {
                     src="/images/jewelry_editorial_hero.png"
                     alt="Editorial Diamond Model"
                     fill
+                    sizes="(min-width: 1024px) 384px, 90vw"
                     className="object-cover object-center"
                     priority
                   />
@@ -443,6 +445,7 @@ export default function LandingPage() {
                     src={item.image}
                     alt={item.name}
                     fill
+                    sizes="(max-width: 768px) 50vw, 25vw"
                     className="object-cover object-center transition-transform duration-500 group-hover:scale-105"
                   />
                   <span className="absolute top-3 left-3 rounded-full bg-[#071e16]/80 px-2.5 py-0.5 text-[10px] font-mono text-[#c8a24f] border border-[#c8a24f]/30">

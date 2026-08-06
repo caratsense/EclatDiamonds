@@ -354,6 +354,7 @@ export default function LoginPage() {
             src="/images/luxury_jewelry_hero.png"
             alt="Éclat Luxury Showroom"
             fill
+            sizes="(min-width: 1024px) 55vw, 0px"
             className="object-cover object-center"
             priority
           />
