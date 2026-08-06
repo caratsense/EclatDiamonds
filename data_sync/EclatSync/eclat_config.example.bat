@@ -15,6 +15,24 @@ REM Leave USER blank to use Windows authentication:
 set "SJEP_SQL_USER="
 set "SJEP_SQL_PASS="
 
+REM ── CONTINUOUS SYNC BEHAVIOUR (the every-15-min scheduled run) ───────────────
+REM The scheduled task runs `python sync_sjep.py` with NO arguments, so anything
+REM you want the automatic sync to do must be set as an env var HERE.
+REM
+REM SJEP_SKIP_STAFF — set to 1 ONCE THE SHOP HAS GONE LIVE on self-signup.
+REM   After go-live, people create their own accounts in the app and a manager /
+REM   head office approves them. If this is left off, the sync keeps re-importing
+REM   Gati's staff every 15 minutes and re-clutters the roster after the wipe.
+REM   Leave BLANK during the initial backfill; set to 1 when you switch to signup.
+set "SJEP_SKIP_STAFF="
+REM
+REM SJEP_SKIP_MIRROR — set to 1 to skip the full raw-table mirror on every run.
+REM   The mapped shop data (customers/stock/sales/…) is unaffected; the mirror is
+REM   just the keep-everything backup and its first pass is long. Most deployments
+REM   leave this ON (=1) for the continuous sync and run a mirror manually now and
+REM   then.
+set "SJEP_SKIP_MIRROR=1"
+
 REM ── CATALOGUE PHOTOS ────────────────────────────────────────────────────────
 REM The folder holding the jewellery photographs. The database stores only the
 REM FILE NAMES, so we have to be told where the files themselves live.

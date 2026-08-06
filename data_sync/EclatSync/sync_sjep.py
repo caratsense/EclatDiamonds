@@ -1089,8 +1089,24 @@ def sync_once():
 
             # Staff AFTER stores: a person carries their branch legacyId, and the
             # backend can only pre-assign them to a store that already exists.
+            #
+            # SKIPPABLE — and it SHOULD be skipped once the shop has gone live on
+            # the self-signup + approval flow. There, people register themselves
+            # and a manager / head office approves them; re-importing Gati's staff
+            # every 15 minutes would fight that model and re-populate the roster
+            # after the go-live account wipe. Keep it ON for the initial backfill,
+            # turn it OFF (in eclat_config.bat) the moment you switch to self-signup.
+            #
+            #   sync_sjep.py --no-staff      one run
+            #   set SJEP_SKIP_STAFF=1        every run  (recommended post-go-live)
+            skip_staff = ("--no-staff" in sys.argv
+                          or os.getenv("SJEP_SKIP_STAFF", "").strip().lower()
+                          in ("1", "true", "yes"))
             try:
-                if not DRY_RUN:
+                if skip_staff:
+                    log.info(f"  [{base_url}] staff import skipped (--no-staff): staff "
+                             f"self-register and are approved in-app.")
+                elif not DRY_RUN:
                     push_staff(cursor, token, base_url)
             except Exception as e:
                 log.error(f"  [{base_url}] staff push error: {e}")
@@ -1249,6 +1265,13 @@ if __name__ == "__main__":
     ap.add_argument("--only", default="", metavar="LIST",
                     help="comma-separated entities to sync, e.g. "
                          "parties,products,stock  (watermark is not advanced)")
+    # These are read from sys.argv inside sync_once(); register them here too so
+    # argparse accepts (rather than rejects) them as recognised flags.
+    ap.add_argument("--no-mirror", action="store_true",
+                    help="skip the full raw-table mirror (also SJEP_SKIP_MIRROR=1)")
+    ap.add_argument("--no-staff", action="store_true",
+                    help="skip importing Gati staff — use once staff self-register "
+                         "in-app (also SJEP_SKIP_STAFF=1)")
     args = ap.parse_args()
 
     DRY_RUN = args.dry_run
