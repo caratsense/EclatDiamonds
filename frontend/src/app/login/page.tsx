@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import {
   ArrowRight,
   ArrowLeft,
+  Eye,
+  EyeOff,
   Loader2,
   MailCheck,
   ShieldCheck,
@@ -83,6 +85,7 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
   const [done, setDone] = React.useState<
     { message: string; loginEmail: string } | null
   >(null);
+  const [showPw, setShowPw] = React.useState(false);
 
   const roleHint = SIGNUP_ROLES.find((r) => r.value === requestedRole)?.hint;
 
@@ -181,15 +184,26 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
           <Label className="text-xs text-[#f6f3ed]/80">Password</Label>
-          <input
-            type="password"
-            autoComplete="new-password"
-            className={inputCls}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="8+ characters"
-            required
-          />
+          <div className="relative">
+            <input
+              type={showPw ? "text" : "password"}
+              autoComplete="new-password"
+              className={`${inputCls} pr-10`}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="8+ characters"
+              required
+            />
+            <button
+              type="button"
+              onClick={() => setShowPw((s) => !s)}
+              aria-label={showPw ? "Hide password" : "Show password"}
+              tabIndex={-1}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-[#f6f3ed]/50 transition-colors hover:text-[#f6f3ed]"
+            >
+              {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs text-[#f6f3ed]/80">Phone (optional)</Label>
@@ -265,6 +279,7 @@ export default function LoginPage() {
 
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
+  const [showPassword, setShowPassword] = React.useState(false);
   const [mode, setMode] = React.useState<"signin" | "signup">("signin");
 
   function finishLogin(me: Parameters<typeof hydrate>[0]) {
@@ -424,7 +439,7 @@ export default function LoginPage() {
             <p className="mt-1.5 text-sm text-[#f6f3ed]/70">
               {mode === "signup"
                 ? "Register and request access. A manager or head office will approve you."
-                : "Select your role keycard or enter details to start the session."}
+                : "Enter your email and password to start the session."}
             </p>
           </div>
 
@@ -491,15 +506,30 @@ export default function LoginPage() {
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="password" className="text-xs text-[#f6f3ed]/80">Password</Label>
-                  <Input
-                    id="password"
-                    type="password"
-                    autoComplete="current-password"
-                    className="border-[#1b3a2c] bg-[#071e16] text-[#f6f3ed] focus:border-[#c8a24f]"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                  />
+                  <div className="relative">
+                    <Input
+                      id="password"
+                      type={showPassword ? "text" : "password"}
+                      autoComplete="current-password"
+                      className="border-[#1b3a2c] bg-[#071e16] pr-10 text-[#f6f3ed] focus:border-[#c8a24f]"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((s) => !s)}
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                      tabIndex={-1}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-[#f6f3ed]/50 transition-colors hover:text-[#f6f3ed]"
+                    >
+                      {showPassword ? (
+                        <EyeOff className="h-4 w-4" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
+                      )}
+                    </button>
+                  </div>
                 </div>
                 <Button
                   type="submit"
@@ -539,7 +569,11 @@ export default function LoginPage() {
             )}
           </button>
 
-          <InstallAppButton label="Install App on Phone" className="mt-4 w-full" />
+          <InstallAppButton
+            label="Install App on Phone"
+            variant="ghost"
+            className="mt-2 w-full border border-[#1b3a2c] text-[#f6f3ed]/70 hover:bg-[#0c261c] hover:text-[#f6f3ed]"
+          />
         </div>
       </main>
     </div>

@@ -57,7 +57,7 @@ function kpiHref(id: string): string | undefined {
   switch (id) {
     case "sales":
     case "my-sales":
-      return "/sales-performance";
+      return "/reporting";
     case "footfall":
       return "/checkins";
     case "pending":
@@ -122,7 +122,7 @@ export default function DashboardsPage() {
       ) : (
         <>
           <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <SalesTrendChart data={trend} href="/sales-performance" />
+            <SalesTrendChart data={trend} href="/reporting" />
             {isMultiStore ? (
               <StoreComparisonChart data={storeComparison} href="/store-comparison" />
             ) : (
