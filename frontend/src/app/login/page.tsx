@@ -26,7 +26,6 @@ import { GoogleSignInButton } from "@/components/auth/google-sign-in-button";
 import { InstallAppButton } from "@/components/pwa/install-app-button";
 import { homeForRole } from "@/lib/navigation";
 import { clearAttendanceHandled } from "@/lib/attendance-gate";
-import { getStoredToken, hasValidSession, setStoredToken } from "@/lib/api";
 import {
   useLogin,
   useGoogleLogin,
@@ -308,23 +307,6 @@ export default function LoginPage() {
     );
   }
 
-  /**
-   * If you asked for the login page, you get the login page.
-   *
-   * This used to be `if (getStoredToken()) router.replace("/dashboards")`, which
-   * made the screen unreachable: any leftover token string sent you straight to a
-   * dashboard, so you could not sign in as anyone else, and an EXPIRED token
-   * bounced you to a dashboard that then 401'd you back here — a redirect loop.
-   *
-   * Now an existing session is offered, not imposed: a valid one shows a
-   * "continue" banner, an expired one is cleared so the form works normally.
-   */
-  const [resumable, setResumable] = React.useState(false);
-  React.useEffect(() => {
-    if (hasValidSession()) setResumable(true);
-    else if (getStoredToken()) setStoredToken(null);
-  }, []);
-
   function onSubmitPassword(e: React.FormEvent) {
     e.preventDefault();
     login.mutate(
@@ -443,38 +425,6 @@ export default function LoginPage() {
                 : "Enter your email and password to start the session."}
             </p>
           </div>
-
-          {/* An existing session is offered, never forced — see the note on
-              `resumable` above. Signing in below simply replaces it. */}
-          {resumable ? (
-            <div className="rounded-lg border border-[#c8a24f]/40 bg-[#c8a24f]/10 p-3">
-              <p className="text-sm text-[#f6f3ed]">
-                You&apos;re already signed in on this device.
-              </p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={() => router.replace("/dashboards")}
-                >
-                  Continue where I left off
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="text-[#f6f3ed]/80 hover:text-[#f6f3ed]"
-                  onClick={() => {
-                    setStoredToken(null);
-                    clearAttendanceHandled();
-                    setResumable(false);
-                  }}
-                >
-                  Sign in as someone else
-                </Button>
-              </div>
-            </div>
-          ) : null}
 
           {mode === "signin" ? (
           <>
