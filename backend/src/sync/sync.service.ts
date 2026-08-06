@@ -1820,14 +1820,20 @@ export class SyncService {
       const price = dec(r.price);
       const karat = int(r.karat) ?? 0;
 
+      // By our own marker first, so a re-run finds what it created last time
+      // rather than colliding on the unique SKU.
       const existing =
+        (await this.prisma.product.findUnique({
+          where: { legacyId: `WEB-${code}` },
+          select: { id: true, imageUrl: true, price: true, legacyId: true },
+        })) ??
         (await this.prisma.product.findFirst({
           where: { name: code },
-          select: { id: true, imageUrl: true, price: true },
+          select: { id: true, imageUrl: true, price: true, legacyId: true },
         })) ??
         (await this.prisma.product.findFirst({
           where: { sku: { startsWith: `${code}-` } },
-          select: { id: true, imageUrl: true, price: true },
+          select: { id: true, imageUrl: true, price: true, legacyId: true },
         }));
 
       if (existing) {
@@ -1837,6 +1843,9 @@ export class SyncService {
         if (imageUrl && !existing.imageUrl) data.imageUrl = imageUrl;
         if (price != null && Number(existing.price) === 0) data.price = price;
         if (str(r.description)) data.description = str(r.description);
+        // Repairs rows this import created before it stamped provenance. Without
+        // it they read as demo data and the go-live purge deletes them.
+        if (!existing.legacyId) data.legacyId = `WEB-${code}`;
         if (Object.keys(data).length) {
           await this.prisma.product.update({ where: { id: existing.id }, data });
           enriched++;
@@ -1850,6 +1859,12 @@ export class SyncService {
       const cat = CATEGORY.find(([re]) => re.test(str(r.category) + ' ' + str(r.name)));
       await this.prisma.product.create({
         data: {
+          // Provenance, and it has to be set. `purgeDemo` decides what is seeded
+          // demo data by `legacyId IS NULL`, so a website design created without
+          // one is indistinguishable from a demo row and gets deleted at go-live
+          // — which is exactly what happened the first time this ran. The `WEB-`
+          // prefix keeps it clear of any Gati id and makes the import idempotent.
+          legacyId: `WEB-${code}`,
           sku: code,
           name: str(r.name) || code,
           category: (cat?.[1] ?? 'other') as any,
