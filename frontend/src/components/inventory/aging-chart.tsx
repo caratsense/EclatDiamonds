@@ -3,7 +3,7 @@
 import * as React from "react";
 import type { EChartsOption } from "echarts";
 
-import { EChart, useChartTokens } from "@/components/chart/echart";
+import { ChartEmpty, EChart, useChartTokens } from "@/components/chart/echart";
 import type { AgingBucket } from "@/lib/mock/inventory";
 
 interface AgingChartProps {
@@ -42,5 +42,8 @@ export function AgingChart({ data }: AgingChartProps) {
     };
   }, [data, t]);
 
+  if (!data.some((d) => d.items > 0)) {
+    return <ChartEmpty height={220} message="No stock in these buckets" />;
+  }
   return <EChart option={option} height={220} notMerge />;
 }

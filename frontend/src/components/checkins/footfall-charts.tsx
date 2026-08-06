@@ -3,7 +3,7 @@
 import * as React from "react";
 import type { EChartsOption } from "echarts";
 
-import { EChart, useChartTokens } from "@/components/chart/echart";
+import { ChartEmpty, EChart, useChartTokens } from "@/components/chart/echart";
 import {
   Card,
   CardContent,
@@ -15,7 +15,9 @@ import type { HourlyFootfall, StoreFootfall } from "@/lib/mock/checkins";
 
 export function FootfallByHourChart({ data }: { data: HourlyFootfall[] }) {
   const t = useChartTokens();
-  const peak = Math.max(...data.map((d) => d.visitors));
+  // Math.max(...[]) is -Infinity — guard the empty case (no walk-ins yet).
+  const peak = data.length ? Math.max(...data.map((d) => d.visitors)) : 0;
+  const hasData = data.some((d) => d.visitors > 0);
 
   const option = React.useMemo<EChartsOption>(() => {
     return {
@@ -49,7 +51,11 @@ export function FootfallByHourChart({ data }: { data: HourlyFootfall[] }) {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <EChart option={option} height={240} notMerge />
+        {hasData ? (
+          <EChart option={option} height={240} notMerge />
+        ) : (
+          <ChartEmpty height={240} message="No walk-ins recorded yet" />
+        )}
       </CardContent>
     </Card>
   );
@@ -62,6 +68,7 @@ export function FootfallByStoreChart({ data }: { data: StoreFootfall[] }) {
     today: d.today,
     converted: d.converted,
   }));
+  const hasData = rows.some((r) => r.today > 0 || r.converted > 0);
 
   const option = React.useMemo<EChartsOption>(() => {
     const round = [0, 4, 4, 0] as [number, number, number, number];
@@ -97,7 +104,11 @@ export function FootfallByStoreChart({ data }: { data: StoreFootfall[] }) {
         <CardDescription>Today&apos;s walk-ins vs sales closed.</CardDescription>
       </CardHeader>
       <CardContent>
-        <EChart option={option} height={240} notMerge />
+        {hasData ? (
+          <EChart option={option} height={240} notMerge />
+        ) : (
+          <ChartEmpty height={240} message="No walk-ins recorded yet" />
+        )}
       </CardContent>
     </Card>
   );

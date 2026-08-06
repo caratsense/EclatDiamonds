@@ -233,7 +233,7 @@ export function EChart({
  * an all-zero series makes ECharts default the value axis to a max of 1, which
  * renders a misleading "₹1" tick — so an empty period looked like a ₹1 day.
  */
-function ChartEmpty({
+export function ChartEmpty({
   height = 280,
   className,
   message = "No data for this period",
