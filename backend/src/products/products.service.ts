@@ -36,6 +36,33 @@ export interface StockPresence {
   where: 'here' | 'elsewhere' | 'made';
 }
 
+const num = (v: Prisma.Decimal | number | null | undefined): number =>
+  v == null ? 0 : Number(v);
+
+/**
+ * One physical piece of a design, as the counter needs it: the actual tagged
+ * price and the tracking identifiers (the Gati JewelId is the tag/batch number,
+ * plus hallmark + certificate). Landed COST is deliberately omitted — that is
+ * gated to area_manager+ (Module 15) and never belongs on a shared catalogue view.
+ */
+export interface StockPieceView {
+  id: string;
+  tagNo: string;
+  storeId: string;
+  storeName: string;
+  status: string;
+  grossWeight: number;
+  netWeight: number;
+  diamondWeightCt: number;
+  diamondPieces: number;
+  tagPrice: number;
+  mrp: number;
+  hallmarkNo: string;
+  certificateNo: string;
+  inwardDate: string | null;
+  ageDays: number | null;
+}
+
 function toView(p: any, presence?: StockPresence) {
   return {
     id: p.id,
@@ -208,6 +235,65 @@ export class ProductsService {
     if (viewerStore) this.scope.assertStoreAllowed(user, viewerStore);
     const presence = await this.stockPresence([p.id], viewerStore, this.visibleStoreIds(user));
     return toView(p, presence.get(p.id));
+  }
+
+  /**
+   * The physical pieces of a design on hand in the viewer's scope, each with its
+   * ACTUAL tagged price and tracking (tag/JewelId, hallmark, certificate) — the
+   * real per-piece detail the design-level `price` cannot carry. Only countable
+   * stock (in_stock / aging / dead_stock); sold and returned pieces are excluded.
+   */
+  async pieces(user: AuthUser, productId: string, headerStore?: string): Promise<StockPieceView[]> {
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+      select: { id: true },
+    });
+    if (!product) throw new NotFoundException('Product not found');
+
+    const requested = headerStore && headerStore !== 'all' ? headerStore : null;
+    if (requested) this.scope.assertStoreAllowed(user, requested);
+    const visible = this.visibleStoreIds(user);
+    const storeFilter = requested
+      ? { storeId: requested }
+      : visible
+        ? { storeId: { in: visible } }
+        : {};
+
+    const rows = await this.prisma.stockItem.findMany({
+      where: {
+        productId,
+        status: { in: ['in_stock', 'aging', 'dead_stock'] },
+        ...storeFilter,
+      },
+      orderBy: [{ inwardDate: 'desc' }],
+      take: 200,
+    });
+
+    const storeIds = [...new Set(rows.map((r) => r.storeId))];
+    const stores = await this.prisma.store.findMany({
+      where: { id: { in: storeIds } },
+      select: { id: true, name: true },
+    });
+    const nameOf = new Map(stores.map((s) => [s.id, s.name]));
+
+    return rows.map((r) => ({
+      id: r.id,
+      // The Gati JewelId (stored as legacyId) is the piece's tag / batch number.
+      tagNo: r.legacyId ?? r.sku ?? '',
+      storeId: r.storeId,
+      storeName: nameOf.get(r.storeId) ?? r.storeId,
+      status: r.status,
+      grossWeight: num(r.grossWeight),
+      netWeight: num(r.netWeight),
+      diamondWeightCt: num(r.diamondWeightCt),
+      diamondPieces: r.diamondPieces ?? 0,
+      tagPrice: num(r.tagPrice),
+      mrp: num(r.mrp),
+      hallmarkNo: r.hallmarkNo ?? '',
+      certificateNo: r.certificateNo ?? '',
+      inwardDate: r.inwardDate ? r.inwardDate.toISOString() : null,
+      ageDays: r.ageDays ?? null,
+    }));
   }
 
   /** Create a catalogue product. Managers and above (store-scoped if storeId given). */

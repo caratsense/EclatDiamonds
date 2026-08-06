@@ -66,6 +66,16 @@ export class ProductsController {
     return this.products.create(user, dto);
   }
 
+  /** The physical pieces of this design on hand, with real tag price + tracking. */
+  @Get(':id/pieces')
+  pieces(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @StoreHeader() store?: string,
+  ) {
+    return this.products.pieces(user, id, store);
+  }
+
   @Get(':id')
   get(
     @CurrentUser() user: AuthUser,

@@ -80,6 +80,43 @@ export function useCreateProduct() {
   });
 }
 
+/** One physical piece on hand — the real tagged price + tracking identifiers. */
+export interface StockPiece {
+  id: string;
+  /** Gati JewelId — the piece's tag / batch number. */
+  tagNo: string;
+  storeId: string;
+  storeName: string;
+  status: string;
+  grossWeight: number;
+  netWeight: number;
+  diamondWeightCt: number;
+  diamondPieces: number;
+  tagPrice: number;
+  mrp: number;
+  hallmarkNo: string;
+  certificateNo: string;
+  inwardDate: string | null;
+  ageDays: number | null;
+}
+
+/**
+ * GET /products/:id/pieces — the physical pieces of a design on hand in the
+ * viewer's scope, each with its actual tag price and tracking (tag no, hallmark,
+ * certificate). Only fetched while the detail dialog is open.
+ */
+export function useProductPieces(productId: string | null) {
+  const storeId = useStoreKey();
+  return useQuery({
+    queryKey: ["product-pieces", storeId, productId],
+    enabled: !!productId,
+    queryFn: async () => {
+      const { data } = await api.get<StockPiece[]>(`/products/${productId}/pieces`);
+      return data;
+    },
+  });
+}
+
 export interface ImageSearchResult {
   aiUsed: boolean;
   detected: { category: string; metal: string; keywords: string[] } | null;

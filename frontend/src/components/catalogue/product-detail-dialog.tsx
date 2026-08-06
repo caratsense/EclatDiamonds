@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef } from "react";
-import { Gem, Upload } from "lucide-react";
+import { Gem, Tag, Upload } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -25,7 +25,7 @@ import {
   METAL_LABELS,
   type Product,
 } from "@/lib/mock/catalogue";
-import { useUploadProductImage } from "@/lib/queries/products";
+import { useProductPieces, useUploadProductImage } from "@/lib/queries/products";
 import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
 import { apiErrorMessage } from "@/lib/utils";
@@ -44,7 +44,14 @@ export function ProductDetailDialog({
   const { stores, role } = useSession();
   const fileRef = useRef<HTMLInputElement>(null);
   const upload = useUploadProductImage();
+  // Real physical pieces (actual tag price + tracking); only while the dialog is open.
+  const piecesQuery = useProductPieces(open && product ? product.id : null);
   if (!product) return null;
+
+  const pieces = piecesQuery.data ?? [];
+  const tagPrices = pieces.map((p) => p.tagPrice || p.mrp).filter((v) => v > 0);
+  const minTag = tagPrices.length ? Math.min(...tagPrices) : 0;
+  const maxTag = tagPrices.length ? Math.max(...tagPrices) : 0;
 
   const inStock = product.availability === "in_stock";
   const store = stores.find((s) => s.id === product.storeId)?.name ?? product.storeId;
@@ -66,7 +73,7 @@ export function ProductDetailDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{product.name}</DialogTitle>
           <DialogDescription>
@@ -106,9 +113,31 @@ export function ProductDetailDialog({
         </div>
 
         <div className="flex items-center justify-between">
-          <span className="num text-lg font-semibold">
-            {formatINR(product.price)}
-          </span>
+          {/* Actual tagged price of the pieces on hand — falls back to the
+              design's indicative price only when nothing is in stock. */}
+          <div>
+            {tagPrices.length ? (
+              <>
+                <span className="num text-lg font-semibold">
+                  {minTag === maxTag
+                    ? formatINR(minTag)
+                    : `${formatINR(minTag)} – ${formatINR(maxTag)}`}
+                </span>
+                <span className="ml-2 text-xs text-muted-foreground">
+                  tag price · {pieces.length} on hand
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="num text-lg font-semibold">
+                  {formatINR(product.price)}
+                </span>
+                <span className="ml-2 text-xs text-muted-foreground">
+                  indicative
+                </span>
+              </>
+            )}
+          </div>
           <Badge variant={inStock ? "success" : "secondary"}>
             {inStock ? (
               "In-Stock"
@@ -138,6 +167,58 @@ export function ProductDetailDialog({
           ) : null}
           <Spec label="Held at">{store}</Spec>
         </dl>
+
+        {/* Physical pieces — the real per-piece tag price + tracking (tag / batch
+            no, hallmark, certificate) the single design price cannot show. */}
+        <div>
+          <div className="mb-2 flex items-center gap-2">
+            <Tag className="h-4 w-4 text-muted-foreground" />
+            <h4 className="text-sm font-semibold">Pieces on hand</h4>
+            {!piecesQuery.isLoading ? (
+              <Badge variant="secondary">{pieces.length}</Badge>
+            ) : null}
+          </div>
+          {piecesQuery.isLoading ? (
+            <p className="text-sm text-muted-foreground">Loading pieces…</p>
+          ) : pieces.length === 0 ? (
+            <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
+              No pieces in stock in your scope — this design is made to order.
+            </p>
+          ) : (
+            <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+              {pieces.map((pc) => (
+                <div key={pc.id} className="rounded-lg border p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-xs font-medium">
+                      Tag {pc.tagNo || "—"}
+                    </span>
+                    <span className="num text-sm font-semibold">
+                      {pc.tagPrice > 0
+                        ? formatINR(pc.tagPrice)
+                        : pc.mrp > 0
+                          ? formatINR(pc.mrp)
+                          : "—"}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                    <span>{pc.storeName}</span>
+                    {pc.grossWeight > 0 ? (
+                      <span className="num">{formatGrams(pc.grossWeight)}</span>
+                    ) : null}
+                    {pc.diamondWeightCt > 0 ? (
+                      <span className="num">
+                        {formatCarats(pc.diamondWeightCt)}
+                        {pc.diamondPieces > 0 ? ` · ${pc.diamondPieces} st` : ""}
+                      </span>
+                    ) : null}
+                    {pc.hallmarkNo ? <span>Hallmark {pc.hallmarkNo}</span> : null}
+                    {pc.certificateNo ? <span>Cert {pc.certificateNo}</span> : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {product.description ? (
           <p className="text-sm text-muted-foreground">{product.description}</p>
