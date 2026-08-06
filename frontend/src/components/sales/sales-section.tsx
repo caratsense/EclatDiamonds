@@ -44,7 +44,11 @@ function prettyDate(iso: string): string {
  */
 export function SalesSection() {
   const { currentStore } = useSession();
-  const [scope, setScope] = useState<SaleScope>("manual");
+  // "all", not "manual". Manual means a sale typed into Eclat by hand, and on a
+  // deployment fed by the shop's own system there are none — so the tab opened
+  // empty while 145 real bills for that branch sat one click away, which reads
+  // as "the sync did not work".
+  const [scope, setScope] = useState<SaleScope>("all");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
 

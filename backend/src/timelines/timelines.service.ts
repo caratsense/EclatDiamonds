@@ -69,7 +69,58 @@ export class TimelinesService {
       include: { store: true },
       orderBy: { bookedOn: 'desc' },
     });
-    return rows.map((o) => this.toView(o));
+
+    // Orders imported from the shop system land in ManufacturingOrder, while
+    // this page has only ever read CustomOrder — so 190 real orders and their
+    // 2,310 items were sitting in the database with nothing anywhere able to
+    // show them. They are the same thing to a user ("an order being made"), so
+    // they are mapped into the same shape and listed together rather than given
+    // a second page that says the same words.
+    //
+    // Adapted rather than migrated: CustomOrder carries booking detail a legacy
+    // order simply does not have (ring size, advance receipt, owner role), and
+    // inventing empty columns for it would be worse than mapping what exists.
+    const legacy = await this.prisma.manufacturingOrder.findMany({
+      where: {
+        ...this.scope.storeFilter(user, headerStore),
+        ...(scope === 'ongoing' ? { status: { notIn: [...TERMINAL_STAGES] } } : {}),
+      },
+      include: { store: true, party: true, _count: { select: { items: true } } },
+      orderBy: { orderDate: 'desc' },
+    });
+
+    const adapted = legacy.map((o) => ({
+      ...this.toView({
+        id: o.id,
+        ref: o.orderNo,
+        customerName: o.party?.name ?? 'Walk-in',
+        // The order header carries no description; the piece count is the one
+        // honest thing we can say about what is being made.
+        item: `${o._count.items} item${o._count.items === 1 ? '' : 's'}`,
+        kind: 'custom',
+        category: null,
+        qty: o._count.items,
+        details: o.poNo ? `PO ${o.poNo}` : null,
+        value: o.amount,
+        advanceReceived: null,
+        stage: o.status,
+        bookedOn: o.orderDate,
+        eta: o.expectedDelivery,
+        createdAt: o.createdAt,
+        store: o.store,
+        storeId: o.storeId,
+        ownerRole: 'salesperson',
+        ownerName: null,
+      }),
+      // Flagged so the UI can tell a synced order from one booked in Eclat: a
+      // legacy order has no stage history to open, and offering one would
+      // promise a timeline this data cannot support.
+      fromLegacy: true,
+    }));
+
+    return [...rows.map((o) => this.toView(o)), ...adapted].sort(
+      (a, b) => +new Date(b.bookedOn) - +new Date(a.bookedOn),
+    );
   }
 
   /** GET /timelines/orders/:id — one custom order plus its full event history. */
