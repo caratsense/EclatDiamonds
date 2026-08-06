@@ -22,6 +22,7 @@ import { RazorpayService } from './razorpay.service';
 import { GoldRateService } from './gold-rate.service';
 import { EmailService } from './email.service';
 import { CreatePaymentLinkDto, SendWhatsAppDto } from './dto/integrations.dto';
+import { SetGoldRateDto } from './dto/gold-rate.dto';
 
 /**
  * External integration endpoints (Phase 4). Provider webhooks are @Public (no JWT)
@@ -124,5 +125,16 @@ export class IntegrationsController {
   @Post('gold-rate/refresh')
   refreshGoldRates() {
     return this.goldRate.refresh();
+  }
+
+  /**
+   * Set today's gold rate by hand (managers and above). The reliable daily-update
+   * path when no live feed is configured — the manager enters the morning rate
+   * and every quote built today prefills off it. See GoldRateService.setManual.
+   */
+  @Roles('store_manager', 'area_manager', 'head_office')
+  @Post('gold-rate')
+  setGoldRate(@Body() dto: SetGoldRateDto) {
+    return this.goldRate.setManual(dto);
   }
 }

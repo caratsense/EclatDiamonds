@@ -24,6 +24,8 @@ import {
   ScrollText,
   Target,
   MessageSquarePlus,
+  Contact,
+  Coins,
 } from "lucide-react";
 
 import type { Role } from "@/lib/types";
@@ -103,6 +105,15 @@ export const NAV_GROUPS: NavGroup[] = [
           "Leads and follow-ups for every customer enquiry.",
         primaryAction: "New Lead",
         icon: Users,
+      },
+      {
+        module: 1,
+        slug: "customers",
+        title: "Customers",
+        purpose:
+          "Your store's customer directory — contacts, purchase history and key dates.",
+        primaryAction: "",
+        icon: Contact,
       },
       {
         module: 7,
@@ -298,6 +309,16 @@ export const NAV_GROUPS: NavGroup[] = [
         purpose: "Add staff, assign roles and stores within your scope.",
         primaryAction: "Add Staff",
         icon: UsersRound,
+        roles: ["store_manager", "area_manager", "head_office"],
+      },
+      {
+        module: 2,
+        slug: "settings/rates",
+        title: "Gold Rate",
+        purpose:
+          "The live gold rate every new quote is priced from — auto-updates from the market; override it here if needed.",
+        primaryAction: "",
+        icon: Coins,
         roles: ["store_manager", "area_manager", "head_office"],
       },
       {

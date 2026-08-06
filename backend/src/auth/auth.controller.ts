@@ -15,7 +15,13 @@ import { CurrentUser, AuthUser } from '../common/auth-user';
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
+  /**
+   * Password sign-in. Tighter per-IP throttle than the global 300/min — a human
+   * never types 15 logins a minute; a script does. Account lockout (5 fails →
+   * 15-min freeze) lives in AuthService for slow distributed brute-force.
+   */
   @Public()
+  @Throttle({ default: { limit: 15, ttl: 60_000 } })
   @Post('login')
   login(@Body() dto: LoginDto) {
     return this.auth.login(dto.email, dto.password);

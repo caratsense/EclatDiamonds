@@ -1,10 +1,23 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { MetalKind } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { fetchJson } from './integrations.util';
 
 const TROY_OUNCE_GRAMS = 31.1035;
+
+/**
+ * Built-in keyless source, used when GOLD_RATE_API_URL is not set: CoinGecko's
+ * PAX Gold price in INR. PAXG is a token redeemable 1:1 for one fine troy ounce
+ * of London Good Delivery gold, so it tracks spot closely; CoinGecko serves it
+ * with no API key and returns INR directly, so gold auto-updates out of the box
+ * with zero configuration. `{ "pax-gold": { "inr": <per fine troy ounce> } }`.
+ */
+const DEFAULT_FEED_URL =
+  'https://api.coingecko.com/api/v3/simple/price?ids=pax-gold&vs_currencies=inr';
+
+/** Sent on every feed request — CoinGecko (and good manners) reject a UA-less call. */
+const FEED_USER_AGENT = 'Eclat-CaratSense/1.0 (+gold-rate)';
 
 /** Purity multipliers vs fine (24k) gold — used to derive each stored rate. */
 const GOLD_PURITY: Array<[MetalKind, number]> = [
@@ -15,11 +28,13 @@ const GOLD_PURITY: Array<[MetalKind, number]> = [
 ];
 
 /**
- * Gold / metal rate feed (Module 2 pricing). Pulls the fine-gold spot price from
- * GOLD_RATE_API_URL and upserts a MetalRate row per derived purity. When no feed
- * is configured it's a no-op and pricing falls back to the last stored MetalRate
- * (which is also what the legacy backfill/sync populates) — so quotes keep
- * working with or without a live feed (OP-2 source-of-truth still open).
+ * Gold / metal rate feed (Module 2 pricing). Pulls the fine-gold spot price and
+ * upserts a MetalRate row per derived purity, lifted to the local retail rate by
+ * GOLD_RATE_PREMIUM_PCT. It runs against a built-in keyless source by default
+ * (CoinGecko PAX Gold, INR) so the rate auto-updates with no setup; point
+ * GOLD_RATE_API_URL (+ optional GOLD_RATE_API_KEY) at a dedicated provider to
+ * override it. Either way quotes fall back to the last stored MetalRate if a pull
+ * fails, so pricing never hard-stops.
  */
 @Injectable()
 export class GoldRateService {
@@ -30,14 +45,33 @@ export class GoldRateService {
     private readonly prisma: PrismaService,
   ) {}
 
+  /** Configured provider, or the built-in keyless CoinGecko source by default. */
   private get feedUrl(): string {
-    return this.config.get<string>('GOLD_RATE_API_URL') ?? '';
+    return this.config.get<string>('GOLD_RATE_API_URL')?.trim() || DEFAULT_FEED_URL;
   }
   private get apiKey(): string {
     return this.config.get<string>('GOLD_RATE_API_KEY') ?? '';
   }
 
-  /** True when a rate feed URL is configured (otherwise refresh is a no-op). */
+  /**
+   * Retailer premium over international spot, as a percent. The feed returns the
+   * INR spot price, but Indian physical gold trades higher once import duty (~6%)
+   * + GST (3%) + the local sarafa premium are on it — so quoting raw spot
+   * underprices by ~10-14%. Defaults to 12 so the out-of-the-box auto rate lands
+   * near the real quote; the shop should compare it to today's actual 22K rate
+   * once and set GOLD_RATE_PREMIUM_PCT to fine-tune. (A manual override on the
+   * Rates screen always wins until the next pull.)
+   */
+  private get premiumPct(): number {
+    const raw = Number(this.config.get<string>('GOLD_RATE_PREMIUM_PCT'));
+    return Number.isFinite(raw) && raw >= 0 ? raw : 12;
+  }
+
+  /**
+   * Always true now — a feed URL is always resolvable (a configured provider, or
+   * the built-in keyless CoinGecko default). Kept as a flag so callers/tests can
+   * still gate on it and a future "disable entirely" switch has a home.
+   */
   get enabled(): boolean {
     return Boolean(this.feedUrl);
   }
@@ -117,46 +151,112 @@ export class GoldRateService {
       return { updated: false, dryRun: true };
     }
 
-    const fineInrPerGram = await this.fetchFineGoldInrPerGram();
-    if (fineInrPerGram == null || fineInrPerGram <= 0) {
+    const spotInrPerGram = await this.fetchFineGoldInrPerGram();
+    if (spotInrPerGram == null || spotInrPerGram <= 0) {
       this.logger.warn('Gold-rate feed returned no usable price.');
       return { updated: false, dryRun: false };
     }
 
-    const effectiveFrom = new Date();
+    // Lift raw spot to the local retail rate (import duty + GST + premium).
+    const fineInrPerGram = round2(spotInrPerGram * (1 + this.premiumPct / 100));
+    const written = await this.writePurities(fineInrPerGram, new Date());
+    this.logger.log(
+      `Gold rates refreshed: 24k = ₹${written.gold_24k}/g (spot ₹${spotInrPerGram} +${this.premiumPct}%)`,
+    );
+    return { updated: true, dryRun: false, rates: written };
+  }
+
+  /**
+   * Manually set today's gold rate (POST /integrations/gold-rate, managers+).
+   *
+   * The reliable path for an Indian retailer: an international-spot feed does NOT
+   * match the local IBJA / sarafa-association rate a jeweller actually quotes
+   * (import duty, GST and local premium sit on top), so the morning rate is
+   * entered by hand. The manager enters one karat's rate and the other purities
+   * are derived from it, so 24k / 22k / 18k always stay consistent — and every
+   * quote built today prefills off this number.
+   */
+  async setManual(input: {
+    ratePerGram: number;
+    karat: 22 | 24;
+  }): Promise<{ rates: Record<string, number> }> {
+    const mult = input.karat === 24 ? 1 : 22 / 24;
+    const fine = round2(input.ratePerGram / mult);
+    if (!Number.isFinite(fine) || fine <= 0) {
+      throw new BadRequestException('Enter a valid gold rate');
+    }
+    const rates = await this.writePurities(fine, new Date());
+    this.logger.log(
+      `Gold rate set manually: ${input.karat}k = ₹${input.ratePerGram}/g (24k ₹${rates.gold_24k})`,
+    );
+    return { rates };
+  }
+
+  /** Write one MetalRate row per gold purity, derived from the fine-gold price. */
+  private async writePurities(
+    fineInrPerGram: number,
+    effectiveFrom: Date,
+  ): Promise<Record<string, number>> {
     const written: Record<string, number> = {};
     for (const [metal, mult] of GOLD_PURITY) {
       const ratePerGram = round2(fineInrPerGram * mult);
       await this.prisma.metalRate.create({ data: { metal, ratePerGram, effectiveFrom } });
       written[metal] = ratePerGram;
     }
-    this.logger.log(`Gold rates refreshed: 24k = ₹${written.gold_24k}/g`);
-    return { updated: true, dryRun: false, rates: written };
+    return written;
   }
 
   /**
    * Normalise a feed response to INR per gram of fine gold. Handles the common
    * shapes so swapping providers is a config change, not a code change:
-   *   A) generic    → { inr_per_gram }
-   *   B) goldapi.io → { price_gram_24k }  (per-gram, in requested currency)
-   *   C) metals.dev → { metals: { gold } } / { price }  (per troy ounce)
+   *   A) CoinGecko  → { "pax-gold": { inr } }       (built-in default; per troy ounce)
+   *   B) generic    → { inr_per_gram }
+   *   C) goldapi.io → { price_gram_24k }            (per-gram, in requested currency)
+   *   D) metals.dev → { metals: { gold } } / { price } (per troy ounce)
+   *
+   * A network/HTTP failure returns null (logged) rather than throwing, so a
+   * transient outage just skips this refresh and pricing keeps the last rate.
    */
   private async fetchFineGoldInrPerGram(): Promise<number | null> {
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = { 'User-Agent': FEED_USER_AGENT };
     if (this.apiKey) headers['x-access-token'] = this.apiKey; // goldapi.io style auth
-    const data = await fetchJson(this.feedUrl, { headers });
 
-    if (typeof data?.inr_per_gram === 'number') return round2(data.inr_per_gram);
-    if (typeof data?.price_gram_24k === 'number') return round2(data.price_gram_24k);
+    let data: any;
+    try {
+      data = await fetchJson(this.feedUrl, { headers });
+    } catch (err) {
+      this.logger.warn(`Gold-rate fetch failed: ${(err as Error)?.message ?? err}`);
+      return null;
+    }
 
-    const perOunce = data?.metals?.gold ?? data?.price ?? data?.gold;
-    if (typeof perOunce === 'number' && perOunce > 0) return round2(perOunce / TROY_OUNCE_GRAMS);
-
-    this.logger.warn(
-      `Unrecognised gold-rate feed shape: ${JSON.stringify(data).slice(0, 200)}`,
-    );
-    return null;
+    const fine = fineGoldInrPerGramFromFeed(data);
+    if (fine == null) {
+      this.logger.warn(
+        `Unrecognised gold-rate feed shape: ${JSON.stringify(data).slice(0, 200)}`,
+      );
+    }
+    return fine;
   }
+}
+
+/**
+ * Pure feed-shape → INR per gram of fine (24k) gold. Split out from the network
+ * call so the money-sensitive branch/conversion logic is unit-testable. Returns
+ * null for an unrecognised shape (the caller logs it). Handles, in order:
+ *   CoinGecko `{ "pax-gold": { inr } }` (per troy ounce) · generic `{ inr_per_gram }`
+ *   · goldapi.io `{ price_gram_24k }` · metals.dev `{ metals: { gold } }` / `{ price }`.
+ */
+export function fineGoldInrPerGramFromFeed(data: any): number | null {
+  const paxg = data?.['pax-gold']?.inr;
+  if (typeof paxg === 'number' && paxg > 0) return round2(paxg / TROY_OUNCE_GRAMS);
+
+  if (typeof data?.inr_per_gram === 'number') return round2(data.inr_per_gram);
+  if (typeof data?.price_gram_24k === 'number') return round2(data.price_gram_24k);
+
+  const perOunce = data?.metals?.gold ?? data?.price ?? data?.gold;
+  if (typeof perOunce === 'number' && perOunce > 0) return round2(perOunce / TROY_OUNCE_GRAMS);
+
+  return null;
 }
 
 function round2(n: number): number {

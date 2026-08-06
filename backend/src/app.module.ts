@@ -12,6 +12,7 @@ import { RolesGuard } from './auth/roles.guard';
 import { StoresModule } from './stores/stores.module';
 import { UsersModule } from './users/users.module';
 import { LeadsModule } from './leads/leads.module';
+import { PartiesModule } from './parties/parties.module';
 import { ProductsModule } from './products/products.module';
 import { QuotesModule } from './quotes/quotes.module';
 import { StockModule } from './stock/stock.module';
@@ -57,6 +58,7 @@ import { AllExceptionsFilter } from './common/all-exceptions.filter';
     StoresModule,
     UsersModule,
     LeadsModule,
+    PartiesModule,
     ProductsModule,
     QuotesModule,
     StockModule,

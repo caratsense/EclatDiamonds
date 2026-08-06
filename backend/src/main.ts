@@ -21,6 +21,21 @@ async function bootstrap() {
   // so req.ip is the real client IP (per-IP rate limiting depends on this).
   app.set('trust proxy', 1);
 
+  // Baseline security headers + drop the "X-Powered-By: Express" fingerprint.
+  // This is a JSON API (the HTML/CSP origin is Vercel), so the four cheap,
+  // always-safe headers cover it without pulling in helmet. ponytail: add a CSP
+  // here only if this service ever starts serving HTML.
+  app.getHttpAdapter().getInstance().disable('x-powered-by');
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    if (process.env.NODE_ENV === 'production') {
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
+    next();
+  });
+
   const config = app.get(ConfigService);
 
   // Serve uploaded images/photos statically at /uploads (same dir StorageService

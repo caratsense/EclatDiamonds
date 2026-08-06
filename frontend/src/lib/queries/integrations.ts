@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
 
@@ -67,8 +67,11 @@ export function useMetalRates() {
       const { data } = await api.get<MetalRate[]>("/integrations/gold-rate");
       return data;
     },
-    // Rates move through the day but not by the second.
+    // Rates move through the day but not by the second. Poll every 5 min so the
+    // live-rate chip + quote builder reflect a feed refresh or a manual override
+    // without a reload.
     staleTime: 5 * 60 * 1000,
+    refetchInterval: 5 * 60 * 1000,
     retry: false,
   });
 
@@ -80,6 +83,44 @@ export function useMetalRates() {
   }
 
   return { ...query, rateFor };
+}
+
+/**
+ * POST /integrations/gold-rate — set today's gold rate by hand (managers+).
+ * The manager enters one karat; the backend derives the other purities. On
+ * success every quote built today prefills off the new number, so the cache is
+ * invalidated to pull it straight through.
+ */
+export function useSetGoldRate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { ratePerGram: number; karat: 22 | 24 }) => {
+      const { data } = await api.post<{ rates: Record<string, number> }>(
+        "/integrations/gold-rate",
+        input,
+      );
+      return data;
+    },
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["integrations", "gold-rate"] }),
+  });
+}
+
+/** POST /integrations/gold-rate/refresh — pull an intraday rate from the feed. */
+export function useRefreshGoldRate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const { data } = await api.post<{
+        updated: boolean;
+        dryRun: boolean;
+        rates?: Record<string, number>;
+      }>("/integrations/gold-rate/refresh");
+      return data;
+    },
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["integrations", "gold-rate"] }),
+  });
 }
 
 /** GET /integrations/status — deployment-wide, so it is cached for the session. */

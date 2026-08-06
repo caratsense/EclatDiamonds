@@ -66,6 +66,17 @@ export class SchedulerService {
     return (this.config.get<string>('SCHEDULER_ENABLED') ?? 'true') !== 'false';
   }
 
+  /**
+   * How often the gold-rate feed is pulled, in hours. Default 12 (an AM + PM
+   * refresh, matching how IBJA publishes and how a jeweller re-rates through the
+   * day) — low enough to track the market, high enough to sit inside a free feed
+   * tier's monthly request quota. Clamped to 1–24h.
+   */
+  private get goldRateRefreshHours(): number {
+    const raw = Number(this.config.get<string>('GOLD_RATE_REFRESH_HOURS'));
+    return Number.isFinite(raw) && raw >= 1 && raw <= 24 ? raw : 12;
+  }
+
   private async rosteredStores() {
     return this.prisma.store.findMany({
       // The "All Stores" aggregate is a UI convenience with no staff and no
@@ -112,21 +123,26 @@ export class SchedulerService {
   }
 
   /**
-   * Pull a fresh metal rate every hour, once a feed is configured.
+   * Auto-pull a fresh market rate when a feed is configured, so nobody has to key
+   * the rate in each morning.
    *
    * Quotes fall back to the last stored rate when the feed is absent, and a
    * fallback rate looks identical to a live one on the total — so a quiet feed is
-   * a pricing error waiting to happen. This keeps the stored rate current; the
-   * quote builder separately flags a rate that has gone stale, which is what
-   * covers the window before a feed is set up at all.
+   * a pricing error waiting to happen. The tick is hourly (shared with the other
+   * jobs), but the run key is an N-hour bucket (GOLD_RATE_REFRESH_HOURS), so
+   * `runOnce` fires exactly one refresh per interval, whichever hour/instance
+   * gets there first — the stored table stays current without accruing a row an
+   * hour or burning through a feed's request quota. A manager can still pull an
+   * intraday rate on demand (POST /gold-rate/refresh) or override it by hand.
    */
   @Cron(CronExpression.EVERY_HOUR, { name: 'pricing.gold-rate-refresh' })
   async refreshGoldRate(): Promise<void> {
     if (!this.enabled || !this.goldRate.enabled) return;
 
-    const now = new Date();
-    // One refresh per clock hour, whichever instance gets there first.
-    const runKey = `${now.toISOString().slice(0, 13)}:00Z`;
+    // One refresh per configured interval, whichever instance gets there first.
+    const hours = this.goldRateRefreshHours;
+    const bucket = Math.floor(Date.now() / (hours * 3_600_000));
+    const runKey = `every-${hours}h-${bucket}`;
     await this.runner.runOnce('pricing.gold-rate-refresh', 'global', runKey, async () => {
       const res = await this.goldRate.refresh();
       if (res.updated) this.logger.log(`Gold rates refreshed: ${JSON.stringify(res.rates)}`);

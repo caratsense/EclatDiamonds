@@ -21,6 +21,7 @@ import { ROLE_RANK } from '../common/role.util';
 import { WhatsAppService } from '../integrations/whatsapp.service';
 import { SignupDto } from './dto/signup.dto';
 import { uniqueEmailHandle } from '../users/users.util';
+import { LoginLockout } from './login-lockout';
 
 /** OTP policy — one place to tune. */
 const OTP_TTL_MS = 5 * 60 * 1000; // code valid 5 minutes
@@ -42,6 +43,9 @@ export class AuthService {
 
   /** Lazily-built Google verifier — caches Google's JWKS across requests. */
   private googleClient?: OAuth2Client;
+
+  /** Per-handle failed-login freeze — see LoginLockout. */
+  private readonly lockout = new LoginLockout();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -245,15 +249,27 @@ export class AuthService {
   }
 
   async login(email: string, password: string) {
-    const user = await this.prisma.user.findUnique({ where: { email: email.toLowerCase() } });
+    const key = email.toLowerCase();
+    // Checked BEFORE the DB lookup, and failures are recorded for unknown handles
+    // too, so lockout behaviour never reveals which handles are real accounts.
+    if (this.lockout.isLocked(key)) {
+      throw new UnauthorizedException('Too many failed attempts. Try again in a few minutes.');
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { email: key } });
     // isActive already blocks pending/rejected (both are isActive=false); the
     // explicit approvalStatus check is defence-in-depth. Same generic message
     // for every case so login never reveals which emails exist or their status.
     if (!user || !user.passwordHash || !user.isActive || user.approvalStatus !== 'approved') {
+      this.lockout.fail(key);
       throw new UnauthorizedException('Invalid credentials');
     }
     const ok = await bcrypt.compare(password, user.passwordHash);
-    if (!ok) throw new UnauthorizedException('Invalid credentials');
+    if (!ok) {
+      this.lockout.fail(key);
+      throw new UnauthorizedException('Invalid credentials');
+    }
+    this.lockout.clear(key); // clean login clears the counter
 
     const token = await this.jwt.signAsync({
       sub: user.id,
