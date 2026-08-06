@@ -258,6 +258,20 @@ def extract_stock(cursor, since=""):
     return stock
 
 
+def extract_stock_movements(cursor, since=""):
+    """Per-piece movement log = InwardHistory (→ Eclat StockMovement).
+
+    Says which piece moved, what it became (`Jstatus`, the same letters the stock
+    import decodes) and when. Append-only, so the watermark rides on Id like the
+    day book. 14,374 rows on the client's live database, and until now nothing
+    read them — "when did this ring reach Bandra, and where was it before" simply
+    had no answer in the product.
+
+    `LocationId` is NULL throughout on this install, so from/to branch cannot be
+    filled and is deliberately left null rather than guessed."""
+    return _base(cursor, "InwardHistory", since)
+
+
 def extract_sales(cursor, since=""):
     """Invoice headers = JewelTrans (SELECT *). Lines via extract_sale_lines().
     TranType selects the doc kind (sale/purchase/branch transfer/proforma/return)."""
@@ -1090,6 +1104,7 @@ def sync_once():
             oitems  = extract_order_items(cursor, [o["OrderId"] for o in orders])
             bags    = extract_bags(cursor, since)
             payments = extract_payments(cursor, since)
+            moves   = extract_stock_movements(cursor, since)
 
             # Branch attribution. Stock and parties already carry a location
             # column (the extractors SELECT *), so the backend reads those
@@ -1098,10 +1113,12 @@ def sync_once():
             book_branch = build_book_branch_map(cursor)
             stamp_branch(sales, book_branch, "sales")
             stamp_branch(orders, book_branch, "orders")
+            # Journal has no location column either — same document-book route.
+            stamp_branch(payments, book_branch, "ledger")
             log.info(f"  [{base_url}] extracted: parties={len(parties)} items={len(items)} "
                      f"stock={len(stock)} sales={len(sales)}({len(lines)} lines) "
                      f"orders={len(orders)}({len(oitems)} items) bags={len(bags)} "
-                     f"payments={len(payments)}")
+                     f"ledger={len(payments)} movements={len(moves)}")
 
             # Masters before rows that reference them (FK resolution on the backend).
             batches = [
@@ -1115,6 +1132,13 @@ def sync_once():
                 # Last: bags advance the order headers pushed just above, so the
                 # orders must already exist for the backend to resolve them.
                 ("bags", bags),
+                # Day book and per-piece history. Both were extracted from the
+                # first version and never sent: there was no endpoint to send
+                # them to, so 1,134 ledger rows and 14,374 movements were read
+                # and discarded on every run, and Finance stayed empty.
+                ("ledger", payments),
+                # After stock: a movement is skipped if its piece is not there.
+                ("stock-movements", moves),
             ]
 
             # PHASE FILTER — bring data across in stages rather than all at once.

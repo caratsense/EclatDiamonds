@@ -79,6 +79,23 @@ export class SyncController {
   }
 
   /**
+   * The shop's day book (Journal) -> LedgerEntry. Extracted by the agent since
+   * the first version and thrown away for want of somewhere to send it, which
+   * is why Finance has been empty. Deliberately NOT Payment: Journal is
+   * double-entry accounting including GST postings, not customer collections.
+   */
+  @Post('ledger')
+  ledger(@Body() body: SyncBatchDto) {
+    return this.sync.syncLedger(body.records);
+  }
+
+  /** Per-piece movement history (InwardHistory) -> StockMovement. */
+  @Post('stock-movements')
+  stockMovements(@Body() body: SyncBatchDto) {
+    return this.sync.syncStockMovements(body.records);
+  }
+
+  /**
    * Designs from the client's own website. Brings the two things the shop system
    * cannot: a clean customer-facing photograph (Gati's library has measurements
    * printed across the pictures) and a price for designs no branch stocks.

@@ -1126,9 +1126,15 @@ export class SyncService {
     stock: ['EclatBranchId', 'BranchNo', 'LocationId', 'FirstLocationId'],
     sales: ['EclatBranchId', 'BranchNo', 'LocationId'],
     orders: ['EclatBranchId', 'BranchNo', 'LocationId'],
+    // Journal carries no branch column at all — only `BookNo`, the document
+    // series, which the agent resolves to a branch through BookMaster and hands
+    // over as `EclatBranchId` exactly as it does for sales and orders.
+    ledger: ['EclatBranchId', 'BranchNo', 'LocationId'],
     // No `bags` entry on purpose: ProductionBag has no storeId of its own and
     // hangs off ManufacturingOrder, so a bag inherits whichever branch its order
     // was attributed to. Listing it here would imply a stamping that never runs.
+    // Likewise no `stock-movements`: a movement belongs to its piece, and the
+    // piece already carries the branch.
   };
 
   private branchColumnsFor(entity: string): string[] {
@@ -1926,6 +1932,147 @@ export class SyncService {
       created,
       enriched,
     };
+  }
+
+  // ── Journal -> LedgerEntry ───────────────────────────────────────────────────
+  /**
+   * The shop's day book.
+   *
+   * `Journal` was extracted by the agent from the first version and then thrown
+   * away — counted in the log, never pushed, no endpoint to push it to. 1,134
+   * rows read and discarded on every run, which is why Finance has been empty.
+   *
+   * It goes to `LedgerEntry`, NOT to `Payment`, and the difference matters.
+   * Journal is double-entry accounting: every row names a debit account and a
+   * credit account, and plenty of the rows are GST splits ("1.5% CGST") rather
+   * than money anyone handed over. Filing that as a customer collection would
+   * put tax postings in the till report. Receipts with an actual payment mode
+   * live in `VoucherEntry`, which is a separate and much smaller table.
+   *
+   * `TranType` decides which side of the business a row belongs to — sales are
+   * income, purchases are expense — and both accounts are kept: `partyId` is the
+   * counterparty (credit side for a sale, debit side for a purchase), so the
+   * ledger can be read per customer or per supplier.
+   */
+  async syncLedger(records: Rec[]): Promise<SyncResult> {
+    const branch = await this.branchResolver('ledger');
+    // JW = jewellery, M = metal, B = branch-to-branch, prefix SL/PH = sale/purchase.
+    const KIND: Record<string, string> = {
+      JWSL: 'income',
+      BJWSL: 'income',
+      MSL: 'income',
+      JWPH: 'expense',
+      BJWPH: 'expense',
+      MPH: 'expense',
+      VCH: 'asset',
+    };
+    const parties = await this.idMap(
+      'party',
+      records.flatMap((r) => [r.DrAccountNo, r.CrAccountNo]),
+    );
+
+    let upserted = 0;
+    let skipped = 0;
+    const byKind: Record<string, number> = {};
+
+    for (const r of records) {
+      const legacyId = r.Id == null ? null : String(r.Id);
+      const amount = dec(r.Amount);
+      if (!legacyId || amount == null) {
+        skipped++;
+        continue;
+      }
+      const tranType = String(str(r.TranType) ?? '').toUpperCase();
+      const kind = KIND[tranType] ?? 'asset';
+      byKind[kind] = (byKind[kind] ?? 0) + 1;
+
+      // Income sits on the credit side of the day book, expense on the debit —
+      // and the counterparty is whichever account is NOT ours.
+      const isIncome = kind === 'income';
+      const counterparty = isIncome ? r.CrAccountNo : r.DrAccountNo;
+
+      const data = {
+        storeId: await branch.resolve(r),
+        partyId: parties.get(String(counterparty)) ?? null,
+        kind: kind as any,
+        side: (isIncome ? 'credit' : 'debit') as any,
+        amount,
+        entryDate: dt(r.Jdate) ?? dt(r.EntryDate) ?? new Date(),
+        reference: str(r.DocNo) ?? str(r.TransNo),
+        // The remark is often the only thing distinguishing a tax posting from
+        // the sale it belongs to, so it is kept verbatim.
+        narration: [str(r.Remarks), tranType ? `(${tranType})` : null]
+          .filter(Boolean)
+          .join(' ') || null,
+        legacyUpdatedAt: dt(r.EntryDate),
+      };
+      await this.prisma.ledgerEntry.upsert({
+        where: { legacyId },
+        create: { legacyId, ...data },
+        update: data,
+      });
+      upserted++;
+    }
+
+    this.logger.log(
+      `sync ledger: ${Object.entries(byKind).map(([k, n]) => `${k}=${n}`).join(' ')}`,
+    );
+    return this.result('ledger', records, upserted, skipped, branch.report());
+  }
+
+  // ── InwardHistory -> StockMovement ───────────────────────────────────────────
+  /**
+   * Where each piece has been.
+   *
+   * `InwardHistory` is the shop's per-piece movement log — 14,374 rows saying
+   * which piece moved, what it became, and when. Nothing was reading it, so
+   * `StockMovement` has been empty since the model was written, and a question
+   * as ordinary as "when did this ring arrive at Bandra, and where was it
+   * before" had no answer in the product.
+   *
+   * `LocationId` is null throughout on this install (the same column the branch
+   * work already found useless), so from/to store cannot be filled from here.
+   * That is recorded honestly as null rather than guessed: a movement history
+   * showing invented branches would be worse than one showing dates and states.
+   * `Jstatus` is the status the piece ENDED UP in — decoded by the same
+   * Const_InwardStatus table the stock import uses — and `Trans` is what
+   * happened (a sale, a bag issue, a return).
+   */
+  async syncStockMovements(records: Rec[]): Promise<SyncResult> {
+    const stock = await this.idMap(
+      'stockItem',
+      records.map((r) => r.JewelId),
+    );
+    let upserted = 0;
+    let skipped = 0;
+
+    for (const r of records) {
+      const legacyId = r.Id == null ? null : String(r.Id);
+      const stockItemId = stock.get(String(r.JewelId));
+      // A movement for a piece we have not imported is skipped, not invented.
+      // The next run picks it up once the piece exists (the agent pushes stock
+      // before movements).
+      if (!legacyId || !stockItemId) {
+        skipped++;
+        continue;
+      }
+      const data = {
+        stockItemId,
+        fromStoreId: null,
+        toStoreId: null,
+        status: str(r.Jstatus),
+        note: str(r.Trans),
+        occurredAt: dt(r.TransactionDate) ?? new Date(),
+        legacyUpdatedAt: dt(r.TransactionDate),
+      };
+      await this.prisma.stockMovement.upsert({
+        where: { legacyId },
+        create: { legacyId, ...data },
+        update: data,
+      });
+      upserted++;
+    }
+    return this.result('stock-movements', records, upserted, skipped);
   }
 
   async syncProductImages(records: Rec[]): Promise<SyncResult> {
