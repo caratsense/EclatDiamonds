@@ -1,10 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import {
   Activity,
   ArrowDownRight,
   ArrowUpRight,
   Banknote,
+  ChevronRight,
   Coins,
   IndianRupee,
   Package,
@@ -28,6 +30,8 @@ interface KpiCardProps {
   invertDelta?: boolean;
   /** Position in a row — cycles the accent palette for visual rhythm. */
   index?: number;
+  /** When set, the whole tile is a link to the matching detail page. */
+  href?: string;
 }
 
 /** Map a KPI label to a fitting glyph. */
@@ -61,16 +65,20 @@ export function KpiCard({
   delta,
   invertDelta,
   index,
+  href,
 }: KpiCardProps) {
   const positive = invertDelta ? delta < 0 : delta > 0;
   const Arrow = delta >= 0 ? ArrowUpRight : ArrowDownRight;
   const Icon = pickIcon(label);
   const isHero = (index ?? 0) === 0;
 
-  return (
+  const card = (
     <Card
       data-active={isHero ? "true" : undefined}
-      className="facet-top group relative overflow-hidden transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md"
+      className={cn(
+        "facet-top group relative overflow-hidden transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md",
+        href && "cursor-pointer",
+      )}
     >
       {/* corner sheen — gold on the hero tile, a faint warm wash elsewhere */}
       <div
@@ -115,8 +123,22 @@ export function KpiCard({
         <p className="num mt-1.5 text-[28px] font-semibold leading-none tracking-tight text-foreground">
           {format === "inr" ? formatINRCompact(value) : formatNumber(value)}
         </p>
-        <p className="mt-2 text-[11px] text-muted-foreground">vs prior period</p>
+        <p className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground">
+          vs prior period
+          {href ? (
+            <ChevronRight className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100" />
+          ) : null}
+        </p>
       </CardContent>
     </Card>
   );
+
+  if (href) {
+    return (
+      <Link href={href} aria-label={`${label} — view details`} className="block">
+        {card}
+      </Link>
+    );
+  }
+  return card;
 }

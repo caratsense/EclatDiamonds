@@ -44,7 +44,7 @@ function hhmm(d: Date, tz: string): string {
   return formatHHMMInTz(d, tz) ?? '--:--';
 }
 
-const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 @Injectable()
 export class DashboardService {
@@ -143,40 +143,61 @@ export class DashboardService {
     if (storeIds.length === 0) return { salesTrend: [], storeComparison: [] };
 
     const tz = await this.scope.resolveTimezone(user, headerStore);
-    const since = dayStartInTz(tz, 6);
-    const sales = await this.prisma.sale.findMany({
-      where: {
-        storeId: { in: storeIds },
-        isCancelled: false,
-        docType: 'sale',
-        docDate: { gte: since },
-      },
-      select: { docDate: true, totalAmount: true, storeId: true },
-    });
+    const storeWhere = { storeId: { in: storeIds }, isCancelled: false, docType: 'sale' as const };
 
-    // 7-day trend.
-    // Bucket by the store-local calendar day (YYYY-MM-DD) rather than by a
-    // server-local `toDateString()`. A sale at 23:00 store time was otherwise
-    // liable to land in the neighbouring bucket, which is exactly the kind of
-    // off-by-one that makes a trend chart quietly disagree with the DSR.
-    const trendMap = new Map<string, number>();
-    for (let i = 6; i >= 0; i--) {
-      trendMap.set(dateOnly(businessDate(dayStartInTz(tz, i), tz)), 0);
+    // ── Monthly sales trend, last 12 months ──────────────────────────────────
+    // A 7-day window is empty until the shop bills today, which made the whole
+    // chart read as broken on a deployment fed by historical data. A 12-month
+    // trend surfaces the real sales history AND the current month.
+    const todayYmd = dateOnly(businessDate(dayStartInTz(tz, 0), tz)); // store-local YYYY-MM-DD
+    const [ty, tm, td] = todayYmd.split('-').map(Number);
+    const months: { key: string; label: string }[] = [];
+    for (let i = 11; i >= 0; i--) {
+      let y = ty;
+      let m = tm - i;
+      while (m <= 0) {
+        m += 12;
+        y -= 1;
+      }
+      const key = `${y}-${String(m).padStart(2, '0')}`;
+      // Show the year on January and on the first bucket so the axis reads clearly.
+      const label = MONTHS[m - 1] + (m === 1 || i === 11 ? ` '${String(y).slice(2)}` : '');
+      months.push({ key, label });
     }
-    for (const s of sales) {
-      const key = dateOnly(businessDate(s.docDate, tz));
-      if (trendMap.has(key)) trendMap.set(key, (trendMap.get(key) ?? 0) + num(s.totalAmount));
-    }
-    const salesTrend = [...trendMap.entries()].map(([ymd, total]) => {
-      const [y, m, d] = ymd.split('-').map(Number);
-      return { day: WEEKDAY[new Date(Date.UTC(y, m - 1, d)).getUTCDay()], sales: total, target: 0 };
-    });
 
-    // Per-store comparison (today). Target = the whole-store monthly SalesTarget.
-    const todayStart = dayStartInTz(tz, 0);
-    const now = new Date();
-    const currentPeriod = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const [stores, monthTargets] = await Promise.all([
+    const monthStart = dayStartInTz(tz, td - 1); // store-midnight on the 1st of this month
+    const yearAgo = dayStartInTz(tz, 366); // safely covers the 12 buckets
+
+    const [salesRows, monthTargets] = await Promise.all([
+      this.prisma.sale.findMany({
+        where: { ...storeWhere, docDate: { gte: yearAgo } },
+        select: { docDate: true, totalAmount: true },
+      }),
+      this.prisma.salesTarget.findMany({
+        where: { storeId: { in: storeIds }, staffId: null, period: { in: months.map((m) => m.key) } },
+        select: { period: true, amount: true },
+      }),
+    ]);
+
+    const salesByMonth = new Map<string, number>();
+    for (const s of salesRows) {
+      const key = dateOnly(businessDate(s.docDate, tz)).slice(0, 7); // YYYY-MM
+      salesByMonth.set(key, (salesByMonth.get(key) ?? 0) + num(s.totalAmount));
+    }
+    const targetByMonth = new Map<string, number>();
+    for (const t of monthTargets) {
+      targetByMonth.set(t.period, (targetByMonth.get(t.period) ?? 0) + num(t.amount));
+    }
+    const salesTrend = months.map((mo) => ({
+      day: mo.label,
+      sales: salesByMonth.get(mo.key) ?? 0,
+      target: targetByMonth.get(mo.key) ?? 0,
+    }));
+
+    // ── This-month revenue by store ──────────────────────────────────────────
+    // (today alone is empty until billing; the month is the useful comparison.)
+    const currentPeriod = `${ty}-${String(tm).padStart(2, '0')}`;
+    const [stores, storeMonthTargets] = await Promise.all([
       this.prisma.store.findMany({
         where: { id: { in: storeIds } },
         select: { id: true, name: true, city: true },
@@ -186,20 +207,15 @@ export class DashboardService {
         select: { storeId: true, amount: true },
       }),
     ]);
-    const targetByStore = new Map(monthTargets.map((t) => [t.storeId, num(t.amount)]));
+    const targetByStore = new Map(storeMonthTargets.map((t) => [t.storeId, num(t.amount)]));
     const storeComparison = await Promise.all(
       stores.map(async (st) => {
         const agg = await this.prisma.sale.aggregate({
           _sum: { totalAmount: true },
-          where: {
-            storeId: st.id,
-            isCancelled: false,
-            docType: 'sale',
-            docDate: { gte: todayStart },
-          },
+          where: { storeId: st.id, isCancelled: false, docType: 'sale', docDate: { gte: monthStart } },
         });
         return {
-          store: st.city,
+          store: st.city || st.name,
           revenue: num(agg._sum.totalAmount),
           target: targetByStore.get(st.id) ?? 0,
         };

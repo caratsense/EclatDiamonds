@@ -52,6 +52,23 @@ import {
 } from "@/lib/queries/dashboard";
 import { apiErrorMessage } from "@/lib/utils";
 
+/** Where each KPI tile drills to when clicked. */
+function kpiHref(id: string): string | undefined {
+  switch (id) {
+    case "sales":
+    case "my-sales":
+      return "/sales-performance";
+    case "footfall":
+      return "/checkins";
+    case "pending":
+      return "/timelines";
+    case "collections":
+      return "/payments";
+    default:
+      return undefined;
+  }
+}
+
 export default function DashboardsPage() {
   const item = getNavItem("dashboards");
   const { role } = useSession();
@@ -92,6 +109,7 @@ export default function DashboardsPage() {
                 delta={k.delta}
                 invertDelta={k.invertDelta}
                 index={i}
+                href={kpiHref(k.id)}
               />
             ))}
       </div>

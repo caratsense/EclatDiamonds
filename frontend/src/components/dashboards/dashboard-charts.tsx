@@ -19,7 +19,7 @@ export function SalesTrendChart({ data }: { data: TrendPoint[] }) {
     <Card>
       <CardHeader>
         <CardTitle>Sales Trend</CardTitle>
-        <CardDescription>Daily revenue vs target — last 7 days</CardDescription>
+        <CardDescription>Monthly revenue vs target — last 12 months</CardDescription>
       </CardHeader>
       <CardContent>
         <AreaChart
@@ -44,7 +44,7 @@ export function StoreComparisonChart({ data }: { data: StoreCompare[] }) {
     <Card>
       <CardHeader>
         <CardTitle>Store Comparison</CardTitle>
-        <CardDescription>Today&apos;s revenue vs target by store</CardDescription>
+        <CardDescription>This month&apos;s revenue vs target by store</CardDescription>
       </CardHeader>
       <CardContent>
         <BarChart
