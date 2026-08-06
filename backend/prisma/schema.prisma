@@ -2213,11 +2213,14 @@ model Handoff {
   toDept        String
   title         String
   note          String?
-  /// "open" | "accepted" | "done"
+  /// "open" | "accepted" | "done" (assignee finished) | "closed" (creator approved)
   status        String   @default("open")
   createdById   String
   createdByName String
+  /// Display name of the assignee (kept for legacy rows / free-text fallback).
   assignedTo    String?
+  /// The assignee's user id — who gets notified and whose "assigned to me" this is.
+  assignedToId  String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

@@ -52,6 +52,12 @@ export class DashboardController {
     return this.dashboard.listHandoffs(user, store);
   }
 
+  /** Active staff in scope, for the hand-off "Assign to" picker. */
+  @Get('assignable-users')
+  assignableUsers(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
+    return this.dashboard.assignableUsers(user, store);
+  }
+
   @Post('handoffs')
   createHandoff(@CurrentUser() user: AuthUser, @Body() dto: CreateHandoffDto) {
     return this.dashboard.createHandoff(user, dto);

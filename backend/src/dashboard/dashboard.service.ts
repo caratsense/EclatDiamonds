@@ -22,6 +22,7 @@ import {
   UpdateHandoffStatusDto,
   UpdateTaskStatusDto,
 } from './dto/dashboard.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 
 function num(v: Prisma.Decimal | number | null | undefined): number {
   return v == null ? 0 : Number(v);
@@ -52,6 +53,7 @@ export class DashboardService {
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /** GET /dashboard/kpis — role/store-scoped aggregates computed from the DB. */
@@ -382,11 +384,49 @@ export class DashboardService {
     return rows.map((h) => this.toHandoffView(h));
   }
 
-  /** POST /dashboard/handoffs — raise a hand-off; defaults to the user's primary store. */
+  /**
+   * GET /dashboard/assignable-users — active staff in the caller's store scope,
+   * so a hand-off can be assigned to a real person (any role may assign).
+   */
+  async assignableUsers(user: AuthUser, headerStore?: string) {
+    const storeIds = this.scope.effectiveStoreIds(user, headerStore);
+    if (!storeIds.length) return [];
+    const links = await this.prisma.userStore.findMany({
+      where: { storeId: { in: storeIds } },
+      select: { userId: true },
+    });
+    const ids = [...new Set(links.map((l) => l.userId))];
+    if (!ids.length) return [];
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: ids }, isActive: true },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+    return users;
+  }
+
+  /**
+   * POST /dashboard/handoffs — raise a hand-off; defaults to the user's primary
+   * store. If a real assignee is picked, they get a dashboard notification and
+   * own the "mark done" step.
+   */
   async createHandoff(user: AuthUser, dto: CreateHandoffDto) {
     const storeId = dto.storeId ?? user.storeIds[0];
     if (!storeId) throw new BadRequestException('storeId is required');
     this.scope.assertStoreAllowed(user, storeId);
+
+    // Resolve the assignee (if one was picked) — the id drives the notification
+    // and "assigned to me"; the name is stored for display.
+    const assignedToId = dto.assignedToId ?? null;
+    let assignedTo = dto.assignedTo?.trim() || null;
+    if (assignedToId) {
+      const assignee = await this.prisma.user.findUnique({
+        where: { id: assignedToId },
+        select: { name: true, isActive: true },
+      });
+      if (!assignee || !assignee.isActive) throw new BadRequestException('Assignee not found');
+      assignedTo = assignee.name;
+    }
 
     const row = await this.prisma.handoff.create({
       data: {
@@ -395,7 +435,8 @@ export class DashboardService {
         toDept: dto.toDept,
         title: dto.title,
         note: dto.note ?? null,
-        assignedTo: dto.assignedTo ?? null,
+        assignedTo,
+        assignedToId,
         createdById: user.id,
         createdByName: user.name,
       },
@@ -407,14 +448,44 @@ export class DashboardService {
       storeId,
       summary: `Hand-off ${dto.fromDept} → ${dto.toDept}: ${dto.title}`,
     });
+
+    // The dashboard notification for the person it was passed to.
+    if (assignedToId && assignedToId !== user.id) {
+      await this.notifications.emit([assignedToId], {
+        kind: 'system',
+        title: `New hand-off: ${dto.title}`,
+        body: `${dto.fromDept} → ${dto.toDept} · from ${user.name}`,
+        href: '/dashboards',
+        storeId,
+        entityType: 'Handoff',
+        entityId: row.id,
+        actorId: user.id,
+        actorName: user.name,
+      });
+    }
     return this.toHandoffView(row);
   }
 
-  /** PATCH /dashboard/handoffs/:id — advance status (open→accepted→done). */
+  /**
+   * PATCH /dashboard/handoffs/:id — advance status. The assignee marks it `done`;
+   * the creator then `closed` (approves). Managers may do either (oversight).
+   * Each transition notifies the other party.
+   */
   async updateHandoffStatus(user: AuthUser, id: string, dto: UpdateHandoffStatusDto) {
     const row = await this.prisma.handoff.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('Hand-off not found');
     this.scope.assertStoreAllowed(user, row.storeId);
+
+    const isAssignee = row.assignedToId === user.id;
+    const isCreator = row.createdById === user.id;
+    const isManager = ROLE_RANK[user.role] >= ROLE_RANK.store_manager;
+
+    if ((dto.status === 'accepted' || dto.status === 'done') && !isAssignee && !isManager) {
+      throw new ForbiddenException('Only the assignee can update this hand-off');
+    }
+    if (dto.status === 'closed' && !isCreator && !isManager) {
+      throw new ForbiddenException('Only the person who raised it can approve it');
+    }
 
     const updated = await this.prisma.handoff.update({
       where: { id },
@@ -428,6 +499,35 @@ export class DashboardService {
       summary: `Hand-off "${row.title}" ${row.status} → ${dto.status}`,
       metadata: { from: row.status, to: dto.status },
     });
+
+    // Assignee finished → tell the creator to approve.
+    if (dto.status === 'done' && row.createdById !== user.id) {
+      await this.notifications.emit([row.createdById], {
+        kind: 'system',
+        title: `Hand-off finished: ${row.title}`,
+        body: `${user.name} marked it done — review and close it`,
+        href: '/dashboards',
+        storeId: row.storeId,
+        entityType: 'Handoff',
+        entityId: row.id,
+        actorId: user.id,
+        actorName: user.name,
+      });
+    }
+    // Creator approved → tell the assignee it's closed.
+    if (dto.status === 'closed' && row.assignedToId && row.assignedToId !== user.id) {
+      await this.notifications.emit([row.assignedToId], {
+        kind: 'system',
+        title: `Hand-off approved: ${row.title}`,
+        body: `${user.name} approved and closed it`,
+        href: '/dashboards',
+        storeId: row.storeId,
+        entityType: 'Handoff',
+        entityId: row.id,
+        actorId: user.id,
+        actorName: user.name,
+      });
+    }
     return this.toHandoffView(updated);
   }
 
@@ -441,6 +541,8 @@ export class DashboardService {
       note: h.note ?? '',
       status: h.status,
       assignedTo: h.assignedTo ?? '',
+      assignedToId: h.assignedToId ?? null,
+      createdById: h.createdById,
       createdBy: h.createdByName,
       createdAt: h.createdAt.toISOString(),
     };

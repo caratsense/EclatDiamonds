@@ -33,12 +33,14 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  useAssignableUsers,
   useCreateHandoff,
   useHandoffs,
   useUpdateHandoff,
   type Handoff,
   type HandoffStatus,
 } from "@/lib/queries/dashboard";
+import { useSession } from "@/store/use-session";
 import { apiErrorMessage } from "@/lib/utils";
 
 const DEPARTMENTS = [
@@ -59,14 +61,16 @@ const STATUS_META: Record<
   { label: string; variant: "secondary" | "default" | "success" }
 > = {
   open: { label: "Open", variant: "secondary" },
-  accepted: { label: "Accepted", variant: "default" },
-  done: { label: "Done", variant: "success" },
+  accepted: { label: "In progress", variant: "default" },
+  done: { label: "Awaiting approval", variant: "default" },
+  closed: { label: "Closed", variant: "success" },
 };
 
 /** Cross-department task hand-offs, live from the API. */
 export function HandoffsPanel() {
   const { data, isLoading } = useHandoffs();
   const updateHandoff = useUpdateHandoff();
+  const myId = useSession((s) => s.user.id);
   const [createOpen, setCreateOpen] = useState(false);
   const handoffs = data ?? [];
 
@@ -76,7 +80,11 @@ export function HandoffsPanel() {
       {
         onSuccess: () =>
           toast.success(
-            status === "done" ? "Hand-off marked done" : "Hand-off accepted",
+            status === "done"
+              ? "Marked done — sent back for approval"
+              : status === "closed"
+                ? "Hand-off approved & closed"
+                : "Hand-off updated",
           ),
         onError: (err) => toast.error(apiErrorMessage(err, "Could not update the hand-off.")),
       },
@@ -138,30 +146,15 @@ export function HandoffsPanel() {
                     <ArrowRight className="h-3 w-3" />
                     {h.toDept}
                   </span>
-                  <span>By {h.createdByName}</span>
+                  <span>By {h.createdBy}</span>
                   {h.assignedTo ? <span>Assigned: {h.assignedTo}</span> : null}
                 </div>
-                {h.status !== "done" ? (
-                  <div className="mt-2 flex gap-2">
-                    {h.status === "open" ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={updateHandoff.isPending}
-                        onClick={() => setStatus(h.id, "accepted")}
-                      >
-                        Accept
-                      </Button>
-                    ) : null}
-                    <Button
-                      size="sm"
-                      disabled={updateHandoff.isPending}
-                      onClick={() => setStatus(h.id, "done")}
-                    >
-                      Mark done
-                    </Button>
-                  </div>
-                ) : null}
+                <HandoffActions
+                  handoff={h}
+                  myId={myId}
+                  busy={updateHandoff.isPending}
+                  onSet={setStatus}
+                />
               </div>
             );
           })
@@ -173,6 +166,59 @@ export function HandoffsPanel() {
   );
 }
 
+/**
+ * Whose move it is: the assignee marks an open hand-off done, then the creator
+ * approves & closes it. Anyone else sees a "waiting for …" note.
+ */
+function HandoffActions({
+  handoff: h,
+  myId,
+  busy,
+  onSet,
+}: {
+  handoff: Handoff;
+  myId: string;
+  busy: boolean;
+  onSet: (id: string, s: HandoffStatus) => void;
+}) {
+  const isAssignee = h.assignedToId === myId;
+  const isCreator = h.createdById === myId;
+
+  if (isAssignee && (h.status === "open" || h.status === "accepted")) {
+    return (
+      <div className="mt-2">
+        <Button size="sm" disabled={busy} onClick={() => onSet(h.id, "done")}>
+          Mark done
+        </Button>
+      </div>
+    );
+  }
+  if (isCreator && h.status === "done") {
+    return (
+      <div className="mt-2">
+        <Button size="sm" disabled={busy} onClick={() => onSet(h.id, "closed")}>
+          Approve &amp; close
+        </Button>
+      </div>
+    );
+  }
+  if (h.status === "done") {
+    return (
+      <p className="mt-2 text-xs text-muted-foreground">
+        Waiting for {h.createdBy} to approve.
+      </p>
+    );
+  }
+  if ((h.status === "open" || h.status === "accepted") && h.assignedTo) {
+    return (
+      <p className="mt-2 text-xs text-muted-foreground">
+        Waiting for {h.assignedTo} to finish.
+      </p>
+    );
+  }
+  return null;
+}
+
 function NewHandoffDialog({
   open,
   onOpenChange,
@@ -181,18 +227,19 @@ function NewHandoffDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const createHandoff = useCreateHandoff();
+  const { data: assignableUsers = [] } = useAssignableUsers();
   const [fromDept, setFromDept] = useState("Sales");
   const [toDept, setToDept] = useState("Design");
   const [title, setTitle] = useState("");
   const [note, setNote] = useState("");
-  const [assignedTo, setAssignedTo] = useState("");
+  const [assignedToId, setAssignedToId] = useState("");
 
   function reset() {
     setFromDept("Sales");
     setToDept("Design");
     setTitle("");
     setNote("");
-    setAssignedTo("");
+    setAssignedToId("");
   }
 
   function save() {
@@ -206,7 +253,7 @@ function NewHandoffDialog({
         toDept,
         title: title.trim(),
         note: note.trim() || undefined,
-        assignedTo: assignedTo.trim() || undefined,
+        assignedToId: assignedToId || undefined,
       },
       {
         onSuccess: () => {
@@ -281,12 +328,28 @@ function NewHandoffDialog({
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="handoff-assignee">Assign to</Label>
-            <Input
-              id="handoff-assignee"
-              placeholder="Optional — e.g. Rohan Mehta"
-              value={assignedTo}
-              onChange={(e) => setAssignedTo(e.target.value)}
-            />
+            {assignableUsers.length === 0 ? (
+              <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+                No teammates in this store to assign to yet.
+              </p>
+            ) : (
+              <Select value={assignedToId} onValueChange={setAssignedToId}>
+                <SelectTrigger id="handoff-assignee">
+                  <SelectValue placeholder="Choose a teammate to notify" />
+                </SelectTrigger>
+                <SelectContent>
+                  {assignableUsers.map((u) => (
+                    <SelectItem key={u.id} value={u.id}>
+                      {u.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              They get a notification and mark it done; it then comes back to you
+              to approve.
+            </p>
           </div>
         </div>
         <DialogFooter>

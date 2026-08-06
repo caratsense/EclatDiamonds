@@ -44,12 +44,18 @@ export class CreateHandoffDto {
   @IsString()
   note?: string;
 
+  /** Free-text display name (legacy / fallback). */
   @IsOptional()
   @IsString()
   assignedTo?: string;
+
+  /** The assignee's user id — who gets notified and owns "assigned to me". */
+  @IsOptional()
+  @IsString()
+  assignedToId?: string;
 }
 
 export class UpdateHandoffStatusDto {
-  @IsIn(['open', 'accepted', 'done'])
+  @IsIn(['open', 'accepted', 'done', 'closed'])
   status!: string;
 }

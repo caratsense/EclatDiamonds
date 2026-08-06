@@ -47,7 +47,7 @@ export interface AgendaItem {
   href: string;
 }
 
-export type HandoffStatus = "open" | "accepted" | "done";
+export type HandoffStatus = "open" | "accepted" | "done" | "closed";
 
 /** A cross-department hand-off (GET /dashboard/handoffs). */
 export interface Handoff {
@@ -58,8 +58,10 @@ export interface Handoff {
   title: string;
   note?: string;
   status: HandoffStatus;
-  createdByName: string;
+  createdBy: string;
+  createdById: string;
   assignedTo?: string;
+  assignedToId: string | null;
   createdAt: string;
 }
 
@@ -70,6 +72,27 @@ export interface CreateHandoffInput {
   title: string;
   note?: string;
   assignedTo?: string;
+  assignedToId?: string;
+}
+
+/** A person a hand-off can be assigned to (GET /dashboard/assignable-users). */
+export interface AssignableUser {
+  id: string;
+  name: string;
+}
+
+/** GET /dashboard/assignable-users — active staff in scope for the assignee picker. */
+export function useAssignableUsers() {
+  const storeId = useStoreKey();
+  return useQuery({
+    queryKey: ["dashboard", "assignable-users", storeId],
+    queryFn: async () => {
+      const { data } = await api.get<AssignableUser[]>(
+        "/dashboard/assignable-users",
+      );
+      return data;
+    },
+  });
 }
 
 /** GET /dashboard/kpis — store-scoped KPI snapshot. */
