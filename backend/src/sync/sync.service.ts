@@ -783,8 +783,23 @@ export class SyncService {
       'quoteLine',
       'quote',
       'checkIn',
+      // Eight tables below were missing from this list, and every one of them
+      // holds a RESTRICT foreign key to User or Store — so the purge got all the
+      // way to `user.deleteMany()` and died on
+      // `LeaveBalance_userId_fkey ... Key (id)=(u-sm-aarav)`. Derived from the
+      // schema rather than remembered: any model with a Restrict relation to
+      // User or Store that the sync never writes belongs here.
+      'attendanceRegularization', // -> attendanceRecord, so it goes first
       'attendanceRecord',
+      'leaveBalance',
       'leaveRequest',
+      'shift',
+      'storeHoliday',
+      'specialRequestMessage',
+      'specialRequest',
+      'handoff',
+      'dailyReport',
+      'salesTarget',
       'commission',
       'ticketMessage',
       'ticket',
@@ -937,11 +952,29 @@ export class SyncService {
     }
 
     if (usersToDelete.length) {
-      deleted['user'] = (
-        await this.prisma.user.deleteMany({
-          where: { id: { in: usersToDelete.map((u) => u.id) } },
-        })
-      ).count;
+      // Guarded like every other step. This one was not, and it is where the
+      // purge actually died — `LeaveBalance_userId_fkey` on `u-sm-aarav`, a
+      // RESTRICT relation from a table the list above had never mentioned. The
+      // throw escaped as a 500 *after* the loops had already deleted rows, so
+      // the operation half-ran: the visible result was 198 catalogue designs
+      // gone and a "something went wrong" message that named nothing.
+      //
+      // The missing tables are now in demoOnlyTables, so this should not fail —
+      // but a demo user that cannot be removed is a cosmetic leftover, and it
+      // must never again cost the work that ran before it.
+      try {
+        deleted['user'] = (
+          await this.prisma.user.deleteMany({
+            where: { id: { in: usersToDelete.map((u) => u.id) } },
+          })
+        ).count;
+      } catch (err) {
+        deleted['user'] = 0;
+        this.logger.warn(
+          `purge: demo users kept — something still references them: ` +
+            (err instanceof Error ? err.message.split('\n').slice(-2).join(' ') : String(err)),
+        );
+      }
     }
 
     if (storesToDelete.length) {
