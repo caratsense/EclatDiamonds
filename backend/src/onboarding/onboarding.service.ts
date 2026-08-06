@@ -94,4 +94,20 @@ export class OnboardingService {
     });
     return this.toState(user.tourViews, user.tourDoneAt);
   }
+
+  /**
+   * POST /onboarding/tour/reset — start the guide over for THIS account.
+   *
+   * Zeroes the view count and clears the "done" flag, so the guide auto-opens
+   * again on the next login. Acts only on the caller's own row — good for a
+   * refresher, or to preview the guide after editing it.
+   */
+  async resetTour(auth: AuthUser): Promise<TourState> {
+    const user = await this.prisma.user.update({
+      where: { id: auth.id },
+      data: { tourViews: 0, tourDoneAt: null },
+      select: { tourViews: true, tourDoneAt: true },
+    });
+    return this.toState(user.tourViews, user.tourDoneAt);
+  }
 }

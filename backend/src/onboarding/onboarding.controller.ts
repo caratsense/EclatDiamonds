@@ -29,4 +29,10 @@ export class OnboardingController {
   markDone(@CurrentUser() user: AuthUser) {
     return this.onboarding.markDone(user);
   }
+
+  /** Start the guide over — it auto-opens again on next login. */
+  @Post('tour/reset')
+  reset(@CurrentUser() user: AuthUser) {
+    return this.onboarding.resetTour(user);
+  }
 }

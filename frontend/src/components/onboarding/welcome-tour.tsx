@@ -14,7 +14,6 @@ import {
   BarChart3,
   GitCompare,
   Search,
-  ArrowRight,
   ChevronDown,
   ChevronUp,
   X,
@@ -78,7 +77,7 @@ function buildSteps(role: Role, firstName: string): TourStep[] {
     title: `Hello ${firstName} — welcome to CaratSense`,
     where: "Everywhere",
     body:
-      "Everything the shop does in a day — sales, customers, orders and staff attendance — is kept here in one place, instead of across registers and phones. This guide points out the handful of pages you will actually use. It takes about a minute, and you can close it whenever you like.",
+      "Everything the shop does in a day — sales, customers, orders and staff attendance — is kept here in one place, instead of across registers and phones. Press Next and this guide walks you through the handful of pages you will actually use, opening each one for you. It takes about a minute, and you can close it whenever you like.",
     icon: Sparkles,
   };
 
@@ -200,15 +199,13 @@ function buildSteps(role: Role, firstName: string): TourStep[] {
 /**
  * The welcome guide — a short, role-aware orientation for someone's first days.
  *
- * ## What it deliberately does NOT do
+ * ## How it behaves
  *
- * It does not drive. The earlier version pushed you through six or seven pages
- * as you clicked Next, which meant opening the app in the morning could take the
- * counter staff away from what they were doing; the guide was steering and the
- * user was a passenger. Now each step describes a page and offers to open it —
- * navigation only ever happens because someone asked for it.
+ * It drives. Pressing Next advances to the next step AND opens that function's
+ * page, so a first-time user is walked through the app one screen at a time.
+ * Steps with no page (the welcome and the search tip) simply advance.
  *
- * It is also not a wall. It sits in the corner (clear of the mobile tab bar),
+ * It is not a wall. It sits in the corner (clear of the mobile tab bar),
  * leaves the page behind it fully usable, closes on Escape, moves on the arrow
  * keys, and can be folded down to a small bar while you carry on working.
  *
@@ -259,6 +256,21 @@ export function WelcomeTour() {
     finishTour.mutate();
     close();
   }, [finishTour, close]);
+
+  /**
+   * Go to a step AND open its page. The guide now DRIVES you through each
+   * function as you press Next, rather than only describing it — the welcome and
+   * search-tip steps have no page, so those just advance.
+   */
+  const goToStep = useCallback(
+    (index: number) => {
+      const clamped = Math.max(0, Math.min(steps.length - 1, index));
+      setStep(clamped);
+      const route = steps[clamped]?.route;
+      if (route && route !== pathname) router.push(route);
+    },
+    [steps, pathname, router],
+  );
 
   // Open by itself on the first visits, after a beat so the page has settled and
   // the guide slides into a finished screen rather than a half-drawn one.
@@ -331,19 +343,18 @@ export function WelcomeTour() {
         e.preventDefault();
         close();
       } else if (e.key === "ArrowRight") {
-        setStep((s) => Math.min(steps.length - 1, s + 1));
+        goToStep(safeStep + 1);
       } else if (e.key === "ArrowLeft") {
-        setStep((s) => Math.max(0, s - 1));
+        goToStep(safeStep - 1);
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, minimized, steps.length, close]);
+  }, [open, minimized, close, goToStep, safeStep]);
 
   if (!open || !current) return null;
 
   const StepIcon = current.icon;
-  const alreadyHere = current.route ? pathname === current.route : false;
 
   // Sits above the mobile tab bar (h-16) and clear of the phone's home
   // indicator; drops to the bottom-right corner once the desktop sidebar takes
@@ -440,17 +451,6 @@ export function WelcomeTour() {
           {current.body}
         </p>
 
-        {/* Opening the page is the user's call, never the guide's. */}
-        {current.route && !alreadyHere ? (
-          <button
-            type="button"
-            onClick={() => router.push(current.route!)}
-            className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-gold-strong underline-offset-4 hover:underline"
-          >
-            Open this page <ArrowRight className="h-3.5 w-3.5" />
-          </button>
-        ) : null}
-
         <div className="mt-4 flex items-center gap-1.5" aria-hidden="true">
           {steps.map((_, i) => (
             <span
@@ -478,7 +478,7 @@ export function WelcomeTour() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setStep((s) => Math.max(0, s - 1))}
+                onClick={() => goToStep(safeStep - 1)}
               >
                 Back
               </Button>
@@ -491,12 +491,9 @@ export function WelcomeTour() {
                 Done
               </Button>
             ) : (
-              <Button
-                size="sm"
-                onClick={() =>
-                  setStep((s) => Math.min(steps.length - 1, s + 1))
-                }
-              >
+              // Next moves on AND opens the page — the guide walks you through
+              // each function in turn.
+              <Button size="sm" onClick={() => goToStep(safeStep + 1)}>
                 Next
               </Button>
             )}
