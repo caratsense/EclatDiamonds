@@ -5,7 +5,7 @@ import { StoreHeader } from '../common/store-header.decorator';
 import { Roles } from '../auth/roles.decorator';
 
 /** Audit-trail read surface — area_manager & head_office only. */
-@Roles('area_manager', 'head_office')
+@Roles('store_manager', 'head_office')
 @Controller('audit')
 export class AuditController {
   constructor(private readonly audit: AuditReadService) {}

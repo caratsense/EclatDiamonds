@@ -24,7 +24,7 @@ export class DiscountsController {
   }
 
   /** Configured per-role caps (area_manager / head_office only). */
-  @Roles('area_manager')
+  @Roles('store_manager')
   @Get('limits')
   limits() {
     return this.discounts.listLimits();

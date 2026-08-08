@@ -90,7 +90,7 @@ export const NAV_GROUPS: NavGroup[] = [
           "Revenue, orders and staff across all stores, side by side.",
         primaryAction: "",
         icon: GitCompare,
-        roles: ["area_manager", "head_office"],
+        roles: ["store_manager", "area_manager", "head_office"],
       },
     ],
   },
@@ -229,7 +229,7 @@ export const NAV_GROUPS: NavGroup[] = [
           "Ledgers, budgets, cash flow and expansion costs.",
         primaryAction: "Add Entry",
         icon: Banknote,
-        roles: ["area_manager", "head_office"],
+        roles: ["store_manager", "area_manager", "head_office"],
       },
       {
         module: 11,
@@ -239,7 +239,7 @@ export const NAV_GROUPS: NavGroup[] = [
           "Tasks and timelines for opening new stores.",
         primaryAction: "New Project",
         icon: Building2,
-        roles: ["area_manager", "head_office"],
+        roles: ["store_manager", "area_manager", "head_office"],
       },
       {
         module: 16,
@@ -300,7 +300,7 @@ export const NAV_GROUPS: NavGroup[] = [
           "Add store branches, review new branches from Gati, and assign logins.",
         primaryAction: "Add Store",
         icon: Store,
-        roles: ["area_manager", "head_office"],
+        roles: ["store_manager", "area_manager", "head_office"],
       },
       {
         module: 6,
@@ -329,7 +329,7 @@ export const NAV_GROUPS: NavGroup[] = [
           "Set monthly sales targets per store and track achievement.",
         primaryAction: "",
         icon: Target,
-        roles: ["area_manager", "head_office"],
+        roles: ["store_manager", "area_manager", "head_office"],
       },
       {
         module: 3,
@@ -339,7 +339,7 @@ export const NAV_GROUPS: NavGroup[] = [
           "A record of approvals, role changes and other sensitive actions.",
         primaryAction: "",
         icon: ScrollText,
-        roles: ["area_manager", "head_office"],
+        roles: ["store_manager", "area_manager", "head_office"],
       },
     ],
   },

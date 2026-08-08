@@ -89,8 +89,8 @@ export function SalesSection() {
                   <TableHead>Date</TableHead>
                   <TableHead>Customer</TableHead>
                   <TableHead>Invoice #</TableHead>
-                  <TableHead className="text-right">Sales</TableHead>
-                  <TableHead className="text-right">After disc.</TableHead>
+                  <TableHead className="text-right">Item value</TableHead>
+                  <TableHead className="text-right">Invoice total</TableHead>
                   <TableHead className="text-right">Advance</TableHead>
                   <TableHead className="text-right">Balance</TableHead>
                   <TableHead>Mode</TableHead>

@@ -90,7 +90,7 @@ export class HrmsController {
    * Manager team-GPS view: every staff member's punch for a day within scope,
    * showing WHERE each person punched (owner anti-buddy-punching visibility).
    */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Get('attendance/team')
   teamAttendance(
     @CurrentUser() user: AuthUser,
@@ -101,7 +101,7 @@ export class HrmsController {
   }
 
   /** Admin/tablet manual mark — marking attendance for others is manager+ only. */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Post('attendance')
   markAttendance(@CurrentUser() user: AuthUser, @Body() dto: MarkAttendanceDto) {
     return this.hrms.markAttendance(user, dto);
@@ -114,7 +114,7 @@ export class HrmsController {
    *
    * Idempotent, so a nightly scheduler may hit it repeatedly. Manager+ only.
    */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Post('attendance/day-close')
   dayClose(@CurrentUser() user: AuthUser, @Body() dto: DayCloseDto) {
     return this.hrms.dayClose(user, dto);
@@ -162,7 +162,7 @@ export class HrmsController {
   }
 
   /** Approving/rejecting leave is a manager+ action (role hierarchy, CLAUDE.md rule #2). */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Patch('leave/:id')
   decideLeave(
     @CurrentUser() user: AuthUser,
@@ -191,7 +191,7 @@ export class HrmsController {
   }
 
   /** Approve/reject a regularization — manager+ (applies the fix on approval). */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Patch('regularize/:id')
   decideRegularization(
     @CurrentUser() user: AuthUser,
@@ -209,7 +209,7 @@ export class HrmsController {
   }
 
   /** Managing shifts is a manager+ action (role hierarchy, CLAUDE.md rule #2). */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Post('shifts')
   createShift(@CurrentUser() user: AuthUser, @Body() dto: CreateShiftDto) {
     return this.hrms.createShift(user, dto);
@@ -221,14 +221,14 @@ export class HrmsController {
   }
 
   /** Configuring holidays is a manager+ action. */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Post('holidays')
   createHoliday(@CurrentUser() user: AuthUser, @Body() dto: CreateHolidayDto) {
     return this.hrms.createHoliday(user, dto);
   }
 
   /** Week-off is set by head office / area management only (client call 2026-07). */
-  @Roles('area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Patch('week-off')
   setWeekOff(@CurrentUser() user: AuthUser, @Body() dto: SetWeekOffDto) {
     return this.hrms.setWeekOff(user, dto);
@@ -256,7 +256,7 @@ export class HrmsController {
   }
 
   /** Edit a commission's rate (manager+) — recomputes the incentive amount. */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Patch('commission/:id')
   updateCommissionRate(
     @CurrentUser() user: AuthUser,

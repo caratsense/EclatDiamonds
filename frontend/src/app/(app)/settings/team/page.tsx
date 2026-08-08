@@ -82,12 +82,13 @@ import { useSession } from "@/store/use-session";
 const nav = getNavItem("settings/team")!;
 
 /** Roles assignable from this page, in rank order (salesperson is the default). */
-const STAFF_ROLES: StaffRole[] = ["salesperson", "store_manager", "area_manager"];
+const STAFF_ROLES: StaffRole[] = ["salesperson", "store_manager"];
 
 /**
  * The roles a given viewer may grant — strictly below their own rank, mirroring
- * the server rule. store_manager → salesperson; area_manager → +store_manager;
- * head_office → +area_manager. Keeps the UI from ever offering an illegal role.
+ * the server rule. store_manager → salesperson; head_office → +store_manager.
+ * (The area_manager tier was folded into store_manager in 2026-08.) Keeps the UI
+ * from ever offering an illegal role.
  */
 function assignableRoles(viewer: Role): StaffRole[] {
   return STAFF_ROLES.filter((r) => ROLE_RANK[r] < ROLE_RANK[viewer]);

@@ -60,7 +60,7 @@ export class ProductsController {
   }
 
   /** Create a catalogue product. Managers and above. */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateProductDto) {
     return this.products.create(user, dto);
@@ -86,7 +86,7 @@ export class ProductsController {
   }
 
   /** Upload/replace a product photo (multipart field `file`). Managers and above. */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Post(':id/image')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 8 * 1024 * 1024 } }))
   uploadImage(

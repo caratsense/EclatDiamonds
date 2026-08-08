@@ -393,7 +393,7 @@ export class NotificationsService {
     }
 
     // --- Branches awaiting setup (area_manager+; auto-detected pending stores) ---
-    if (rank >= ROLE_RANK.area_manager) {
+    if (rank >= ROLE_RANK.store_manager) {
       const pending = await this.prisma.store.count({
         where: {
           status: 'pending',

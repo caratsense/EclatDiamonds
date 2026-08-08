@@ -68,7 +68,7 @@ export class AuthController {
   }
 
   /** Manager resets a subordinate's password (store-scope + role-rank gated). */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Post('reset-password')
   resetPassword(@CurrentUser() user: AuthUser, @Body() dto: ResetPasswordDto) {
     return this.auth.resetPassword(user, dto.userId, dto.newPassword);

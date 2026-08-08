@@ -53,11 +53,6 @@ const SIGNUP_ROLES: { value: Role; label: string; hint: string }[] = [
     label: "Store Manager",
     hint: "Run a store. Head office approves you.",
   },
-  {
-    value: "area_manager",
-    label: "Area Manager",
-    hint: "Oversee a region. Head office approves you.",
-  },
 ];
 
 const inputCls =

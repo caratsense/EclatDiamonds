@@ -86,7 +86,7 @@ export class UsersController {
   }
 
   /** PATCH /users/:id/role — delegated promote/demote (never to/at the caller's rank). */
-  @Roles('area_manager')
+  @Roles('store_manager')
   @Patch(':id/role')
   updateRole(
     @CurrentUser() user: AuthUser,
@@ -97,7 +97,7 @@ export class UsersController {
   }
 
   /** PATCH /users/:id/store — reassign the user's primary store within scope. */
-  @Roles('area_manager')
+  @Roles('store_manager')
   @Patch(':id/store')
   updateStore(
     @CurrentUser() user: AuthUser,

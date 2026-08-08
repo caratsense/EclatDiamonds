@@ -24,7 +24,7 @@ export class StockController {
     return this.stock.list(user, store, parsePagination(page, pageSize));
   }
 
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateStockDto) {
     return this.stock.create(user, dto);
@@ -34,7 +34,7 @@ export class StockController {
    * Adjust a stock piece: status change (store_manager+) and/or cross-store
    * transfer (area_manager+, enforced in the service when storeId differs).
    */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Patch(':id')
   adjust(
     @CurrentUser() user: AuthUser,

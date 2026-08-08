@@ -46,7 +46,7 @@ export class ReportingController {
    * mix. Ungated, it is a one-call data-exfiltration path for anyone with a
    * login — the sensitivity is in the payload, not the route name.
    */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Post('send')
   send(
     @CurrentUser() user: AuthUser,
@@ -83,7 +83,7 @@ export class ReportingController {
    * Manager+ for the same reason as `/send`: it ships the day's takings to an
    * arbitrary external recipient.
    */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Post('daily/:id/send')
   sendDaily(
     @CurrentUser() user: AuthUser,

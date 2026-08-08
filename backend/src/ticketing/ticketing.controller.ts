@@ -38,7 +38,7 @@ export class TicketingController {
   }
 
   /** Back office (area manager / head office) closes a ticket. */
-  @Roles('area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Patch(':id/close')
   close(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.ticketing.close(user, id);

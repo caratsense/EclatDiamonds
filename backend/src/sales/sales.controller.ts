@@ -42,7 +42,7 @@ export class SalesController {
   }
 
   /** POST /sales/:id/quotation — upload the quotation photo (multipart `file`). Managers+. */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Post(':id/quotation')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 8 * 1024 * 1024 } }))
   uploadQuotation(
@@ -54,7 +54,7 @@ export class SalesController {
   }
 
   /** POST /sales/:id/invoice — upload the invoice photo (multipart `file`). Managers+. */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Post(':id/invoice')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 8 * 1024 * 1024 } }))
   uploadInvoice(
@@ -66,7 +66,7 @@ export class SalesController {
   }
 
   /** POST /sales/:id/receipt — upload the receipt photo (multipart `file`). Managers+. */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Post(':id/receipt')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 8 * 1024 * 1024 } }))
   uploadReceipt(

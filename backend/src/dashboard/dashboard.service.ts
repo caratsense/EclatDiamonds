@@ -66,8 +66,22 @@ export class DashboardService {
     const yestStart = dayStartInTz(tz, 1);
     const isBroad = ROLE_RANK[user.role] >= ROLE_RANK.store_manager;
 
-    const [salesToday, salesYest, footfall, pending, collections, mySalesToday] =
-      await Promise.all([
+    // Party/product counts scoped exactly like the pages the tiles link to, so
+    // the dashboard number matches what /customers and /catalogue show.
+    const partyScope = this.scope.storeFilter(user, headerStore);
+    const productScope = { OR: [{ storeId: { in: storeIds } }, { storeId: null }] };
+
+    const [
+      salesToday,
+      salesYest,
+      footfall,
+      pending,
+      collections,
+      mySalesToday,
+      customersCount,
+      designsCount,
+      stockCount,
+    ] = await Promise.all([
         this.prisma.sale.aggregate({
           _sum: { totalAmount: true },
           where: { ...storeWhere, isCancelled: false, docType: 'sale', docDate: { gte: todayStart } },
@@ -99,22 +113,26 @@ export class DashboardService {
             docDate: { gte: todayStart },
           },
         }),
+        this.prisma.party.count({ where: { ...partyScope, types: { has: 'customer' } } }),
+        this.prisma.product.count({ where: productScope }),
+        this.prisma.stockItem.count({ where: storeWhere }),
       ]);
 
     const sales = num(salesToday._sum.totalAmount);
     const prior = num(salesYest._sum.totalAmount);
     const salesDelta = prior > 0 ? ((sales - prior) / prior) * 100 : 0;
 
+    // `delta: null` means "no period comparison" — the tile then shows no % pill
+    // instead of a misleading 0.0%. Only Sales Today has a real day-over-day base.
     const kpis: any[] = [
       { id: 'sales', label: 'Sales Today', value: sales, format: 'inr', delta: round(salesDelta) },
-      { id: 'footfall', label: 'Footfall', value: footfall, format: 'number', delta: 0 },
+      { id: 'footfall', label: 'Footfall', value: footfall, format: 'number', delta: null },
       {
         id: 'pending',
         label: 'Pending Orders',
         value: pending,
         format: 'number',
-        delta: 0,
-        invertDelta: true,
+        delta: null,
       },
     ];
 
@@ -124,8 +142,7 @@ export class DashboardService {
         label: 'Collections Due',
         value: num(collections._sum.amount),
         format: 'inr',
-        delta: 0,
-        invertDelta: true,
+        delta: null,
       });
     } else {
       kpis.push({
@@ -133,9 +150,17 @@ export class DashboardService {
         label: 'My Sales Today',
         value: num(mySalesToday._sum.totalAmount),
         format: 'inr',
-        delta: 0,
+        delta: null,
       });
     }
+
+    // Book-of-business counts — customers, catalogue designs and stock pieces in
+    // scope. Static totals (no day-over-day delta), each tile links to its page.
+    kpis.push(
+      { id: 'customers', label: 'Customers', value: customersCount, format: 'number', delta: null },
+      { id: 'designs', label: 'Designs', value: designsCount, format: 'number', delta: null },
+      { id: 'stock', label: 'Stock Pieces', value: stockCount, format: 'number', delta: null },
+    );
     return kpis;
   }
 

@@ -370,7 +370,7 @@ export class LoyaltyService {
     // SECURITY: pct overrides are area_manager+ only. For lower roles the dto
     // fields are hard-ignored (inert) and the config defaults always apply —
     // a salesperson can still apply a code, but never change the economics.
-    const canOverridePct = ROLE_RANK[user.role] >= ROLE_RANK.area_manager;
+    const canOverridePct = ROLE_RANK[user.role] >= ROLE_RANK.store_manager;
     const diamondDiscountPct = canOverridePct
       ? dto.diamondDiscountPct ?? DIAMOND_DISCOUNT_PCT
       : DIAMOND_DISCOUNT_PCT;

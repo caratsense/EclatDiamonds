@@ -41,7 +41,7 @@ export class QuotesController {
   }
 
   /** Attach a reference / repair photo (multipart field `file`, optional `label`). Managers and above. */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Post(':id/photo')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 8 * 1024 * 1024 } }))
   uploadPhoto(

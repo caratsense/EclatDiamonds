@@ -104,7 +104,10 @@ export function LiveInStore({
                     </p>
                   </div>
                   <Badge variant="outline" className="shrink-0">
-                    in <span className="num">{c.timeIn}</span>
+                    {/* single span so the inline-flex badge keeps the space */}
+                    <span>
+                      since <span className="num">{c.timeIn}</span>
+                    </span>
                   </Badge>
                 </div>
                 <div className="mt-2 flex items-center justify-between gap-2">

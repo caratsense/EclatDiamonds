@@ -23,7 +23,7 @@ export class PaymentsController {
    * Bank-vs-till reconciliation exposes where the branch's takings are short.
    * That is a management view, not a counter one.
    */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Get('reconciliation')
   reconciliation(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.payments.reconciliation(user, store);

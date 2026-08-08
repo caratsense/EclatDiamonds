@@ -25,7 +25,8 @@ interface KpiCardProps {
   label: string;
   value: number;
   format: "inr" | "number";
-  delta: number;
+  /** Percentage change vs prior period; `null` = no comparison, hide the pill. */
+  delta: number | null;
   /** When true, a negative delta is "good" (e.g. pending orders, costs). */
   invertDelta?: boolean;
   /** Position in a row — cycles the accent palette for visual rhythm. */
@@ -67,8 +68,9 @@ export function KpiCard({
   index,
   href,
 }: KpiCardProps) {
-  const positive = invertDelta ? delta < 0 : delta > 0;
-  const Arrow = delta >= 0 ? ArrowUpRight : ArrowDownRight;
+  const hasDelta = delta != null;
+  const positive = invertDelta ? delta! < 0 : delta! > 0;
+  const Arrow = delta! >= 0 ? ArrowUpRight : ArrowDownRight;
   const Icon = pickIcon(label);
   const isHero = (index ?? 0) === 0;
 
@@ -102,17 +104,19 @@ export function KpiCard({
           >
             <Icon className="h-5 w-5" />
           </span>
-          <span
-            className={cn(
-              "inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums",
-              positive
-                ? "bg-[color-mix(in_srgb,var(--success)_15%,transparent)] text-success"
-                : "bg-[color-mix(in_srgb,var(--destructive)_14%,transparent)] text-destructive",
-            )}
-          >
-            <Arrow className="h-3 w-3" />
-            {formatPercent(Math.abs(delta))}
-          </span>
+          {hasDelta ? (
+            <span
+              className={cn(
+                "inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums",
+                positive
+                  ? "bg-[color-mix(in_srgb,var(--success)_15%,transparent)] text-success"
+                  : "bg-[color-mix(in_srgb,var(--destructive)_14%,transparent)] text-destructive",
+              )}
+            >
+              <Arrow className="h-3 w-3" />
+              {formatPercent(Math.abs(delta!))}
+            </span>
+          ) : null}
         </div>
 
         <p className="mt-4 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
@@ -124,7 +128,7 @@ export function KpiCard({
           {format === "inr" ? formatINRCompact(value) : formatNumber(value)}
         </p>
         <p className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground">
-          vs prior period
+          {hasDelta ? "vs prior period" : href ? "View details" : " "}
           {href ? (
             <ChevronRight className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100" />
           ) : null}

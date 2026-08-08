@@ -3,9 +3,11 @@ import { Role } from '@prisma/client';
 
 /**
  * Roles a self-signup may REQUEST. Never `head_office` — that is not grantable by
- * anyone, least of all the applicant themselves.
+ * anyone, least of all the applicant themselves. `area_manager` was removed too:
+ * the tier was folded into `store_manager` (2026-08), so it is no longer a role
+ * anyone signs up as.
  */
-export const REQUESTABLE_ROLES: Role[] = ['salesperson', 'store_manager', 'area_manager'];
+export const REQUESTABLE_ROLES: Role[] = ['salesperson', 'store_manager'];
 
 /**
  * POST /auth/signup — a person registers themselves. This creates a POWERLESS

@@ -18,8 +18,8 @@ import { ROLE_RANK } from '../common/role.util';
  */
 const KIND_MIN_ROLE: Record<SpecialRequestKind, Role> = {
   diamond_rate: Role.head_office,
-  price_override: Role.area_manager,
-  purchase: Role.area_manager,
+  price_override: Role.store_manager,
+  purchase: Role.store_manager,
   stock_transfer: Role.store_manager,
   expense: Role.store_manager,
   staff: Role.store_manager,
@@ -33,7 +33,7 @@ const KIND_MIN_ROLE: Record<SpecialRequestKind, Role> = {
  */
 const AMOUNT_ESCALATION: { above: number; role: Role }[] = [
   { above: 100_000, role: Role.head_office },
-  { above: 25_000, role: Role.area_manager },
+  { above: 25_000, role: Role.store_manager },
 ];
 
 /** Human-readable summary of a kind, for notification bodies and the assistant. */

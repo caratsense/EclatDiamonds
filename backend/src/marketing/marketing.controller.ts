@@ -21,7 +21,7 @@ export class MarketingController {
   }
 
   /** Launching campaigns spends marketing budget — area_manager+ only. */
-  @Roles('area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Post('campaigns')
   createCampaign(@CurrentUser() user: AuthUser, @Body() dto: CreateCampaignDto) {
     return this.marketing.create(user, dto);
@@ -40,7 +40,7 @@ export class MarketingController {
   }
 
   /** Approve / reject a deliverable — area_manager+ only. */
-  @Roles('area_manager')
+  @Roles('store_manager')
   @Patch('assets/:id')
   updateAssetStatus(
     @CurrentUser() user: AuthUser,

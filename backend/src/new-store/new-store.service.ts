@@ -62,7 +62,7 @@ export class NewStoreService {
    */
   async projects(user: AuthUser) {
     let where: Prisma.NewStoreProjectWhereInput = {};
-    if (user.role === 'area_manager' && !user.allStores) {
+    if (!user.allStores) {
       const regionIds = await this.userRegionIds(user);
       where = { regionId: { in: regionIds } };
     }
@@ -136,7 +136,7 @@ export class NewStoreService {
    */
   async createProject(user: AuthUser, dto: CreateProjectDto) {
     let regionId = dto.regionId ?? null;
-    if (!regionId && user.role === 'area_manager' && !user.allStores) {
+    if (!regionId && !user.allStores) {
       const store = await this.prisma.store.findFirst({
         where: { id: { in: user.storeIds } },
         select: { regionId: true },
@@ -335,10 +335,10 @@ export class NewStoreService {
   private async assertProjectInScope(user: AuthUser, project: { regionId: string | null }) {
     // head_office (allStores) sees every launch.
     if (user.allStores || user.role === 'head_office') return;
-    if (user.role === 'area_manager') {
-      const regionIds = await this.userRegionIds(user);
-      if (project.regionId && regionIds.includes(project.regionId)) return;
-    }
+    // Non-HO managers (store managers now hold the former area-manager authority)
+    // are scoped to their own region's launches.
+    const regionIds = await this.userRegionIds(user);
+    if (project.regionId && regionIds.includes(project.regionId)) return;
     throw new ForbiddenException('Project not in your region');
   }
 

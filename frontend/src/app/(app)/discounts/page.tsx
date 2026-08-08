@@ -69,7 +69,8 @@ export default function DiscountsPage() {
   // CRITICAL (M15): cost price + margin are visible to area/HO ONLY. This gate
   // is on the viewer's ROLE — never on whether the field is present — so a stray
   // costPrice in a store-manager payload can never render.
-  const isApprover = role === "area_manager" || role === "head_office";
+  const isApprover =
+    role === "store_manager" || role === "area_manager" || role === "head_office";
   const canSeeCost = isApprover;
 
   const [addOpen, setAddOpen] = React.useState(false);

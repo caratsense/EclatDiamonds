@@ -10,8 +10,8 @@ export interface Kpi {
   value: number;
   /** Pre-formatted display when value is non-monetary (e.g. counts). */
   format: "inr" | "number";
-  /** Percentage change vs. prior period. */
-  delta: number;
+  /** Percentage change vs. prior period. `null` = no comparison (hide the pill). */
+  delta: number | null;
   /** Lower-is-better metrics invert delta colouring (e.g. pending orders). */
   invertDelta?: boolean;
   /** Roles that should see this KPI; empty = everyone. */

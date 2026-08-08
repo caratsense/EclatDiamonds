@@ -13,7 +13,7 @@ import { CurrentUser, AuthUser } from '../common/auth-user';
 import { Roles } from '../auth/roles.decorator';
 
 /** New-store setup is an area-manager / head-office programme. */
-@Roles('area_manager', 'head_office')
+@Roles('store_manager', 'head_office')
 @Controller('new-store')
 export class NewStoreController {
   constructor(private readonly newStore: NewStoreService) {}

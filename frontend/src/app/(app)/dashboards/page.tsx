@@ -47,6 +47,7 @@ import {
   useTasks,
   useCreateTask,
   useUpdateTaskStatus,
+  useAssignableUsers,
   type DashboardTask,
   type TaskStatus,
 } from "@/lib/queries/dashboard";
@@ -64,6 +65,12 @@ function kpiHref(id: string): string | undefined {
       return "/timelines";
     case "collections":
       return "/payments";
+    case "customers":
+      return "/customers";
+    case "designs":
+      return "/catalogue";
+    case "stock":
+      return "/inventory";
     default:
       return undefined;
   }
@@ -97,7 +104,7 @@ export default function DashboardsPage() {
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {kpisQuery.isLoading
-          ? Array.from({ length: 4 }).map((_, i) => (
+          ? Array.from({ length: 7 }).map((_, i) => (
               <Skeleton key={i} className="h-28 rounded-xl" />
             ))
           : kpis.map((k, i) => (
@@ -248,20 +255,30 @@ function AddTaskDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { currentStore } = useSession();
+  const { currentStore, stores } = useSession();
   const createTask = useCreateTask();
+  const assignableUsers = useAssignableUsers();
   const [title, setTitle] = useState("");
   const [detail, setDetail] = useState("");
   const [assignee, setAssignee] = useState("");
   const [dueDate, setDueDate] = useState("");
 
-  // Aggregate ("all") scope has no concrete store to write to — fall back
-  // to the first real store id; broad roles normally pick a store first.
-  const targetStoreId = currentStore.isAggregate ? "surat-main" : currentStore.id;
+  // A task is filed against ONE real store. On the "All Stores" aggregate there
+  // is nothing concrete to write to, so offer a picker defaulted to the first
+  // real store (never a hardcoded branch); single-store users just use theirs.
+  const realStores = stores.filter((s) => !s.isAggregate);
+  const [storeId, setStoreId] = useState(
+    currentStore.isAggregate ? (realStores[0]?.id ?? "") : currentStore.id,
+  );
+  const targetStore = realStores.find((s) => s.id === storeId);
 
   function save() {
     if (!title.trim()) {
       toast.error("Task title is required.");
+      return;
+    }
+    if (!storeId) {
+      toast.error("Pick a store to file this task against.");
       return;
     }
     createTask.mutate(
@@ -270,7 +287,7 @@ function AddTaskDialog({
         detail: detail.trim() || undefined,
         assignee: assignee.trim() || undefined,
         dueDate: dueDate || undefined,
-        storeId: targetStoreId,
+        storeId,
       },
       {
         onSuccess: () => {
@@ -293,10 +310,27 @@ function AddTaskDialog({
           <DialogTitle>New task</DialogTitle>
           <DialogDescription>
             Raise a collaboration task against{" "}
-            {currentStore.isAggregate ? "Surat — Main" : currentStore.name}.
+            {targetStore?.name ?? "your store"}.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
+          {realStores.length > 1 ? (
+            <div className="grid gap-1.5">
+              <Label htmlFor="task-store">Store</Label>
+              <Select value={storeId} onValueChange={setStoreId}>
+                <SelectTrigger id="task-store">
+                  <SelectValue placeholder="Choose a store" />
+                </SelectTrigger>
+                <SelectContent>
+                  {realStores.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
           <div className="grid gap-1.5">
             <Label htmlFor="task-title">Title</Label>
             <Input
@@ -317,12 +351,22 @@ function AddTaskDialog({
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="task-assignee">Assignee</Label>
-            <Input
-              id="task-assignee"
-              placeholder="e.g. Rohan Mehta"
-              value={assignee}
-              onChange={(e) => setAssignee(e.target.value)}
-            />
+            <Select
+              value={assignee || "__none__"}
+              onValueChange={(v) => setAssignee(v === "__none__" ? "" : v)}
+            >
+              <SelectTrigger id="task-assignee">
+                <SelectValue placeholder="Unassigned" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">Unassigned</SelectItem>
+                {(assignableUsers.data ?? []).map((u) => (
+                  <SelectItem key={u.id} value={u.name}>
+                    {u.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="task-due">Due date</Label>

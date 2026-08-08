@@ -47,12 +47,17 @@ const ALLOWED_NEXT: Record<OrderStatus, OrderStatus[]> = {
  * order, stops the delay clock and is the last point at which the balance can be
  * collected. The route-level guard only required `store_manager` for stage moves
  * in general, so any manager could close out an order from their phone. Handover
- * now sits with the store manager explicitly, and cancellation — which writes off
- * a booked order — is escalated to area management.
+ * sits with the store manager explicitly.
+ *
+ * Cancellation — which writes off a booked order and implies a refund — is the
+ * store manager's call too (2026-08: the area-manager tier was removed from the
+ * production workflow and its operational authority moved to the store manager;
+ * see docs/DECISIONS.md). A written reason is still mandatory (enforced in
+ * TimelinesService.advanceStage), so the write-off is always accountable.
  */
 const STAGE_MIN_ROLE: Partial<Record<OrderStatus, Role>> = {
   delivered: 'store_manager',
-  cancelled: 'area_manager',
+  cancelled: 'store_manager',
 };
 
 /** Human-friendly stage labels for error messages and the UI. */

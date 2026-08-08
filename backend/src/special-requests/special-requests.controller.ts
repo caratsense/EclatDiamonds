@@ -50,7 +50,7 @@ export class SpecialRequestsController {
    * PATCH /requests/:id/decide — approve or reject (manager+; the service also
    * checks the request's own required role and refuses self-approval).
    */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Patch(':id/decide')
   decide(
     @CurrentUser() user: AuthUser,
@@ -61,7 +61,7 @@ export class SpecialRequestsController {
   }
 
   /** PATCH /requests/:id/escalate — hand it to the next role up. */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Patch(':id/escalate')
   escalate(
     @CurrentUser() user: AuthUser,

@@ -148,10 +148,10 @@ export function OrderDetailDialog({
           ORDER_STATUS_SEQUENCE.indexOf(currentStage) + 2,
         ).map((s) => ({ stage: s, label: ORDER_STATUS_LABELS[s] }))
       : []);
-  // store_manager and above may move production along. Delivery additionally
-  // needs store_manager and cancellation needs area_manager; the server enforces
-  // those and returns a message naming the required role, which the error toast
-  // surfaces verbatim.
+  // store_manager and above manage production. The area-manager tier has been
+  // folded into store_manager (2026-08), so both see these controls; the server
+  // enforces every rule and returns a message naming the required role, which the
+  // error toast surfaces verbatim.
   const showAdvance =
     ROLE_RANK[role] >= ROLE_RANK.store_manager &&
     !!currentStage &&
@@ -249,7 +249,7 @@ export function OrderDetailDialog({
             Stage:{" "}
             {o.stageLabel ?? ORDER_STAGES[o.currentStageIndex] ?? "Cancelled"}
             {o.daysInStage != null ? (
-              <span className="num"> · {o.daysInStage}d here</span>
+              <span className="num"> · {o.daysInStage}d in stage</span>
             ) : null}
           </span>
           <div className="flex flex-wrap items-center gap-1.5">

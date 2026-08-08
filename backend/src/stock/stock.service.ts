@@ -152,9 +152,11 @@ export class StockService {
     const storeFrom = item.storeId;
     const isTransfer = dto.storeId != null && dto.storeId !== storeFrom;
     if (isTransfer) {
-      // Cross-store moves are an area-manager-and-above operation.
-      if (ROLE_RANK[user.role] < ROLE_RANK.area_manager) {
-        throw new ForbiddenException('Cross-store transfer requires area manager or above');
+      // Cross-store moves need a store-manager-and-above role AND both stores in
+      // scope (assertStoreAllowed below), so a single-store manager still cannot
+      // move stock into a branch they don't hold.
+      if (ROLE_RANK[user.role] < ROLE_RANK.store_manager) {
+        throw new ForbiddenException('Cross-store transfer requires a store manager or above');
       }
       this.scope.assertStoreAllowed(user, dto.storeId!);
     }

@@ -21,9 +21,10 @@ export function isAllStoreRole(role: Role): boolean {
 }
 
 /**
- * Module 15 cost/margin visibility gate. Only area_manager and head_office may
- * ever see cost price / margin. store_manager and salesperson NEVER do.
+ * Module 15 cost/margin visibility gate. store_manager and head_office may see
+ * cost price / margin; a salesperson NEVER does. (Store manager was raised into
+ * this in 2026-08 when the area-manager tier was folded into it.)
  */
 export function canSeeCost(role: Role): boolean {
-  return ROLE_RANK[role] >= ROLE_RANK.area_manager;
+  return ROLE_RANK[role] >= ROLE_RANK.store_manager;
 }

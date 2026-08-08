@@ -53,7 +53,7 @@ export class IntegrationsController {
   // ── WhatsApp ────────────────────────────────────────────────────────────────
 
   /** Send a quote/reminder/DSR message (text inside the 24h window, else template). */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Post('whatsapp/send')
   sendWhatsApp(@Body() dto: SendWhatsAppDto) {
     if (dto.template) {
@@ -121,7 +121,7 @@ export class IntegrationsController {
   }
 
   /** Pull a fresh rate from the configured feed (managers and above). */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Post('gold-rate/refresh')
   refreshGoldRates() {
     return this.goldRate.refresh();
@@ -132,7 +132,7 @@ export class IntegrationsController {
    * path when no live feed is configured — the manager enters the morning rate
    * and every quote built today prefills off it. See GoldRateService.setManual.
    */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Post('gold-rate')
   setGoldRate(@Body() dto: SetGoldRateDto) {
     return this.goldRate.setManual(dto);

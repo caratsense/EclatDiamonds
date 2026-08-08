@@ -76,7 +76,7 @@ export class LoyaltyController {
   }
 
   /** Minting codes is a manager+ action; company-wide codes are HO-only (service). */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Post('referral-codes')
   createReferralCode(
     @CurrentUser() user: AuthUser,
@@ -95,7 +95,7 @@ export class LoyaltyController {
   }
 
   /** Paying out commission moves money — manager+ only (HO-only for company-wide codes). */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Post('referral-codes/:id/payout')
   payout(
     @CurrentUser() user: AuthUser,

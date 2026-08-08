@@ -160,7 +160,7 @@ export class TicketingService {
       dto.status === 'closed' ||
       dto.assigneeId !== undefined ||
       dto.assigneeName !== undefined;
-    if (closesOrReassigns && ROLE_RANK[user.role] < ROLE_RANK.area_manager) {
+    if (closesOrReassigns && ROLE_RANK[user.role] < ROLE_RANK.store_manager) {
       throw new ForbiddenException(
         'Closing or reassigning a ticket requires area manager or head office',
       );

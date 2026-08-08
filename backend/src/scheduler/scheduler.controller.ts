@@ -10,7 +10,7 @@ import { Roles } from '../auth/roles.decorator';
  * attendance close run?" had no answer before this. Management-only — the run log
  * shows which stores exist and when their day ended.
  */
-@Roles('area_manager', 'head_office')
+@Roles('store_manager', 'head_office')
 @Controller('scheduler')
 export class SchedulerController {
   constructor(private readonly prisma: PrismaService) {}

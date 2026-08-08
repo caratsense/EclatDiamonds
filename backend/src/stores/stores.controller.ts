@@ -31,21 +31,21 @@ export class StoresController {
   }
 
   /** GET /stores/pending — branches awaiting setup, in the caller's scope (area manager+). */
-  @Roles('area_manager')
+  @Roles('store_manager')
   @Get('pending')
   pending(@CurrentUser() user: AuthUser) {
     return this.stores.listPending(user);
   }
 
   /** POST /stores — provision a new branch (area manager+; AM limited to their regions). */
-  @Roles('area_manager')
+  @Roles('store_manager')
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateStoreDto) {
     return this.stores.create(user, dto);
   }
 
   /** PATCH /stores/:id/activate — flip a pending branch to active (area manager+, in scope). */
-  @Roles('area_manager')
+  @Roles('store_manager')
   @Patch(':id/activate')
   activate(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.stores.activate(user, id);

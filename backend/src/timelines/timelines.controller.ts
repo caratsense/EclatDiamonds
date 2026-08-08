@@ -57,7 +57,7 @@ export class TimelinesController {
   }
 
   /** Attach/replace an order reference image (multipart field `file`). Managers and above. */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Post('orders/:id/image')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 8 * 1024 * 1024 } }))
   uploadOrderImage(
@@ -69,7 +69,7 @@ export class TimelinesController {
   }
 
   /** Attach the advance-payment receipt photo (multipart field `file`). Managers and above. */
-  @Roles('store_manager', 'area_manager', 'head_office')
+  @Roles('store_manager', 'head_office')
   @Post('orders/:id/receipt')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 8 * 1024 * 1024 } }))
   uploadOrderReceipt(

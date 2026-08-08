@@ -65,8 +65,10 @@ export function TicketDetailDialog({
   const updateTicket = useUpdateTicket();
   const closeTicket = useCloseTicket();
   const role = useSession((s) => s.role);
-  // Closing a ticket is a back-office action (area manager / head office).
-  const canClose = role === "area_manager" || role === "head_office";
+  // Closing a ticket is a back-office action (store manager / head office; the
+  // area-manager tier was folded into store_manager in 2026-08).
+  const canClose =
+    role === "store_manager" || role === "area_manager" || role === "head_office";
   const [body, setBody] = React.useState("");
 
   function send() {

@@ -12,7 +12,7 @@ import { Roles } from '../auth/roles.decorator';
  * area_manager+ only (security audit, 2026-07). Store-scoping inside the service
  * further restricts which stores an area manager can see.
  */
-@Roles('area_manager', 'head_office')
+@Roles('store_manager', 'head_office')
 @Controller('finance')
 export class FinanceController {
   constructor(private readonly finance: FinanceService) {}

@@ -178,6 +178,9 @@ export class TimelinesService {
   async advanceStage(user: AuthUser, id: string, dto: AdvanceStageDto) {
     const o = await this.prisma.customOrder.findUnique({ where: { id } });
     if (!o) throw new NotFoundException('Custom order not found');
+    // Branch scope: a store manager only ever touches their own store's orders.
+    // Role authority is enforced by the route guard (store_manager+) plus the
+    // per-stage floors in assertStageRoleAllowed below.
     this.scope.assertStoreAllowed(user, o.storeId);
 
     const from = o.stage;
