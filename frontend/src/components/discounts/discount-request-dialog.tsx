@@ -31,7 +31,10 @@ import {
   STORE_MANAGER_CAPS,
 } from "@/lib/mock/discounts";
 import { useCreateDiscountRequest, useDiscountPresets } from "@/lib/queries/discounts";
-import { useSession } from "@/store/use-session";
+import {
+  StoreScopeField,
+  useStoreScope,
+} from "@/components/common/store-scope-field";
 
 
 /** Parse a numeric input into a number, or undefined when blank/invalid. */
@@ -57,18 +60,10 @@ export function DiscountRequestDialog({
   open,
   onOpenChange,
 }: DiscountRequestDialogProps) {
-  const { currentStore } = useSession();
+  const { targetStoreId, storeLabel, pickedStoreId, setPickedStoreId } =
+    useStoreScope();
   const createRequest = useCreateDiscountRequest();
   const { data: presets = [] } = useDiscountPresets();
-
-  // Aggregate ("all") scope has no concrete store to write to — fall back to the
-  // first real store id; broad roles normally pick a store first.
-  const targetStoreId = currentStore.isAggregate
-    ? "surat-main"
-    : currentStore.id;
-  const storeLabel = currentStore.isAggregate
-    ? "Surat — Main"
-    : currentStore.name;
 
   const [customer, setCustomer] = React.useState("");
   const [item, setItem] = React.useState("");
@@ -99,8 +94,13 @@ export function DiscountRequestDialog({
   }
 
   function submit() {
+    if (!targetStoreId) {
+      toast.error("Select a store to raise this request against.");
+      return;
+    }
     const fe: Record<string, string> = {};
     if (!customer.trim()) fe.customer = "Customer name is required.";
+    if (!item.trim()) fe.item = "Item name is required.";
     if (!hasDiscount)
       fe.discount = "Enter a diamond % or making % — gold is never discounted.";
     setErrors(fe);
@@ -112,7 +112,7 @@ export function DiscountRequestDialog({
       {
         storeId: targetStoreId,
         customerName: customer.trim(),
-        item: item.trim() || undefined,
+        item: item.trim(),
         diamondPercent: diamondPct,
         makingPercent: makingPct,
         sellingPrice: toNumber(selling),
@@ -162,6 +162,8 @@ export function DiscountRequestDialog({
         </DialogHeader>
 
         <div className="grid gap-4">
+          <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
+
           <div className="grid gap-1.5">
             <Label htmlFor="dr-customer">
               Customer name <span className="text-destructive">*</span>
@@ -182,16 +184,26 @@ export function DiscountRequestDialog({
           </div>
 
           <div className="grid gap-1.5">
-            <Label htmlFor="dr-item">Item</Label>
+            <Label htmlFor="dr-item">
+              Item <span className="text-destructive">*</span>
+            </Label>
             <Input
               id="dr-item"
               placeholder="e.g. 18K Diamond Ring — DR-3380"
               value={item}
-              onChange={(e) => setItem(e.target.value)}
+              onChange={(e) => {
+                setItem(e.target.value);
+                if (errors.item) setErrors((p) => ({ ...p, item: "" }));
+              }}
+              aria-invalid={!!errors.item}
             />
-            <p className="text-[11px] text-muted-foreground">
-              Optional — product name or code.
-            </p>
+            {errors.item ? (
+              <p className="mt-1 text-xs text-destructive">{errors.item}</p>
+            ) : (
+              <p className="text-[11px] text-muted-foreground">
+                Product name or code.
+              </p>
+            )}
           </div>
 
           {/* Discount Preset Code Dropdown */}

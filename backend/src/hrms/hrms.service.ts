@@ -222,11 +222,17 @@ export class HrmsService {
   }
 
   /**
-   * Geofence evaluation for one punch. Deliberately NON-blocking: a punch is
-   * always recorded, because refusing it strands staff whose GPS is drifting
-   * indoors or whose store has no coordinates configured yet. What it does
-   * instead is demand accountability — an out-of-fence punch must carry a written
-   * reason, which lands in the manager's review queue.
+   * Geofence evaluation for one punch.
+   *
+   * A check-IN outside a CONFIGURED fence is BLOCKED (sheet: "punch-in shouldn't
+   * be allowed if geo-fencing is breached") — it can't be recorded as on-time
+   * from across town. Check-OUT is more lenient: someone who walked off before
+   * punching out isn't stranded — it's recorded with a written reason and lands
+   * in the manager's review queue.
+   *
+   * SAFETY: when the store has no coordinates configured there is nothing to
+   * verify against, so the punch is allowed and treated as compliant — a
+   * missing fence must never lock staff out.
    */
   private evaluateFence(
     store: StoreCtx,
@@ -235,6 +241,11 @@ export class HrmsService {
     note: string | undefined,
     kind: 'check-in' | 'check-out',
   ): { distanceM: number | null; withinFence: boolean } {
+    if (store.latitude == null || store.longitude == null) {
+      // No geofence configured for this store — nothing to verify against, so
+      // never block or flag. The fence is enforced only when it's actually set.
+      return { distanceM: null, withinFence: true };
+    }
     if (lat == null || lng == null) {
       // The device produced no fix. There is nothing to measure, and "my GPS
       // wasn't working" is exactly how a buddy punch would be dressed up — so it
@@ -248,18 +259,25 @@ export class HrmsService {
       }
       return { distanceM: null, withinFence: false };
     }
-    if (store.latitude == null || store.longitude == null) {
-      // No geofence configured for this store — nothing to verify against.
-      return { distanceM: null, withinFence: false };
-    }
     const dist = haversineM(store.latitude, store.longitude, lat, lng);
     const withinFence = dist <= store.geofenceRadiusM;
-    if (!withinFence && !note?.trim()) {
-      throw new BadRequestException(
-        `This ${kind} is ${Math.round(dist)} m from ${store.name} (allowed: ${
-          store.geofenceRadiusM
-        } m). Add a reason to record it — your manager will review it.`,
-      );
+    if (!withinFence) {
+      if (kind === 'check-in') {
+        // Blocked outright: an out-of-fence check-in is not recorded at all, so
+        // it can never surface as an on-time punch from outside the store.
+        throw new BadRequestException(
+          `You're ${Math.round(dist)} m from ${store.name} (allowed: ${
+            store.geofenceRadiusM
+          } m). You must be at the store to check in.`,
+        );
+      }
+      if (!note?.trim()) {
+        throw new BadRequestException(
+          `This check-out is ${Math.round(dist)} m from ${store.name} (allowed: ${
+            store.geofenceRadiusM
+          } m). Add a reason to record it — your manager will review it.`,
+        );
+      }
     }
     return { distanceM: Math.round(dist), withinFence };
   }
@@ -311,6 +329,7 @@ export class HrmsService {
     return {
       id: r.id,
       storeId: r.storeId,
+      storeName: r.store?.name ?? null,
       staffId: r.staffId,
       date: dateOnly(r.date),
       name: r.staffName ?? r.staffId,
@@ -365,6 +384,15 @@ export class HrmsService {
    *   - the day is keyed by the STORE's calendar date, not the API server's.
    */
   async markAttendance(user: AuthUser, dto: MarkAttendanceDto) {
+    // Head office is view-only for attendance. The controller gate is
+    // @Roles('store_manager','head_office') and rank rolls up, so HO would slip
+    // through — it must be rejected explicitly here (a rank floor can't carve
+    // out the top role). Store managers mark for their team; HO only observes.
+    if (user.role === 'head_office') {
+      throw new ForbiddenException(
+        'Head office is view-only for attendance and cannot mark attendance.',
+      );
+    }
     this.scope.assertStoreAllowed(user, dto.storeId);
     const store = await this.storeCtx(dto.storeId);
 
@@ -446,6 +474,14 @@ export class HrmsService {
    * written reason and is surfaced to the manager for review.
    */
   async checkIn(user: AuthUser, dto: CheckInDto, headerStore?: string) {
+    // Head office is view-only for attendance — it sees store-wise data but does
+    // not punch. The role-rank guards roll up (store_manager admits everything
+    // higher), so HO must be excluded explicitly, not by a rank floor.
+    if (user.role === 'head_office') {
+      throw new ForbiddenException(
+        'Head office is view-only for attendance and cannot punch in.',
+      );
+    }
     const storeId = this.resolveStoreId(user, headerStore, user.storeIds);
     this.scope.assertStoreAllowed(user, storeId);
     const store = await this.storeCtx(storeId);
@@ -538,6 +574,12 @@ export class HrmsService {
    * still closes the shift it opened rather than reporting "no check-in found".
    */
   async checkOut(user: AuthUser, dto: CheckOutDto, headerStore?: string) {
+    // Head office is view-only for attendance (see checkIn) — it never punches.
+    if (user.role === 'head_office') {
+      throw new ForbiddenException(
+        'Head office is view-only for attendance and cannot punch out.',
+      );
+    }
     const storeId = this.resolveStoreId(user, headerStore, user.storeIds);
     this.scope.assertStoreAllowed(user, storeId);
     const store = await this.storeCtx(storeId);
@@ -1926,6 +1968,15 @@ export class HrmsService {
    * (amount = salesValue × rate / 100).
    */
   async updateCommissionRate(user: AuthUser, id: string, rate: number) {
+    // Head office is view-only for sales-performance data. The role-rank guard
+    // rolls up (store_manager admits everything higher), so HO must be blocked
+    // here explicitly — a rank floor alone can't carve out the top role.
+    if (user.role === 'head_office') {
+      throw new ForbiddenException(
+        'Head office is view-only for sales-performance data',
+      );
+    }
+
     const existing = await this.prisma.commission.findUnique({
       where: { id },
       include: { user: { include: { userStores: true } } },

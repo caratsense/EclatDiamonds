@@ -22,7 +22,10 @@ import {
   type Referral,
 } from "@/lib/mock/loyalty";
 import { useApplyReferral } from "@/lib/queries/loyalty";
-import { useSession } from "@/store/use-session";
+import {
+  StoreScopeField,
+  useStoreScope,
+} from "@/components/common/store-scope-field";
 import { apiErrorMessage } from "@/lib/utils";
 
 /** Parse a numeric input into a number, or undefined when blank/invalid. */
@@ -52,12 +55,8 @@ export function ApplyReferralDialog({
   onOpenChange,
   initialCode,
 }: ApplyReferralDialogProps) {
-  const { currentStore } = useSession();
+  const { targetStoreId, pickedStoreId, setPickedStoreId } = useStoreScope();
   const applyReferral = useApplyReferral();
-
-  const targetStoreId = currentStore.isAggregate
-    ? "surat-main"
-    : currentStore.id;
 
   const [code, setCode] = React.useState(initialCode ?? "");
   const [refereeName, setRefereeName] = React.useState("");
@@ -95,6 +94,10 @@ export function ApplyReferralDialog({
 
   function submit() {
     setError(null);
+    if (!targetStoreId) {
+      toast.error("Select a store to apply this referral at.");
+      return;
+    }
     const fe: Record<string, string> = {};
     if (!code.trim()) fe.code = "Referral code is required.";
     if (!refereeName.trim()) fe.refereeName = "Referee name is required.";
@@ -235,6 +238,11 @@ export function ApplyReferralDialog({
         ) : (
           /* ---- Entry form ---- */
           <div className="grid gap-4">
+            <StoreScopeField
+              value={pickedStoreId}
+              onChange={setPickedStoreId}
+            />
+
             <div className="grid gap-1.5">
               <Label htmlFor="ar-code">
                 Referral code <span className="text-destructive">*</span>

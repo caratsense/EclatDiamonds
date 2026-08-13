@@ -255,8 +255,13 @@ export class HrmsController {
     return this.hrms.commission(user, store);
   }
 
-  /** Edit a commission's rate (manager+) — recomputes the incentive amount. */
-  @Roles('store_manager', 'head_office')
+  /**
+   * Edit a commission's rate — recomputes the incentive amount. Store managers
+   * (and the area tier) INPUT this; head office is view-only. The rank guard
+   * rolls up so it can't exclude the top role — the service rejects head_office
+   * explicitly.
+   */
+  @Roles('store_manager')
   @Patch('commission/:id')
   updateCommissionRate(
     @CurrentUser() user: AuthUser,

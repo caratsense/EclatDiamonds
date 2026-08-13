@@ -197,11 +197,11 @@ describe('Eclat backend — critical paths (e2e)', () => {
       expect(res.status).toBe(403);
     });
 
-    it('store manager GET /finance/summary -> 403 (area+ only)', async () => {
+    it('store manager GET /finance/summary -> 200 (store_manager+ after the area-manager collapse)', async () => {
       const res = await request(app.getHttpServer())
         .get('/finance/summary')
         .set(auth(tokens.manager));
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(200);
     });
 
     it('salesperson GET /new-store/projects -> 403', async () => {
@@ -211,17 +211,17 @@ describe('Eclat backend — critical paths (e2e)', () => {
       expect(res.status).toBe(403);
     });
 
-    it('store manager GET /new-store/projects -> 403 (area+ only)', async () => {
+    it('store manager GET /new-store/projects -> 403 (head office only — store provisioning)', async () => {
       const res = await request(app.getHttpServer())
         .get('/new-store/projects')
         .set(auth(tokens.manager));
       expect(res.status).toBe(403);
     });
 
-    it('area manager GET /new-store/projects -> 200', async () => {
+    it('head office GET /new-store/projects -> 200', async () => {
       const res = await request(app.getHttpServer())
         .get('/new-store/projects')
-        .set(auth(tokens.area));
+        .set(auth(tokens.ho));
       expect(res.status).toBe(200);
     });
 
@@ -298,6 +298,7 @@ describe('Eclat backend — critical paths (e2e)', () => {
         .send({
           storeId: MUMBAI,
           customerName: 'QA Test — cross store',
+          item: 'Test bangle', // item is now mandatory — send a valid one so the store-scope check is what fires
           percent: 1,
         });
       expect(res.status).toBe(403);

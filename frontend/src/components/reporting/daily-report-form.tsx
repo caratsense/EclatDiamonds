@@ -14,6 +14,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { formatINR } from "@/lib/format";
 import {
   composeDailyReportText,
@@ -114,17 +121,20 @@ function GroupLabel({ children }: { children: React.ReactNode }) {
  * Submit → POST /reporting/daily.
  */
 export function DailyReportForm() {
-  const { currentStore, user } = useSession();
+  const { currentStore, user, stores } = useSession();
   const createReport = useCreateDailyReport();
 
-  // Aggregate ("All Stores") has no concrete store to file against — fall back
-  // to the first real store, matching the direct-sale entry convention.
-  const targetStoreId = currentStore.isAggregate
-    ? "surat-main"
-    : currentStore.id;
-  const storeLabel = currentStore.isAggregate
-    ? "Surat — Main"
-    : currentStore.name;
+  // A DSR is a per-store store-close report. On the "All Stores" aggregate there
+  // is no single store to file against, so the manager must PICK one — never a
+  // silent fallback to a particular branch. Single-store context uses its store.
+  const realStores = stores.filter((s) => !s.isAggregate);
+  // A real active store follows the topbar switcher (derived, so it stays
+  // reactive — a useState would go stale on a store switch). Only the aggregate
+  // needs a manual pick, held separately.
+  const [pickedStoreId, setPickedStoreId] = useState("");
+  const storeId = currentStore.isAggregate ? pickedStoreId : currentStore.id;
+  const selectedStore = realStores.find((s) => s.id === storeId);
+  const storeLabel = selectedStore?.name ?? "—";
 
   const [reportDate, setReportDate] = useState(todayLocal());
   const [reportTime, setReportTime] = useState(nowLocalTime());
@@ -147,7 +157,7 @@ export function DailyReportForm() {
   // Build the live input snapshot (numbers default to 0 for the preview).
   const draft: DailyReportInput = useMemo(
     () => ({
-      storeId: targetStoreId,
+      storeId,
       reportDate,
       reportTime: reportTime || undefined,
       walkIns: toNumber(walkIns) ?? 0,
@@ -163,7 +173,7 @@ export function DailyReportForm() {
       submittedBy: submittedBy.trim() || undefined,
     }),
     [
-      targetStoreId,
+      storeId,
       reportDate,
       reportTime,
       walkIns,
@@ -187,6 +197,15 @@ export function DailyReportForm() {
 
   const collected = draft.cash + draft.card + draft.upi;
 
+  // Footfall funnel: serious enquiries are a subset of walk-ins, so they can't
+  // exceed the walk-in count. Only flagged once both figures are actually
+  // entered (a blank field is undefined, not zero).
+  const enquiriesExceedWalkIns = (() => {
+    const w = toNumber(walkIns);
+    const se = toNumber(seriousEnquiries);
+    return w != null && se != null && se > w;
+  })();
+
   function resetFigures() {
     setWalkIns("");
     setSeriousEnquiries("");
@@ -201,12 +220,20 @@ export function DailyReportForm() {
   }
 
   async function submit() {
+    if (!storeId) {
+      toast.error("Select a store to file the report for.");
+      return;
+    }
     if (!reportDate) {
       toast.error("Pick the report date.");
       return;
     }
     if (!draft.submittedBy) {
       toast.error("Add who is submitting this report.");
+      return;
+    }
+    if (enquiriesExceedWalkIns) {
+      toast.error("Serious enquiries cannot exceed walk-ins.");
       return;
     }
     try {
@@ -236,24 +263,41 @@ export function DailyReportForm() {
         <CardHeader>
           <CardTitle>File today&apos;s report</CardTitle>
           <CardDescription>
-            Store-close figures for {storeLabel}
-            {currentStore.isAggregate ? (
-              <span className="text-warning">
-                {" "}
-                · switch to a specific store to change
-              </span>
-            ) : null}
+            {currentStore.isAggregate && !storeId
+              ? "Choose the store you're filing for"
+              : `Store-close figures for ${storeLabel}`}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
           {/* Store / date / time */}
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="grid gap-1.5">
-              <Label className="text-xs">Store</Label>
-              <div className="flex h-9 items-center gap-1.5 rounded-md border bg-muted/40 px-3 text-sm font-medium">
-                <span className="h-1.5 w-1.5 rounded-full bg-[var(--gold)]" />
-                {storeLabel}
-              </div>
+              <Label htmlFor="dsr-store" className="text-xs">
+                Store{" "}
+                {currentStore.isAggregate ? (
+                  <span className="text-destructive">*</span>
+                ) : null}
+              </Label>
+              {currentStore.isAggregate ? (
+                // All Stores → the manager must pick one; never a silent default.
+                <Select value={storeId} onValueChange={setPickedStoreId}>
+                  <SelectTrigger id="dsr-store" className="h-9">
+                    <SelectValue placeholder="Choose a store" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {realStores.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <div className="flex h-9 items-center gap-1.5 rounded-md border bg-muted/40 px-3 text-sm font-medium">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[var(--gold)]" />
+                  {storeLabel}
+                </div>
+              )}
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="dsr-date" className="text-xs">
@@ -262,6 +306,7 @@ export function DailyReportForm() {
               <Input
                 id="dsr-date"
                 type="date"
+                max={todayLocal()}
                 value={reportDate}
                 onChange={(e) => setReportDate(e.target.value)}
               />
@@ -270,18 +315,36 @@ export function DailyReportForm() {
               <Label htmlFor="dsr-time" className="text-xs">
                 Time
               </Label>
-              <Input
-                id="dsr-time"
-                type="time"
-                value={reportTime}
-                onChange={(e) => setReportTime(e.target.value)}
-              />
+              <div className="flex gap-1.5">
+                <Input
+                  id="dsr-time"
+                  type="time"
+                  value={reportTime}
+                  onChange={(e) => setReportTime(e.target.value)}
+                />
+                {/* Refresh to the current time without a full page reload; never
+                    overwrites a time the user has typed unless they click it. */}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  title="Set to the current time"
+                  onClick={() => setReportTime(nowLocalTime())}
+                >
+                  Now
+                </Button>
+              </div>
             </div>
           </div>
 
           {/* Traffic */}
           <div className="space-y-2.5">
             <GroupLabel>Traffic</GroupLabel>
+            <p className="text-[11px] text-muted-foreground">
+              Total walk-ins, and how many were serious enquiries — a subset of
+              walk-ins, so it can&apos;t exceed the walk-in count.
+            </p>
             <div className="grid gap-3 sm:grid-cols-2">
               <NumberField
                 id="dsr-walkins"
@@ -298,6 +361,11 @@ export function DailyReportForm() {
                 step="1"
               />
             </div>
+            {enquiriesExceedWalkIns ? (
+              <p className="text-[11px] font-medium text-destructive">
+                Serious enquiries cannot exceed walk-ins.
+              </p>
+            ) : null}
           </div>
 
           {/* Sales */}

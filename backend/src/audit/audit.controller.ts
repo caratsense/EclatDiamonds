@@ -19,10 +19,15 @@ export class AuditController {
     @Query('action') action?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('storeId') storeId?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
     @StoreHeader() store?: string,
   ) {
-    return this.audit.list(user, { entityType, entityId, action, from, to, page, pageSize }, store);
+    return this.audit.list(
+      user,
+      { entityType, entityId, action, from, to, storeId, page, pageSize },
+      store,
+    );
   }
 }

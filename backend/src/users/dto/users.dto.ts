@@ -11,7 +11,7 @@ import {
 import { LeaveType, Role } from '@prisma/client';
 
 /** Roles a head-office admin may assign here — never `head_office` (HO cannot mint another HO). */
-export const ASSIGNABLE_ROLES: Role[] = ['salesperson', 'store_manager', 'area_manager'];
+export const ASSIGNABLE_ROLES: Role[] = ['salesperson', 'store_manager'];
 
 /**
  * POST /users — head office onboards a staff member (defaults to salesperson).

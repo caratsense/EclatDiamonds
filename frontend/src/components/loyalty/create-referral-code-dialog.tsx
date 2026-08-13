@@ -20,7 +20,10 @@ import {
   REFERRAL_DIAMOND_DISCOUNT_PCT,
 } from "@/lib/mock/loyalty";
 import { useCreateReferralCode } from "@/lib/queries/loyalty";
-import { useSession } from "@/store/use-session";
+import {
+  StoreScopeField,
+  useStoreScope,
+} from "@/components/common/store-scope-field";
 import { apiErrorMessage } from "@/lib/utils";
 
 /** Parse a numeric input into a positive integer, or undefined when blank. */
@@ -43,12 +46,8 @@ export function CreateReferralCodeDialog({
   open,
   onOpenChange,
 }: CreateReferralCodeDialogProps) {
-  const { currentStore } = useSession();
+  const { targetStoreId, pickedStoreId, setPickedStoreId } = useStoreScope();
   const createCode = useCreateReferralCode();
-
-  const targetStoreId = currentStore.isAggregate
-    ? "surat-main"
-    : currentStore.id;
 
   const [name, setName] = React.useState("");
   const [phone, setPhone] = React.useState("");
@@ -63,6 +62,10 @@ export function CreateReferralCodeDialog({
   }
 
   function submit() {
+    if (!targetStoreId) {
+      toast.error("Select a store to create this code for.");
+      return;
+    }
     if (!name.trim()) {
       setErrors({ name: "Referrer name is required." });
       toast.error("Referrer name is required.");
@@ -125,6 +128,8 @@ export function CreateReferralCodeDialog({
         </DialogHeader>
 
         <div className="grid gap-4">
+          <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
+
           <div className="grid gap-1.5">
             <Label htmlFor="rc-name">
               Referrer name <span className="text-destructive">*</span>

@@ -1,11 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { Receipt } from "lucide-react";
+import { BadgeCheck, Receipt } from "lucide-react";
 
 import { SaleDetailDialog } from "@/components/sales/sale-detail-dialog";
+import {
+  DirectSaleDialog,
+  type SaleApprovalCompletion,
+} from "@/components/sales/direct-sale-dialog";
 import { SaleDocThumbs } from "@/components/sales/sale-doc-thumbs";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
   Card,
@@ -15,6 +20,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useDiscounts } from "@/lib/queries/discounts";
 import {
   Table,
   TableBody,
@@ -51,9 +57,18 @@ export function SalesSection() {
   const [scope, setScope] = useState<SaleScope>("all");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  // The over-cap request being billed, if any (completion-mode dialog).
+  const [approval, setApproval] = useState<SaleApprovalCompletion | null>(null);
 
   const salesQuery = useSales(scope);
   const sales = salesQuery.data ?? [];
+
+  // Approved-but-unbilled over-cap discounts = "ready to bill". The API already
+  // scopes this to the current user for salespeople.
+  const discountsQuery = useDiscounts();
+  const readyToBill = (discountsQuery.data ?? []).filter(
+    (d) => d.status === "approved" && !d.saleId,
+  );
 
   const totalBilled = sales.reduce((s, r) => s + r.afterDiscountValue, 0);
   const totalBalance = sales.reduce((s, r) => s + r.balance, 0);
@@ -65,6 +80,65 @@ export function SalesSection() {
 
   return (
     <>
+      {readyToBill.length > 0 ? (
+        <Card className="border-success/40 bg-success/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <BadgeCheck className="h-4 w-4 text-success" />
+              Ready to bill
+            </CardTitle>
+            <CardDescription>
+              Approved over-cap discounts waiting to be recorded as a sale.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {readyToBill.map((d) => (
+              <div
+                key={d.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background p-3"
+              >
+                <div className="min-w-0 space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">{d.customerName}</span>
+                    {d.ref ? (
+                      <span className="text-xs text-muted-foreground">
+                        {d.ref}
+                      </span>
+                    ) : null}
+                  </div>
+                  {d.item ? (
+                    <div className="truncate text-xs text-muted-foreground">
+                      {d.item}
+                    </div>
+                  ) : null}
+                  <div className="flex flex-wrap gap-1.5">
+                    <Badge variant="secondary">
+                      Diamond {d.diamondPercent}%
+                    </Badge>
+                    <Badge variant="secondary">Making {d.makingPercent}%</Badge>
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    setApproval({
+                      id: d.id,
+                      ref: d.ref ?? d.id,
+                      customer: d.customerName,
+                      item: d.item ?? "",
+                      diamondPercent: d.diamondPercent,
+                      makingPercent: d.makingPercent,
+                    })
+                  }
+                >
+                  Record sale
+                </Button>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card>
         <CardHeader className="flex flex-row items-start justify-between gap-3 pb-2">
           <div className="space-y-1">
@@ -136,7 +210,12 @@ export function SalesSection() {
                         {prettyDate(sale.docDate)}
                       </TableCell>
                       <TableCell>
-                        <div className="font-medium">{sale.customer}</div>
+                        <div className="flex items-center gap-2 font-medium">
+                          {sale.customer}
+                          {sale.isCancelled ? (
+                            <Badge variant="destructive">Cancelled</Badge>
+                          ) : null}
+                        </div>
                         {sale.description ? (
                           <div className="max-w-[16rem] truncate text-xs text-muted-foreground">
                             {sale.description}
@@ -208,6 +287,14 @@ export function SalesSection() {
         saleId={activeId}
         open={detailOpen}
         onOpenChange={setDetailOpen}
+      />
+
+      <DirectSaleDialog
+        open={!!approval}
+        onOpenChange={(o) => {
+          if (!o) setApproval(null);
+        }}
+        approval={approval}
       />
     </>
   );

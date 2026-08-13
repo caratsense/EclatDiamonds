@@ -22,7 +22,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { cn, apiErrorMessage } from "@/lib/utils";
+import { cn, apiErrorMessage, isValidEmail, normalizeIndianMobile } from "@/lib/utils";
 import { ChannelStatusNotice } from "@/components/integrations/channel-status-notice";
 import {
   composeDailyReportText,
@@ -99,21 +99,28 @@ export function DailyReportSendDialog({
   const isEmail = channel === "email";
   const channelName = isEmail ? "Email" : "WhatsApp";
 
+  const trimmed = to.trim();
+  const normalizedPhone = isEmail ? null : normalizeIndianMobile(trimmed);
+  const recipientValid = isEmail
+    ? isValidEmail(trimmed)
+    : normalizedPhone != null;
+  const recipientError = trimmed.length > 0 && !recipientValid;
+
   function send() {
     if (!report) return;
-    const recipient = to.trim();
-    if (!recipient) {
+    if (!trimmed) {
       toast.error(isEmail ? "Enter an email address." : "Enter a WhatsApp number.");
       return;
     }
-    if (isEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
-      toast.error("Enter a valid email address.");
+    if (!recipientValid) {
+      toast.error(
+        isEmail
+          ? "Enter a valid email address."
+          : "Enter a valid 10-digit Indian mobile number.",
+      );
       return;
     }
-    if (!isEmail && recipient.replace(/\D/g, "").length < 10) {
-      toast.error("Enter a valid phone number.");
-      return;
-    }
+    const recipient = isEmail ? trimmed : (normalizedPhone as string);
     setOutcome(null);
     sendReport.mutate(
       { id: report.id, channel, to: recipient },
@@ -211,11 +218,19 @@ export function DailyReportSendDialog({
               inputMode={isEmail ? "email" : "tel"}
               placeholder={isEmail ? "owner@eclatdiamonds.in" : "9876500000"}
               value={to}
+              aria-invalid={recipientError}
               onChange={(e) => {
                 setTo(e.target.value);
                 clearOutcome();
               }}
             />
+            {recipientError ? (
+              <p className="text-xs text-destructive">
+                {isEmail
+                  ? "Enter a valid email address."
+                  : "Enter a valid 10-digit Indian mobile number (digits only)."}
+              </p>
+            ) : null}
           </div>
 
           {outcome?.disabled ? (
@@ -243,7 +258,7 @@ export function DailyReportSendDialog({
           </Button>
           <Button
             onClick={send}
-            disabled={sendReport.isPending || !report || !text}
+            disabled={sendReport.isPending || !report || !text || !recipientValid}
           >
             {sendReport.isPending ? "Sending…" : "Send"}
           </Button>

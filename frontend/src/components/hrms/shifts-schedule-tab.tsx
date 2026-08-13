@@ -30,7 +30,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn, apiErrorMessage } from "@/lib/utils";
-import { useSession } from "@/store/use-session";
+import {
+  StoreScopeField,
+  useStoreScope,
+} from "@/components/common/store-scope-field";
 import {
   MOCK_WEEK_OFF,
   WEEK_DAYS,
@@ -43,6 +46,8 @@ import {
   useCreateShift,
   useSetWeekOff,
 } from "@/lib/queries/hrms";
+import { ROLE_RANK } from "@/lib/types";
+import { useSession } from "@/store/use-session";
 
 /** Parse a 'yyyy-mm-dd' string into a *local* Date (no tz drift). */
 function parseISODate(iso: string): Date {
@@ -65,13 +70,12 @@ interface ShiftsScheduleTabProps {
 }
 
 export function ShiftsScheduleTab({ shifts, holidays }: ShiftsScheduleTabProps) {
-  const { currentStore } = useSession();
-  const isAggregate = currentStore.isAggregate;
-
-  // Aggregate ("all") scope has no concrete store to write to — fall back to
-  // the first real store id; broad roles normally pick a store first.
-  const targetStoreId = isAggregate ? "surat-main" : currentStore.id;
-  const targetStoreName = isAggregate ? "Surat — Main" : currentStore.name;
+  const { targetStoreId, storeLabel, pickedStoreId, setPickedStoreId } =
+    useStoreScope();
+  // Salespeople are view-only for shifts / week-off / holidays; store_manager+
+  // may edit (the backend enforces the same via @Roles('store_manager'+)).
+  const role = useSession((s) => s.role);
+  const canEdit = ROLE_RANK[role] >= ROLE_RANK.store_manager;
 
   const [shiftOpen, setShiftOpen] = useState(false);
 
@@ -86,6 +90,8 @@ export function ShiftsScheduleTab({ shifts, holidays }: ShiftsScheduleTabProps) 
 
   return (
     <div className="space-y-4">
+      <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
+
       {/* --- Shifts / batches --------------------------------------- */}
       <Card>
         <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
@@ -99,10 +105,12 @@ export function ShiftsScheduleTab({ shifts, holidays }: ShiftsScheduleTabProps) 
               against their own shift start&nbsp;+&nbsp;buffer.
             </CardDescription>
           </div>
-          <Button size="sm" className="shrink-0" onClick={() => setShiftOpen(true)}>
-            <Plus className="h-4 w-4" />
-            Add shift
-          </Button>
+          {canEdit ? (
+            <Button size="sm" className="shrink-0" onClick={() => setShiftOpen(true)}>
+              <Plus className="h-4 w-4" />
+              Add shift
+            </Button>
+          ) : null}
         </CardHeader>
         <CardContent className="space-y-2">
           {shifts.length === 0 ? (
@@ -158,14 +166,16 @@ export function ShiftsScheduleTab({ shifts, holidays }: ShiftsScheduleTabProps) 
         {/* --- Weekly off day -------------------------------------- */}
         <WeekOffCard
           storeId={targetStoreId}
-          storeName={targetStoreName}
+          storeName={storeLabel}
+          canEdit={canEdit}
         />
 
         {/* --- Store holidays -------------------------------------- */}
         <HolidaysCard
           storeId={targetStoreId}
-          storeName={targetStoreName}
+          storeName={storeLabel}
           upcoming={upcoming}
+          canEdit={canEdit}
         />
       </div>
 
@@ -173,7 +183,7 @@ export function ShiftsScheduleTab({ shifts, holidays }: ShiftsScheduleTabProps) 
         open={shiftOpen}
         onOpenChange={setShiftOpen}
         storeId={targetStoreId}
-        storeName={targetStoreName}
+        storeName={storeLabel}
       />
     </div>
   );
@@ -186,9 +196,11 @@ export function ShiftsScheduleTab({ shifts, holidays }: ShiftsScheduleTabProps) 
 function WeekOffCard({
   storeId,
   storeName,
+  canEdit,
 }: {
   storeId: string;
   storeName: string;
+  canEdit: boolean;
 }) {
   const setWeekOff = useSetWeekOff();
   // No GET for week-off — seed from the known default, then track locally.
@@ -197,6 +209,10 @@ function WeekOffCard({
   const [saved, setSaved] = useState<number>(seeded);
 
   function save() {
+    if (!storeId) {
+      toast.error("Select a store first.");
+      return;
+    }
     setWeekOff.mutate(
       { storeId, weekOffDay: day },
       {
@@ -231,12 +247,14 @@ function WeekOffCard({
                 key={label}
                 type="button"
                 aria-pressed={active}
+                disabled={!canEdit}
                 onClick={() => setDay(idx)}
                 className={cn(
                   "rounded-lg border py-2 text-xs font-medium transition-colors",
                   active
                     ? "border-primary bg-primary/10 text-foreground"
                     : "border-input text-muted-foreground hover:border-primary/40 hover:bg-accent",
+                  !canEdit && "cursor-default opacity-60 hover:border-input hover:bg-transparent",
                 )}
               >
                 {label}
@@ -248,14 +266,16 @@ function WeekOffCard({
           <p className="text-xs text-muted-foreground">
             Current: <span className="font-medium text-foreground">{WEEK_DAYS[saved]}</span>
           </p>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={save}
-            disabled={setWeekOff.isPending || day === saved}
-          >
-            {setWeekOff.isPending ? "Saving…" : "Save"}
-          </Button>
+          {canEdit ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={save}
+              disabled={setWeekOff.isPending || day === saved}
+            >
+              {setWeekOff.isPending ? "Saving…" : "Save"}
+            </Button>
+          ) : null}
         </div>
       </CardContent>
     </Card>
@@ -270,16 +290,22 @@ function HolidaysCard({
   storeId,
   storeName,
   upcoming,
+  canEdit,
 }: {
   storeId: string;
   storeName: string;
   upcoming: Holiday[];
+  canEdit: boolean;
 }) {
   const addHoliday = useAddHoliday();
   const [date, setDate] = useState("");
   const [label, setLabel] = useState("");
 
   function add() {
+    if (!storeId) {
+      toast.error("Select a store first.");
+      return;
+    }
     if (!date) {
       toast.error("Pick a date for the holiday.");
       return;
@@ -311,35 +337,37 @@ function HolidaysCard({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-          <div className="grid flex-1 gap-1.5">
-            <Label htmlFor="hol-date">Date</Label>
-            <Input
-              id="hol-date"
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-            />
+        {canEdit ? (
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+            <div className="grid flex-1 gap-1.5">
+              <Label htmlFor="hol-date">Date</Label>
+              <Input
+                id="hol-date"
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+              />
+            </div>
+            <div className="grid flex-1 gap-1.5">
+              <Label htmlFor="hol-label">Label</Label>
+              <Input
+                id="hol-label"
+                placeholder="e.g. Diwali"
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+              />
+            </div>
+            <Button
+              variant="outline"
+              onClick={add}
+              disabled={addHoliday.isPending}
+              className="shrink-0"
+            >
+              <Plus className="h-4 w-4" />
+              Add
+            </Button>
           </div>
-          <div className="grid flex-1 gap-1.5">
-            <Label htmlFor="hol-label">Label</Label>
-            <Input
-              id="hol-label"
-              placeholder="e.g. Diwali"
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-            />
-          </div>
-          <Button
-            variant="outline"
-            onClick={add}
-            disabled={addHoliday.isPending}
-            className="shrink-0"
-          >
-            <Plus className="h-4 w-4" />
-            Add
-          </Button>
-        </div>
+        ) : null}
 
         <div className="space-y-1.5">
           <p className="text-xs font-medium text-muted-foreground">Upcoming</p>
@@ -397,6 +425,10 @@ function AddShiftDialog({
   }
 
   function save() {
+    if (!storeId) {
+      toast.error("Select a store first.");
+      return;
+    }
     if (!name.trim()) {
       toast.error("Shift name is required.");
       return;

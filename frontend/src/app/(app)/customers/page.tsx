@@ -2,27 +2,27 @@
 
 import { type ReactNode, useState } from "react";
 import { Ban, Contact, Search } from "lucide-react";
+import { toast } from "sonner";
 
 import { SectionHeader } from "@/components/section/section-header";
+import {
+  StoreScopeField,
+  useStoreScope,
+} from "@/components/common/store-scope-field";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { PaginationBar } from "@/components/ui/pagination-bar";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -35,22 +35,15 @@ import {
 import { getNavItem } from "@/lib/navigation";
 import { formatINR } from "@/lib/format";
 import {
+  useCreateParty,
   useParties,
   type PartyRow,
   type PartyTypeName,
 } from "@/lib/queries/parties";
 import { useDebouncedValue } from "@/lib/queries/search";
+import { apiErrorMessage, normalizeIndianMobile } from "@/lib/utils";
 
 const nav = getNavItem("customers")!;
-
-type TypeFilter = PartyTypeName | "all";
-
-const TYPE_OPTIONS: { value: TypeFilter; label: string }[] = [
-  { value: "customer", label: "Customers" },
-  { value: "supplier", label: "Suppliers" },
-  { value: "staff", label: "Staff" },
-  { value: "all", label: "All parties" },
-];
 
 const TYPE_LABELS: Record<PartyTypeName, string> = {
   customer: "Customer",
@@ -81,18 +74,18 @@ function fmtDayMonth(iso: string | null): string {
 }
 
 export default function CustomersPage() {
-  const [type, setType] = useState<TypeFilter>("customer");
   const [rawQ, setRawQ] = useState("");
   const q = useDebouncedValue(rawQ, 300);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   const [active, setActive] = useState<PartyRow | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
 
   const { data, isLoading, isError, refetch } = useParties({
     page,
     pageSize,
     q: q.trim() || undefined,
-    type,
+    type: "customer",
   });
 
   const rows = data?.items ?? [];
@@ -100,10 +93,15 @@ export default function CustomersPage() {
 
   return (
     <div>
-      <SectionHeader title={nav.title} purpose={nav.purpose} />
+      <SectionHeader
+        title={nav.title}
+        purpose={nav.purpose}
+        primaryAction="Add customer"
+        onPrimaryAction={() => setAddOpen(true)}
+      />
 
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
-        <div className="relative flex-1">
+      <div className="mb-4">
+        <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={rawQ}
@@ -115,24 +113,6 @@ export default function CustomersPage() {
             className="pl-9"
           />
         </div>
-        <Select
-          value={type}
-          onValueChange={(v) => {
-            setType(v as TypeFilter);
-            setPage(1);
-          }}
-        >
-          <SelectTrigger className="w-full sm:w-[180px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {TYPE_OPTIONS.map((o) => (
-              <SelectItem key={o.value} value={o.value}>
-                {o.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
       </div>
 
       {isError ? (
@@ -195,11 +175,11 @@ export default function CustomersPage() {
                           </Badge>
                         ) : null}
                       </div>
-                      {p.code ? (
-                        <span className="num text-xs text-muted-foreground">
-                          {p.code}
-                        </span>
-                      ) : null}
+                      {/* Consistent subtitle on every row: the customer code,
+                          or "—" when unknown (e.g. manually-added, not synced). */}
+                      <span className="num text-xs text-muted-foreground">
+                        {p.code ?? "—"}
+                      </span>
                     </TableCell>
                     <TableCell className="num">{p.phone ?? "—"}</TableCell>
                     <TableCell className="hidden md:table-cell text-muted-foreground">
@@ -231,7 +211,135 @@ export default function CustomersPage() {
         party={active}
         onOpenChange={(open) => !open && setActive(null)}
       />
+
+      <AddCustomerDialog open={addOpen} onOpenChange={setAddOpen} />
     </div>
+  );
+}
+
+function AddCustomerDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { targetStoreId, storeLabel, pickedStoreId, setPickedStoreId } =
+    useStoreScope();
+  const create = useCreateParty();
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [city, setCity] = useState("");
+
+  // Phone is required and must be a valid Indian mobile (backend enforces
+  // @IsIndianMobile). Validate inline so submit is blocked before the round-trip.
+  const trimmedPhone = phone.trim();
+  const normalizedPhone = trimmedPhone ? normalizeIndianMobile(trimmedPhone) : null;
+  const phoneInvalid = trimmedPhone.length > 0 && normalizedPhone == null;
+
+  function save() {
+    if (!targetStoreId) {
+      toast.error("Select a store to add this customer to.");
+      return;
+    }
+    if (!name.trim()) {
+      toast.error("Customer name is required.");
+      return;
+    }
+    if (!normalizedPhone) {
+      toast.error("Enter a valid 10-digit mobile number.");
+      return;
+    }
+    create.mutate(
+      {
+        storeId: targetStoreId,
+        name: name.trim(),
+        phone: normalizedPhone,
+        email: email.trim() || undefined,
+        city: city.trim() || undefined,
+      },
+      {
+        onSuccess: () => {
+          toast.success("Customer added");
+          setName("");
+          setPhone("");
+          setEmail("");
+          setCity("");
+          onOpenChange(false);
+        },
+        onError: (err) =>
+          toast.error(apiErrorMessage(err, "Could not add the customer.")),
+      },
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add customer</DialogTitle>
+          <DialogDescription>
+            New customers are added to {storeLabel}.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
+
+          <div className="grid gap-1.5">
+            <Label htmlFor="cust-name">Name</Label>
+            <Input
+              id="cust-name"
+              placeholder="e.g. Rajesh Agarwal"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="cust-phone">Phone</Label>
+            <Input
+              id="cust-phone"
+              placeholder="+91 ..."
+              value={phone}
+              aria-invalid={phoneInvalid}
+              onChange={(e) => setPhone(e.target.value)}
+            />
+            {phoneInvalid ? (
+              <p className="mt-1 text-xs text-destructive">
+                Enter a valid 10-digit mobile number.
+              </p>
+            ) : null}
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="cust-email">Email (optional)</Label>
+            <Input
+              id="cust-email"
+              type="email"
+              placeholder="name@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="cust-city">City (optional)</Label>
+            <Input
+              id="cust-city"
+              placeholder="e.g. Surat"
+              value={city}
+              onChange={(e) => setCity(e.target.value)}
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={create.isPending}>
+            {create.isPending ? "Saving…" : "Add customer"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

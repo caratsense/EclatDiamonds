@@ -30,22 +30,22 @@ export class StoresController {
     return this.stores.list(user);
   }
 
-  /** GET /stores/pending — branches awaiting setup, in the caller's scope (area manager+). */
-  @Roles('store_manager')
+  /** GET /stores/pending — branches awaiting setup (head office only; store lifecycle). */
+  @Roles('head_office')
   @Get('pending')
   pending(@CurrentUser() user: AuthUser) {
     return this.stores.listPending(user);
   }
 
-  /** POST /stores — provision a new branch (area manager+; AM limited to their regions). */
-  @Roles('store_manager')
+  /** POST /stores — provision a new branch (head office only; the whole store lifecycle is). */
+  @Roles('head_office')
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateStoreDto) {
     return this.stores.create(user, dto);
   }
 
-  /** PATCH /stores/:id/activate — flip a pending branch to active (area manager+, in scope). */
-  @Roles('store_manager')
+  /** PATCH /stores/:id/activate — flip a pending branch to active (head office only). */
+  @Roles('head_office')
   @Patch(':id/activate')
   activate(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.stores.activate(user, id);

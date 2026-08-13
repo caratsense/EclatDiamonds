@@ -25,6 +25,10 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSession } from "@/store/use-session";
+import {
+  StoreScopeField,
+  useStoreScope,
+} from "@/components/common/store-scope-field";
 import { getNavItem } from "@/lib/navigation";
 import { formatPercent } from "@/lib/format";
 import { StatTiles } from "@/components/hrms/stat-tiles";
@@ -46,7 +50,7 @@ import {
   useCreateCheckin,
   type CheckinOutcomeInput,
 } from "@/lib/queries/checkins";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, normalizeIndianMobile } from "@/lib/utils";
 
 /** Bucket "HH:mm" into an hour label like "10a" / "1p" for the hourly chart. */
 function hourLabel(timeIn: string | null): string | null {
@@ -321,27 +325,38 @@ function AddCheckinDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { currentStore } = useSession();
+  const { targetStoreId, storeLabel, pickedStoreId, setPickedStoreId } =
+    useStoreScope();
   const create = useCreateCheckin();
   const [customer, setCustomer] = useState("");
   const [phone, setPhone] = useState("");
   const [purpose, setPurpose] = useState<VisitPurpose>("Browsing");
 
-  // Aggregate scope has no concrete store — fall back to the first real store.
-  const targetStoreId = currentStore.isAggregate
-    ? "surat-main"
-    : currentStore.id;
+  // Phone is optional — but if typed it must be a valid Indian mobile (backend
+  // now enforces @IsIndianMobile). Blank passes through; present-and-invalid
+  // blocks submit and shows an inline error.
+  const trimmedPhone = phone.trim();
+  const normalizedPhone = trimmedPhone ? normalizeIndianMobile(trimmedPhone) : null;
+  const phoneInvalid = trimmedPhone.length > 0 && normalizedPhone == null;
 
   function save() {
+    if (!targetStoreId) {
+      toast.error("Select a store to log this walk-in against.");
+      return;
+    }
     if (!customer.trim()) {
       toast.error("Customer name is required.");
+      return;
+    }
+    if (phoneInvalid) {
+      toast.error("Enter a valid 10-digit mobile number.");
       return;
     }
     create.mutate(
       {
         storeId: targetStoreId,
         customerName: customer.trim(),
-        phone: phone.trim() || undefined,
+        phone: normalizedPhone ?? undefined,
         purpose: PURPOSE_TO_ENUM[purpose],
       },
       {
@@ -363,11 +378,12 @@ function AddCheckinDialog({
         <DialogHeader>
           <DialogTitle>Log walk-in</DialogTitle>
           <DialogDescription>
-            New check-ins are recorded against{" "}
-            {currentStore.isAggregate ? "Surat — Main" : currentStore.name}.
+            New check-ins are recorded against {storeLabel}.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
+          <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
+
           <div className="grid gap-1.5">
             <Label htmlFor="ci-cust">Customer name</Label>
             <Input
@@ -383,8 +399,14 @@ function AddCheckinDialog({
               id="ci-phone"
               placeholder="+91 ..."
               value={phone}
+              aria-invalid={phoneInvalid}
               onChange={(e) => setPhone(e.target.value)}
             />
+            {phoneInvalid ? (
+              <p className="mt-1 text-xs text-destructive">
+                Enter a valid 10-digit mobile number.
+              </p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="ci-purpose">Purpose</Label>

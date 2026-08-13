@@ -12,7 +12,11 @@ import {
 } from "@/components/ui/card";
 import { AreaChart, BarChart, useChartTokens } from "@/components/chart/echart";
 import { formatINRCompact } from "@/lib/format";
-import type { StoreCompare, TrendPoint } from "@/lib/mock/dashboards";
+import {
+  storeCompareLabel,
+  type StoreCompare,
+  type TrendPoint,
+} from "@/lib/mock/dashboards";
 
 /**
  * A chart card that, when `href` is set, becomes a tappable link to the matching
@@ -76,7 +80,7 @@ export function SalesTrendChart({ data, href }: { data: TrendPoint[]; href?: str
 }
 
 export function StoreComparisonChart({ data, href }: { data: StoreCompare[]; href?: string }) {
-  const categories = data.map((d) => d.store);
+  const categories = data.map(storeCompareLabel);
   const t = useChartTokens();
 
   return (

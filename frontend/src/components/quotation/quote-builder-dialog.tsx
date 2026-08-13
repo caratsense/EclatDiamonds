@@ -55,8 +55,11 @@ import {
   useUploadQuotePhoto,
 } from "@/lib/queries/quotes";
 import { useMetalRates } from "@/lib/queries/integrations";
-import { cn } from "@/lib/utils";
-import { useSession } from "@/store/use-session";
+import { cn, normalizeIndianMobile } from "@/lib/utils";
+import {
+  StoreScopeField,
+  useStoreScope,
+} from "@/components/common/store-scope-field";
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 
@@ -101,7 +104,8 @@ export function QuoteBuilderDialog({
   open,
   onOpenChange,
 }: QuoteBuilderDialogProps) {
-  const { currentStore } = useSession();
+  const { targetStoreId, storeLabel, pickedStoreId, setPickedStoreId } =
+    useStoreScope();
   const createQuote = useCreateQuote();
   const metalRates = useMetalRates();
   const uploadPhoto = useUploadQuotePhoto();
@@ -163,13 +167,6 @@ export function QuoteBuilderDialog({
   const [deliveryDate, setDeliveryDate] = useState("");
   const [advance, setAdvance] = useState("");
   const [advanceMode, setAdvanceMode] = useState("");
-
-  const targetStoreId = currentStore.isAggregate
-    ? "surat-main"
-    : currentStore.id;
-  const storeLabel = currentStore.isAggregate
-    ? "Surat — Main"
-    : currentStore.name;
 
   const metalColor =
     metalColorSel === "other" ? metalColorOther.trim() : metalColorSel;
@@ -497,14 +494,29 @@ export function QuoteBuilderDialog({
   }
 
   async function submit(asCustomOrder: boolean) {
+    if (!targetStoreId) {
+      toast.error("Select a store to raise this quote at.");
+      return;
+    }
     const name = customer.trim();
     // Inline-validate the required identity fields first; toast is the summary.
     const next: Record<string, string> = {};
     if (!name) next.customer = "Customer name is required.";
-    if (!phone.trim()) next.phone = "Phone number is required.";
+    // Name must contain a letter, not just digits/spaces (backend @Matches).
+    else if (!/[^\d\s]/.test(name))
+      next.customer = "Enter a valid name (letters, not just numbers).";
+    // Phone is optional, but if typed it must be a valid Indian mobile.
+    const normalizedPhone = phone.trim() ? normalizeIndianMobile(phone) : null;
+    if (phone.trim() && !normalizedPhone)
+      next.phone = "Enter a valid 10-digit mobile number.";
     if (Object.keys(next).length > 0) {
       setErrors(next);
       toast.error("Please fill in the required fields.");
+      return;
+    }
+    // Weights can't be negative (backend @Min(0) on weightGrams / gross weight).
+    if (weightNum < 0 || (toNumber(grossWeight) ?? 0) < 0) {
+      toast.error("Weight cannot be negative.");
       return;
     }
     const lines = buildLines();
@@ -522,7 +534,7 @@ export function QuoteBuilderDialog({
       const quote = await createQuote.mutateAsync({
         storeId: targetStoreId,
         customerName: name,
-        phone: phone.trim() || undefined,
+        phone: normalizedPhone ?? undefined,
         kind: mode,
         isKaccha: isKaccha || undefined,
         remarks: mode === "repair" ? remarks.trim() || undefined : undefined,
@@ -596,6 +608,8 @@ export function QuoteBuilderDialog({
         </DialogHeader>
 
         <div className="grid gap-4">
+          <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
+
           {/* Quick vs Advanced — simplified front door defaults on */}
           <Tabs
             value={view}
@@ -641,6 +655,7 @@ export function QuoteBuilderDialog({
               <Input
                 id="qb-cust"
                 value={customer}
+                aria-invalid={!!errors.customer}
                 onChange={(e) => {
                   setCustomer(e.target.value);
                   clearError("customer");
@@ -654,12 +669,11 @@ export function QuoteBuilderDialog({
               ) : null}
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="qb-phone">
-                Phone <span className="text-destructive">*</span>
-              </Label>
+              <Label htmlFor="qb-phone">Phone</Label>
               <Input
                 id="qb-phone"
                 value={phone}
+                aria-invalid={!!errors.phone}
                 onChange={(e) => {
                   setPhone(e.target.value);
                   clearError("phone");
@@ -690,6 +704,7 @@ export function QuoteBuilderDialog({
                       id="qb-q-wt"
                       type="number"
                       inputMode="decimal"
+                      min={0}
                       placeholder="0"
                       value={weight}
                       onChange={(e) => setWeight(e.target.value)}
@@ -845,6 +860,7 @@ export function QuoteBuilderDialog({
                         id="qb-wt"
                         type="number"
                         inputMode="decimal"
+                        min={0}
                         placeholder="0"
                         value={weight}
                         onChange={(e) => setWeight(e.target.value)}
@@ -1091,6 +1107,7 @@ export function QuoteBuilderDialog({
                     id="qb-gross"
                     type="number"
                     inputMode="decimal"
+                    min={0}
                     placeholder="0"
                     value={grossWeight}
                     onChange={(e) => setGrossWeight(e.target.value)}

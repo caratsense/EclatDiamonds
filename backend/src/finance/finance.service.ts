@@ -194,7 +194,9 @@ export class FinanceService {
           }),
         ]);
         return {
-          store: st.city,
+          // Label by store NAME (unique); two stores can share a city. City kept for tooltip.
+          store: st.name,
+          city: st.city ?? null,
           budget: num(budgetRow?.amount),
           actual: num(actualAgg._sum.totalAmount),
         };

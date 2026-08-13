@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useStoreKey } from "@/lib/queries/keys";
 import type { Sale, SaleDocType, SalePaymentMode } from "@/lib/mock/sales";
+import type { Role } from "@/lib/types";
 
 /**
  * Direct-sales format + payment capture (client call § "Sales (Direct Sales)"
@@ -62,17 +63,72 @@ export interface CreateSaleInput {
   description?: string;
   invoiceNo: string;
   salesValue: number;
-  afterDiscountValue: number;
+  /** Optional — omit for a no-discount sale (backend defaults total = salesValue). */
+  afterDiscountValue?: number;
+  /** Discount split (gold is never discounted). Send only when discounting. */
+  diamondValue?: number;
+  makingValue?: number;
+  diamondDiscountPercent?: number;
+  makingDiscountPercent?: number;
   paymentMode?: SalePaymentMode;
   advanceReceived?: number;
+  /**
+   * Set to an approved-but-unbilled discount request id to complete that
+   * over-cap sale. The backend verifies the request is approved, in-scope,
+   * unused, and that the applied %s stay within the approved amounts (so it
+   * does NOT re-escalate).
+   */
+  discountRequestId?: string;
 }
 
-/** POST /sales — record a direct sale. Returns the created sale (with id). */
+/**
+ * When the discount exceeds the salesperson's cap the backend creates NO sale
+ * and returns this instead — the discount is queued for approval.
+ */
+export interface SaleApprovalRequired {
+  requiresApproval: true;
+  discountRequest: { ref: string; requiredRole: Role; status: string; id: string };
+  message: string;
+}
+
+export type CreateSaleResult = Sale | SaleApprovalRequired;
+
+export function isApprovalRequired(
+  r: CreateSaleResult,
+): r is SaleApprovalRequired {
+  return (r as SaleApprovalRequired).requiresApproval === true;
+}
+
+/**
+ * POST /sales — record a direct sale. Returns the created sale, OR a
+ * `{ requiresApproval }` payload when the discount exceeds the caller's cap
+ * (in which case no sale was created — see `isApprovalRequired`).
+ */
 export function useCreateSale() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: CreateSaleInput) => {
-      const { data } = await api.post<Sale>("/sales", input);
+      const { data } = await api.post<CreateSaleResult>("/sales", input);
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [SALES_KEY] });
+      // Completing an approved request marks it billed (saleId set) and a
+      // fresh over-cap attempt queues a new request — refresh both lists.
+      qc.invalidateQueries({ queryKey: ["discounts"] });
+    },
+  });
+}
+
+/**
+ * POST /sales/:id/cancel — soft-void a sale (store manager + head office only).
+ * Returns the updated sale (`isCancelled: true`).
+ */
+export function useCancelSale() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, reason }: { id: string; reason: string }) => {
+      const { data } = await api.post<Sale>(`/sales/${id}/cancel`, { reason });
       return data;
     },
     onSuccess: () => {

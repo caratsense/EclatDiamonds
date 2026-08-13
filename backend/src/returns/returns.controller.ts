@@ -40,8 +40,8 @@ export class ReturnsController {
 
   /** Preview the exchange/buyback values without persisting. */
   @Post('valuate')
-  valuate(@Body() dto: ValuateReturnDto) {
-    return this.returns.valuate(dto);
+  valuate(@CurrentUser() user: AuthUser, @Body() dto: ValuateReturnDto) {
+    return this.returns.valuate(user, dto);
   }
 
   @Get(':id')

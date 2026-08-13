@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { formatINR } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import { cn, normalizeIndianMobile } from "@/lib/utils";
 import type { ChosenOption } from "@/lib/mock/returns";
 import {
   useCreateReturn,
@@ -32,7 +32,10 @@ import {
   useValuate,
   type ValuateInput,
 } from "@/lib/queries/returns";
-import { useSession } from "@/store/use-session";
+import {
+  StoreScopeField,
+  useStoreScope,
+} from "@/components/common/store-scope-field";
 
 /** Parse a numeric input into a number, or undefined when blank/invalid. */
 function toNumber(v: string): number | undefined {
@@ -57,19 +60,11 @@ export function ReturnCalculatorDialog({
   open,
   onOpenChange,
 }: ReturnCalculatorDialogProps) {
-  const { currentStore } = useSession();
+  const { targetStoreId, storeLabel, pickedStoreId, setPickedStoreId } =
+    useStoreScope();
   const createReturn = useCreateReturn();
   const valuate = useValuate();
   const { data: rates } = useRates();
-
-  // Aggregate ("all") scope has no concrete store to write to — fall back to the
-  // first real store id; broad roles normally pick a store first.
-  const targetStoreId = currentStore.isAggregate
-    ? "surat-main"
-    : currentStore.id;
-  const storeLabel = currentStore.isAggregate
-    ? "Surat — Main"
-    : currentStore.name;
 
   const [entryMode, setEntryMode] = React.useState<"manual" | "invoice">(
     "manual",
@@ -79,7 +74,7 @@ export function ReturnCalculatorDialog({
   const [phone, setPhone] = React.useState("");
   const [item, setItem] = React.useState("");
   const [goldWtG, setGoldWtG] = React.useState("");
-  const [goldKarat, setGoldKarat] = React.useState("18");
+  const [goldKarat, setGoldKarat] = React.useState("22");
   const [goldRate, setGoldRate] = React.useState("");
   const [diaCarat, setDiaCarat] = React.useState("");
   const [diaSpec, setDiaSpec] = React.useState("");
@@ -108,6 +103,7 @@ export function ReturnCalculatorDialog({
     setPhone("");
     setItem("");
     setGoldWtG("");
+    setGoldKarat("22");
     setGoldRate("");
     setDiaCarat("");
     setDiaSpec("");
@@ -132,6 +128,7 @@ export function ReturnCalculatorDialog({
     const useInvoice = entryMode === "invoice" && invoiceNo.trim().length > 0;
     const body: ValuateInput = {
       goldWtG: goldWtNum,
+      goldKarat: toNumber(goldKarat),
       goldRateAtPurchase: toNumber(goldRate),
       diaCarat: diaCaratNum,
       diaSpec: diaSpec || undefined,
@@ -143,7 +140,7 @@ export function ReturnCalculatorDialog({
     const t = setTimeout(() => runValuate(body), 350);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, goldWtG, goldRate, diaCarat, diaSpec, diaRate, making, entryMode, invoiceNo]);
+  }, [open, goldWtG, goldKarat, goldRate, diaCarat, diaSpec, diaRate, making, entryMode, invoiceNo]);
 
   const result = valuate.data;
   const goldToday = result?.goldValueToday ?? 0;
@@ -153,8 +150,18 @@ export function ReturnCalculatorDialog({
   const buybackDia = result ? result.buybackValue - goldToday : 0;
 
   async function submit() {
+    if (!targetStoreId) {
+      toast.error("Select a store to raise this return against.");
+      return;
+    }
     const nextErrors: Record<string, string> = {};
     if (!customer.trim()) nextErrors.customer = "Customer name is required.";
+    // Phone is now mandatory + must be a valid Indian mobile (backend @IsNotEmpty
+    // + @IsIndianMobile) — block/normalise before the call.
+    const normalizedPhone = normalizeIndianMobile(phone);
+    if (!phone.trim()) nextErrors.phone = "Phone number is required.";
+    else if (!normalizedPhone)
+      nextErrors.phone = "Enter a valid 10-digit mobile number.";
     if (entryMode === "invoice" && !invoiceNo.trim())
       nextErrors.invoiceNo = "Invoice number is required for an invoice-based return.";
     setErrors(nextErrors);
@@ -172,11 +179,13 @@ export function ReturnCalculatorDialog({
       const created = await createReturn.mutateAsync({
         storeId: targetStoreId,
         customerName: customer.trim(),
-        phone: phone.trim() || undefined,
+        // Validated non-null just above; send the canonical 10-digit value.
+        phone: normalizedPhone as string,
         // `type` mirrors the chosen option: exchange → exchange, buyback → return.
         type: chosen === "exchange" ? "exchange" : "return",
         item: item.trim() || undefined,
         goldWtG: goldWtNum,
+        goldKarat: toNumber(goldKarat),
         goldRateAtPurchase: toNumber(goldRate),
         diaCarat: diaCaratNum,
         diaSpec: diaSpec || undefined,
@@ -221,6 +230,8 @@ export function ReturnCalculatorDialog({
         </DialogHeader>
 
         <div className="grid gap-5">
+          <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
+
           {/* Entry mode: pull the original bill by invoice, or type it manually. */}
           <div className="grid gap-2">
             <div className="grid grid-cols-2 gap-2 sm:max-w-sm">
@@ -293,13 +304,22 @@ export function ReturnCalculatorDialog({
               ) : null}
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="rc-phone">Phone</Label>
+              <Label htmlFor="rc-phone">
+                Phone <span className="text-destructive">*</span>
+              </Label>
               <Input
                 id="rc-phone"
                 placeholder="+91 …"
                 value={phone}
-                onChange={(e) => setPhone(e.target.value)}
+                aria-invalid={!!errors.phone}
+                onChange={(e) => {
+                  setPhone(e.target.value);
+                  if (errors.phone) setErrors((p) => ({ ...p, phone: "" }));
+                }}
               />
+              {errors.phone ? (
+                <p className="mt-1 text-xs text-destructive">{errors.phone}</p>
+              ) : null}
             </div>
           </div>
 
@@ -316,7 +336,7 @@ export function ReturnCalculatorDialog({
           {/* Gold block */}
           <div className="rounded-lg border bg-muted/20 p-4">
             <p className="mb-3 text-sm font-semibold">Gold (original bill)</p>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-3">
               <div className="grid gap-1.5">
                 <Label htmlFor="rc-gold-wt">Gold weight (g)</Label>
                 <Input
@@ -329,6 +349,19 @@ export function ReturnCalculatorDialog({
                   value={goldWtG}
                   onChange={(e) => setGoldWtG(e.target.value)}
                 />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="rc-gold-karat">Gold purity</Label>
+                <Select value={goldKarat} onValueChange={setGoldKarat}>
+                  <SelectTrigger id="rc-gold-karat">
+                    <SelectValue placeholder="Karat" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="24">24K (999)</SelectItem>
+                    <SelectItem value="22">22K (916)</SelectItem>
+                    <SelectItem value="18">18K (750)</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div className="grid gap-1.5">
                 <Label htmlFor="rc-gold-rate">Gold rate at purchase (₹/g)</Label>
@@ -418,19 +451,8 @@ export function ReturnCalculatorDialog({
             </p>
           </div>
 
-          {/* Today's rates readout */}
+          {/* Today's diamond rate readout — gold rate lives in the top-bar chip. */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
-            <span className="inline-flex items-center gap-1.5">
-              <span className="h-1.5 w-1.5 rounded-full bg-[var(--gold)]" />
-              Today&apos;s gold:{" "}
-              <span className="num font-medium text-foreground">
-                {result
-                  ? `${formatINR(result.todayGoldRate)}/g`
-                  : rates?.gold?.[0]
-                    ? `${formatINR(rates.gold[0].ratePerGram)}/g`
-                    : "—"}
-              </span>
-            </span>
             <span className="inline-flex items-center gap-1.5">
               <Gem className="h-3 w-3 text-primary" />
               Today&apos;s diamond{diaSpec ? ` (${diaSpec})` : ""}:{" "}

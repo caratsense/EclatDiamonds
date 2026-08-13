@@ -135,6 +135,8 @@ export const MOCK_STOCK: StockItem[] = [
 export interface AgingBucket {
   bucket: string;
   items: number;
+  /** Stock value (₹) in the bucket — the summary endpoint populates this. */
+  value?: number;
 }
 
 export const MOCK_AGING_DISTRIBUTION: AgingBucket[] = [

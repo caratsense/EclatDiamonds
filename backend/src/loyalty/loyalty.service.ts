@@ -184,11 +184,18 @@ export class LoyaltyService {
       include: { installments: true },
       orderBy: { enrolledAt: 'desc' },
     });
-    const now = Date.now();
+    // An installment is only "missed" once its due DAY has fully passed. dueDate
+    // is a @db.Date (UTC midnight), so compare against the start of today in UTC
+    // — not `Date.now()`, which would flag an installment due today (e.g. month
+    // one of a brand-new enrollment) as already overdue.
+    const startOfToday = (() => {
+      const d = new Date();
+      return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+    })();
     return rows.map((m) => {
       const paidMonths = m.installments.filter((i) => i.status === 'paid').length;
       const missedMonths = m.installments.filter(
-        (i) => i.status === 'missed' || (i.status === 'due' && i.dueDate.getTime() < now),
+        (i) => i.status === 'missed' || (i.status === 'due' && i.dueDate.getTime() < startOfToday),
       ).length;
       return {
         id: m.id,
@@ -235,7 +242,10 @@ export class LoyaltyService {
         installments: {
           create: Array.from({ length: plan.tenureMonths }, (_, i) => ({
             sequence: i + 1,
-            dueDate: new Date(enrolledAt.getFullYear(), enrolledAt.getMonth() + i, enrolledAt.getDate()),
+            // Build in UTC to match the @db.Date column. A local-time Date here
+            // lands a day early in +ve-offset zones (e.g. IST), which shifted
+            // month one before today and made it read back as an instant miss.
+            dueDate: new Date(Date.UTC(enrolledAt.getUTCFullYear(), enrolledAt.getUTCMonth() + i, enrolledAt.getUTCDate())),
             amount: new Prisma.Decimal(dto.installment),
             status: 'due' as const,
           })),

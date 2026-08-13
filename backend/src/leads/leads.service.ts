@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
@@ -197,8 +202,11 @@ export class LeadsService {
   }
 
   async get(user: AuthUser, id: string) {
+    const where: Prisma.LeadWhereInput = { id, ...this.scope.storeFilter(user) };
+    // A salesperson can only open a lead they own (mirrors list()).
+    if (user.role === 'salesperson') where.ownerId = user.id;
     const lead = await this.prisma.lead.findFirst({
-      where: { id, ...this.scope.storeFilter(user) },
+      where,
       include: {
         owner: true,
         notes: { include: { author: true }, orderBy: { createdAt: 'desc' } },
@@ -418,6 +426,8 @@ export class LeadsService {
     const where: Prisma.LeadFollowUpWhereInput = {
       ...this.scope.storeFilter(user, headerStore),
     };
+    // A salesperson only sees follow-ups on leads they own (mirrors list()).
+    if (user.role === 'salesperson') where.lead = { ownerId: user.id };
     const today = todayUtc();
     switch (scope) {
       case 'overdue':
@@ -456,6 +466,10 @@ export class LeadsService {
     });
     if (!existing) throw new NotFoundException('Follow-up not found');
     this.scope.assertStoreAllowed(user, existing.storeId);
+    // A salesperson can only touch follow-ups on their own leads.
+    if (user.role === 'salesperson' && existing.lead.ownerId !== user.id) {
+      throw new ForbiddenException('You can only update follow-ups on your own leads');
+    }
 
     const data: Prisma.LeadFollowUpUpdateInput = {};
     if (dto.dueDate) data.dueDate = parseYmd(dto.dueDate);

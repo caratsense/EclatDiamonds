@@ -12,6 +12,8 @@ export interface AuditQuery {
   action?: string;
   from?: string;
   to?: string;
+  /** Explicit store filter (an in-page dropdown); validated against the caller's scope. */
+  storeId?: string;
   page?: string;
   pageSize?: string;
 }
@@ -21,6 +23,21 @@ function parseBound(v?: string): Date | undefined {
   if (!v) return undefined;
   const d = new Date(v);
   return isNaN(d.getTime()) ? undefined : d;
+}
+
+/**
+ * Upper bound for a date range. A bare `YYYY-MM-DD` parses as midnight UTC, so a
+ * plain `lte` would exclude everything that happened later that same day — the
+ * "to = today shows nothing from today" bug. For a date-only value we make the
+ * bound the END of that day so the range is inclusive of it.
+ */
+function parseUpperBound(v?: string): Date | undefined {
+  const d = parseBound(v);
+  if (!d) return undefined;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v!.trim())) {
+    d.setUTCHours(23, 59, 59, 999);
+  }
+  return d;
 }
 
 function toRow(r: any) {
@@ -53,7 +70,10 @@ export class AuditReadService {
    */
   async list(user: AuthUser, q: AuditQuery, headerStore?: string) {
     const where: Prisma.AuditLogWhereInput = {
-      ...this.scope.storeFilter(user, headerStore),
+      // An in-page store dropdown (q.storeId) takes precedence over the global
+      // switcher; storeFilter validates it against the caller's scope either way,
+      // so a store manager can never widen past their own store(s).
+      ...this.scope.storeFilter(user, q.storeId ?? headerStore),
     };
     if (q.entityType) where.entityType = q.entityType;
     if (q.entityId) where.entityId = q.entityId;
@@ -61,7 +81,7 @@ export class AuditReadService {
     // Parse date bounds defensively — a garbage ?from=/&to= must not reach Prisma
     // as an Invalid Date (which would 500). Silently ignore unparseable values.
     const from = parseBound(q.from);
-    const to = parseBound(q.to);
+    const to = parseUpperBound(q.to);
     if (from || to) {
       where.createdAt = {
         ...(from ? { gte: from } : {}),
@@ -81,6 +101,22 @@ export class AuditReadService {
       }),
     ]);
 
-    return { items: rows.map(toRow), page: pg.page, pageSize: pg.pageSize, total };
+    // Resolve store names for the page (batched) so the UI shows "Surat — Main"
+    // rather than a raw store id, and the export/detail read cleanly.
+    const storeIds = [...new Set(rows.map((r) => r.storeId).filter((s): s is string => !!s))];
+    const stores = storeIds.length
+      ? await this.prisma.store.findMany({
+          where: { id: { in: storeIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const nameById = new Map(stores.map((s) => [s.id, s.name]));
+
+    return {
+      items: rows.map((r) => ({ ...toRow(r), storeName: r.storeId ? nameById.get(r.storeId) ?? null : null })),
+      page: pg.page,
+      pageSize: pg.pageSize,
+      total,
+    };
   }
 }

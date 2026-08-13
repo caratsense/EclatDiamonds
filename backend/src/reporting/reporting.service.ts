@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { PaymentMode, Prisma } from '@prisma/client';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { MetalKind, PaymentMode, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
+import { isValidEmail, normalizeIndianMobile } from '../common/contact.util';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuditService } from '../common/audit.service';
 import { paymentModeLabel } from '../common/payment-mode.util';
@@ -29,6 +30,15 @@ type DailyReportWithStore = Prisma.DailyReportGetPayload<{ include: { store: tru
 function num(v: Prisma.Decimal | number | null | undefined): number {
   return v == null ? 0 : Number(v);
 }
+
+/** MetalKind values that count as gold — everything else (platinum, silver) is excluded from goldGrams. */
+const GOLD_METALS: MetalKind[] = [
+  'gold_24k',
+  'gold_22k',
+  'gold_18k',
+  'rose_gold_18k',
+  'gold_unspecified',
+];
 
 /**
  * Partially mask a phone number or email for the audit trail.
@@ -256,7 +266,15 @@ export class ReportingService {
           this.prisma.checkIn.count({ where: { storeId: st.id, timeIn: { gte: todayStart } } }),
           this.prisma.saleLine.aggregate({
             _sum: { netWeight: true },
-            where: { sale: { storeId: st.id, isCancelled: false, docType: 'sale', docDate: { gte: todayStart } } },
+            // Only gold pieces count toward goldGrams. SaleLine has no metal of its
+            // own, so read it off the physical piece or, failing that, the design.
+            where: {
+              sale: { storeId: st.id, isCancelled: false, docType: 'sale', docDate: { gte: todayStart } },
+              OR: [
+                { stockItem: { metal: { in: GOLD_METALS } } },
+                { product: { metal: { in: GOLD_METALS } } },
+              ],
+            },
           }),
         ]);
         return {
@@ -384,7 +402,9 @@ export class ReportingService {
       this.prisma.customOrder.aggregate({
         _count: true,
         _sum: { advanceReceived: true, value: true },
-        where: { ...storeWhere, bookedOn: range },
+        // Cancelled/refunded orders are not booked takings — exclude them from
+        // count, advance and estimation.
+        where: { ...storeWhere, bookedOn: range, stage: { not: 'cancelled' } },
       }),
       this.prisma.payment.aggregate({
         _count: true,
@@ -431,22 +451,42 @@ export class ReportingService {
    * (sent=false, disabled=true) when its integration is unconfigured — the preview
    * text is always returned so the report can be inspected regardless.
    */
+  /**
+   * Validate the outbound recipient for the chosen channel and return it in a
+   * consistent form. Rejects letters/garbage rather than salvaging digits — a
+   * report is about to be delivered to whatever this resolves to.
+   */
+  private assertRecipient(channel: ReportChannel, to: string): string {
+    if (channel === 'whatsapp') {
+      const phone = normalizeIndianMobile(to);
+      if (!phone) {
+        throw new BadRequestException('Enter a valid 10-digit Indian mobile number');
+      }
+      return phone;
+    }
+    if (!isValidEmail(to)) {
+      throw new BadRequestException('Enter a valid email address');
+    }
+    return to.trim();
+  }
+
   async send(
     user: AuthUser,
     dto: SendReportDto,
     headerStore?: string,
   ): Promise<{ sent: boolean; channel: ReportChannel; disabled?: boolean; preview: string }> {
+    const to = this.assertRecipient(dto.channel, dto.to);
     const summary = await this.summary(user, dto.period, dto.date, headerStore);
     const preview = this.composeReport(summary);
 
     let sent = false;
     let disabled = false;
     if (dto.channel === 'whatsapp') {
-      if (this.whatsapp.enabled) sent = (await this.whatsapp.sendText(dto.to, preview)).delivered;
+      if (this.whatsapp.enabled) sent = (await this.whatsapp.sendText(to, preview)).delivered;
       else disabled = true;
     } else if (this.email.enabled) {
       const subject = `CaratSense ${PERIOD_LABEL[dto.period]} Report — ${summary.from} to ${summary.to}`;
-      sent = (await this.email.send(dto.to, subject, preview)).sent;
+      sent = (await this.email.send(to, subject, preview)).sent;
     } else {
       disabled = true;
     }
@@ -522,11 +562,36 @@ export class ReportingService {
 
   /** POST /reporting/daily — capture a store-close DSR. Store-scoped write. */
   async createDaily(user: AuthUser, dto: CreateDailyReportDto) {
-    this.scope.assertStoreAllowed(user, dto.storeId);
+    // A DSR belongs to ONE concrete store. An "All Stores" caller (head_office
+    // with no store selected) must pick one — never silently fall through to a
+    // default store. assertStoreAllowed is a no-op for allStores users, so this
+    // is the only thing stopping a filing under 'all'/'' from landing somewhere.
+    const storeId = (dto.storeId ?? '').trim();
+    if (!storeId || storeId === 'all') {
+      throw new BadRequestException('Select a store to file the DSR for');
+    }
+    this.scope.assertStoreAllowed(user, storeId);
+
+    // Footfall funnel: serious enquiries are a subset of walk-ins, so they can
+    // never exceed the total walk-in count (industry-standard retail metric).
+    if (
+      dto.walkIns != null &&
+      dto.seriousEnquiries != null &&
+      dto.seriousEnquiries > dto.walkIns
+    ) {
+      throw new BadRequestException('Serious enquiries cannot exceed walk-ins');
+    }
+
+    // A store-close report is a record of a day that has ended; it cannot be for
+    // a future day at the store. Back-dating (late entry) stays allowed.
+    const tz = await this.scope.resolveTimezone(user, storeId);
+    if (dto.reportDate > dateOnly(businessDate(new Date(), tz))) {
+      throw new BadRequestException('Report date cannot be in the future');
+    }
 
     const created = await this.prisma.dailyReport.create({
       data: {
-        storeId: dto.storeId,
+        storeId,
         reportDate: new Date(`${dto.reportDate}T00:00:00.000Z`),
         reportTime: dto.reportTime,
         walkIns: dto.walkIns ?? 0,
@@ -581,17 +646,18 @@ export class ReportingService {
     id: string,
     dto: SendDailyReportDto,
   ): Promise<{ sent: boolean; channel: ReportChannel; disabled?: boolean; preview: string }> {
+    const to = this.assertRecipient(dto.channel, dto.to);
     const report = await this.loadScopedDaily(user, id);
     const preview = this.composeDsrText(report);
 
     let sent = false;
     let disabled = false;
     if (dto.channel === 'whatsapp') {
-      if (this.whatsapp.enabled) sent = (await this.whatsapp.sendText(dto.to, preview)).delivered;
+      if (this.whatsapp.enabled) sent = (await this.whatsapp.sendText(to, preview)).delivered;
       else disabled = true;
     } else if (this.email.enabled) {
       const subject = `Daily Sales Report — ${report.store?.name ?? 'Store'} — ${fmtDMY(report.reportDate)}`;
-      sent = (await this.email.send(dto.to, subject, preview)).sent;
+      sent = (await this.email.send(to, subject, preview)).sent;
     } else {
       disabled = true;
     }

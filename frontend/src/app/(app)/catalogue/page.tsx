@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { ImagePlus } from "lucide-react";
 import { toast } from "sonner";
 
 import { ImageSearch } from "@/components/catalogue/image-search";
@@ -36,8 +37,17 @@ import {
   type Product,
   type ProductCategory,
 } from "@/lib/mock/catalogue";
-import { useCreateProduct, useProducts } from "@/lib/queries/products";
+import {
+  useCreateProduct,
+  useProducts,
+  useUploadProductImage,
+} from "@/lib/queries/products";
+import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
+import {
+  StoreScopeField,
+  useStoreScope,
+} from "@/components/common/store-scope-field";
 import { apiErrorMessage } from "@/lib/utils";
 
 const nav = getNavItem("catalogue")!;
@@ -48,7 +58,7 @@ type AvailFilter = Availability | "all";
 type StoreFilter = string; // store id or "all"
 
 export default function CataloguePage() {
-  const { currentStore, stores } = useSession();
+  const { currentStore, stores, role } = useSession();
   const [active, setActive] = useState<Product | null>(null);
   const [open, setOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -77,6 +87,30 @@ export default function CataloguePage() {
   const products = data?.items ?? [];
   const total = data?.total ?? 0;
 
+  // Facet snapshot — the metals / availabilities actually stocked in scope, so
+  // the dropdowns only offer real choices (no empty "platinum" or "lead-time"
+  // when the business carries none). Unfiltered by metal/availability on
+  // purpose; category is kept so the facets track the browsed category.
+  // ponytail: 200-row scan; a store with >200 designs could miss a rare facet.
+  const { data: facetData } = useProducts({
+    page: 1,
+    pageSize: 200,
+    category: category === "all" ? undefined : category,
+    storeId: store === "all" ? undefined : store,
+  });
+  const facetRows = facetData?.items;
+  const presentMetals = facetRows
+    ? new Set(facetRows.map((p) => p.metal))
+    : null;
+  const presentAvail = facetRows
+    ? new Set(facetRows.map((p) => p.availability))
+    : null;
+  // Fall back to all options until the snapshot loads, and always keep the
+  // currently-selected value so an active filter never hides itself.
+  const metalOptions = (Object.entries(METAL_LABELS) as [Metal, string][]).filter(
+    ([id]) => !presentMetals || presentMetals.has(id) || metal === id,
+  );
+
   function openProduct(p: Product) {
     setActive(p);
     setOpen(true);
@@ -84,12 +118,15 @@ export default function CataloguePage() {
 
   const selectStores = stores.filter((s) => !s.isAggregate);
 
+  // POST /products requires store_manager+; hide the CTA for salespeople.
+  const canAddProduct = ROLE_RANK[role] >= ROLE_RANK.store_manager;
+
   return (
     <>
       <SectionHeader
         title={nav.title}
         purpose={nav.purpose}
-        primaryAction={nav.primaryAction}
+        primaryAction={canAddProduct ? nav.primaryAction : undefined}
         onPrimaryAction={() => setAddOpen(true)}
       />
 
@@ -131,7 +168,7 @@ export default function CataloguePage() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All metals</SelectItem>
-            {Object.entries(METAL_LABELS).map(([id, label]) => (
+            {metalOptions.map(([id, label]) => (
               <SelectItem key={id} value={id}>
                 {label}
               </SelectItem>
@@ -171,8 +208,12 @@ export default function CataloguePage() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All availability</SelectItem>
-            <SelectItem value="in_stock">In-Stock</SelectItem>
-            <SelectItem value="lead_time">Lead-Time</SelectItem>
+            {!presentAvail || presentAvail.has("in_stock") || avail === "in_stock" ? (
+              <SelectItem value="in_stock">In-Stock</SelectItem>
+            ) : null}
+            {!presentAvail || presentAvail.has("lead_time") || avail === "lead_time" ? (
+              <SelectItem value="lead_time">Lead-Time</SelectItem>
+            ) : null}
           </SelectContent>
         </Select>
       </div>
@@ -244,8 +285,11 @@ function AddProductDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { currentStore } = useSession();
+  const { targetStoreId, storeLabel, pickedStoreId, setPickedStoreId } =
+    useStoreScope();
   const createProduct = useCreateProduct();
+  const uploadImage = useUploadProductImage();
+  const photoRef = useRef<HTMLInputElement>(null);
   const [sku, setSku] = useState("");
   const [name, setName] = useState("");
   const [category, setCategory] = useState<ProductCategory>("necklace");
@@ -253,10 +297,16 @@ function AddProductDialog({
   const [karat, setKarat] = useState("");
   const [weight, setWeight] = useState("");
   const [price, setPrice] = useState("");
+  const [photo, setPhoto] = useState<File | null>(null);
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
 
-  // Aggregate ("all") scope has no concrete store to write to — fall back
-  // to the first real store id; broad roles normally pick a store first.
-  const targetStoreId = currentStore.isAggregate ? "surat-main" : currentStore.id;
+  function pickPhoto(file: File | null) {
+    setPhotoUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return file ? URL.createObjectURL(file) : null;
+    });
+    setPhoto(file);
+  }
 
   function reset() {
     setSku("");
@@ -266,9 +316,15 @@ function AddProductDialog({
     setKarat("");
     setWeight("");
     setPrice("");
+    pickPhoto(null);
+    if (photoRef.current) photoRef.current.value = "";
   }
 
   function save() {
+    if (!targetStoreId) {
+      toast.error("Select a store to add this product to.");
+      return;
+    }
     if (!sku.trim()) {
       toast.error("SKU is required.");
       return;
@@ -289,7 +345,17 @@ function AddProductDialog({
         storeId: targetStoreId,
       },
       {
-        onSuccess: () => {
+        onSuccess: (created) => {
+          // Photo picked up-front → upload it against the new product's id.
+          if (photo && created?.id) {
+            uploadImage.mutate(
+              { id: created.id, file: photo },
+              {
+                onError: (err) =>
+                  toast.error(apiErrorMessage(err, "Product added, but the photo upload failed.")),
+              },
+            );
+          }
           toast.success("Product added");
           reset();
           onOpenChange(false);
@@ -305,11 +371,39 @@ function AddProductDialog({
         <DialogHeader>
           <DialogTitle>Add product</DialogTitle>
           <DialogDescription>
-            New products are added to{" "}
-            {currentStore.isAggregate ? "Surat — Main" : currentStore.name}.
+            New products are added to {storeLabel}.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
+          <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
+
+          {/* Photo up-front — add it now or alongside the details, not only after saving. */}
+          <div className="grid gap-1.5">
+            <Label>Photo</Label>
+            <button
+              type="button"
+              onClick={() => photoRef.current?.click()}
+              className="flex aspect-[16/9] items-center justify-center overflow-hidden rounded-lg border border-dashed bg-muted/40 transition-colors hover:border-primary/50"
+            >
+              {photoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={photoUrl} alt="Selected product" className="h-full w-full object-cover" />
+              ) : (
+                <span className="flex flex-col items-center gap-1 text-xs text-muted-foreground">
+                  <ImagePlus className="h-6 w-6" />
+                  Add a photo (optional)
+                </span>
+              )}
+            </button>
+            <input
+              ref={photoRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => pickPhoto(e.target.files?.[0] ?? null)}
+            />
+          </div>
+
           <div className="grid gap-1.5">
             <Label htmlFor="sku">SKU</Label>
             <Input

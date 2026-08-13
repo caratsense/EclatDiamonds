@@ -84,8 +84,15 @@ export const SALES_TREND: Record<string, TrendPoint[]> = {
 /** Store comparison bars (today's revenue, ₹). */
 export interface StoreCompare {
   store: string;
+  /** City for disambiguation — the backend sends it alongside the store name. */
+  city?: string | null;
   revenue: number;
   target: number;
+}
+
+/** Chart label: `name — city` so two stores in the same city never collide. */
+export function storeCompareLabel(s: StoreCompare): string {
+  return s.city ? `${s.store} — ${s.city}` : s.store;
 }
 
 export const STORE_COMPARISON: StoreCompare[] = [

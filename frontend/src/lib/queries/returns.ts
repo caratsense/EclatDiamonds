@@ -65,6 +65,8 @@ export function useRates() {
 
 export interface ValuateInput {
   goldWtG?: number;
+  /** Gold purity in karat (24/22/18) — picks today's per-karat gold rate. */
+  goldKarat?: number;
   goldRateAtPurchase?: number;
   diaCarat?: number;
   diaSpec?: string;
@@ -134,6 +136,8 @@ export interface CreateReturnInput {
   type: ReturnType;
   item?: string;
   goldWtG?: number;
+  /** Gold purity in karat (24/22/18) — picks today's per-karat gold rate. */
+  goldKarat?: number;
   goldRateAtPurchase?: number;
   diaCarat?: number;
   diaSpec?: string;

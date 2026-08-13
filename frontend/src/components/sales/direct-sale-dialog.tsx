@@ -1,7 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Banknote, CreditCard, ImagePlus, Smartphone, X } from "lucide-react";
+import {
+  Banknote,
+  CreditCard,
+  Gem,
+  Hammer,
+  ImagePlus,
+  Lock,
+  Smartphone,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -23,9 +32,16 @@ import {
   type SaleDocType,
   type SalePaymentMode,
 } from "@/lib/mock/sales";
-import { useCreateSale, useUploadSaleDoc } from "@/lib/queries/sales";
+import {
+  isApprovalRequired,
+  useCreateSale,
+  useUploadSaleDoc,
+} from "@/lib/queries/sales";
 import { cn } from "@/lib/utils";
-import { useSession } from "@/store/use-session";
+import {
+  StoreScopeField,
+  useStoreScope,
+} from "@/components/common/store-scope-field";
 
 /** Parse a currency input into a number, or undefined when blank/invalid. */
 function toNumber(v: string): number | undefined {
@@ -42,9 +58,26 @@ const MODE_ICON: Record<SalePaymentMode, typeof Banknote> = {
 type StagedDocs = Record<SaleDocType, File | null>;
 const EMPTY_DOCS: StagedDocs = { quotation: null, invoice: null, receipt: null };
 
+/**
+ * An approved-but-unbilled over-cap discount request. When passed to
+ * `DirectSaleDialog`, the dialog opens in "completion" mode: customer/item are
+ * pre-filled and the diamond/making discount %s are locked to the approved
+ * values, so submitting records the sale linked to `id` without re-escalating.
+ */
+export interface SaleApprovalCompletion {
+  id: string;
+  ref: string;
+  customer: string;
+  item: string;
+  diamondPercent: number;
+  makingPercent: number;
+}
+
 interface DirectSaleDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** When set, complete this approved discount request instead of a fresh sale. */
+  approval?: SaleApprovalCompletion | null;
 }
 
 /**
@@ -53,43 +86,66 @@ interface DirectSaleDialogProps {
  * the sale, then uploads whichever of the three counter photos (quotation /
  * invoice / receipt) the user attached to the `/sales/:id/...` routes.
  */
-export function DirectSaleDialog({ open, onOpenChange }: DirectSaleDialogProps) {
-  const { currentStore } = useSession();
+export function DirectSaleDialog({
+  open,
+  onOpenChange,
+  approval = null,
+}: DirectSaleDialogProps) {
+  const { targetStoreId, storeLabel, pickedStoreId, setPickedStoreId } =
+    useStoreScope();
   const createSale = useCreateSale();
   const uploadDoc = useUploadSaleDoc();
+  const isCompletion = !!approval;
 
   const [customer, setCustomer] = useState("");
   const [description, setDescription] = useState("");
   const [invoiceNo, setInvoiceNo] = useState("");
   const [salesValue, setSalesValue] = useState("");
-  const [afterDiscount, setAfterDiscount] = useState("");
+  // Discount split — gold is never discounted (Module 15).
+  const [diamondValue, setDiamondValue] = useState("");
+  const [diamondPct, setDiamondPct] = useState("");
+  const [makingValue, setMakingValue] = useState("");
+  const [makingPct, setMakingPct] = useState("");
   const [mode, setMode] = useState<SalePaymentMode | "">("");
   const [advance, setAdvance] = useState("");
   const [docs, setDocs] = useState<StagedDocs>(EMPTY_DOCS);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Aggregate ("all") scope has no concrete store to write to — fall back to
-  // the first real store id; broad roles normally pick a store first.
-  const targetStoreId = currentStore.isAggregate
-    ? "surat-main"
-    : currentStore.id;
-  const storeLabel = currentStore.isAggregate
-    ? "Surat — Main"
-    : currentStore.name;
+  // Completion mode: on open, pre-fill from the approved request and pin the
+  // discount %s to the approved values (the % inputs render read-only below).
+  useEffect(() => {
+    if (open && approval) {
+      setCustomer(approval.customer);
+      setDescription(approval.item);
+      setDiamondPct(String(approval.diamondPercent));
+      setMakingPct(String(approval.makingPercent));
+    }
+  }, [open, approval]);
 
   const salesNum = toNumber(salesValue);
   const advanceNum = toNumber(advance);
-  // After-discount defaults to the sales value when left blank (no discount).
-  const afterNum = toNumber(afterDiscount) ?? salesNum;
+  const diamondValueNum = toNumber(diamondValue) ?? 0;
+  const makingValueNum = toNumber(makingValue) ?? 0;
+  const diamondPctNum = toNumber(diamondPct) ?? 0;
+  const makingPctNum = toNumber(makingPct) ?? 0;
+  // Mirror the backend: discount = diamondValue×dia% + makingValue×making%.
+  const discount =
+    (diamondValueNum * diamondPctNum) / 100 +
+    (makingValueNum * makingPctNum) / 100;
+  const hasDiscount = discount > 0;
+  const total = salesNum !== undefined ? salesNum - discount : undefined;
   const balance =
-    afterNum !== undefined ? Math.max(afterNum - (advanceNum ?? 0), 0) : undefined;
+    total !== undefined ? Math.max(total - (advanceNum ?? 0), 0) : undefined;
 
   function reset() {
     setCustomer("");
     setDescription("");
     setInvoiceNo("");
     setSalesValue("");
-    setAfterDiscount("");
+    setDiamondValue("");
+    setDiamondPct("");
+    setMakingValue("");
+    setMakingPct("");
     setMode("");
     setAdvance("");
     setDocs(EMPTY_DOCS);
@@ -99,40 +155,68 @@ export function DirectSaleDialog({ open, onOpenChange }: DirectSaleDialogProps) 
   const submitting = createSale.isPending || uploadDoc.isPending;
 
   async function save() {
+    if (!targetStoreId) {
+      toast.error("Select a store to record this sale against.");
+      return;
+    }
     const name = customer.trim();
     const fe: Record<string, string> = {};
     if (!name) fe.customer = "Customer name is required.";
     if (!invoiceNo.trim()) fe.invoiceNo = "Invoice number is required.";
     if (salesNum === undefined || salesNum <= 0)
       fe.salesValue = "Enter a valid sales value.";
+    if (diamondPctNum < 0 || diamondPctNum > 100)
+      fe.diamondPct = "Enter a value between 0 and 100.";
+    if (makingPctNum < 0 || makingPctNum > 100)
+      fe.makingPct = "Enter a value between 0 and 100.";
+    if (diamondValueNum < 0 || makingValueNum < 0)
+      fe.split = "Values cannot be negative.";
+    else if (salesNum !== undefined && diamondValueNum + makingValueNum > salesNum)
+      fe.split = "Diamond + making value cannot exceed the sales value.";
+    if (advanceNum !== undefined && total !== undefined && advanceNum > total)
+      fe.advance = "Advance received cannot exceed the total.";
     setErrors(fe);
     if (Object.keys(fe).length > 0) {
-      toast.error("Please fill in the required fields.");
+      toast.error("Please fix the highlighted fields.");
       return;
     }
     // Validated above; narrow for the type-checker.
     if (salesNum === undefined) return;
-    const finalAfter = afterNum ?? salesNum;
-    if (finalAfter > salesNum) {
-      toast.error("After-discount value cannot exceed the sales value.");
-      return;
-    }
-    if (advanceNum !== undefined && advanceNum > finalAfter) {
-      toast.error("Advance received cannot exceed the after-discount value.");
-      return;
-    }
 
     try {
-      const sale = await createSale.mutateAsync({
+      const result = await createSale.mutateAsync({
         storeId: targetStoreId,
         customerName: name,
         description: description.trim() || undefined,
         invoiceNo: invoiceNo.trim(),
         salesValue: salesNum,
-        afterDiscountValue: finalAfter,
+        // Send the split when there's a discount (backend rejects a blended
+        // after-discount value without it), or always in completion mode so the
+        // approved %s are verified against the request. Gold is never discounted.
+        ...(hasDiscount || isCompletion
+          ? {
+              diamondValue: diamondValueNum,
+              makingValue: makingValueNum,
+              diamondDiscountPercent: diamondPctNum,
+              makingDiscountPercent: makingPctNum,
+            }
+          : {}),
+        // Link to the approved request so the backend bills it (no re-escalation).
+        ...(approval ? { discountRequestId: approval.id } : {}),
         paymentMode: mode || undefined,
         advanceReceived: advanceNum,
       });
+
+      // Over-cap discount → no sale created; it was queued for approval.
+      if (isApprovalRequired(result)) {
+        toast.info(result.message, {
+          description: `Reference ${result.discountRequest.ref}`,
+        });
+        reset();
+        onOpenChange(false);
+        return;
+      }
+      const sale = result;
 
       // Upload whichever photos were attached, against the new sale id.
       const staged = SALE_DOC_META.map((d) => ({ doc: d.type, file: docs[d.type] })).filter(
@@ -172,13 +256,19 @@ export function DirectSaleDialog({ open, onOpenChange }: DirectSaleDialogProps) 
     >
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Record a sale</DialogTitle>
+          <DialogTitle>
+            {isCompletion ? "Complete approved sale" : "Record a sale"}
+          </DialogTitle>
           <DialogDescription>
-            Direct sale booked against {storeLabel} — feeds the weekly report.
+            {isCompletion
+              ? `Completing approved discount ${approval!.ref} — the discount %s are locked to the approved values.`
+              : `Direct sale booked against ${storeLabel} — feeds the weekly report.`}
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-4">
+          <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
+
           {/* Customer */}
           <div className="grid gap-1.5">
             <Label htmlFor="sale-customer">
@@ -233,44 +323,141 @@ export function DirectSaleDialog({ open, onOpenChange }: DirectSaleDialogProps) 
             ) : null}
           </div>
 
-          {/* Sales value + after discount */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="grid gap-1.5">
-              <Label htmlFor="sale-value">
-                Sales value (₹) <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="sale-value"
-                type="number"
-                min={0}
-                inputMode="numeric"
-                placeholder="0"
-                value={salesValue}
-                onChange={(e) => {
-                  setSalesValue(e.target.value);
-                  if (errors.salesValue)
-                    setErrors((p) => ({ ...p, salesValue: "" }));
-                }}
-                aria-invalid={!!errors.salesValue}
-              />
-              {errors.salesValue ? (
-                <p className="mt-1 text-xs text-destructive">
-                  {errors.salesValue}
-                </p>
-              ) : null}
+          {/* Sales value */}
+          <div className="grid gap-1.5 sm:max-w-xs">
+            <Label htmlFor="sale-value">
+              Sales value (₹) <span className="text-destructive">*</span>
+            </Label>
+            <Input
+              id="sale-value"
+              type="number"
+              min={0}
+              inputMode="numeric"
+              placeholder="0"
+              value={salesValue}
+              onChange={(e) => {
+                setSalesValue(e.target.value);
+                if (errors.salesValue)
+                  setErrors((p) => ({ ...p, salesValue: "" }));
+              }}
+              aria-invalid={!!errors.salesValue}
+            />
+            {errors.salesValue ? (
+              <p className="mt-1 text-xs text-destructive">
+                {errors.salesValue}
+              </p>
+            ) : null}
+          </div>
+
+          {/* Discount split — gold is never discounted (Module 15). */}
+          <div className="rounded-lg border bg-muted/20 p-4">
+            <p className="mb-3 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <Lock className="h-3.5 w-3.5" />
+              Gold: no discount — only diamond &amp; making are discountable.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-1.5">
+                <Label
+                  htmlFor="sale-diamond-value"
+                  className="flex items-center gap-1.5"
+                >
+                  <Gem className="h-3.5 w-3.5 text-primary" />
+                  Diamond / stone value (₹)
+                </Label>
+                <Input
+                  id="sale-diamond-value"
+                  type="number"
+                  min={0}
+                  inputMode="numeric"
+                  placeholder="0"
+                  value={diamondValue}
+                  onChange={(e) => {
+                    setDiamondValue(e.target.value);
+                    if (errors.split) setErrors((p) => ({ ...p, split: "" }));
+                  }}
+                  aria-invalid={!!errors.split}
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="sale-diamond-pct">Diamond discount %</Label>
+                <Input
+                  id="sale-diamond-pct"
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={0.5}
+                  inputMode="decimal"
+                  placeholder="0"
+                  value={diamondPct}
+                  readOnly={isCompletion}
+                  className={cn(isCompletion && "bg-muted cursor-not-allowed")}
+                  onChange={(e) => {
+                    if (isCompletion) return;
+                    setDiamondPct(e.target.value);
+                    if (errors.diamondPct)
+                      setErrors((p) => ({ ...p, diamondPct: "" }));
+                  }}
+                  aria-invalid={!!errors.diamondPct}
+                />
+                {errors.diamondPct ? (
+                  <p className="mt-1 text-xs text-destructive">
+                    {errors.diamondPct}
+                  </p>
+                ) : null}
+              </div>
+              <div className="grid gap-1.5">
+                <Label
+                  htmlFor="sale-making-value"
+                  className="flex items-center gap-1.5"
+                >
+                  <Hammer className="h-3.5 w-3.5 text-primary" />
+                  Making value (₹)
+                </Label>
+                <Input
+                  id="sale-making-value"
+                  type="number"
+                  min={0}
+                  inputMode="numeric"
+                  placeholder="0"
+                  value={makingValue}
+                  onChange={(e) => {
+                    setMakingValue(e.target.value);
+                    if (errors.split) setErrors((p) => ({ ...p, split: "" }));
+                  }}
+                  aria-invalid={!!errors.split}
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="sale-making-pct">Making discount %</Label>
+                <Input
+                  id="sale-making-pct"
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={0.5}
+                  inputMode="decimal"
+                  placeholder="0"
+                  value={makingPct}
+                  readOnly={isCompletion}
+                  className={cn(isCompletion && "bg-muted cursor-not-allowed")}
+                  onChange={(e) => {
+                    if (isCompletion) return;
+                    setMakingPct(e.target.value);
+                    if (errors.makingPct)
+                      setErrors((p) => ({ ...p, makingPct: "" }));
+                  }}
+                  aria-invalid={!!errors.makingPct}
+                />
+                {errors.makingPct ? (
+                  <p className="mt-1 text-xs text-destructive">
+                    {errors.makingPct}
+                  </p>
+                ) : null}
+              </div>
             </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="sale-after">After-discount (₹)</Label>
-              <Input
-                id="sale-after"
-                type="number"
-                min={0}
-                inputMode="numeric"
-                placeholder="Defaults to sales value"
-                value={afterDiscount}
-                onChange={(e) => setAfterDiscount(e.target.value)}
-              />
-            </div>
+            {errors.split ? (
+              <p className="mt-2 text-xs text-destructive">{errors.split}</p>
+            ) : null}
           </div>
 
           {/* Payment mode — large, touch-friendly segmented control */}
@@ -311,20 +498,52 @@ export function DirectSaleDialog({ open, onOpenChange }: DirectSaleDialogProps) 
               inputMode="numeric"
               placeholder="0"
               value={advance}
-              onChange={(e) => setAdvance(e.target.value)}
+              onChange={(e) => {
+                setAdvance(e.target.value);
+                if (errors.advance) setErrors((p) => ({ ...p, advance: "" }));
+              }}
+              aria-invalid={!!errors.advance}
             />
+            {errors.advance ? (
+              <p className="mt-1 text-xs text-destructive">{errors.advance}</p>
+            ) : null}
+          </div>
+
+          {/* Live discount summary — Original · Discount · Total */}
+          <div className="grid grid-cols-3 gap-3 rounded-lg border bg-muted/30 p-3 text-center">
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                Original
+              </p>
+              <p className="num mt-0.5 text-sm font-semibold">
+                {salesNum !== undefined ? formatINR(salesNum) : "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                Discount
+              </p>
+              <p
+                className={cn(
+                  "num mt-0.5 text-sm font-semibold",
+                  hasDiscount ? "text-warning" : "text-foreground",
+                )}
+              >
+                {hasDiscount ? `− ${formatINR(discount)}` : formatINR(0)}
+              </p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                Total
+              </p>
+              <p className="num mt-0.5 text-sm font-semibold">
+                {total !== undefined ? formatINR(total) : "—"}
+              </p>
+            </div>
           </div>
 
           {/* Live advance vs balance summary */}
-          <div className="grid grid-cols-2 gap-3 rounded-lg border bg-muted/30 p-3 text-center sm:grid-cols-3">
-            <div>
-              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                Billed
-              </p>
-              <p className="num mt-0.5 text-sm font-semibold">
-                {afterNum !== undefined ? formatINR(afterNum) : "—"}
-              </p>
-            </div>
+          <div className="grid grid-cols-2 gap-3 rounded-lg border bg-muted/30 p-3 text-center">
             <div>
               <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
                 Advance

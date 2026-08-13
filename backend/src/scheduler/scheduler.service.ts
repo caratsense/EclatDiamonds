@@ -128,23 +128,25 @@ export class SchedulerService {
    *
    * Quotes fall back to the last stored rate when the feed is absent, and a
    * fallback rate looks identical to a live one on the total — so a quiet feed is
-   * a pricing error waiting to happen. The tick is hourly (shared with the other
-   * jobs), but the run key is an N-hour bucket (GOLD_RATE_REFRESH_HOURS), so
-   * `runOnce` fires exactly one refresh per interval, whichever hour/instance
-   * gets there first — the stored table stays current without accruing a row an
-   * hour or burning through a feed's request quota. A manager can still pull an
-   * intraday rate on demand (POST /gold-rate/refresh) or override it by hand.
+   * a pricing error waiting to happen. The tick is hourly, and the run key is an
+   * HOURLY bucket so `runOnce` fires one attempt per hour (deduped across
+   * instances). The feed is only actually hit when the stored rate is older than
+   * GOLD_RATE_REFRESH_HOURS (`refreshIfStale`), so a fresh rate costs nothing —
+   * but a FAILED pull is retried the next hour instead of leaving the price stale
+   * for the whole interval. A manager can still pull an intraday rate on demand
+   * (POST /gold-rate/refresh) or override it by hand.
    */
   @Cron(CronExpression.EVERY_HOUR, { name: 'pricing.gold-rate-refresh' })
   async refreshGoldRate(): Promise<void> {
     if (!this.enabled || !this.goldRate.enabled) return;
 
-    // One refresh per configured interval, whichever instance gets there first.
+    // Dedup per hour across instances; refreshIfStale gates the actual feed call
+    // on the stored rate's age, so this retries hourly until a pull succeeds.
     const hours = this.goldRateRefreshHours;
-    const bucket = Math.floor(Date.now() / (hours * 3_600_000));
-    const runKey = `every-${hours}h-${bucket}`;
+    const hourBucket = Math.floor(Date.now() / 3_600_000);
+    const runKey = `hourly-${hourBucket}`;
     await this.runner.runOnce('pricing.gold-rate-refresh', 'global', runKey, async () => {
-      const res = await this.goldRate.refresh();
+      const res = await this.goldRate.refreshIfStale(hours);
       if (res.updated) this.logger.log(`Gold rates refreshed: ${JSON.stringify(res.rates)}`);
       return res;
     });

@@ -47,7 +47,7 @@ export interface SetTargetInput {
 /** GET /targets?period — configured target rows for the month. */
 export function useTargets(period: string) {
   const role = useSession((s) => s.role);
-  const canView = ROLE_RANK[role] >= ROLE_RANK.area_manager;
+  const canView = ROLE_RANK[role] >= ROLE_RANK.store_manager;
   return useQuery({
     queryKey: ["targets", period],
     enabled: canView && !!period,
@@ -63,7 +63,7 @@ export function useTargets(period: string) {
 /** GET /targets/achievement?period — per-store target vs. achieved. */
 export function useTargetAchievement(period: string) {
   const role = useSession((s) => s.role);
-  const canView = ROLE_RANK[role] >= ROLE_RANK.area_manager;
+  const canView = ROLE_RANK[role] >= ROLE_RANK.store_manager;
   return useQuery({
     queryKey: ["targets", "achievement", period],
     enabled: canView && !!period,

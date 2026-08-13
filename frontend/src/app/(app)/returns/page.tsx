@@ -55,6 +55,7 @@ import {
 } from "@/lib/queries/returns";
 import { useSession } from "@/store/use-session";
 import { apiErrorMessage } from "@/lib/utils";
+import { ROLE_LABELS, type Role } from "@/lib/types";
 
 const STATUS_VARIANT: Record<
   ReturnStatus,
@@ -215,6 +216,7 @@ export default function ReturnsPage() {
                       <TableHead className="text-right">Exchange</TableHead>
                       <TableHead className="text-right">Buyback</TableHead>
                       <TableHead>Chosen</TableHead>
+                      <TableHead>Raised by</TableHead>
                       <TableHead>Status</TableHead>
                       {isHeadOffice ? (
                         <TableHead className="text-right">Approval</TableHead>
@@ -273,6 +275,15 @@ export default function ReturnsPage() {
                                 {r.settlement?.replace("_", " ") ?? "—"}
                               </span>
                             )}
+                          </TableCell>
+                          <TableCell>
+                            <div>{r.raisedBy || "—"}</div>
+                            {r.raisedByRole ? (
+                              <div className="text-xs text-muted-foreground">
+                                {ROLE_LABELS[r.raisedByRole as Role] ??
+                                  r.raisedByRole}
+                              </div>
+                            ) : null}
                           </TableCell>
                           <TableCell>
                             <Badge variant={STATUS_VARIANT[r.status]}>

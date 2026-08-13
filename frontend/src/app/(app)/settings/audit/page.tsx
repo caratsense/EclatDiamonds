@@ -1,11 +1,21 @@
 "use client";
 
 import { useState } from "react";
-import { Lock, ScrollText } from "lucide-react";
+import Link from "next/link";
+import { Download, Lock, ScrollText } from "lucide-react";
+import * as XLSX from "xlsx";
+import { toast } from "sonner";
 
 import { SectionHeader } from "@/components/section/section-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -24,11 +34,35 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useAuditLog } from "@/lib/queries/audit";
+import {
+  exportAudit,
+  useAuditLog,
+  type AuditEntry,
+} from "@/lib/queries/audit";
 import { ROLE_LABELS, ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
 
 const PAGE_SIZE = 50;
+
+/**
+ * Deep-link map: entityType → the module list page for context. The app is
+ * list-driven with few dynamic detail routes, so we link to the module page,
+ * not an invented /:id route. Types with no matching route (e.g. Sale) fall
+ * through to plain text.
+ */
+const ENTITY_ROUTES: Record<string, string> = {
+  Lead: "/crm",
+  Quote: "/quotation",
+  Payment: "/payments",
+  Return: "/returns",
+  DiscountRequest: "/discounts",
+  StockItem: "/inventory",
+  StockTransfer: "/stock-transfers",
+  Task: "/dashboards",
+  Handoff: "/dashboards",
+  Store: "/settings/stores",
+  User: "/settings/team",
+};
 
 /** Sensitive actions worth filtering by. "" = all actions. */
 const ACTION_OPTIONS: { value: string; label: string }[] = [
@@ -105,24 +139,46 @@ function absoluteTime(iso: string): string {
   });
 }
 
+/** Role label, but only when it isn't already the actor's name (avoids dupes). */
+function roleLabel(entry: AuditEntry): string {
+  return ROLE_LABELS[entry.actorRole] ?? entry.actorRole;
+}
+
+function storeLabel(entry: AuditEntry): string {
+  return entry.storeName ?? entry.storeId ?? "—";
+}
+
 export default function AuditLogPage() {
   const role = useSession((s) => s.role);
-  const canView = ROLE_RANK[role] >= ROLE_RANK.area_manager;
+  const stores = useSession((s) => s.stores);
+  const canView = ROLE_RANK[role] >= ROLE_RANK.store_manager;
+  // Only head office may filter across stores; a store manager is locked to
+  // their own store server-side, so the picker is pointless (and misleading).
+  const canFilterStore = role === "head_office";
+  const realStores = stores.filter((s) => !s.isAggregate);
 
   const [action, setAction] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [storeId, setStoreId] = useState("");
   const [page, setPage] = useState(1);
+  const [detail, setDetail] = useState<AuditEntry | null>(null);
+  const [exporting, setExporting] = useState(false);
 
-  const { data, isLoading, isError, refetch, isFetching } = useAuditLog({
+  const filters = {
     action: action || undefined,
     from: from || undefined,
     to: to || undefined,
+    storeId: storeId || undefined,
+  };
+
+  const { data, isLoading, isError, refetch, isFetching } = useAuditLog({
+    ...filters,
     page,
     pageSize: PAGE_SIZE,
   });
 
-  // Area-manager+ only. Nav hides this for other roles; guard the page too so a
+  // store_manager+ only. Nav hides this for other roles; guard the page too so a
   // direct URL or a demo role switch can't reach it.
   if (!canView) {
     return (
@@ -135,9 +191,9 @@ export default function AuditLogPage() {
           <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-muted">
             <Lock className="h-5 w-5 text-muted-foreground" />
           </div>
-          <p className="text-sm font-medium">Area Manager &amp; above only</p>
+          <p className="text-sm font-medium">Store Manager &amp; above only</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            The audit log records sensitive actions and is limited to Area
+            The audit log records sensitive actions and is limited to Store
             Managers and Head Office. Switch to a higher-level view to continue.
           </p>
         </div>
@@ -148,9 +204,36 @@ export default function AuditLogPage() {
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
   const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const hasFilters = Boolean(action || from || to || storeId);
 
   function resetToFirstPage() {
     setPage(1);
+  }
+
+  async function handleExport() {
+    setExporting(true);
+    try {
+      const res = await exportAudit(filters);
+      const data = res.items.map((e) => ({
+        "When (ISO)": e.createdAt,
+        "When (readable)": absoluteTime(e.createdAt),
+        Actor: e.actorName,
+        Role: roleLabel(e),
+        Action: humanizeAction(e.action),
+        Summary: e.summary,
+        "Entity Type": e.entityType,
+        "Entity Id": e.entityId,
+        Store: storeLabel(e),
+      }));
+      const ws = XLSX.utils.json_to_sheet(data);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Audit");
+      XLSX.writeFile(wb, `audit-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch {
+      toast.error("Couldn't export the audit log. Please try again.");
+    } finally {
+      setExporting(false);
+    }
   }
 
   return (
@@ -184,6 +267,30 @@ export default function AuditLogPage() {
             </SelectContent>
           </Select>
         </div>
+        {canFilterStore ? (
+          <div className="grid gap-1.5">
+            <Label htmlFor="audit-store">Store</Label>
+            <Select
+              value={storeId || "all"}
+              onValueChange={(v) => {
+                setStoreId(v === "all" ? "" : v);
+                resetToFirstPage();
+              }}
+            >
+              <SelectTrigger id="audit-store" className="w-[190px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All stores</SelectItem>
+                {realStores.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>
+                    {s.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        ) : null}
         <div className="grid gap-1.5">
           <Label htmlFor="audit-from">From</Label>
           <Input
@@ -212,7 +319,7 @@ export default function AuditLogPage() {
             }}
           />
         </div>
-        {action || from || to ? (
+        {hasFilters ? (
           <Button
             variant="ghost"
             size="sm"
@@ -220,12 +327,23 @@ export default function AuditLogPage() {
               setAction("");
               setFrom("");
               setTo("");
+              setStoreId("");
               resetToFirstPage();
             }}
           >
             Clear filters
           </Button>
         ) : null}
+        <Button
+          variant="outline"
+          size="sm"
+          className="sm:ml-auto"
+          onClick={handleExport}
+          disabled={exporting || total === 0}
+        >
+          <Download className="h-4 w-4" />
+          {exporting ? "Exporting…" : "Export to Excel"}
+        </Button>
       </div>
 
       <div className="rounded-xl border">
@@ -237,20 +355,21 @@ export default function AuditLogPage() {
               <TableHead className="w-[190px]">Action</TableHead>
               <TableHead>Summary</TableHead>
               <TableHead className="w-[140px]">Store</TableHead>
+              <TableHead className="w-[80px] text-right">Detail</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
               Array.from({ length: 6 }).map((_, i) => (
                 <TableRow key={i}>
-                  <TableCell colSpan={5} className="py-3">
+                  <TableCell colSpan={6} className="py-3">
                     <Skeleton className="h-6 w-full" />
                   </TableCell>
                 </TableRow>
               ))
             ) : isError ? (
               <TableRow>
-                <TableCell colSpan={5} className="py-10 text-center">
+                <TableCell colSpan={6} className="py-10 text-center">
                   <div className="mx-auto max-w-sm rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
                     <p>Couldn&apos;t load the audit log.</p>
                     <Button
@@ -266,7 +385,7 @@ export default function AuditLogPage() {
               </TableRow>
             ) : items.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="py-12 text-center">
+                <TableCell colSpan={6} className="py-12 text-center">
                   <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-muted">
                     <ScrollText className="h-5 w-5 text-muted-foreground" />
                   </div>
@@ -277,31 +396,57 @@ export default function AuditLogPage() {
                 </TableCell>
               </TableRow>
             ) : (
-              items.map((e) => (
-                <TableRow key={e.id}>
-                  <TableCell className="align-top">
-                    <div className="text-sm">{relativeTime(e.createdAt)}</div>
-                    <div className="num text-xs text-muted-foreground">
-                      {absoluteTime(e.createdAt)}
-                    </div>
-                  </TableCell>
-                  <TableCell className="align-top">
-                    <div className="text-sm font-medium">{e.actorName}</div>
-                    <Badge variant="outline" className="mt-0.5">
-                      {ROLE_LABELS[e.actorRole] ?? e.actorRole}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="align-top">
-                    <span className="text-sm">{humanizeAction(e.action)}</span>
-                  </TableCell>
-                  <TableCell className="align-top text-sm text-muted-foreground">
-                    {e.summary}
-                  </TableCell>
-                  <TableCell className="align-top text-sm text-muted-foreground">
-                    {e.storeId}
-                  </TableCell>
-                </TableRow>
-              ))
+              items.map((e) => {
+                const rl = roleLabel(e);
+                // Don't repeat the role when the actor is literally named after it
+                // (e.g. the "Head Office" user with the head_office role).
+                const showRoleBadge = e.actorName ? rl !== e.actorName : false;
+                return (
+                  <TableRow
+                    key={e.id}
+                    className="cursor-pointer"
+                    onClick={() => setDetail(e)}
+                  >
+                    <TableCell className="align-top">
+                      <div className="text-sm">{relativeTime(e.createdAt)}</div>
+                      <div className="num text-xs text-muted-foreground">
+                        {absoluteTime(e.createdAt)}
+                      </div>
+                    </TableCell>
+                    <TableCell className="align-top">
+                      <div className="text-sm font-medium">
+                        {e.actorName || rl}
+                      </div>
+                      {showRoleBadge ? (
+                        <Badge variant="outline" className="mt-0.5">
+                          {rl}
+                        </Badge>
+                      ) : null}
+                    </TableCell>
+                    <TableCell className="align-top">
+                      <span className="text-sm">{humanizeAction(e.action)}</span>
+                    </TableCell>
+                    <TableCell className="align-top text-sm text-muted-foreground">
+                      {e.summary}
+                    </TableCell>
+                    <TableCell className="align-top text-sm text-muted-foreground">
+                      {storeLabel(e)}
+                    </TableCell>
+                    <TableCell className="align-top text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          setDetail(e);
+                        }}
+                      >
+                        View
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
             )}
           </TableBody>
         </Table>
@@ -336,6 +481,113 @@ export default function AuditLogPage() {
           </div>
         </div>
       ) : null}
+
+      <AuditDetailDialog entry={detail} onOpenChange={() => setDetail(null)} />
     </>
+  );
+}
+
+/** A read-only definition row for the detail dialog. */
+function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-[120px_1fr] gap-3 py-1.5">
+      <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
+      <dd className="text-sm">{children}</dd>
+    </div>
+  );
+}
+
+function AuditDetailDialog({
+  entry,
+  onOpenChange,
+}: {
+  entry: AuditEntry | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const route = entry ? ENTITY_ROUTES[entry.entityType] : undefined;
+  const meta = entry?.metadata ?? null;
+  const metaEntries = meta ? Object.entries(meta) : [];
+
+  return (
+    <Dialog open={!!entry} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Audit entry</DialogTitle>
+          <DialogDescription>
+            {entry ? humanizeAction(entry.action) : ""}
+          </DialogDescription>
+        </DialogHeader>
+        {entry ? (
+          <dl className="divide-y">
+            <DetailRow label="When">
+              <span className="num">{absoluteTime(entry.createdAt)}</span>
+              <span className="ml-2 text-xs text-muted-foreground">
+                {relativeTime(entry.createdAt)}
+              </span>
+            </DetailRow>
+            <DetailRow label="Actor">
+              {entry.actorName || "—"}
+              <Badge variant="outline" className="ml-2">
+                {roleLabel(entry)}
+              </Badge>
+            </DetailRow>
+            <DetailRow label="Action">
+              {humanizeAction(entry.action)}
+              <code className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs">
+                {entry.action}
+              </code>
+            </DetailRow>
+            <DetailRow label="Store">{storeLabel(entry)}</DetailRow>
+            <DetailRow label="Entity">
+              {route ? (
+                <Link
+                  href={route}
+                  className="text-[var(--gold)] underline underline-offset-2 hover:opacity-80"
+                >
+                  {entry.entityType}
+                </Link>
+              ) : (
+                entry.entityType
+              )}
+              {entry.entityId ? (
+                <span className="ml-2 text-xs text-muted-foreground num">
+                  {entry.entityId}
+                </span>
+              ) : null}
+            </DetailRow>
+            <DetailRow label="Summary">{entry.summary || "—"}</DetailRow>
+            {metaEntries.length > 0 ? (
+              <div className="py-1.5">
+                <p className="mb-1.5 text-xs font-medium text-muted-foreground">
+                  Details
+                </p>
+                <dl className="rounded-lg border bg-muted/30 p-3">
+                  {metaEntries.map(([k, v]) => {
+                    const nested = v !== null && typeof v === "object";
+                    return (
+                      <div
+                        key={k}
+                        className="grid grid-cols-[140px_1fr] gap-3 py-1 text-sm"
+                      >
+                        <dt className="text-xs text-muted-foreground">{k}</dt>
+                        <dd className="min-w-0 break-words">
+                          {nested ? (
+                            <pre className="max-h-40 overflow-auto rounded bg-background p-2 text-xs">
+                              {JSON.stringify(v, null, 2)}
+                            </pre>
+                          ) : (
+                            String(v)
+                          )}
+                        </dd>
+                      </div>
+                    );
+                  })}
+                </dl>
+              </div>
+            ) : null}
+          </dl>
+        ) : null}
+      </DialogContent>
+    </Dialog>
   );
 }

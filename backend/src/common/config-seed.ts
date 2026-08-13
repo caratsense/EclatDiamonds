@@ -20,7 +20,6 @@ export async function seedConfig(prisma: PrismaService): Promise<void> {
   const caps = [
     { role: 'salesperson' as const, maxDiamondPercent: 2, maxMakingPercent: 5, maxPercent: 2 },
     { role: 'store_manager' as const, maxDiamondPercent: 5, maxMakingPercent: 10, maxPercent: 10 },
-    { role: 'area_manager' as const, maxDiamondPercent: 20, maxMakingPercent: 20, maxPercent: 20 },
     { role: 'head_office' as const, maxDiamondPercent: 100, maxMakingPercent: 100, maxPercent: 100 },
   ];
   for (const c of caps) {

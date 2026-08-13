@@ -20,7 +20,6 @@ async function seedDiscountCaps() {
   const caps = [
     { role: 'salesperson', maxDiamondPercent: 2, maxMakingPercent: 5, maxPercent: 2 },
     { role: 'store_manager', maxDiamondPercent: 5, maxMakingPercent: 10, maxPercent: 10 },
-    { role: 'area_manager', maxDiamondPercent: 20, maxMakingPercent: 20, maxPercent: 20 },
     { role: 'head_office', maxDiamondPercent: 100, maxMakingPercent: 100, maxPercent: 100 },
   ];
   let n = 0;

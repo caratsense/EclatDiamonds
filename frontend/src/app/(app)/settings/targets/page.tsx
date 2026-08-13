@@ -67,7 +67,7 @@ interface EditTarget {
 
 export default function TargetsPage() {
   const role = useSession((s) => s.role);
-  const canView = ROLE_RANK[role] >= ROLE_RANK.area_manager;
+  const canView = ROLE_RANK[role] >= ROLE_RANK.store_manager;
 
   const [period, setPeriod] = useState(currentMonth());
   const [edit, setEdit] = useState<EditTarget | null>(null);

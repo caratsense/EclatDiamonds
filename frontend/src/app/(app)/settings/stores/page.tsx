@@ -98,7 +98,7 @@ export default function StoreSetupPage() {
   // Store lifecycle is managed by area managers and Head Office. Nav hides
   // this for lower roles; guard the page too so a direct URL / a demo role
   // switch can't reach the provisioning controls.
-  if (ROLE_RANK[role] < ROLE_RANK.area_manager) {
+  if (ROLE_RANK[role] < ROLE_RANK.head_office) {
     return (
       <>
         <SectionHeader title={nav.title} purpose={nav.purpose} />

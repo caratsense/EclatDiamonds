@@ -88,7 +88,7 @@ const VENDOR_STATUS_OPTIONS: { value: string; label: string }[] = [
 export default function NewStorePage() {
   const { data, isLoading, isError, refetch } = useNewStoreProjects();
   const role = useSession((s) => s.role);
-  const canEdit = ROLE_RANK[role] >= ROLE_RANK.area_manager;
+  const canEdit = ROLE_RANK[role] >= ROLE_RANK.head_office;
   const [projectOpen, setProjectOpen] = useState(false);
 
   const header = (

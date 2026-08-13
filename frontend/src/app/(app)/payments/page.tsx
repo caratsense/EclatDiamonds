@@ -53,6 +53,10 @@ import {
   type PaymentMode,
 } from "@/lib/queries/payments";
 import { useSession } from "@/store/use-session";
+import {
+  StoreScopeField,
+  useStoreScope,
+} from "@/components/common/store-scope-field";
 import { apiErrorMessage } from "@/lib/utils";
 
 const MODE_OPTIONS: { value: PaymentMode; label: string }[] = [
@@ -432,31 +436,40 @@ function AddPaymentDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { currentStore } = useSession();
+  const { targetStoreId, storeLabel, pickedStoreId, setPickedStoreId } =
+    useStoreScope();
   const recordPayment = useRecordPayment();
   const [customer, setCustomer] = useState("");
   const [amount, setAmount] = useState("");
-  const [mode, setMode] = useState<PaymentMode>("cash");
+  // No silent default — the mode must be a deliberate choice (FIX 2).
+  const [mode, setMode] = useState<PaymentMode | "">("");
   const [reference, setReference] = useState("");
-
-  // Aggregate ("all") scope has no concrete store to write to — fall back
-  // to the first real store id; broad roles normally pick a store first.
-  const targetStoreId = currentStore.isAggregate ? "surat-main" : currentStore.id;
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   function save() {
-    const value = Number(amount);
-    if (!Number.isFinite(value) || value <= 0) {
-      toast.error("Enter a valid amount.");
+    if (!targetStoreId) {
+      toast.error("Select a store to record this payment against.");
       return;
     }
-    // Customer name is captured into the reference line when no party is linked.
-    const ref =
-      reference.trim() || (customer.trim() ? customer.trim() : undefined);
+    const name = customer.trim();
+    const value = Number(amount);
+    const fe: Record<string, string> = {};
+    if (!name) fe.customer = "Customer name is required.";
+    if (!Number.isFinite(value) || value <= 0)
+      fe.amount = "Enter a valid amount.";
+    if (!mode) fe.mode = "Select a payment mode.";
+    setErrors(fe);
+    if (Object.keys(fe).length > 0) return;
+    // The customer name is the collection's identity; an optional txn/cheque
+    // reference is folded in so neither is lost in the single reference field.
+    const txn = reference.trim();
+    const ref = txn ? `${name} · ${txn}` : name;
     recordPayment.mutate(
       {
         storeId: targetStoreId,
         amount: value,
-        mode,
+        // Validated non-empty above.
+        mode: mode as PaymentMode,
         reference: ref,
       },
       {
@@ -464,8 +477,9 @@ function AddPaymentDialog({
           toast.success("Payment recorded");
           setCustomer("");
           setAmount("");
-          setMode("cash");
+          setMode("");
           setReference("");
+          setErrors({});
           onOpenChange(false);
         },
         onError: (err) => toast.error(apiErrorMessage(err, "Could not record payment.")),
@@ -479,19 +493,29 @@ function AddPaymentDialog({
         <DialogHeader>
           <DialogTitle>Record payment</DialogTitle>
           <DialogDescription>
-            Collections are recorded against{" "}
-            {currentStore.isAggregate ? "Surat — Main" : currentStore.name}.
+            Collections are recorded against {storeLabel}.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
+          <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
+
           <div className="grid gap-1.5">
-            <Label htmlFor="pay-customer">Customer name</Label>
+            <Label htmlFor="pay-customer">
+              Customer name <span className="text-destructive">*</span>
+            </Label>
             <Input
               id="pay-customer"
-              placeholder="e.g. Priya Sharma (optional)"
+              placeholder="e.g. Priya Sharma"
               value={customer}
-              onChange={(e) => setCustomer(e.target.value)}
+              onChange={(e) => {
+                setCustomer(e.target.value);
+                if (errors.customer) setErrors((p) => ({ ...p, customer: "" }));
+              }}
+              aria-invalid={!!errors.customer}
             />
+            {errors.customer ? (
+              <p className="mt-1 text-xs text-destructive">{errors.customer}</p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="pay-amount">Amount</Label>
@@ -501,17 +525,29 @@ function AddPaymentDialog({
               min={0}
               placeholder="0"
               value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              onChange={(e) => {
+                setAmount(e.target.value);
+                if (errors.amount) setErrors((p) => ({ ...p, amount: "" }));
+              }}
+              aria-invalid={!!errors.amount}
             />
+            {errors.amount ? (
+              <p className="mt-1 text-xs text-destructive">{errors.amount}</p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="pay-mode">Mode</Label>
+            <Label htmlFor="pay-mode">
+              Mode <span className="text-destructive">*</span>
+            </Label>
             <Select
               value={mode}
-              onValueChange={(v) => setMode(v as PaymentMode)}
+              onValueChange={(v) => {
+                setMode(v as PaymentMode);
+                if (errors.mode) setErrors((p) => ({ ...p, mode: "" }));
+              }}
             >
-              <SelectTrigger id="pay-mode">
-                <SelectValue />
+              <SelectTrigger id="pay-mode" aria-invalid={!!errors.mode}>
+                <SelectValue placeholder="Select a mode" />
               </SelectTrigger>
               <SelectContent>
                 {MODE_OPTIONS.map((m) => (
@@ -521,6 +557,9 @@ function AddPaymentDialog({
                 ))}
               </SelectContent>
             </Select>
+            {errors.mode ? (
+              <p className="mt-1 text-xs text-destructive">{errors.mode}</p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="pay-ref">Reference</Label>

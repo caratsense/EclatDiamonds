@@ -271,9 +271,12 @@ export function GeoPunchCard() {
     }
     const away = offsiteDistance(pos);
     if (away != null) {
-      setPendingPos(pos);
-      setPendingDistance(away);
-      setReasonFor("in");
+      // A check-in from outside the store geofence is not allowed (the backend
+      // rejects it too) — block it here with a clear message rather than
+      // prompting for a reason. Check-OUT stays lenient (see handleCheckOut).
+      toast.error("You're outside the store's range", {
+        description: `You're ${away} m away (allowed: ${fence?.geofenceRadiusM ?? 0} m). You must be at the store to check in.`,
+      });
       return;
     }
     submitCheckIn(pos);

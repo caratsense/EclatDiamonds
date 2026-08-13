@@ -89,6 +89,10 @@ enum MetalKind {
   rose_gold_18k
   platinum
   silver
+  /// Gold whose purity/karat is not known from the legacy source. Used instead
+  /// of asserting a default karat (Gati carries no per-piece karat today), so an
+  /// unmapped purity reads as "gold, karat unknown" rather than a false 22K.
+  gold_unspecified
 }
 
 enum ProductCategory {
@@ -115,6 +119,25 @@ enum StockStatus {
   sold
   melted
   transferred
+  // Manual "Adjust status" outcomes (Module 9). Each is the target of a
+  // mandatory adjustment reason and takes the piece out of available stock.
+  damaged
+  lost
+  vendor_return
+  repair
+}
+
+/// Module 9 — inter-store stock transfer lifecycle. Transitions are centralised
+/// in stock-transfers/stock-transfer-status.ts; no other path may change status.
+enum StockTransferStatus {
+  draft
+  submitted
+  ho_approved
+  dispatched
+  received
+  acknowledged
+  rejected
+  cancelled
 }
 
 enum SaleDocType {
@@ -388,6 +411,8 @@ model Store {
   parties             Party[]
   products            Product[]
   stockItems          StockItem[]
+  transfersFrom       StockTransfer[]      @relation("StockTransferFrom")
+  transfersTo         StockTransfer[]      @relation("StockTransferTo")
   leads               Lead[]
   quotes              Quote[]
   sales               Sale[]
@@ -956,6 +981,9 @@ model StockItem {
   tagPrice      Decimal? @db.Decimal(14, 2)
 
   hallmarkNo    String?
+  /// BIS Hallmark Unique ID (6-char alphanumeric, one per hallmarked piece).
+  /// Distinct from hallmarkNo (the BIS licence number). Entered at stock-in.
+  huid          String?
   certificateNo String?
   imageUrl      String?
   inwardDate    DateTime?
@@ -967,10 +995,11 @@ model StockItem {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  store     Store           @relation(fields: [storeId], references: [id])
-  product   Product?        @relation(fields: [productId], references: [id])
-  saleLines SaleLine[]
-  movements StockMovement[]
+  store         Store               @relation(fields: [storeId], references: [id])
+  product       Product?            @relation(fields: [productId], references: [id])
+  saleLines     SaleLine[]
+  movements     StockMovement[]
+  transferItems StockTransferItem[]
 
   @@index([storeId, createdAt])
   @@index([status])
@@ -987,14 +1016,74 @@ model StockMovement {
   status      String?
   note        String?
   occurredAt  DateTime @default(now())
+  /// Links the movement to the inter-store transfer that produced it (Module 9).
+  stockTransferId String?
 
   // Legacy provenance (InwardHistory.Id — append-only, watermark by Id).
   legacyId        String?   @unique
   legacyUpdatedAt DateTime?
 
-  stockItem StockItem @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
+  stockItem StockItem      @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
+  transfer  StockTransfer? @relation(fields: [stockTransferId], references: [id])
 
   @@index([stockItemId, occurredAt])
+  @@index([stockTransferId])
+}
+
+/// Module 9 — inter-store stock transfer (state machine). Source store submits →
+/// HO approves (pieces reserved) → source dispatches → destination receives (a
+/// StockMovement is written and each piece is re-homed to the destination) →
+/// destination acknowledges. The ONLY inventory mutation is at receive.
+model StockTransfer {
+  id     String              @id @default(cuid())
+  ref    String              @unique
+  status StockTransferStatus @default(draft)
+
+  fromStoreId String
+  toStoreId   String
+
+  /// Rejection or cancellation reason, set on the terminal-negative transitions.
+  reason String?
+
+  // Actor id + timestamp per stage (ids only — names/roles resolved in the view).
+  requestedById    String
+  submittedAt      DateTime?
+  approvedById     String?
+  approvedAt       DateTime?
+  dispatchedById   String?
+  dispatchedAt     DateTime?
+  receivedById     String?
+  receivedAt       DateTime?
+  acknowledgedById String?
+  acknowledgedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  fromStore Store               @relation("StockTransferFrom", fields: [fromStoreId], references: [id])
+  toStore   Store               @relation("StockTransferTo", fields: [toStoreId], references: [id])
+  items     StockTransferItem[]
+  movements StockMovement[]
+
+  @@index([fromStoreId, createdAt])
+  @@index([toStoreId, createdAt])
+  @@index([status])
+}
+
+/// One physical piece in a transfer. Snapshots sku/name so the request is
+/// preserved even if the piece's metadata changes later. Unique per transfer.
+model StockTransferItem {
+  id          String  @id @default(cuid())
+  transferId  String
+  stockItemId String
+  sku         String?
+  name        String?
+
+  transfer  StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  stockItem StockItem     @relation(fields: [stockItemId], references: [id])
+
+  @@unique([transferId, stockItemId])
+  @@index([stockItemId])
 }
 
 // ============================================================================
@@ -1032,8 +1121,22 @@ model Sale {
   /// Object-storage URL of the invoice photo (if the bill was made) (Module 12).
   invoiceUrl      String?
 
+  // Module 15 — discount split captured on a manual sale so the configured
+  // diamond/making caps are enforceable (gold is never discounted). Null on a
+  // no-discount sale and on legacy-synced sales.
+  diamondValue           Decimal? @db.Decimal(14, 2)
+  makingValue            Decimal? @db.Decimal(14, 2)
+  diamondDiscountPercent Decimal? @db.Decimal(5, 2)
+  makingDiscountPercent  Decimal? @db.Decimal(5, 2)
+  /// Set only for an OVER-cap sale whose discount was approved via a DiscountRequest.
+  discountRequestId      String?  @unique
+
   /// Mirrors legacy soft-cancel (JewelTrans.isCancel) — do not hard-delete (audit).
   isCancelled Boolean @default(false)
+  // Soft-void metadata (Phase 2). The row stays; reporting already excludes isCancelled.
+  cancelledAt   DateTime?
+  cancelledById String?
+  cancelReason  String?
 
   // Legacy provenance (JewelTrans.JewelTransId).
   legacyId        String?   @unique
@@ -1042,11 +1145,12 @@ model Sale {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  store    Store          @relation(fields: [storeId], references: [id])
-  party    Party?         @relation(fields: [partyId], references: [id])
-  lines    SaleLine[]
-  payments Payment[]
-  returns  ReturnRecord[]
+  store           Store            @relation(fields: [storeId], references: [id])
+  party           Party?           @relation(fields: [partyId], references: [id])
+  lines           SaleLine[]
+  payments        Payment[]
+  returns         ReturnRecord[]
+  discountRequest DiscountRequest? @relation("SaleDiscount", fields: [discountRequestId], references: [id])
 
   @@unique([storeId, docNo, docType])
   @@index([storeId, docDate])
@@ -1264,12 +1368,19 @@ model Payment {
 
   reference  String?
   mode       PaymentMode
+  /// Signed INR. A reversal entry carries the NEGATIVE of the original so sums net
+  /// to zero; the original is never edited or deleted (financial immutability).
   amount     Decimal     @db.Decimal(14, 2)
   paidAt     DateTime
   /// Object-storage URL of the receipt photo handed to the customer (Module 12).
   receiptUrl String?
   /// Reconciliation against bank statement (Module 12).
   reconciled Boolean     @default(false)
+
+  /// Reversal link — set on a reversal entry; points at the original it cancels.
+  /// @unique enforces at most ONE reversal per original payment.
+  reversesPaymentId String? @unique
+  reversalReason    String?
 
   /// WHO recorded this collection. Without it a cash payment is anonymous —
   /// there is no way to answer "who took this ₹50,000" during a till dispute,
@@ -1284,10 +1395,12 @@ model Payment {
 
   createdAt DateTime @default(now())
 
-  store  Store         @relation(fields: [storeId], references: [id])
-  party  Party?        @relation(fields: [partyId], references: [id])
-  sale   Sale?         @relation(fields: [saleId], references: [id])
-  scheme SchemeMember? @relation(fields: [schemeMemberId], references: [id])
+  store      Store         @relation(fields: [storeId], references: [id])
+  party      Party?        @relation(fields: [partyId], references: [id])
+  sale       Sale?         @relation(fields: [saleId], references: [id])
+  scheme     SchemeMember? @relation(fields: [schemeMemberId], references: [id])
+  reverses   Payment?      @relation("PaymentReversal", fields: [reversesPaymentId], references: [id])
+  reversedBy Payment?      @relation("PaymentReversal")
 
   @@index([storeId, paidAt])
   @@index([mode])
@@ -2017,6 +2130,8 @@ model DiscountRequest {
   store       Store @relation(fields: [storeId], references: [id])
   requestedBy User? @relation("DiscountRequester", fields: [requestedById], references: [id])
   approvedBy  User? @relation("DiscountApprover", fields: [approvedById], references: [id])
+  /// The manual sale this request authorised (Module 15 direct-sale over-cap flow), if any.
+  sale        Sale? @relation("SaleDiscount")
 
   @@index([storeId, createdAt])
   @@index([status])

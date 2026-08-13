@@ -87,6 +87,14 @@ export interface Sale {
   advanceReceived: number;
   /** Outstanding = afterDiscountValue − advanceReceived (₹). Server-computed. */
   balance: number;
+  /** Discount amount applied (₹). Server-computed from the split. */
+  discount?: number;
+  /** Discount split percentages actually applied (gold is never discounted). */
+  diamondDiscountPercent?: number;
+  makingDiscountPercent?: number;
+  /** Soft-void state (Store manager + head office cancel). */
+  isCancelled?: boolean;
+  cancelReason?: string | null;
   /** Advance payment method (cash / card / upi / …). */
   paymentMode?: string | null;
   /** Uploaded photo URLs (relative to the API base or absolute CDN). */

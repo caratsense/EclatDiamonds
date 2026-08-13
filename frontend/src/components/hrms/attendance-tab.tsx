@@ -90,6 +90,11 @@ export function AttendanceTab({ records, fence }: AttendanceTabProps) {
   const hasCoords =
     !!fence && fence.hasCoords && fence.latitude != null && fence.longitude != null;
 
+  // Show a Store column whenever the list spans more than one store — i.e. the
+  // multi-store aggregate (head office / area) view, where "who's in today" is
+  // really store-wise attendance across branches.
+  const showStore = new Set(records.map((r) => r.storeId)).size > 1;
+
   return (
     <div className="space-y-4">
       <StatTiles
@@ -169,6 +174,7 @@ export function AttendanceTab({ records, fence }: AttendanceTabProps) {
             <TableHeader>
               <TableRow>
                 <TableHead>Staff</TableHead>
+                {showStore ? <TableHead>Store</TableHead> : null}
                 <TableHead>Shift</TableHead>
                 <TableHead>In</TableHead>
                 <TableHead>Out</TableHead>
@@ -181,7 +187,7 @@ export function AttendanceTab({ records, fence }: AttendanceTabProps) {
               {records.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={7}
+                    colSpan={showStore ? 8 : 7}
                     className="py-10 text-center text-sm text-muted-foreground"
                   >
                     No attendance marked yet — mark the first staff member in.
@@ -203,6 +209,11 @@ export function AttendanceTab({ records, fence }: AttendanceTabProps) {
                       </div>
                     </div>
                   </TableCell>
+                  {showStore ? (
+                    <TableCell className="text-muted-foreground">
+                      {r.storeName ?? "—"}
+                    </TableCell>
+                  ) : null}
                   <TableCell className="text-muted-foreground">{r.shift}</TableCell>
                   <TableCell className="num">{r.checkIn ?? "—"}</TableCell>
                   <TableCell className="num">{r.checkOut ?? "—"}</TableCell>

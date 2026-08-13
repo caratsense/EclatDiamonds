@@ -45,6 +45,10 @@ import {
   useSchemePlans,
 } from "@/lib/queries/loyalty";
 import { useSession } from "@/store/use-session";
+import {
+  StoreScopeField,
+  useStoreScope,
+} from "@/components/common/store-scope-field";
 import { SchemePlansManager } from "@/components/loyalty/scheme-plans-manager";
 import { apiErrorMessage } from "@/lib/utils";
 
@@ -107,11 +111,13 @@ export default function LoyaltyPage() {
 
   const planName = (id: string) => plans.find((p) => p.id === id)?.name ?? "—";
 
-  const targetStoreId = currentStore.isAggregate
-    ? "surat-main"
-    : currentStore.id;
+  const { targetStoreId, pickedStoreId, setPickedStoreId } = useStoreScope();
 
   function submit() {
+    if (!targetStoreId) {
+      toast.error("Select a store to enroll this customer at.");
+      return;
+    }
     if (!customer.trim()) {
       toast.error("Customer name is required.");
       return;
@@ -169,6 +175,7 @@ export default function LoyaltyPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="cust">Customer</Label>

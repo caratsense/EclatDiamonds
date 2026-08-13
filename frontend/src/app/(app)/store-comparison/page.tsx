@@ -38,6 +38,7 @@ import { formatINR, formatINRCompact, formatPercent } from "@/lib/format";
 import { getNavItem } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 import { useStoreComparison } from "@/lib/queries/store-comparison";
+import { storeCompareLabel } from "@/lib/mock/dashboards";
 
 /**
  * Store Comparison (Module 10, area/HO only) — every store side by side WITHOUT
@@ -224,7 +225,7 @@ export default function StoreComparisonPage() {
             </CardHeader>
             <CardContent>
               <BarChart
-                categories={chartRows.map((r) => r.store)}
+                categories={chartRows.map(storeCompareLabel)}
                 valueFormatter={formatINRCompact}
                 series={chartSeries}
                 height={320}

@@ -282,6 +282,15 @@ export class QuotesService {
 
     const item = q.lines[0]?.description ?? 'Custom piece';
 
+    // An advance cannot exceed the order value — a data-entry slip that would
+    // otherwise persist a negative balance (mirrors the direct-booking guard).
+    if (
+      dto.advanceReceived != null &&
+      new Prisma.Decimal(dto.advanceReceived).greaterThan(q.grandTotal)
+    ) {
+      throw new BadRequestException('Advance cannot exceed the order value');
+    }
+
     // Same store-scoped, sequence-backed ref format the timelines module mints,
     // so an order looks identical whether it was booked directly or converted
     // from a quote. (`CO-${Date.now()}` collided under concurrency and told the

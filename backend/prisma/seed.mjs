@@ -54,12 +54,11 @@ async function main() {
   // --- Discount limits (Module 15) — GLOBAL caps (storeId=null). Gold is never
   // discounted; caps are split into diamond% / making%. maxPercent kept for back-compat.
   //   store_manager -> diamond 5%  / making 10%
-  //   area_manager  -> diamond 20% / making 20%
   //   head_office   -> diamond 100%/ making 100%
+  // (area_manager was collapsed into store_manager — no cap tier for it.)
   const limits = [
     { role: "salesperson", maxPercent: "2.00", maxDiamondPercent: "2.00", maxMakingPercent: "5.00" },
     { role: "store_manager", maxPercent: "10.00", maxDiamondPercent: "5.00", maxMakingPercent: "10.00" },
-    { role: "area_manager", maxPercent: "20.00", maxDiamondPercent: "20.00", maxMakingPercent: "20.00" },
     { role: "head_office", maxPercent: "100.00", maxDiamondPercent: "100.00", maxMakingPercent: "100.00" },
   ];
   for (const { role, maxPercent, maxDiamondPercent, maxMakingPercent } of limits) {
@@ -74,7 +73,7 @@ async function main() {
     { id: "u-rep-priya", name: "Priya Verma", email: "priya.rep@caratsense.in", initials: "PV", role: "salesperson", stores: ["surat-main"] },
     { id: "u-sm-aarav", name: "Aarav Mehta", email: "aarav.mehta@caratsense.in", initials: "AM", role: "store_manager", stores: ["surat-main"] },
     { id: "u-sm-karan", name: "Karan Malhotra", email: "karan.malhotra@caratsense.in", initials: "KM", role: "store_manager", stores: ["mumbai-bandra"] },
-    { id: "u-am-neelam", name: "Neelam Rao", email: "neelam.area@caratsense.in", initials: "NR", role: "area_manager", stores: ["surat-main", "mumbai-bandra", "ahmedabad-cg"] },
+    { id: "u-am-neelam", name: "Neelam Rao", email: "neelam.area@caratsense.in", initials: "NR", role: "store_manager", stores: ["surat-main", "mumbai-bandra", "ahmedabad-cg"] },
     { id: "u-ho", name: "Head Office", email: "head.office@caratsense.in", initials: "HO", role: "head_office", stores: ["surat-main", "mumbai-bandra", "ahmedabad-cg"] },
     { id: "u-rep-rina", name: "Rina Trivedi", email: "rina.rep@caratsense.in", initials: "RT", role: "salesperson", stores: ["ahmedabad-cg"] },
   ];

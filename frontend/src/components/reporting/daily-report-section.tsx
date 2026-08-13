@@ -16,7 +16,7 @@ export function DailyReportSection() {
           Daily Report (DSR)
         </h2>
         <p className="text-sm text-muted-foreground">
-          The store-close report, filed on the website instead of WhatsApp
+          Type it once. Saved here, ready to send on WhatsApp
         </p>
       </div>
       <DailyReportForm />

@@ -107,6 +107,8 @@ export class SearchService {
 
     const leadWhere: Prisma.LeadWhereInput = {
       ...scope,
+      // A salesperson only owns their leads — don't leak colleagues' via search.
+      ...(user.role === 'salesperson' ? { ownerId: user.id } : {}),
       OR: [{ customerName: ci }, { phone: ci }, { ref: ci }, ...phoneOr('phone')],
     };
 

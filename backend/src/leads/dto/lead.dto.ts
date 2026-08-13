@@ -11,6 +11,7 @@ import {
   Min,
 } from 'class-validator';
 import { LeadSource, LeadStage } from '@prisma/client';
+import { IsIndianMobile } from '../../common/contact.util';
 
 /** Follow-up reminder scopes for GET /leads/reminders. */
 export const REMINDER_SCOPES = ['today', 'overdue', 'upcoming', 'pending', 'all'] as const;
@@ -38,9 +39,10 @@ export class CreateLeadDto {
   @IsString()
   customerName!: string;
 
-  /** Phone is mandatory on create (Round 2). */
+  /** Phone is mandatory on create (Round 2) and must be a valid Indian mobile. */
   @IsString()
   @IsNotEmpty()
+  @IsIndianMobile()
   phone!: string;
 
   @IsOptional()

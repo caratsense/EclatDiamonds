@@ -44,6 +44,9 @@ function toView(d: any, viewerRole: Role) {
     requestedRole: d.requestedRole,
     requiredRole: d.requiredRole ?? null,
     approvedRole: d.approvedRole,
+    // The manual sale this approval has been billed to, if any — lets the UI show
+    // approved-but-unbilled requests as "ready to bill" (direct-sale over-cap flow).
+    saleId: d.sale?.id ?? null,
     createdAt: d.createdAt.toISOString().slice(0, 10),
   };
 
@@ -86,8 +89,15 @@ export class DiscountsService {
   ) {}
 
   async list(user: AuthUser, headerStore?: string) {
+    const where: Prisma.DiscountRequestWhereInput = {
+      ...this.scope.storeFilter(user, headerStore),
+    };
+    // A salesperson only ever sees the discount requests they raised; store_manager+
+    // see every in-scope request (mirrors the leads ownership rule).
+    if (user.role === 'salesperson') where.requestedById = user.id;
     const rows = await this.prisma.discountRequest.findMany({
-      where: this.scope.storeFilter(user, headerStore),
+      where,
+      include: { sale: { select: { id: true } } },
       orderBy: { createdAt: 'desc' },
     });
     return rows.map((r) => toView(r, user.role));
@@ -225,6 +235,28 @@ export class DiscountsService {
     }
 
     return toView(row, user.role);
+  }
+
+  /**
+   * Shared Module 15 cap evaluation — reused by the discount-request workflow AND
+   * direct-sale enforcement so the diamond/making caps live in ONE place (no
+   * duplicated cap logic). Returns whether the requester may self-approve the
+   * given split, and if not, the lowest role that must approve (escalation target).
+   */
+  async evaluateDiscount(
+    user: AuthUser,
+    storeId: string,
+    diamondPercent: number,
+    makingPercent: number,
+  ): Promise<{ withinOwn: boolean; requiredRole: Role }> {
+    const caps = await this.loadCaps(storeId);
+    const own = caps[user.role] ?? { diamond: 0, making: 0 };
+    const withinOwn =
+      diamondPercent <= own.diamond && makingPercent <= own.making;
+    const requiredRole = withinOwn
+      ? user.role
+      : this.findApprover(user.role, diamondPercent, makingPercent, caps);
+    return { withinOwn, requiredRole };
   }
 
   /** Approve a pending/escalated request. Only a role ranked >= requiredRole may act. */
@@ -415,6 +447,8 @@ export class DiscountsService {
     const ordered = (Object.keys(ROLE_RANK) as Role[]).sort((a, b) => ROLE_RANK[a] - ROLE_RANK[b]);
     for (const role of ordered) {
       if (ROLE_RANK[role] <= ROLE_RANK[requester]) continue;
+      // area_manager was collapsed into store_manager — it is a dead approver tier
+      if (role === 'area_manager') continue;
       const c = caps[role];
       if (c && diamondPercent <= c.diamond && makingPercent <= c.making) return role;
     }

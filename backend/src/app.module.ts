@@ -16,6 +16,7 @@ import { PartiesModule } from './parties/parties.module';
 import { ProductsModule } from './products/products.module';
 import { QuotesModule } from './quotes/quotes.module';
 import { StockModule } from './stock/stock.module';
+import { StockTransfersModule } from './stock-transfers/stock-transfers.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { DiscountsModule } from './discounts/discounts.module';
 import { FinanceModule } from './finance/finance.module';
@@ -62,6 +63,7 @@ import { AllExceptionsFilter } from './common/all-exceptions.filter';
     ProductsModule,
     QuotesModule,
     StockModule,
+    StockTransfersModule,
     DashboardModule,
     DiscountsModule,
     FinanceModule,

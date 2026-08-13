@@ -1,9 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma, PartyType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuthUser } from '../common/auth-user';
 import { PageRequest, Paginated } from '../common/pagination';
+import { isValidEmail, normalizeIndianMobile } from '../common/contact.util';
+import { CreatePartyDto } from './dto/party.dto';
 
 /** Decimal | null -> number | null (Decimals never cross the wire raw). */
 function num(d: Prisma.Decimal | null | undefined): number | null {
@@ -43,6 +45,55 @@ export interface PartyRow {
   /** Bills this party is linked to — the quick "how much of a customer" signal. */
   salesCount: number;
   createdAt: string | null;
+}
+
+/** One place to define the row shape, shared by list + create. */
+const PARTY_SELECT = {
+  id: true,
+  name: true,
+  code: true,
+  types: true,
+  phone: true,
+  whatsapp: true,
+  email: true,
+  addressLine1: true,
+  addressLine2: true,
+  city: true,
+  state: true,
+  pincode: true,
+  gstin: true,
+  birthday: true,
+  anniversary: true,
+  creditLimit: true,
+  isBlacklisted: true,
+  createdAt: true,
+  _count: { select: { sales: true } },
+} satisfies Prisma.PartySelect;
+
+type PartySelected = Prisma.PartyGetPayload<{ select: typeof PARTY_SELECT }>;
+
+function toPartyRow(p: PartySelected): PartyRow {
+  return {
+    id: p.id,
+    name: p.name,
+    code: p.code ?? null,
+    types: p.types,
+    phone: p.phone ?? null,
+    whatsapp: p.whatsapp ?? null,
+    email: p.email ?? null,
+    addressLine1: p.addressLine1 ?? null,
+    addressLine2: p.addressLine2 ?? null,
+    city: p.city ?? null,
+    state: p.state ?? null,
+    pincode: p.pincode ?? null,
+    gstin: p.gstin ?? null,
+    birthday: iso(p.birthday),
+    anniversary: iso(p.anniversary),
+    creditLimit: num(p.creditLimit),
+    isBlacklisted: p.isBlacklisted,
+    salesCount: p._count.sales,
+    createdAt: iso(p.createdAt),
+  };
 }
 
 /**
@@ -97,55 +148,46 @@ export class PartiesService {
         orderBy: { name: 'asc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
-        select: {
-          id: true,
-          name: true,
-          code: true,
-          types: true,
-          phone: true,
-          whatsapp: true,
-          email: true,
-          addressLine1: true,
-          addressLine2: true,
-          city: true,
-          state: true,
-          pincode: true,
-          gstin: true,
-          birthday: true,
-          anniversary: true,
-          creditLimit: true,
-          isBlacklisted: true,
-          createdAt: true,
-          _count: { select: { sales: true } },
-        },
+        select: PARTY_SELECT,
       }),
     ]);
 
     return {
-      items: rows.map((p) => ({
-        id: p.id,
-        name: p.name,
-        code: p.code ?? null,
-        types: p.types,
-        phone: p.phone ?? null,
-        whatsapp: p.whatsapp ?? null,
-        email: p.email ?? null,
-        addressLine1: p.addressLine1 ?? null,
-        addressLine2: p.addressLine2 ?? null,
-        city: p.city ?? null,
-        state: p.state ?? null,
-        pincode: p.pincode ?? null,
-        gstin: p.gstin ?? null,
-        birthday: iso(p.birthday),
-        anniversary: iso(p.anniversary),
-        creditLimit: num(p.creditLimit),
-        isBlacklisted: p.isBlacklisted,
-        salesCount: p._count.sales,
-        createdAt: iso(p.createdAt),
-      })),
+      items: rows.map(toPartyRow),
       total,
       page,
       pageSize,
     };
+  }
+
+  /**
+   * POST /parties — add a customer (type=customer) against a store the caller
+   * may write to. Any authenticated role can add (reps create customers), but
+   * store scope is enforced via assertStoreAllowed.
+   */
+  async create(user: AuthUser, dto: CreatePartyDto): Promise<PartyRow> {
+    this.scope.assertStoreAllowed(user, dto.storeId);
+
+    const name = dto.name?.trim();
+    if (!name) throw new BadRequestException('Name is required');
+
+    // @IsIndianMobile already validated shape; normalize to the canonical
+    // 10-digit form so stored/searchable numbers stay consistent.
+    const phone = normalizeIndianMobile(dto.phone);
+    if (!phone) {
+      throw new BadRequestException('A valid 10-digit Indian mobile number is required');
+    }
+
+    const email = dto.email?.trim() || undefined;
+    if (email && !isValidEmail(email)) {
+      throw new BadRequestException('Enter a valid email address');
+    }
+    const city = dto.city?.trim() || undefined;
+
+    const party = await this.prisma.party.create({
+      data: { storeId: dto.storeId, name, phone, email, city, types: ['customer'] },
+      select: PARTY_SELECT,
+    });
+    return toPartyRow(party);
   }
 }

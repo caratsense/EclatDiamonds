@@ -1,5 +1,6 @@
-import { IsEnum, IsIn, IsISO8601, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsEnum, IsIn, IsISO8601, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 import { ReturnType, SettlementType } from '@prisma/client';
+import { IsIndianMobile } from '../../common/contact.util';
 
 /** 'exchange' | 'buyback' — Module 14 calculator option the customer picks. */
 export type ChosenOption = 'exchange' | 'buyback';
@@ -11,9 +12,11 @@ export class CreateReturnDto {
   @IsString()
   customerName!: string;
 
-  @IsOptional()
+  /** Phone is now mandatory on a return (team checklist) — valid Indian mobile. */
   @IsString()
-  phone?: string;
+  @IsNotEmpty()
+  @IsIndianMobile()
+  phone!: string;
 
   /** Round 2: 'invoice' (pulled from a bill) vs 'manual' (typed). Defaults to 'manual'. */
   @IsOptional()
@@ -81,6 +84,11 @@ export class CreateReturnDto {
   @Min(0)
   goldWtG?: number;
 
+  /** Gold purity in karat (24/22/18) — selects today's per-karat gold rate. */
+  @IsOptional()
+  @IsIn([24, 22, 18])
+  goldKarat?: number;
+
   /** Gold rate on the original bill (INR/g). Captured for the record. */
   @IsOptional()
   @IsNumber()
@@ -145,6 +153,11 @@ export class ValuateReturnDto {
   @IsNumber()
   @Min(0)
   goldWtG?: number;
+
+  /** Gold purity in karat (24/22/18) — selects today's per-karat gold rate. */
+  @IsOptional()
+  @IsIn([24, 22, 18])
+  goldKarat?: number;
 
   @IsOptional()
   @IsNumber()

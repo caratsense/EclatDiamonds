@@ -119,15 +119,16 @@ export function useStoresAdmin() {
 }
 
 /**
- * GET /stores/pending — branches still awaiting geo/region/manager before
- * they can go live. Scoped by the API to the caller's region; only enabled
- * for area managers and above (the endpoint 403s below that rank).
+ * GET /stores/pending — branches still awaiting geo/region/manager before they
+ * can go live. The whole store lifecycle (provision/activate/close/edit) is
+ * head-office only, so this is enabled for head office alone (the endpoint 403s
+ * below that rank).
  */
 export function usePendingStores() {
   const role = useSession((s) => s.role);
   return useQuery({
     queryKey: ["stores", "pending"],
-    enabled: ROLE_RANK[role] >= ROLE_RANK.area_manager,
+    enabled: ROLE_RANK[role] >= ROLE_RANK.head_office,
     queryFn: async () => {
       const { data } = await api.get<PendingStore[]>("/stores/pending");
       return data;

@@ -1,15 +1,19 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { PaymentMode, Prisma, SaleDocType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
+import { AuditService } from '../common/audit.service';
+import { ROLE_RANK } from '../common/role.util';
 import { StoreScopeService } from '../common/store-scope.service';
 import { StorageService } from '../storage/storage.service';
-import { CreateSaleDto, SalesQueryDto } from './dto/sales.dto';
+import { DiscountsService } from '../discounts/discounts.service';
+import { CancelSaleDto, CreateSaleDto, SalesQueryDto } from './dto/sales.dto';
 
 function num(v: Prisma.Decimal | number | null | undefined): number {
   return v == null ? 0 : Number(v);
@@ -35,22 +39,117 @@ export class SalesService {
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
     private readonly storage: StorageService,
+    private readonly discounts: DiscountsService,
+    private readonly audit: AuditService,
   ) {}
 
   /**
    * POST /sales — record a manual direct sale (Module 10 reporting) with the
-   * advance payment folded in (Module 12). Discount is derived as
-   * salesValue - afterDiscountValue; a Payment is created when an advance was
-   * taken with a known payment mode.
+   * advance payment folded in (Module 12).
+   *
+   * Module 15: a discount is captured as a diamond/making SPLIT (gold is never
+   * discounted) and the configured caps are enforced HERE — a salesperson cannot
+   * bypass the discount-request workflow by keying an over-cap discount straight
+   * into a sale. Within cap → the sale is recorded. Over cap → NO sale is created;
+   * an escalated DiscountRequest is raised, and the sale is recorded later by
+   * re-submitting with the approved `discountRequestId`.
    */
   async create(user: AuthUser, dto: CreateSaleDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
 
     const gross = new Prisma.Decimal(dto.salesValue);
-    const total = new Prisma.Decimal(dto.afterDiscountValue);
-    const discount = gross.minus(total);
+    const dPct = dto.diamondDiscountPercent ?? 0;
+    const mPct = dto.makingDiscountPercent ?? 0;
+    const diamondValue = new Prisma.Decimal(dto.diamondValue ?? 0);
+    const makingValue = new Prisma.Decimal(dto.makingValue ?? 0);
+    const hasSplitDiscount = dPct > 0 || mPct > 0;
+
+    let discount = new Prisma.Decimal(0);
+    let total = gross;
+    let linkedRequestId: string | null = null;
+
+    if (hasSplitDiscount) {
+      // The discountable bases cannot exceed the sale value (metal = remainder ≥ 0).
+      if (diamondValue.plus(makingValue).greaterThan(gross)) {
+        throw new BadRequestException(
+          'Diamond + making value cannot exceed the sales value',
+        );
+      }
+      // Decimal-safe: discount = diamondValue×d% + makingValue×m%.
+      discount = diamondValue
+        .times(dPct)
+        .dividedBy(100)
+        .plus(makingValue.times(mPct).dividedBy(100));
+      total = gross.minus(discount);
+
+      if (dto.discountRequestId) {
+        // Re-submission after an over-cap discount was approved — verify the approval.
+        const req = await this.prisma.discountRequest.findUnique({
+          where: { id: dto.discountRequestId },
+        });
+        if (!req) throw new NotFoundException('Discount approval not found');
+        this.scope.assertStoreAllowed(user, req.storeId);
+        if (req.status !== 'approved') {
+          throw new BadRequestException('The linked discount request is not approved');
+        }
+        // The applied split may not exceed what was approved.
+        if (
+          dPct > Number(req.diamondPercent ?? 0) ||
+          mPct > Number(req.makingPercent ?? 0)
+        ) {
+          throw new BadRequestException('Discount exceeds the approved amount');
+        }
+        const already = await this.prisma.sale.findUnique({
+          where: { discountRequestId: req.id },
+        });
+        if (already) {
+          throw new ConflictException(
+            'This approval has already been used on another sale',
+          );
+        }
+        linkedRequestId = req.id;
+      } else {
+        // First submission — enforce the caps via the shared Module 15 evaluator.
+        const { withinOwn, requiredRole } = await this.discounts.evaluateDiscount(
+          user,
+          dto.storeId,
+          dPct,
+          mPct,
+        );
+        if (!withinOwn) {
+          // Over cap — do NOT create the sale. Raise the escalated request instead,
+          // reusing the discount-request workflow (ref, notifications, approvals).
+          const request = await this.discounts.create(user, {
+            storeId: dto.storeId,
+            customerName: dto.customerName,
+            item: dto.description?.trim() || `Direct sale ${dto.invoiceNo}`,
+            diamondPercent: dPct,
+            makingPercent: mPct,
+            sellingPrice: Number(gross),
+          });
+          return {
+            requiresApproval: true as const,
+            discountRequest: request,
+            message: `This discount exceeds your limit — sent to ${requiredRole} for approval. Record the sale once it is approved.`,
+          };
+        }
+        // Within cap → auto-approved; proceed (no request row needed).
+      }
+    } else if (
+      dto.afterDiscountValue != null &&
+      new Prisma.Decimal(dto.afterDiscountValue).lessThan(gross)
+    ) {
+      // A blended discount with no diamond/making split is the old cap bypass.
+      throw new BadRequestException(
+        'Enter the diamond/making discount breakdown so the discount can be authorised',
+      );
+    }
+
     const advance =
       dto.advanceReceived != null ? new Prisma.Decimal(dto.advanceReceived) : null;
+    if (advance && advance.greaterThan(total)) {
+      throw new BadRequestException('Advance cannot exceed the total value');
+    }
 
     let saleId: string;
     try {
@@ -68,6 +167,12 @@ export class SalesService {
           totalAmount: total,
           paymentMode: dto.paymentMode ?? null,
           advanceReceived: advance,
+          // Module 15 split snapshot + approval link (null on a no-discount sale).
+          diamondValue: hasSplitDiscount ? diamondValue : null,
+          makingValue: hasSplitDiscount ? makingValue : null,
+          diamondDiscountPercent: hasSplitDiscount ? new Prisma.Decimal(dPct) : null,
+          makingDiscountPercent: hasSplitDiscount ? new Prisma.Decimal(mPct) : null,
+          discountRequestId: linkedRequestId,
         },
       });
       saleId = created.id;
@@ -96,7 +201,66 @@ export class SalesService {
       });
     }
 
+    await this.audit.record(user, {
+      action: 'sale.create',
+      entityType: 'Sale',
+      entityId: saleId,
+      storeId: dto.storeId,
+      summary: `Sale ${dto.invoiceNo} recorded (₹${Number(total)})${
+        discount.greaterThan(0) ? ` · discount ₹${Number(discount)}` : ''
+      }`,
+      metadata: {
+        total: Number(total),
+        discount: Number(discount),
+        diamondPercent: dPct,
+        makingPercent: mPct,
+        discountRequestId: linkedRequestId,
+      },
+    });
+
     return this.get(user, saleId);
+  }
+
+  /**
+   * POST /sales/:id/cancel — soft-void a sale (store manager → head office). The
+   * row stays in the DB (never hard-deleted); every revenue/KPI query already
+   * excludes `isCancelled`. A reason is mandatory and the void is audited.
+   */
+  async cancel(user: AuthUser, id: string, dto: CancelSaleDto) {
+    const sale = await this.prisma.sale.findUnique({ where: { id } });
+    if (!sale) throw new NotFoundException('Sale not found');
+    // Store isolation: a store manager cannot void another store's sale.
+    this.scope.assertStoreAllowed(user, sale.storeId);
+    // Only store manager and above may void; a salesperson cannot.
+    if (ROLE_RANK[user.role] < ROLE_RANK.store_manager) {
+      throw new ForbiddenException(
+        'Only a store manager or head office can cancel a sale',
+      );
+    }
+    if (sale.isCancelled) {
+      throw new BadRequestException('This sale is already cancelled');
+    }
+    const reason = dto.reason.trim();
+    if (!reason) throw new BadRequestException('A cancellation reason is required');
+
+    await this.prisma.sale.update({
+      where: { id },
+      data: {
+        isCancelled: true,
+        cancelledAt: new Date(),
+        cancelledById: user.id,
+        cancelReason: reason,
+      },
+    });
+    await this.audit.record(user, {
+      action: 'sale.void',
+      entityType: 'Sale',
+      entityId: id,
+      storeId: sale.storeId,
+      summary: `Voided sale ${sale.docNo} — ${reason}`,
+      metadata: { reason },
+    });
+    return this.get(user, id);
   }
 
   /**
@@ -232,13 +396,18 @@ export class SalesService {
       customer: s.customerName ?? s.party?.name ?? 'Walk-in',
       description: s.remarks ?? '',
       salesValue: num(s.grossAmount),
+      discount: num(s.discountAmount),
       afterDiscountValue: total,
+      diamondDiscountPercent: s.diamondDiscountPercent != null ? num(s.diamondDiscountPercent) : null,
+      makingDiscountPercent: s.makingDiscountPercent != null ? num(s.makingDiscountPercent) : null,
       advanceReceived: advance,
       balance: total - advance,
       paymentMode: s.paymentMode ?? null,
       quotationUrl: s.quotationUrl ?? null,
       invoiceUrl: s.invoiceUrl ?? null,
       receiptUrl,
+      isCancelled: !!s.isCancelled,
+      cancelReason: s.cancelReason ?? null,
       docDate: s.docDate.toISOString(),
     };
   }

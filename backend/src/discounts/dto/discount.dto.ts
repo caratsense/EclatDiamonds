@@ -1,4 +1,4 @@
-import { IsIn, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsIn, IsNotEmpty, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
 import { Role } from '@prisma/client';
 
 /**
@@ -13,9 +13,9 @@ export class CreateDiscountRequestDto {
   @IsString()
   customerName!: string;
 
-  @IsOptional()
   @IsString()
-  item?: string;
+  @IsNotEmpty()
+  item!: string;
 
   /** Optional link to the piece; used to snapshot selling & cost price. */
   @IsOptional()

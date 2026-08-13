@@ -62,6 +62,11 @@ export interface DiscountRecord {
   status: DiscountStatus;
   /** Role that must sign off. store_manager (or lower) ⇒ auto-approved. */
   requiredRole: Role;
+  /**
+   * Set once an approved request has been billed to a sale. An approved
+   * request with `saleId == null` is still "ready to bill".
+   */
+  saleId?: string | null;
   reason?: string | null;
   requestedRole?: Role;
   requestedBy?: string;

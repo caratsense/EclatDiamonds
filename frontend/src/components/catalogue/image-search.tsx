@@ -25,6 +25,7 @@ interface ImageSearchProps {
 export function ImageSearch({ onOpenProduct }: ImageSearchProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [result, setResult] = useState<ImageSearchResult | null>(null);
   const search = useImageSearch();
@@ -32,7 +33,17 @@ export function ImageSearch({ onOpenProduct }: ImageSearchProps) {
   function onFiles(files: FileList | null) {
     const f = files?.[0];
     if (!f) return;
+    // Guard drops of non-image files (drag-drop bypasses the accept filter).
+    if (!f.type.startsWith("image/")) {
+      toast.error("That's not an image — drop a JPG or PNG design photo.");
+      return;
+    }
     setFileName(f.name);
+    // Show the uploaded image so the user can confirm what they're searching with.
+    setPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return URL.createObjectURL(f);
+    });
     search.mutate(f, {
       onSuccess: (data) => {
         setResult(data);
@@ -47,6 +58,10 @@ export function ImageSearch({ onOpenProduct }: ImageSearchProps) {
 
   function reset() {
     setFileName(null);
+    setPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
     setResult(null);
     if (inputRef.current) inputRef.current.value = "";
   }
@@ -88,9 +103,17 @@ export function ImageSearch({ onOpenProduct }: ImageSearchProps) {
               : "border-muted-foreground/25 hover:border-primary/50",
           )}
         >
+          {previewUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={previewUrl}
+              alt={fileName ?? "Uploaded design"}
+              className="max-h-32 w-auto rounded-md object-contain"
+            />
+          ) : null}
           {search.isPending ? (
             <Loader2 className="h-6 w-6 animate-spin text-primary" />
-          ) : (
+          ) : previewUrl ? null : (
             <ImagePlus className="h-6 w-6 text-muted-foreground" />
           )}
           <p className="text-sm font-medium">

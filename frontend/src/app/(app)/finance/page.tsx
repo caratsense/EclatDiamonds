@@ -40,6 +40,10 @@ import {
   type LedgerKind,
 } from "@/lib/queries/finance";
 import { useSession } from "@/store/use-session";
+import {
+  StoreScopeField,
+  useStoreScope,
+} from "@/components/common/store-scope-field";
 import { apiErrorMessage } from "@/lib/utils";
 
 export default function FinancePage() {
@@ -177,7 +181,8 @@ function AddEntryDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { currentStore } = useSession();
+  const { targetStoreId, storeLabel, pickedStoreId, setPickedStoreId } =
+    useStoreScope();
   const addEntry = useAddLedgerEntry();
   const [kind, setKind] = useState<LedgerKind>("AR");
   const [status, setStatus] = useState(() => defaultStatusForKind("AR"));
@@ -192,10 +197,6 @@ function AddEntryDialog({
   const [entryDate, setEntryDate] = useState("");
   const [narration, setNarration] = useState("");
 
-  // Aggregate ("all") scope has no concrete store to write to — fall back
-  // to the first real store id; broad roles normally pick a store first.
-  const targetStoreId = currentStore.isAggregate ? "surat-main" : currentStore.id;
-
   function reset() {
     setKind("AR");
     setStatus(defaultStatusForKind("AR"));
@@ -205,6 +206,10 @@ function AddEntryDialog({
   }
 
   function save() {
+    if (!targetStoreId) {
+      toast.error("Select a store to book this entry against.");
+      return;
+    }
     const value = Number(amount);
     if (!amount.trim() || Number.isNaN(value) || value < 0) {
       toast.error("Enter a valid amount.");
@@ -237,11 +242,12 @@ function AddEntryDialog({
         <DialogHeader>
           <DialogTitle>Add ledger entry</DialogTitle>
           <DialogDescription>
-            Book a ledger, budget or forecast row against{" "}
-            {currentStore.isAggregate ? "Surat — Main" : currentStore.name}.
+            Book a ledger, budget or forecast row against {storeLabel}.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
+          <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
+
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="kind">Kind</Label>

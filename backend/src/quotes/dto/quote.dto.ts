@@ -12,6 +12,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { QuoteKind, QuoteStatus } from '@prisma/client';
+import { IsIndianMobile } from '../../common/contact.util';
 
 export class QuoteLineDto {
   @IsString()
@@ -57,11 +58,14 @@ export class CreateQuoteDto {
   @IsString()
   storeId!: string;
 
+  // A name that is only digits/spaces is a mis-key — require at least one letter.
   @IsString()
+  @Matches(/[^\d\s]/, { message: 'customerName must include letters, not just numbers' })
   customerName!: string;
 
   @IsOptional()
   @IsString()
+  @IsIndianMobile()
   phone?: string;
 
   @IsOptional()

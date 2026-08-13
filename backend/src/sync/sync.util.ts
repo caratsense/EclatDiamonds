@@ -44,27 +44,34 @@ export function bool(v: unknown): boolean {
   return v === true || v === 1 || v === '1';
 }
 
-/** Legacy ToneFor (G=gold, D=diamond) + ToneCode -> Eclat MetalKind. */
+/**
+ * Legacy ToneFor (G=gold, D=diamond) + ToneCode -> Eclat MetalKind.
+ *
+ * The tone carries a pink/rose marker but NOT the karat, and Gati has no
+ * per-piece purity column wired into this pipeline (a RateChart/caratage join
+ * would be needed and does not exist). So a plain gold piece is mapped to
+ * `gold_unspecified` — "gold, purity unknown" — rather than asserting a false
+ * 22K. See docs/GATI_DATA_CONTRACT.md (Karat: CLIENT INPUT REQUIRED).
+ */
 export function metalFromTone(toneFor: unknown, toneCode: unknown): string {
   const c = String(toneCode ?? '').toUpperCase();
+  // Rose/pink is a genuine tone signal (conventionally 18K rose gold).
   if (c.includes('PG') || c.includes('PINK') || c.includes('ROSE')) return 'rose_gold_18k';
-  // Legacy doesn't store karat on the tone; default gold pieces to 22k (dominant
-  // retail purity in this market). Karat refinement needs the live RateChart join.
-  if (String(toneFor ?? '').toUpperCase() === 'G') return 'gold_22k';
-  return 'gold_22k';
+  // Any other gold: we know the metal but NOT the karat — do not guess a purity.
+  if (String(toneFor ?? '').toUpperCase() === 'G') return 'gold_unspecified';
+  return 'gold_unspecified';
 }
 
-export function karatFromMetal(metal: string): number {
-  return (
-    {
-      gold_24k: 24,
-      gold_22k: 22,
-      gold_18k: 18,
-      rose_gold_18k: 18,
-      platinum: 0,
-      silver: 0,
-    }[metal] ?? 0
-  );
+/** Karat implied by a mapped metal, or null when the purity is genuinely unknown. */
+export function karatFromMetal(metal: string): number | null {
+  const k: Record<string, number> = {
+    gold_24k: 24,
+    gold_22k: 22,
+    gold_18k: 18,
+    rose_gold_18k: 18,
+  };
+  // gold_unspecified / platinum / silver have no meaningful karat -> null.
+  return k[metal] ?? null;
 }
 
 /** Legacy JewelTrans.TranType -> Eclat SaleDocType. */

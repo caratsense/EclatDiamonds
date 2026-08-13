@@ -25,6 +25,10 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSession } from "@/store/use-session";
+import {
+  StoreScopeField,
+  useStoreScope,
+} from "@/components/common/store-scope-field";
 import { getNavItem } from "@/lib/navigation";
 import { useStaff } from "@/lib/queries/users";
 import type { LeaveRequest, LeaveStatus } from "@/lib/mock/hrms";
@@ -57,10 +61,13 @@ const ATTENDANCE_STATUSES: { value: AttendanceStatus; label: string }[] = [
 ];
 
 export default function HrmsPage() {
-  const { currentStore } = useSession();
+  const { currentStore, role } = useSession();
   const nav = getNavItem("hrms");
   const isAggregate = currentStore.isAggregate;
   const [markOpen, setMarkOpen] = useState(false);
+  // Head office is view-only for attendance: no personal punch card, no
+  // marking attendance for others — it only observes store-wise data.
+  const isHeadOffice = role === "head_office";
 
   // Live, already store/role-scoped server-side (keyed on the active store).
   const attendanceQuery = useAttendance();
@@ -103,13 +110,15 @@ export default function HrmsPage() {
       <SectionHeader
         title={nav?.title ?? "HRMS & Attendance"}
         purpose={nav?.purpose ?? ""}
-        primaryAction={nav?.primaryAction}
-        onPrimaryAction={() => setMarkOpen(true)}
+        primaryAction={isHeadOffice ? undefined : nav?.primaryAction}
+        onPrimaryAction={isHeadOffice ? undefined : () => setMarkOpen(true)}
       />
 
-      <div className="mb-4">
-        <GeoPunchCard />
-      </div>
+      {isHeadOffice ? null : (
+        <div className="mb-4">
+          <GeoPunchCard />
+        </div>
+      )}
 
       <Tabs defaultValue="attendance" className="space-y-4">
         <TabsList className="flex h-auto flex-wrap">
@@ -197,7 +206,8 @@ function MarkAttendanceDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { currentStore } = useSession();
+  const { targetStoreId, storeLabel, pickedStoreId, setPickedStoreId } =
+    useStoreScope();
   const markAttendance = useMarkAttendance();
   const { data: shifts = [] } = useShifts();
   const [staffId, setStaffId] = useState("");
@@ -205,15 +215,16 @@ function MarkAttendanceDialog({
   const [checkInTime, setCheckInTime] = useState("");
   const [shiftId, setShiftId] = useState<string>("");
 
-  // Aggregate ("all") scope has no concrete store to write to — fall back
-  // to the first real store id; broad roles normally pick a store first.
-  const targetStoreId = currentStore.isAggregate ? "surat-main" : currentStore.id;
   // The roster for the target store. Attendance must be attributed to a REAL
   // staff record: a typed-in name produced a throwaway id that no report or
   // payroll run could ever reconcile, so the picker is the only way in now.
   const { data: staff = [] } = useStaff(targetStoreId);
 
   function save() {
+    if (!targetStoreId) {
+      toast.error("Select a store first.");
+      return;
+    }
     if (!staffId) {
       toast.error("Choose the staff member.");
       return;
@@ -239,9 +250,7 @@ function MarkAttendanceDialog({
       {
         onSuccess: () => {
           toast.success("Attendance marked", {
-            description: `Logged at ${
-              currentStore.isAggregate ? "Surat — Main" : currentStore.name
-            }.`,
+            description: `Logged at ${storeLabel}.`,
           });
           setStaffId("");
           setStatus("present");
@@ -261,11 +270,12 @@ function MarkAttendanceDialog({
         <DialogHeader>
           <DialogTitle>Mark attendance</DialogTitle>
           <DialogDescription>
-            Log a staff member&apos;s attendance against{" "}
-            {currentStore.isAggregate ? "Surat — Main" : currentStore.name}.
+            Log a staff member&apos;s attendance against {storeLabel}.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
+          <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
+
           <div className="grid gap-1.5">
             <Label htmlFor="staff-pick">Staff member</Label>
             <Select value={staffId} onValueChange={setStaffId}>

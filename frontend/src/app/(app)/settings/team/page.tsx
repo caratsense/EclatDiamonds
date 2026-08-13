@@ -237,7 +237,7 @@ function UserRow({
 
   // Never act on a peer or a superior — hide every action in that case.
   const canManage = ROLE_RANK[user.role] < ROLE_RANK[viewerRole];
-  const canRoleOrStore = ROLE_RANK[viewerRole] >= ROLE_RANK.area_manager;
+  const canRoleOrStore = ROLE_RANK[viewerRole] >= ROLE_RANK.store_manager;
   const canDeactivate = ROLE_RANK[viewerRole] >= ROLE_RANK.store_manager;
 
   function reactivate() {

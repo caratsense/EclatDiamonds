@@ -137,9 +137,9 @@ export default function MarketingPage() {
   const [taskOpen, setTaskOpen] = useState(false);
 
   const role = useSession((s) => s.role);
-  const canCreateCampaign = ROLE_RANK[role] >= ROLE_RANK.area_manager;
+  const canCreateCampaign = ROLE_RANK[role] >= ROLE_RANK.store_manager;
   const canCreateDeliverable = ROLE_RANK[role] >= ROLE_RANK.store_manager;
-  const canApprove = ROLE_RANK[role] >= ROLE_RANK.area_manager;
+  const canApprove = ROLE_RANK[role] >= ROLE_RANK.store_manager;
 
   return (
     <>

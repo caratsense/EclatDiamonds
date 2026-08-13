@@ -128,7 +128,7 @@ export function KpiCard({
           {format === "inr" ? formatINRCompact(value) : formatNumber(value)}
         </p>
         <p className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground">
-          {hasDelta ? "vs prior period" : href ? "View details" : " "}
+          {hasDelta ? "vs yesterday" : href ? "View details" : " "}
           {href ? (
             <ChevronRight className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100" />
           ) : null}

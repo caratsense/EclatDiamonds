@@ -120,12 +120,21 @@ export class DashboardService {
 
     const sales = num(salesToday._sum.totalAmount);
     const prior = num(salesYest._sum.totalAmount);
-    const salesDelta = prior > 0 ? ((sales - prior) / prior) * 100 : 0;
+    // Day-over-day: today vs the full prior calendar day, in the store's tz.
+    // With no sales yesterday there is no meaningful base — emit `null` (no pill)
+    // rather than a misleading "+0.0% vs yesterday".
+    const salesDelta = prior > 0 ? ((sales - prior) / prior) * 100 : null;
 
     // `delta: null` means "no period comparison" — the tile then shows no % pill
     // instead of a misleading 0.0%. Only Sales Today has a real day-over-day base.
     const kpis: any[] = [
-      { id: 'sales', label: 'Sales Today', value: sales, format: 'inr', delta: round(salesDelta) },
+      {
+        id: 'sales',
+        label: 'Sales Today',
+        value: sales,
+        format: 'inr',
+        delta: salesDelta == null ? null : round(salesDelta),
+      },
       { id: 'footfall', label: 'Footfall', value: footfall, format: 'number', delta: null },
       {
         id: 'pending',
@@ -242,7 +251,10 @@ export class DashboardService {
           where: { storeId: st.id, isCancelled: false, docType: 'sale', docDate: { gte: monthStart } },
         });
         return {
-          store: st.city || st.name,
+          // Label bars by store NAME (unique per store); two stores can share a
+          // city, and a blank/code-like city renders oddly. City kept for tooltip.
+          store: st.name,
+          city: st.city ?? null,
           revenue: num(agg._sum.totalAmount),
           target: targetByStore.get(st.id) ?? 0,
         };
@@ -271,12 +283,16 @@ export class DashboardService {
       throw new BadRequestException('storeId is required');
     }
 
+    // Assignee is mandatory — @IsNotEmpty catches "", this catches whitespace-only.
+    const assignee = dto.assignee.trim();
+    if (!assignee) throw new BadRequestException('An assignee is required');
+
     const task = await this.prisma.task.create({
       data: {
         storeId: dto.storeId ?? null,
         title: dto.title,
         detail: dto.detail ?? null,
-        assignee: dto.assignee ?? null,
+        assignee,
         status: 'open',
         dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
         createdById: user.id,
@@ -436,8 +452,12 @@ export class DashboardService {
    * own the "mark done" step.
    */
   async createHandoff(user: AuthUser, dto: CreateHandoffDto) {
-    const storeId = dto.storeId ?? user.storeIds[0];
-    if (!storeId) throw new BadRequestException('storeId is required');
+    // A hand-off is filed against ONE concrete store. Only auto-use the caller's
+    // store when they have exactly one — a multi-store user (or head office) must
+    // name the store explicitly, never silently default to their first branch.
+    const storeId =
+      dto.storeId ?? (user.storeIds.length === 1 ? user.storeIds[0] : undefined);
+    if (!storeId) throw new BadRequestException('Select a store to file this hand-off against');
     this.scope.assertStoreAllowed(user, storeId);
 
     // Resolve the assignee (if one was picked) — the id drives the notification

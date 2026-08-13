@@ -24,7 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { cn, apiErrorMessage } from "@/lib/utils";
+import { cn, apiErrorMessage, isValidEmail, normalizeIndianMobile } from "@/lib/utils";
 import { ChannelStatusNotice } from "@/components/integrations/channel-status-notice";
 import { formatINR, formatNumber } from "@/lib/format";
 import {
@@ -137,22 +137,31 @@ export function SendReportDialog({
   const isEmail = channel === "email";
   const channelName = isEmail ? "Email" : "WhatsApp";
 
+  // Immediate validation: valid email, or a valid Indian mobile (normalised).
+  const trimmed = to.trim();
+  const normalizedPhone = isEmail ? null : normalizeIndianMobile(trimmed);
+  const recipientValid = isEmail
+    ? isValidEmail(trimmed)
+    : normalizedPhone != null;
+  const recipientError = trimmed.length > 0 && !recipientValid;
+
   function send() {
-    const recipient = to.trim();
-    if (!recipient) {
+    if (!trimmed) {
       toast.error(
         isEmail ? "Enter an email address." : "Enter a WhatsApp number.",
       );
       return;
     }
-    if (isEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
-      toast.error("Enter a valid email address.");
+    if (!recipientValid) {
+      toast.error(
+        isEmail
+          ? "Enter a valid email address."
+          : "Enter a valid 10-digit Indian mobile number.",
+      );
       return;
     }
-    if (!isEmail && recipient.replace(/\D/g, "").length < 10) {
-      toast.error("Enter a valid phone number.");
-      return;
-    }
+    // Send the normalised value (10-digit phone / trimmed email), not raw input.
+    const recipient = isEmail ? trimmed : (normalizedPhone as string);
     setOutcome(null);
     sendReport.mutate(
       { period, channel, to: recipient },
@@ -242,11 +251,19 @@ export function SendReportDialog({
               inputMode={isEmail ? "email" : "tel"}
               placeholder={isEmail ? "owner@eclatdiamonds.in" : "9876500000"}
               value={to}
+              aria-invalid={recipientError}
               onChange={(e) => {
                 setTo(e.target.value);
                 clearOutcome();
               }}
             />
+            {recipientError ? (
+              <p className="text-xs text-destructive">
+                {isEmail
+                  ? "Enter a valid email address."
+                  : "Enter a valid 10-digit Indian mobile number (digits only)."}
+              </p>
+            ) : null}
           </div>
 
           <div className="grid gap-1.5">
@@ -290,7 +307,10 @@ export function SendReportDialog({
           <Button
             onClick={send}
             disabled={
-              sendReport.isPending || summaryQuery.isLoading || !preview
+              sendReport.isPending ||
+              summaryQuery.isLoading ||
+              !preview ||
+              !recipientValid
             }
           >
             {sendReport.isPending ? "Sending…" : "Send report"}

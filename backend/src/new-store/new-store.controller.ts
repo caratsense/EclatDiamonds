@@ -12,8 +12,8 @@ import {
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { Roles } from '../auth/roles.decorator';
 
-/** New-store setup is an area-manager / head-office programme. */
-@Roles('store_manager', 'head_office')
+/** New-store setup is part of opening a branch — head office only. */
+@Roles('head_office')
 @Controller('new-store')
 export class NewStoreController {
   constructor(private readonly newStore: NewStoreService) {}

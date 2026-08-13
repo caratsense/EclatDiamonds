@@ -78,6 +78,8 @@ export interface ReturnRecord {
   reason: string;
   createdAt: string;
   raisedBy: string;
+  /** Role/designation of whoever raised the return (e.g. "store_manager"). */
+  raisedByRole?: string;
   photos: IntakePhoto[];
   /** Optional note the approver left on approve/reject — shown to the requester. */
   decisionNote?: string | null;

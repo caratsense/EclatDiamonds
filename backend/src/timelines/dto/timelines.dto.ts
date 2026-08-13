@@ -2,6 +2,7 @@ import {
   IsEnum,
   IsIn,
   IsInt,
+  IsNotEmpty,
   IsNumber,
   IsISO8601,
   IsOptional,
@@ -46,12 +47,15 @@ export class AdvanceStageDto {
 
 export class CreateWorkflowDto {
   @IsString()
+  @IsNotEmpty({ message: 'A customer name is required' })
   customer!: string;
 
   @IsString()
+  @IsNotEmpty({ message: 'An item description is required' })
   item!: string;
 
   @IsString()
+  @IsNotEmpty({ message: 'A store is required' })
   storeId!: string;
 }
 
@@ -63,9 +67,11 @@ export class CreateWorkflowDto {
  */
 export class CreateOrderDto {
   @IsString()
+  @IsNotEmpty({ message: 'A store is required' })
   storeId!: string;
 
   @IsString()
+  @IsNotEmpty({ message: 'A customer name is required' })
   customerName!: string;
 
   /** 'custom' (default) or 'stock' replenishment order. */

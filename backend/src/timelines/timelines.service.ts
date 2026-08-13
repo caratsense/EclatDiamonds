@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { OrderKind, OrderStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
@@ -204,30 +209,42 @@ export class TimelinesService {
     const now = new Date();
     const balanceDue = Math.max(0, num(o.value) - num(o.advanceReceived));
 
-    const updated = await this.prisma.customOrder.update({
-      where: { id },
-      data: {
-        stage: to,
-        stageEnteredAt: now,
-        ...(to === OrderStatus.cancelled
-          ? { cancelReason: dto.note!.trim(), cancelledAt: now }
-          : {}),
-        ...(to === OrderStatus.delivered
-          ? { deliveredTo: dto.deliveredTo!.trim(), deliveredAt: now }
-          : {}),
-        events: {
-          create: {
-            stage: to,
-            note: dto.note?.trim() || null,
-            // Production moves are driven from the back office; handover and
-            // cancellation are recorded against the person who performed them.
-            byRole: to === OrderStatus.delivered ? 'salesperson' : 'back_office',
-            byName: user.name,
-          },
+    // Compare-and-swap on the stage we just validated against: two identical
+    // concurrent requests can both pass the findUnique + validation above, so gate
+    // the write on the stage still being `from`. Only the winner writes the
+    // stage-change event/audit; the loser gets a conflict, not a duplicate row.
+    // CAS + event share a transaction so the event is written iff the swap took.
+    const swapped = await this.prisma.$transaction(async (tx) => {
+      const res = await tx.customOrder.updateMany({
+        where: { id, stage: from },
+        data: {
+          stage: to,
+          stageEnteredAt: now,
+          ...(to === OrderStatus.cancelled
+            ? { cancelReason: dto.note!.trim(), cancelledAt: now }
+            : {}),
+          ...(to === OrderStatus.delivered
+            ? { deliveredTo: dto.deliveredTo!.trim(), deliveredAt: now }
+            : {}),
         },
-      },
-      include: { store: true },
+      });
+      if (res.count === 0) return false;
+      await tx.customOrderEvent.create({
+        data: {
+          orderId: id,
+          stage: to,
+          note: dto.note?.trim() || null,
+          // Production moves are driven from the back office; handover and
+          // cancellation are recorded against the person who performed them.
+          byRole: to === OrderStatus.delivered ? 'salesperson' : 'back_office',
+          byName: user.name,
+        },
+      });
+      return true;
     });
+    if (!swapped) {
+      throw new ConflictException('This order has already moved on');
+    }
 
     await this.audit.record(user, {
       action:
@@ -259,7 +276,7 @@ export class TimelinesService {
     });
 
     // Return the same detail view as GET /timelines/orders/:id.
-    return this.order(user, updated.id);
+    return this.order(user, id);
   }
 
   /**

@@ -9,7 +9,7 @@ import {
 import { api } from "@/lib/api";
 import { useStoreKey } from "@/lib/queries/keys";
 import { useSession } from "@/store/use-session";
-import type { Role } from "@/lib/types";
+import { ROLE_RANK, type Role } from "@/lib/types";
 import type { DiscountRecord } from "@/lib/mock/discounts";
 
 /**
@@ -117,12 +117,12 @@ export function useRejectDiscount() {
 }
 
 /**
- * GET /discounts/limits — the per-role caps table. Restricted to area_manager /
- * head_office server-side, so the query is disabled for lower roles.
+ * GET /discounts/limits — the per-role caps table. Restricted to store_manager
+ * and above server-side, so the query is disabled for salespeople.
  */
 export function useDiscountLimits() {
   const role = useSession((s) => s.role);
-  const canView = role === "area_manager" || role === "head_office";
+  const canView = ROLE_RANK[role] >= ROLE_RANK.store_manager;
   return useQuery({
     queryKey: ["discounts", "limits"],
     enabled: canView,

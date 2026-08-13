@@ -34,6 +34,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatINR, formatPercent } from "@/lib/format";
+import { ROLE_RANK } from "@/lib/types";
+import { useSession } from "@/store/use-session";
 import { cn } from "@/lib/utils";
 import {
   isCapReached,
@@ -81,6 +83,9 @@ function CopyButton({ value }: { value: string }) {
  */
 export function ReferralProgram() {
   const { data: codes = [], isLoading, isError } = useReferralCodes();
+  const role = useSession((s) => s.role);
+  // Creating codes and cashing out commission both require store_manager+.
+  const canManageReferrals = ROLE_RANK[role] >= ROLE_RANK.store_manager;
 
   const [createOpen, setCreateOpen] = React.useState(false);
   const [applyOpen, setApplyOpen] = React.useState(false);
@@ -149,10 +154,12 @@ export function ReferralProgram() {
               <Gem className="h-4 w-4" />
               Apply a referral
             </Button>
-            <Button variant="gold" onClick={() => setCreateOpen(true)}>
-              <Plus className="h-4 w-4" />
-              Create code
-            </Button>
+            {canManageReferrals ? (
+              <Button variant="gold" onClick={() => setCreateOpen(true)}>
+                <Plus className="h-4 w-4" />
+                Create code
+              </Button>
+            ) : null}
           </div>
         </CardContent>
       </Card>
@@ -314,7 +321,7 @@ export function ReferralProgram() {
                 <Button
                   variant="gold"
                   className="w-full"
-                  disabled={selected.commissionBalance <= 0}
+                  disabled={!canManageReferrals || selected.commissionBalance <= 0}
                   onClick={() => openPayout(selected)}
                 >
                   <HandCoins className="h-4 w-4" />

@@ -261,15 +261,17 @@ function AddTaskDialog({
   const [title, setTitle] = useState("");
   const [detail, setDetail] = useState("");
   const [assignee, setAssignee] = useState("");
+  const [assigneeError, setAssigneeError] = useState(false);
   const [dueDate, setDueDate] = useState("");
 
   // A task is filed against ONE real store. On the "All Stores" aggregate there
-  // is nothing concrete to write to, so offer a picker defaulted to the first
-  // real store (never a hardcoded branch); single-store users just use theirs.
+  // is nothing concrete to write to, so the user must PICK a store — we never
+  // silently default to the first (or any) branch; save() blocks an empty pick.
   const realStores = stores.filter((s) => !s.isAggregate);
-  const [storeId, setStoreId] = useState(
-    currentStore.isAggregate ? (realStores[0]?.id ?? "") : currentStore.id,
-  );
+  // A real active store follows the topbar switcher (derived, stays reactive);
+  // on the aggregate, an explicit manual pick (empty until chosen).
+  const [pickedStoreId, setPickedStoreId] = useState("");
+  const storeId = currentStore.isAggregate ? pickedStoreId : currentStore.id;
   const targetStore = realStores.find((s) => s.id === storeId);
 
   function save() {
@@ -281,11 +283,16 @@ function AddTaskDialog({
       toast.error("Pick a store to file this task against.");
       return;
     }
+    if (!assignee.trim()) {
+      setAssigneeError(true);
+      toast.error("Pick an assignee for this task.");
+      return;
+    }
     createTask.mutate(
       {
         title: title.trim(),
         detail: detail.trim() || undefined,
-        assignee: assignee.trim() || undefined,
+        assignee: assignee.trim(),
         dueDate: dueDate || undefined,
         storeId,
       },
@@ -317,7 +324,7 @@ function AddTaskDialog({
           {realStores.length > 1 ? (
             <div className="grid gap-1.5">
               <Label htmlFor="task-store">Store</Label>
-              <Select value={storeId} onValueChange={setStoreId}>
+              <Select value={storeId} onValueChange={setPickedStoreId}>
                 <SelectTrigger id="task-store">
                   <SelectValue placeholder="Choose a store" />
                 </SelectTrigger>
@@ -350,16 +357,20 @@ function AddTaskDialog({
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="task-assignee">Assignee</Label>
+            <Label htmlFor="task-assignee">
+              Assignee <span className="text-destructive">*</span>
+            </Label>
             <Select
-              value={assignee || "__none__"}
-              onValueChange={(v) => setAssignee(v === "__none__" ? "" : v)}
+              value={assignee}
+              onValueChange={(v) => {
+                setAssignee(v);
+                setAssigneeError(false);
+              }}
             >
-              <SelectTrigger id="task-assignee">
-                <SelectValue placeholder="Unassigned" />
+              <SelectTrigger id="task-assignee" aria-invalid={assigneeError}>
+                <SelectValue placeholder="Select an assignee" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="__none__">Unassigned</SelectItem>
                 {(assignableUsers.data ?? []).map((u) => (
                   <SelectItem key={u.id} value={u.name}>
                     {u.name}
@@ -367,6 +378,14 @@ function AddTaskDialog({
                 ))}
               </SelectContent>
             </Select>
+            {assigneeError ? (
+              <p className="text-xs text-destructive">An assignee is required.</p>
+            ) : !assignableUsers.isLoading &&
+              (assignableUsers.data ?? []).length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                No team members to assign here yet — add staff in Team first.
+              </p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="task-due">Due date</Label>

@@ -61,6 +61,7 @@ function toView(r: any) {
     invoiceNo: r.invoiceNo ?? undefined,
     createdAt: r.createdAt.toISOString(),
     raisedBy: r.raisedBy ?? '',
+    raisedByRole: r.raisedByRole ?? undefined,
     photos: (r.photos ?? []).map((p: any) => ({ id: p.id, label: p.label ?? '', swatch: '' })),
     // Module 14 exchange/buyback calculator fields (undefined on legacy rows).
     chosenOption: r.chosenOption ?? undefined,
@@ -94,7 +95,18 @@ export class ReturnsService {
       include: { photos: true },
       orderBy: { createdAt: 'desc' },
     });
-    return rows.map(toView);
+    // Surface the raiser's role/designation in the list. No FK relation exists on
+    // raisedById, so resolve roles in one batched lookup and map them back on.
+    const ids = [...new Set(rows.map((r) => r.raisedById).filter(Boolean) as string[])];
+    const roleById = new Map<string, string>();
+    if (ids.length) {
+      const users = await this.prisma.user.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, role: true },
+      });
+      for (const u of users) roleById.set(u.id, u.role);
+    }
+    return rows.map((r) => toView({ ...r, raisedByRole: r.raisedById ? roleById.get(r.raisedById) : undefined }));
   }
 
   /** GET /returns/:id — one record with intake photos. */
@@ -115,8 +127,9 @@ export class ReturnsService {
    * POST /returns/valuate — preview only, nothing persisted. Resolves today's
    * gold + diamond rates (request overrides win) and returns both option values.
    */
-  async valuate(dto: ValuateReturnDto): Promise<Valuation> {
-    const todayGoldRate = await this.resolveGoldRate(dto.storeId, dto.todayGoldRate);
+  async valuate(user: AuthUser, dto: ValuateReturnDto): Promise<Valuation> {
+    if (dto.storeId) this.scope.assertStoreAllowed(user, dto.storeId);
+    const todayGoldRate = await this.resolveGoldRate(dto.storeId, dto.todayGoldRate, dto.goldKarat);
     const todayDiaRate = await this.resolveDiaRate(dto.diaSpec, dto.storeId, dto.todayDiaRate);
     return this.computeValuation(
       dto.goldWtG,
@@ -203,7 +216,7 @@ export class ReturnsService {
 
     // --- Module 14 exchange/buyback calculator branch ---
     if (dto.chosenOption) {
-      const todayGoldRate = await this.resolveGoldRate(dto.storeId, dto.todayGoldRate);
+      const todayGoldRate = await this.resolveGoldRate(dto.storeId, dto.todayGoldRate, dto.goldKarat);
       const todayDiaRate = await this.resolveDiaRate(dto.diaSpec, dto.storeId, dto.todayDiaRate);
       const v = this.computeValuation(dto.goldWtG, dto.diaCarat, todayGoldRate, todayDiaRate);
 
@@ -455,11 +468,16 @@ export class ReturnsService {
     return row ? Number(row.ratePerGram) : (GOLD_RATE_PER_GRAM[karat] ?? GOLD_RATE_PER_GRAM[22]);
   }
 
-  /** Resolve today's gold rate/gram: request override → latest 22k MetalRate → fallback. */
-  private async resolveGoldRate(storeId: string | undefined, override?: number): Promise<number> {
+  /** Resolve today's gold rate/gram: request override → latest per-karat MetalRate → fallback. */
+  private async resolveGoldRate(
+    storeId: string | undefined,
+    override?: number,
+    karat?: number,
+  ): Promise<number> {
     if (override != null) return override;
     const scoped = storeId && storeId !== 'all' ? storeId : undefined;
-    return this.latestGoldRate('gold_22k', scoped, 22);
+    const k = karat ?? 22; // default to 22K (the dominant purity) when unspecified.
+    return this.latestGoldRate(`gold_${k}k`, scoped, k);
   }
 
   /** Resolve today's diamond rate/carat by spec: override → latest DiamondRate → 0. */

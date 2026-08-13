@@ -22,7 +22,9 @@ export type Metal =
   | "gold_18k"
   | "rose_gold_18k"
   | "platinum"
-  | "silver";
+  | "silver"
+  // Gold whose karat is unknown from the legacy source (never guessed as 22K).
+  | "gold_unspecified";
 
 export interface Product {
   id: string;
@@ -66,6 +68,7 @@ export const METAL_LABELS: Record<Metal, string> = {
   rose_gold_18k: "18K Rose Gold",
   platinum: "Platinum",
   silver: "Silver",
+  gold_unspecified: "Gold (karat unknown)",
 };
 
 export const MOCK_PRODUCTS: Product[] = [

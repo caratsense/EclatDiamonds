@@ -470,9 +470,24 @@ export class AuthService {
       storeViews.push(storeView(aggregate));
     }
 
+    // The user's designated primary store, if one is flagged. `stores` is ordered
+    // by name, so `storeViews[0]` is merely the alphabetically-first assignment —
+    // landing a multi-store user there made every store-scoped default (the
+    // geo-attendance anchor, DSR store, etc.) follow the wrong branch: a user
+    // primary at Surat but also assigned Mumbai — Borivali defaulted to Borivali.
+    const primary = await this.prisma.userStore.findFirst({
+      where: { userId, isPrimary: true },
+      select: { storeId: true },
+    });
+    const primaryView = primary
+      ? storeViews.find((s) => s.id === primary.storeId)
+      : undefined;
+
     // Broad roles (head office / area manager) land on the pan-India "All Stores"
-    // aggregate by default; single-store users land on their own store.
-    const currentStore = storeViews.find((s) => s.isAggregate) ?? storeViews[0];
+    // aggregate by default; everyone else lands on their PRIMARY store, falling
+    // back to the first assignment only when none is flagged primary.
+    const currentStore =
+      storeViews.find((s) => s.isAggregate) ?? primaryView ?? storeViews[0];
 
     return {
       user: {

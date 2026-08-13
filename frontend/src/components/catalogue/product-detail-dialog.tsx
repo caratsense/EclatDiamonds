@@ -53,8 +53,18 @@ export function ProductDetailDialog({
   const minTag = tagPrices.length ? Math.min(...tagPrices) : 0;
   const maxTag = tagPrices.length ? Math.max(...tagPrices) : 0;
 
+  // Real gross weight: the design master's own weight, or — when the import left
+  // it at 0 — a piece actually on hand carries the true weight.
+  const pieceWeights = pieces.map((p) => p.grossWeight).filter((v) => v > 0);
+  const grossWeight = product.weightGrams > 0 ? product.weightGrams : pieceWeights[0] ?? 0;
+
   const inStock = product.availability === "in_stock";
+  // The lead time is only meaningful when a positive number of days was recorded.
+  const leadDays = product.leadTimeDays && product.leadTimeDays > 0 ? product.leadTimeDays : 0;
+  // Where it is actually held: the branches holding pieces, else the design's own store.
+  const pieceStores = [...new Set(pieces.map((p) => p.storeName).filter(Boolean))];
   const store = stores.find((s) => s.id === product.storeId)?.name ?? product.storeId;
+  const heldAt = pieceStores.length ? pieceStores.join(", ") : store || "—";
   const src = assetUrl(product.imageUrl);
   const canEdit = ROLE_RANK[role] >= ROLE_RANK.store_manager;
 
@@ -141,11 +151,12 @@ export function ProductDetailDialog({
           <Badge variant={inStock ? "success" : "secondary"}>
             {inStock ? (
               "In-Stock"
-            ) : (
+            ) : leadDays > 0 ? (
               <>
-                Lead-Time ·{" "}
-                <span className="num">{product.leadTimeDays} days</span>
+                Lead-Time · <span className="num">{leadDays} days</span>
               </>
+            ) : (
+              "Made to order"
             )}
           </Badge>
         </div>
@@ -158,14 +169,18 @@ export function ProductDetailDialog({
             </Spec>
           ) : null}
           <Spec label="Gross weight">
-            <span className="num">{formatGrams(product.weightGrams)}</span>
+            {grossWeight > 0 ? (
+              <span className="num">{formatGrams(grossWeight)}</span>
+            ) : (
+              "—"
+            )}
           </Spec>
           {product.caratWeight > 0 ? (
             <Spec label="Stones">
               <span className="num">{formatCarats(product.caratWeight)}</span>
             </Spec>
           ) : null}
-          <Spec label="Held at">{store}</Spec>
+          <Spec label="Held at">{heldAt}</Spec>
         </dl>
 
         {/* Physical pieces — the real per-piece tag price + tracking (tag / batch

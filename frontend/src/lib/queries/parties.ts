@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
 import { useStoreKey } from "@/lib/queries/keys";
@@ -59,5 +59,27 @@ export function useParties(params: PartyListParams) {
     },
     // Keep the previous page on screen while the next loads — no empty flash.
     placeholderData: (prev) => prev,
+  });
+}
+
+export interface CreatePartyInput {
+  storeId: string;
+  name: string;
+  phone: string;
+  email?: string;
+  city?: string;
+}
+
+/** POST /parties — add a customer (type=customer) against the target store. */
+export function useCreateParty() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: CreatePartyInput) => {
+      const { data } = await api.post<PartyRow>("/parties", input);
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["parties"] });
+    },
   });
 }

@@ -52,7 +52,9 @@ export function roleAbove(role: Role): Role | null {
   const ordered = (Object.keys(ROLE_RANK) as Role[]).sort(
     (a, b) => ROLE_RANK[a] - ROLE_RANK[b],
   );
-  return ordered.find((r) => ROLE_RANK[r] > ROLE_RANK[role]) ?? null;
+  // area_manager was collapsed into store_manager — skip the dead tier so the
+  // role above store_manager is head_office.
+  return ordered.find((r) => r !== 'area_manager' && ROLE_RANK[r] > ROLE_RANK[role]) ?? null;
 }
 
 /**

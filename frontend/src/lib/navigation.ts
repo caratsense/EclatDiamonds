@@ -26,6 +26,7 @@ import {
   MessageSquarePlus,
   Contact,
   Coins,
+  ArrowLeftRight,
 } from "lucide-react";
 
 import type { Role } from "@/lib/types";
@@ -202,6 +203,18 @@ export const NAV_GROUPS: NavGroup[] = [
         // Store managers see their own store's stock; area/HO see all stores.
         roles: ["store_manager", "area_manager", "head_office"],
       },
+      {
+        module: 9,
+        slug: "stock-transfers",
+        title: "Stock Transfers",
+        purpose:
+          "Move stock between branches — request, Head-Office approval, dispatch and receipt.",
+        primaryAction: "New Transfer",
+        icon: ArrowLeftRight,
+        // Salespeople have no actions here; store managers run the movements,
+        // area/HO oversee + approve.
+        roles: ["store_manager", "area_manager", "head_office"],
+      },
     ],
   },
   {
@@ -239,7 +252,7 @@ export const NAV_GROUPS: NavGroup[] = [
           "Tasks and timelines for opening new stores.",
         primaryAction: "New Project",
         icon: Building2,
-        roles: ["store_manager", "area_manager", "head_office"],
+        roles: ["head_office"],
       },
       {
         module: 16,
@@ -300,7 +313,7 @@ export const NAV_GROUPS: NavGroup[] = [
           "Add store branches, review new branches from Gati, and assign logins.",
         primaryAction: "Add Store",
         icon: Store,
-        roles: ["store_manager", "area_manager", "head_office"],
+        roles: ["head_office"],
       },
       {
         module: 6,

@@ -1,9 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import { toast } from "sonner";
 
 import { SaleDocThumbs } from "@/components/sales/sale-doc-thumbs";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -13,9 +15,12 @@ import {
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import { formatINR } from "@/lib/format";
 import { saleModeLabel, saleModeVariant, type SaleDocType } from "@/lib/mock/sales";
-import { useSaleDetail, useUploadSaleDoc } from "@/lib/queries/sales";
+import { useCancelSale, useSaleDetail, useUploadSaleDoc } from "@/lib/queries/sales";
+import { ROLE_RANK } from "@/lib/types";
+import { useSession } from "@/store/use-session";
 import { apiErrorMessage } from "@/lib/utils";
 
 function prettyDate(iso?: string): string {
@@ -45,6 +50,33 @@ export function SaleDetailDialog({
 }: SaleDetailDialogProps) {
   const { data: sale, isLoading, isError } = useSaleDetail(open ? saleId : null);
   const uploadDoc = useUploadSaleDoc();
+  const cancelSale = useCancelSale();
+  const { role } = useSession();
+  // Store manager + head office may soft-void a sale; salesperson cannot.
+  const canCancel = ROLE_RANK[role] >= ROLE_RANK.store_manager;
+  const [showCancel, setShowCancel] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+
+  function confirmCancel() {
+    if (!saleId) return;
+    const reason = cancelReason.trim();
+    if (!reason) {
+      toast.error("Please enter a reason for cancelling this sale.");
+      return;
+    }
+    cancelSale.mutate(
+      { id: saleId, reason },
+      {
+        onSuccess: () => {
+          toast.success("Sale cancelled");
+          setShowCancel(false);
+          setCancelReason("");
+        },
+        onError: (err) =>
+          toast.error(apiErrorMessage(err, "Could not cancel the sale.")),
+      },
+    );
+  }
 
   function onUpload(doc: SaleDocType, file: File) {
     if (!saleId) return;
@@ -62,7 +94,16 @@ export function SaleDetailDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) {
+          setShowCancel(false);
+          setCancelReason("");
+        }
+        onOpenChange(o);
+      }}
+    >
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         {isLoading ? (
           <div className="space-y-3">
@@ -84,6 +125,9 @@ export function SaleDetailDialog({
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 {sale.customer}
+                {sale.isCancelled ? (
+                  <Badge variant="destructive">Cancelled</Badge>
+                ) : null}
                 {sale.paymentMode ? (
                   <Badge variant={saleModeVariant(sale.paymentMode)}>
                     {saleModeLabel(sale.paymentMode)}
@@ -160,6 +204,65 @@ export function SaleDetailDialog({
                 </p>
               )}
             </div>
+
+            {/* Soft-void — store manager + head office only. */}
+            {sale.isCancelled ? (
+              <>
+                <Separator />
+                <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
+                  <p className="font-medium text-destructive">Sale cancelled</p>
+                  {sale.cancelReason ? (
+                    <p className="mt-1 text-muted-foreground">
+                      {sale.cancelReason}
+                    </p>
+                  ) : null}
+                </div>
+              </>
+            ) : canCancel ? (
+              <>
+                <Separator />
+                {showCancel ? (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Cancel this sale</p>
+                    <Textarea
+                      placeholder="Reason for cancelling (required) — wrong entry, customer backed out…"
+                      value={cancelReason}
+                      onChange={(e) => setCancelReason(e.target.value)}
+                    />
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setShowCancel(false);
+                          setCancelReason("");
+                        }}
+                      >
+                        Keep sale
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={confirmCancel}
+                        disabled={cancelSale.isPending || !cancelReason.trim()}
+                      >
+                        {cancelSale.isPending
+                          ? "Cancelling…"
+                          : "Confirm cancellation"}
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <Button
+                    variant="outline"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => setShowCancel(true)}
+                  >
+                    Cancel sale
+                  </Button>
+                )}
+              </>
+            ) : null}
           </>
         )}
       </DialogContent>

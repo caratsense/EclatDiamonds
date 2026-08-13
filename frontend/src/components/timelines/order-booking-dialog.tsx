@@ -39,7 +39,10 @@ import {
   useUploadReceipt,
 } from "@/lib/queries/timelines";
 import { cn } from "@/lib/utils";
-import { useSession } from "@/store/use-session";
+import {
+  StoreScopeField,
+  useStoreScope,
+} from "@/components/common/store-scope-field";
 
 /** Local yyyy-mm-dd (en-CA yields that format without UTC drift). */
 function todayIso(): string {
@@ -83,7 +86,8 @@ export function OrderBookingDialog({
   open,
   onOpenChange,
 }: OrderBookingDialogProps) {
-  const { currentStore } = useSession();
+  const { targetStoreId, storeLabel, pickedStoreId, setPickedStoreId } =
+    useStoreScope();
   const createOrder = useCreateOrder();
   const uploadImage = useUploadOrderImage();
   const uploadReceipt = useUploadReceipt();
@@ -115,15 +119,6 @@ export function OrderBookingDialog({
 
   const metalColor =
     metalColorSel === "other" ? metalColorOther.trim() : metalColorSel;
-
-  // Aggregate ("all") scope has no concrete store to write to — fall back to the
-  // first real store id; broad roles normally pick a store first.
-  const targetStoreId = currentStore.isAggregate
-    ? "surat-main"
-    : currentStore.id;
-  const storeLabel = currentStore.isAggregate
-    ? "Surat — Main"
-    : currentStore.name;
 
   // Stock orders carry a fixed 21-day back-office SLA. Auto-fill the ETA from
   // the order-placed date unless the manager has overridden it (still editable).
@@ -206,6 +201,10 @@ export function OrderBookingDialog({
   const estimationNum = toNumber(estimation);
 
   async function save() {
+    if (!targetStoreId) {
+      toast.error("Select a store to book this order against.");
+      return;
+    }
     const name = customer.trim();
     const fe: Record<string, string> = {};
     if (kind === "custom" && !name)
@@ -296,6 +295,8 @@ export function OrderBookingDialog({
         </DialogHeader>
 
         <div className="grid gap-4">
+          <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
+
           {/* Kind toggle */}
           <div className="grid gap-1.5">
             <Label>Order type</Label>

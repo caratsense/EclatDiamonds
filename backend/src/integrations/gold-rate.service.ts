@@ -82,7 +82,14 @@ export class GoldRateService {
    */
   private get staleAfterHours(): number {
     const raw = Number(this.config.get<string>('GOLD_RATE_STALE_HOURS'));
-    return Number.isFinite(raw) && raw > 0 ? raw : 24;
+    if (Number.isFinite(raw) && raw > 0) return raw;
+    // Default: tie staleness to the refresh cadence, so a MISSED refresh (a feed
+    // outage that outlasts a full cycle) surfaces as stale instead of quoting off
+    // an aging rate. Flags at 1.5× the refresh interval (18h for the 12h default);
+    // set GOLD_RATE_STALE_HOURS to override.
+    const refresh = Number(this.config.get<string>('GOLD_RATE_REFRESH_HOURS'));
+    const refreshHours = Number.isFinite(refresh) && refresh > 0 ? refresh : 12;
+    return refreshHours * 1.5;
   }
 
   /** Latest stored row for a metal — store-specific override wins over global. */
@@ -164,6 +171,31 @@ export class GoldRateService {
       `Gold rates refreshed: 24k = ₹${written.gold_24k}/g (spot ₹${spotInrPerGram} +${this.premiumPct}%)`,
     );
     return { updated: true, dryRun: false, rates: written };
+  }
+
+  /** Age in hours of the freshest gold (24k) rate on record; Infinity if none. */
+  private async goldRateAgeHours(): Promise<number> {
+    const row = await this.latestRow(MetalKind.gold_24k);
+    if (!row) return Infinity;
+    const eff = row.effectiveFrom ?? row.createdAt;
+    return (Date.now() - eff.getTime()) / 3_600_000;
+  }
+
+  /**
+   * Refresh only when the stored gold rate is older than `maxAgeHours` (or absent).
+   * The scheduler calls this hourly: a fresh rate is left untouched (no feed hit),
+   * a stale/missing one is re-pulled. So a failed pull (feed timeout / 429) is
+   * retried the very next hour instead of leaving the price stale for the whole
+   * refresh window — refresh() returns { updated:false } on failure without
+   * throwing, so the stored rate simply stays old and the next tick tries again.
+   */
+  async refreshIfStale(
+    maxAgeHours: number,
+  ): Promise<{ updated: boolean; dryRun: boolean; skipped?: boolean; rates?: Record<string, number> }> {
+    if (!this.enabled) return { updated: false, dryRun: true };
+    const age = await this.goldRateAgeHours();
+    if (age < maxAgeHours) return { updated: false, dryRun: false, skipped: true };
+    return this.refresh();
   }
 
   /**

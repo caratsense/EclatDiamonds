@@ -1,16 +1,18 @@
-import { IsDateString, IsIn, IsOptional, IsString } from 'class-validator';
+import { IsDateString, IsIn, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class CreateTaskDto {
   @IsString()
+  @IsNotEmpty({ message: 'A task title is required' })
   title!: string;
 
   @IsOptional()
   @IsString()
   detail?: string;
 
-  @IsOptional()
+  /** Mandatory (2026-08): a task must name who it is for. */
   @IsString()
-  assignee?: string;
+  @IsNotEmpty({ message: 'An assignee is required' })
+  assignee!: string;
 
   @IsOptional()
   @IsDateString()

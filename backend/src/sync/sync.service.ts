@@ -53,6 +53,12 @@ export interface SyncResult {
    * this is how that decision surfaces instead of quietly hiding stock.
    */
   unknownStatuses?: Record<string, number>;
+  /**
+   * Stock only — how many rows had their Eclat-owned store/location + status
+   * preserved against the legacy values because the piece is mid- or
+   * post-transfer (Module 9 source-of-truth split). 0 on a normal batch.
+   */
+  eclatControlledPreserved?: number;
 }
 
 type Rec = Record<string, any>;
@@ -131,7 +137,17 @@ export class SyncService {
    * default it used to be.
    */
   private get defaultStoreId(): string {
-    return this.config.get<string>('SYNC_DEFAULT_STORE_ID') ?? 'surat-main';
+    // The store that owns rows we cannot attribute to a branch. This MUST be set
+    // explicitly per install — there is no "main store", so never fall back to a
+    // hardcoded branch (Surat or any other). An unset value is a config error.
+    const id = this.config.get<string>('SYNC_DEFAULT_STORE_ID');
+    if (!id) {
+      throw new BadRequestException(
+        'SYNC_DEFAULT_STORE_ID is not configured. Set it to the store that should own ' +
+          'unattributed rows (a real branch or a dedicated holding store) — the sync never assumes one.',
+      );
+    }
+    return id;
   }
 
   private async assertStore(): Promise<string> {
@@ -1514,7 +1530,10 @@ export class SyncService {
         name: str(r.StyleCode) || sku,
         category: categoryFromRow(r) as any,
         metal: metal as any,
-        karat: karatFromMetal(metal),
+        // Product.karat is a non-null Int; when purity is unknown the honest
+        // signal is metal=gold_unspecified, and karat falls back to 0 (a design,
+        // not a physical piece). Physical StockItems keep null karat below.
+        karat: karatFromMetal(metal) ?? 0,
         weightGrams: dec(r.GrossWt ?? r.ModelWt) ?? '0',
         caratWeight: dec(r.TotDiaWt) ?? '0',
         price: dec(r.MRP ?? r.TagPrice ?? r.EndClientPrice) ?? '0',
@@ -1549,6 +1568,39 @@ export class SyncService {
     const byStatus: Record<string, number> = {};
     const unknownStatuses: Record<string, number> = {};
 
+    // Source-of-truth split (Module 9). Gati owns a piece until it enters an
+    // Eclat-controlled transfer; from the moment that transfer RESERVES the
+    // piece (ho_approved/dispatched) or MOVES it (received/acknowledged), Eclat
+    // is authoritative for the piece's store/location and status. A legacy sync
+    // must not overwrite those two fields for such pieces — otherwise the next
+    // sync silently reverts a legitimate transfer (piece jumps back to its old
+    // branch, reservation dissolves). Every OTHER field stays Gati-owned and
+    // keeps syncing. Evidence is the existing StockTransferItem -> StockTransfer
+    // relationship; no marker column is added.
+    const legacyIds = records
+      .filter((r) => r.JewelId != null)
+      .map((r) => String(r.JewelId));
+    const existingItems = legacyIds.length
+      ? await this.prisma.stockItem.findMany({
+          where: { legacyId: { in: legacyIds } },
+          select: { id: true, legacyId: true },
+        })
+      : [];
+    const idByLegacy = new Map(existingItems.map((s) => [s.legacyId as string, s.id]));
+    const controlled = existingItems.length
+      ? await this.prisma.stockTransferItem.findMany({
+          where: {
+            stockItemId: { in: existingItems.map((s) => s.id) },
+            transfer: {
+              status: { in: ['ho_approved', 'dispatched', 'received', 'acknowledged'] },
+            },
+          },
+          select: { stockItemId: true },
+        })
+      : [];
+    const eclatControlled = new Set(controlled.map((i) => i.stockItemId));
+    let eclatControlledPreserved = 0;
+
     for (const r of records) {
       if (r.JewelId == null) {
         skipped++;
@@ -1567,6 +1619,9 @@ export class SyncService {
         productId: productByStyle.get(String(r.StyleId)) ?? null,
         sku: str(r.InwardSKUNo) || str(r.JewelCode),
         name: str(r.JewelCode),
+        // Same keyword rule as the product sync — without this the piece keeps
+        // the `other` default and every stock row reads "Other".
+        category: categoryFromRow(r) as any,
         metal: metal as any,
         karat: karatFromMetal(metal),
         status: stockStatus as any,
@@ -1591,10 +1646,20 @@ export class SyncService {
         legacyUpdatedAt: dt(r.UpdateDate),
       };
       const legacyId = String(r.JewelId);
+      // Eclat-controlled piece: keep syncing every Gati-owned field, but do NOT
+      // let the legacy store/location or status overwrite what the transfer set.
+      // The CREATE path is never protected — a brand-new piece has no transfer.
+      let updateData: typeof data | Omit<typeof data, 'storeId' | 'status'> = data;
+      const existingId = idByLegacy.get(legacyId);
+      if (existingId && eclatControlled.has(existingId)) {
+        const { storeId: _omitStore, status: _omitStatus, ...gatiOwned } = data;
+        updateData = gatiOwned;
+        eclatControlledPreserved++;
+      }
       await this.prisma.stockItem.upsert({
         where: { legacyId },
         create: { legacyId, ...data },
-        update: data,
+        update: updateData,
       });
       upserted++;
     }
@@ -1623,6 +1688,9 @@ export class SyncService {
       // mapping silently doubles.
       availability: byStatus,
       unknownStatuses,
+      // How many rows had their Eclat-owned store/status preserved against the
+      // legacy values (pieces mid- or post-transfer). 0 on a normal batch.
+      eclatControlledPreserved,
     };
   }
 
@@ -1899,7 +1967,11 @@ export class SyncService {
         where: { id: orderId },
         select: { status: true },
       });
-      const currentRank = current ? (STAGE_RANK[current.status] ?? -1) : -1;
+      // A cancelled (refunded) order is terminal — a stray bag returning through a
+      // department must never reopen it. Skip BEFORE the rank comparison: cancelled
+      // ranks -1, so any incoming stage (>=0) would otherwise win and un-cancel it.
+      if (!current || current.status === 'cancelled') continue;
+      const currentRank = STAGE_RANK[current.status] ?? -1;
       if (STAGE_RANK[stage] > currentRank) {
         await this.prisma.manufacturingOrder.update({
           where: { id: orderId },

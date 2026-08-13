@@ -32,7 +32,7 @@ export class EnrollMemberDto {
 
   /** Monthly installment amount (INR). */
   @IsNumber()
-  @Min(0)
+  @Min(1)
   installment!: number;
 }
 

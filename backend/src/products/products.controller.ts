@@ -37,6 +37,20 @@ export class ProductsController {
   }
 
   /**
+   * (Re)generate image embeddings for the store-scoped catalogue (M5, HO-only).
+   * Idempotent — pass `?force=1` to re-embed products that already have a vector.
+   */
+  @Roles('head_office')
+  @Post('embeddings/reindex')
+  reindexEmbeddings(
+    @CurrentUser() user: AuthUser,
+    @StoreHeader() store: string | undefined,
+    @Query('force') force?: string,
+  ) {
+    return this.aiSearch.reindex(user, store, { force: force === '1' || force === 'true' });
+  }
+
+  /**
    * List catalogue products. Without `page`/`pageSize` returns the plain array
    * (legacy shape); with either param returns { items, total, page, pageSize }.
    */

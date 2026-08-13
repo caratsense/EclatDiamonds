@@ -19,7 +19,11 @@ import { useCommission, useLeaderboard } from "@/lib/queries/hrms";
 export default function SalesPerformancePage() {
   const nav = getNavItem("sales-performance");
   const { role } = useSession();
-  const canEditRates = ROLE_RANK[role] >= ROLE_RANK.store_manager;
+  // Store managers (and the area tier) INPUT sales-performance data; head office
+  // is view-only. The role rank rolls up, so head_office would otherwise inherit
+  // write access — exclude it explicitly (mirrors the backend guard).
+  const canEditRates =
+    role !== "head_office" && ROLE_RANK[role] >= ROLE_RANK.store_manager;
 
   const leaderboardQuery = useLeaderboard();
   const commissionQuery = useCommission();

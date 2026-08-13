@@ -20,3 +20,28 @@ export function apiErrorMessage(err: unknown, fallback: string): string {
   }
   return fallback;
 }
+
+/**
+ * Validate + normalise an Indian mobile number. Mirrors the backend
+ * `contact.util.normalizeIndianMobile`: only digits + phone formatting
+ * (`+ - ( ) space`) are allowed — letters/symbols are rejected, not stripped —
+ * and a `+91`/`91`/leading-`0` prefix is accepted. Returns the canonical
+ * 10-digit number, or null if it is not a valid mobile.
+ */
+export function normalizeIndianMobile(raw: string): string | null {
+  const v = (raw ?? "").trim();
+  if (!v) return null;
+  if (!/^[+\d()\-\s]+$/.test(v)) return null;
+  let digits = v.replace(/\D/g, "");
+  if (digits.length === 12 && digits.startsWith("91")) digits = digits.slice(2);
+  else if (digits.length === 11 && digits.startsWith("0")) digits = digits.slice(1);
+  if (digits.length !== 10) return null;
+  if (!/^[6-9]/.test(digits)) return null;
+  return digits;
+}
+
+/** Conservative email check (single @, a dot in the domain, no spaces). */
+export function isValidEmail(raw: string): boolean {
+  const v = (raw ?? "").trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) && v.length <= 254;
+}

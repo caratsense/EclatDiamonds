@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
@@ -97,6 +97,10 @@ export class CheckinsService {
       where: { id, ...this.scope.storeFilter(user) },
     });
     if (!existing) throw new NotFoundException('Check-in not found');
+    // A salesperson can only close their own walk-in, not another rep's.
+    if (user.role === 'salesperson' && existing.repId !== user.id) {
+      throw new ForbiddenException('You can only check out your own walk-ins');
+    }
     const row = await this.prisma.checkIn.update({
       where: { id },
       data: { timeOut: new Date(), outcome: dto.outcome ?? 'left' },

@@ -68,6 +68,8 @@ export interface StoreGeofence {
 export interface AttendanceRecord {
   id: string;
   storeId: string;
+  /** The store's display name — populated for the multi-store aggregate view. */
+  storeName?: string | null;
   staffId: string;
   /** YYYY-MM-DD, the store-local business date this punch belongs to. */
   date?: string;

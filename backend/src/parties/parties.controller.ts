@@ -1,6 +1,7 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { PartyType } from '@prisma/client';
 import { PartiesService } from './parties.service';
+import { CreatePartyDto } from './dto/party.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
 import { parsePagination, DEFAULT_PAGE_SIZE } from '../common/pagination';
@@ -28,5 +29,11 @@ export class PartiesController {
     const pagination =
       parsePagination(page ?? '1', pageSize) ?? { page: 1, pageSize: DEFAULT_PAGE_SIZE };
     return this.parties.list(user, { q, type: type ?? 'customer' }, store, pagination);
+  }
+
+  /** POST /parties — add a customer. Store scope enforced in the service. */
+  @Post()
+  create(@CurrentUser() user: AuthUser, @Body() dto: CreatePartyDto) {
+    return this.parties.create(user, dto);
   }
 }

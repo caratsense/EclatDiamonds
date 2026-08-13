@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { SalesService } from './sales.service';
-import { CreateSaleDto, SalesQueryDto } from './dto/sales.dto';
+import { CancelSaleDto, CreateSaleDto, SalesQueryDto } from './dto/sales.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
 import { Roles } from '../auth/roles.decorator';
@@ -39,6 +39,20 @@ export class SalesController {
   @Get(':id')
   get(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.sales.get(user, id);
+  }
+
+  /**
+   * POST /sales/:id/cancel — soft-void a sale (store manager → head office; a
+   * salesperson is rejected by the role gate). Store-scoped, reason required.
+   */
+  @Roles('store_manager', 'head_office')
+  @Post(':id/cancel')
+  cancel(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: CancelSaleDto,
+  ) {
+    return this.sales.cancel(user, id, dto);
   }
 
   /** POST /sales/:id/quotation — upload the quotation photo (multipart `file`). Managers+. */

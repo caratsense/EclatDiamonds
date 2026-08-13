@@ -54,7 +54,11 @@ import {
   type LeadOutcomeFilter,
 } from "@/lib/queries/leads";
 import { useSession } from "@/store/use-session";
-import { apiErrorMessage } from "@/lib/utils";
+import {
+  StoreScopeField,
+  useStoreScope,
+} from "@/components/common/store-scope-field";
+import { apiErrorMessage, normalizeIndianMobile } from "@/lib/utils";
 
 const nav = getNavItem("crm")!;
 
@@ -418,7 +422,8 @@ function AddLeadDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { currentStore } = useSession();
+  const { targetStoreId, storeLabel, pickedStoreId, setPickedStoreId } =
+    useStoreScope();
   const createLead = useCreateLead();
   const [customer, setCustomer] = useState("");
   const [phone, setPhone] = useState("");
@@ -435,10 +440,6 @@ function AddLeadDialog({
     setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
   }
 
-  // Aggregate ("all") scope has no concrete store to write to — fall back
-  // to the first real store id; broad roles normally pick a store first.
-  const targetStoreId = currentStore.isAggregate ? "surat-main" : currentStore.id;
-
   function reset() {
     setCustomer("");
     setPhone("");
@@ -452,12 +453,19 @@ function AddLeadDialog({
   }
 
   function save() {
+    if (!targetStoreId) {
+      toast.error("Select a store to capture this lead against.");
+      return;
+    }
     // Validate all required fields up front so every offending field shows
     // its own inline message; the toast is just a summary.
     const next: Record<string, string> = {};
     if (!customer.trim()) next.customer = "Customer name is required.";
-    // Phone is mandatory (Round-2) — block client-side before the call.
+    // Phone is mandatory (Round-2) and must be a valid Indian mobile — the
+    // backend now enforces @IsIndianMobile, so block/normalise client-side.
+    const normalizedPhone = normalizeIndianMobile(phone);
     if (!phone.trim()) next.phone = "Phone number is required to save a lead.";
+    else if (!normalizedPhone) next.phone = "Enter a valid 10-digit mobile number.";
     if (!source) next.source = "Lead source is required.";
     if (Object.keys(next).length > 0) {
       setErrors(next);
@@ -468,7 +476,8 @@ function AddLeadDialog({
       {
         storeId: targetStoreId,
         customerName: customer.trim(),
-        phone: phone.trim(),
+        // Validated non-null just above; send the canonical 10-digit value.
+        phone: normalizedPhone as string,
         // Validated non-empty just above; narrow away the "" union member.
         source: source as LeadSource,
         interest: interest.trim() || undefined,
@@ -494,11 +503,12 @@ function AddLeadDialog({
         <DialogHeader>
           <DialogTitle>Add lead</DialogTitle>
           <DialogDescription>
-            New leads are captured against{" "}
-            {currentStore.isAggregate ? "Surat — Main" : currentStore.name}.
+            New leads are captured against {storeLabel}.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
+          <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
+
           <div className="grid gap-1.5">
             <Label htmlFor="cust">
               Customer name <span className="text-destructive">*</span>
@@ -524,6 +534,7 @@ function AddLeadDialog({
               id="phone"
               placeholder="+91 ..."
               value={phone}
+              aria-invalid={!!errors.phone}
               onChange={(e) => {
                 setPhone(e.target.value);
                 clearError("phone");

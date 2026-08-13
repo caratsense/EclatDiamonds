@@ -1,5 +1,6 @@
 import { IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { CheckinOutcome, CheckinPurpose } from '@prisma/client';
+import { IsIndianMobile } from '../../common/contact.util';
 
 export class CreateCheckInDto {
   @IsString()
@@ -10,6 +11,7 @@ export class CreateCheckInDto {
 
   @IsOptional()
   @IsString()
+  @IsIndianMobile()
   phone?: string;
 
   @IsOptional()

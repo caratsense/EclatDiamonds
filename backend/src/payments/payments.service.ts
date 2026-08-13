@@ -1,11 +1,17 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuditService } from '../common/audit.service';
+import { ROLE_RANK } from '../common/role.util';
 import { paymentModeLabel } from '../common/payment-mode.util';
-import { CreatePaymentDto } from './dto/payment.dto';
+import { CreatePaymentDto, ReversePaymentDto } from './dto/payment.dto';
 
 function num(v: Prisma.Decimal | number | null | undefined): number {
   return v == null ? 0 : Number(v);
@@ -16,8 +22,12 @@ function toRow(p: any) {
   return {
     id: p.id,
     date: p.paidAt.toISOString(),
-    customer: p.party?.name ?? 'Walk-in',
-    ref: p.reference ?? p.sale?.docNo ?? '—',
+    // The customer is the linked party, else the free-text name captured on the
+    // receipt. No fabricated "Walk-in" — a nameless collection is now refused at
+    // the edge, so a blank here only ever means a legacy import with neither.
+    customer: p.party?.name ?? p.reference ?? '—',
+    // Ref is the linked sale's document; the payer's name lives in `customer`.
+    ref: p.sale?.docNo ?? '—',
     mode: paymentModeLabel(p.mode),
     amount: num(p.amount),
     storeId: p.storeId,
@@ -125,13 +135,83 @@ export class PaymentsService {
       entityId: payment.id,
       storeId: payment.storeId,
       summary: `Recorded ₹${num(payment.amount)} ${paymentModeLabel(payment.mode)} from ${
-        payment.party?.name ?? 'walk-in'
+        payment.party?.name ?? payment.reference
       }`,
       metadata: {
         amount: num(payment.amount),
         mode: payment.mode,
         saleId: dto.saleId ?? null,
         reference: dto.reference ?? null,
+      },
+    });
+
+    return toRow(payment);
+  }
+
+  /**
+   * POST /payments/:id/reverse — reverse a collection (store manager → head office).
+   *
+   * The original Payment is NEVER edited or deleted (financial immutability); a
+   * new entry is written carrying the NEGATIVE amount and linked to the original,
+   * so every sum nets to zero. At most one reversal per original (unique link),
+   * and a reversal cannot itself be reversed. Audited.
+   */
+  async reverse(user: AuthUser, id: string, dto: ReversePaymentDto) {
+    const original = await this.prisma.payment.findUnique({
+      where: { id },
+      include: { reversedBy: true },
+    });
+    if (!original) throw new NotFoundException('Payment not found');
+    this.scope.assertStoreAllowed(user, original.storeId);
+    // Reversing money out is a management correction — store manager and above.
+    if (ROLE_RANK[user.role] < ROLE_RANK.store_manager) {
+      throw new ForbiddenException(
+        'Only a store manager or head office can reverse a payment',
+      );
+    }
+    if (original.reversesPaymentId) {
+      throw new BadRequestException('A reversal entry cannot itself be reversed');
+    }
+    if (original.reversedBy) {
+      throw new BadRequestException('This payment has already been reversed');
+    }
+    const reason = dto.reason.trim();
+    if (!reason) throw new BadRequestException('A reversal reason is required');
+
+    const created = await this.prisma.payment.create({
+      data: {
+        storeId: original.storeId,
+        partyId: original.partyId,
+        saleId: original.saleId,
+        schemeMemberId: original.schemeMemberId,
+        reference: original.reference,
+        mode: original.mode,
+        amount: new Prisma.Decimal(original.amount).negated(),
+        paidAt: new Date(),
+        reconciled: false,
+        recordedById: user.id,
+        recordedByName: user.name,
+        reversesPaymentId: original.id,
+        reversalReason: reason,
+      },
+    });
+    const payment = await this.prisma.payment.findUniqueOrThrow({
+      where: { id: created.id },
+      include: { party: true, store: true, sale: true },
+    });
+
+    await this.audit.record(user, {
+      action: 'payment.reverse',
+      entityType: 'Payment',
+      entityId: payment.id,
+      storeId: payment.storeId,
+      summary: `Reversed ₹${num(original.amount)} ${paymentModeLabel(
+        original.mode,
+      )} — ${reason}`,
+      metadata: {
+        reversesPaymentId: original.id,
+        amount: num(payment.amount),
+        reason,
       },
     });
 
