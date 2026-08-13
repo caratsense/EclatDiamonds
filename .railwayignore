@@ -1,0 +1,22 @@
+# Railway deploys ONLY the backend service (its root_directory = "backend"), so
+# the uploaded tarball must contain backend/ at the top level but nothing else
+# heavy. Exclude everything the backend Docker build does not need — especially
+# the multi-GB legacy SQL Server dumps and every node_modules.
+SJEP DATA/
+SJEP BACKUP/
+SJEP REPORT/
+frontend/
+synceclatcaratsense/
+HANDOVER/
+data_sync/
+docs/
+node_modules/
+backend/node_modules/
+backend/dist/
+backend/uploads/
+.git/
+*.bak
+*.mdf
+*.ldf
+*.xlsx
+*.pdf
