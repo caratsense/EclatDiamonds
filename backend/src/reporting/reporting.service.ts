@@ -36,6 +36,9 @@ const GOLD_METALS: MetalKind[] = [
   'gold_24k',
   'gold_22k',
   'gold_18k',
+  'gold_14k',
+  'gold_10k',
+  'gold_9k',
   'rose_gold_18k',
   'gold_unspecified',
 ];

@@ -13,7 +13,8 @@ import {
   int,
   karatFromMetal,
   maxWatermark,
-  metalFromTone,
+  metalFromRow,
+  karatFromRow,
   str,
   KNOWN_INWARD_STATUSES,
   stockStatusFromInward,
@@ -81,8 +82,38 @@ const CATEGORY_RULES: [RegExp, string][] = [
   [/ring|solitaire|\bband\b|finger\s*ring/i, 'ring'],
 ];
 
-/** First matching category across all of a row's text values; `other` if none. */
+/**
+ * Gati encodes the product group as a 2-letter code inside the design/piece code
+ * (`10880RG` -> RG, `SDNK01033` -> NK, `12483BRG` -> RG, `LGCBR0045` -> BR),
+ * matching MainProductGroup prefixes. The English-word scan below never matched
+ * Gati rows (the text is the CODE, not the word "ring"), so every product/stock
+ * row classified as `other`. Strip non-letters from the leading token and read
+ * the last two letters.
+ */
+const CODE_GROUP: Record<string, string> = {
+  RG: 'ring',
+  PD: 'pendant',
+  BG: 'bangle',
+  BR: 'bracelet',
+  NK: 'necklace',
+  ER: 'earrings',
+  CH: 'chain',
+  CG: 'chain',
+};
+
+function categoryFromCode(r: Rec): string | null {
+  const token = String(
+    r.StyleCode ?? r.StyleSKUNo ?? r.JewelCode ?? r.InwardSKUNo ?? '',
+  ).split('-')[0];
+  const two = token.replace(/[^A-Za-z]/g, '').slice(-2).toUpperCase();
+  return CODE_GROUP[two] ?? null;
+}
+
+/** Category from the Gati product-group code first, then an English-word scan
+ * (kept for website imports, which carry real descriptions); `other` if none. */
 function categoryFromRow(r: Rec): string {
+  const fromCode = categoryFromCode(r);
+  if (fromCode) return fromCode;
   const hay = Object.values(r)
     .map((v) => String(v ?? ''))
     .join(' ');
@@ -1521,7 +1552,7 @@ export class SyncService {
         skipped++;
         continue;
       }
-      const metal = metalFromTone(r.ToneFor, r.ToneCode);
+      const metal = metalFromRow(r);
       const sku = str(r.StyleSKUNo) || str(r.StyleCode) || `STYLE-${r.StyleId}`;
       const storeId = await branch.resolve(r);
       const data = {
@@ -1533,7 +1564,7 @@ export class SyncService {
         // Product.karat is a non-null Int; when purity is unknown the honest
         // signal is metal=gold_unspecified, and karat falls back to 0 (a design,
         // not a physical piece). Physical StockItems keep null karat below.
-        karat: karatFromMetal(metal) ?? 0,
+        karat: karatFromRow(r) ?? 0,
         weightGrams: dec(r.GrossWt ?? r.ModelWt) ?? '0',
         caratWeight: dec(r.TotDiaWt) ?? '0',
         price: dec(r.MRP ?? r.TagPrice ?? r.EndClientPrice) ?? '0',
@@ -1606,7 +1637,7 @@ export class SyncService {
         skipped++;
         continue;
       }
-      const metal = metalFromTone(r.ToneFor, r.ToneCode);
+      const metal = metalFromRow(r);
       const storeId = await branch.resolveRequired(r);
       const rawStatus = String(r.Status ?? '').trim().toUpperCase();
       if (rawStatus && !KNOWN_INWARD_STATUSES.has(rawStatus)) {
@@ -1623,7 +1654,7 @@ export class SyncService {
         // the `other` default and every stock row reads "Other".
         category: categoryFromRow(r) as any,
         metal: metal as any,
-        karat: karatFromMetal(metal),
+        karat: karatFromRow(r),
         status: stockStatus as any,
         grossWeight: dec(r.GrossWt),
         netWeight: dec(r.NetWt),
@@ -1640,7 +1671,8 @@ export class SyncService {
         cost: dec(r.COST),
         mrp: dec(r.MRP),
         tagPrice: dec(r.TagPrice),
-        hallmarkNo: str(r.HallMarkId),
+        // HallMarkId is an opaque FK id (33/38), not a hallmark serial, so it is
+        // not mapped. certificateNo carries the real certificate number.
         certificateNo: str(r.Jewelry_CertificateNo),
         inwardDate: dt(r.InwardDate),
         legacyUpdatedAt: dt(r.UpdateDate),

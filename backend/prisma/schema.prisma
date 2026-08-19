@@ -86,12 +86,15 @@ enum MetalKind {
   gold_24k
   gold_22k
   gold_18k
+  /// 14K/10K/9K gold — the real purities this (lab-grown diamond) business uses;
+  /// karat is read per-piece from the SKU token (-14KT-/-18KT-/-9KT-).
+  gold_14k
+  gold_10k
+  gold_9k
   rose_gold_18k
   platinum
   silver
-  /// Gold whose purity/karat is not known from the legacy source. Used instead
-  /// of asserting a default karat (Gati carries no per-piece karat today), so an
-  /// unmapped purity reads as "gold, karat unknown" rather than a false 22K.
+  /// Gold whose karat could not be determined from the legacy source (rare).
   gold_unspecified
 }
 

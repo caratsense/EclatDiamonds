@@ -67,7 +67,12 @@ describe('sync — what counts as stock a shop can actually sell', () => {
     expect(stockStatusFromInward({ Status: '' })).toBe('in_stock');
   });
 
-  it('a sale reference wins over a stale status letter', () => {
-    expect(stockStatusFromInward({ SaleId: 42, Status: 'A' })).toBe('sold');
+  it('the status letter is authoritative — SaleId does NOT override it', () => {
+    // Validated on the real DB: Inward.SaleId is also set on branch-transfer (V)
+    // vouchers, so trusting it first flipped ~550 transferred pieces to a phantom
+    // "sold". Status wins; SaleId only decides when there is no status letter.
+    expect(stockStatusFromInward({ SaleId: 42, Status: 'A' })).toBe('in_stock');
+    expect(stockStatusFromInward({ SaleId: 42, Status: 'V' })).toBe('transferred');
+    expect(stockStatusFromInward({ SaleId: 42, Status: '' })).toBe('sold'); // no letter → SaleId
   });
 });

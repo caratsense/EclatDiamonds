@@ -45,32 +45,56 @@ export function bool(v: unknown): boolean {
 }
 
 /**
- * Legacy ToneFor (G=gold, D=diamond) + ToneCode -> Eclat MetalKind.
- *
- * The tone carries a pink/rose marker but NOT the karat, and Gati has no
- * per-piece purity column wired into this pipeline (a RateChart/caratage join
- * would be needed and does not exist). So a plain gold piece is mapped to
- * `gold_unspecified` — "gold, purity unknown" — rather than asserting a false
- * 22K. See docs/GATI_DATA_CONTRACT.md (Karat: CLIENT INPUT REQUIRED).
+ * Per-piece KARAT. The base-metal karat is carried literally in the piece's code
+ * as a `-14KT-` / `-18KT-` / `-9KT-` token (validated 100% on the client's live
+ * data against the authoritative `InwardDetail(IsBase=1) → SPM_Items → QualityMst`
+ * join: 14KT×2128, 9KT×450, 18KT×112). The extractor may also attach an explicit
+ * `Karat` int; prefer it, else parse the token off any code field.
  */
-export function metalFromTone(toneFor: unknown, toneCode: unknown): string {
-  const c = String(toneCode ?? '').toUpperCase();
-  // Rose/pink is a genuine tone signal (conventionally 18K rose gold).
-  if (c.includes('PG') || c.includes('PINK') || c.includes('ROSE')) return 'rose_gold_18k';
-  // Any other gold: we know the metal but NOT the karat — do not guess a purity.
-  if (String(toneFor ?? '').toUpperCase() === 'G') return 'gold_unspecified';
+export function karatFromRow(r: any): number | null {
+  const explicit = Number(r?.Karat);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  const code = String(
+    r?.InwardSKUNo ?? r?.StyleSKUNo ?? r?.JewelCode ?? r?.StyleCode ?? '',
+  );
+  const m = code.match(/-(\d{1,2})\s*KT?-/i);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * Tone + karat -> Eclat MetalKind. Colour comes from the tone (PG/PINK/ROSE ->
+ * rose gold); the karat (karatFromRow) picks the gold bucket. The EXACT karat
+ * always rides on the Int column — the enum is a coarse label.
+ */
+export function metalFromRow(r: any): string {
+  const tone = String(r?.ToneCode ?? '').toUpperCase();
+  const code = String(
+    r?.InwardSKUNo ?? r?.StyleSKUNo ?? r?.JewelCode ?? r?.StyleCode ?? '',
+  ).toUpperCase();
+  if (tone.includes('PG') || tone.includes('PINK') || tone.includes('ROSE') || /-PG-/.test(code))
+    return 'rose_gold_18k';
+  const k = karatFromRow(r);
+  if (k == null) return 'gold_unspecified';
+  if (k >= 23) return 'gold_24k'; // 24 / 999 / 995
+  if (k === 22) return 'gold_22k';
+  if (k === 18) return 'gold_18k';
+  if (k === 14) return 'gold_14k';
+  if (k === 10) return 'gold_10k';
+  if (k === 9) return 'gold_9k';
   return 'gold_unspecified';
 }
 
-/** Karat implied by a mapped metal, or null when the purity is genuinely unknown. */
+/** Karat implied by a mapped metal (fallback when no per-row karat is present). */
 export function karatFromMetal(metal: string): number | null {
   const k: Record<string, number> = {
     gold_24k: 24,
     gold_22k: 22,
     gold_18k: 18,
+    gold_14k: 14,
+    gold_10k: 10,
+    gold_9k: 9,
     rose_gold_18k: 18,
   };
-  // gold_unspecified / platinum / silver have no meaningful karat -> null.
   return k[metal] ?? null;
 }
 
@@ -149,12 +173,15 @@ const INWARD_STATUS: Record<string, string> = {
 export const KNOWN_INWARD_STATUSES = new Set(Object.keys(INWARD_STATUS));
 
 export function stockStatusFromInward(row: { SaleId?: unknown; Status?: unknown }): string {
-  // A sale reference, where the install has one, is decisive — a piece attached
-  // to a bill is sold whatever the status letter still says.
-  if (row.SaleId) return 'sold';
+  // `Status` is authoritative — it is the client's Const_InwardStatus letter and
+  // is 100% populated. `SaleId` must NOT be trusted first: on this install it is
+  // also set on branch-transfer vouchers (every `V` Branch-Issue row carries
+  // one), so a SaleId-first rule flips ~550 transferred pieces to a phantom
+  // "sold" and drops them from transfer tracking. Use SaleId only as a tie-break
+  // when there is no status letter at all.
   const code = String(row.Status ?? '').trim().toUpperCase();
-  if (!code) return 'in_stock'; // no status column at all: the old behaviour
-  return INWARD_STATUS[code] ?? 'transferred';
+  if (code) return INWARD_STATUS[code] ?? 'transferred';
+  return row.SaleId ? 'sold' : 'in_stock';
 }
 
 /** Highest legacy watermark (UpdateDate else EntryDate) across a record set, as ISO. */
