@@ -12,7 +12,9 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { Availability, MetalKind, ProductCategory } from '@prisma/client';
 import { ProductsService } from './products.service';
 import { AiImageSearchService } from './ai-image-search.service';
+import { JewelrySimilarityService } from './jewelry-similarity.service';
 import { CreateProductDto } from './dto/product.dto';
+import { SimilarityFeedbackDto, SimilaritySearchQueryDto } from './dto/jewelry-similarity.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
 import { parsePagination } from '../common/pagination';
@@ -23,7 +25,33 @@ export class ProductsController {
   constructor(
     private readonly products: ProductsService,
     private readonly aiSearch: AiImageSearchService,
+    private readonly jewelry: JewelrySimilarityService,
   ) {}
+
+  /**
+   * Jewelry visual similarity (M5): upload a photo → ranked catalogue matches via
+   * dual DINOv3 + SigLIP 2 embeddings. Sales tool — salesperson and above.
+   */
+  @Post('jewelry/similarity-search')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 12 * 1024 * 1024 } }))
+  similaritySearch(
+    @CurrentUser() user: AuthUser,
+    @StoreHeader() store: string | undefined,
+    @UploadedFile() file: any,
+    @Query() query: SimilaritySearchQueryDto,
+  ) {
+    return this.jewelry.search(user, file, { category: query.category, limit: query.limit }, store);
+  }
+
+  /** Record relevance feedback on a similarity-search hit (M5 training signal). */
+  @Post('jewelry/similarity-feedback')
+  similarityFeedback(
+    @CurrentUser() user: AuthUser,
+    @StoreHeader() store: string | undefined,
+    @Body() dto: SimilarityFeedbackDto,
+  ) {
+    return this.jewelry.feedback(user, dto, store);
+  }
 
   /** AI image search (M5): upload a design photo → ranked catalogue matches. */
   @Post('image-search')
@@ -37,8 +65,10 @@ export class ProductsController {
   }
 
   /**
-   * (Re)generate image embeddings for the store-scoped catalogue (M5, HO-only).
-   * Idempotent — pass `?force=1` to re-embed products that already have a vector.
+   * (Re)build dual visual embeddings (DINOv3 + SigLIP 2) for the store-scoped
+   * catalogue into ProductEmbedding (M5, HO-only). Idempotent — skips unchanged
+   * images/model versions. `?force=1` re-embeds everything; `?productId=` scopes
+   * to a single design (single-product reindex / failed-row retry).
    */
   @Roles('head_office')
   @Post('embeddings/reindex')
@@ -46,8 +76,12 @@ export class ProductsController {
     @CurrentUser() user: AuthUser,
     @StoreHeader() store: string | undefined,
     @Query('force') force?: string,
+    @Query('productId') productId?: string,
   ) {
-    return this.aiSearch.reindex(user, store, { force: force === '1' || force === 'true' });
+    return this.jewelry.reindex(user, store, {
+      force: force === '1' || force === 'true',
+      productId,
+    });
   }
 
   /**

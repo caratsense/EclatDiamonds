@@ -114,6 +114,15 @@ enum Availability {
   lead_time
 }
 
+/// Module 5 — relevance label a user attaches to a jewelry similarity-search hit.
+/// Training signal for future ranking calibration; never changes the live result.
+enum SimilarityFeedback {
+  very_close
+  relevant
+  somewhat
+  not_relevant
+}
+
 enum StockStatus {
   in_stock
   aging
@@ -936,14 +945,73 @@ model Product {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  store      Store?      @relation(fields: [storeId], references: [id])
-  stockItems StockItem[]
-  quoteLines QuoteLine[]
-  saleLines  SaleLine[]
+  store           Store?             @relation(fields: [storeId], references: [id])
+  stockItems      StockItem[]
+  quoteLines      QuoteLine[]
+  saleLines       SaleLine[]
+  imageEmbeddings ProductEmbedding[]
 
   @@index([storeId, createdAt])
   @@index([category])
   @@index([sku])
+}
+
+/// Module 5 — dual visual embedding for one product image (DINOv3 + SigLIP 2).
+///
+/// One row per (product, preprocessingVersion). Kept in its own table (not on
+/// Product) so re-indexing a model never rewrites the catalogue row, and so a
+/// pgvector upgrade can swap the two Float[] columns for `vector(N)` + an HNSW
+/// cosine index per column WITHOUT touching Product. Until pgvector is installed
+/// on the target Postgres these stay `Float[]` and ranking runs in-app
+/// (jewelry-ranking.service.ts). See prisma/manual/20260819_pgvector_dual_embeddings.sql.
+model ProductEmbedding {
+  id        String  @id @default(cuid())
+  productId String
+  /// Inherited from the product at index time so search can store-scope without a join.
+  storeId   String?
+
+  /// DINOv3 patch/global embedding — structure & shape.
+  dinoEmbedding   Float[]
+  /// SigLIP 2 embedding — semantic / text-aligned appearance.
+  siglipEmbedding Float[]
+
+  /// Provenance so a model or pipeline upgrade auto-invalidates a stale row.
+  dinoModelVersion   String @default("unknown")
+  siglipModelVersion String @default("unknown")
+  preprocessingVersion String @default("unknown")
+  /// sha256 of the source image bytes — the idempotency key for re-index skip.
+  imageHash          String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, preprocessingVersion])
+  @@index([storeId])
+}
+
+/// Module 5 — relevance feedback on a jewelry similarity-search result.
+/// Advisory training data: which returned hits the user judged close. Not linked
+/// to a stored query (we never persist the uploaded photo); queryId is the opaque
+/// id echoed from the search response.
+model SimilaritySearchFeedback {
+  id        String             @id @default(cuid())
+  queryId   String
+  productId String
+  storeId   String?
+  rank      Int
+  /// The closenessScore (0-100) the ranker gave this hit, for calibration analysis.
+  score     Float
+  feedback  SimilarityFeedback
+  /// Ranking pipeline version + the model versions in play, so feedback stays
+  /// interpretable after the ranker or models change.
+  rankingVersion String
+  modelVersions  Json
+  createdAt      DateTime @default(now())
+
+  @@index([queryId])
+  @@index([productId])
 }
 
 /// A physical jewellery piece in stock. Legacy: Inward + InwardSummary (1:1 rollup).

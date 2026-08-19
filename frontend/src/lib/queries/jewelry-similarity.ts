@@ -1,0 +1,98 @@
+"use client";
+
+import { useMutation } from "@tanstack/react-query";
+
+import { api } from "@/lib/api";
+import type { ProductCategory } from "@/lib/mock/catalogue";
+
+/** How close a hit is — colour-coded in the UI, never shown as raw cosine. */
+export type MatchLevel =
+  | "VERY_CLOSE"
+  | "CLOSE"
+  | "SIMILAR"
+  | "WEAK"
+  | "NO_CLOSE_MATCH";
+
+export type SearchStatus = "MATCHES_FOUND" | "NO_CLOSE_MATCH" | "SEARCH_ERROR";
+
+/** Relevance feedback values accepted by the backend (training signal). */
+export type SimilarityFeedbackValue =
+  | "very_close"
+  | "relevant"
+  | "somewhat"
+  | "not_relevant";
+
+export interface SimilarityHit {
+  productId: string;
+  productName: string;
+  imageUrl?: string | null;
+  rank: number;
+  /** 0–100, already normalised server-side (NOT a raw cosine). */
+  closenessScore: number;
+  matchLevel: MatchLevel;
+}
+
+export interface SimilaritySearchResult {
+  queryId: string;
+  /** false → the inference service isn't wired in this env (not an error). */
+  available: boolean;
+  status: SearchStatus;
+  matchLevel: MatchLevel;
+  closenessScore: number;
+  results: SimilarityHit[];
+  /** Server-supplied reason on the unavailable / error paths. */
+  reason?: string;
+}
+
+export interface SimilaritySearchInput {
+  file: File;
+  category?: ProductCategory;
+  limit?: number;
+}
+
+/**
+ * POST /products/jewelry/similarity-search — upload a reference photo, get
+ * visually ranked catalogue matches (DINO/SigLIP embeddings, server-side).
+ * Auth: salesperson and up. The image goes as multipart `file`; category /
+ * limit ride as query params.
+ */
+export function useSimilaritySearch() {
+  return useMutation({
+    mutationFn: async ({ file, category, limit }: SimilaritySearchInput) => {
+      const form = new FormData();
+      form.append("file", file);
+      const { data } = await api.post<SimilaritySearchResult>(
+        "/products/jewelry/similarity-search",
+        form,
+        {
+          headers: { "Content-Type": "multipart/form-data" },
+          params: { category, limit },
+        },
+      );
+      return data;
+    },
+  });
+}
+
+export interface SimilarityFeedbackInput {
+  queryId: string;
+  productId: string;
+  rank: number;
+  feedback: SimilarityFeedbackValue;
+}
+
+/**
+ * POST /products/jewelry/similarity-feedback — record whether a hit was
+ * relevant. Fire-and-forget from the UI (a training signal, not user-blocking).
+ */
+export function useSimilarityFeedback() {
+  return useMutation({
+    mutationFn: async (input: SimilarityFeedbackInput) => {
+      const { data } = await api.post<{ stored: boolean }>(
+        "/products/jewelry/similarity-feedback",
+        input,
+      );
+      return data;
+    },
+  });
+}

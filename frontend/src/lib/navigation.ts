@@ -27,6 +27,7 @@ import {
   Contact,
   Coins,
   ArrowLeftRight,
+  ScanSearch,
 } from "lucide-react";
 
 import type { Role } from "@/lib/types";
@@ -151,6 +152,16 @@ export const NAV_GROUPS: NavGroup[] = [
           "Browse products across stores; search by photo.",
         primaryAction: "Add Product",
         icon: Gem,
+      },
+      {
+        module: 5,
+        slug: "find-similar",
+        title: "Find Similar Jewellery",
+        purpose:
+          "Upload a reference photo to find visually similar pieces in the catalogue.",
+        primaryAction: "",
+        icon: ScanSearch,
+        // Visible to everyone — a salesperson at the counter is the primary user.
       },
       {
         module: 14,

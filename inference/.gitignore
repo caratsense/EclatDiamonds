@@ -1,0 +1,14 @@
+# virtualenvs
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# model / HF caches — never commit weights
+models/
+.cache/
+*.safetensors
+*.bin
+
+# local env
+.env
