@@ -3,6 +3,7 @@ import { SchedulerModule } from '../scheduler/scheduler.module';
 import { WhatsAppBotController } from './whatsapp-bot.controller';
 import { WhatsAppBotScheduler } from './whatsapp-bot.scheduler';
 import { WhatsAppBotService } from './whatsapp-bot.service';
+import { WhatsAppConversationService } from './whatsapp-conversation.service';
 import { WhatsAppIdentityService } from './whatsapp-identity.service';
 
 /**
@@ -17,7 +18,12 @@ import { WhatsAppIdentityService } from './whatsapp-identity.service';
 @Module({
   imports: [SchedulerModule],
   controllers: [WhatsAppBotController],
-  providers: [WhatsAppBotService, WhatsAppIdentityService, WhatsAppBotScheduler],
+  providers: [
+    WhatsAppBotService,
+    WhatsAppIdentityService,
+    WhatsAppConversationService,
+    WhatsAppBotScheduler,
+  ],
   exports: [WhatsAppBotService, WhatsAppIdentityService],
 })
 export class WhatsAppBotModule {}

@@ -649,6 +649,29 @@ model WhatsAppEvent {
   @@index([phoneE164, createdAt])
 }
 
+/// Where a conversation with the bot has got to. WhatsApp is stateless
+/// request/response, but a daily report is ten questions, so the answers so far
+/// live in `draft` until the user confirms and the row is written. One live
+/// session per number; it expires so an abandoned half-report never resurfaces
+/// days later as if it were today's.
+model WhatsAppSession {
+  id        String   @id @default(cuid())
+  phoneE164 String   @unique
+  userId    String?
+  /// idle | dsr | dsr_confirm | message | pick_store
+  flow      String   @default("idle")
+  /// Index into the flow's question list.
+  step      Int      @default(0)
+  /// Answers collected so far, keyed by DailyReport field name.
+  draft     Json?
+  storeId   String?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([expiresAt])
+}
+
 /// One-time code that links a WhatsApp number to a user. The user starts the
 /// link in-app (POST /whatsapp/link/start), which shows this code; they send it
 /// to the bot from the number they want to bind, proving control of that number.
@@ -2513,10 +2536,17 @@ model DailyReport {
   oldGoldWtG       Decimal? @db.Decimal(12, 3)
   oldGoldValue     Decimal? @db.Decimal(14, 2)
   submittedBy      String?
+  /// Where this came from: "web" (the in-app form) or "whatsapp" (the bot), so
+  /// HO can tell the channels apart.
+  source           String   @default("web")
   createdAt        DateTime @default(now())
 
   store Store @relation(fields: [storeId], references: [id])
 
+  /// One report per store per day. Without this a resubmission (or a webhook
+  /// retry) becomes a second row and silently doubles every roll-up that reads
+  /// it; with it, a resubmission updates the day in place.
+  @@unique([storeId, reportDate])
   @@index([storeId, reportDate])
 }
 

@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../integrations/whatsapp.service';
+import { WhatsAppConversationService } from './whatsapp-conversation.service';
 import { WhatsAppIdentityService } from './whatsapp-identity.service';
 
 /** A code-shaped token: 6–10 chars of the link-code alphabet. */
@@ -38,6 +39,7 @@ export class WhatsAppBotService {
     private readonly prisma: PrismaService,
     private readonly wa: WhatsAppService,
     private readonly identity: WhatsAppIdentityService,
+    private readonly conversation: WhatsAppConversationService,
   ) {}
 
   /**
@@ -169,8 +171,13 @@ export class WhatsAppBotService {
     const user = await this.identity.resolveActiveUser(from);
 
     if (user) {
-      // Known sender. Conversation handling lands in Phase 3.
-      this.logger.log(`inbound from ${user.name} (${from}): ${text ?? `[${event.messageType}]`}`);
+      if (!text) {
+        // Media, location, stickers — nothing to read yet.
+        await this.wa.sendText(from, 'I can only read text messages right now. Say *hi* for the menu.');
+        return { status: 'processed', userId: user.id };
+      }
+      const reply = await this.conversation.handle(from, user, text);
+      await this.wa.sendText(from, reply);
       return { status: 'processed', userId: user.id };
     }
 
