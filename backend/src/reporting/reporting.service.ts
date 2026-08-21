@@ -10,12 +10,14 @@ import {
   businessDate,
   dateOnly,
   instantFromLocalTime,
+  resolveTz,
   startOfDayAgoInTz,
   startOfDayInTz,
 } from '../common/tz.util';
 import { WhatsAppService } from '../integrations/whatsapp.service';
 import { EmailService } from '../integrations/email.service';
 import {
+  ComplianceQueryDto,
   CreateDailyReportDto,
   DailyReportQueryDto,
   ReportChannel,
@@ -562,6 +564,90 @@ export class ReportingService {
   // stored so it lives on the website. Store-scoped; additive to the derived
   // /reporting/dsr + /reporting/summary aggregates above.
   // ==========================================================================
+
+  /**
+   * GET /reporting/compliance — who has and has NOT filed a daily report.
+   *
+   * The point of this view is the gaps. A list of submitted reports tells head
+   * office what came in; it does not tell them the branch that has been silent
+   * for three days, which is the thing worth acting on.
+   *
+   * Each store is evaluated against its OWN calendar: "today" in Surat is not
+   * "today" on a server running UTC, and marking a branch delinquent because of
+   * a timezone offset would make the whole view untrustworthy.
+   */
+  async compliance(user: AuthUser, query: ComplianceQueryDto = {}, headerStore?: string) {
+    const days = Math.min(Math.max(Number(query.days) || 7, 1), 31);
+    const storeIds = this.scope.effectiveStoreIds(user, query.storeId ?? headerStore);
+
+    const stores = await this.prisma.store.findMany({
+      where: { id: { in: storeIds }, isAggregate: false, isActive: true },
+      select: { id: true, name: true, timezone: true },
+      orderBy: { name: 'asc' },
+    });
+    if (!stores.length) {
+      return { days, from: null, to: null, stores: [], missingToday: 0 };
+    }
+
+    // One query for the whole grid; widen the range by a day at each end so a
+    // store in any timezone still finds its own dates inside the result.
+    const now = new Date();
+    const allDates = new Map<string, Date[]>();
+    for (const s of stores) {
+      const today = businessDate(now, resolveTz(s.timezone));
+      const list: Date[] = [];
+      for (let i = days - 1; i >= 0; i--) {
+        const d = new Date(today);
+        d.setUTCDate(d.getUTCDate() - i);
+        list.push(d);
+      }
+      allDates.set(s.id, list);
+    }
+    const flat = [...allDates.values()].flat();
+    const lower = new Date(Math.min(...flat.map((d) => d.getTime())));
+    const upper = new Date(Math.max(...flat.map((d) => d.getTime())));
+
+    const reports = await this.prisma.dailyReport.findMany({
+      where: { storeId: { in: stores.map((s) => s.id) }, reportDate: { gte: lower, lte: upper } },
+      select: { id: true, storeId: true, reportDate: true, source: true, submittedBy: true },
+    });
+    const byKey = new Map(reports.map((r) => [`${r.storeId}|${fmtISODateUTC(r.reportDate)}`, r]));
+
+    let missingToday = 0;
+    const rows = stores.map((s) => {
+      const dates = allDates.get(s.id)!;
+      const entries = dates.map((d) => {
+        const key = fmtISODateUTC(d);
+        const hit = byKey.get(`${s.id}|${key}`);
+        return {
+          date: key,
+          submitted: !!hit,
+          source: hit?.source ?? null,
+          submittedBy: hit?.submittedBy ?? null,
+          reportId: hit?.id ?? null,
+        };
+      });
+      const submitted = entries.filter((e) => e.submitted).length;
+      const todayEntry = entries[entries.length - 1];
+      if (!todayEntry.submitted) missingToday++;
+      return {
+        storeId: s.id,
+        storeName: s.name,
+        submitted,
+        missing: entries.length - submitted,
+        reportedToday: todayEntry.submitted,
+        entries,
+      };
+    });
+
+    return {
+      days,
+      from: fmtISODateUTC(lower),
+      to: fmtISODateUTC(upper),
+      missingToday,
+      stores: rows,
+    };
+  }
 
   /** POST /reporting/daily — capture a store-close DSR. Store-scoped write. */
   async createDaily(user: AuthUser, dto: CreateDailyReportDto) {

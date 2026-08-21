@@ -31,6 +31,21 @@ export class ReportSummaryQueryDto {
   date?: string;
 }
 
+/** GET /reporting/compliance?days=&storeId= */
+export class ComplianceQueryDto {
+  /** How many days back to show, ending today. 1–31, default 7. */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  days?: number;
+
+  /** Narrow to one branch (validated against the caller's scope). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  storeId?: string;
+}
+
 /** POST /reporting/send */
 export class SendReportDto {
   @IsIn(REPORT_PERIODS)

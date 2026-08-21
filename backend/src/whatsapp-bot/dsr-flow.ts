@@ -111,6 +111,85 @@ export function inr(n: number): string {
   return `₹${new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(n)}`;
 }
 
+/**
+ * How far back a report may be filed. Long enough to cover a forgotten Friday or
+ * a weekend, short enough that nobody quietly rewrites last month's numbers.
+ */
+export const MAX_BACKDATE_DAYS = 14;
+
+/** "2026-08-21" from a @db.Date-style UTC-midnight Date. */
+function iso(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/** Shift a UTC-midnight date by whole days without tripping over DST. */
+function addDays(d: Date, days: number): Date {
+  const out = new Date(d);
+  out.setUTCDate(out.getUTCDate() + days);
+  return out;
+}
+
+/**
+ * Read the date a report is being filed for, relative to the store's own today.
+ *
+ * Accepts `today`, `yesterday`, `21/8`, `21-08`, `21/08/2026`. A bare day/month
+ * that would land in the future is read as last year's — on 2 Jan, "28/12" means
+ * five days ago, not eleven months away.
+ *
+ * Returns null when it cannot be read, is in the future, or is further back than
+ * MAX_BACKDATE_DAYS — the caller must re-ask rather than guess at a date that
+ * decides which day's revenue gets overwritten.
+ */
+export function parseReportDate(raw: string, today: Date): Date | null {
+  const s = raw.trim().toLowerCase();
+  if (!s) return null;
+  if (s === 'today') return today;
+  if (s === 'yesterday') return addDays(today, -1);
+
+  const m = s.match(/^(\d{1,2})[/\-.](\d{1,2})(?:[/\-.](\d{2}|\d{4}))?$/);
+  if (!m) return null;
+
+  const day = Number(m[1]);
+  const month = Number(m[2]);
+  if (day < 1 || day > 31 || month < 1 || month > 12) return null;
+
+  let year: number;
+  if (m[3]) {
+    year = Number(m[3]);
+    if (year < 100) year += 2000;
+  } else {
+    year = today.getUTCFullYear();
+  }
+
+  let candidate = new Date(Date.UTC(year, month - 1, day));
+  // Reject impossible dates (31/02 rolls over into March).
+  if (candidate.getUTCMonth() !== month - 1 || candidate.getUTCDate() !== day) return null;
+
+  // Bare "28/12" typed in early January means last December.
+  if (!m[3] && candidate > today) {
+    candidate = new Date(Date.UTC(year - 1, month - 1, day));
+  }
+
+  if (candidate > today) return null;
+  if (candidate < addDays(today, -MAX_BACKDATE_DAYS)) return null;
+  return candidate;
+}
+
+/** "21 Aug 2026" — unambiguous in a way 21/08 vs 08/21 is not. */
+export function formatDateLabel(d: Date): string {
+  return d.toLocaleDateString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+}
+
+/** ISO date key used inside the session draft (see WhatsAppConversationService). */
+export const DRAFT_DATE_KEY = '_reportDate';
+
+export { iso as isoDate, addDays as addDaysUtc };
+
 /** The question text, with the hint that a field can be skipped. */
 export function promptFor(field: DsrField, index: number): string {
   const counter = `${index + 1}/${DSR_FIELDS.length}`;
@@ -119,8 +198,12 @@ export function promptFor(field: DsrField, index: number): string {
 }
 
 /** The summary shown before anything is written. */
-export function summarise(draft: Record<string, number | null>, storeName: string, dateLabel: string): string {
-  const v = (k: string) => draft[k] ?? 0;
+export function summarise(
+  draft: Record<string, number | null>,
+  storeName: string,
+  dateLabel: string,
+): string {
+  const v = (k: string) => Number(draft[k] ?? 0);
   const lines = [
     `*${storeName}* — ${dateLabel}`,
     '',
@@ -131,8 +214,12 @@ export function summarise(draft: Record<string, number | null>, storeName: strin
     `Cash ${inr(v('cash'))} · Card ${inr(v('card'))} · UPI ${inr(v('upi'))}`,
   ];
   if (draft.oldGoldWtG != null || draft.oldGoldValue != null) {
-    lines.push(`Old gold: ${draft.oldGoldWtG ?? 0} g · ${inr(draft.oldGoldValue ?? 0)}`);
+    lines.push(`Old gold: ${draft.oldGoldWtG ?? 0} g · ${inr(Number(draft.oldGoldValue ?? 0))}`);
   }
-  lines.push('', 'Reply *YES* to submit, or *CANCEL* to discard.');
+  lines.push(
+    '',
+    'Reply *YES* to submit, *CANCEL* to discard,',
+    'or *DATE 20/08* if this is for another day.',
+  );
   return lines.join('\n');
 }

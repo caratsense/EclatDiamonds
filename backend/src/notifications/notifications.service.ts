@@ -4,12 +4,20 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
 import { ROLE_RANK } from '../common/role.util';
+import { businessDate, resolveTz } from '../common/tz.util';
 import { NotificationBus, NotificationEvent } from './notification-bus';
 import { FeedQueryDto } from './dto/notifications.dto';
 
 /** A single actionable-count row surfaced alongside the feed. */
 interface NotificationItem {
-  type: 'discount' | 'return' | 'leave' | 'reminder' | 'store_pending' | 'special_request';
+  type:
+    | 'discount'
+    | 'return'
+    | 'leave'
+    | 'reminder'
+    | 'store_pending'
+    | 'special_request'
+    | 'dsr_missing';
   label: string;
   count: number;
   href: string;
@@ -408,6 +416,41 @@ export class NotificationsService {
           count: pending,
           href: '/settings/stores',
         });
+      }
+    }
+
+    // --- Branches that have not filed today's daily report (store_manager+) ---
+    // Counted per store's OWN date: a branch is not late because the server is
+    // in a different timezone.
+    if (rank >= ROLE_RANK.store_manager) {
+      const stores = await this.prisma.store.findMany({
+        where: {
+          isAggregate: false,
+          isActive: true,
+          ...(user.allStores ? {} : { id: { in: user.storeIds } }),
+        },
+        select: { id: true, timezone: true },
+      });
+      if (stores.length) {
+        const now = new Date();
+        const wanted = stores.map((s) => ({
+          storeId: s.id,
+          date: businessDate(now, resolveTz(s.timezone)),
+        }));
+        const filed = await this.prisma.dailyReport.findMany({
+          where: { OR: wanted.map((w) => ({ storeId: w.storeId, reportDate: w.date })) },
+          select: { storeId: true },
+        });
+        const filedIds = new Set(filed.map((f) => f.storeId));
+        const missing = wanted.length - filedIds.size;
+        if (missing > 0) {
+          items.push({
+            type: 'dsr_missing',
+            label: missing === 1 ? 'Branch has not reported today' : 'Branches have not reported today',
+            count: missing,
+            href: '/reporting',
+          });
+        }
       }
     }
 
