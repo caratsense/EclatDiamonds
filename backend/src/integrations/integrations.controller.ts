@@ -23,6 +23,7 @@ import { GoldRateService } from './gold-rate.service';
 import { EmailService } from './email.service';
 import { CreatePaymentLinkDto, SendWhatsAppDto } from './dto/integrations.dto';
 import { SetGoldRateDto } from './dto/gold-rate.dto';
+import { WhatsAppBotService } from '../whatsapp-bot/whatsapp-bot.service';
 
 /**
  * External integration endpoints (Phase 4). Provider webhooks are @Public (no JWT)
@@ -37,6 +38,7 @@ export class IntegrationsController {
     private readonly goldRate: GoldRateService,
     private readonly email: EmailService,
     private readonly scope: StoreScopeService,
+    private readonly bot: WhatsAppBotService,
   ) {}
 
   /** Which integrations are live (credentials present) on this deploy. */
@@ -86,7 +88,9 @@ export class IntegrationsController {
     if (!this.whatsapp.verifySignature(req.rawBody, signature)) {
       throw new ForbiddenException('invalid signature');
     }
-    return this.whatsapp.handleInbound(parseRawJson(req.rawBody));
+    // Route inbound to the reporting bot (link completion in Phase 1; DSR +
+    // store->HO messages in later phases). Persist-then-200 lands in Phase 2.
+    return this.bot.handleInboundPayload(parseRawJson(req.rawBody));
   }
 
   // ── Razorpay ────────────────────────────────────────────────────────────────

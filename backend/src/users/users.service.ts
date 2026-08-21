@@ -12,6 +12,7 @@ import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { ROLE_RANK } from '../common/role.util';
+import { WhatsAppIdentityService } from '../whatsapp-bot/whatsapp-identity.service';
 import { canApproveSignup, uniqueEmailHandle } from './users.util';
 import {
   ApproveUserDto,
@@ -53,6 +54,7 @@ export class UsersService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly scope: StoreScopeService,
+    private readonly whatsappIdentity: WhatsAppIdentityService,
   ) {}
 
   // ── Delegation / privilege-escalation guards ───────────────────────────────
@@ -384,6 +386,10 @@ export class UsersService {
       data: { isActive: false, googleSub: null },
       include: USER_INCLUDE,
     });
+
+    // Revoke WhatsApp bindings too — a deactivated user's number must not keep
+    // reaching the reporting bot.
+    await this.whatsappIdentity.revokeForUser(id);
 
     await this.audit.record(actor, {
       action: 'user.deactivate',

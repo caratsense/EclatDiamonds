@@ -33,6 +33,7 @@ import { MarketingModule } from './marketing/marketing.module';
 import { LoyaltyModule } from './loyalty/loyalty.module';
 import { SearchModule } from './search/search.module';
 import { IntegrationsModule } from './integrations/integrations.module';
+import { WhatsAppBotModule } from './whatsapp-bot/whatsapp-bot.module';
 import { SyncModule } from './sync/sync.module';
 import { StorageModule } from './storage/storage.module';
 import { NotificationsModule } from './notifications/notifications.module';
@@ -80,6 +81,7 @@ import { AllExceptionsFilter } from './common/all-exceptions.filter';
     LoyaltyModule,
     SearchModule,
     IntegrationsModule,
+    WhatsAppBotModule,
     SyncModule,
     StorageModule,
     NotificationsModule,
