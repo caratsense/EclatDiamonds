@@ -115,13 +115,22 @@ export class WhatsAppService {
   }
 
   /**
-   * Validate the X-Hub-Signature-256 header against the raw request body. When no
-   * app secret is configured we log a warning and accept (dev convenience); set
-   * WHATSAPP_APP_SECRET in production to enforce it.
+   * Validate the X-Hub-Signature-256 header against the raw request body.
+   *
+   * The webhook is @Public and now writes business data, so an unsigned request
+   * must never be trusted in production: with no secret configured we REFUSE
+   * there, and only fall through to accepting in development (where curl-driven
+   * testing has no way to sign). Same shape as the JWT_SECRET guard in main.ts.
    */
   verifySignature(rawBody: Buffer | undefined, signature?: string): boolean {
     if (!this.appSecret) {
-      this.logger.warn('WHATSAPP_APP_SECRET not set — skipping inbound signature check.');
+      if (process.env.NODE_ENV === 'production') {
+        this.logger.error(
+          'WHATSAPP_APP_SECRET is not set — refusing inbound webhook. Set it to accept WhatsApp traffic.',
+        );
+        return false;
+      }
+      this.logger.warn('WHATSAPP_APP_SECRET not set — skipping signature check (development only).');
       return true;
     }
     if (!rawBody || !signature) return false;
@@ -129,23 +138,4 @@ export class WhatsAppService {
     return safeEqual(expected, signature);
   }
 
-  /** Flatten an inbound webhook payload into message/status counts (and log each). */
-  handleInbound(payload: any): { messages: number; statuses: number } {
-    let messages = 0;
-    let statuses = 0;
-    for (const entry of payload?.entry ?? []) {
-      for (const change of entry?.changes ?? []) {
-        const value = change?.value ?? {};
-        for (const m of value.messages ?? []) {
-          messages++;
-          this.logger.log(`WhatsApp inbound from ${m.from}: ${m.text?.body ?? `[${m.type}]`}`);
-        }
-        for (const s of value.statuses ?? []) {
-          statuses++;
-          this.logger.log(`WhatsApp delivery status ${s.status} for ${s.id}`);
-        }
-      }
-    }
-    return { messages, statuses };
-  }
 }

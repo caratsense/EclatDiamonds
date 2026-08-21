@@ -620,6 +620,35 @@ model WhatsAppIdentity {
   @@index([userId])
 }
 
+/// Every inbound webhook message, stored BEFORE it is processed.
+///
+/// Meta expects a 200 within seconds and retries for up to ~7 days otherwise, so
+/// the webhook persists and acknowledges first and processes after. `wamid` is
+/// Meta's message id and is unique here: a retried delivery collides and is
+/// skipped, which is what stops one message becoming two daily reports.
+/// Doubles as the message log HO can inspect when a number looks wrong.
+model WhatsAppEvent {
+  id          String    @id @default(cuid())
+  /// Meta's message id ("wamid.xxx"). The idempotency key.
+  wamid       String?   @unique
+  direction   String    @default("inbound")
+  phoneE164   String
+  /// Resolved at processing time, when the sender is a linked user.
+  userId      String?
+  messageType String    @default("text")
+  body        String?
+  payload     Json
+  /// received | processed | ignored | failed
+  status      String    @default("received")
+  error       String?
+  attempts    Int       @default(0)
+  processedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([status, createdAt])
+  @@index([phoneE164, createdAt])
+}
+
 /// One-time code that links a WhatsApp number to a user. The user starts the
 /// link in-app (POST /whatsapp/link/start), which shows this code; they send it
 /// to the bot from the number they want to bind, proving control of that number.

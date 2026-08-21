@@ -88,9 +88,10 @@ export class IntegrationsController {
     if (!this.whatsapp.verifySignature(req.rawBody, signature)) {
       throw new ForbiddenException('invalid signature');
     }
-    // Route inbound to the reporting bot (link completion in Phase 1; DSR +
-    // store->HO messages in later phases). Persist-then-200 lands in Phase 2.
-    return this.bot.handleInboundPayload(parseRawJson(req.rawBody));
+    // Store the messages and acknowledge; the bot handles them straight after,
+    // off the request. Meta retries anything it does not get a prompt 200 for,
+    // and a redelivered daily report must not become a second row.
+    return this.bot.ingest(parseRawJson(req.rawBody));
   }
 
   // ── Razorpay ────────────────────────────────────────────────────────────────

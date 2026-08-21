@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
+import { SchedulerModule } from '../scheduler/scheduler.module';
 import { WhatsAppBotController } from './whatsapp-bot.controller';
+import { WhatsAppBotScheduler } from './whatsapp-bot.scheduler';
 import { WhatsAppBotService } from './whatsapp-bot.service';
 import { WhatsAppIdentityService } from './whatsapp-identity.service';
 
@@ -13,8 +15,9 @@ import { WhatsAppIdentityService } from './whatsapp-identity.service';
  * UsersModule (revoke-on-deactivate) can use these services.
  */
 @Module({
+  imports: [SchedulerModule],
   controllers: [WhatsAppBotController],
-  providers: [WhatsAppBotService, WhatsAppIdentityService],
+  providers: [WhatsAppBotService, WhatsAppIdentityService, WhatsAppBotScheduler],
   exports: [WhatsAppBotService, WhatsAppIdentityService],
 })
 export class WhatsAppBotModule {}
