@@ -77,7 +77,7 @@ All in `backend/prisma/schema.prisma`; migrations `20260820120000_whatsapp_ident
 | `WhatsAppIdentity` | Verified number↔user binding. `phoneE164` unique (digits, no `+`, e.g. `919876543210`). `status: active \| revoked`. The **only** path from a sender to a user |
 | `WhatsAppLinkCode` | One-time linking code. bcrypt hash only, 10-min TTL, single-use. Mirrors the `LoginOtp` pattern |
 | `WhatsAppEvent` | Every inbound message, raw. `wamid` unique = idempotency key. `status: received → processing → processed \| ignored \| failed`, max 3 attempts. Doubles as the audit/message log |
-| `WhatsAppSession` | Conversation state per number: `flow`, `step`, `draft` (answers so far), 30-min expiry so an abandoned half-report never resurfaces as today's |
+| `WhatsAppSession` | Conversation state per number: `flow` (`idle`/`pick_store`/`dsr`/`dsr_confirm`/`message`), `step`, `draft` (answers so far, plus the reserved `_reportDate` key holding the day being filed for), 30-min expiry so an abandoned half-report never resurfaces as today's |
 
 Changes to existing tables:
 
@@ -94,7 +94,7 @@ Changes to existing tables:
 | `whatsapp-bot.service.ts` | The pipeline: `ingest()` (persist + ack), `processPending()` (claim + process, retries), `route()` (who is this, what do they mean) |
 | `whatsapp-identity.service.ts` | Linking (`startLinking` / `completeLinking`), `resolveActiveUser`, list/revoke, `revokeForUser` (called on user deactivation) |
 | `whatsapp-conversation.service.ts` | The state machine: menu, guided DSR, confirmation, store→HO message, session load/save |
-| `dsr-flow.ts` | **Pure functions, no DB/WhatsApp** — the 10 questions, the Indian-format number parsers, prompt + summary rendering. Start here to understand the DSR |
+| `dsr-flow.ts` | **Pure functions, no DB/WhatsApp** — the 10 questions, the Indian-format number parsers, the report-date parser (`today`/`yesterday`/`21-08`), prompt + summary rendering. Start here to understand the DSR, and test it here: no infrastructure needed |
 | `whatsapp-bot.scheduler.ts` | `@Cron` sweep every 5 min → `processPending()` via `JobRunnerService.runOnce` (replica-safe) |
 | `whatsapp-bot.controller.ts` | REST: `POST /whatsapp/link/start` (any user, for self), `GET /whatsapp/identities` + `POST /whatsapp/identities/:id/revoke` (manager+, store-scoped) |
 
@@ -137,6 +137,16 @@ enquiries, delivered & billed, new bookings, advance received, cash, card, UPI,
 old gold grams, old gold value. Required fields accept `0`; the two old-gold
 ones accept `skip` (stored as null). Unreadable input **re-asks** — never stores
 a guess. Then a full summary is played back; only `YES` writes the row.
+
+**Which store, and which day.** Both are chosen explicitly rather than inferred,
+because getting either wrong writes real numbers onto the wrong row and nothing
+looks broken afterwards:
+- A user attached to **more than one branch is asked which**, before the
+  questions start. Single-store users are not prompted.
+- The date defaults to the store's today, and the confirmation step accepts
+  **`DATE 20/08`** to change it — for the manager who files Friday's numbers on
+  Saturday morning. Backdating is capped at `MAX_BACKDATE_DAYS` (14) and future
+  dates are refused.
 
 The parser (`dsr-flow.ts`) accepts what people actually type: `4.5L`,
 `1,20,000`, `₹75,000`, `50k`, `1.2cr`. Indian digit grouping (2,2,3) is why
@@ -194,22 +204,56 @@ can be unit-tested with no infrastructure at all.
 
 ## 9. Current status & what's left
 
-Done and verified from a real handset: linking, guided report (all number
-formats), store→HO message, retry-safety under a real outage, fail-closed
-signatures, revoke-on-deactivate.
+**The bot's behaviour is complete and verified from a real handset**: linking,
+the guided report (every number format), store→HO messages, correct store and
+date selection, retry-safety under a real outage, fail-closed signatures, and
+revoke-on-deactivate. The compliance API behind the HO view is built too.
 
-Not built yet, in rough priority order:
+What that does **not** mean is "shipped". The bot only reaches the outside world
+through a tunnel on a developer's laptop right now — see item 1.
 
-1. **Frontend** — the biggest gap. No UI to request a link code, see or revoke
-   bound numbers (`/settings` page hitting the three existing endpoints), and no
-   `source` badge on reporting rows. Until this exists, linking requires an API
-   call.
-2. **Compliance grid** — store × last-7-days view of who *hasn't* reported;
-   the highest-value HO feature.
-3. **Evening nudges** — reminder to stores that haven't filed. Needs a
-   Meta-approved template (bot-initiated messages outside the 24h window can't
-   be free text; approval takes 1–3 days, so submit early). Scheduler infra
-   already exists.
+### Left to do
+
+**1. Production webhook — off ngrok, onto Railway.** The single thing between
+"works" and "live". The backend already deploys to Railway and has a permanent
+HTTPS URL; point Meta's callback at
+`https://<service>.up.railway.app/integrations/whatsapp/webhook`, set the
+`WHATSAPP_*` variables there, and no tunnel is involved again. Until this is
+done the bot is only alive while someone's laptop is.
+
+**2. Evening nudges.** Remind branches that have not filed. The scheduler and
+the compliance query it needs both exist, so the code is small.
+⚠️ **Two external gates, not one:** the template `eclat_dsr_reminder` must be
+approved (submitted 2026-08-21), *and* the WABA needs a payment method —
+business-initiated messages are billed, and "Add payment to send
+business-initiated messages" is still unchecked in Meta's Production setup.
+Replies inside the 24h window stay free, which is why everything else works
+today with no payment configured. Build it against the template shape in the
+plan doc; it will simply fail to send until both gates clear.
+
+**3. Retention + cleanup cron.** `WhatsAppEvent` stores full message bodies —
+customer names, phone numbers — and nothing ever deletes them. `WhatsAppSession`
+rows accumulate the same way (they expire logically, but are never removed). A
+job that purges event bodies after ~90 days and clears expired sessions.
+`JobRunnerService.runOnce` is the pattern; the existing 5-minute sweep in
+`whatsapp-bot.scheduler.ts` is the template.
+
+**4. Webhook throttle exemption.** The global limit is 300 requests/60s per IP,
+and all of Meta's traffic arrives from their range. A burst can get throttled;
+Meta retries so nothing is lost, but it stalls delivery for no reason. Give the
+webhook route its own limit or `@SkipThrottle()`.
+
+### Frontend (assigned separately)
+
+- **WhatsApp settings page** — request a link code, list bound numbers, revoke
+  one. All three endpoints exist (§4); nothing else is needed from the backend.
+  Until this ships, linking a number requires an API call by hand.
+- **Compliance grid** — `GET /reporting/compliance?days=7` already returns
+  exactly what a store × day heatmap needs: per-store `entries[]` with
+  `{date, submitted, source, submittedBy, reportId}`, plus `missingToday`. The
+  notification bell already carries a `dsr_missing` item.
+- **`source` badge** on reporting rows, so HO can see which reports came in over
+  WhatsApp.
 
 ## 10. Gotchas that will bite you
 

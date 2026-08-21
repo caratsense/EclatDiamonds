@@ -287,9 +287,20 @@ Tracked as OP-numbers in `docs/DECISIONS.md`, which is the authoritative list:
 - Confirm one shared DB vs per-store DBs (topology B is not supported today).
 
 ### Code still to write
-- **WhatsApp bot frontend** — no UI to link a number or revoke one. Highest-value next task; the three backend endpoints already exist. See `docs/WHATSAPP-BOT.md` §9.
-- **DSR compliance grid** — store × 7-day view of who hasn't reported.
-- **Evening nudges** — needs a Meta-approved message template (1–3 day approval).
+
+**WhatsApp bot** — behaviour is complete and proven from a real handset; what
+remains is operational. Full detail in `docs/WHATSAPP-BOT.md` §9.
+- **Production webhook** — still pointed at an ngrok tunnel on a laptop. Moving it to the Railway URL is the one thing between "works" and "live".
+- **Evening nudges** — small, but gated on *two* external things: template approval **and** a payment method on the WABA (business-initiated messages are billed; replies inside 24h are free, which is why everything else works today).
+- **Retention + cleanup cron** — `WhatsAppEvent` keeps full message bodies (customer names, phone numbers) forever; sessions accumulate too.
+- **Webhook throttle exemption** — global 300/60s per IP vs. Meta's IP range.
+
+**Frontend** (assigned separately) — WhatsApp settings page (link/revoke, three
+endpoints already exist), the compliance grid (`GET /reporting/compliance`
+already returns exactly what a heatmap needs), and a `source` badge on reporting
+rows.
+
+**Elsewhere**
 - **OP-19** — scheduled nightly DSR send, blocked on OP-12 + OP-18.
 - **OP-15** — selfie-on-punch, approver delegation, stale-approval escalation. All need a client call first.
 
@@ -352,5 +363,5 @@ Tracked as OP-numbers in `docs/DECISIONS.md`, which is the authoritative list:
 1. Get it running locally (§4). Sign in as each seeded role and click through — the fastest way to understand the product.
 2. Read `CLAUDE.md`, then `docs/PRODUCTION_READINESS.md`, then `docs/MODULES.md` for one module you'll work on.
 3. Read `StoreScopeService` and one service that uses it (`reporting.service.ts` is a good example). That's the pattern you'll repeat everywhere.
-4. Run the test suite so you know what green looks like before you change anything.
-5. First task: the WhatsApp bot frontend (§11). Self-contained, the backend endpoints exist, and it touches auth, scoping, and the design system — a good tour of the codebase without much risk.
+4. Run the test suite. **Note: it is currently red on `main`** — commit `ad273be` renamed head office to `head.office@eclatdiamonds.in` without updating the fixtures, which still hardcode `@caratsense.in`, so every suite that logs in as HO fails at the login step. It is not your change. Fixing the fixtures is a good, genuinely useful first PR.
+5. First task after that: something from the WhatsApp bot's operational list (§11) — the retention cron and the throttle exemption are small, self-contained, and touch the scheduler pattern you'll want to know. `dsr-flow.ts` is the gentlest place to start reading, since it's pure functions with no infrastructure.
