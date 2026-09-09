@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { JobsService } from '../jobs/jobs.service';
+import { JobAlertsService } from '../jobs/job-alerts.service';
 import { Role } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
@@ -69,6 +70,7 @@ export class SchedulerService {
     private readonly jobs: JobsService,
     private readonly omnichannel: OmnichannelService,
     private readonly templateSync: TemplateSyncService,
+    private readonly jobAlerts: JobAlertsService,
   ) {}
 
   /**
@@ -292,6 +294,32 @@ export class SchedulerService {
           }`,
         );
       }
+    }
+  }
+
+  /**
+   * Look for work that died, and tell somebody.
+   *
+   * `GET /jobs/summary` has always counted dead jobs; nothing read it unless a
+   * person opened the screen. A dead Meta lead fetch is a customer who filled in
+   * a form and reached nobody, so it is worth a page rather than a discovery.
+   *
+   * Every fifteen minutes: often enough that a broken token is noticed within a
+   * lunch break, rare enough that the alert channel is not itself the noise.
+   * Deduplication lives in JobAlertsService — this only decides when to look.
+   */
+  @Cron(CronExpression.EVERY_30_MINUTES, { name: 'jobs.dead-alerts' })
+  async alertOnDeadJobs(): Promise<void> {
+    if (!this.enabled) return;
+    try {
+      const alerts = await this.jobAlerts.sweep();
+      if (alerts.length) {
+        this.logger.warn(`Job alert sweep raised ${alerts.length} alert(s).`);
+      }
+    } catch (e) {
+      this.logger.error(
+        `Job alert sweep failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
 }

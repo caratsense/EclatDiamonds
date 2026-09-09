@@ -31,6 +31,12 @@ const AGEING_POLICY_KEY = 'crmLeadAgeingPolicy';
 const ROUND_ROBIN_POLICY_KEY = 'crmRoundRobinPolicy';
 const ROUND_ROBIN_STATE_KEY = 'crmRoundRobinState';
 const DAY_MS = 86_400_000;
+/**
+ * Local-only QR signing key. Never reachable when NODE_ENV is production, and
+ * deliberately self-describing so it can never be mistaken for a real secret in
+ * a log, a dump or a screenshot.
+ */
+const DEVELOPMENT_QR_SECRET = 'development-only-crm-qr-secret-not-for-production';
 
 export interface SavedLeadSegment {
   id: string;
@@ -1042,10 +1048,28 @@ export class AdvancedCrmService {
     };
   }
 
+  /**
+   * The QR signing secret, with no fallback in production.
+   *
+   * It used to fall back to `JWT_SECRET`. That quietly gave one key two jobs:
+   * anything able to mint a QR token was signing with the same material that
+   * authenticates every session, so a leak of either compromised both and
+   * neither could be rotated without invalidating the other. Store QR posters
+   * live on walls for months; login sessions must be rotatable in minutes.
+   *
+   * Production now fails closed. Development and test keep an explicit,
+   * clearly-named constant so a local run needs no setup — it is not a secret,
+   * and it cannot reach production because the branch is on NODE_ENV.
+   */
   private qrSecret(): string {
-    const value = this.config.get<string>('CRM_QR_SECRET') ?? this.config.get<string>('JWT_SECRET');
-    if (!value || value.length < 16) throw new Error('CRM QR signing secret is not configured.');
-    return value;
+    const value = this.config.get<string>('CRM_QR_SECRET');
+    if (value && value.length >= 16) return value;
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'CRM_QR_SECRET is not set (or is shorter than 16 characters). Set it to sign store QR codes.',
+      );
+    }
+    return DEVELOPMENT_QR_SECRET;
   }
 
   private async settings(organisationId: string): Promise<OrgSettings> {
