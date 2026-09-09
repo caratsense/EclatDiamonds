@@ -65,6 +65,24 @@ export class WhatsAppService {
     return (await this.credentials.senderFor(organisationId)).usable;
   }
 
+  /**
+   * The numbers this environment is allowed to message, or null for "no limit".
+   *
+   * Read per call rather than cached at construction so the door can be closed
+   * on a running staging service without a redeploy.
+   */
+  private recipientAllowlist(): Set<string> | null {
+    const raw = (this.config.get<string>('MESSAGING_RECIPIENT_ALLOWLIST') ?? '').trim();
+    if (!raw) return null;
+    const numbers = raw
+      .split(',')
+      .map((entry) => this.normalise(entry))
+      .filter((entry) => entry.length >= 6);
+    // An allowlist that parsed to nothing is a configuration mistake, and the
+    // safe reading of it is "nobody", never "everybody".
+    return new Set(numbers);
+  }
+
   /** Normalise a phone number to WhatsApp's E.164-without-plus form (India default). */
   private normalise(phone: string): string {
     const digits = phone.replace(/\D/g, '');
@@ -102,9 +120,39 @@ export class WhatsAppService {
     payload: Record<string, unknown>,
   ): Promise<WhatsAppSendResult> {
     const recipient = this.normalise(to);
+
+    /*
+     * The staging blast door.
+     *
+     * A test environment restored from, or pointed at, real customer records is
+     * one misconfigured job away from messaging those customers for real. When
+     * MESSAGING_RECIPIENT_ALLOWLIST is set, this process may only reach the
+     * numbers named in it, and everything else is refused HERE — the single
+     * point every outbound message passes through, below every policy, every
+     * queue and every retry, so no caller can route around it.
+     *
+     * Production leaves the variable unset and is unaffected. Presence of the
+     * variable is the switch, deliberately not NODE_ENV: staging also runs as
+     * production, and that is exactly the environment that needs the door.
+     */
+    const allowlist = this.recipientAllowlist();
+    if (allowlist && !allowlist.has(recipient)) {
+      this.logger.warn(
+        `[allowlist] WhatsApp send to ${maskNumber(recipient)} refused: not a configured test recipient.`,
+      );
+      return {
+        delivered: false,
+        dryRun: true,
+        to: recipient,
+        reason:
+          'This environment may only message its configured test recipients. Add the number to MESSAGING_RECIPIENT_ALLOWLIST to test with it.',
+        credentialScope: 'none',
+      };
+    }
+
     const sender = await this.credentials.senderFor(organisationId);
     if (!sender.usable || !sender.accessToken || !sender.phoneNumberId) {
-      this.logger.log(`[dry-run] WhatsApp → ${recipient}: ${sender.reason}`);
+      this.logger.log(`[dry-run] WhatsApp → ${maskNumber(recipient)}: ${sender.reason}`);
       return {
         delivered: false,
         dryRun: true,
@@ -135,7 +183,7 @@ export class WhatsAppService {
       };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
-      this.logger.error(`WhatsApp send to ${recipient} failed: ${error}`);
+      this.logger.error(`WhatsApp send to ${maskNumber(recipient)} failed: ${error}`);
       return { delivered: false, dryRun: false, to: recipient, error, credentialScope: sender.scope };
     }
   }
@@ -173,4 +221,16 @@ export class WhatsAppService {
     const expected = 'sha256=' + createHmac('sha256', this.appSecret).update(rawBody).digest('hex');
     return safeEqual(expected, signature);
   }
+}
+
+/**
+ * A phone number safe to write down.
+ *
+ * Logs are read by more people than customer records are, are shipped to third
+ * parties, and outlive the data they describe. The last four digits are enough
+ * to match a number an operator already has in front of them and not enough to
+ * be one.
+ */
+function maskNumber(recipient: string): string {
+  return recipient.length <= 4 ? '****' : `****${recipient.slice(-4)}`;
 }

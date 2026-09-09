@@ -141,6 +141,9 @@ describe('omnichannel durable worker', () => {
       activity as any,
       {} as any,
       whatsapp as any,
+      // Identity resolution is only used by the send-to-a-bare-number path,
+      // which this harness never exercises.
+      {} as any,
     );
     service.onModuleInit();
     return { handler: () => handler!, updates, prisma, whatsapp, activity };

@@ -105,15 +105,28 @@ describe('Eclat backend — integrations (e2e)', () => {
 
   // ---------------------------------------------------------------- WhatsApp
   describe('WhatsApp', () => {
-    it('send is a dry-run no-op (and normalises the Indian number)', async () => {
+    /*
+     * CONTRACT CHANGE. This used to assert that a manager could free-text any
+     * number and get a dry-run acceptance back. That WAS the defect: the
+     * endpoint called the provider directly, so consent, opt-out, the 24-hour
+     * customer-care window, template approval, the outbox and the audit trail
+     * were all skipped. It now refuses, for the reason a person can act on.
+     */
+    it('refuses free text to a number with no open customer-care window', async () => {
       const res = await request(app.getHttpServer())
         .post('/integrations/whatsapp/send')
         .set(auth(tokens.manager))
         .send({ to: '9876543210', body: 'Your CaratSense quote is ready.' });
-      expect(res.status).toBe(201);
-      expect(res.body.dryRun).toBe(true);
-      expect(res.body.delivered).toBe(false);
-      expect(res.body.to).toBe('919876543210');
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/template is required/i);
+    });
+
+    it('never claims delivery on the request thread', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/integrations/whatsapp/send')
+        .set(auth(tokens.manager))
+        .send({ to: '9876543210', body: 'hello' });
+      expect(res.body.delivered).not.toBe(true);
     });
 
     it('rejects unknown body fields (mass-assignment guard)', async () => {

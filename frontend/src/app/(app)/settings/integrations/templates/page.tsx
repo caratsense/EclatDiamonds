@@ -197,7 +197,10 @@ function Templates() {
                     <TableRow key={row.id}>
                       <TableCell>
                         <div className="space-y-0.5">
-                          <p className="font-mono text-xs">{row.externalId}</p>
+                          {/* The bare provider name. `externalId` is the local
+                              composite identity (name:language) and would read
+                              as a typo on screen. */}
+                          <p className="font-mono text-xs">{row.name ?? row.externalId}</p>
                           <p className="text-xs text-muted-foreground">{row.metadata.category}</p>
                         </div>
                       </TableCell>

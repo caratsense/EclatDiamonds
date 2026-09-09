@@ -41,6 +41,21 @@ export class SendWhatsAppDto {
   @IsOptional()
   @IsArray()
   components?: unknown[];
+
+  /**
+   * Why this message is being sent. Defaults to `service`, which is what every
+   * historic caller of this endpoint meant — a quote, a reminder, a DSR reply.
+   * `marketing` additionally requires recorded consent and is refused without it.
+   */
+  @IsOptional()
+  @IsIn(['service', 'marketing'])
+  purpose?: 'service' | 'marketing';
+
+  /** Repeat submissions with the same key resolve to the same outbound message. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  idempotencyKey?: string;
 }
 
 export class RegisterMetaAssetDto {

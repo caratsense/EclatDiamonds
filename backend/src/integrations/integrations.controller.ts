@@ -34,6 +34,7 @@ import { RateLimit } from '../common/rate-limit';
 import { MetaWebhookService } from './meta-webhook.service';
 import { MetaHealthService } from './meta-health.service';
 import { MetaAssetOwnershipService } from './meta-asset-ownership.service';
+import { OmnichannelService } from '../omnichannel/omnichannel.service';
 
 /**
  * External integration endpoints (Phase 4). Provider webhooks are @Public (no JWT)
@@ -57,6 +58,7 @@ export class IntegrationsController {
     private readonly metaWebhook: MetaWebhookService,
     private readonly metaAssets: MetaAssetOwnershipService,
     private readonly metaHealth: MetaHealthService,
+    private readonly omnichannel: OmnichannelService,
   ) {}
 
   /**
@@ -84,20 +86,46 @@ export class IntegrationsController {
 
   // ── WhatsApp ────────────────────────────────────────────────────────────────
 
-  /** Send a quote/reminder/DSR message (text inside the 24h window, else template). */
+  /**
+   * Send a quote/reminder/DSR message (text inside the 24h window, else template).
+   *
+   * CONTRACT CHANGE (deliberate). This used to call the provider directly and
+   * return its acceptance inline. It bypassed consent, opt-out, the 24-hour
+   * customer-care window, provider template approval, the outbox and the audit
+   * trail — so a store manager could message a customer who had answered STOP,
+   * and nothing recorded that it happened.
+   *
+   * It now queues through the same policy as every other outbound message. The
+   * response therefore reports what is TRUE at that moment — the message is
+   * accepted and queued — instead of claiming a delivery that has not happened
+   * yet. `delivered` is kept in the body for old callers, and is honest: false
+   * until the provider says otherwise. Poll the outbox, or read the receipt.
+   *
+   * Backward compatibility stops where it would reinstate the bypass, which is
+   * the one thing this endpoint may not do.
+   */
   @Roles('store_manager', 'head_office')
   @Post('whatsapp/send')
-  sendWhatsApp(@CurrentUser() user: AuthUser, @Body() dto: SendWhatsAppDto) {
-    if (dto.template) {
-      return this.whatsapp.sendTemplate(
-        user.organisationId,
-        dto.to,
-        dto.template,
-        dto.languageCode,
-        dto.components,
-      );
-    }
-    return this.whatsapp.sendText(user.organisationId, dto.to, dto.body ?? '');
+  async sendWhatsApp(@CurrentUser() user: AuthUser, @Body() dto: SendWhatsAppDto) {
+    const queued = await this.omnichannel.queueToContact(user, {
+      to: dto.to,
+      purpose: dto.purpose ?? 'service',
+      body: dto.body,
+      templateName: dto.template,
+      languageCode: dto.languageCode,
+      templateComponents: dto.components,
+      idempotencyKey: dto.idempotencyKey,
+    });
+    return {
+      delivered: false,
+      queued: true,
+      status: queued.message.status,
+      messageId: queued.message.id,
+      conversationId: queued.message.conversationId,
+      jobId: queued.job?.id ?? null,
+      deduplicated: queued.deduplicated,
+      mode: queued.policy.mode,
+    };
   }
 
   /** Meta webhook verification handshake. Returns the echoed challenge as text. */

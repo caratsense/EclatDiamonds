@@ -12,6 +12,7 @@ import { AuditService } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
 import { ConversationsService } from '../crm/conversations.service';
 import { ActivityService } from '../crm/activity.service';
+import { IdentityService } from '../crm/identity.service';
 import { WhatsAppService } from '../integrations/whatsapp.service';
 import { JobContext, JobsService } from '../jobs/jobs.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -29,6 +30,7 @@ import {
   templateSendability,
   type ProviderTemplateStatus,
 } from './omnichannel-policy';
+import { templateKey } from './template-sync.service';
 
 export const OMNICHANNEL_DELIVERY_JOB = 'omnichannel.deliver';
 const DELIVERY_MAX_ATTEMPTS = 5;
@@ -114,6 +116,7 @@ export class OmnichannelService implements OnModuleInit {
     private readonly activity: ActivityService,
     private readonly audit: AuditService,
     private readonly whatsapp: WhatsAppService,
+    private readonly identity: IdentityService,
   ) {}
 
   onModuleInit(): void {
@@ -348,8 +351,20 @@ export class OmnichannelService implements OnModuleInit {
      * it can never set or raise `providerStatus` — only TemplateSyncService can,
      * and only from what Meta actually returned.
      */
+    /*
+     * Identity is name AND language, never name alone. Meta approves
+     * `order_update` in en_US and in hi_IN independently, and the old key —
+     * `@@unique([integrationId, kind, externalId])` over the bare name — could
+     * only hold one of them. Recording the second language silently rewrote the
+     * first one's row, so an approved English verdict became the Hindi row's
+     * verdict and authorised a send Meta had never reviewed.
+     */
+    const key = templateKey(input.name, input.languageCode);
+    if (!key) {
+      throw new BadRequestException('A template needs a valid name and language code.');
+    }
     const existing = await this.prisma.integrationAsset.findFirst({
-      where: { integrationId, kind: TEMPLATE_ASSET_KIND, externalId: input.name },
+      where: { integrationId, kind: TEMPLATE_ASSET_KIND, externalId: key },
       select: { metadata: true },
     });
     const previous = existing ? templateMetadata(existing.metadata) : null;
@@ -370,14 +385,16 @@ export class OmnichannelService implements OnModuleInit {
         integrationId_kind_externalId: {
           integrationId,
           kind: TEMPLATE_ASSET_KIND,
-          externalId: input.name,
+          externalId: key,
         },
       },
       create: {
         organisationId: user.organisationId,
         integrationId,
         kind: TEMPLATE_ASSET_KIND,
-        externalId: input.name,
+        // `externalId` carries the composite identity; `name` stays the bare
+        // provider template name, because that is what the Graph send call needs.
+        externalId: key,
         name: input.name,
         metadata: metadata as unknown as Prisma.InputJsonValue,
         isActive: input.status !== 'disabled',
@@ -406,6 +423,141 @@ export class OmnichannelService implements OnModuleInit {
   }
 
   // ----------------------------------------------------------------- Outbox
+
+  /**
+   * Send to a bare phone number, through the same policy as everything else.
+   *
+   * This exists for `POST /integrations/whatsapp/send`, which predates the
+   * omnichannel module and called the provider directly: no consent check, no
+   * opt-out check, no 24-hour window, no provider-approved template, no outbox
+   * row, no delivery job, no audit. Any store manager could message any number
+   * in the tenant, including one that had answered STOP.
+   *
+   * A phone number is not an authorisation, so the resolution is deliberate:
+   * the number is normalised, matched to a customer this user is allowed to see
+   * (a number belonging to another store's customer is refused exactly like a
+   * direct id would be), and the thread it belongs to is reused rather than
+   * forked. From there `queue()` owns every decision.
+   */
+  async queueToContact(
+    user: AuthUser,
+    input: {
+      to: string;
+      purpose: MessagePurpose;
+      body?: string;
+      templateName?: string;
+      languageCode?: string;
+      templateComponents?: unknown[];
+      idempotencyKey?: string;
+    },
+  ) {
+    const org = await this.prisma.organisation.findUnique({
+      where: { id: user.organisationId },
+      select: { country: true },
+    });
+    const normalized = this.identity.normalize('whatsapp', input.to, org?.country ?? 'IN');
+    if (!normalized) {
+      throw new BadRequestException('That is not a usable WhatsApp number.');
+    }
+
+    // Tenant-scoped by the query itself: another organisation's contact point
+    // is not visible here even when both tenants hold the same number.
+    const holder = await this.prisma.contactPoint.findFirst({
+      where: {
+        organisationId: user.organisationId,
+        valueNormalized: normalized,
+        kind: { in: ['whatsapp', 'phone'] },
+      },
+      orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+      select: { partyId: true },
+    });
+    // Store scope is enforced for a KNOWN customer. An unmatched number stays
+    // anonymous — it is still bound by consent, window and template rules, and
+    // marketing to it is refused outright by the policy.
+    const party = holder?.partyId ? await this.assertPartyAccess(user, holder.partyId) : null;
+
+    let templateAssetId: string | undefined;
+    if (input.templateName) {
+      const key = templateKey(input.templateName, input.languageCode);
+      if (!key) {
+        throw new BadRequestException(
+          'Sending a template needs its name and its language code, for example en_US.',
+        );
+      }
+      const asset = await this.prisma.integrationAsset.findFirst({
+        where: {
+          organisationId: user.organisationId,
+          kind: TEMPLATE_ASSET_KIND,
+          externalId: key,
+          integration: { providerCode: 'whatsapp_cloud' },
+        },
+        select: { id: true },
+      });
+      if (!asset) {
+        throw new BadRequestException(
+          'That template is not registered for this tenant in that language. Synchronise templates first.',
+        );
+      }
+      // Whether it may actually be SENT is loadApprovedTemplate's decision
+      // inside queue(), which is the provider's verdict and its age.
+      templateAssetId = asset.id;
+    }
+
+    const conversation = await this.findOrCreateContactThread(user, {
+      normalized,
+      partyId: party?.id ?? null,
+      storeId: party?.storeId ?? null,
+    });
+
+    return this.queue(user, conversation.id, {
+      purpose: input.purpose,
+      body: input.body,
+      templateAssetId,
+      templateComponents: input.templateComponents,
+      idempotencyKey: input.idempotencyKey,
+    } as QueueOmnichannelMessageDto);
+  }
+
+  /**
+   * The thread for a number, created only if this tenant has none.
+   *
+   * Keyed on `@@unique([organisationId, channel, externalThreadId])`, the same
+   * key inbound uses, so an outbound-first message and the customer's reply land
+   * in one thread instead of two. A concurrent create loses the race harmlessly
+   * and re-reads the winner.
+   */
+  private async findOrCreateContactThread(
+    user: AuthUser,
+    input: { normalized: string; partyId: string | null; storeId: string | null },
+  ) {
+    const where = {
+      organisationId_channel_externalThreadId: {
+        organisationId: user.organisationId,
+        channel: 'whatsapp',
+        externalThreadId: input.normalized,
+      },
+    };
+    const existing = await this.prisma.conversation.findUnique({ where });
+    if (existing) return existing;
+    try {
+      return await this.prisma.conversation.create({
+        data: {
+          organisationId: user.organisationId,
+          channel: 'whatsapp',
+          externalThreadId: input.normalized,
+          partyId: input.partyId,
+          storeId: input.storeId ?? user.storeIds[0] ?? null,
+          handling: 'human',
+          assignedUserId: user.id,
+        },
+      });
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+      const raced = await this.prisma.conversation.findUnique({ where });
+      if (!raced) throw error;
+      return raced;
+    }
+  }
 
   /**
    * Queue a policy-checked outbound message. Existing CRM/AI queued messages are
@@ -810,7 +962,9 @@ export class OmnichannelService implements OnModuleInit {
       ? await this.whatsapp.sendTemplate(
           ctx.organisationId,
           recipient,
-          template.externalId,
+          // `name`, not `externalId`: the latter is the local composite
+          // identity (`name:language`) and Meta would not recognise it.
+          template.name ?? '',
           template.metadata.languageCode,
           instructions.templateComponents,
         )

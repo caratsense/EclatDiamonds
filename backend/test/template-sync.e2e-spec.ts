@@ -82,7 +82,7 @@ describe('INT-08 provider-authoritative WhatsApp templates (e2e)', () => {
         organisationId: t.org,
         integrationId: t.integ,
         kind: 'message_template',
-        externalId: name,
+        externalId: `${name}:${language}`,
         name,
         isActive: over.isActive ?? true,
         providerOwnershipVerified: over.providerStatus === 'APPROVED',
@@ -226,7 +226,8 @@ describe('INT-08 provider-authoritative WhatsApp templates (e2e)', () => {
       where: { organisationId: A.org, kind: 'message_template' },
       orderBy: { externalId: 'asc' },
     });
-    const byName = Object.fromEntries(rows.map((r) => [r.externalId, r]));
+    // Keyed by the bare name here; identity on disk is name:language.
+    const byName = Object.fromEntries(rows.map((r) => [r.name, r]));
 
     expect(byName.order_update.providerOwnershipVerified).toBe(true);
     expect(byName.order_update.lastError).toBeNull();
@@ -246,14 +247,14 @@ describe('INT-08 provider-authoritative WhatsApp templates (e2e)', () => {
     graph.pages = [{ data: [tpl('order_update', 'en_US', 'APPROVED')] }];
     await sync.sync(A.org, A.integ);
     expect(
-      (await prisma.integrationAsset.findFirstOrThrow({ where: { externalId: 'order_update' } }))
+      (await prisma.integrationAsset.findFirstOrThrow({ where: { externalId: 'order_update:en_US' } }))
         .providerOwnershipVerified,
     ).toBe(true);
 
     graph.pages = [{ data: [tpl('order_update', 'en_US', 'PAUSED')] }];
     await sync.sync(A.org, A.integ);
 
-    const after = await prisma.integrationAsset.findFirstOrThrow({ where: { externalId: 'order_update' } });
+    const after = await prisma.integrationAsset.findFirstOrThrow({ where: { name: 'order_update' } });
     expect(after.providerOwnershipVerified).toBe(false);
     expect((after.metadata as { providerStatus: string }).providerStatus).toBe('PAUSED');
   });
@@ -266,17 +267,23 @@ describe('INT-08 provider-authoritative WhatsApp templates (e2e)', () => {
     await sync.sync(A.org, A.integ);
 
     const hindi = await prisma.integrationAsset.findFirstOrThrow({
-      where: { organisationId: A.org, externalId: 'order_update' },
+      where: { organisationId: A.org, externalId: 'order_update:hi' },
     });
     expect(hindi.providerOwnershipVerified).toBe(false);
     expect((hindi.metadata as { providerStatus: string }).providerStatus).toBe('REMOVED');
     // And the reason names the language, so nobody hunts for a deleted template.
     expect(hindi.lastError).toMatch(/only in en_US/);
-    // The English one is NOT silently created over the Hindi row: the asset key
-    // is the template name alone, so one row cannot hold two languages.
+
+    // The English one now arrives as its OWN row rather than being suppressed:
+    // identity is name AND language, so both can be held at once and each keeps
+    // the verdict Meta actually gave it.
+    const english = await prisma.integrationAsset.findFirstOrThrow({
+      where: { organisationId: A.org, externalId: 'order_update:en_US' },
+    });
+    expect(english.providerOwnershipVerified).toBe(true);
     expect(
       await prisma.integrationAsset.count({ where: { organisationId: A.org, kind: 'message_template' } }),
-    ).toBe(1);
+    ).toBe(2);
   });
 
   it('discovers templates the provider has that nobody recorded here', async () => {
@@ -289,9 +296,9 @@ describe('INT-08 provider-authoritative WhatsApp templates (e2e)', () => {
       where: { organisationId: A.org, kind: 'message_template' },
       orderBy: { externalId: 'asc' },
     });
-    expect(rows.map((r) => r.externalId)).toEqual(['draft_one', 'shipping_update']);
-    expect(rows.find((r) => r.externalId === 'shipping_update')!.providerOwnershipVerified).toBe(true);
-    expect(rows.find((r) => r.externalId === 'draft_one')!.providerOwnershipVerified).toBe(false);
+    expect(rows.map((r) => r.externalId)).toEqual(['draft_one:en_US', 'shipping_update:en_US']);
+    expect(rows.find((r) => r.name === 'shipping_update')!.providerOwnershipVerified).toBe(true);
+    expect(rows.find((r) => r.name === 'draft_one')!.providerOwnershipVerified).toBe(false);
     // Discovered, not declared: nothing pretends a person recorded these.
     expect((rows[0].metadata as { discoveredFromProvider: boolean }).discoveredFromProvider).toBe(true);
   });
@@ -301,7 +308,7 @@ describe('INT-08 provider-authoritative WhatsApp templates (e2e)', () => {
     graph.pages = [{ data: [tpl('order_update', 'en_US', 'APPROVED')] }];
     await sync.sync(A.org, A.integ);
 
-    const row = await prisma.integrationAsset.findFirstOrThrow({ where: { externalId: 'order_update' } });
+    const row = await prisma.integrationAsset.findFirstOrThrow({ where: { externalId: 'order_update:en_US' } });
     const metadata = row.metadata as Record<string, unknown>;
     // What the operator recorded is still there beside what the provider said.
     expect(metadata.approvalStatus).toBe('pending');
@@ -318,7 +325,7 @@ describe('INT-08 provider-authoritative WhatsApp templates (e2e)', () => {
     await sync.sync(A.org, A.integ);
 
     const theirs = await prisma.integrationAsset.findFirstOrThrow({
-      where: { organisationId: B.org, externalId: 'order_update' },
+      where: { organisationId: B.org, externalId: 'order_update:en_US' },
     });
     expect(theirs.providerOwnershipVerified).toBe(false);
     expect(theirs.lastVerifiedAt).toBeNull();
@@ -432,7 +439,7 @@ describe('INT-08 provider-authoritative WhatsApp templates (e2e)', () => {
       await localTemplate(A, 'order_update', 'en_US');
       graph.pages = [{ data: [tpl('order_update', 'en_US', 'APPROVED')] }];
       await sync.sync(A.org, A.integ);
-      const asset = await prisma.integrationAsset.findFirstOrThrow({ where: { externalId: 'order_update' } });
+      const asset = await prisma.integrationAsset.findFirstOrThrow({ where: { externalId: 'order_update:en_US' } });
 
       const queued = await send(asset.id);
       expect(queued).toMatchObject({ message: { status: 'queued' }, policy: { mode: 'template' } });
@@ -457,7 +464,7 @@ describe('INT-08 provider-authoritative WhatsApp templates (e2e)', () => {
       variables: [],
     } as never);
 
-    const row = await prisma.integrationAsset.findFirstOrThrow({ where: { externalId: 'order_update' } });
+    const row = await prisma.integrationAsset.findFirstOrThrow({ where: { externalId: 'order_update:en_US' } });
     const metadata = row.metadata as Record<string, unknown>;
     // The provider verdict survived a local edit rather than being reset or raised.
     expect(metadata.providerStatus).toBe('APPROVED');

@@ -155,11 +155,14 @@ export class TemplateSyncService implements OnModuleInit {
 
     let approved = 0;
     let removed = 0;
-    // Names this connection already holds. A template asset is keyed by name
-    // alone -- `@@unique([integrationId, kind, externalId])` -- so discovery
-    // must never upsert onto a name that exists, or it would overwrite one
-    // language's row with another language's verdict.
-    const localNames = new Set(local.map((a) => cleanName(a.externalId)).filter(Boolean) as string[]);
+    // Name:language pairs this connection already holds. `externalId` is that
+    // composite, so two languages of one template are two rows and discovery
+    // can create the missing language without touching the one that exists.
+    const localKeys = new Set(
+      local
+        .map((a) => templateKey(a.name, jsonObject(a.metadata).languageCode) ?? a.externalId)
+        .filter(Boolean),
+    );
     const languagesByName = new Map<string, string[]>();
     for (const row of provider.values()) {
       const name = cleanName(row.name);
@@ -169,7 +172,7 @@ export class TemplateSyncService implements OnModuleInit {
 
     for (const asset of local) {
       const metadata = jsonObject(asset.metadata);
-      const key = templateKey(asset.externalId, metadata.languageCode);
+      const key = templateKey(asset.name, metadata.languageCode);
       const row = key ? provider.get(key) : undefined;
       /*
        * A template the provider did not list is REMOVED, not "unchanged".
@@ -184,7 +187,7 @@ export class TemplateSyncService implements OnModuleInit {
       // A name the provider has, but not in the language recorded here. Say so:
       // "removed" alone would send an operator looking for a deleted template
       // that is in fact sitting there under another language.
-      const name = cleanName(asset.externalId);
+      const name = cleanName(asset.name);
       const otherLanguages = !row && name ? (languagesByName.get(name) ?? []) : [];
       const reason = otherLanguages.length
         ? `The provider has this template only in ${otherLanguages.join(', ')}; this connection records it as ${String(metadata.languageCode ?? 'an unknown language')}.`
@@ -217,17 +220,18 @@ export class TemplateSyncService implements OnModuleInit {
     for (const row of provider.values()) {
       const name = cleanName(row.name);
       const language = cleanLanguage(row.language);
-      if (!name || !language || localNames.has(name)) continue;
+      const key = templateKey(name, language);
+      if (!name || !language || !key || localKeys.has(key)) continue;
       const status = providerTemplateStatus(row.status);
       if (status === 'APPROVED') approved += 1;
       discovered += 1;
-      localNames.add(name);
+      localKeys.add(key);
       await this.prisma.integrationAsset.create({
         data: {
           organisationId,
           integrationId,
           kind: TEMPLATE_ASSET_KIND,
-          externalId: name,
+          externalId: key,
           name,
           isActive: true,
           providerOwnershipVerified: status === 'APPROVED',
