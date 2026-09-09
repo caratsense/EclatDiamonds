@@ -1,5 +1,5 @@
-import { IsOptional, IsString } from 'class-validator';
-import { IsIndianMobile } from '../../common/contact.util';
+import { IsEmail, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsIndianMobile, IsRealName } from '../../common/contact.util';
 
 /**
  * POST /parties — add a customer from the shop floor (reps create customers;
@@ -8,9 +8,13 @@ import { IsIndianMobile } from '../../common/contact.util';
  */
 export class CreatePartyDto {
   @IsString()
+  @IsNotEmpty()
   storeId!: string;
 
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  @IsRealName()
   name!: string;
 
   @IsString()
@@ -19,6 +23,7 @@ export class CreatePartyDto {
 
   @IsOptional()
   @IsString()
+  @IsEmail()
   email?: string;
 
   @IsOptional()

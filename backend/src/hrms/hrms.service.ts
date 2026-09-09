@@ -442,7 +442,13 @@ export class HrmsService {
     const row = await this.prisma.attendanceRecord.upsert({
       where: { storeId_staffId_date: { storeId: dto.storeId, staffId: target.id, date } },
       update: data,
-      create: { storeId: dto.storeId, staffId: target.id, date, ...data },
+      create: {
+        organisationId: user.organisationId,
+        storeId: dto.storeId,
+        staffId: target.id,
+        date,
+        ...data,
+      },
       include: { store: true },
     });
 
@@ -543,7 +549,14 @@ export class HrmsService {
     const row = await this.prisma.attendanceRecord.upsert({
       where: { storeId_staffId_date: { storeId, staffId: user.id, date } },
       update: payload,
-      create: { storeId, staffId: user.id, staffName: user.name, date, ...payload },
+      create: {
+        organisationId: user.organisationId,
+        storeId,
+        staffId: user.id,
+        staffName: user.name,
+        date,
+        ...payload,
+      },
     });
 
     // A punch away from the store, or one from a device reporting a mock GPS
@@ -875,6 +888,7 @@ export class HrmsService {
 
       await this.prisma.attendanceRecord.create({
         data: {
+          organisationId: user.organisationId,
           storeId,
           staffId: a.userId,
           staffName: a.user.name,
@@ -937,6 +951,7 @@ export class HrmsService {
     }
     const row = await this.prisma.shift.create({
       data: {
+        organisationId: user.organisationId,
         storeId: dto.storeId,
         name: dto.name,
         startTime: dto.startTime,
@@ -967,7 +982,7 @@ export class HrmsService {
     const row = await this.prisma.storeHoliday.upsert({
       where: { storeId_date: { storeId: dto.storeId, date } },
       update: { label: dto.label ?? null },
-      create: { storeId: dto.storeId, date, label: dto.label ?? null },
+      create: { organisationId: user.organisationId, storeId: dto.storeId, date, label: dto.label ?? null },
     });
     return toHolidayView(row);
   }
@@ -1557,6 +1572,7 @@ export class HrmsService {
 
     const row = await this.prisma.leaveRequest.create({
       data: {
+        organisationId: user.organisationId,
         storeId: actor.storeId,
         staffId: actor.staffId,
         staffName: actor.staffName,
@@ -1663,6 +1679,7 @@ export class HrmsService {
 
     const row = await this.prisma.attendanceRegularization.create({
       data: {
+        organisationId: user.organisationId,
         storeId,
         staffId: user.id,
         staffName: user.name,
@@ -1784,6 +1801,7 @@ export class HrmsService {
           autoClosed: false,
         },
         create: {
+          organisationId: user.organisationId,
           storeId,
           staffId,
           staffName,

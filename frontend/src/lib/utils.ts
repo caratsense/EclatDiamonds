@@ -45,3 +45,22 @@ export function isValidEmail(raw: string): boolean {
   const v = (raw ?? "").trim();
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) && v.length <= 254;
 }
+
+/**
+ * A real, human-meaningful name/title — must contain at least one letter (any
+ * script) so a phone number, amount or id can't masquerade as a name. Mirrors
+ * the backend `@IsRealName()` validator so the inline check matches the API.
+ */
+export function isRealName(raw: string): boolean {
+  return /\p{L}/u.test((raw ?? "").trim());
+}
+
+/**
+ * Cap a phone input the way the lead form does: 10 digits for a bare number,
+ * 12 when prefixed with "+" (i.e. +91 + 10). Mirrors backend normalization.
+ */
+export function capIndianPhone(raw: string): string {
+  const hasPlus = raw.trimStart().startsWith("+");
+  const digits = raw.replace(/\D/g, "").slice(0, hasPlus ? 12 : 10);
+  return (hasPlus ? "+" : "") + digits;
+}

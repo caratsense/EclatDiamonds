@@ -1,0 +1,155 @@
+SHARED-FILE CHANGE REQUESTS — from the CRM/AI agent (Claude)
+============================================================
+
+Protocol: every change this agent needs in a file owned or contended by another
+agent is written here BEFORE the edit is made. One block per request. Newest at
+the bottom. "Applied by Claude" means the edit has been made; anything marked
+REQUESTED is waiting on the owning agent.
+
+
+--------------------------------------------------------------------
+REQ-001  schema.prisma — add model `AiDraftRecord`  (Phase 2C)
+Status:  APPLIED BY CLAUDE (additive only)
+Date:    2026-09-07
+--------------------------------------------------------------------
+
+WHY
+Phase 2C requires an AI draft to record how it was produced: provider, model,
+confidence, latency, policy version, and the ids of the knowledge documents
+quoted. None of that exists today. `Message` has no such fields, and its
+`payload` column means "the raw provider payload of an inbound message" — using
+it for outbound AI provenance would overload one column with two meanings and
+turn "which drafts cited document X?" into a JSON scan.
+
+The draft also needs a review state (pending / approved / edited / rejected)
+with the person and time attached, because approval must be attributable.
+
+WHAT
+One NEW model. No existing model's columns are altered, so no backfill and no
+risk to any existing query:
+
+  model AiDraftRecord {
+    id, organisationId, messageId (unique), conversationId,
+    provider, model, confidence, latencyMs, policyVersion,
+    knowledgeDocumentIds String[],
+    review, reviewedById, reviewedAt, reviewNote, createdAt
+  }
+
+Three BACK-RELATIONS are required by Prisma and are the only edits to existing
+model blocks. Each is a single line; none changes an existing field:
+
+  Organisation  ->  aiDraftRecords  AiDraftRecord[]
+  Message       ->  aiDraft         AiDraftRecord?
+  User          ->  aiDraftsReviewed AiDraftRecord[] @relation("AiDraftReviewer")
+
+`prisma format` was NOT run: it would reformat the whole 4000-line shared schema
+and collide with concurrent edits. The blocks were added by hand and
+`prisma validate` passes.
+
+MIGRATION
+  20260907200000_crm_ai_draft_records — CREATE TABLE + 2 indexes + 3 FKs.
+  Additive only. No DROP / DELETE / TRUNCATE / type change. Rehearsed
+  zero-to-current on a disposable `_test` database.
+
+FK behaviour, chosen deliberately:
+  organisation -> RESTRICT  (a tenant with AI history is not silently deletable)
+  message      -> CASCADE   (the record is provenance FOR that message)
+  reviewedBy   -> SET NULL  (deactivating an employee must not delete the record
+                             of a decision they made)
+
+
+--------------------------------------------------------------------
+REQ-002  KnowledgeService — an organisation-scoped retrieval entry point
+Status:  FULFILLED BY CODEX (searchForOrganisation added)
+Owner:   Codex (backend/src/knowledge/** is not editable by Claude)
+Date:    2026-09-07
+--------------------------------------------------------------------
+
+WHY
+`KnowledgeService.search(user: AuthUser, query: string)` is the only retrieval
+entry point, and it is shaped for a signed-in person. The AI responder runs on
+the webhook path, where there is no AuthUser — the caller is a provider, not a
+user. Today the method reads only `user.organisationId`, so a tenant-bound
+synthetic principal is correct and safe, and that is what Claude passes (the
+same pattern `RequalificationService` already uses for background work).
+
+That works, but it depends on an internal detail of `search`. If a later change
+reads anything else off `user` (store scope, role, id), the AI path would either
+break or silently narrow.
+
+REQUEST
+Please add an explicit org-scoped overload that cannot be misused, e.g.
+
+  searchForOrganisation(organisationId: string, query: string, opts?: {limit?: number})
+
+and have `search(user, query)` delegate to it. Claude will switch to it as soon
+as it exists — no other change needed on the CRM side.
+
+Claude's interim call site (single place, easy to swap):
+  backend/src/crm/ai/knowledge-retrieval.ts
+
+
+--------------------------------------------------------------------
+REQ-003  Nothing else
+--------------------------------------------------------------------
+No change is requested to app.module.ts, package.json, env examples or
+navigation. Phase 2C wires itself entirely through `CrmModule`, which is
+@Global and already imported, and the AI provider is configured from existing
+environment variables read at runtime (no new required vars: absent credentials
+simply leave the provider unconfigured, which the gate already handles).
+
+
+--------------------------------------------------------------------
+REQ-004  .env.example — four OPTIONAL variables for the AI provider
+Status:  FULFILLED BY CODEX
+Owner:   Codex
+Date:    2026-09-07
+--------------------------------------------------------------------
+
+None of these is required. With any of the first three absent the responder
+reports itself unconfigured and the gate hands conversations to people, which is
+the same behaviour as before Phase 2C. Please add them to .env.example when
+convenient, documented as optional:
+
+  CRM_AI_PROVIDER   anthropic | openai   (empty or absent => assistant disabled)
+  CRM_AI_MODEL      model id, e.g. a Claude or GPT model name
+  CRM_AI_API_KEY    provider credential  (never logged; only its presence is)
+  CRM_AI_BASE_URL   optional, for an OpenAI-compatible gateway
+
+Read at construction in backend/src/crm/ai/provider-ai-responder.ts.
+
+
+--------------------------------------------------------------------
+REQ-005  KnowledgeService.search — retrieval quality (NOT a blocker)
+Status:  FULFILLED BY CODEX (bounded ranked lexical retrieval)
+Owner:   Codex
+Date:    2026-09-07
+--------------------------------------------------------------------
+
+FINDING (worth knowing before the assistant is switched on for anyone)
+
+`search` is a literal substring match:
+
+    content: { contains: term, mode: 'insensitive' }
+
+Given a whole customer question — "what are your opening hours" — it asks
+whether that exact phrase appears in a document. It essentially never does, so
+retrieval returned NOTHING for realistic messages. Because the gate refuses to
+draft without supporting material, the assistant would have handed off on almost
+every message: safe, but useless, and it would have looked like the model was
+failing rather than the search.
+
+WHAT CLAUDE DID (inside CRM only; knowledge/** untouched)
+
+`backend/src/crm/ai/knowledge-retrieval.ts` now reduces the question to content
+words, drops stop-words, and looks up at most 6 terms longest-first, unioning and
+de-duplicating the chunks. Each call is still organisation-scoped, so this widens
+what is FOUND without widening whose documents can be found.
+
+WHAT IT STILL CANNOT DO
+
+It is keyword matching. A document that answers the question in different words
+(the customer asks "when do you open", the handbook says "trading times") is
+missed. Ranked or vector retrieval inside KnowledgeService would fix this
+properly; the CRM side would then simplify to a single call. No action needed
+from Claude when that lands beyond deleting the keyword helper.

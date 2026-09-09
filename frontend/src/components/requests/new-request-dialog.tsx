@@ -30,7 +30,7 @@ import {
   type RequestPriority,
   type SpecialRequestKind,
 } from "@/lib/queries/special-requests";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, isRealName } from "@/lib/utils";
 
 const PRIORITIES: RequestPriority[] = ["low", "medium", "high", "urgent"];
 
@@ -89,6 +89,10 @@ export function NewRequestDialog({
     }
     if (title.trim().length < 3) {
       toast.error("Give the request a short title.");
+      return;
+    }
+    if (!isRealName(title)) {
+      toast.error("The title needs letters, not just a number.");
       return;
     }
     if (isDiamond && (!diamondSpec.trim() || !Number(rate))) {

@@ -114,6 +114,7 @@ describe('Stock entry + adjust-status (e2e)', () => {
     // Lock `locked` by attaching it to an approved transfer.
     await prisma.stockTransfer.create({
       data: {
+        organisationId: 'org_eclat',
         ref: `ADJLOCK-${Date.now()}-${seq++}`,
         status: 'ho_approved',
         fromStoreId: SURAT,

@@ -38,7 +38,10 @@ describe('sync — linking Gati branches to existing stores', () => {
         },
       },
     };
-    return new SyncService(prisma as any, { get: () => undefined } as any, {} as any);
+    // planAdoptions touches only `store`, so config/audit/provenance are stubs.
+    // ProvenanceService joined the constructor when the purge's "did the customer
+    // give us this?" rule moved out of SyncService into one shared place.
+    return new SyncService(prisma as any, { get: () => undefined } as any, {} as any, {} as any);
   }
 
   /** legacyId -> the Eclat store id it would claim (or undefined). */
@@ -47,7 +50,10 @@ describe('sync — linking Gati branches to existing stores', () => {
     stores = ECLAT as { id: string; name: string; legacyId?: string }[],
   ) {
     const svc = serviceWith(stores);
-    const map = await (svc as any).planAdoptions(records);
+    // planAdoptions is now org-scoped: (organisationId, records). The stub prisma
+    // ignores organisationId (it filters only on legacyId), so a dummy org id
+    // exercises the same name-matching logic this test covers.
+    const map = await (svc as any).planAdoptions('org_eclat', records);
     const out: Record<string, string | undefined> = {};
     for (const r of records) out[r.legacyId] = map.get(r.legacyId)?.storeId;
     return out;

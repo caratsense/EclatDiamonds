@@ -27,7 +27,12 @@ import {
   Contact,
   Coins,
   ArrowLeftRight,
-  ScanSearch,
+  Receipt,
+  Inbox,
+  SlidersHorizontal,
+  Plug,
+  Database,
+  ListChecks,
 } from "lucide-react";
 
 import type { Role } from "@/lib/types";
@@ -109,6 +114,17 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: Users,
       },
       {
+        // CaratOS Phase A3 — the unified inbox. Channel-neutral: WhatsApp today,
+        // any other channel once its adapter exists, with no change to this screen.
+        module: 1,
+        slug: "conversations",
+        title: "Conversations",
+        purpose:
+          "Every customer message, on every channel, in one place.",
+        primaryAction: "",
+        icon: Inbox,
+      },
+      {
         module: 1,
         slug: "customers",
         title: "Customers",
@@ -152,16 +168,6 @@ export const NAV_GROUPS: NavGroup[] = [
           "Browse products across stores; search by photo.",
         primaryAction: "Add Product",
         icon: Gem,
-      },
-      {
-        module: 5,
-        slug: "find-similar",
-        title: "Find Similar Jewellery",
-        purpose:
-          "Upload a reference photo to find visually similar pieces in the catalogue.",
-        primaryAction: "",
-        icon: ScanSearch,
-        // Visible to everyone — a salesperson at the counter is the primary user.
       },
       {
         module: 14,
@@ -224,6 +230,19 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: ArrowLeftRight,
         // Salespeople have no actions here; store managers run the movements,
         // area/HO oversee + approve.
+        roles: ["store_manager", "area_manager", "head_office"],
+      },
+      {
+        module: 12,
+        slug: "payments",
+        title: "Sales & Payments",
+        purpose:
+          "Record sales with advance and balance, and track collections and bank reconciliation.",
+        primaryAction: "New Sale",
+        icon: Receipt,
+        // Store-level collections ledger + reconciliation is a manager view
+        // (matches Finance/Reporting/Targets gating). If salespeople need to
+        // record direct sales at the counter, widen this — open product decision.
         roles: ["store_manager", "area_manager", "head_office"],
       },
     ],
@@ -317,11 +336,26 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Administration",
     items: [
       {
+        // CaratOS Phase A11 — live setup state, not a one-time wizard.
+        module: 11,
+        slug: "settings/onboarding",
+        title: "Getting Started",
+        purpose:
+          "What is set up and what is left — industry, locations, team, data and channels.",
+        primaryAction: "",
+        icon: ListChecks,
+        roles: ["head_office"],
+      },
+      {
         module: 11,
         slug: "settings/stores",
         title: "Store Setup",
+        // "Gati" is one jewellery tenant's ERP connector, and naming it here put
+        // a vendor no other industry has ever heard of in front of every tenant.
+        // The sentence says what the screen does; which system a branch arrived
+        // from is the connector's business, not the navigation's.
         purpose:
-          "Add store branches, review new branches from Gati, and assign logins.",
+          "Add branches, review the ones a connected system has sent through, and assign logins.",
         primaryAction: "Add Store",
         icon: Store,
         roles: ["head_office"],
@@ -356,6 +390,41 @@ export const NAV_GROUPS: NavGroup[] = [
         roles: ["store_manager", "area_manager", "head_office"],
       },
       {
+        // CaratOS Phase A2 — the screen that makes the product industry-neutral.
+        module: 11,
+        slug: "settings/configuration",
+        title: "Business Configuration",
+        purpose:
+          "Your industry, what your business calls things, and which fields your team fills in.",
+        primaryAction: "",
+        icon: SlidersHorizontal,
+        roles: ["head_office"],
+      },
+      {
+        // CaratOS Phase A7 — bring existing records in, and see what each
+        // source has actually delivered. store_manager+ because onboarding data
+        // is a management action (matches ImportController's own guard).
+        module: 11,
+        slug: "data",
+        title: "Data & Imports",
+        purpose:
+          "Import your existing records and check what each connected system has delivered.",
+        primaryAction: "",
+        icon: Database,
+        roles: ["store_manager", "area_manager", "head_office"],
+      },
+      {
+        // CaratOS Phase A5 — per-organisation connections and credentials.
+        module: 11,
+        slug: "settings/integrations",
+        title: "Integrations",
+        purpose:
+          "Connect the systems and channels your business already uses.",
+        primaryAction: "",
+        icon: Plug,
+        roles: ["head_office"],
+      },
+      {
         module: 3,
         slug: "settings/audit",
         title: "Audit Log",
@@ -371,6 +440,29 @@ export const NAV_GROUPS: NavGroup[] = [
 
 export const NAV_ITEMS: NavItem[] = NAV_GROUPS.flatMap((g) => g.items);
 
+/**
+ * The independently sellable, industry-neutral product surface. Keep this in
+ * step with the backend industry-pack CORE_NAVIGATION list. It is also the safe
+ * UI fallback while a tenant has no resolvable pack: vertical modules stay
+ * hidden, while CRM, catalogue, attendance and administration remain usable.
+ */
+export const CORE_NAVIGATION: readonly string[] = Object.freeze([
+  "crm",
+  "conversations",
+  "customers",
+  "reminders",
+  "catalogue",
+  "checkins",
+  "hrms",
+  "settings/onboarding",
+  "settings/stores",
+  "settings/team",
+  "settings/configuration",
+  "data",
+  "settings/integrations",
+  "settings/audit",
+]);
+
 export function getNavItem(slug: string): NavItem | undefined {
   return NAV_ITEMS.find((i) => i.slug === slug);
 }
@@ -384,11 +476,33 @@ export function canSeeNavItem(item: NavItem, role: Role): boolean {
  * Nav groups filtered to what `role` may see, with empty groups dropped.
  * Keeps the sidebar + mobile nav role-aware from a single source of truth.
  */
-export function visibleNavGroups(role: Role): NavGroup[] {
+export function visibleNavGroups(
+  role: Role,
+  enabledNavigation?: readonly string[],
+): NavGroup[] {
+  const enabled = enabledNavigation?.length
+    ? new Set(enabledNavigation)
+    : undefined;
   return NAV_GROUPS.map((group) => ({
     ...group,
-    items: group.items.filter((item) => canSeeNavItem(item, role)),
+    items: group.items.filter(
+      (item) => canSeeNavItem(item, role) && (!enabled || enabled.has(item.slug)),
+    ),
   })).filter((group) => group.items.length > 0);
+}
+
+/** Read the fresh-tenant feature profile defensively from Organisation.settings. */
+export function navigationFromSettings(
+  settings: Record<string, unknown> | undefined,
+): string[] | undefined {
+  const profile = settings?.featureProfile;
+  if (!profile || typeof profile !== "object" || Array.isArray(profile)) {
+    return undefined;
+  }
+  const value = (profile as Record<string, unknown>).enabledNavigation;
+  if (!Array.isArray(value)) return undefined;
+  const routes = value.filter((item): item is string => typeof item === "string");
+  return routes.length ? routes : undefined;
 }
 
 /**
@@ -397,6 +511,9 @@ export function visibleNavGroups(role: Role): NavGroup[] {
  * they start on CRM (their funnel). Managers+ get the Dashboards home.
  * Also used by the sidebar logo so "home" always points somewhere visible.
  */
-export function homeForRole(role: Role): string {
-  return role === "salesperson" ? "/crm" : "/dashboards";
+export function homeForRole(role: Role, enabledNavigation?: readonly string[] | null): string {
+  if (role === "salesperson") return "/crm";
+  return enabledNavigation?.length && !enabledNavigation.includes("dashboards")
+    ? "/crm"
+    : "/dashboards";
 }

@@ -79,7 +79,11 @@ export class SpecialRequestsService {
           'A diamond-rate request needs both the spec and the requested rate per carat',
         );
       }
-      currentRate = await this.currentDiamondRate(dto.diamondSpec.trim(), dto.storeId);
+      currentRate = await this.currentDiamondRate(
+        user.organisationId,
+        dto.diamondSpec.trim(),
+        dto.storeId,
+      );
     }
 
     const requiredRole = resolveRequiredRole(dto.kind, user.role, dto.amount ?? null);
@@ -97,6 +101,7 @@ export class SpecialRequestsService {
 
     const row = await this.prisma.specialRequest.create({
       data: {
+        organisationId: user.organisationId,
         ref,
         storeId: dto.storeId,
         kind: dto.kind,
@@ -160,9 +165,13 @@ export class SpecialRequestsService {
   }
 
   /** The rate currently in force for a spec — store override wins over global. */
-  private async currentDiamondRate(spec: string, storeId: string): Promise<number | null> {
+  private async currentDiamondRate(
+    organisationId: string,
+    spec: string,
+    storeId: string,
+  ): Promise<number | null> {
     const rate = await this.prisma.diamondRate.findFirst({
-      where: { spec, effectiveFrom: { lte: new Date() }, OR: [{ storeId }, { storeId: null }] },
+      where: { spec, organisationId, effectiveFrom: { lte: new Date() }, OR: [{ storeId }, { storeId: null }] },
       orderBy: [{ storeId: 'desc' }, { effectiveFrom: 'desc' }],
     });
     return rate ? Number(rate.ratePerCarat) : null;
@@ -335,6 +344,7 @@ export class SpecialRequestsService {
             // Scoped to the requesting branch. A rate approved for one store's
             // deal must not silently reprice every other branch.
             storeId: row.storeId,
+            organisationId: user.organisationId,
           },
         });
         appliedRateId = created.id;

@@ -2,6 +2,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request = require('supertest');
 import { AppModule } from '../src/app.module';
+import { GoldRateService } from '../src/integrations/gold-rate.service';
 
 /**
  * Integrations (Phase 4) regression suite — WhatsApp / Razorpay / gold-rate.
@@ -13,7 +14,24 @@ import { AppModule } from '../src/app.module';
  *
  * This proves the module is "code-complete behind env keys": it never crashes or
  * leaks when unconfigured, and the security gates hold regardless.
+ *
+ * Gold-rate note: unlike the other integrations, GoldRateService is deliberately
+ * KEYLESS — its `enabled` flag is unconditionally true (a built-in CoinGecko feed
+ * URL is always resolvable), so there is no real "unconfigured" state and no env
+ * that disables it. To test the unconfigured CONTRACT deterministically (and not
+ * depend on the live feed / network / local .env), we override the provider with
+ * a stub that reports the disabled state. RBAC is unaffected — the @Roles guard
+ * lives on the controller, not the service, so the manager-only check is still
+ * exercised for real.
  */
+const goldRateStub = {
+  enabled: false,
+  currentRates: async () => [],
+  refresh: async () => ({ updated: false, dryRun: true }),
+  refreshIfStale: async () => ({ updated: false, dryRun: true }),
+  getLatestRate: async () => null,
+  setManual: async () => ({ rates: {} }),
+};
 
 const PASSWORD = 'password123';
 const REP = 'priya.rep@caratsense.in'; // salesperson, Surat — Main
@@ -33,7 +51,13 @@ describe('Eclat backend — integrations (e2e)', () => {
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      // Simulate the "no gold-rate feed configured" state deterministically —
+      // see the gold-rate note above. Keeps the suite independent of the live
+      // keyless feed, the network, and local .env.
+      .overrideProvider(GoldRateService)
+      .useValue(goldRateStub)
+      .compile();
 
     // rawBody mirrors main.ts so webhook signature verification sees real bytes.
     app = moduleRef.createNestApplication({ rawBody: true });

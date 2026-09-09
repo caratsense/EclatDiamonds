@@ -60,12 +60,12 @@ describe('signup approval — who may approve whom', () => {
 
     it('appends a numeric suffix only when the base is already taken', async () => {
       const taken = new Set(['shreyansh.mumbaibandra@eclatdiamonds.in']);
-      const first = await uniqueEmailHandle('Shreyansh', 'Mumbai Bandra', async (e) =>
+      const first = await uniqueEmailHandle('Shreyansh', 'Mumbai Bandra', 'eclat', async (e) =>
         taken.has(e),
       );
       expect(first).toBe('shreyansh.mumbaibandra2@eclatdiamonds.in');
 
-      const fresh = await uniqueEmailHandle('Aarav', 'Mumbai Bandra', async (e) =>
+      const fresh = await uniqueEmailHandle('Aarav', 'Mumbai Bandra', 'eclat', async (e) =>
         taken.has(e),
       );
       expect(fresh).toBe('aarav.mumbaibandra@eclatdiamonds.in'); // no suffix when free

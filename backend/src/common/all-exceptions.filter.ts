@@ -9,6 +9,7 @@ import {
 import type { Request, Response } from 'express';
 
 import { AuthUser } from './auth-user';
+import { current } from './tenant-context';
 
 /**
  * AllExceptionsFilter — the single place every unhandled error passes through.
@@ -64,9 +65,17 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const where = `${req?.method ?? '-'} ${req?.originalUrl ?? '-'}`;
 
     try {
+      // ORGANISATION and REQUEST ID added in Phase B5. Without the tenant, a
+      // multi-tenant incident cannot be scoped to whose data was involved; without
+      // the correlation id, this line cannot be tied to the request log entry that
+      // recorded its timing.
+      const scope = current();
+      const org =
+        user?.organisationId ?? (scope?.kind === 'tenant' ? scope.organisationId : '-');
       this.logger.error(
-        `${where} -> ${status} | user=${user?.id ?? 'anon'} (${user?.role ?? '-'}) ` +
-          `store=${(req?.headers?.['x-store-id'] as string) ?? '-'} | ${detail}`,
+        `${where} -> ${status} | org=${org} user=${user?.id ?? 'anon'} (${user?.role ?? '-'}) ` +
+          `store=${(req?.headers?.['x-store-id'] as string) ?? '-'} ` +
+          `rid=${(req as any)?.requestId ?? '-'} | ${detail}`,
         err?.stack,
       );
     } catch {

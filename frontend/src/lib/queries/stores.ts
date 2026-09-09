@@ -53,6 +53,8 @@ export interface AdminStore {
   isActive: boolean;
   /** true for the synthetic "All Stores" aggregate — not editable. */
   isAggregate: boolean;
+  /** Configured weekly off (0 = Sunday). Null when none has been set. */
+  weekOffDay?: number | null;
   managers: StoreManager[];
 }
 

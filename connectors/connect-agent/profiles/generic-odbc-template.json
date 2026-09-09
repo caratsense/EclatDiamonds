@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "generic-odbc-template",
+  "displayName": "Generic ODBC discovery template",
+  "sourceSystem": "odbc",
+  "discoveryOnly": true,
+  "notes": "Run discover, copy this file, then add reviewed SELECT-only entity queries and explicit field mappings. Never place a password in the profile.",
+  "transport": {
+    "kind": "odbc",
+    "connectionEnv": "CONNECT_SOURCE_DSN"
+  },
+  "entities": {}
+}
+

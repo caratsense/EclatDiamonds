@@ -257,7 +257,7 @@ export class StockService {
     const metals = [...new Set(rows.map((r) => r.metal).filter((m): m is MetalKind => !!m))];
     const rateByMetal = new Map<MetalKind, number>();
     for (const m of metals) {
-      rateByMetal.set(m, (await this.gold.getLatestRate(m, headerStore)) ?? 0);
+      rateByMetal.set(m, (await this.gold.getLatestRate(m, user.organisationId, headerStore)) ?? 0);
     }
 
     /** Value a piece at its tag price, else its metal weight at today's rate. */
@@ -353,8 +353,11 @@ export class StockService {
     // same HUID must not be entered twice. (SKU is not globally unique across the
     // legacy data, so HUID is the safe natural key to dedupe on.)
     if (dto.huid) {
+      // Org-scoped: a HUID is unique to one physical piece WITHIN a tenant. An
+      // unscoped check leaks the existence of another org's HUID and wrongly
+      // blocks a legitimate same-HUID piece in a different org.
       const clash = await this.prisma.stockItem.findFirst({
-        where: { huid: dto.huid },
+        where: { huid: dto.huid, organisationId: user.organisationId },
         select: { id: true },
       });
       if (clash) {
@@ -364,6 +367,7 @@ export class StockService {
 
     const item = await this.prisma.stockItem.create({
       data: {
+        organisationId: user.organisationId,
         storeId: dto.storeId,
         productId: dto.productId,
         sku: dto.sku,
@@ -555,6 +559,7 @@ export class StockService {
       dto.rows.map((r) =>
         this.prisma.stockItem.create({
           data: {
+            organisationId: user.organisationId,
             storeId: dto.storeId,
             sku: r.sku,
             name: r.name,

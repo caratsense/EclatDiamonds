@@ -2,7 +2,7 @@
 REM ===========================================================================
 REM  Eclat / CaratSense — STEP 1: DISCOVERY  (read-only, changes nothing)
 REM
-REM  Run this FIRST on the client's PC, before setup.bat.
+REM  Run this only as part of the numbered, reviewed workflow. setup.bat is retired.
 REM  It reads the live database read-only and reports:
 REM    - how much data is there
 REM    - which manufacturing status codes and departments this install uses
@@ -21,12 +21,11 @@ if not exist "eclat_config.bat" (
 )
 call eclat_config.bat
 
-if exist "_pyexe.bat" (call "_pyexe.bat") else (set "PYEXE=python")
-
-echo.
-echo Installing the two components discovery needs (safe to re-run)...
-"%PYEXE%" -m pip install --quiet pyodbc requests
-echo.
+call "%~dp0require_runtime.bat"
+if errorlevel 1 (
+  pause
+  exit /b 21
+)
 
 "%PYEXE%" discover.py
 set RC=%ERRORLEVEL%
@@ -44,3 +43,4 @@ if "%RC%"=="0" (
 )
 echo.
 pause
+exit /b %RC%

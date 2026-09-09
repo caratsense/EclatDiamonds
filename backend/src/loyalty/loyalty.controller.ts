@@ -30,8 +30,8 @@ export class LoyaltyController {
    * screen passes ?includeInactive=true to also see retired ones.
    */
   @Get('plans')
-  plans(@Query('includeInactive') includeInactive?: string) {
-    return this.loyalty.plans(includeInactive === 'true');
+  plans(@CurrentUser() user: AuthUser, @Query('includeInactive') includeInactive?: string) {
+    return this.loyalty.plans(user, includeInactive === 'true');
   }
 
   // --- Scheme plan management (Head Office defines the client's own scheme) ---

@@ -32,6 +32,12 @@ export class FinanceController {
     return this.finance.summary(user, store);
   }
 
+  /** Operating-expense breakdown behind the Operating Expense KPI. */
+  @Get('expenses')
+  expenses(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
+    return this.finance.expenses(user, store);
+  }
+
   @Get('budget')
   budget(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.finance.budget(user, store);

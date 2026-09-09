@@ -185,7 +185,7 @@ export class PartiesService {
     const city = dto.city?.trim() || undefined;
 
     const party = await this.prisma.party.create({
-      data: { storeId: dto.storeId, name, phone, email, city, types: ['customer'] },
+      data: { organisationId: user.organisationId, storeId: dto.storeId, name, phone, email, city, types: ['customer'] },
       select: PARTY_SELECT,
     });
     return toPartyRow(party);

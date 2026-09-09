@@ -98,19 +98,41 @@ machine rather than assumed:
 
 ### Step 0 — before you connect
 Have ready:
-- The Eclat **sync account** (a `head_office` login) — email + password.
+- An organisation-wide **Gati Connect agent** token (`cxa_...`). Do not put a
+  human head-office email/password on the client PC.
 - **Cloudflare R2**: account ID, access key ID, secret, bucket name, and the
   bucket's public base URL. R2 must be enabled on the account first (R2 →
   Overview) and the bucket must have public access turned on, otherwise every
   uploaded URL 404s for customers even though the upload succeeded.
-- The backend URL (`https://backend-production-89dd.up.railway.app`).
+- The exact CaratOS backend origin approved for this installation. There is no
+  package default: step 2 records the reviewed origin twice and every networked
+  command refuses to run if the target and approval differ.
+- If website catalogue enrichment is required, the exact product-feed URL and
+  the website's public origin. Both remain blank when that feature is unused.
 
-Copy the whole `EclatSync` folder onto the client's PC (Desktop is fine).
+Copy the whole folder into a private local directory owned by the intended sync
+user, for example `%LOCALAPPDATA%\CaratOS\GatiConnect`. Do **not** run it from a
+shared Desktop, `ProgramData`, a network share, a junction/symbolic link, or a
+folder another user can read or modify: the folder contains an agent token and a
+database password. In **Properties → Security**, only that exact user, SYSTEM,
+and local Administrators may have access. `install_scheduler.bat` enforces this
+ACL and owner rule before it will create a task.
+
+If an earlier package was installed, inspect Task Scheduler for `EclatSync`,
+`EclatSync_Boot`, or `EclatSync_Logon`. Old releases used SYSTEM/HIGHEST. Remove
+those tasks in a separate IT maintenance session, close the elevated session,
+then continue while signed in as the intended non-admin sync user. Never run the
+agent itself from the elevated session.
 
 ### Step 1 — Python + config
 1. Install Python 3.10+ if absent — **tick "Add Python to PATH"**.
-2. Copy `eclat_config.example.bat` → `eclat_config.bat`.
-3. Fill in the Eclat and SQL Server sections. Leave `SJEP_IMAGE_ROOT` and the
+2. From a normal, non-administrator PowerShell in the private package folder,
+   run `powershell -ExecutionPolicy Bypass -File .\setup_runtime.ps1`. It creates
+   `.venv`, installs only the exact `requirements-lock.txt` set, verifies imports,
+   and runs the connector self-tests. Use `-Wheelhouse <private-local-path>` on
+   an offline client. Never run `pip install` from a numbered sync script.
+3. Copy `eclat_config.example.bat` → `eclat_config.bat`.
+4. Fill in the Eclat and SQL Server sections. Leave `SJEP_IMAGE_ROOT` and the
    R2 keys blank for now.
 
 For SQL Server, prefer a **read-only login** (`create_readonly_login.sql` creates
@@ -139,15 +161,28 @@ the safe direction to be wrong in.
 
 ### Step 3 — data sync
 ```
-setup.bat        (right-click -> Run as administrator)
+2_configure.bat
+3_test.bat
+4_preview.bat
+5_first_sync.bat
 ```
-Installs dependencies, runs a connectivity test, registers the schedule (every
-15 min + at boot, as SYSTEM), and runs the first sync.
+Review the dry-run counts, send the default controlled sample, and verify it in
+the dashboard. Expand the sample only after it is correct. `setup.bat` is retired
+and exits without installing, scheduling, or uploading; it cannot be used to
+bypass these gates.
 
 Watch `auto_sync.log`. The extract line should show non-zero counts:
 ```
 extracted: parties=564 items=753 stock=2690 sales=239(...) orders=121(...) bags=... payments=475
 ```
+
+Only after the complete first sync has been checked, run
+`install_scheduler.bat` normally — **not** with “Run as administrator”. It
+repeats the approval/connectivity check and dry run, requires the operator to
+type `SCHEDULE APPROVED`, and then creates one task for the exact current Windows
+user with `InteractiveToken` + `Limited` settings. It does not run a full sync.
+The task runs every 15 minutes while that user is signed in and once at sign-in;
+it never runs as SYSTEM/HIGHEST.
 
 ### Step 4 — photos
 Fill in `SJEP_IMAGE_ROOT` and the R2 keys in `eclat_config.bat`, then
@@ -165,6 +200,10 @@ sync_media.bat
 The first full run can take hours on a large catalogue — that is expected. It is
 resumable: stop it, run it again, it picks up where it stopped. Photos upload
 straight from this PC to Cloudflare and never pass through the Eclat backend.
+The media ledger does not call a storage upload complete until the backend has
+confirmed the exact link batch. If approval or linking fails, the command exits
+nonzero; rerunning it reuses the stored URL and retries only the missing backend
+link. Do not delete `uploaded_media.json` while recovering a link failure.
 
 R2 charges no egress, so a catalogue browsed all day costs only storage. R2 does
 not resize images, though — whatever is uploaded is what a phone downloads. If
@@ -181,13 +220,13 @@ Sign in to Eclat as head office and confirm:
 
 ## Scheduling the photo sync (optional)
 
-`setup.bat` schedules the data sync only. Photos change far less often, so run
-them nightly rather than every 15 minutes:
-
-```
-schtasks /Create /TN "EclatMediaSync" /TR "\"C:\path\to\EclatSync\sync_media.bat\"" ^
-  /SC DAILY /ST 02:00 /RU SYSTEM /RL HIGHEST /F
-```
+Photos change far less often. For the MVP, run `sync_media.bat` manually as the
+same non-admin Windows user after checking a small batch. Do not recreate the old
+SYSTEM/HIGHEST photo-task recipe: it executes user-writable scripts with elevated
+privilege and exposes the same plaintext configuration. If nightly automation is
+required, create a separately reviewed task with the exact same user,
+`InteractiveToken`, `LeastPrivilege`, and private-directory rules as
+`EclatSync`; never point an elevated task at this folder.
 
 ---
 
@@ -215,13 +254,25 @@ Either `stage_map.json` is missing (the log says so explicitly) or every code in
 it is still `null`. Go back to the discovery report and get the decode confirmed.
 
 **Uploads fail with 401**
-The sync account is not `head_office`. Every `/sync/*` route is restricted to
-that role so store staff cannot bulk-write.
+The Gati agent token is invalid, revoked, or belongs to another source system.
+Re-enrol or rotate the restricted agent; do not substitute a human login.
+
+**Uploads fail with 403**
+Run `sync_sjep.py --dry-run`, then confirm its exact `profileHash` and
+`sourceInstanceHash` in head-office agent settings. Saving settings issues the
+current `configRevision`; stale clients and repointed databases fail closed.
 
 **A sync run failed halfway**
-Nothing to do. The watermark only advances when *every* chunk succeeds, so the
-next run re-sends the same rows. Upserts are keyed on `legacyId`, so re-sending
-refreshes rather than duplicating.
+Nothing to do. Each source/table checkpoint advances only after its complete
+zero-skip acknowledgement (and a parent waits for its child batch), so the next
+run safely re-sends unfinished rows. Upserts are keyed on `legacyId`, so
+re-sending refreshes rather than duplicating. Ctrl+C and other failures exit
+nonzero for Task Scheduler; the shared process lock releases automatically.
+
+**The log says head office changed the connector configuration**
+That run has stopped all later uploads by design. Start a fresh run after the
+new profile/source/configuration approval is confirmed; the new generation gets
+its own mapped and raw checkpoints and cannot inherit the previous boundary.
 
 ---
 

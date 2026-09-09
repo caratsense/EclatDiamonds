@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { DashboardService } from './dashboard.service';
 import {
   CreateHandoffDto,
@@ -24,8 +24,25 @@ export class DashboardController {
   }
 
   @Get('tasks')
-  tasks(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
-    return this.dashboard.listTasks(user, store);
+  tasks(
+    @CurrentUser() user: AuthUser,
+    @StoreHeader() store?: string,
+    @Query('mine') mine?: string,
+    @Query('status') status?: string,
+    @Query('priority') priority?: string,
+    @Query('partyId') partyId?: string,
+    @Query('leadId') leadId?: string,
+  ) {
+    // `mine` resolves to the CALLER's id server-side. A client cannot ask for
+    // someone else's tasks by passing a different id, because there is no id to
+    // pass.
+    return this.dashboard.listTasks(user, store, {
+      mine: mine === 'true',
+      status,
+      priority,
+      partyId,
+      leadId,
+    });
   }
 
   @Post('tasks')

@@ -42,7 +42,6 @@ import { getNavItem } from "@/lib/navigation";
 import {
   LEAD_SOURCE_LABELS,
   LEAD_SOURCE_OPTIONS,
-  LEAD_STAGES,
   type Lead,
   type LeadSource,
   type LeadStage,
@@ -53,6 +52,7 @@ import {
   useCreateLead,
   type LeadOutcomeFilter,
 } from "@/lib/queries/leads";
+import { useLeadStages } from "@/lib/queries/crm";
 import { useSession } from "@/store/use-session";
 import {
   StoreScopeField,
@@ -90,6 +90,11 @@ export default function CrmPage() {
     refetch,
   } = useLeads({ from: from || undefined, to: to || undefined, outcome: "all" });
   const moveStage = useMoveLeadStage();
+  // The board's columns come from the tenant's configured pipeline, not from a
+  // constant compiled into this file — a business whose funnel is not
+  // inquiry/quotation/order sees its own stages here. Falls back to the built-in
+  // three when nothing is configured, so existing stores are unaffected.
+  const { stages: leadStages, unmapped: unmappedStages, pipelineName } = useLeadStages();
   const [view, setView] = useState<"board" | "list">("board");
   const [active, setActive] = useState<Lead | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -128,7 +133,7 @@ export default function CrmPage() {
     if (!dragId) return;
     const lead = leads.find((l) => l.id === dragId);
     if (lead && lead.stage !== stage) {
-      const label = LEAD_STAGES.find((s) => s.id === stage)?.label;
+      const label = leadStages.find((s) => s.id === stage)?.label;
       moveStage.mutate(
         { id: lead.id, stage },
         {
@@ -260,7 +265,7 @@ export default function CrmPage() {
 
       {isLoading ? (
         <div className="grid gap-4 md:grid-cols-3">
-          {LEAD_STAGES.map((s) => (
+          {leadStages.map((s) => (
             <Skeleton key={s.id} className="h-64 rounded-xl" />
           ))}
         </div>
@@ -299,8 +304,26 @@ export default function CrmPage() {
           />
         )
       ) : view === "board" ? (
-        <div className="grid gap-4 md:grid-cols-3">
-          {LEAD_STAGES.map((stage) => {
+        <>
+        {unmappedStages.length > 0 ? (
+          <p className="mb-3 rounded-lg border border-dashed bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            {pipelineName ? `${pipelineName}: ` : ""}
+            {unmappedStages.map((s) => s.label).join(", ")}{" "}
+            {unmappedStages.length === 1 ? "is" : "are"} configured but not yet tied to a
+            lead status, so no lead can sit there. Set that in Settings → Business
+            Configuration.
+          </p>
+        ) : null}
+        <div
+          className={`grid gap-4 ${
+            leadStages.length <= 2
+              ? "md:grid-cols-2"
+              : leadStages.length === 3
+                ? "md:grid-cols-3"
+                : "md:grid-cols-2 xl:grid-cols-4"
+          }`}
+        >
+          {leadStages.map((stage) => {
             const items = byStage(stage.id);
             return (
               <div
@@ -337,6 +360,7 @@ export default function CrmPage() {
             );
           })}
         </div>
+        </>
       ) : (
         <div className="rounded-xl border">
           <Table>
@@ -376,7 +400,8 @@ export default function CrmPage() {
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    {LEAD_STAGES.find((s) => s.id === lead.stage)?.label}
+                    {leadStages.find((s) => s.id === lead.stage)?.label ??
+                      lead.stage.replace(/_/g, " ")}
                   </TableCell>
                   <TableCell>{lead.assignedRep}</TableCell>
                   <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
@@ -386,8 +411,14 @@ export default function CrmPage() {
                       title="WhatsApp Re-engagement"
                       onClick={() => {
                         const cleanPhone = lead.phone.replace(/[^0-9]/g, "");
+                        // No industry noun in the fallback. This text is sent to
+                        // a real customer, and "your enquiry for jewellery" is
+                        // wrong for every tenant that is not a jeweller — and
+                        // wrong for a jeweller too, whenever the interest was
+                        // simply never recorded. Naming nothing is always true.
+                        const about = lead.interest ? ` for ${lead.interest}` : "";
                         const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(
-                          `Hello ${lead.customer}, following up regarding your enquiry for ${lead.interest || "jewellery"}.`
+                          `Hello ${lead.customer}, following up regarding your enquiry${about}.`
                         )}`;
                         window.open(waUrl, "_blank");
                       }}
@@ -461,12 +492,15 @@ function AddLeadDialog({
     // its own inline message; the toast is just a summary.
     const next: Record<string, string> = {};
     if (!customer.trim()) next.customer = "Customer name is required.";
+    // A name must actually be a name — reject a phone number / id typed here.
+    else if (!/\p{L}/u.test(customer)) next.customer = "Enter a real name (letters, not just a number).";
     // Phone is mandatory (Round-2) and must be a valid Indian mobile — the
     // backend now enforces @IsIndianMobile, so block/normalise client-side.
     const normalizedPhone = normalizeIndianMobile(phone);
     if (!phone.trim()) next.phone = "Phone number is required to save a lead.";
     else if (!normalizedPhone) next.phone = "Enter a valid 10-digit mobile number.";
     if (!source) next.source = "Lead source is required.";
+    if (!interest.trim()) next.interest = "Add what the lead is interested in.";
     if (Object.keys(next).length > 0) {
       setErrors(next);
       toast.error("Please fill in the required fields.");
@@ -480,7 +514,7 @@ function AddLeadDialog({
         phone: normalizedPhone as string,
         // Validated non-empty just above; narrow away the "" union member.
         source: source as LeadSource,
-        interest: interest.trim() || undefined,
+        interest: interest.trim(),
         remark: remark.trim() || undefined,
         address: address.trim() || undefined,
         birthday: birthday || undefined,
@@ -533,10 +567,16 @@ function AddLeadDialog({
             <Input
               id="phone"
               placeholder="+91 ..."
+              inputMode="tel"
+              maxLength={13}
               value={phone}
               aria-invalid={!!errors.phone}
               onChange={(e) => {
-                setPhone(e.target.value);
+                // Cap digits: 10 for a bare number, 12 when prefixed with "+91".
+                const raw = e.target.value;
+                const hasPlus = raw.trimStart().startsWith("+");
+                const digits = raw.replace(/\D/g, "").slice(0, hasPlus ? 12 : 10);
+                setPhone((hasPlus ? "+" : "") + digits);
                 clearError("phone");
               }}
             />
@@ -571,13 +611,22 @@ function AddLeadDialog({
             ) : null}
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="interest">Interest / what they want</Label>
+            <Label htmlFor="interest">
+              Interest / what they want <span className="text-destructive">*</span>
+            </Label>
             <Input
               id="interest"
               placeholder="e.g. Bridal necklace set"
               value={interest}
-              onChange={(e) => setInterest(e.target.value)}
+              aria-invalid={!!errors.interest}
+              onChange={(e) => {
+                setInterest(e.target.value);
+                clearError("interest");
+              }}
             />
+            {errors.interest ? (
+              <p className="mt-1 text-xs text-destructive">{errors.interest}</p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="address">Address</Label>

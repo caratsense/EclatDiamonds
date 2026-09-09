@@ -1,14 +1,10 @@
-import {
-  BadRequestException,
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuditService } from '../common/audit.service';
+import { ActivityService } from '../crm/activity.service';
 import { ROLE_RANK } from '../common/role.util';
 import { paymentModeLabel } from '../common/payment-mode.util';
 import { CreatePaymentDto, ReversePaymentDto } from './dto/payment.dto';
@@ -46,6 +42,7 @@ export class PaymentsService {
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
     private readonly audit: AuditService,
+    private readonly activity: ActivityService,
   ) {}
 
   /** GET /payments — collections ledger from Payment, store-scoped. */
@@ -110,8 +107,24 @@ export class PaymentsService {
       }
     }
 
+    // NO DUPLICATE-REFERENCE GUARD, and this is a correction to an earlier
+    // report rather than an omission.
+    //
+    // Previous reports listed "Payment.reference idempotency" as an outstanding
+    // P0. Reading the field's own contract (payment.dto.ts) shows the premise is
+    // wrong: `reference` is WHO THE MONEY CAME FROM — a free-text payer name for
+    // an unlinked walk-in — not a bank/UTR transaction id. The ledger renders it
+    // as the customer name for exactly that reason.
+    //
+    // A uniqueness or duplicate rule over it would therefore refuse the second
+    // genuine cash collection from the same person on the same day, which is
+    // ordinary counter behaviour. Idempotency needs a field that actually
+    // identifies a transaction; that is recorded as follow-up work rather than
+    // bolted onto a column that means something else.
+
     const created = await this.prisma.payment.create({
       data: {
+        organisationId: user.organisationId,
         storeId: dto.storeId,
         partyId: dto.partyId,
         saleId: dto.saleId,
@@ -143,6 +156,21 @@ export class PaymentsService {
         saleId: dto.saleId ?? null,
         reference: dto.reference ?? null,
       },
+    });
+
+    // Phase A6 — the payment also belongs on the customer's timeline. The audit
+    // log above answers "who did what"; this answers "what happened to this
+    // customer", and they are read by different people for different reasons.
+    await this.activity.recordFor(user, {
+      type: 'payment.recorded',
+      summary: `Received ₹${num(payment.amount)} ${paymentModeLabel(payment.mode)}`,
+      partyId: payment.partyId,
+      storeId: payment.storeId,
+      entityType: 'Payment',
+      entityId: payment.id,
+      channel: 'store',
+      occurredAt: payment.paidAt,
+      metadata: { amount: num(payment.amount), mode: payment.mode, saleId: dto.saleId ?? null },
     });
 
     return toRow(payment);
@@ -180,6 +208,7 @@ export class PaymentsService {
 
     const created = await this.prisma.payment.create({
       data: {
+        organisationId: user.organisationId,
         storeId: original.storeId,
         partyId: original.partyId,
         saleId: original.saleId,

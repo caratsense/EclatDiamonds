@@ -19,6 +19,14 @@ costs an afternoon.
 import os
 import re
 import sys
+from getpass import getpass
+
+from gati_target_safety import (
+    TargetSafetyError,
+    normalize_backend_origin,
+    normalize_website_endpoint,
+    normalize_website_origin,
+)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG = os.path.join(HERE, "eclat_config.bat")
@@ -34,7 +42,7 @@ def ask(label, default="", secret=False, validate=None, hint=""):
     """Prompt until the answer passes `validate`. Enter keeps `default`."""
     shown = f" [{default}]" if default else ""
     while True:
-        raw = input(f"  {label}{shown}: ")
+        raw = getpass(f"  {label}{shown}: ") if secret else input(f"  {label}{shown}: ")
         # A tab or newline pasted into the middle of a value is invisible on
         # screen but corrupts the setting; strip the lot.
         value = raw.replace("\t", "").replace("\r", "").replace("\n", "").strip()
@@ -57,6 +65,23 @@ def optional(_v):
     return None
 
 
+def batch_safe(v):
+    """Reject bytes that cmd.exe would expand or that break `set "K=V"`."""
+    if any(char in v for char in ('"', "%", "\x00")):
+        return 'cannot contain a double quote, percent sign, or NUL in this Windows package'
+    return None
+
+
+def both(*validators):
+    def check(value):
+        for validator in validators:
+            problem = validator(value)
+            if problem:
+                return problem
+        return None
+    return check
+
+
 def hexish(length, what):
     def check(v):
         if not v:
@@ -70,11 +95,11 @@ def hexish(length, what):
     return check
 
 
-def is_email(v):
+def is_agent_token(v):
     if not v:
-        return "an email is required for the sync account"
-    if "@" not in v or " " in v:
-        return "that does not look like an email address"
+        return "an organisation-wide Gati Connect agent token is required"
+    if not re.fullmatch(r"cxa_[A-Za-z0-9._~-]{16,500}", v):
+        return "that does not look like a CaratOS Connect token (expected cxa_...)"
     return None
 
 
@@ -83,6 +108,32 @@ def is_url(v):
         return "should start with https://"
     if v.endswith("/"):
         return "should NOT end with a slash"
+    return None
+
+
+def is_backend_origin(v):
+    try:
+        normalize_backend_origin(v)
+    except TargetSafetyError as exc:
+        return str(exc)
+    return None
+
+
+def optional_website_endpoint(v):
+    if not v:
+        return None
+    try:
+        normalize_website_endpoint(v)
+    except TargetSafetyError as exc:
+        return str(exc)
+    return None
+
+
+def website_origin(v):
+    try:
+        normalize_website_origin(v)
+    except TargetSafetyError as exc:
+        return str(exc)
     return None
 
 
@@ -114,35 +165,70 @@ def main():
 
     print("\n--- YOUR JEWELLERY DATABASE ---\n")
     print("  If you are not sure, run 1_discover.bat — it prints these two.\n")
-    sql_server = ask("SQL Server", "localhost")
-    sql_db = ask("Database name", "APRSSJEP")
+    sql_server = ask("SQL Server", "localhost", validate=batch_safe)
+    sql_db = ask("Database name", "APRSSJEP", validate=batch_safe)
 
     print("\n  Database login. Ask IT to run create_readonly_login.sql.")
-    print("  Leaving it blank uses the Windows login, which works while you")
-    print("  run things by hand and then FAILS once the sync is automatic.\n")
-    sql_user = ask("Database username (blank = Windows login)", "", validate=optional)
-    sql_pass = ask("Database password", "", validate=optional) if sql_user else ""
+    print("  Leaving it blank uses the current Windows login. The scheduled")
+    print("  task uses that same interactive user, so IT must grant it read access.\n")
+    sql_user = ask(
+        "Database username (blank = Windows login)", "", validate=batch_safe
+    )
+    sql_pass = (
+        ask("Database password", "", secret=True, validate=batch_safe)
+        if sql_user
+        else ""
+    )
 
     print("\n--- YOUR ECLAT DASHBOARD ---\n")
-    base_url = ask("Eclat address", "https://backend-production-89dd.up.railway.app",
-                   validate=is_url)
-    email = ask("Eclat sync email", "", validate=is_email)
-    password = ask("Eclat sync password", "", validate=lambda v: None if v else "required")
+    print("  Enter the exact backend for this installation. There is deliberately")
+    print("  no production default: the address you confirm becomes its safety pin.\n")
+    base_url = ask("CaratOS backend address", "",
+                   validate=both(is_backend_origin, batch_safe))
+    base_url = normalize_backend_origin(base_url)
+    agent_token = ask(
+        "Organisation-wide Gati Connect token",
+        "",
+        secret=True,
+        validate=both(is_agent_token, batch_safe),
+    )
+
+    print("\n--- OPTIONAL WEBSITE CATALOGUE FEED ---\n")
+    print("  Leave blank unless this client has an approved product-feed URL.")
+    website_api = ask(
+        "Website product-feed URL",
+        "",
+        validate=both(optional_website_endpoint, batch_safe),
+    )
+    website_public_origin = ""
+    if website_api:
+        website_api = normalize_website_endpoint(website_api)
+        website_public_origin = ask(
+            "Website public origin",
+            "",
+            validate=both(website_origin, batch_safe),
+            hint="e.g. https://shop.example.com (no path)",
+        )
+        website_public_origin = normalize_website_origin(website_public_origin)
 
     print("\n--- PHOTOGRAPHS ---\n")
     print("  The folder holding the jewellery pictures. 1_discover.bat finds it.")
     print("  Leave blank if you are not doing photos yet.\n")
-    image_root = ask("Photo folder", "", validate=folder_exists,
+    image_root = ask("Photo folder", "", validate=both(folder_exists, batch_safe),
                      hint="e.g. D:\\GATISOFTTECH\\SJEP IMAGES")
 
     print("\n--- PHOTO STORAGE (given to you by the Eclat team) ---\n")
     print("  Leave blank to skip photos for now.\n")
     r2_account = ask("R2 account id", "", validate=hexish(32, "the account id"))
-    r2_key = ask("R2 access key id", "", validate=hexish(32, "the access key"))
-    r2_secret = ask("R2 secret key", "", validate=hexish(64, "the secret key"))
-    r2_bucket = ask("R2 bucket", "eclat-media")
+    r2_key = ask(
+        "R2 access key id", "", secret=True, validate=hexish(32, "the access key")
+    )
+    r2_secret = ask(
+        "R2 secret key", "", secret=True, validate=hexish(64, "the secret key")
+    )
+    r2_bucket = ask("R2 bucket", "eclat-media", validate=batch_safe)
     r2_url = ask("R2 public address", "",
-                 validate=lambda v: None if not v else is_url(v))
+                 validate=lambda v: None if not v else (is_url(v) or batch_safe(v)))
 
     def mask(v):
         if not v:
@@ -158,8 +244,9 @@ def main():
         ("DB username", sql_user or "(Windows login)"),
         ("DB password", mask(sql_pass)),
         ("Eclat address", base_url),
-        ("Eclat email", email),
-        ("Eclat password", mask(password)),
+        ("Gati agent token", mask(agent_token)),
+        ("Website feed", website_api or "(none)"),
+        ("Website origin", website_public_origin or "(none)"),
         ("Photo folder", image_root or "(none)"),
         ("R2 account id", r2_account or "(blank)"),
         ("R2 access key", r2_key or "(blank)"),
@@ -180,8 +267,11 @@ def main():
         "@echo off",
         "REM Written by 2_configure.bat - contains passwords, keep private.",
         f'set "ECLAT_BASE_URL={base_url}"',
-        f'set "ECLAT_EMAIL={email}"',
-        f'set "ECLAT_PASSWORD={password}"',
+        f'set "CARATOS_APPROVED_BACKEND_ORIGIN={base_url}"',
+        f'set "CARATOS_AGENT_TOKEN={agent_token}"',
+        f'set "ECLAT_WEBSITE_API={website_api}"',
+        f'set "ECLAT_APPROVED_WEBSITE_API={website_api}"',
+        f'set "ECLAT_WEBSITE_ORIGIN={website_public_origin}"',
         f'set "SJEP_SQL_SERVER={sql_server}"',
         f'set "SJEP_SQL_DB={sql_db}"',
         f'set "SJEP_SQL_USER={sql_user}"',
@@ -205,11 +295,10 @@ def main():
     if not sql_user:
         print()
         print("  " + "*" * 56)
-        print("  WARNING - no database login was given.")
-        print("  The test below may pass, but the AUTOMATIC sync will")
-        print("  probably fail, because it runs as the computer rather")
-        print("  than as you. Ask IT to run create_readonly_login.sql,")
-        print("  then run this step again before install_scheduler.bat.")
+        print("  WARNING - Windows database authentication is selected.")
+        print("  The automatic task runs only as this same interactive")
+        print("  Windows user. Ask IT to grant this identity read access,")
+        print("  then run step 3 as that user before installing the task.")
         print("  " + "*" * 56)
     return 0
 

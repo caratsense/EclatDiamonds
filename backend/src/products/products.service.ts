@@ -69,17 +69,26 @@ function toView(p: any, presence?: StockPresence) {
     sku: p.sku,
     name: p.name,
     category: p.category,
+    categoryLabel: p.categoryLabel ?? undefined,
     metal: p.metal,
+    materialLabel: p.materialLabel ?? undefined,
     karat: p.karat,
     weightGrams: Number(p.weightGrams),
+    weightKnown: p.weightKnown ?? true,
     caratWeight: Number(p.caratWeight),
     price: Number(p.price),
+    priceKnown: p.priceKnown ?? true,
+    unitOfMeasure: p.unitOfMeasure ?? undefined,
     availability: p.availability,
     leadTimeDays: p.leadTimeDays ?? undefined,
     storeId: p.storeId ?? '',
     description: p.description ?? '',
     imageUrl: p.imageUrl ?? undefined,
     bestSeller: p.bestSeller,
+    // Tenant-defined attributes. Previously dropped here, which made every
+    // configured custom field invisible in the app no matter what an admin set
+    // up — the configuration screen wrote definitions nothing ever read.
+    attributes: (p.attributes ?? null) as Record<string, unknown> | null,
     ...(presence ? { stock: presence } : {}),
   };
 }
@@ -178,12 +187,14 @@ export class ProductsService {
     headerStore?: string,
     pagination?: PageRequest,
   ): Promise<ReturnType<typeof toView>[] | Paginated<ReturnType<typeof toView>>> {
-    const where: Prisma.ProductWhereInput = {};
+    // ORGANISATION boundary first — the catalogue is company-wide WITHIN an org,
+    // never across organisations. Applied to both count and findMany below.
+    const where: Prisma.ProductWhereInput = { organisationId: user.organisationId };
     if (f.category) where.category = f.category;
     if (f.metal) where.metal = f.metal;
     if (f.availability) where.availability = f.availability;
 
-    // Catalogue is shared, but scope to the user's stores (+ global products with no store).
+    // Within the org, scope to the user's stores (+ global products with no store).
     const requested = f.storeId ?? headerStore;
     if (requested && requested !== 'all') {
       this.scope.assertStoreAllowed(user, requested);
@@ -231,6 +242,8 @@ export class ProductsService {
   async get(user: AuthUser, id: string, headerStore?: string) {
     const p = await this.prisma.product.findUnique({ where: { id } });
     if (!p) throw new NotFoundException('Product not found');
+    // Organisation boundary: a product from another org is Not Found to this user.
+    if (p.organisationId !== user.organisationId) throw new NotFoundException('Product not found');
     const viewerStore = headerStore && headerStore !== 'all' ? headerStore : null;
     if (viewerStore) this.scope.assertStoreAllowed(user, viewerStore);
     const presence = await this.stockPresence([p.id], viewerStore, this.visibleStoreIds(user));
@@ -246,8 +259,11 @@ export class ProductsService {
   async pieces(user: AuthUser, productId: string, headerStore?: string): Promise<StockPieceView[]> {
     const product = await this.prisma.product.findUnique({
       where: { id: productId },
-      select: { id: true },
+      select: { id: true, organisationId: true },
     });
+    if (product && product.organisationId !== user.organisationId) {
+      throw new NotFoundException('Product not found');
+    }
     if (!product) throw new NotFoundException('Product not found');
 
     const requested = headerStore && headerStore !== 'all' ? headerStore : null;
@@ -300,17 +316,26 @@ export class ProductsService {
   async create(user: AuthUser, dto: CreateProductDto) {
     if (dto.storeId) this.scope.assertStoreAllowed(user, dto.storeId);
 
-    const existing = await this.prisma.product.findUnique({
-      where: { sku: dto.sku },
+    // SKU uniqueness is per-organisation — two tenants may each own SKU "R001".
+    const existing = await this.prisma.product.findFirst({
+      where: { sku: dto.sku, organisationId: user.organisationId },
+      select: { id: true },
     });
     if (existing) throw new ConflictException(`SKU "${dto.sku}" already exists`);
 
     const created = await this.prisma.product.create({
       data: {
+        organisationId: user.organisationId,
         sku: dto.sku,
         name: dto.name,
         category: dto.category,
         metal: dto.metal,
+        // The tenant's own words for a product whose typed columns had to fall
+        // back to `other` / `unspecified`. Trimmed to null rather than stored as
+        // an empty string, so "absent" has one representation.
+        categoryLabel: dto.categoryLabel?.trim() || null,
+        materialLabel: dto.materialLabel?.trim() || null,
+        unitOfMeasure: dto.unitOfMeasure?.trim() || null,
         karat: dto.karat ?? 0,
         weightGrams:
           dto.weightGrams != null ? new Prisma.Decimal(dto.weightGrams) : undefined,
@@ -321,6 +346,7 @@ export class ProductsService {
         leadTimeDays: dto.leadTimeDays,
         description: dto.description,
         storeId: dto.storeId,
+        attributes: (dto.attributes ?? undefined) as Prisma.InputJsonValue | undefined,
       },
     });
     return toView(created);
@@ -334,11 +360,14 @@ export class ProductsService {
     }
     const p = await this.prisma.product.findUnique({ where: { id } });
     if (!p) throw new NotFoundException('Product not found');
+    // Org gate first: the store check below misses null-store (company-wide)
+    // products, so without this a product from another tenant could be overwritten.
+    if (p.organisationId !== user.organisationId) throw new NotFoundException('Product not found');
     // A store-scoped product can only be edited by someone with that store in scope.
     if (p.storeId) this.scope.assertStoreAllowed(user, p.storeId);
 
     const ext = (file.originalname?.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '');
-    const imageUrl = await this.storage.save('products', `${id}.${ext}`, file.buffer);
+    const imageUrl = await this.storage.save(user.organisationId, 'products', `${id}.${ext}`, file.buffer);
     const updated = await this.prisma.product.update({ where: { id }, data: { imageUrl } });
     return toView(updated);
   }

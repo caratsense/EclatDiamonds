@@ -8,10 +8,12 @@ import {
   IsOptional,
   IsString,
   Matches,
+  MaxLength,
   Min,
+  MinLength,
 } from 'class-validator';
 import { LeadSource, LeadStage } from '@prisma/client';
-import { IsIndianMobile } from '../../common/contact.util';
+import { IsIndianMobile, IsRealName } from '../../common/contact.util';
 
 /** Follow-up reminder scopes for GET /leads/reminders. */
 export const REMINDER_SCOPES = ['today', 'overdue', 'upcoming', 'pending', 'all'] as const;
@@ -34,9 +36,18 @@ const YMD = /^\d{4}-\d{2}-\d{2}$/;
 
 export class CreateLeadDto {
   @IsString()
+  @IsNotEmpty()
   storeId!: string;
 
+  /**
+   * A real name — required, and must contain at least one letter so a phone
+   * number or reference id can never land in the name field (e.g. "46466").
+   */
   @IsString()
+  @IsNotEmpty()
+  @MinLength(2)
+  @MaxLength(120)
+  @IsRealName()
   customerName!: string;
 
   /** Phone is mandatory on create (Round 2) and must be a valid Indian mobile. */
@@ -57,9 +68,11 @@ export class CreateLeadDto {
   @IsEnum(LeadStage)
   stage?: LeadStage;
 
-  @IsOptional()
+  /** What the lead wants — required so every lead is actionable. */
   @IsString()
-  interest?: string;
+  @IsNotEmpty({ message: 'Add what the lead is interested in.' })
+  @MaxLength(280)
+  interest!: string;
 
   @IsOptional()
   @IsString()

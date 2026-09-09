@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
   IsEnum,
   IsIn,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
@@ -15,18 +16,22 @@ import {
   SpecialRequestStatus,
   TicketPriority,
 } from '@prisma/client';
+import { IsRealName } from '../../common/contact.util';
 
 /** POST /requests — a branch raises a request to someone above it. */
 export class CreateSpecialRequestDto {
   @IsString()
+  @IsNotEmpty()
   storeId!: string;
 
   @IsEnum(SpecialRequestKind)
   kind!: SpecialRequestKind;
 
   @IsString()
+  @IsNotEmpty()
   @MinLength(3)
   @MaxLength(160)
+  @IsRealName()
   title!: string;
 
   @IsOptional()

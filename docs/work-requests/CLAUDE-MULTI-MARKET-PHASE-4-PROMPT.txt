@@ -1,0 +1,250 @@
+CARATOS MULTI-MARKET PHASE 4 — CLIENT-SIDE CLOSURE AND LOCAL-TEST SAFETY
+
+Read the settled Phase 3 tree and the five MM3 findings appended to
+CLAUDE-MULTI-MARKET-PHASE-3-PROMPT.txt before editing. Phase 3 finished with
+797 tests passed, 1 skipped and 0 failed. Codex is concurrently finishing the
+connector lane; do not enter its files.
+
+OBJECTIVE
+
+Close MM3-01 through MM3-05, align frontend entitlement presentation with the
+server, and make it impossible for a local/browser verification command to
+silently target a production API. Preserve Eclat behaviour and branding inside
+the Eclat tenant.
+
+STRICT OWNERSHIP FENCE
+
+You may edit only:
+  frontend/src/app/login/page.tsx
+  frontend/src/components/layout/module-gate.tsx
+  frontend/src/components/landing/**
+  frontend/src/app/(app)/settings/team/page.tsx (stale comment only)
+  frontend/package.json and a narrowly scoped frontend/scripts/** preflight
+  frontend/next.config.* only if required for the local-target safety check
+  backend/.env.example (documentation only; never a real env file)
+  focused frontend tests for these items
+  this work-request file for newly discovered findings
+
+Do not edit:
+  backend/prisma/** or any migration
+  backend/src/integration/**
+  backend/src/sync/**
+  connectors/**
+  synceclatcaratsense/**
+  import-engine, connector runtime or connector tests
+  CRM pipeline/provisioning logic completed in Phase 3
+  attendance, payroll, presence or geofence behaviour
+  catalogue inference, embeddings, similarity or image search
+  Meta/CTWA, ROAS or omnichannel delivery
+  any real .env file, credential, deployment, scheduled task or production data
+
+WORK ITEMS
+
+0. LOCAL VERIFICATION SAFETY TRIPWIRE — FIRST
+
+The Phase 3 browser check accidentally sent three failed sign-in attempts to
+the Railway production backend because Next baked its /_api rewrite target at
+build time. Prevent a repeat before any browser verification.
+
+Requirements:
+  - Add a narrow local-verification preflight/script which inspects the actual
+    effective/built API target, not merely the current shell variable.
+  - A command intended for local verification must abort unless every API target
+    is loopback (localhost, 127.0.0.1 or ::1) and uses http/https as expected.
+  - Treat a missing, malformed, Railway, public DNS or otherwise non-loopback
+    target as a hard failure with a clear message.
+  - Do not weaken or alter the legitimate production deployment path. Scope the
+    protection to local/browser verification commands.
+  - Unit-test the target parser/check with loopback allow cases and public,
+    deceptive-hostname, malformed and missing reject cases.
+  - Before every browser action in this phase, run this preflight and record its
+    output. Never contact production, including for a harmless GET.
+
+1. MM3-01 — REMOVE THE ECLAT SIGN-UP DEFAULT (HIGH)
+
+In frontend/src/app/login/page.tsx remove the fallback
+NEXT_PUBLIC_DEFAULT_ORG_SLUG ?? "eclat". The generic product must not show
+Eclat stores or route a new user toward Eclat merely because configuration is
+absent.
+
+Requirements:
+  - Default the organisation field to empty when no explicitly configured,
+    validated tenant is supplied.
+  - Do not fetch stores until the organisation slug is non-empty and valid.
+  - Clear stale stores/selection when the slug is cleared or changed.
+  - Preserve an explicitly configured NEXT_PUBLIC_DEFAULT_ORG_SLUG for a
+    genuinely tenant-specific deployment, but validate/normalise it.
+  - Never infer a tenant from localhost or an arbitrary untrusted hostname.
+  - Existing Eclat tenant-specific deployments remain able to opt into eclat.
+  - Add focused tests for absent default, explicit default, slug change and no
+    store request against an empty tenant.
+
+2. MM3-02 — DOCUMENT GENERATED-HANDLE DOMAIN (SMALL)
+
+Add to backend/.env.example only:
+
+  # Root domain for generated staff login handles; it does not receive mail.
+  # Non-Eclat handles are <person>.<branch>@<tenant>.<root>.
+  PLATFORM_HANDLE_DOMAIN=accounts.caratos.invalid
+
+Do not place any real domain, secret or current environment value in the file.
+
+3. MM3-03 — MATCH THE SERVER'S FAIL-CLOSED VERTICAL ENTITLEMENTS (MEDIUM)
+
+ModuleGate currently renders a vertical page when enabledNavigation is absent,
+while the backend correctly refuses it. Make presentation match enforcement:
+  - Known universal routes remain available.
+  - Known vertical routes render the existing "not part of your setup" state
+    when bootstrap navigation is absent, unresolved or excludes the route.
+  - Loading must not flash a forbidden vertical page.
+  - Eclat with its resolved navigation remains unchanged.
+  - Do not build a second drifting vertical-route list if an existing shared
+    frontend navigation/entitlement registry can be reused.
+  - Test missing bootstrap, unresolved pack, universal route, excluded clinic
+    route and full Eclat navigation.
+
+4. MM3-04 — REMOVE DEAD JEWELLERY LANDING PREVIEWS (LOW)
+
+Re-run an import/reference search first. If still unreferenced, delete only:
+  frontend/src/components/landing/dashboard-preview.tsx
+  frontend/src/components/landing/crm-preview.tsx
+  frontend/src/components/landing/inventory-preview.tsx
+  frontend/src/components/landing/finance-preview.tsx
+
+If any is referenced, do not delete it; report the exact reference instead.
+
+5. MM3-05 — CORRECT THE STALE TEAM COMMENT (LOW)
+
+Update only the inaccurate JSX/code comment near the Add-staff dialog. Do not
+change user-visible copy or staff behaviour for this item.
+
+VERIFICATION
+
+At minimum run:
+  - focused frontend tests for items 0, 1 and 3;
+  - frontend TypeScript, targeted lint and Next production build;
+  - the safe local-target preflight against the built output;
+  - browser verification for generic signup, clinic vertical denial and Eclat
+    preservation, only after the preflight proves a loopback API target.
+
+Do not rerun the full backend suite unless a frontend contract test requires it;
+Codex owns the settled full-tree regression after connector work lands. Do not
+commit, push, deploy, register tasks, contact production or change credentials.
+
+FINAL REPORT
+
+List exact files, tests and browser evidence. State explicitly that the
+preflight's negative test rejects the Railway/public target and that the real
+browser run used only loopback. Report any remaining MM findings separately.
+
+
+================================================================================
+FINDINGS FROM CLAUDE — phase 4, 2026-09-08
+Outside this phase's fence. Nothing below was changed.
+================================================================================
+
+--------------------------------------------------------------------------------
+MM4-01  Every tenant's stock-transfer dialog lists ECLAT's branches.     HIGH
+        Owner: frontend/src/lib/queries/auth.ts
+               frontend/src/components/inventory/create-transfer-dialog.tsx
+--------------------------------------------------------------------------------
+    auth.ts:90    export function useSignupStores(organisationCode = "eclat") {
+    dialog.tsx:70   const { data: stores = [] } = useSignupStores();
+    dialog.tsx:141  const destinations = stores.filter((s) => s.id !== sourceStoreId);
+
+The hook defaults its tenant to the literal "eclat"; the transfer dialog calls it
+with no argument. So `destinations` — the "transfer to" picker — is populated
+from Eclat's PUBLIC store directory for whoever is signed in.
+
+This is not only a display leak. The picker offers another organisation's branch
+ids as selectable destinations for a stock transfer. The server's store-scope
+check should refuse the submission, so the likely outcome is a confusing failure
+rather than a cross-tenant write — but the UI is naming a stranger's branches as
+valid choices, and it is one server-side gap away from being worse.
+
+Today only a tenant with the `stock-transfers` capability reaches this screen,
+which post-phase-3 means Eclat and any future jewellery tenant. The second
+jewellery customer to sign up is the one who sees it.
+
+Requested: delete the `= "eclat"` default so the argument is required, and pass
+the signed-in organisation at the call site. A tenant identity should never have
+a fallback; absent, it is a bug, not a default.
+
+--------------------------------------------------------------------------------
+MM4-02  A local `docker build` bakes the production backend, unfixably.  MEDIUM
+        Owner: frontend/Dockerfile
+--------------------------------------------------------------------------------
+The Dockerfile declares `ARG NEXT_PUBLIC_API_URL` but no `ARG BACKEND_ORIGIN`.
+Since next.config.ts resolves rewrites() at build time, the image's
+routes-manifest is frozen with the production Railway default, and
+`docker run -e BACKEND_ORIGIN=…` is inert against it. `.dockerignore` excludes
+`.env*`, so a corrected env file never enters the build context either.
+
+The phase-4 preflight cannot see this: it reads the host filesystem, not the
+inside of an image. Requested: `ARG BACKEND_ORIGIN` + `ENV` before the build
+step, mirroring how NEXT_PUBLIC_API_URL is already handled.
+
+--------------------------------------------------------------------------------
+MM4-03  One-click .bat files point at the production tenant.            MEDIUM
+        Owner: synceclatcaratsense/** (explicitly outside this fence)
+--------------------------------------------------------------------------------
+`eclat_config.bat` is gitignored but present on this machine and sets
+
+    set ECLAT_BASE_URL=https://backend-production-89dd.up.railway.app
+
+It is consumed by run_sync.bat, 3_test.bat, 4_preview.bat, 5_first_sync.bat and
+sync_media.bat — all double-clickable, all of which log in and POST. configure.py
+also defaults its interactive prompt to the same production URL. Separately,
+check_website_match.py and import_website.py hardcode the client's live
+e-commerce API with a spoofed Origin/Referer and have no env override at all.
+
+These are the same hazard class as the incident the preflight now covers, in a
+directory the preflight does not reach and this phase may not enter.
+
+--------------------------------------------------------------------------------
+MM4-04  A jeweller's domain is the example address for every tenant.    LOW
+        Owner: frontend/src/components/reporting/
+--------------------------------------------------------------------------------
+    daily-report-send-dialog.tsx:219   placeholder={isEmail ? "owner@eclatdiamonds.in" : …}
+    send-report-dialog.tsx:252         placeholder={isEmail ? "owner@eclatdiamonds.in" : …}
+
+A clinic sending a daily report is shown a jewellery retailer's address as the
+example. Same class as the sign-in copy fixed in phase 2; these two were missed
+because they are placeholders rather than prose.
+
+--------------------------------------------------------------------------------
+MM4-05  OBSERVATION: the incident recurred during this phase.            —
+--------------------------------------------------------------------------------
+At 22:56:02 on 8 September, while phase 4 was in progress, a frontend build
+completed in this shared tree that baked
+`https://backend-production-89dd.up.railway.app` into BOTH
+.next/routes-manifest.json and .next/standalone/.next/routes-manifest.json. It
+was not from this phase's `build:local`, which had already aborted at its
+pre-build gate. Separately, .next/dev/routes-manifest.json was found pointing at
+the same production host, left by an earlier unguarded `next dev`.
+
+Recorded because it settles a question the work item could only assume: the
+build-time baking hazard is live and recurring in this tree, not a one-off
+mistake on 8 September. Both artefacts were caught by the new preflight and have
+since been replaced with loopback destinations.
+
+--------------------------------------------------------------------------------
+MM4-06  Already closed before this phase started.                        —
+--------------------------------------------------------------------------------
+Two items in the brief needed no change:
+
+  MM3-02  backend/.env.example already documents PLATFORM_HANDLE_DOMAIN at
+          line 27-29, with wording equivalent to the text the brief specifies.
+          Left as-is rather than churned to match verbatim.
+
+  MM3-05  the stale Add-staff comment is already gone from
+          frontend/src/app/(app)/settings/team/page.tsx. The surrounding
+          user-visible copy is accurate post-MM2-01 (it promises a generated
+          handle shown after adding, and names no domain). Nothing inaccurate
+          remains near that dialog; grep for eclatdiamonds/HANDLE_DOMAIN/MM2-0
+          in that file returns nothing.
+
+  MM3-01's headline `?? "eclat"` fallback was also already removed; what
+  remained, and what this phase added, was validation/normalisation of a
+  configured slug and the guard against requesting a directory for an empty or
+  malformed tenant.

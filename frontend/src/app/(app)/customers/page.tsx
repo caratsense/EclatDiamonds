@@ -1,6 +1,7 @@
 "use client";
 
 import { type ReactNode, useState } from "react";
+import Link from "next/link";
 import { Ban, Contact, Search } from "lucide-react";
 import { toast } from "sonner";
 
@@ -41,7 +42,13 @@ import {
   type PartyTypeName,
 } from "@/lib/queries/parties";
 import { useDebouncedValue } from "@/lib/queries/search";
-import { apiErrorMessage, normalizeIndianMobile } from "@/lib/utils";
+import {
+  apiErrorMessage,
+  capIndianPhone,
+  isRealName,
+  isValidEmail,
+  normalizeIndianMobile,
+} from "@/lib/utils";
 
 const nav = getNavItem("customers")!;
 
@@ -166,9 +173,16 @@ export default function CustomersPage() {
                   >
                     <TableCell>
                       <div className="flex items-center gap-2">
-                        <span className="font-medium text-foreground">
+                        {/* The name opens Customer 360; the rest of the row keeps
+                            its existing quick-edit dialog, so nothing an existing
+                            user relies on changes. */}
+                        <Link
+                          href={`/customers/${p.id}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="font-medium text-foreground hover:underline"
+                        >
                           {p.name}
-                        </span>
+                        </Link>
                         {p.isBlacklisted ? (
                           <Badge variant="destructive" className="gap-1">
                             <Ban className="h-3 w-3" /> Blacklisted
@@ -231,31 +245,41 @@ function AddCustomerDialog({
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [city, setCity] = useState("");
+  // Inline validation errors, keyed by field. Cleared per-field on change.
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Phone is required and must be a valid Indian mobile (backend enforces
-  // @IsIndianMobile). Validate inline so submit is blocked before the round-trip.
-  const trimmedPhone = phone.trim();
-  const normalizedPhone = trimmedPhone ? normalizeIndianMobile(trimmedPhone) : null;
-  const phoneInvalid = trimmedPhone.length > 0 && normalizedPhone == null;
+  function clearError(field: string) {
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
+  }
 
   function save() {
     if (!targetStoreId) {
       toast.error("Select a store to add this customer to.");
       return;
     }
-    if (!name.trim()) {
-      toast.error("Customer name is required.");
-      return;
-    }
-    if (!normalizedPhone) {
-      toast.error("Enter a valid 10-digit mobile number.");
+    // Validate every field up front so each offending one shows its own inline
+    // message; the toast is just a summary. Backend DTOs remain authoritative.
+    const next: Record<string, string> = {};
+    if (!name.trim()) next.name = "Customer name is required.";
+    else if (!isRealName(name))
+      next.name = "Enter a real name — letters, not just a number.";
+    // Phone is required and must be a valid Indian mobile (backend @IsIndianMobile).
+    const normalizedPhone = normalizeIndianMobile(phone);
+    if (!phone.trim()) next.phone = "Phone number is required.";
+    else if (!normalizedPhone)
+      next.phone = "Enter a valid 10-digit mobile number.";
+    if (email.trim() && !isValidEmail(email))
+      next.email = "Enter a valid email address.";
+    if (Object.keys(next).length > 0) {
+      setErrors(next);
+      toast.error("Please fix the highlighted fields.");
       return;
     }
     create.mutate(
       {
         storeId: targetStoreId,
         name: name.trim(),
-        phone: normalizedPhone,
+        phone: normalizedPhone as string,
         email: email.trim() || undefined,
         city: city.trim() || undefined,
       },
@@ -266,6 +290,7 @@ function AddCustomerDialog({
           setPhone("");
           setEmail("");
           setCity("");
+          setErrors({});
           onOpenChange(false);
         },
         onError: (err) =>
@@ -287,27 +312,40 @@ function AddCustomerDialog({
           <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
 
           <div className="grid gap-1.5">
-            <Label htmlFor="cust-name">Name</Label>
+            <Label htmlFor="cust-name">
+              Name <span className="text-destructive">*</span>
+            </Label>
             <Input
               id="cust-name"
               placeholder="e.g. Rajesh Agarwal"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              aria-invalid={!!errors.name}
+              onChange={(e) => {
+                setName(e.target.value);
+                clearError("name");
+              }}
             />
+            {errors.name ? (
+              <p className="mt-1 text-xs text-destructive">{errors.name}</p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="cust-phone">Phone</Label>
+            <Label htmlFor="cust-phone">
+              Phone <span className="text-destructive">*</span>
+            </Label>
             <Input
               id="cust-phone"
               placeholder="+91 ..."
+              inputMode="tel"
               value={phone}
-              aria-invalid={phoneInvalid}
-              onChange={(e) => setPhone(e.target.value)}
+              aria-invalid={!!errors.phone}
+              onChange={(e) => {
+                setPhone(capIndianPhone(e.target.value));
+                clearError("phone");
+              }}
             />
-            {phoneInvalid ? (
-              <p className="mt-1 text-xs text-destructive">
-                Enter a valid 10-digit mobile number.
-              </p>
+            {errors.phone ? (
+              <p className="mt-1 text-xs text-destructive">{errors.phone}</p>
             ) : null}
           </div>
           <div className="grid gap-1.5">
@@ -317,8 +355,15 @@ function AddCustomerDialog({
               type="email"
               placeholder="name@example.com"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              aria-invalid={!!errors.email}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                clearError("email");
+              }}
             />
+            {errors.email ? (
+              <p className="mt-1 text-xs text-destructive">{errors.email}</p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="cust-city">City (optional)</Label>

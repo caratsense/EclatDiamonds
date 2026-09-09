@@ -3,6 +3,8 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
+import { ActivityService } from '../crm/activity.service';
+import { IdentityService } from '../crm/identity.service';
 import { CheckoutDto, CreateCheckInDto } from './dto/checkin.dto';
 
 const PURPOSE_LABEL: Record<string, string> = {
@@ -38,6 +40,11 @@ function toView(c: any) {
     storeId: c.storeId,
     customer: c.customerName,
     returning: !!c.partyId,
+    // The linked customer record, so the counter can open this walk-in's
+    // history or log what they were shown. `returning` alone said that a
+    // customer EXISTED without saying which one, which made every downstream
+    // action re-resolve the phone number and risk resolving it differently.
+    partyId: c.partyId ?? null,
     phone: c.phone ?? '',
     partySize: 1,
     purpose: PURPOSE_LABEL[c.purpose] ?? 'Browsing',
@@ -56,6 +63,8 @@ export class CheckinsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
+    private readonly identity: IdentityService,
+    private readonly activity: ActivityService,
   ) {}
 
   /** GET /checkins — footfall log, store-scoped (most recent first). */
@@ -76,9 +85,24 @@ export class CheckinsService {
   /** POST /checkins — register a walk-in. */
   async create(user: AuthUser, dto: CreateCheckInDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
+
+    // Phase A6 — a walk-in is the moment a real person is in front of a
+    // salesperson, which makes it the single best point to establish identity.
+    // Best-effort: a check-in must never be blocked by an unusable phone number,
+    // because the customer is standing there either way.
+    const identity = await this.identity.resolveForRecord(user, {
+      phone: dto.phone,
+      name: dto.customerName,
+      storeId: dto.storeId,
+      source: 'checkin',
+    });
+    const partyId = identity.partyId;
+
     const row = await this.prisma.checkIn.create({
       data: {
+        organisationId: user.organisationId,
         storeId: dto.storeId,
+        partyId,
         customerName: dto.customerName,
         phone: dto.phone,
         purpose: dto.purpose ?? 'browsing',
@@ -88,6 +112,17 @@ export class CheckinsService {
         timeIn: new Date(),
       },
     });
+
+    await this.activity.recordFor(user, {
+      type: 'visit.recorded',
+      summary: `${dto.customerName} walked in (${dto.purpose ?? 'browsing'})`,
+      partyId,
+      storeId: dto.storeId,
+      entityType: 'CheckIn',
+      entityId: row.id,
+      channel: 'store',
+    });
+
     return toView(row);
   }
 

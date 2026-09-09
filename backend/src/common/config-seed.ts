@@ -11,9 +11,31 @@ export async function seedConfig(prisma: PrismaService): Promise<void> {
   // Fast path: if diamond rates already exist we've seeded before — no-op.
   if ((await prisma.diamondRate.count()) > 0) return;
 
+  // This bootstrap seeds the ECLAT tenant's config, and only that tenant's.
+  const organisationId = 'org_eclat';
+
+  // GUARD (Phase A9 safety pass): previously this ran unconditionally and wrote
+  // rows stamped `org_eclat` on any deployment, including one where that
+  // organisation does not exist — creating orphaned config attached to a
+  // non-existent tenant, and doing it on the first boot of every new
+  // installation. A CaratOS deployment that is not Eclat now seeds nothing,
+  // which is the correct amount of jewellery-specific configuration for a
+  // business that is not Eclat.
+  const org = await prisma.organisation.findUnique({
+    where: { id: organisationId },
+    select: { id: true },
+  });
+  if (!org) return;
+
+  // Scoped to THIS organisation's stores. The previous `findFirst` with no
+  // filter would, on a multi-tenant database, happily pick another tenant's
+  // branch and hang Eclat's demo config off it.
   const store =
-    (await prisma.store.findFirst({ where: { isAggregate: false }, select: { id: true } })) ??
-    (await prisma.store.findFirst({ select: { id: true } }));
+    (await prisma.store.findFirst({
+      where: { organisationId, isAggregate: false },
+      select: { id: true },
+    })) ??
+    (await prisma.store.findFirst({ where: { organisationId }, select: { id: true } }));
   const storeId = store?.id ?? null;
 
   // ── M15 discount caps (split diamond/making %) ──────────────────────────────
@@ -24,12 +46,12 @@ export async function seedConfig(prisma: PrismaService): Promise<void> {
   ];
   for (const c of caps) {
     const existing = await prisma.discountLimit.findFirst({
-      where: { role: c.role, storeId: null },
+      where: { role: c.role, storeId: null, organisationId },
     });
     if (existing) {
       await prisma.discountLimit.update({ where: { id: existing.id }, data: c });
     } else {
-      await prisma.discountLimit.create({ data: { ...c, storeId: null } });
+      await prisma.discountLimit.create({ data: { ...c, storeId: null, organisationId } });
     }
   }
 
@@ -43,7 +65,7 @@ export async function seedConfig(prisma: PrismaService): Promise<void> {
     { spec: '3ct', ratePerCarat: 130000 },
   ];
   for (const r of rates) {
-    await prisma.diamondRate.create({ data: { ...r, storeId: null, effectiveFrom } });
+    await prisma.diamondRate.create({ data: { ...r, storeId: null, effectiveFrom, organisationId } });
   }
 
   // ── M6 shifts + week-off + a holiday ────────────────────────────────────────
@@ -54,14 +76,14 @@ export async function seedConfig(prisma: PrismaService): Promise<void> {
     ];
     for (const s of shifts) {
       const existing = await prisma.shift.findFirst({ where: { storeId, name: s.name } });
-      if (!existing) await prisma.shift.create({ data: { ...s, storeId } });
+      if (!existing) await prisma.shift.create({ data: { ...s, storeId, organisationId } });
     }
     await prisma.store.update({ where: { id: storeId }, data: { weekOffDay: 2 } });
     const holidayDate = new Date('2026-08-15T00:00:00.000Z');
     const hol = await prisma.storeHoliday.findFirst({ where: { storeId, date: holidayDate } });
     if (!hol) {
       await prisma.storeHoliday.create({
-        data: { storeId, date: holidayDate, label: 'Independence Day' },
+        data: { storeId, date: holidayDate, label: 'Independence Day', organisationId },
       });
     }
   }
@@ -81,9 +103,10 @@ export async function seedConfig(prisma: PrismaService): Promise<void> {
 
   // ── M17 demo referral code ──────────────────────────────────────────────────
   const code = 'ECLAT-DEMO';
-  if (!(await prisma.referralCode.findUnique({ where: { code } }))) {
+  if (!(await prisma.referralCode.findFirst({ where: { code, organisationId: 'org_eclat' } }))) {
     await prisma.referralCode.create({
       data: {
+        organisationId: 'org_eclat',
         code,
         referrerName: 'Éclat Demo Referrer',
         referrerPhone: '+91 90000 00000',

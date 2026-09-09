@@ -2,12 +2,21 @@
 REM ── Eclat Busy/SJEP Sync config — copy to eclat_config.bat and fill in. ──
 REM Never commit the real eclat_config.bat (it holds passwords).
 
-REM Eclat dashboard backend(s). Comma-separate to push to several at once, e.g.
-REM   set ECLAT_BASE_URL=http://localhost:4000,https://YOUR-ECLAT-BACKEND.example.com
+REM This restricted token belongs to exactly one backend/tenant. Use a separate
+REM installation and separately enrolled token for development or another tenant.
 set "ECLAT_BASE_URL=https://YOUR-ECLAT-BACKEND.example.com"
-set "ECLAT_EMAIL=sync@YOUR-DOMAIN.example"
-REM  ↓ FILL IN — the sync service-account password (a secret; ask the Eclat team). ↓
-set "ECLAT_PASSWORD=CHANGE_ME"
+REM Must be the exact same reviewed origin. Networked commands fail closed if
+REM this is missing or differs; 2_configure.bat writes both after confirmation.
+set "CARATOS_APPROVED_BACKEND_ORIGIN=https://YOUR-ECLAT-BACKEND.example.com"
+REM Enrol an organisation-wide Gati Connect agent. Its restricted token replaces
+REM the old human head-office email/password and is still a secret.
+set "CARATOS_AGENT_TOKEN=cxa_CHANGE_ME"
+
+REM Optional, explicit website catalogue source. There is no built-in live URL.
+REM Leave all three blank when this client has no approved website feed.
+set "ECLAT_WEBSITE_API="
+set "ECLAT_APPROVED_WEBSITE_API="
+set "ECLAT_WEBSITE_ORIGIN="
 
 REM Live SJE Plus / APRS SQL Server (READ-ONLY login recommended)
 set "SJEP_SQL_SERVER=localhost\SQLEXPRESS"

@@ -26,12 +26,17 @@ if exist "eclat_config.bat" (
   exit /b 1
 )
 
-if exist "_pyexe.bat" (call "_pyexe.bat") else (set "PYEXE=python")
-
-"%PYEXE%" -c "import pyodbc, requests" >nul 2>&1
+call "%~dp0require_runtime.bat"
 if errorlevel 1 (
-  echo Installing the parts Python needs...
-  "%PYEXE%" -m pip install -r requirements.txt
+  pause
+  exit /b 21
+)
+
+"%PYEXE%" gati_target_safety.py website
+if errorlevel 1 (
+  echo Run 2_configure.bat and explicitly review the website feed.
+  pause
+  exit /b 20
 )
 
 "%PYEXE%" check_website_match.py

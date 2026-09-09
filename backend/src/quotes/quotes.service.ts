@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { OrderStatus, Prisma, QuoteKind } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
@@ -7,6 +7,8 @@ import { isAllStoreRole } from '../common/role.util';
 import { SequenceService } from '../common/sequence.service';
 import { StorageService } from '../storage/storage.service';
 import { WhatsAppService } from '../integrations/whatsapp.service';
+import { ActivityService } from '../crm/activity.service';
+import { IdentityService } from '../crm/identity.service';
 import { ConvertToOrderDto, CreateQuoteDto, QuoteLineDto } from './dto/quote.dto';
 
 const GST_RATE = 0.03;
@@ -84,12 +86,16 @@ function computeTotals(lines: QuoteLineDto[], kind: QuoteKind = QuoteKind.sale) 
 
 @Injectable()
 export class QuotesService {
+  private readonly logger = new Logger(QuotesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
     private readonly storage: StorageService,
     private readonly sequence: SequenceService,
     private readonly whatsapp: WhatsAppService,
+    private readonly identity: IdentityService,
+    private readonly activity: ActivityService,
   ) {}
 
   /**
@@ -133,7 +139,7 @@ export class QuotesService {
       .filter(Boolean)
       .join('\n');
 
-    const result = await this.whatsapp.sendText(quote.phone, body);
+    const result = await this.whatsapp.sendText(user.organisationId, quote.phone, body);
     return {
       delivered: result.delivered,
       dryRun: result.dryRun,
@@ -189,6 +195,7 @@ export class QuotesService {
 
     const quote = await this.prisma.quote.create({
       data: {
+        organisationId: user.organisationId,
         ref: `QT-${2000 + seq}`,
         storeId: dto.storeId,
         leadId: dto.leadId,
@@ -230,7 +237,94 @@ export class QuotesService {
       },
       include: { assignedRep: true, lines: true, redeemableStores: true, photos: true },
     });
+
+    // Phase A4/A6 — join the quote to a customer and put it on their timeline.
+    //
+    // A quote raised against a LEAD inherits that lead's customer rather than
+    // re-resolving from the phone: the lead already did that work, and re-running
+    // it would let a mistyped digit on the quote form silently attach the quote to
+    // a different person than the lead it came from.
+    let partyId: string | null = null;
+    let unresolvedReason: string | null = null;
+    if (dto.leadId) {
+      const lead = await this.prisma.lead.findFirst({
+        where: { id: dto.leadId, organisationId: user.organisationId },
+        select: { partyId: true },
+      });
+      partyId = lead?.partyId ?? null;
+    }
+    if (!partyId) {
+      const identity = await this.identity.resolveForRecord(user, {
+        phone: dto.phone,
+        name: dto.customerName,
+        storeId: dto.storeId,
+        source: 'quote',
+      });
+      partyId = identity.partyId;
+      unresolvedReason = identity.unresolvedReason;
+    }
+    if (partyId) {
+      await this.prisma.quote.update({ where: { id: quote.id }, data: { partyId } });
+    }
+
+    await this.activity.recordFor(user, {
+      type: 'quote.created',
+      summary: `Quote ${quote.ref} for ${dto.customerName} — ₹${Number(t.grandTotal)}`,
+      partyId,
+      leadId: dto.leadId ?? null,
+      storeId: dto.storeId,
+      entityType: 'Quote',
+      entityId: quote.id,
+      channel: 'store',
+      metadata: {
+        grandTotal: Number(t.grandTotal),
+        kind,
+        lineCount: dto.lines.length,
+        // The unresolved state is carried on the event, so "why is this quote not
+        // on a customer?" has an answer months later.
+        ...(unresolvedReason ? { customerUnresolved: unresolvedReason } : {}),
+      },
+    });
+
+    // Every quoted catalogue item becomes a product interaction, so "what did we
+    // quote this customer?" is answerable from Customer 360 without reading
+    // quote lines. Lines with no catalogue product carry their description as the
+    // free-text identifier rather than being dropped.
+    await this.recordQuotedInterest(user, quote.id, partyId, dto);
+
     return toView(quote);
+  }
+
+  /**
+   * Record 'quoted' product interest for a quote's lines. Best-effort: a failure
+   * here must never undo a quote that was already priced and saved.
+   */
+  private async recordQuotedInterest(
+    user: AuthUser,
+    quoteId: string,
+    partyId: string | null,
+    dto: CreateQuoteDto,
+  ): Promise<void> {
+    try {
+      const rows = dto.lines.map((l) => ({
+        organisationId: user.organisationId,
+        storeId: dto.storeId,
+        partyId,
+        leadId: dto.leadId ?? null,
+        productId: l.productId ?? null,
+        sku: l.productId ? null : (l.description ?? null),
+        kind: 'quoted',
+        userId: user.id,
+        channel: 'store',
+        notes: null,
+        metadata: { quoteId },
+      }));
+      if (rows.length) await this.prisma.productInteraction.createMany({ data: rows });
+    } catch (e) {
+      this.logger.warn(
+        `Quote ${quoteId}: product interest not recorded — ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
   }
 
   /**
@@ -259,7 +353,7 @@ export class QuotesService {
     const ext = (file.originalname?.split('.').pop() || 'jpg')
       .toLowerCase()
       .replace(/[^a-z0-9]/g, '');
-    const url = await this.storage.save('quotes', `${id}-${Date.now()}.${ext}`, file.buffer);
+    const url = await this.storage.save(user.organisationId, 'quotes', `${id}-${Date.now()}.${ext}`, file.buffer);
     await this.prisma.quotePhoto.create({
       data: { quoteId: id, url, label: label ?? null },
     });
@@ -308,6 +402,7 @@ export class QuotesService {
 
     const order = await this.prisma.customOrder.create({
       data: {
+        organisationId: user.organisationId,
         ref,
         storeId: q.storeId,
         partyId: q.partyId,

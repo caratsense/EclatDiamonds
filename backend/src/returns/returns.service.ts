@@ -6,6 +6,8 @@ import { StoreScopeService } from '../common/store-scope.service';
 import { AuditService } from '../common/audit.service';
 import { SequenceService } from '../common/sequence.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { ActivityService } from '../crm/activity.service';
+import { IdentityService } from '../crm/identity.service';
 import { assertNotSelfApproval, assertUndecided } from '../common/approval.util';
 import { CreateDiamondRateDto, CreateReturnDto, ValuateReturnDto } from './dto/return.dto';
 
@@ -86,7 +88,63 @@ export class ReturnsService {
     private readonly audit: AuditService,
     private readonly sequence: SequenceService,
     private readonly notifications: NotificationsService,
+    private readonly identity: IdentityService,
+    private readonly activity: ActivityService,
   ) {}
+
+  /**
+   * Phase A4/A6 — link a return to its customer and put it on their timeline.
+   *
+   * One hook for BOTH creation branches (the Module-14 calculator path and the
+   * legacy path). Writing it twice is how the two branches drift, and a return
+   * that appears on a customer's history only when it was raised through one of
+   * two forms is worse than one that never appears at all.
+   *
+   * A return is money going back to a customer, so it is never blocked by an
+   * identity problem: `resolveForRecord` cannot throw, and the timeline write is
+   * best-effort.
+   */
+  private async linkReturnToCustomer(
+    user: AuthUser,
+    row: {
+      id: string;
+      ref: string;
+      storeId: string;
+      customerName: string;
+      phone: string | null;
+      type: string;
+      /** Nullable on the model — a repair estimate has no credit value yet. */
+      value: Prisma.Decimal | null;
+    },
+  ): Promise<void> {
+    const identity = await this.identity.resolveForRecord(user, {
+      phone: row.phone,
+      name: row.customerName,
+      storeId: row.storeId,
+      source: 'return',
+    });
+    if (identity.partyId) {
+      await this.prisma.returnRecord
+        .update({ where: { id: row.id }, data: { partyId: identity.partyId } })
+        .catch(() => undefined);
+    }
+    await this.activity.recordFor(user, {
+      type: 'return.raised',
+      summary:
+        `${row.type.replace(/_/g, ' ')} ${row.ref} for ${row.customerName}` +
+        (row.value != null ? ` — ₹${Number(row.value)}` : ''),
+      partyId: identity.partyId,
+      storeId: row.storeId,
+      entityType: 'ReturnRecord',
+      entityId: row.id,
+      channel: 'store',
+      metadata: {
+        type: row.type,
+        value: row.value != null ? Number(row.value) : null,
+        ...(identity.unresolvedReason ? { customerUnresolved: identity.unresolvedReason } : {}),
+      },
+    });
+  }
 
   /** GET /returns — returns/exchanges/buybacks, store-scoped. */
   async list(user: AuthUser, headerStore?: string) {
@@ -129,8 +187,9 @@ export class ReturnsService {
    */
   async valuate(user: AuthUser, dto: ValuateReturnDto): Promise<Valuation> {
     if (dto.storeId) this.scope.assertStoreAllowed(user, dto.storeId);
-    const todayGoldRate = await this.resolveGoldRate(dto.storeId, dto.todayGoldRate, dto.goldKarat);
-    const todayDiaRate = await this.resolveDiaRate(dto.diaSpec, dto.storeId, dto.todayDiaRate);
+    const org = user.organisationId;
+    const todayGoldRate = await this.resolveGoldRate(org, dto.storeId, dto.todayGoldRate, dto.goldKarat);
+    const todayDiaRate = await this.resolveDiaRate(org, dto.diaSpec, dto.storeId, dto.todayDiaRate);
     return this.computeValuation(
       dto.goldWtG,
       dto.diaCarat,
@@ -201,6 +260,42 @@ export class ReturnsService {
    * approve). Otherwise falls back to the original exchange-value / old-gold /
    * return branches unchanged.
    */
+  /**
+   * Mint a return reference that is actually free.
+   *
+   * Sequence-backed, as before — `count()`-derived numbers collide when two
+   * stores raise a return in the same instant and get re-used after a deletion.
+   * What is new is the emptiness check, and it fixes a real failure: if any
+   * ReturnRecord was ever inserted WITHOUT going through this sequence (a seed
+   * script, a data load, a restore), the counter is behind the data. The next
+   * return raised through the UI then mints a reference that already exists and
+   * dies on the unique constraint with a bare 500 — with no hint that the cause
+   * is a counter, not the return.
+   *
+   * NOTE for multi-tenancy: `ReturnRecord.ref` is unique GLOBALLY, not per
+   * organisation, so this lookup deliberately spans tenants — it has to, to match
+   * the constraint it is protecting against. It reveals only whether a reference
+   * string is taken. Making refs unique per organisation (and the sequence
+   * org-scoped) is the right long-term fix and is reported as remaining work; it
+   * needs a migration on three models and is out of scope here.
+   */
+  private async mintRef(): Promise<string> {
+    const year = new Date().getFullYear();
+    for (let attempt = 0; attempt < 25; attempt++) {
+      const ref = `RTN-${year}-${1000 + (await this.sequence.next(`RTN:${year}`))}`;
+      const taken = await this.prisma.returnRecord.findUnique({
+        where: { ref },
+        select: { id: true },
+      });
+      if (!taken) return ref;
+    }
+    // 25 consecutive collisions means something is badly wrong with the counter,
+    // and looping forever would be worse than saying so.
+    throw new BadRequestException(
+      'Could not allocate a return reference. The reference counter appears to be behind the data.',
+    );
+  }
+
   async create(user: AuthUser, dto: CreateReturnDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
 
@@ -209,15 +304,13 @@ export class ReturnsService {
       throw new BadRequestException('invoiceNo is required when entryMode is "invoice"');
     }
 
-    // Sequence-backed ref. `count()`-derived numbers collide when two stores
-    // raise a return in the same instant, and re-use a number after a deletion.
-    const year = new Date().getFullYear();
-    const ref = `RTN-${year}-${1000 + (await this.sequence.next(`RTN:${year}`))}`;
+    const ref = await this.mintRef();
 
     // --- Module 14 exchange/buyback calculator branch ---
     if (dto.chosenOption) {
-      const todayGoldRate = await this.resolveGoldRate(dto.storeId, dto.todayGoldRate, dto.goldKarat);
-      const todayDiaRate = await this.resolveDiaRate(dto.diaSpec, dto.storeId, dto.todayDiaRate);
+      const org = user.organisationId;
+      const todayGoldRate = await this.resolveGoldRate(org, dto.storeId, dto.todayGoldRate, dto.goldKarat);
+      const todayDiaRate = await this.resolveDiaRate(org, dto.diaSpec, dto.storeId, dto.todayDiaRate);
       const v = this.computeValuation(dto.goldWtG, dto.diaCarat, todayGoldRate, todayDiaRate);
 
       const isExchange = dto.chosenOption === 'exchange';
@@ -225,6 +318,7 @@ export class ReturnsService {
 
       const row = await this.prisma.returnRecord.create({
         data: {
+          organisationId: user.organisationId,
           ref,
           storeId: dto.storeId,
           customerName: dto.customerName,
@@ -257,6 +351,7 @@ export class ReturnsService {
         },
         include: { photos: true },
       });
+      await this.linkReturnToCustomer(user, row);
       await this.notifyReturnRaised(user, row);
       return toView(row);
     }
@@ -280,6 +375,7 @@ export class ReturnsService {
 
     const row = await this.prisma.returnRecord.create({
       data: {
+        organisationId: user.organisationId,
         ref,
         storeId: dto.storeId,
         customerName: dto.customerName,
@@ -298,6 +394,7 @@ export class ReturnsService {
       },
       include: { photos: true },
     });
+    await this.linkReturnToCustomer(user, row);
     await this.notifyReturnRaised(user, row);
     return toView(row);
   }
@@ -403,7 +500,8 @@ export class ReturnsService {
   // -------------------------------------------------------------------------
 
   /** GET /returns/rates — current gold (per karat/gram) + diamond (per spec) rates. */
-  async rates(headerStore?: string) {
+  async rates(user: AuthUser, headerStore?: string) {
+    const organisationId = user.organisationId;
     const scoped = headerStore && headerStore !== 'all' ? headerStore : undefined;
     const goldMetals: Array<[number, string]> = [
       [24, 'gold_24k'],
@@ -412,17 +510,17 @@ export class ReturnsService {
     ];
     const gold = [] as Array<{ karat: number; ratePerGram: number }>;
     for (const [karat, metal] of goldMetals) {
-      gold.push({ karat, ratePerGram: await this.latestGoldRate(metal, scoped, karat) });
+      gold.push({ karat, ratePerGram: await this.latestGoldRate(metal, organisationId, scoped, karat) });
     }
-    const diamond = await this.currentDiamondRates(scoped);
+    const diamond = await this.currentDiamondRates(organisationId, scoped);
     return { gold, diamond };
   }
 
   /** GET /returns/diamond-rates — full diamond-rate table (HO management view). */
-  async diamondRates(headerStore?: string) {
+  async diamondRates(user: AuthUser, headerStore?: string) {
     const scoped = headerStore && headerStore !== 'all' ? headerStore : undefined;
     const rows = await this.prisma.diamondRate.findMany({
-      where: scoped ? { OR: [{ storeId: scoped }, { storeId: null }] } : {},
+      where: { ...this.scope.orgFilter(user), ...(scoped ? { OR: [{ storeId: scoped }, { storeId: null }] } : {}) },
       orderBy: [{ spec: 'asc' }, { effectiveFrom: 'desc' }, { createdAt: 'desc' }],
     });
     return rows.map((r) => ({
@@ -436,13 +534,15 @@ export class ReturnsService {
   }
 
   /** POST /returns/diamond-rates — HO sets/updates a diamond rate for a spec. */
-  async createDiamondRate(dto: CreateDiamondRateDto) {
+  async createDiamondRate(user: AuthUser, dto: CreateDiamondRateDto) {
+    if (dto.storeId) this.scope.assertStoreAllowed(user, dto.storeId);
     const row = await this.prisma.diamondRate.create({
       data: {
         spec: dto.spec,
         ratePerCarat: new Prisma.Decimal(dto.ratePerCarat),
         effectiveFrom: dto.effectiveFrom ? new Date(dto.effectiveFrom) : new Date(),
         storeId: dto.storeId ?? null,
+        organisationId: user.organisationId,
       },
     });
     return {
@@ -459,10 +559,18 @@ export class ReturnsService {
   // Rate resolution helpers
   // -------------------------------------------------------------------------
 
-  /** Latest gold rate (INR/g) for a metal; store override wins, else fallback table. */
-  private async latestGoldRate(metal: string, scoped: string | undefined, karat: number): Promise<number> {
+  /**
+   * Latest gold rate (INR/g) for a metal; store override wins, else fallback table.
+   * Organisation-scoped: rates are per-tenant config, never read across orgs.
+   */
+  private async latestGoldRate(
+    metal: string,
+    organisationId: string,
+    scoped: string | undefined,
+    karat: number,
+  ): Promise<number> {
     const row = await this.prisma.metalRate.findFirst({
-      where: { metal: metal as any, ...(scoped ? { OR: [{ storeId: scoped }, { storeId: null }] } : {}) },
+      where: { metal: metal as any, organisationId, ...(scoped ? { OR: [{ storeId: scoped }, { storeId: null }] } : {}) },
       orderBy: [{ storeId: 'desc' }, { effectiveFrom: 'desc' }, { createdAt: 'desc' }],
     });
     return row ? Number(row.ratePerGram) : (GOLD_RATE_PER_GRAM[karat] ?? GOLD_RATE_PER_GRAM[22]);
@@ -470,6 +578,7 @@ export class ReturnsService {
 
   /** Resolve today's gold rate/gram: request override → latest per-karat MetalRate → fallback. */
   private async resolveGoldRate(
+    organisationId: string,
     storeId: string | undefined,
     override?: number,
     karat?: number,
@@ -477,11 +586,12 @@ export class ReturnsService {
     if (override != null) return override;
     const scoped = storeId && storeId !== 'all' ? storeId : undefined;
     const k = karat ?? 22; // default to 22K (the dominant purity) when unspecified.
-    return this.latestGoldRate(`gold_${k}k`, scoped, k);
+    return this.latestGoldRate(`gold_${k}k`, organisationId, scoped, k);
   }
 
   /** Resolve today's diamond rate/carat by spec: override → latest DiamondRate → 0. */
   private async resolveDiaRate(
+    organisationId: string,
     spec: string | undefined,
     storeId: string | undefined,
     override?: number,
@@ -490,16 +600,16 @@ export class ReturnsService {
     if (!spec) return 0;
     const scoped = storeId && storeId !== 'all' ? storeId : undefined;
     const row = await this.prisma.diamondRate.findFirst({
-      where: { spec, ...(scoped ? { OR: [{ storeId: scoped }, { storeId: null }] } : {}) },
+      where: { spec, organisationId, ...(scoped ? { OR: [{ storeId: scoped }, { storeId: null }] } : {}) },
       orderBy: [{ storeId: 'desc' }, { effectiveFrom: 'desc' }, { createdAt: 'desc' }],
     });
     return row ? Number(row.ratePerCarat) : 0;
   }
 
   /** Latest diamond rate per distinct spec (store override + most-recent wins). */
-  private async currentDiamondRates(scoped?: string) {
+  private async currentDiamondRates(organisationId: string, scoped?: string) {
     const rows = await this.prisma.diamondRate.findMany({
-      where: scoped ? { OR: [{ storeId: scoped }, { storeId: null }] } : {},
+      where: { organisationId, ...(scoped ? { OR: [{ storeId: scoped }, { storeId: null }] } : {}) },
       orderBy: [{ storeId: 'desc' }, { effectiveFrom: 'desc' }, { createdAt: 'desc' }],
     });
     const seen = new Map<string, (typeof rows)[number]>();

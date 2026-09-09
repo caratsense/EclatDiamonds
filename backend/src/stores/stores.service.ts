@@ -90,6 +90,11 @@ export class StoresService {
       latitude: store.latitude != null ? Number(store.latitude) : null,
       longitude: store.longitude != null ? Number(store.longitude) : null,
       geofenceRadiusM: store.geofenceRadiusM ?? null,
+      // The store's configured weekly off. Exposed because the HRMS screen that
+      // EDITS it had no way to READ it, so it seeded the control from a
+      // hardcoded default — showing a day that was not necessarily the one
+      // actually saved.
+      weekOffDay: store.weekOffDay ?? null,
       managers,
     };
   }
@@ -101,17 +106,60 @@ export class StoresService {
    */
   async list(user: AuthUser) {
     const stores = await this.prisma.store.findMany({
-      where: user.allStores ? { isAggregate: false } : { id: { in: user.storeIds } },
+      // head_office => every store OF THEIR ORGANISATION (never global); lower roles
+      // => their assignments (already organisation-bounded via resolveScope).
+      where: user.allStores
+        ? { isAggregate: false, organisationId: user.organisationId }
+        : { id: { in: user.storeIds } },
       orderBy: { name: 'asc' },
       include: STORE_INCLUDE,
     });
     return stores.map((s) => this.toView(s));
   }
 
-  /** Public store picker (self-signup). Minimal fields, real trading branches only. */
-  async directory() {
+  /**
+   * Public store picker (self-signup). Minimal fields, real trading branches only.
+   *
+   * Tenant-scoped by an explicit `org` (organisation id or slug) query param.
+   * With no `org`: if the platform still has exactly ONE organisation there is
+   * nothing to enumerate across, so the picker resolves to that sole org (keeps
+   * single-tenant Eclat self-signup working with no frontend change). The moment a
+   * SECOND organisation exists, no-`org` returns `[]` — an explicit org is required
+   * — so an unauthenticated caller can never enumerate every tenant's branches
+   * (audit §I-4 / §L-M2). This is never a "first/default org" guess: it resolves
+   * only when the org is unambiguous.
+   *
+   * ponytail: minimal safe fix, single-org fallback until tenant-aware onboarding.
+   * A proper solution resolves the org from the signup CONTEXT (subdomain/custom
+   * domain); until then the signup UI passes the org it is signing into.
+   */
+  async directory(org?: string) {
+    const slug = org?.trim();
+    let organisationId: string;
+    if (slug) {
+      const organisation = await this.prisma.organisation.findFirst({
+        where: { OR: [{ id: slug }, { slug }] },
+        select: { id: true },
+      });
+      if (!organisation) return [];
+      organisationId = organisation.id;
+    } else {
+      // No org given: only safe when the platform is single-tenant. Take 2 so we
+      // can tell "exactly one" from "more than one" without counting all rows.
+      const orgs = await this.prisma.organisation.findMany({
+        where: { status: { in: ['active', 'onboarding'] } },
+        select: { id: true },
+        take: 2,
+      });
+      if (orgs.length !== 1) return [];
+      organisationId = orgs[0].id;
+    }
     const stores = await this.prisma.store.findMany({
-      where: { isAggregate: false, status: { not: 'closed' } },
+      where: {
+        organisationId,
+        isAggregate: false,
+        status: { not: 'closed' },
+      },
       orderBy: { name: 'asc' },
       select: { id: true, name: true, city: true },
     });
@@ -150,6 +198,8 @@ export class StoresService {
       data: {
         id: slug,
         code: slug,
+        // A store a manager provisions belongs to that manager's organisation.
+        organisationId: user.organisationId,
         name: dto.name,
         city: dto.city,
         regionId: dto.regionId || null,
@@ -213,6 +263,8 @@ export class StoresService {
   async close(user: AuthUser, id: string) {
     const store = await this.prisma.store.findUnique({ where: { id } });
     if (!store) throw new NotFoundException('Store not found');
+    // Org boundary: an HO must not close a branch belonging to another tenant.
+    this.scope.assertOrgAllowed(user, store.organisationId);
     if (store.isAggregate) {
       throw new BadRequestException('The aggregate "All Stores" view cannot be closed');
     }
@@ -242,7 +294,11 @@ export class StoresService {
       where: {
         status: 'pending',
         isAggregate: false,
-        ...(user.allStores ? {} : { id: { in: user.storeIds } }),
+        // storeIds is organisation-bounded for every role (head_office too — it
+        // is the org's full store set, pending branches included), so this is the
+        // tenant boundary. Never an unfiltered {} that would list another
+        // organisation's pending branches.
+        id: { in: user.storeIds },
       },
       orderBy: { createdAt: 'desc' },
       include: STORE_INCLUDE,
@@ -281,9 +337,12 @@ export class StoresService {
   }
 
   /** PATCH /stores/:id (head office) — edit a branch. Aggregate stores are immutable. */
-  async update(id: string, dto: UpdateStoreDto) {
+  async update(user: AuthUser, id: string, dto: UpdateStoreDto) {
     const store = await this.prisma.store.findUnique({ where: { id } });
     if (!store) throw new NotFoundException('Store not found');
+    // @Roles('head_office') alone is org-blind — an HO of another tenant would edit
+    // this branch's name/address/GSTIN. Bind the mutation to the caller's org.
+    this.scope.assertOrgAllowed(user, store.organisationId);
     if (store.isAggregate) {
       throw new BadRequestException('The aggregate "All Stores" view cannot be edited');
     }
@@ -343,9 +402,13 @@ export class StoresService {
    * link it to the branch. If the email already belongs to a user, we only ensure
    * the UserStore link exists (never duplicate, never touch their password/role).
    */
-  async addManager(storeId: string, dto: CreateManagerDto) {
+  async addManager(actor: AuthUser, storeId: string, dto: CreateManagerDto) {
     const store = await this.prisma.store.findUnique({ where: { id: storeId } });
     if (!store) throw new NotFoundException('Store not found');
+    // The new manager is stamped with store.organisationId below — so the store
+    // being staffed MUST be the caller's org, or an HO could provision a login
+    // into another tenant's branch.
+    this.scope.assertOrgAllowed(actor, store.organisationId);
 
     const email = dto.email.toLowerCase();
     let user = await this.prisma.user.findUnique({ where: { email } });
@@ -362,6 +425,9 @@ export class StoresService {
           role: 'store_manager',
           passwordHash,
           isActive: true,
+          // No AuthUser here — the manager belongs to the branch being staffed,
+          // so org is taken from the (already-validated) store.
+          organisationId: store.organisationId,
         },
       });
     }
@@ -375,20 +441,31 @@ export class StoresService {
     return { userId: user.id, name: user.name, email: user.email, storeId };
   }
 
-  /** GET /regions (head office) — optional store grouping. */
-  async listRegions() {
-    const regions = await this.prisma.region.findMany({ orderBy: { name: 'asc' } });
+  /** GET /regions (head office) — optional store grouping, scoped to the caller's org. */
+  async listRegions(user: AuthUser) {
+    const regions = await this.prisma.region.findMany({
+      where: { organisationId: user.organisationId },
+      orderBy: { name: 'asc' },
+    });
     return regions.map((r) => ({ id: r.id, name: r.name, code: r.code ?? null }));
   }
 
   /** POST /regions (head office) — create a region. */
-  async createRegion(dto: CreateRegionDto) {
+  async createRegion(user: AuthUser, dto: CreateRegionDto) {
     const code = dto.code?.trim() || null;
     if (code) {
-      const clash = await this.prisma.region.findUnique({ where: { code } });
+      // Region codes are unique PER ORGANISATION (the schema constraint is being
+      // made org-scoped); keep the app check org-scoped so two tenants can each
+      // own a region "NORTH" without a false clash.
+      const clash = await this.prisma.region.findFirst({
+        where: { code, organisationId: user.organisationId },
+        select: { id: true },
+      });
       if (clash) throw new ConflictException(`Region code "${code}" already exists`);
     }
-    const region = await this.prisma.region.create({ data: { name: dto.name, code } });
+    const region = await this.prisma.region.create({
+      data: { name: dto.name, code, organisationId: user.organisationId },
+    });
     return { id: region.id, name: region.name, code: region.code ?? null };
   }
 

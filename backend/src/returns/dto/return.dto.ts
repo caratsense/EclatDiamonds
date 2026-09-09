@@ -1,15 +1,19 @@
-import { IsEnum, IsIn, IsISO8601, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsEnum, IsIn, IsISO8601, IsNotEmpty, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 import { ReturnType, SettlementType } from '@prisma/client';
-import { IsIndianMobile } from '../../common/contact.util';
+import { IsIndianMobile, IsRealName } from '../../common/contact.util';
 
 /** 'exchange' | 'buyback' — Module 14 calculator option the customer picks. */
 export type ChosenOption = 'exchange' | 'buyback';
 
 export class CreateReturnDto {
   @IsString()
+  @IsNotEmpty()
   storeId!: string;
 
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  @IsRealName()
   customerName!: string;
 
   /** Phone is now mandatory on a return (team checklist) — valid Indian mobile. */
@@ -39,6 +43,8 @@ export class CreateReturnDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(120)
+  @IsRealName()
   item?: string;
 
   /** Original invoice value of the item (INR). */
@@ -55,6 +61,7 @@ export class CreateReturnDto {
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
   oldGoldKarat?: number;
 
   /** Rate per gram applied at intake (INR/g). */
@@ -227,6 +234,7 @@ export class DecideReturnDto {
 /** POST /returns/diamond-rates — HO sets a diamond rate for a spec/code. */
 export class CreateDiamondRateDto {
   @IsString()
+  @IsNotEmpty()
   spec!: string;
 
   @IsNumber()

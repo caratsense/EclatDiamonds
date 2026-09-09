@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import {
   ArrowRight,
   ArrowLeft,
+  Bot,
+  Building2,
   Eye,
   EyeOff,
   Loader2,
@@ -29,8 +31,11 @@ import { clearAttendanceHandled } from "@/lib/attendance-gate";
 import {
   useLogin,
   useGoogleLogin,
+  useCreateOrganisation,
+  usePublicIndustries,
   useSignup,
   useSignupStores,
+  type AuthMeResponse,
 } from "@/lib/queries/auth";
 import { useSession } from "@/store/use-session";
 import type { Role } from "@/lib/types";
@@ -59,6 +64,58 @@ const inputCls =
   "w-full rounded-md border border-[#1b3a2c] bg-[#071e16] px-3 py-2 text-sm text-[#f6f3ed] placeholder:text-[#f6f3ed]/30 focus:border-[#c8a24f] focus:outline-none focus:ring-1 focus:ring-[#c8a24f]";
 
 /**
+ * Organisation slugs, as the server mints them: lowercase, alphanumeric, single
+ * hyphens between segments, no leading or trailing hyphen. "eclat" and
+ * "sunrise-clinic-3ebcb7d2" are both real examples.
+ */
+const ORG_SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
+
+/**
+ * Trim and lowercase, and nothing else.
+ *
+ * Deliberately non-destructive: a code with a space or a slash in it is left
+ * visibly wrong rather than silently rewritten into a different tenant's slug.
+ * Turning "Sunrise Clinic" into "sunrise-clinic" would be a guess, and a guess
+ * that happened to hit an existing organisation would show a stranger's
+ * branches.
+ */
+export function normaliseOrgSlug(raw: string | null | undefined): string {
+  return (raw ?? "").trim().toLowerCase();
+}
+
+/** Could this string name a real organisation? Two characters minimum. */
+export function isUsableOrgSlug(raw: string | null | undefined): boolean {
+  const slug = normaliseOrgSlug(raw);
+  return slug.length >= 2 && ORG_SLUG_PATTERN.test(slug);
+}
+
+/**
+ * The organisation this deployment is for, or "" — never a hardcoded tenant.
+ *
+ * The signup form used to open on `NEXT_PUBLIC_DEFAULT_ORG_SLUG ?? "eclat"`, so
+ * a clinic's new receptionist, on a generic deployment with nothing configured,
+ * was shown a jeweller's branch list and pointed at their organisation. The
+ * fallback is gone: absent configuration now means an empty field and no
+ * request, which is the honest state — the product does not know which tenant
+ * this person belongs to, and asking is the only correct move.
+ *
+ * A single-tenant deployment can still pin itself by setting the variable, but
+ * the value is validated first. A malformed one is ignored rather than sent to
+ * the directory endpoint, because a build-time typo should degrade to "ask the
+ * user", never to "query something arbitrary".
+ *
+ * Nothing here reads the hostname. Inferring a tenant from the URL would make
+ * the answer depend on which domain someone happened to load, including
+ * localhost and any domain later pointed at this app.
+ */
+export function configuredOrgSlug(
+  raw: string | undefined = process.env.NEXT_PUBLIC_DEFAULT_ORG_SLUG,
+): string {
+  const slug = normaliseOrgSlug(raw);
+  return isUsableOrgSlug(slug) ? slug : "";
+}
+
+/**
  * Self-registration card. Creates a PENDING request (never a live session): the
  * applicant picks a store + the role they are asking for, and on submit sees a
  * "waiting for approval" screen. Head office approves store/area managers; a
@@ -67,8 +124,16 @@ const inputCls =
  */
 function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
   const signup = useSignup();
-  const storesQuery = useSignupStores();
-  const stores = storesQuery.data ?? [];
+  const [organisationCode, setOrganisationCode] = React.useState(configuredOrgSlug());
+
+  // The slug is normalised before it is used for anything, and the directory is
+  // requested only once it could name a real tenant. Passing "" keeps the query
+  // disabled, so an empty or half-typed code makes no request at all — there is
+  // no tenant to guess at, and guessing is what this screen used to do.
+  const slug = normaliseOrgSlug(organisationCode);
+  const slugUsable = isUsableOrgSlug(slug);
+  const storesQuery = useSignupStores(slugUsable ? slug : "");
+  const stores = slugUsable ? storesQuery.data ?? [] : [];
 
   const [name, setName] = React.useState("");
   const [email, setEmail] = React.useState("");
@@ -85,6 +150,10 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
+    // Checked before the store, because with no usable code the store list was
+    // never fetched and "Choose your store" would be the wrong thing to say.
+    if (!slugUsable)
+      return toast.error("Enter your organisation code — ask your administrator.");
     if (name.trim().length < 2) return toast.error("Enter your full name.");
     if (email && !/^\S+@\S+\.\S+$/.test(email))
       return toast.error("That email doesn't look right (or leave it blank).");
@@ -98,10 +167,7 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
         email: email.trim(),
         password,
         phone: phone.trim() || undefined,
-        requestedRole: requestedRole as
-          | "salesperson"
-          | "store_manager"
-          | "area_manager",
+        requestedRole: requestedRole as "salesperson" | "store_manager",
         requestedStoreId,
       },
       {
@@ -149,6 +215,22 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
       onSubmit={submit}
       className="space-y-3.5 rounded-2xl border border-[#1b3a2c] bg-[#0c261c]/80 p-5 shadow-xl"
     >
+      <div className="space-y-1.5">
+        <Label className="text-xs text-[#f6f3ed]/80">Organisation code</Label>
+        <input
+          className={inputCls}
+          value={organisationCode}
+          onChange={(e) => {
+            setOrganisationCode(e.target.value);
+            setRequestedStoreId("");
+          }}
+          placeholder="e.g. your-company"
+          required
+        />
+        <p className="text-[11px] text-[#f6f3ed]/45">
+          Ask your administrator for your organisation code.
+        </p>
+      </div>
       <div className="space-y-1.5">
         <Label className="text-xs text-[#f6f3ed]/80">Full name</Label>
         <input
@@ -228,7 +310,7 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
         ) : null}
       </div>
       <div className="space-y-1.5">
-        <Label className="text-xs text-[#f6f3ed]/80">Store</Label>
+        <Label className="text-xs text-[#f6f3ed]/80">Location / store</Label>
         <select
           className={inputCls}
           value={requestedStoreId}
@@ -236,7 +318,11 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
           required
         >
           <option value="" className="bg-[#071e16]">
-            {storesQuery.isLoading ? "Loading stores…" : "Select your store"}
+            {!slugUsable
+              ? "Enter your organisation code first"
+              : storesQuery.isLoading
+                ? "Loading stores…"
+                : "Select your store"}
           </option>
           {stores.map((s) => (
             <option key={s.id} value={s.id} className="bg-[#071e16]">
@@ -265,6 +351,268 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
   );
 }
 
+function OrganisationSignupCard({
+  onCreated,
+}: {
+  onCreated: (session: AuthMeResponse) => void;
+}) {
+  const createOrganisation = useCreateOrganisation();
+  const industriesQuery = usePublicIndustries();
+  const industries = industriesQuery.data?.packs ?? [];
+
+  const [organisationName, setOrganisationName] = React.useState("");
+  /*
+   * Starts EMPTY, and the empty option is what a fresh form shows.
+   *
+   * It used to default to "retail", which meant the commonest path through this
+   * form was to never look at the question — a clinic could sign up and be
+   * provisioned as a shop, then wonder why the product used the wrong words.
+   * The industry decides this tenant's vocabulary, fields, pipeline and which
+   * modules exist, so it is a decision the owner should make once, deliberately,
+   * rather than a default they can miss.
+   */
+  const [industryCode, setIndustryCode] = React.useState("");
+  const [ownerName, setOwnerName] = React.useState("");
+  const [email, setEmail] = React.useState("");
+  const [password, setPassword] = React.useState("");
+  const [phone, setPhone] = React.useState("");
+  const [primaryLocationName, setPrimaryLocationName] =
+    React.useState("Main location");
+  const [city, setCity] = React.useState("");
+  const [showPw, setShowPw] = React.useState(false);
+
+  const selectedIndustry = industries.find(
+    (industry) => industry.code === industryCode,
+  );
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (organisationName.trim().length < 2)
+      return toast.error("Enter your organisation name.");
+    if (ownerName.trim().length < 2)
+      return toast.error("Enter the owner's full name.");
+    if (!/^\S+@\S+\.\S+$/.test(email))
+      return toast.error("Enter a valid work email.");
+    if (password.length < 8)
+      return toast.error("Password must be at least 8 characters.");
+    if (!industryCode)
+      return toast.error("Choose your industry.", {
+        description:
+          "It sets the words, fields and workflow your team starts with. You can change it later.",
+      });
+    if (primaryLocationName.trim().length < 2 || city.trim().length < 2)
+      return toast.error("Enter your first location and city.");
+
+    createOrganisation.mutate(
+      {
+        organisationName: organisationName.trim(),
+        industryCode,
+        ownerName: ownerName.trim(),
+        email: email.trim(),
+        password,
+        phone: phone.trim() || undefined,
+        primaryLocationName: primaryLocationName.trim(),
+        city: city.trim(),
+      },
+      {
+        onSuccess: onCreated,
+        onError: (err) =>
+          toast.error(
+            apiMessage(err, "Couldn't set up your organisation. Try again."),
+          ),
+      },
+    );
+  }
+
+  return (
+    <form
+      onSubmit={submit}
+      className="space-y-3.5 rounded-2xl border border-[#c8a24f]/35 bg-[#0c261c]/80 p-5 shadow-xl"
+    >
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label className="text-xs text-[#f6f3ed]/80">
+            Organisation name
+          </Label>
+          <input
+            className={inputCls}
+            value={organisationName}
+            onChange={(e) => setOrganisationName(e.target.value)}
+            placeholder="e.g. Acme Health"
+            required
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs text-[#f6f3ed]/80">
+            What industry do you cater to?
+          </Label>
+          <select
+            className={inputCls}
+            value={industryCode}
+            onChange={(e) => setIndustryCode(e.target.value)}
+            disabled={industriesQuery.isLoading}
+            required
+          >
+            {/*
+              An unselectable prompt, so "no answer" is visibly no answer rather
+              than a plausible-looking industry the user never chose. The list
+              itself is the server's — nothing here hardcodes a pack code, so
+              adding or renaming a pack needs no frontend release.
+            */}
+            <option value="" disabled className="bg-[#071e16]">
+              {industriesQuery.isLoading
+                ? "Loading industries…"
+                : industriesQuery.isError
+                  ? "Could not load industries — retry in a moment"
+                  : "Select your industry…"}
+            </option>
+            {industries.map((industry) => (
+              <option
+                key={industry.code}
+                value={industry.code}
+                className="bg-[#071e16]"
+              >
+                {industry.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {selectedIndustry ? (
+        <div className="flex gap-2.5 rounded-lg border border-[#1b3a2c] bg-[#071e16]/70 p-3">
+          <Bot className="mt-0.5 h-4 w-4 shrink-0 text-[#c8a24f]" />
+          <div>
+            <p className="text-xs font-medium text-[#f6f3ed]">
+              Industry-ready CRM setup
+            </p>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-[#f6f3ed]/55">
+              {selectedIndustry.description}
+            </p>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label className="text-xs text-[#f6f3ed]/80">Owner name</Label>
+          <input
+            className={inputCls}
+            value={ownerName}
+            onChange={(e) => setOwnerName(e.target.value)}
+            placeholder="Full name"
+            required
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs text-[#f6f3ed]/80">
+            Work email / login
+          </Label>
+          <input
+            type="email"
+            autoComplete="email"
+            className={inputCls}
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="owner@company.com"
+            required
+          />
+        </div>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label className="text-xs text-[#f6f3ed]/80">Password</Label>
+          <div className="relative">
+            <input
+              type={showPw ? "text" : "password"}
+              autoComplete="new-password"
+              className={inputCls + " pr-10"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="8+ characters"
+              required
+            />
+            <button
+              type="button"
+              onClick={() => setShowPw((value) => !value)}
+              aria-label={showPw ? "Hide password" : "Show password"}
+              tabIndex={-1}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-[#f6f3ed]/50 hover:text-[#f6f3ed]"
+            >
+              {showPw ? (
+                <EyeOff className="h-4 w-4" />
+              ) : (
+                <Eye className="h-4 w-4" />
+              )}
+            </button>
+          </div>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs text-[#f6f3ed]/80">
+            Phone <span className="text-[#f6f3ed]/40">(optional)</span>
+          </Label>
+          <input
+            type="tel"
+            autoComplete="tel"
+            className={inputCls}
+            value={phone}
+            onChange={(e) => setPhone(e.target.value.slice(0, 21))}
+            placeholder="+91 98765 43210"
+          />
+        </div>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label className="text-xs text-[#f6f3ed]/80">
+            First location
+          </Label>
+          <input
+            className={inputCls}
+            value={primaryLocationName}
+            onChange={(e) => setPrimaryLocationName(e.target.value)}
+            placeholder="Main location"
+            required
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs text-[#f6f3ed]/80">City</Label>
+          <input
+            className={inputCls}
+            value={city}
+            onChange={(e) => setCity(e.target.value)}
+            placeholder="e.g. Mumbai"
+            required
+          />
+        </div>
+      </div>
+
+      <p className="text-[11px] leading-relaxed text-[#f6f3ed]/50">
+        Omnichannel CRM, AI catalogue, attendance, imports and integrations are
+        included. AI qualification and draft assistance start enabled; automatic
+        sending stays off until you connect and approve a provider.
+      </p>
+
+      <Button
+        type="submit"
+        className="w-full bg-[#c8a24f] font-semibold text-[#071e16] hover:bg-[#b8903c]"
+        disabled={createOrganisation.isPending || industriesQuery.isLoading}
+      >
+        {createOrganisation.isPending ? (
+          <>
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Setting up…
+          </>
+        ) : (
+          <>
+            Create organisation <ArrowRight className="ml-1 h-4 w-4" />
+          </>
+        )}
+      </Button>
+    </form>
+  );
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const hydrate = useSession((s) => s.hydrate);
@@ -275,13 +623,18 @@ export default function LoginPage() {
   const [password, setPassword] = React.useState("");
   const [showPassword, setShowPassword] = React.useState(false);
   const [mode, setMode] = React.useState<"signin" | "signup">("signin");
+  const [signupKind, setSignupKind] = React.useState<"join" | "organisation">(
+    "join",
+  );
 
-  function finishLogin(me: Parameters<typeof hydrate>[0]) {
+  function finishLogin(me: AuthMeResponse) {
     hydrate(me);
     toast.success(`Welcome, ${me.user.name}`);
     clearAttendanceHandled();
     router.replace(
-      me.role === "salesperson" ? "/check-in" : homeForRole(me.role),
+      me.role === "salesperson"
+        ? "/check-in"
+        : homeForRole(me.role, me.productProfile?.enabledNavigation),
     );
   }
 
@@ -294,7 +647,7 @@ export default function LoginPage() {
           const status = (err as AxiosError)?.response?.status;
           toast.error(
             status === 401
-              ? "No Éclat account for this Google email."
+              ? "No account for this Google email."
               : "Google sign-in failed.",
           );
         },
@@ -320,16 +673,23 @@ export default function LoginPage() {
     );
   }
 
+  const creatingOrganisation =
+    mode === "signup" && signupKind === "organisation";
 
   return (
     <div className="grid min-h-dvh bg-[#071e16] text-[#f6f3ed] lg:grid-cols-[1.1fr_1fr]">
       {/* ── Left Realistic Luxury Showroom Panel ───────────────────── */}
       <aside className="relative hidden flex-col justify-between overflow-hidden p-10 lg:flex xl:p-14">
         {/* Rich background image overlay */}
-        <div className="absolute inset-0 z-0 opacity-40">
+        <div
+          className={
+            "absolute inset-0 z-0 transition-opacity " +
+            (creatingOrganisation ? "opacity-10" : "opacity-40")
+          }
+        >
           <Image
             src="/images/luxury_jewelry_hero.png"
-            alt="Éclat Luxury Showroom"
+            alt=""
             fill
             sizes="(min-width: 1024px) 55vw, 0px"
             className="object-cover object-center"
@@ -341,10 +701,19 @@ export default function LoginPage() {
 
         {/* Top Header */}
         <div className="relative z-10 flex items-center justify-between">
-          <Logo className="h-10 w-auto" />
+          {creatingOrganisation ? (
+            <div className="flex items-center gap-2 text-[#c8a24f]">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#c8a24f]/40 bg-[#c8a24f]/10">
+                <Bot className="h-5 w-5" />
+              </div>
+              <span className="font-display text-xl font-bold">CaratSense</span>
+            </div>
+          ) : (
+            <Logo className="h-10 w-auto" />
+          )}
           <span className="inline-flex items-center gap-2 rounded-full border border-[#c8a24f]/30 bg-[#c8a24f]/10 px-3.5 py-1 text-xs font-medium text-[#c8a24f]">
             <Sparkles className="h-3.5 w-3.5 text-[#c8a24f]" />
-            Live Showroom Platform
+            {creatingOrganisation ? "Universal AI CRM" : "Live Showroom Platform"}
           </span>
         </div>
 
@@ -352,13 +721,25 @@ export default function LoginPage() {
         <div className="relative z-10 my-auto max-w-lg space-y-7 py-8">
           <div>
             <span className="text-xs font-medium uppercase tracking-[0.2em] text-[#c8a24f]">
-              Éclat Diamonds
+              {creatingOrganisation ? "Built for every industry" : "CaratSense"}
             </span>
             <h1 className="mt-2 font-display text-4xl font-bold leading-[1.1] text-[#f6f3ed] xl:text-5xl">
-              Where dreams meet <span className="italic text-[#c8a24f]">diamonds.</span>
+              {creatingOrganisation ? (
+                <>
+                  One AI CRM, shaped around{" "}
+                  <span className="italic text-[#c8a24f]">your business.</span>
+                </>
+              ) : (
+                <>
+                  One place for{" "}
+                  <span className="italic text-[#c8a24f]">every counter.</span>
+                </>
+              )}
             </h1>
             <p className="mt-4 text-base leading-relaxed text-[#f6f3ed]/75">
-              The unified front-of-house operations platform behind every Éclat Diamonds store — sales, inventory, finance, and team in one calm place.
+              {creatingOrganisation
+                ? "Start with industry-specific fields and workflows, while omnichannel CRM, AI cataloguing, attendance and integrations stay at the core."
+                : "The unified front-of-house operations platform behind your counter — customers, catalogue, attendance and team in one calm place."}
             </p>
           </div>
 
@@ -367,7 +748,11 @@ export default function LoginPage() {
             {/* Widget 1: Multi-Store Live Pulse */}
             <div className="flex items-center gap-3.5 rounded-2xl border border-[#1b3a2c] bg-[#0c261c]/80 p-4 shadow-lg backdrop-blur-md">
               <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#c8a24f]/15 text-[#c8a24f]">
-                <Store className="h-5 w-5" />
+                {creatingOrganisation ? (
+                  <Bot className="h-5 w-5" />
+                ) : (
+                  <Store className="h-5 w-5" />
+                )}
                 <span className="absolute -right-0.5 -top-0.5 flex h-3 w-3">
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
                   <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500" />
@@ -375,10 +760,20 @@ export default function LoginPage() {
               </div>
               <div className="flex-1">
                 <div className="flex items-center justify-between">
-                  <p className="text-sm font-semibold text-[#f6f3ed]">3 Branches Active</p>
-                  <span className="text-[11px] font-mono text-emerald-400">Live Sync</span>
+                  <p className="text-sm font-semibold text-[#f6f3ed]">
+                    {creatingOrganisation
+                      ? "Industry-ready from signup"
+                      : "3 Branches Active"}
+                  </p>
+                  <span className="text-[11px] font-mono text-emerald-400">
+                    {creatingOrganisation ? "AI Ready" : "Live Sync"}
+                  </span>
                 </div>
-                <p className="mt-0.5 text-xs text-[#f6f3ed]/65">Surat Main · Mumbai Bandra · Ahmedabad CG</p>
+                <p className="mt-0.5 text-xs text-[#f6f3ed]/65">
+                  {creatingOrganisation
+                    ? "CRM · AI catalogue · attendance · integrations"
+                    : "Surat Main · Mumbai Bandra · Ahmedabad CG"}
+                </p>
               </div>
             </div>
 
@@ -388,8 +783,16 @@ export default function LoginPage() {
                 <ShieldCheck className="h-5 w-5" />
               </div>
               <div className="flex-1">
-                <p className="text-sm font-semibold text-[#f6f3ed]">Role-Aware Security & Cost Protection</p>
-                <p className="mt-0.5 text-xs text-[#f6f3ed]/65">Sales staff see selling price only; margins masked automatically.</p>
+                <p className="text-sm font-semibold text-[#f6f3ed]">
+                  {creatingOrganisation
+                    ? "Tenant-isolated from day one"
+                    : "Role-Aware Security & Cost Protection"}
+                </p>
+                <p className="mt-0.5 text-xs text-[#f6f3ed]/65">
+                  {creatingOrganisation
+                    ? "Your data, users and connection credentials stay inside your organisation."
+                    : "Sales staff see selling price only; margins masked automatically."}
+                </p>
               </div>
             </div>
           </div>
@@ -398,26 +801,43 @@ export default function LoginPage() {
         {/* Bottom Footer */}
         <div className="relative z-10 flex items-center justify-between border-t border-[#1b3a2c] pt-5 text-xs text-[#f6f3ed]/50">
           <span className="font-mono uppercase tracking-[0.16em]">CaratSense OS v2.4</span>
-          <span>© 2026 Éclat Diamonds. All rights reserved.</span>
+          <span>
+            {creatingOrganisation
+              ? "Universal CRM · Isolated workspaces"
+              : "© 2026 CaratSense. All rights reserved."}
+          </span>
         </div>
       </aside>
 
       {/* ── Right Live Interactive Sign-in Form ─────────────────────── */}
       <main className="relative flex flex-col justify-between bg-[#071e16] px-6 py-10 sm:px-12 lg:px-16">
-        <div className="mx-auto w-full max-w-md my-auto space-y-7">
+        <div className="mx-auto my-auto w-full max-w-xl space-y-7">
           {/* Mobile Logo */}
           <div className="mb-4 lg:hidden">
-            <Logo className="h-9 w-auto" />
+            {creatingOrganisation ? (
+              <div className="flex items-center gap-2 text-[#c8a24f]">
+                <Bot className="h-6 w-6" />
+                <span className="font-display text-xl font-bold">CaratSense</span>
+              </div>
+            ) : (
+              <Logo className="h-9 w-auto" />
+            )}
           </div>
 
           <div>
             <h2 className="font-display text-3xl font-bold tracking-tight text-[#f6f3ed]">
-              {mode === "signup" ? "Create your account" : "Sign in to your counter"}
+              {mode === "signin"
+                ? "Sign in to your workspace"
+                : signupKind === "organisation"
+                  ? "Set up your organisation"
+                  : "Join your organisation"}
             </h2>
             <p className="mt-1.5 text-sm text-[#f6f3ed]/70">
-              {mode === "signup"
-                ? "Register and request access. A manager or head office will approve you."
-                : "Enter your email and password to start the session."}
+              {mode === "signin"
+                ? "Enter your email and password to start the session."
+                : signupKind === "organisation"
+                  ? "Choose your industry and start with the right CRM, fields and workflow."
+                  : "Request access to an existing team. Your manager will approve you."}
             </p>
           </div>
 
@@ -495,7 +915,39 @@ export default function LoginPage() {
 
           </>
           ) : (
-            <SignupCard onBackToSignin={() => setMode("signin")} />
+            <div className="space-y-3.5">
+              <div className="grid grid-cols-2 gap-2 rounded-xl border border-[#1b3a2c] bg-[#061a13] p-1.5">
+                <button
+                  type="button"
+                  onClick={() => setSignupKind("join")}
+                  className={
+                    "flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-colors " +
+                    (signupKind === "join"
+                      ? "bg-[#c8a24f] text-[#071e16]"
+                      : "text-[#f6f3ed]/65 hover:bg-white/5")
+                  }
+                >
+                  <UserPlus className="h-3.5 w-3.5" /> Join a team
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSignupKind("organisation")}
+                  className={
+                    "flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-colors " +
+                    (signupKind === "organisation"
+                      ? "bg-[#c8a24f] text-[#071e16]"
+                      : "text-[#f6f3ed]/65 hover:bg-white/5")
+                  }
+                >
+                  <Building2 className="h-3.5 w-3.5" /> Create organisation
+                </button>
+              </div>
+              {signupKind === "organisation" ? (
+                <OrganisationSignupCard onCreated={finishLogin} />
+              ) : (
+                <SignupCard onBackToSignin={() => setMode("signin")} />
+              )}
+            </div>
           )}
 
           {/* Sign in ⇄ Create account toggle */}

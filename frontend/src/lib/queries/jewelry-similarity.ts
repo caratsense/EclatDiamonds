@@ -13,7 +13,11 @@ export type MatchLevel =
   | "WEAK"
   | "NO_CLOSE_MATCH";
 
-export type SearchStatus = "MATCHES_FOUND" | "NO_CLOSE_MATCH" | "SEARCH_ERROR";
+export type SearchStatus =
+  | "MATCHES_FOUND"
+  | "NO_CLOSE_MATCH"
+  | "NOT_INDEXED"
+  | "SEARCH_ERROR";
 
 /** Relevance feedback values accepted by the backend (training signal). */
 export type SimilarityFeedbackValue =
@@ -25,12 +29,20 @@ export type SimilarityFeedbackValue =
 export interface SimilarityHit {
   productId: string;
   productName: string;
+  /** SKU / reference, when the catalogue row has one. */
+  sku?: string | null;
   imageUrl?: string | null;
+  /** Store the design belongs to (null = company-wide); shown only when relevant to scope. */
+  storeId?: string | null;
+  storeName?: string | null;
   rank: number;
   /** 0–100, already normalised server-side (NOT a raw cosine). */
   closenessScore: number;
   matchLevel: MatchLevel;
 }
+
+/** One ranked visual-search result set is exactly the TOP 10 closest genuine matches. */
+export const SIMILARITY_TOP_N = 10;
 
 export interface SimilaritySearchResult {
   queryId: string;

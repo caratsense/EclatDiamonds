@@ -13,6 +13,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { OrderKind, OrderStatus, ProductCategory } from '@prisma/client';
+import { IsRealName } from '../../common/contact.util';
 
 /**
  * PATCH /timelines/orders/:id/stage — advance a custom order to the next
@@ -42,12 +43,15 @@ export class AdvanceStageDto {
   @IsOptional()
   @IsString()
   @MaxLength(120)
+  @IsRealName()
   deliveredTo?: string;
 }
 
 export class CreateWorkflowDto {
   @IsString()
   @IsNotEmpty({ message: 'A customer name is required' })
+  @MaxLength(120)
+  @IsRealName()
   customer!: string;
 
   @IsString()
@@ -72,6 +76,9 @@ export class CreateOrderDto {
 
   @IsString()
   @IsNotEmpty({ message: 'A customer name is required' })
+  @MaxLength(120)
+  @Matches(/[^\d\s]/, { message: 'Customer name must include letters' })
+  @IsRealName()
   customerName!: string;
 
   /** 'custom' (default) or 'stock' replenishment order. */

@@ -1,6 +1,7 @@
 import {
   ArrayMaxSize,
   ArrayMinSize,
+  ArrayNotEmpty,
   ArrayUnique,
   IsArray,
   IsIn,
@@ -28,6 +29,7 @@ export class CreateStockTransferDto {
   // Cap the batch: approve/receive loop the pieces inside one transaction holding
   // a row lock per piece, so an unbounded list is a lock-duration DoS.
   @IsArray()
+  @ArrayNotEmpty()
   @ArrayMinSize(1)
   @ArrayMaxSize(500)
   @ArrayUnique()

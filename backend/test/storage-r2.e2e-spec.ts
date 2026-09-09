@@ -41,33 +41,34 @@ describeIf('StorageService — R2 provider', () => {
   });
 
   it('uploads and returns the public URL', async () => {
-    const url = await makeService().save('products', 'abc123.jpg', Buffer.from('jpegbytes'));
-    expect(url).toBe('https://pub-deadbeef.r2.dev/products/abc123.jpg');
+    const url = await makeService().save('org_eclat', 'products', 'abc123.jpg', Buffer.from('jpegbytes'));
+    expect(url).toBe('https://pub-deadbeef.r2.dev/org/org_eclat/products/abc123.jpg');
   });
 
   it('sanitises awkward filenames before they become keys', async () => {
     // `save()` strips anything outside [A-Za-z0-9._-], so a space never reaches
     // the signer. Asserted here because that sanitisation is what keeps object
     // keys, and therefore signatures, predictable — encodeKey is the backstop.
-    const url = await makeService().save('products', 'ring size 7.png', Buffer.from('x'));
-    expect(url).toBe('https://pub-deadbeef.r2.dev/products/ring_size_7.png');
+    const url = await makeService().save('org_eclat', 'products', 'ring size 7.png', Buffer.from('x'));
+    expect(url).toBe('https://pub-deadbeef.r2.dev/org/org_eclat/products/ring_size_7.png');
   });
 
   it('sends a large body intact', async () => {
     const big = Buffer.alloc(256 * 500);
     for (let i = 0; i < big.length; i++) big[i] = i % 256;
-    const url = await makeService().save('products', 'big.jpg', big);
-    expect(url).toBe('https://pub-deadbeef.r2.dev/products/big.jpg');
+    const url = await makeService().save('org_eclat', 'products', 'big.jpg', big);
+    expect(url).toBe('https://pub-deadbeef.r2.dev/org/org_eclat/products/big.jpg');
   });
 
   it('falls back to local disk when R2 rejects the request', async () => {
     // Wrong secret -> 403. The upload must still succeed somewhere rather than
     // failing the caller's intake at the counter.
     const url = await makeService({ R2_SECRET_ACCESS_KEY: 'WRONG' }).save(
+      'org_eclat',
       'products',
       'fallback.jpg',
       Buffer.from('x'),
     );
-    expect(url).toBe('/uploads/products/fallback.jpg');
+    expect(url).toBe('/uploads/org/org_eclat/products/fallback.jpg');
   });
 });

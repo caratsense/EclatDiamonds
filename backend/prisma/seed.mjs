@@ -8,10 +8,72 @@
 //   karan.malhotra@caratsense.in   store_manager (Mumbai — Bandra)
 //   neelam.area@caratsense.in      area_manager  (West India region)
 //   head.office@caratsense.in      head_office   (all stores)
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
-const prisma = new PrismaClient();
+const ORGANISATION_ID = "org_eclat";
+const basePrisma = new PrismaClient();
+
+// Keep this legacy-rich demo seed tenant-safe without duplicating
+// `organisationId` across every fixture. The model list comes from the generated
+// schema, so adding a new tenant-owned model cannot silently make the seed write
+// an unscoped row. Nested creates still need the tenant key explicitly because
+// Prisma query extensions run at the top-level operation boundary.
+const organisationModels = new Set(
+  Prisma.dmmf.datamodel.models
+    .filter((model) =>
+      model.fields.some(
+        (field) => field.name === "organisationId" && field.isRequired,
+      ),
+    )
+    .map((model) => model.name),
+);
+
+const withOrganisation = (data) => ({
+  ...data,
+  organisationId: data.organisationId ?? ORGANISATION_ID,
+});
+
+const prisma = basePrisma.$extends({
+  query: {
+    $allModels: {
+      async $allOperations({ model, operation, args, query }) {
+        if (!organisationModels.has(model)) return query(args);
+
+        if (operation === "create") args.data = withOrganisation(args.data);
+        if (operation === "createMany" || operation === "createManyAndReturn") {
+          args.data = Array.isArray(args.data)
+            ? args.data.map(withOrganisation)
+            : withOrganisation(args.data);
+        }
+        if (operation === "upsert") {
+          args.where = { ...args.where, organisationId: ORGANISATION_ID };
+          args.create = withOrganisation(args.create);
+        }
+        if (
+          [
+            "findUnique",
+            "findUniqueOrThrow",
+            "findFirst",
+            "findFirstOrThrow",
+            "findMany",
+            "count",
+            "aggregate",
+            "groupBy",
+            "update",
+            "updateMany",
+            "updateManyAndReturn",
+            "delete",
+            "deleteMany",
+          ].includes(operation)
+        ) {
+          args.where = { ...(args.where ?? {}), organisationId: ORGANISATION_ID };
+        }
+        return query(args);
+      },
+    },
+  },
+});
 const D = (n) => n.toString();
 const PASSWORD = "password123";
 
@@ -25,9 +87,29 @@ function daysAgo(n) {
 async function main() {
   const passwordHash = await bcrypt.hash(PASSWORD, 10);
 
+  await basePrisma.organisation.upsert({
+    where: { slug: "eclat" },
+    update: {
+      name: "Eclat",
+      status: "active",
+      industryPackCode: "jewellery",
+      industryPackVersion: 1,
+    },
+    create: {
+      id: ORGANISATION_ID,
+      slug: "eclat",
+      name: "Eclat",
+      status: "active",
+      industryPackCode: "jewellery",
+      industryPackVersion: 1,
+    },
+  });
+
   // --- Region + stores (stable ids = frontend store ids) ---
   const west = await prisma.region.upsert({
-    where: { code: "WEST" },
+    where: {
+      organisationId_code: { organisationId: ORGANISATION_ID, code: "WEST" },
+    },
     update: {},
     create: { name: "West India", code: "WEST" },
   });
@@ -279,6 +361,7 @@ async function main() {
           grossAmount: D(gross), taxAmount: D(tax), totalAmount: D(total),
           lines: {
             create: {
+              organisationId: ORGANISATION_ID,
               productId: line.productId,
               description: line.desc,
               netWeight: D(line.net),
@@ -350,6 +433,16 @@ async function main() {
       percent: "7.00", status: "escalated", requestedById: uid("u-sm-karan"), requestedRole: "store_manager",
     },
   });
+  // The live service mints DR-(1000 + sequence). Seeded human-readable refs
+  // therefore reserve sequence values 1 and 2 as well. GREATEST keeps this
+  // idempotent and never rewinds a counter in a reused development database.
+  await prisma.$executeRaw`
+    INSERT INTO "DocSequence" ("scope", "next", "updatedAt")
+    VALUES ('DR:global', 3, CURRENT_TIMESTAMP)
+    ON CONFLICT ("scope") DO UPDATE
+      SET "next" = GREATEST("DocSequence"."next", EXCLUDED."next"),
+          "updatedAt" = CURRENT_TIMESTAMP
+  `;
 
   // --- Gold-savings scheme plans (Module 17) ---
   // Intentionally NOT seeded. The client marked the gold-savings scheme LATER
@@ -790,7 +883,12 @@ async function main() {
   // MODULE 17 — "Earn with Éclat" referral / commission program
   // ==========================================================================
   await prisma.referralCode.upsert({
-    where: { code: "ECLAT-DEMO" },
+    where: {
+      organisationId_code: {
+        organisationId: ORGANISATION_ID,
+        code: "ECLAT-DEMO",
+      },
+    },
     update: { maxUses: 10 },
     create: {
       id: "ref-code-demo",
@@ -837,9 +935,9 @@ async function main() {
 }
 
 main()
-  .then(() => prisma.$disconnect())
+  .then(() => basePrisma.$disconnect())
   .catch(async (e) => {
     console.error(e);
-    await prisma.$disconnect();
+    await basePrisma.$disconnect();
     process.exit(1);
   });

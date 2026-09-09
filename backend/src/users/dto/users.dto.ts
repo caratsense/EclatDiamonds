@@ -2,36 +2,43 @@ import {
   IsEmail,
   IsIn,
   IsInt,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
+  MaxLength,
   Min,
   MinLength,
 } from 'class-validator';
 import { LeaveType, Role } from '@prisma/client';
+import { IsIndianMobile, IsRealName } from '../../common/contact.util';
 
 /** Roles a head-office admin may assign here — never `head_office` (HO cannot mint another HO). */
 export const ASSIGNABLE_ROLES: Role[] = ['salesperson', 'store_manager'];
 
 /**
- * POST /users — head office onboards a staff member (defaults to salesperson).
- * Requires at least one login identifier (phone and/or email); enforced in the
- * service since either is individually optional.
+ * POST /users — a manager onboards a staff member (defaults to salesperson).
+ * Team add requires BOTH a phone and an email (confirmed rule). This is the
+ * manager-add path ONLY — self-signup lives in AuthService and is unaffected.
  */
 export class CreateUserDto {
   @IsString()
+  @IsNotEmpty()
   @MinLength(2)
+  @MaxLength(120)
+  @IsRealName()
   name!: string;
 
-  @IsOptional()
-  @IsString()
-  phone?: string;
+  // Both mandatory for a manager-added staff member. The phone must be a real
+  // Indian mobile (same rule as customers/quotes) — not merely "10 digits".
+  @IsIndianMobile()
+  phone!: string;
 
-  @IsOptional()
   @IsEmail()
-  email?: string;
+  email!: string;
 
   @IsString()
+  @IsNotEmpty()
   storeId!: string;
 
   /** Defaults to `salesperson` when omitted. `head_office` is not assignable here. */
@@ -49,6 +56,7 @@ export class UpdateUserRoleDto {
 /** PATCH /users/:id/store — reassign a user's primary store. */
 export class UpdateUserStoreDto {
   @IsString()
+  @IsNotEmpty()
   storeId!: string;
 }
 

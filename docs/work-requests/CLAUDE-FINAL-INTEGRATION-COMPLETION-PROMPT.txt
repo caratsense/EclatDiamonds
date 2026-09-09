@@ -1,0 +1,331 @@
+CARATOS — FINAL INTEGRATION COMPLETION AND RELEASE GATE
+Repository: C:\Users\Shrey\Eclat
+Scope: integration closure only; no new product expansion
+
+Start only after the current Phase 5/6 work has completely settled. Work from the
+actual tree, not from an earlier report. Preserve all existing changes.
+
+===============================================================================
+MISSION
+===============================================================================
+
+Take the existing fixture-tested Meta/WhatsApp/Lead Ads/ROAS/omnichannel code to
+an honest staging-ready checkpoint. Close every remaining internal seam and
+safety defect, complete the minimum administration UI, and produce a precise
+manual-live-setup handoff. Do not claim live verification without real approved
+Meta credentials and real signed provider traffic.
+
+The product is a universal multi-market AI CRM. New integration code and copy
+must be industry-neutral. Existing Eclat/jewellery functionality must remain
+byte-for-byte compatible unless a tested security or correctness fix requires a
+narrow change.
+
+===============================================================================
+NON-NEGOTIABLE BOUNDARIES
+===============================================================================
+
+1. Do not revert, reset, overwrite, or reformat unrelated dirty files.
+2. Do not edit attendance/HRMS, AI catalogue, product inference, or image-search
+   modules. Their tests may be run; their source is out of scope.
+3. Do not use production, deploy, push, or commit unless explicitly instructed.
+4. Do not read, print, log, commit, or echo a real access token or app secret.
+5. Do not store Meta access tokens in Integration.config or environment variables
+   for tenant connections. Store them encrypted in IntegrationCredential.
+6. Public webhook payloads never choose organisationId. Resolve the tenant from
+   one uniquely owned, active IntegrationAsset and fail closed if ownership is
+   missing or ambiguous.
+7. Persist and authenticate webhook input before business processing.
+8. Message status becomes sent only after the provider accepts it and returns a
+   provider message id. queued, sent, delivered, read, failed and dead-letter
+   states must never be conflated.
+9. Historical CRM/AI rows at status=queued must not be adopted automatically.
+   Only rows carrying an explicit payload.omnichannel delivery instruction may
+   enter the delivery worker.
+10. Keep Meta-facing tests fixture-based. No automated test may call a live Meta
+    endpoint.
+11. Before shared schema/config edits, follow the existing work-request/shared-
+    file protocol in docs/work-requests.
+12. Do not run prisma format across the shared schema if it creates a repository-
+    wide line-ending/alignment rewrite. Validate the schema; isolate formatting
+    only when the tree is quiet.
+
+===============================================================================
+SETTLED VERIFIED BASELINE TO RECONFIRM
+===============================================================================
+
+The latest reported checkpoint was:
+
+- TypeScript: 0 errors
+- Nest build: exit 0
+- Prisma validate: valid
+- New-area ESLint: 0 errors / 0 warnings
+- Full backend e2e from a disposable database migrated from zero:
+  67 suites passed, 865 tests passed, 0 failed, 6 inference tests skipped
+- HEAD was 9589ac5, 0 staged, nothing committed/pushed/deployed
+
+Re-run lightweight checks before editing. If the actual baseline differs, record
+the difference and diagnose it instead of masking it.
+
+Already fixed and not to be regressed:
+
+- sweepQueued adopts only explicitly instructed omnichannel messages.
+- Meta delivery receipts are joined to OmnichannelService through a tenant-safe
+  adapter.
+- Receipt states cannot walk failed/delivered/read messages backwards.
+- AttributionModule is imported and /attribution is entitlement-classified.
+- Required Meta/QR environment variable names are documented.
+- Webhook raw-body HMAC verification and persist-first intake are covered.
+
+===============================================================================
+WAVE 2 — CLOSE THE REMAINING DEAD SEAMS
+===============================================================================
+
+INT-01 — PERSIST STOP/UNSUBSCRIBE BEFORE AI OR MARKETING
+
+- Detect only unambiguous opt-out messages. A phrase such as “nearest bus stop”
+  must not opt a person out.
+- On a verified inbound WhatsApp message, resolve the tenant and party first.
+- Call OmnichannelService.recordProviderOptOut before qualification, AI drafting,
+  automation, or outbound work.
+- Make the operation idempotent by provider event/message id.
+- A recorded all-purpose/channel revocation must immediately block service and
+  marketing sends according to the existing policy.
+- A later consent grant must require an explicit new consent event; never infer
+  re-consent from another inbound message.
+- Add DB-backed tests proving ordering and replay behaviour.
+
+INT-02 — IMPLEMENT AND REGISTER THE META LEAD CRM SINK
+
+- Implement MetaLeadSink and register it with MetaLeadAdsService on module init.
+- Fetching a signed Lead Ads notification must end in a real tenant-scoped CRM
+  write instead of “sink is not registered” dead-lettering.
+- Resolve/create Party and ContactPoint through existing identity contracts.
+- Create one Lead with honest provider provenance.
+- Preserve leadgen id, page id, form id, ad id, ad-set id, campaign id, created
+  time and field-mapping evidence where supplied. Missing values remain null.
+- Apply existing ad-set routing rules after identity/lead creation.
+- Duplicate webhook/job retries must return the existing records.
+- Never include the full form payload, token, phone or email in logs.
+- Unknown/unmapped form questions may be retained only in a bounded tenant-owned
+  metadata field with field names and values redacted from operational logs.
+
+INT-03 — ADD AN HONEST META LEAD SOURCE
+
+- Add LeadSource.meta_ads through one additive Prisma migration.
+- Update every system-backed industry-pack lead_source taxonomy consistently.
+- Preserve all existing enum values and seeded tenant customizations.
+- Use meta_ads for Meta Lead Ads. Do not mislabel Facebook forms as whatsapp,
+  website, instagram or referral.
+- Rehearse the migration from an empty disposable database and against a clone
+  containing existing leads.
+
+INT-04 — ENABLE META ADS IN THE PROVIDER REGISTRY ONLY WHEN TRUE
+
+- The registry currently advertises meta_ads as unavailable.
+- After INT-02/03 and provider health checks exist, set available=true.
+- Declare only capabilities actually backed by code: Lead Ads fetch/webhooks and
+  Ads Insights spend ingestion.
+- Keep Instagram Direct unavailable; no Instagram messaging adapter exists.
+- Declare tenant credential scope and access_token accurately.
+- Add entities/assets/webhooks metadata that matches the implemented adapter.
+- Provider catalogue tests must fail if an unavailable/dead adapter is advertised.
+
+===============================================================================
+WAVE 3 — SPEND, ROAS AND PROVIDER TRUTH
+===============================================================================
+
+INT-05 — REMOVE MEASURED META SPEND FROM LEGACYROW
+
+- LegacyRow is the ERP mirror and is writable through generic sync. It cannot be
+  the authoritative Meta spend ledger.
+- Add the smallest dedicated additive model(s), for example MetaAdSpendDaily and
+  MetaAdSpendCoverage, with organisationId, integrationId, adAccountAssetId,
+  date, account/campaign/ad-set/ad identifiers, amount, currency, source update
+  time, fetch/run provenance and idempotent unique keys.
+- Enforce tenant relations and useful date/account/campaign indexes.
+- Migrate existing valid Meta spend/coverage LegacyRows into the dedicated model
+  idempotently; do not copy malformed or unprovable rows.
+- Update ingestion and reports to use only the dedicated measured-spend source.
+- Ensure ERP/Connect sync cannot write these tables.
+
+INT-06 — MAKE CURRENCY CORRECTNESS EXPLICIT
+
+- Read the Meta ad-account currency and the organisation/sale currency.
+- MVP rule: calculate ROAS only when currencies match. For a mismatch, return
+  available=false with both currency codes and reason=currency_mismatch.
+- Do not silently convert and do not assume INR.
+- If a dated FX provider is already genuinely implemented, conversion may be
+  added only with rate source/date/currency provenance and tests. Otherwise keep
+  the safe equality gate.
+- Keep declared campaign budget/spend separate from measured provider spend.
+- Partial date/account coverage must return unavailable/incomplete, not a number.
+
+INT-07 — PROVIDER HEALTH AND ASSET OWNERSHIP CHECKS
+
+- Add a head-office-only, rate-limited Meta connection health check.
+- Verify the encrypted token can read each registered Page, form and ad account.
+- Set providerOwnershipVerified and lastHealthAt only from a successful live
+  Graph response; manual asset entry never means verified.
+- Store bounded error codes/messages, never tokens or raw Graph responses.
+- Distinguish not_configured, configured, connected, needs_attention and disabled.
+- Token expiry/permission loss must move the connection to needs_attention.
+- Tests use a fake Graph provider.
+
+INT-08 — META TEMPLATE SYNCHRONISATION
+
+- Add a provider boundary/job to fetch WhatsApp templates and their current
+  language/category/status.
+- Upsert tenant template assets idempotently.
+- A provider-paused/rejected/disabled template must cease to be deliverable.
+- Operator-entered approval is not live verification. Expose its source and last
+  sync time.
+- Do not delete local audit history when a provider template disappears; mark it
+  inactive/unknown and require review.
+
+===============================================================================
+WAVE 4 — EXISTING CORRECTNESS DEFECTS EXPOSED BY INTEGRATIONS
+===============================================================================
+
+INT-09 — SAFE PARTY MERGE
+
+- A merge must not launder isBlacklisted or discard creditLimit/risk evidence.
+- Define deterministic conflict rules, preview them, and require explicit human
+  confirmation for destructive conflicts.
+- Move supported relations transactionally and retain immutable merge evidence.
+- Cross-tenant or out-of-store merge ids must be indistinguishable from missing.
+
+INT-10 — CORRECT SLA SUMMARY
+
+- Do not compute tenant totals from a result page capped at 1,000.
+- Use database aggregates for totals and separate pagination for rows.
+- Add a >1,000 lead test proving counts, at-risk and overdue totals.
+
+INT-11 — AUDIT AUTOMATIC ROUND-ROBIN AND QR ASSIGNMENT
+
+- System-triggered assignment must create immutable audit/activity evidence with
+  a system actor/source, even when no AuthUser initiated it.
+- Retain rule id, eligible pool, selected assignee/store and idempotency key.
+- Do not log QR token contents or customer contact data.
+
+===============================================================================
+WAVE 5 — MINIMUM INTEGRATION ADMIN UI
+===============================================================================
+
+Complete only the screens needed to configure and operate these integrations:
+
+1. Meta Ads integration creation and encrypted access-token entry.
+2. Page, form and ad-account asset registration.
+3. Connection/permission/asset health with last checked time.
+4. WhatsApp template list with provider status and last sync time.
+5. Consent status and explicit grant/revoke action.
+6. Outbox states: queued, retrying, failed, sent, delivered, read.
+7. Manual retry for an eligible failed/dead delivery.
+8. Lead Ads event/job failure visibility without exposing customer form data.
+9. Spend sync controls, coverage state and currency-safe ROAS.
+
+UI requirements:
+
+- Head-office-only configuration; store-scoped operational views.
+- Never render or return a stored secret.
+- Never label “credential stored” as “connected”.
+- Distinguish fixture-tested, configured, health-verified and live-verified.
+- Proper loading, empty, validation, permission and failure states.
+- Industry-neutral vocabulary. Do not touch unrelated Phase 5 frontend work.
+
+===============================================================================
+WAVE 6 — OPERATIONS, DOCUMENTATION AND RELEASE GATES
+===============================================================================
+
+- Update backend/.env.example without real values.
+- Update a staging runbook with exact callback paths:
+  /integrations/whatsapp/webhook
+  /integrations/meta/webhook
+- Document tenant integration API/UI order, assets and credential rotation.
+- Add alerts/operational visibility for dead Meta fetch, Insights and delivery
+  jobs. Alert contents must be metadata-only.
+- Add a token rotation drill using CREDENTIAL_ENCRYPTION_KEY_PREVIOUS and the
+  rewrap endpoint; use generated test keys only.
+- Confirm backup/PITR and perform a staging restore drill before go-live.
+- Preserve and update the intern workbook:
+  docs/handovers/CaratOS-Meta-WhatsApp-Manual-Integration-Handover.xlsx
+- Do not put secrets in that workbook. Evidence may contain dashboard object ids
+  only if the business approves; redact customer contact data.
+
+===============================================================================
+VERIFICATION ORDER
+===============================================================================
+
+1. Record HEAD, git status, staged files and current baseline.
+2. Prisma validate.
+3. Generate Prisma Client after checking for an exact stale Windows DLL holder.
+4. Backend tsc --noEmit.
+5. Nest build.
+6. ESLint every changed source/test file.
+7. Meta webhook/signature/persist-first suites.
+8. STOP-before-AI and consent suites.
+9. Meta Lead sink and retry/idempotency suites.
+10. Dedicated spend migration/ingestion/coverage/currency suites.
+11. Omnichannel queue/template/receipt/retry suites.
+12. Advanced CRM merge/SLA/assignment audit suites.
+13. Industry onboarding and entitlement suites.
+14. Full backend e2e on a disposable database migrated from zero.
+15. Frontend TypeScript, ESLint and production build.
+16. Browser verification against localhost/staging only.
+17. Migration rehearsal from zero and from a pre-migration data clone.
+
+Prove the critical tests bite by temporarily injecting representative defects:
+
+- Allow historical queued rows into sweep.
+- Dispatch a webhook with ambiguous/no asset owner.
+- Process AI before STOP persistence.
+- Replay one Lead Ads event/job.
+- Attempt cross-tenant asset/receipt lookup.
+- Calculate ROAS with mismatched currencies.
+- Merge a blacklisted duplicate into a clean survivor.
+- Count 1,001+ open leads.
+
+Restore each defect and rerun green. Do not leave intentional breakage behind.
+
+===============================================================================
+DEFINITION OF DONE
+===============================================================================
+
+Code-complete means all internal items INT-01 through INT-11 plus the minimum UI
+and operations documentation are complete and locally verified.
+
+Staging-verified additionally requires:
+
+- zero-to-current migrations on staging,
+- disposable restore proof,
+- test credentials stored through encrypted tenant configuration,
+- test Page/form/ad-account/phone assets health-verified,
+- signed test webhooks accepted and invalid signatures rejected,
+- test Lead Ads event reaches CRM,
+- test Insights sync matches Meta test data,
+- WhatsApp test message reaches sent/delivered/read,
+- STOP blocks a later marketing send.
+
+Live-verified additionally requires real business approval, reviewed permissions,
+real tenant credentials, real subscribed assets and real signed payloads. External
+approval delays are not code failures and must remain reported separately.
+
+===============================================================================
+FINAL REPORT
+===============================================================================
+
+Return:
+
+1. Exact files changed and migrations added.
+2. INT-01 through INT-11 status individually.
+3. Exact test/build/lint totals and every skip/warning.
+4. Migration results from zero and the pre-migration clone.
+5. Code-complete, locally verified, staging verified and live verified percentages.
+6. Remaining external Meta/app-review blockers.
+7. Connection evidence captured, with all secrets and customer data redacted.
+8. Confirmation that attendance, HRMS, AI catalogue and inference source files
+   were untouched.
+9. Confirmation of commit/push/deploy/production/credential actions.
+10. Updated dirty/staged count and HEAD.
+
+Never describe fixture-tested code as a live integration.
+

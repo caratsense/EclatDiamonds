@@ -2,6 +2,7 @@ import {
   IsBoolean,
   IsIn,
   IsInt,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsPositive,
@@ -12,22 +13,29 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { IsIndianMobile, IsRealName } from '../../common/contact.util';
 
 /** yyyy-mm-dd (date-only). */
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 
 export class EnrollMemberDto {
   @IsString()
+  @IsNotEmpty()
   storeId!: string;
 
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  @IsRealName()
   customerName!: string;
 
   @IsOptional()
   @IsString()
+  @IsIndianMobile()
   phone?: string;
 
   @IsString()
+  @IsNotEmpty()
   planId!: string;
 
   /** Monthly installment amount (INR). */
@@ -43,10 +51,14 @@ export class EnrollMemberDto {
 /** POST /loyalty/referral-codes — mint a coupon code for a referrer. */
 export class CreateReferralCodeDto {
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  @IsRealName()
   referrerName!: string;
 
   @IsOptional()
   @IsString()
+  @IsIndianMobile()
   referrerPhone?: string;
 
   /** Optional anti-leak cap: how many times the code may be used (>= 1). */
@@ -63,13 +75,18 @@ export class CreateReferralCodeDto {
 /** POST /loyalty/referrals — apply a code on a referee's purchase. */
 export class CreateReferralDto {
   @IsString()
+  @IsNotEmpty()
   code!: string;
 
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  @IsRealName()
   refereeName!: string;
 
   @IsOptional()
   @IsString()
+  @IsIndianMobile()
   refereePhone?: string;
 
   /** Referee's total bill amount (INR). */
@@ -129,8 +146,10 @@ export class ReferralPayoutDto {
  */
 export class CreateSchemePlanDto {
   @IsString()
+  @IsNotEmpty()
   @MinLength(2)
   @MaxLength(60)
+  @IsRealName()
   name!: string;
 
   /** Paying months, e.g. 11 for "Rs 5,000 x 11 months". */
@@ -168,6 +187,7 @@ export class UpdateSchemePlanDto {
   @IsString()
   @MinLength(2)
   @MaxLength(60)
+  @IsRealName()
   name?: string;
 
   @IsOptional()

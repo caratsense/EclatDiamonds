@@ -1,4 +1,5 @@
 import { IsString, Matches, MaxLength, MinLength } from 'class-validator';
+import { IsIndianMobile } from '../../common/contact.util';
 
 /** POST /auth/otp/request — phone in any human format (+91, spaces, dashes ok). */
 export class RequestOtpDto {
@@ -6,6 +7,7 @@ export class RequestOtpDto {
   @MinLength(10)
   @MaxLength(20)
   @Matches(/^[\d\s\-+()]+$/, { message: 'phone must contain only digits, spaces, +, -, ()' })
+  @IsIndianMobile()
   phone!: string;
 }
 
@@ -15,6 +17,7 @@ export class VerifyOtpDto {
   @MinLength(10)
   @MaxLength(20)
   @Matches(/^[\d\s\-+()]+$/, { message: 'phone must contain only digits, spaces, +, -, ()' })
+  @IsIndianMobile()
   phone!: string;
 
   @IsString()

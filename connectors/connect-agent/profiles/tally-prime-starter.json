@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "id": "tally-prime-starter",
+  "displayName": "TallyPrime XML starter",
+  "sourceSystem": "tally",
+  "notes": "Uses TallyPrime's local XML-over-HTTP export interface. Fixture-tested; preview against the loaded client company before first sync.",
+  "transport": {
+    "kind": "tally_xml",
+    "urlEnv": "TALLY_URL",
+    "companyEnv": "TALLY_COMPANY"
+  },
+  "entities": {
+    "customers": {
+      "objectType": "Ledger",
+      "recordTags": ["LEDGER"],
+      "fields": {
+        "code": ["GUID"],
+        "name": ["NAME", "LEDGERNAME"],
+        "phone": ["LEDGERPHONE", "MOBILE", "PHONENUMBER"],
+        "email": ["EMAIL", "EMAILID"],
+        "gstin": ["PARTYGSTIN", "GSTIN"],
+        "city": ["LEDGERCITY", "CITY"],
+        "_parent": ["PARENT"]
+      },
+      "prefixValues": {
+        "code": "tally:"
+      },
+      "include": [
+        {
+          "field": "_parent",
+          "containsAny": ["sundry debtors"]
+        }
+      ]
+    },
+    "products": {
+      "objectType": "Stock Item",
+      "recordTags": ["STOCKITEM"],
+      "fields": {
+        "sku": ["GUID"],
+        "name": ["NAME", "STOCKITEMNAME"],
+        "category": ["PARENT", "CATEGORY"]
+      },
+      "prefixValues": {
+        "sku": "tally:"
+      }
+    }
+  }
+}

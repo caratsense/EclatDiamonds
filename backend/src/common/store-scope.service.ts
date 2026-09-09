@@ -20,30 +20,46 @@ import { DEFAULT_TZ, resolveTz } from './tz.util';
 export class StoreScopeService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Resolve the full allowed-store set for a freshly-authenticated user. */
-  async resolveScope(userId: string, role: Role): Promise<{ storeIds: string[]; allStores: boolean }> {
+  /**
+   * Resolve the full allowed-store set for a freshly-authenticated user, SCOPED TO
+   * THEIR ORGANISATION. `head_office` (allStores) sees every store OF THEIR ORG —
+   * never all stores globally. `organisationId` comes from the authenticated DB
+   * user; a missing org yields an empty scope (fail-closed), never a global fetch.
+   */
+  async resolveScope(
+    userId: string,
+    role: Role,
+    organisationId: string,
+  ): Promise<{ storeIds: string[]; allStores: boolean }> {
+    // No organisation => no access. Never fall back to a global store fetch.
+    if (!organisationId) return { storeIds: [], allStores: isAllStoreRole(role) };
+
     if (isAllStoreRole(role)) {
       const stores = await this.prisma.store.findMany({
-        where: { isAggregate: false },
+        where: { isAggregate: false, organisationId },
         select: { id: true },
       });
       return { storeIds: stores.map((s) => s.id), allStores: true };
     }
 
+    // Lower roles: only their own UserStore assignments, and only stores that
+    // actually belong to their organisation (defence-in-depth against a stray
+    // cross-org assignment).
     const assignments = await this.prisma.userStore.findMany({
-      where: { userId },
+      where: { userId, store: { organisationId } },
       select: { storeId: true, store: { select: { regionId: true } } },
     });
     const direct = assignments.map((a) => a.storeId);
 
     if (role === 'area_manager') {
-      // Roll up: every store in any region the user is assigned to, plus direct stores.
+      // Roll up: every store in any region the user is assigned to (within the
+      // organisation), plus direct stores.
       const regionIds = [
         ...new Set(assignments.map((a) => a.store.regionId).filter((r): r is string => !!r)),
       ];
       const regionStores = regionIds.length
         ? await this.prisma.store.findMany({
-            where: { regionId: { in: regionIds }, isAggregate: false },
+            where: { regionId: { in: regionIds }, isAggregate: false, organisationId },
             select: { id: true },
           })
         : [];
@@ -64,21 +80,43 @@ export class StoreScopeService {
    * Pass `requestedStoreId` from the X-Store-Id header / ?storeId query so the UI's
    * current-store selector narrows the result for broad roles.
    */
-  storeFilter(user: AuthUser, requestedStoreId?: string): { storeId?: { in: string[] } | string } {
+  storeFilter(user: AuthUser, requestedStoreId?: string): { storeId: { in: string[] } | string } {
     if (requestedStoreId && requestedStoreId !== 'all') {
-      if (!user.allStores && !user.storeIds.includes(requestedStoreId)) {
+      if (!user.storeIds.includes(requestedStoreId)) {
         throw new ForbiddenException('Store not in your scope');
       }
       return { storeId: requestedStoreId };
     }
-    if (user.allStores) return {};
+    // Always bound to the user's stores — for head_office that is every store OF
+    // THEIR ORGANISATION (storeIds is org-resolved in resolveScope), NOT a global
+    // no-op filter. This is the primary organisation-isolation guarantee for
+    // store-scoped models.
     return { storeId: { in: user.storeIds } };
+  }
+
+  /**
+   * A `where` fragment for ORGANISATION-level / nullable-store models (gold &
+   * diamond rates, discount limits/presets, scheme plans, sync state, legacy rows,
+   * audit reads, …). Use this where `storeFilter` cannot (a row with a null storeId
+   * would be excluded by a storeId filter, and must be scoped by organisation).
+   */
+  orgFilter(user: AuthUser): { organisationId: string } {
+    return { organisationId: user.organisationId };
+  }
+
+  /** Gate a write/read to a specific organisation. Throws if it is not the caller's. */
+  assertOrgAllowed(user: AuthUser, organisationId: string | null | undefined): void {
+    if (!organisationId || organisationId !== user.organisationId) {
+      throw new ForbiddenException('Resource not in your organisation');
+    }
   }
 
   /** The concrete list of store ids in play for a request (for aggregates/dashboards). */
   effectiveStoreIds(user: AuthUser, requestedStoreId?: string): string[] {
     if (requestedStoreId && requestedStoreId !== 'all') {
-      if (!user.allStores && !user.storeIds.includes(requestedStoreId)) {
+      // Even head_office must own the store — storeIds is organisation-bounded, so
+      // this rejects any store belonging to another organisation.
+      if (!user.storeIds.includes(requestedStoreId)) {
         throw new ForbiddenException('Store not in your scope');
       }
       return [requestedStoreId];
@@ -112,9 +150,12 @@ export class StoreScopeService {
     return resolveTz(store?.timezone);
   }
 
-  /** Gate a write to a specific store. Throws if out of scope. */
+  /**
+   * Gate a write to a specific store. Throws if out of scope. head_office is NOT
+   * blanket-allowed any more — its `storeIds` is the set of stores in its
+   * organisation, so a store from another organisation is correctly rejected.
+   */
   assertStoreAllowed(user: AuthUser, storeId: string): void {
-    if (user.allStores) return;
     if (!user.storeIds.includes(storeId)) {
       throw new ForbiddenException('Store not in your scope');
     }

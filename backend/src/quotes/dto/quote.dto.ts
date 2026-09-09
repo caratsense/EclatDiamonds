@@ -1,24 +1,31 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayNotEmpty,
   IsArray,
   IsBoolean,
   IsEnum,
   IsInt,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
   Matches,
+  MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
 import { QuoteKind, QuoteStatus } from '@prisma/client';
-import { IsIndianMobile } from '../../common/contact.util';
+import { IsIndianMobile, IsRealName } from '../../common/contact.util';
 
 export class QuoteLineDto {
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  @IsRealName()
   description!: string;
 
   @IsInt()
+  @Min(0)
   karat!: number;
 
   @IsNumber()
@@ -56,17 +63,21 @@ export class QuoteLineDto {
 
 export class CreateQuoteDto {
   @IsString()
+  @IsNotEmpty()
   storeId!: string;
 
-  // A name that is only digits/spaces is a mis-key — require at least one letter.
+  // A name that is only digits/symbols is a mis-key — require at least one letter.
   @IsString()
-  @Matches(/[^\d\s]/, { message: 'customerName must include letters, not just numbers' })
+  @IsNotEmpty()
+  @MaxLength(120)
+  @IsRealName()
   customerName!: string;
 
-  @IsOptional()
+  // Phone is mandatory on quote creation (confirmed rule) and must be a valid
+  // Indian mobile.
   @IsString()
   @IsIndianMobile()
-  phone?: string;
+  phone!: string;
 
   @IsOptional()
   @IsEnum(QuoteStatus)
@@ -112,6 +123,7 @@ export class CreateQuoteDto {
   redeemableStoreIds?: string[];
 
   @IsArray()
+  @ArrayNotEmpty()
   @ValidateNested({ each: true })
   @Type(() => QuoteLineDto)
   lines!: QuoteLineDto[];
@@ -121,6 +133,8 @@ export class CreateQuoteDto {
 export class QuotePhotoDto {
   @IsOptional()
   @IsString()
+  @MaxLength(120)
+  @IsRealName()
   label?: string;
 }
 

@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CaratOS Connect profile",
+  "type": "object",
+  "required": ["schemaVersion", "id", "sourceSystem", "transport", "entities"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,79}$" },
+    "displayName": { "type": "string", "maxLength": 120 },
+    "notes": { "type": "string", "maxLength": 2000 },
+    "sourceSystem": { "enum": ["busy", "tally", "gati", "odbc"] },
+    "discoveryOnly": { "type": "boolean" },
+    "transport": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["odbc", "access_file", "tally_xml"] },
+        "connectionEnv": { "$ref": "#/$defs/envName" },
+        "pathEnv": { "$ref": "#/$defs/envName" },
+        "passwordEnv": { "$ref": "#/$defs/envName" },
+        "urlEnv": { "$ref": "#/$defs/envName" },
+        "companyEnv": { "$ref": "#/$defs/envName" },
+        "driver": { "type": "string", "maxLength": 200 }
+      },
+      "additionalProperties": false
+    },
+    "entities": {
+      "type": "object",
+      "propertyNames": { "enum": ["customers", "products", "stores"] },
+      "additionalProperties": { "$ref": "#/$defs/entity" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "envName": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,79}$" },
+    "candidate": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+      ]
+    },
+    "filter": {
+      "type": "object",
+      "required": ["field"],
+      "properties": {
+        "field": { "type": "string", "minLength": 1 },
+        "containsAny": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "equalsAny": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+      },
+      "oneOf": [
+        { "required": ["containsAny"] },
+        { "required": ["equalsAny"] }
+      ],
+      "additionalProperties": false
+    },
+    "entity": {
+      "type": "object",
+      "required": ["fields", "prefixValues"],
+      "properties": {
+        "query": { "type": "string", "minLength": 1 },
+        "objectType": { "type": "string", "minLength": 1 },
+        "recordTags": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "fields": { "type": "object", "minProperties": 1, "additionalProperties": { "$ref": "#/$defs/candidate" } },
+        "prefixValues": { "type": "object", "minProperties": 1, "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 40 } },
+        "required": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "include": { "type": "array", "items": { "$ref": "#/$defs/filter" } },
+        "allowEmpty": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

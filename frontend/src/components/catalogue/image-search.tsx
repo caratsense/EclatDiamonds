@@ -4,60 +4,75 @@ import { useRef, useState } from "react";
 import { ImagePlus, Loader2, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 
-import { Badge } from "@/components/ui/badge";
+import { SimilarityResults } from "@/components/catalogue/similarity-results";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { ProductCard } from "@/components/catalogue/product-card";
-import { CATEGORY_LABELS, METAL_LABELS, type Product } from "@/lib/mock/catalogue";
-import { useImageSearch, type ImageSearchResult } from "@/lib/queries/products";
+import {
+  SIMILARITY_TOP_N,
+  useSimilaritySearch,
+  type SimilaritySearchResult,
+} from "@/lib/queries/jewelry-similarity";
 import { cn, apiErrorMessage } from "@/lib/utils";
 
-interface ImageSearchProps {
-  onOpenProduct: (product: Product) => void;
-}
+const MAX_BYTES = 8 * 1024 * 1024; // ~8 MB
 
 /**
- * AI image-based search (Module 5). Upload / drop a design image; Claude vision
- * tags it (category / metal / style keywords) and the catalogue is matched
- * rule-based, server-side. Falls back to a rule-based "best matches" view when
- * no AI key is configured.
+ * AI image search on the catalogue. Upload a design photo → the TOP 10 visually
+ * closest catalogue pieces via the DINOv2 + SigLIP 2 pipeline. Same engine, same
+ * result set and same {@link SimilarityResults} presentation as the Find-Similar
+ * page — one experience, never a parallel one. Never fabricates matches.
  */
-export function ImageSearch({ onOpenProduct }: ImageSearchProps) {
+export function ImageSearch() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [lastFile, setLastFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
-  const [result, setResult] = useState<ImageSearchResult | null>(null);
-  const search = useImageSearch();
+  const [result, setResult] = useState<SimilaritySearchResult | null>(null);
+  const search = useSimilaritySearch();
+
+  function run(file: File) {
+    setResult(null);
+    search.mutate(
+      { file, limit: SIMILARITY_TOP_N },
+      {
+        onSuccess: (data) => {
+          setResult(data);
+          if (data.status === "MATCHES_FOUND") {
+            toast.success(
+              `Found ${data.results.length} similar design${data.results.length === 1 ? "" : "s"}`,
+            );
+          }
+        },
+        onError: (err) =>
+          toast.error(apiErrorMessage(err, "Image search failed — try another image.")),
+      },
+    );
+  }
 
   function onFiles(files: FileList | null) {
     const f = files?.[0];
     if (!f) return;
-    // Guard drops of non-image files (drag-drop bypasses the accept filter).
     if (!f.type.startsWith("image/")) {
       toast.error("That's not an image — drop a JPG or PNG design photo.");
       return;
     }
+    if (f.size > MAX_BYTES) {
+      toast.error("Image is too large — keep it under 8 MB.");
+      return;
+    }
     setFileName(f.name);
-    // Show the uploaded image so the user can confirm what they're searching with.
+    setLastFile(f);
     setPreviewUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev);
       return URL.createObjectURL(f);
     });
-    search.mutate(f, {
-      onSuccess: (data) => {
-        setResult(data);
-        toast.success(
-          data.aiUsed ? "Found similar designs" : "Showing closest catalogue matches",
-          { description: `${data.results.length} matches for "${f.name}"` },
-        );
-      },
-      onError: (err) => toast.error(apiErrorMessage(err, "Image search failed — try another image.")),
-    });
+    run(f);
   }
 
   function reset() {
     setFileName(null);
+    setLastFile(null);
     setPreviewUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev);
       return null;
@@ -66,8 +81,6 @@ export function ImageSearch({ onOpenProduct }: ImageSearchProps) {
     if (inputRef.current) inputRef.current.value = "";
   }
 
-  const detected = result?.detected;
-
   return (
     <Card className="border-primary/30 bg-primary/[0.03]">
       <CardContent className="space-y-4 p-4">
@@ -75,7 +88,7 @@ export function ImageSearch({ onOpenProduct }: ImageSearchProps) {
           <Sparkles className="h-4 w-4 text-primary" />
           <h2 className="text-sm font-semibold">AI image search</h2>
           <span className="text-xs text-muted-foreground">
-            Upload a design photo or sketch to find similar pieces
+            Upload a design photo or sketch to find the closest catalogue pieces
           </span>
         </div>
 
@@ -118,7 +131,7 @@ export function ImageSearch({ onOpenProduct }: ImageSearchProps) {
           )}
           <p className="text-sm font-medium">
             {search.isPending
-              ? "Analysing image…"
+              ? "Searching the catalogue…"
               : fileName ?? "Drop an image here or click to upload"}
           </p>
           <p className="text-xs text-muted-foreground">
@@ -135,47 +148,15 @@ export function ImageSearch({ onOpenProduct }: ImageSearchProps) {
 
         {result ? (
           <div className="space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <p className="text-xs font-medium text-muted-foreground">
-                  {result.aiUsed ? "Similar designs in the catalogue" : "Closest matches"}
-                </p>
-                {detected ? (
-                  <>
-                    <Badge variant="secondary" className="text-[11px]">
-                      {CATEGORY_LABELS[detected.category as Product["category"]] ?? detected.category}
-                    </Badge>
-                    <Badge variant="secondary" className="text-[11px]">
-                      {METAL_LABELS[detected.metal as Product["metal"]] ?? detected.metal}
-                    </Badge>
-                    {detected.keywords.slice(0, 4).map((k) => (
-                      <Badge key={k} variant="outline" className="text-[11px]">
-                        {k}
-                      </Badge>
-                    ))}
-                  </>
-                ) : null}
-              </div>
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-medium text-muted-foreground">
+                Closest matches (best first)
+              </p>
               <Button variant="ghost" size="sm" onClick={reset}>
                 <X className="h-4 w-4" /> Clear
               </Button>
             </div>
-            {result.results.length === 0 ? (
-              <p className="rounded-lg border border-dashed py-6 text-center text-xs text-muted-foreground">
-                No catalogue matches for this image.
-              </p>
-            ) : (
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                {result.results.map((p) => (
-                  <ProductCard
-                    key={p.id}
-                    product={p}
-                    similarity={p.similarity}
-                    onOpen={onOpenProduct}
-                  />
-                ))}
-              </div>
-            )}
+            <SimilarityResults result={result} onRetry={() => lastFile && run(lastFile)} />
           </div>
         ) : null}
       </CardContent>

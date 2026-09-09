@@ -60,7 +60,7 @@ import {
   type TicketCategory,
   type TicketPriority,
 } from "@/lib/mock/ticketing";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, isRealName } from "@/lib/utils";
 
 export default function TicketingPage() {
   const { data, isLoading, isError, refetch } = useTickets();
@@ -282,9 +282,13 @@ function NewTicketDialog({
   const routedTo = resolverFor(resolvedCategory);
 
   function save() {
-    if (!subject.trim()) {
-      setErrors({ subject: "Subject is required." });
-      toast.error("Subject is required.");
+    const next: Record<string, string> = {};
+    if (!subject.trim()) next.subject = "Subject is required.";
+    else if (!isRealName(subject))
+      next.subject = "Enter a real subject (letters, not just a number).";
+    if (Object.keys(next).length > 0) {
+      setErrors(next);
+      toast.error("Please fix the highlighted field.");
       return;
     }
     setErrors({});

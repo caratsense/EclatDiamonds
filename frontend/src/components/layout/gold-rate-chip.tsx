@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Coins } from "lucide-react";
 
 import { useMetalRates } from "@/lib/queries/integrations";
+import { useRouteEnabled } from "@/lib/queries/tenant-config";
 import { formatINR } from "@/lib/format";
 import { ROLE_RANK } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -15,14 +16,23 @@ import { useSession } from "@/store/use-session";
  * without going to look for it. `useMetalRates` polls, so it tracks the auto
  * feed (or a manual override) on its own. Managers tap through to set/override
  * it; everyone else sees it read-only. Renders nothing until a rate exists.
+ *
+ * ONLY for a tenant whose product actually has a metal rate. The top bar is
+ * outside the navigation, so nothing here was ever filtered by industry: a
+ * pharmacy got a gold-coin chip reading "₹X /g 22K" on every screen, and for a
+ * manager it was a one-click link into /settings/rates — a screen the pack
+ * layer means to hide. The rate is real, too: the refresh job runs for every
+ * organisation that has a store, so there was always a number to display.
+ * Gating on the route keeps the chip and the screen it opens in agreement.
  */
 export function GoldRateChip() {
   const role = useSession((s) => s.role);
   const canEdit = ROLE_RANK[role] >= ROLE_RANK.store_manager;
+  const showsRates = useRouteEnabled("settings/rates");
   const { rateFor, isLoading } = useMetalRates();
 
   const rate = rateFor(22);
-  if (isLoading || !rate) return null;
+  if (!showsRates || isLoading || !rate) return null;
 
   const content = (
     <span

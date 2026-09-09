@@ -7,10 +7,13 @@ import type { MetadataRoute } from "next";
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "CaratSense — Éclat Diamonds",
+    // One manifest is served to every tenant, so it names the product. A
+    // pharmacy installing this on its counter tablet was getting a home-screen
+    // icon labelled after a jeweller.
+    name: "CaratSense",
     short_name: "CaratSense",
     description:
-      "Unified operations platform for Éclat Diamonds stores — sales, inventory, finance, HR and customers, in one place.",
+      "Unified operations platform for multi-branch businesses — customers, catalogue, attendance, finance and team, in one place.",
     start_url: "/",
     scope: "/",
     display: "standalone",

@@ -44,6 +44,11 @@ function toRow(r: any) {
   return {
     id: r.id,
     createdAt: r.createdAt.toISOString(),
+    // Three kinds of actor, not two. `systemActorId` means the software acted on
+    // its own — an inbound webhook, a public form — and reporting that as a
+    // `user` with no id would read as a corrupt human entry.
+    actorType: r.machineActorId ? 'connect_agent' : r.systemActorId ? 'system' : 'user',
+    actorId: r.machineActorId ?? r.systemActorId ?? r.actorId,
     actorName: r.actorName,
     actorRole: r.actorRole,
     action: r.action,
@@ -63,17 +68,30 @@ export class AuditReadService {
   ) {}
 
   /**
-   * GET /audit — filtered, paginated, store-scoped audit trail (newest first).
-   * Store-scoping applies to `storeId`; rows with a null storeId (e.g. role
-   * changes) fall out of any `storeId in [...]` filter, so only head_office
-   * (unfiltered scope) sees them.
+   * GET /audit — filtered, paginated, org- and store-scoped trail (newest first).
+   *
+   * Scope = the caller's stores, PLUS (for head office only) their organisation's
+   * org-level (null-store) events (role changes, user create/approve). The
+   * top-level `organisationId` predicate guarantees another tenant's audit —
+   * store-scoped OR null-store — can NEVER surface. The previous version filtered
+   * on `storeId in [...]` only, which silently dropped every null-store row so even
+   * head office could not review them; org-level events are restored for HO here
+   * without widening what a store manager sees beyond their own store(s).
    */
   async list(user: AuthUser, q: AuditQuery, headerStore?: string) {
+    // An in-page store dropdown (q.storeId) takes precedence over the global
+    // switcher; storeFilter validates it against the caller's scope either way,
+    // so a store manager can never widen past their own store(s).
+    const storeScope = this.scope.storeFilter(user, q.storeId ?? headerStore);
+    // Only head office (allStores) sees org-level (null-store) events; a scoped
+    // manager stays bounded to their own store rows — no new visibility for them.
+    const orBranches: Prisma.AuditLogWhereInput[] = [storeScope];
+    if (user.allStores) orBranches.push({ storeId: null });
     const where: Prisma.AuditLogWhereInput = {
-      // An in-page store dropdown (q.storeId) takes precedence over the global
-      // switcher; storeFilter validates it against the caller's scope either way,
-      // so a store manager can never widen past their own store(s).
-      ...this.scope.storeFilter(user, q.storeId ?? headerStore),
+      // Org bound is the isolation guarantee; it AND-s with the store OR below so
+      // null-store rows are only ever the caller's own org's.
+      organisationId: user.organisationId,
+      OR: orBranches,
     };
     if (q.entityType) where.entityType = q.entityType;
     if (q.entityId) where.entityId = q.entityId;

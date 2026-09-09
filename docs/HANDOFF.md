@@ -1,8 +1,222 @@
 # Eclat / CaratSense — Session Handoff (START HERE)
 
+> **Current-state correction — 2026-09-07:** The June narrative below is historical. Eclat has pivoted to multi-tenant **CaratOS**: Organisation tenancy, CRM spine/inbox, imports, integrations, qualification, attribution, job queue and expanded product UI are present as uncommitted work. Read `CARATOS_ARCHITECTURE.md`, `OPERATIONS.md`, root `CARATOS_STEP1_AUDIT.md` and `CARATOS_STEP2_REPORT.md` before relying on the older status.
+>
+> **Latest enhancement:** competitor CRM inputs were reviewed in `COMPETITOR-CRM-ENHANCEMENT-REVIEW.md`. Ad-set routing and per-rule AI/human control are implemented **and now connected to inbound CTWA traffic** (see the 2026-09-07 section below). Live Meta credentials, app review and real-payload verification remain outstanding.
+> The complete new-feature and external-connection checklist is in `NEW-FEATURES-AND-INTEGRATION-SETUP.md`.
+>
 > **New machine / new Claude session? Read this file first, then `CLAUDE.md`.**
 > This captures the full project state so work can continue exactly where it stopped.
-> Last updated: 2026-06-24.
+> **Last updated: 2026-09-09.**
+
+## 2026-09-09 — CURRENT STATE (read this first)
+
+Phase 6 closed the remaining integration honesty gaps (INT-01 to INT-11) and built the
+nine connection-administration screens. Still uncommitted; HEAD is still `9589ac5`.
+
+Start here:
+
+- `docs/INTEGRATION-OPERATIONS-RUNBOOK.md` — how to run the connected accounts:
+  environment, connecting a tenant, credential rotation, dead-job alerting, restore, and
+  an intern workbook. It marks what is externally blocked rather than implying a
+  rehearsal happened.
+- `docs/work-requests/CLAUDE-MULTI-MARKET-PHASE-6-PROMPT.txt` — the shared-file record
+  (SF-01 to SF-12): every schema, registry, scheduler and enum change, why it was made
+  and which migration carries it.
+- `docs/screenshots/phase-6/` — browser verification of the nine new screens at desktop
+  and phone widths, for both a jewellery tenant and a generic (healthcare) one, plus the
+  head-office-only denial. Untracked; delete or commit as you prefer.
+
+Five additive migrations were added (20260909150000 to 20260909190000). They have been
+applied from zero and to a populated clone; `backend/scripts/backfill-ad-spend.mjs`
+moves the historical LegacyRow advertising spend into the new typed models and is
+idempotent.
+
+What still cannot be verified here: anything requiring a reviewed Meta app. See the
+runbook's final section.
+
+## 2026-09-07 — CURRENT STATE (read this first; everything below it is older)
+
+**The product is now CaratOS**, a multi-tenant platform. Eclat is Organisation #1 and
+the reference implementation, and must keep working at every step. The sections further
+down this file predate that pivot — in particular, **"Frontend — BUILT (2026-06-17)"
+below is out of date where it says the frontend is mock-only**: it has been wired to the
+real API since July. Treat anything below this block as history.
+
+### Worktree
+The CaratOS implementation is **uncommitted** — the last commit is `9589ac5` (2026-08-19).
+Roughly 250 changed/untracked files carry user-owned work. Do not reset, revert or clean.
+
+### Today's change (P0-A: CTWA ad routing)
+The ad-set routing engine existed but was **unreachable** — nothing supplied a routing
+context to `ingestInbound`, so no rule could fire. Meta's CTWA `referral` was already
+stored verbatim in `WhatsAppEvent.payload` and never read.
+
+Now connected: `integration/contracts/ad-referral.ts` (neutral contract) →
+`integrations/meta-referral.ts` (Meta adapter) → `whatsapp-bot.service.ts` →
+`conversations.service.ts` → rule match → store/handling → Lead (only with a real store)
+→ `measured` AttributionTouch. Migration `20260907120000_crm_ad_referral_routing`
+(additive, rehearsed zero-to-current).
+
+**Tested with a sanitized fixture of the documented CTWA shape — NOT with live Meta
+traffic.** A real ad, app review and a live webhook are still required.
+
+### CRM Phase 2C — provider-backed AI drafting (2026-09-07, latest session)
+The `AI_RESPONDER` seam now has a real adapter behind it (Anthropic or an
+OpenAI-compatible endpoint, chosen by `CRM_AI_PROVIDER`/`CRM_AI_MODEL`/
+`CRM_AI_API_KEY`; absent credentials leave it unconfigured and everything hands
+off to people, exactly as before).
+
+What the gate now does, in order: refuse for `human`/`unassigned`; refuse if the
+tenant has not switched drafting on; refuse if no provider; **screen** the
+message for complaints, opt-outs and legal mentions BEFORE any provider call;
+**retrieve** from the tenant's knowledge and refuse to draft if nothing matched;
+then call the provider, and discard anything under 0.55 confidence or flagged
+`needsHuman`. Every refusal sets `handling='human'` with a reason.
+
+A successful draft writes a `Message(status='draft')` and an `AiDraftRecord` in
+ONE transaction: provider, model, confidence, latency, policy version and the
+knowledge document IDs. Approve/edit/reject live at `/crm/ai/drafts/:id/...`,
+are `@HumansOnly()`, and approving moves the message to **queued** — never
+`sent`. Rejecting sets **rejected**, deliberately not `failed`.
+
+**Two defects found while building it:**
+1. `KnowledgeService.search` substring-matches the WHOLE query, so a natural
+   question ("what are your opening hours") retrieved nothing and the assistant
+   would have handed off on essentially every message. The CRM side now searches
+   by content word. See REQ-005 — the real fix is ranked retrieval in
+   KnowledgeService.
+2. A bare `stop` opt-out rule fired on "Where is the nearest bus stop?".
+   Narrowed to a whole-message STOP or "stop messaging/texting/calling".
+
+**Contract change to be aware of:** the gate will not call a provider with no
+supporting material. Two Phase 1 tests asserted the old behaviour and were
+updated to seed a knowledge document — the assertions themselves are unchanged.
+
+### CRM Phase 2B — queues, assignment, routing conflicts (2026-09-07, latest session)
+The queue tabs existed but nothing could act on what they showed: there was no way to
+reassign a conversation from the UI and no way to decide a routing conflict. Both exist
+now, and four defects were found and fixed on the way:
+
+1. **`PATCH /crm/conversations/:id` could set `assignedUserId`** with no store-membership
+   check and no role gate, which made the new rank on `/assign` decorative. The field is
+   gone from the DTO; ownership has exactly one door.
+2. **Conflict resolution had a read-then-check race.** Two managers deciding in the same
+   second both passed. It is now `UPDATE … WHERE resolution IS NULL`, with the claim
+   released if the assignment is then refused.
+3. **`accepted_proposed` cleared the location** when the proposing rule had no store,
+   evicting a routed thread into the head-office-only central queue.
+4. **`load()` had no `include`**, so the conversation detail header showed "Unknown
+   sender" for every thread — and routing audit rows carried no store, making routing
+   history invisible to the store manager it concerned.
+
+New: `GET /crm/conversations/queues` (server-side counts), `GET
+/crm/conversations/routing-conflicts?state=open|resolved|all&conversationId=` (names
+resolved, history kept), `AssignConversationDialog`, `RoutingConflictPanel`. Queue and
+thread selection now live in the URL.
+
+**Verified:** the CRM regression (phase1, phase1b, phase2b, ctwa, requalification,
+adset-rules, auth-rate-limit) **81/81, 7/7 suites** on a database migrated from zero,
+with the unmodified `test/jest-e2e.json` and no `--forceExit`; `whatsapp-bot` 11/11
+against the seeded `eclat_preview`; backend `tsc` 0 errors and `nest build` exit 0;
+frontend `tsc`/eslint/`next build` all clean; plus every flow driven in a real Chrome
+over CDP (queue badges matching the API, `?queue=`/`?thread=` deep links, an assignment
+that moved the header from "North Branch · Nadia Rep" to "South Branch · South Manager",
+and a conflict resolution that dropped the review badge 1 -> 0).
+
+**Environment gotchas hit this session, both worth knowing:**
+- A `prisma generate` that fails on the Windows DLL lock leaves a client that reports
+  *"the URL must start with the protocol `prisma://`"* — which reads like an Accelerate
+  misconfiguration and is not. The DLL was held by an ORPHANED jest process (no CPU, no
+  listening port, hours old); killing that one process and re-running `prisma generate`
+  fixed it. Identify the holder before killing anything:
+  `Get-Process node | ? { $_.Modules.FileName -contains $dll }`.
+- Next 16 blocks cross-origin `/_next/` dev assets, so opening the dev server on
+  `127.0.0.1` instead of `localhost` serves the SSR shell and never hydrates — the page
+  looks blank with no console error. Use `localhost`, or set `allowedDevOrigins`.
+
+**Known limit:** `whatsapp-bot` depends on the seeded `org_eclat` users, so it cannot run
+on a fresh zero-to-current database while `prisma/seed.mjs` stays stale (it sets
+`organisationId` zero times against a NOT NULL column on 47 models). `eclat_dev` is also
+behind on migrations — the app will not boot against it until `prisma migrate deploy`
+is run there.
+
+### CRM Phase 1 hardening (2026-09-07, later session)
+Five verified defects in the CTWA path were fixed, each with a test that was proven
+to fail against the old code:
+- **Lead reuse ignored the routed store** — a Hyderabad ad could attach to an open
+  Mumbai lead. Now scoped to `organisationId + partyId + storeId + open`.
+- **Ad clicks produced anonymous leads with no phone** — now resolve/create a
+  tenant-scoped Party + ContactPoint (`IdentityService.resolveInbound`, P2002-safe
+  against webhook retries). Non-ad traffic still stays anonymous by design.
+- **A later ad silently moved an active thread** to another branch. First routing
+  now wins; conflicts set `Conversation.routingReviewRequired` and log an activity event.
+- **Attribution could double-count** — `AttributionTouch.dedupeKey` + unique index
+  on `(organisationId, dedupeKey)`.
+- **"AI vs human" was an unread string** — `ConversationAiGate` + provider-neutral
+  `AiResponder` (`AI_RESPONDER` token) now enforce it. Tenant switch
+  `crmAiAutoReplyEnabled` is **off by default**; AI replies are stored as drafts and
+  **nothing is ever delivered**.
+
+Migration `20260907140000_crm_attribution_dedupe_routing_review` (additive, rehearsed).
+
+**Still not built:** conversational AI provider adapter (interface + fake only),
+Meta Lead Ads ingestion, requalification-after-inbound, ROAS reporting.
+
+### CRM Phase 1 residual + Phase 2A (2026-09-07, later session)
+
+Fixed, each with a test proven to fail against the old code:
+- **1A** automatic routing no longer seizes a MANUALLY assigned thread (the old
+  test was `!matchedRuleId`; a hand-assigned thread has no rule).
+- **1B** `ConversationRoutingConflict` table + resolve action (keep / accept /
+  manual). The review flag can now be cleared; history is retained.
+- **1C** `Lead.originKey` + unique `(organisationId, originKey)` — concurrent
+  deliveries of one click can no longer create two leads.
+- **1D** message creation catches P2002 and returns the winner, so a racing
+  redelivery creates no second lead, touch, party or AI draft.
+- **1E** `POST /crm/conversations/:id/assign` — store, owner and handling move
+  atomically, and an assignee must actually work at the destination store.
+- **1F** the central storeless queue is **head office only** (fail closed —
+  `User` has no region link). Applied in `list()` AND `load()`.
+- **1G** three separate AI switches, all default off, merged into settings
+  without clobbering. `GET/POST /crm/qualification/ai-settings`.
+- **1H** conversations page lint fixed by deriving state from the URL (keyed
+  remount) instead of syncing it in an effect.
+
+**2A** requalification: `RequalificationService` registers a `crm.requalify`
+job, debounced per conversation via the queue's `idempotencyKey`. Never on a
+replay; off unless `crmAiQualificationEnabled`.
+
+**Test database (Part 3):** `npm run test:db:setup` / `test:e2e:isolated`.
+`scripts/test-db.mjs` refuses to create or drop anything not ending in `_test`
+or `_rehearsal`, with `eclat_dev`/`eclat_preview`/`postgres` on a never-touch
+list. **Blocked:** `prisma/seed.mjs` predates multi-tenancy (sets
+`organisationId` zero times) so legacy seeded suites cannot run on a fresh
+database. CRM suites build their own tenants and pass there — 51/51, no
+`--forceExit`.
+
+**Not built:** conversational AI provider adapter (interface + fake only), Meta
+Lead Ads ingestion, ROAS reporting, routing-review UI, draft-approval UI.
+
+### The blockers that gate go-live (from the Phase C verification, 2026-09-03)
+1. The on-site sync agent still logs in as a **head_office user** (`sync@caratsense.in`),
+   so a password in a `.bat` file on a shop PC reaches `/sync/reset` and `/sync/purge-demo`.
+   The ConnectAgent machine-credential path is built and tested but **not adopted**.
+2. **No verified database backup** — nothing in the repo, no restore ever drilled.
+3. Committed bcrypt hashes for the two most privileged accounts, seeded into every fresh DB.
+4. Cross-tenant media key collisions: the sync agent writes flat `catalogue/{legacyId}`
+   keys outside the tenant namespace.
+5. R2 read+write bucket credentials sit on every client PC.
+6. `caratos_org_not_null` does 47 `SET NOT NULL` + 47 FK rebuilds under `ACCESS EXCLUSIVE`
+   while the API serves traffic — the most dangerous item in the deploy queue.
+
+RLS: 70 policies exist and are **deliberately disabled** (per-request tenant context is
+not wired; enabling would take the app down, not leak). Do not enable.
+
+### Local databases
+`eclat_preview` is the test database — run suites with an explicit `DATABASE_URL`
+override. `.env` still points at the stale `eclat_dev`. Rehearse migrations on a
+disposable database (`eclat_rehearsal_*`), never against production.
 
 ## 2026-06-24 — Spec audit + "Assay" design system + Éclat Diamonds brand
 - **Audit** of the codebase vs the build spec written to `docs/AUDIT.md` (evidence-based; verdict: demo-workable, production-workable for in-store web ops; blockers = scheduler/email/quote→order/mobile-app). Stack confirmed: NestJS+Prisma+Postgres backend, Next.js 16 web (no mobile app), RBAC globally enforced, frontend renders live API (mock = types only).
@@ -157,3 +371,50 @@ Both remaining engineering pieces (Phase 4 integrations + `/sync` route) are DON
 Also still open: whether to **adopt Twenty CRM** as the customer/sales core (M1 + parts of 2,3,8,15,17) vs. build custom — and the **AGPL-3.0** license question if adopted. (User was mid-decision; build on its apps framework = AGPL-safe.)
 
 **To resume:** read this file + `CLAUDE.md` + `docs/MODULES.md` + `docs/DECISIONS.md` + `docs/DATA_PIPELINE.md`, then continue with step 1 (the `/sync/*` route), or ask which fork.
+
+## MULTI-MARKET PHASE 2 — ENFORCEMENT (2026-09-08)
+
+The industry layer stopped being cosmetic. Phase 1 made the product *look* right
+per industry; this made it *be* right.
+
+**Where the policy lives now**
+
+- `backend/src/config/entitlements.ts` — request path → capability (a navigation
+  slug), allow-by-default, longest-prefix match. One screen of code; the whole
+  module policy is readable in it.
+- `backend/src/common/entitlement.guard.ts` — registered in `app.module.ts`
+  beside `RolesGuard`. Skips machine principals (the Connect agent contract is
+  not ours to redecide) and `@Public()` routes.
+- `frontend/src/components/layout/module-gate.tsx` — mounted once in the (app)
+  layout. Not the security boundary; it exists so a clinic that types `/finance`
+  sees an explanation instead of a rendered page whose every panel 403s.
+
+**Things that will surprise you**
+
+- `checkins` moved into `CORE_NAVIGATION`. Every pack already seeded a
+  `checkin_purpose` vocabulary with its own visit labels, which only makes sense
+  if the screen is reachable.
+- `Organisation.settings.packManaged` is an ownership record, not configuration.
+  It stores the exact strings the last pack apply wrote, so a later apply can
+  tell "untouched" from "the tenant renamed it". Delete it and industry
+  switching silently stops converging. It exists only because `Pipeline` /
+  `PipelineStage` have no `packCode` column — see MM2-03.
+- `updateOrgSettings` (`backend/src/config/org-settings.ts`) is now the ONLY
+  supported way to change `Organisation.settings`. It takes a row lock. Writing
+  that column with a plain read-spread-update reintroduces a lost update that
+  reports success on both requests.
+- Signup no longer writes `settings.featureProfile.enabledNavigation`,
+  `crmAiIndustryContext` or `crmQualificationFields`. Navigation is derived from
+  the pack on every read; the other two had no readers at all.
+
+**Verification entry points**
+
+    cd backend && TEST_PATTERN='multi-market-phase2|industry-onboarding|tenant-config' node scripts/run-e2e.mjs
+
+`industry-onboarding.e2e-spec.ts` needs no database — it is pure unit coverage of
+the packs, the lexicon and the entitlement map, and it runs in ~12s.
+
+**Known blocked (see MM2-01..06 in docs/work-requests/CLAUDE-MULTI-MARKET-PHASE-2-PROMPT.txt)**
+Staff login handles are still minted at `eclatdiamonds.in` for every tenant; the
+public landing page is still Eclat marketing; `PipelinesService.ensureDefault`
+can still pre-empt a pack's funnel if it runs first.

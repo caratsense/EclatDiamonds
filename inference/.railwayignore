@@ -1,0 +1,8 @@
+# The model weights (~2GB) download on the container at boot — never upload them.
+models/
+.hf_cache/
+venv/
+.venv/
+__pycache__/
+*.pyc
+test_service.py

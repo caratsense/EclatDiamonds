@@ -30,6 +30,7 @@ import {
   useStoreScope,
 } from "@/components/common/store-scope-field";
 import { getNavItem } from "@/lib/navigation";
+import { ROLE_RANK } from "@/lib/types";
 import { useStaff } from "@/lib/queries/users";
 import type { LeaveRequest, LeaveStatus } from "@/lib/mock/hrms";
 import { AttendanceTab } from "@/components/hrms/attendance-tab";
@@ -68,6 +69,13 @@ export default function HrmsPage() {
   // Head office is view-only for attendance: no personal punch card, no
   // marking attendance for others — it only observes store-wise data.
   const isHeadOffice = role === "head_office";
+  // Role split (rank-monotonic; area_manager collapses to the store_manager
+  // tier). A salesperson gets an attendance-ONLY view — self punch + own
+  // history + a leave request; every manager/observer tab is store_manager+.
+  const isManager = ROLE_RANK[role] >= ROLE_RANK.store_manager;
+  // Only the store tier marks attendance FOR others (backend: @Roles
+  // store_manager+; HO stays deliberately observe-only).
+  const canMarkOthers = isManager && !isHeadOffice;
 
   // Live, already store/role-scoped server-side (keyed on the active store).
   const attendanceQuery = useAttendance();
@@ -110,8 +118,8 @@ export default function HrmsPage() {
       <SectionHeader
         title={nav?.title ?? "HRMS & Attendance"}
         purpose={nav?.purpose ?? ""}
-        primaryAction={isHeadOffice ? undefined : nav?.primaryAction}
-        onPrimaryAction={isHeadOffice ? undefined : () => setMarkOpen(true)}
+        primaryAction={canMarkOthers ? nav?.primaryAction : undefined}
+        onPrimaryAction={canMarkOthers ? () => setMarkOpen(true) : undefined}
       />
 
       {isHeadOffice ? null : (
@@ -120,70 +128,94 @@ export default function HrmsPage() {
         </div>
       )}
 
-      <Tabs defaultValue="attendance" className="space-y-4">
+      <Tabs
+        defaultValue={isManager ? "attendance" : "roster"}
+        className="space-y-4"
+      >
         <TabsList className="flex h-auto flex-wrap">
-          <TabsTrigger value="attendance">Attendance</TabsTrigger>
-          <TabsTrigger value="schedule">Shifts &amp; Schedule</TabsTrigger>
-          <TabsTrigger value="flags">Late Flags</TabsTrigger>
-          <TabsTrigger value="roster">Roster &amp; Leave</TabsTrigger>
+          {/* Store-wide attendance, shift/holiday setup and late-flag roll-ups
+              are manager/observer tools — hidden from a salesperson, whose view
+              is self punch + own history + leave. */}
+          {isManager ? (
+            <>
+              <TabsTrigger value="attendance">Attendance</TabsTrigger>
+              <TabsTrigger value="schedule">Shifts &amp; Schedule</TabsTrigger>
+              <TabsTrigger value="flags">Late Flags</TabsTrigger>
+            </>
+          ) : null}
+          <TabsTrigger value="roster">
+            {isManager ? "Roster & Leave" : "Leave"}
+          </TabsTrigger>
           <TabsTrigger value="reports">Reports</TabsTrigger>
           <TabsTrigger value="regularize">Fix attendance</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="attendance">
-          {attLoading ? (
-            <TabSkeleton />
-          ) : attendanceQuery.isError ? (
-            <TabError what="today's attendance" onRetry={() => attendanceQuery.refetch()} />
-          ) : (
-            <AttendanceTab records={attendance} fence={fence} />
-          )}
-        </TabsContent>
-        <TabsContent value="schedule">
-          {scheduleLoading ? (
-            <TabSkeleton />
-          ) : scheduleError ? (
-            <TabError
-              what="shifts & schedule"
-              onRetry={() => {
-                shiftsQuery.refetch();
-                holidaysQuery.refetch();
-              }}
-            />
-          ) : (
-            <ShiftsScheduleTab shifts={shifts} holidays={holidays} />
-          )}
-        </TabsContent>
-        <TabsContent value="flags">
-          {flagsLoading ? (
-            <TabSkeleton />
-          ) : lateFlagsQuery.isError ? (
-            <TabError
-              what="late flags"
-              onRetry={() => lateFlagsQuery.refetch()}
-            />
-          ) : (
-            <LateFlagsTab rows={lateFlags} month={month} />
-          )}
-        </TabsContent>
+        {isManager ? (
+          <>
+            <TabsContent value="attendance">
+              {attLoading ? (
+                <TabSkeleton />
+              ) : attendanceQuery.isError ? (
+                <TabError
+                  what="today's attendance"
+                  onRetry={() => attendanceQuery.refetch()}
+                />
+              ) : (
+                <AttendanceTab records={attendance} fence={fence} />
+              )}
+            </TabsContent>
+            <TabsContent value="schedule">
+              {scheduleLoading ? (
+                <TabSkeleton />
+              ) : scheduleError ? (
+                <TabError
+                  what="shifts & schedule"
+                  onRetry={() => {
+                    shiftsQuery.refetch();
+                    holidaysQuery.refetch();
+                  }}
+                />
+              ) : (
+                <ShiftsScheduleTab shifts={shifts} holidays={holidays} />
+              )}
+            </TabsContent>
+            <TabsContent value="flags">
+              {flagsLoading ? (
+                <TabSkeleton />
+              ) : lateFlagsQuery.isError ? (
+                <TabError
+                  what="late flags"
+                  onRetry={() => lateFlagsQuery.refetch()}
+                />
+              ) : (
+                <LateFlagsTab rows={lateFlags} month={month} />
+              )}
+            </TabsContent>
+          </>
+        ) : null}
+
         <TabsContent value="roster">
           <div className="space-y-4">
+            {/* Self-service balances + "Apply for leave" — every role. The
+                approval list below is the manager control (store-scoped). */}
             <LeaveBalances />
-            {leaveLoading ? (
-              <TabSkeleton />
-            ) : leaveQuery.isError ? (
-              <TabError
-                what="leave requests"
-                onRetry={() => leaveQuery.refetch()}
-              />
-            ) : (
-              <RosterTab
-                shifts={shifts}
-                leave={leave}
-                onDecide={handleDecide}
-                deciding={decideLeave.isPending}
-              />
-            )}
+            {isManager ? (
+              leaveLoading ? (
+                <TabSkeleton />
+              ) : leaveQuery.isError ? (
+                <TabError
+                  what="leave requests"
+                  onRetry={() => leaveQuery.refetch()}
+                />
+              ) : (
+                <RosterTab
+                  shifts={shifts}
+                  leave={leave}
+                  onDecide={handleDecide}
+                  deciding={decideLeave.isPending}
+                />
+              )
+            ) : null}
           </div>
         </TabsContent>
         <TabsContent value="reports">
@@ -214,6 +246,12 @@ function MarkAttendanceDialog({
   const [status, setStatus] = useState<AttendanceStatus>("present");
   const [checkInTime, setCheckInTime] = useState("");
   const [shiftId, setShiftId] = useState<string>("");
+  // Inline validation errors, keyed by field. Cleared per-field on change.
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  function clearError(field: string) {
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
+  }
 
   // The roster for the target store. Attendance must be attributed to a REAL
   // staff record: a typed-in name produced a throwaway id that no report or
@@ -225,8 +263,11 @@ function MarkAttendanceDialog({
       toast.error("Select a store first.");
       return;
     }
-    if (!staffId) {
-      toast.error("Choose the staff member.");
+    const next: Record<string, string> = {};
+    if (!staffId) next.staffId = "Choose the staff member.";
+    if (Object.keys(next).length > 0) {
+      setErrors(next);
+      toast.error("Please fill in the required fields.");
       return;
     }
 
@@ -256,6 +297,7 @@ function MarkAttendanceDialog({
           setStatus("present");
           setCheckInTime("");
           setShiftId("");
+          setErrors({});
           onOpenChange(false);
         },
         onError: (err: unknown) =>
@@ -277,9 +319,17 @@ function MarkAttendanceDialog({
           <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
 
           <div className="grid gap-1.5">
-            <Label htmlFor="staff-pick">Staff member</Label>
-            <Select value={staffId} onValueChange={setStaffId}>
-              <SelectTrigger id="staff-pick">
+            <Label htmlFor="staff-pick">
+              Staff member <span className="text-destructive">*</span>
+            </Label>
+            <Select
+              value={staffId}
+              onValueChange={(v) => {
+                setStaffId(v);
+                clearError("staffId");
+              }}
+            >
+              <SelectTrigger id="staff-pick" aria-invalid={!!errors.staffId}>
                 <SelectValue
                   placeholder={
                     staff.length ? "Select staff" : "No staff assigned to this store"
@@ -294,6 +344,9 @@ function MarkAttendanceDialog({
                 ))}
               </SelectContent>
             </Select>
+            {errors.staffId ? (
+              <p className="mt-1 text-xs text-destructive">{errors.staffId}</p>
+            ) : null}
             <p className="text-xs text-muted-foreground">
               Attendance is attributed to a real staff record, so it reconciles
               with reports and payroll.

@@ -289,6 +289,7 @@ export class TimelinesService {
 
     const order = await this.prisma.customOrder.create({
       data: {
+        organisationId: user.organisationId,
         ref: await this.mintRef('CO', dto.storeId),
         storeId: dto.storeId,
         customerName: dto.customer,
@@ -339,6 +340,7 @@ export class TimelinesService {
 
     const order = await this.prisma.customOrder.create({
       data: {
+        organisationId: user.organisationId,
         ref: await this.mintRef(prefix, dto.storeId),
         storeId: dto.storeId,
         customerName: dto.customerName,
@@ -414,7 +416,7 @@ export class TimelinesService {
     file?: { buffer?: Buffer; originalname?: string; mimetype?: string },
   ) {
     const o = await this.assertImageTarget(user, id, file);
-    const imageUrl = await this.storage.save('orders', `${id}.${this.extOf(file!)}`, file!.buffer!);
+    const imageUrl = await this.storage.save(user.organisationId, 'orders', `${id}.${this.extOf(file!)}`, file!.buffer!);
     const updated = await this.prisma.customOrder.update({
       where: { id: o.id },
       data: { imageUrl },
@@ -434,6 +436,7 @@ export class TimelinesService {
   ) {
     const o = await this.assertImageTarget(user, id, file);
     const advanceReceiptUrl = await this.storage.save(
+      user.organisationId,
       'orders',
       `${id}-receipt.${this.extOf(file!)}`,
       file!.buffer!,

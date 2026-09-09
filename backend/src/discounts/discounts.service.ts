@@ -104,9 +104,10 @@ export class DiscountsService {
   }
 
   /** GET /discounts/presets — return preset discount codes list (seeds default if empty). */
-  async listPresets() {
+  async listPresets(user: AuthUser) {
+    const organisationId = user.organisationId;
     let presets = await this.prisma.discountPreset.findMany({
-      where: { isActive: true },
+      where: { isActive: true, organisationId },
       orderBy: { code: 'asc' },
     });
     if (presets.length === 0) {
@@ -123,9 +124,11 @@ export class DiscountsService {
         { code: 'D15_M10', name: '15% Diamond + 10% Making', diamondPercent: new Prisma.Decimal(15), makingPercent: new Prisma.Decimal(10), description: '15% on diamond + 10% on making' },
         { code: 'D20_M10', name: '20% Diamond + 10% Making', diamondPercent: new Prisma.Decimal(20), makingPercent: new Prisma.Decimal(10), description: '20% on diamond + 10% on making' },
       ];
-      await this.prisma.discountPreset.createMany({ data: defaults });
+      await this.prisma.discountPreset.createMany({
+        data: defaults.map((d) => ({ ...d, organisationId })),
+      });
       presets = await this.prisma.discountPreset.findMany({
-        where: { isActive: true },
+        where: { isActive: true, organisationId },
         orderBy: { code: 'asc' },
       });
     }
@@ -149,7 +152,7 @@ export class DiscountsService {
   async create(user: AuthUser, dto: CreateDiscountRequestDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
 
-    const caps = await this.loadCaps(dto.storeId);
+    const caps = await this.loadCaps(user.organisationId, dto.storeId);
     const diamondPercent = dto.diamondPercent ?? dto.percent ?? 0;
     const makingPercent = dto.makingPercent ?? dto.percent ?? 0;
 
@@ -157,11 +160,14 @@ export class DiscountsService {
     let sellingPrice = dto.sellingPrice ?? null;
     let costPrice: number | null = null;
     if (dto.productId) {
-      const product = await this.prisma.product.findUnique({ where: { id: dto.productId } });
-      if (product) {
-        if (sellingPrice == null && product.price != null) sellingPrice = Number(product.price);
-        if (product.costPrice != null) costPrice = Number(product.costPrice);
-      }
+      // Org-scope the lookup: a foreign productId must not snapshot another
+      // tenant's price/cost (margin leak) — treat it as an invalid reference.
+      const product = await this.prisma.product.findFirst({
+        where: { id: dto.productId, organisationId: user.organisationId },
+      });
+      if (!product) throw new NotFoundException('Product not found');
+      if (sellingPrice == null && product.price != null) sellingPrice = Number(product.price);
+      if (product.costPrice != null) costPrice = Number(product.costPrice);
     }
 
     // Margin impact (INR) = the rupee hit to margin from the discount.
@@ -189,6 +195,7 @@ export class DiscountsService {
     const seq = await this.sequence.next('DR:global');
     const row = await this.prisma.discountRequest.create({
       data: {
+        organisationId: user.organisationId,
         ref: `DR-${1000 + seq}`,
         storeId: dto.storeId,
         customerName: dto.customerName,
@@ -249,7 +256,7 @@ export class DiscountsService {
     diamondPercent: number,
     makingPercent: number,
   ): Promise<{ withinOwn: boolean; requiredRole: Role }> {
-    const caps = await this.loadCaps(storeId);
+    const caps = await this.loadCaps(user.organisationId, storeId);
     const own = caps[user.role] ?? { diamond: 0, making: 0 };
     const withinOwn =
       diamondPercent <= own.diamond && makingPercent <= own.making;
@@ -348,8 +355,9 @@ export class DiscountsService {
   }
 
   /** View the configured caps (area_manager / head_office). */
-  async listLimits() {
+  async listLimits(user: AuthUser) {
     const rows = await this.prisma.discountLimit.findMany({
+      where: this.scope.orgFilter(user),
       orderBy: [{ storeId: 'asc' }, { role: 'asc' }],
     });
     return rows.map(limitView);
@@ -358,7 +366,11 @@ export class DiscountsService {
   /** head_office: set/override a global or store-scoped role cap. */
   async setLimit(user: AuthUser, dto: SetDiscountLimitDto) {
     const storeId = dto.storeId ?? null;
-    const existing = await this.prisma.discountLimit.findFirst({ where: { role: dto.role, storeId } });
+    if (storeId) this.scope.assertStoreAllowed(user, storeId);
+    const organisationId = user.organisationId;
+    const existing = await this.prisma.discountLimit.findFirst({
+      where: { role: dto.role, storeId, organisationId },
+    });
 
     const diamond = dto.maxDiamondPercent != null ? new Prisma.Decimal(dto.maxDiamondPercent) : undefined;
     const making = dto.maxMakingPercent != null ? new Prisma.Decimal(dto.maxMakingPercent) : undefined;
@@ -383,6 +395,7 @@ export class DiscountsService {
         data: {
           role: dto.role,
           storeId,
+          organisationId,
           maxPercent: new Prisma.Decimal(overall),
           maxDiamondPercent: diamond,
           maxMakingPercent: making,
@@ -414,9 +427,9 @@ export class DiscountsService {
    * Load per-role diamond/making caps for a store (store-scoped row overrides the
    * global storeId=null default). Falls back to maxPercent when a split cap is null.
    */
-  private async loadCaps(storeId: string): Promise<Record<Role, Caps>> {
+  private async loadCaps(organisationId: string, storeId: string): Promise<Record<Role, Caps>> {
     const rows = await this.prisma.discountLimit.findMany({
-      where: { OR: [{ storeId }, { storeId: null }] },
+      where: { organisationId, OR: [{ storeId }, { storeId: null }] },
     });
     const byRole: Partial<Record<Role, any>> = {};
     for (const r of rows) {

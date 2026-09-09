@@ -19,15 +19,15 @@ export class DiscountsController {
   }
 
   @Get('presets')
-  presets() {
-    return this.discounts.listPresets();
+  presets(@CurrentUser() user: AuthUser) {
+    return this.discounts.listPresets(user);
   }
 
   /** Configured per-role caps (area_manager / head_office only). */
   @Roles('store_manager')
   @Get('limits')
-  limits() {
-    return this.discounts.listLimits();
+  limits(@CurrentUser() user: AuthUser) {
+    return this.discounts.listLimits(user);
   }
 
   /** head_office: set/override a global or store-scoped role cap. */

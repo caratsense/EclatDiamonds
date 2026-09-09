@@ -150,15 +150,64 @@ export class RazorpayService {
     }
 
     const reference = payment.id as string;
-    const existing = await this.prisma.payment.findFirst({ where: { reference } });
+
+    // Org comes from the store the payment is attributed to — never from the
+    // webhook notes.
+    const store = await this.prisma.store.findUnique({
+      where: { id: storeId },
+      select: { organisationId: true },
+    });
+    if (!store) {
+      this.logger.warn(`Razorpay payment ${payment.id} references unknown store ${storeId}.`);
+      return { handled: false, reason: 'unknown store' };
+    }
+    const organisationId = store.organisationId;
+
+    // Scoped to the resolved organisation (Phase B2). This was a GLOBAL lookup on
+    // `reference` — a column that, for hand-entered collections, holds the payer's
+    // NAME. One tenant's walk-in could therefore suppress another tenant's
+    // webhook, and the dedupe depended on a business row existing at all.
+    const existing = await this.prisma.payment.findFirst({
+      where: { organisationId, reference },
+      select: { id: true },
+    });
     if (existing) return { handled: true, reason: 'already recorded' };
+
+    // OWNERSHIP CHECK ON EVERY NOTE (Phase B2).
+    //
+    // `notes` are echoed back by Razorpay from whatever was set at link creation.
+    // They were previously written into the Payment row unverified, so a note
+    // naming another tenant's sale would have attached this money to that
+    // tenant's invoice — a cross-tenant write arriving through a signed,
+    // apparently-trustworthy webhook.
+    //
+    // A note that does not resolve inside this organisation is DROPPED, not
+    // rejected: the money genuinely arrived and must be recorded. Losing the
+    // link is recoverable by hand; losing the payment is not.
+    const [party, sale, schemeMember] = await Promise.all([
+      this.ownedOrNull('party', notes.partyId, organisationId),
+      this.ownedOrNull('sale', notes.saleId, organisationId),
+      this.ownedOrNull('schemeMember', notes.schemeMemberId, organisationId),
+    ]);
+    for (const [field, given, resolved] of [
+      ['partyId', notes.partyId, party],
+      ['saleId', notes.saleId, sale],
+      ['schemeMemberId', notes.schemeMemberId, schemeMember],
+    ] as const) {
+      if (given && !resolved) {
+        this.logger.warn(
+          `Razorpay payment ${payment.id}: note ${field}=${given} is not in organisation ${organisationId} — recorded without it.`,
+        );
+      }
+    }
 
     await this.prisma.payment.create({
       data: {
+        organisationId,
         storeId,
-        partyId: notes.partyId ?? null,
-        saleId: notes.saleId ?? null,
-        schemeMemberId: notes.schemeMemberId ?? null,
+        partyId: party,
+        saleId: sale,
+        schemeMemberId: schemeMember,
         reference,
         mode: 'online',
         amount: payment.amount / 100,
@@ -171,4 +220,28 @@ export class RazorpayService {
     );
     return { handled: true };
   }
+
+  /**
+   * Return the id only if that record exists INSIDE the given organisation.
+   *
+   * Deliberately returns null rather than throwing: this runs on a webhook, and
+   * an unrecognised reference is a reason to record the payment unlinked, not a
+   * reason to reject money that has already changed hands.
+   */
+  private async ownedOrNull(
+    model: 'party' | 'sale' | 'schemeMember',
+    id: string | undefined,
+    organisationId: string,
+  ): Promise<string | null> {
+    if (!id) return null;
+    const client = this.prisma as unknown as Record<
+      string,
+      { findFirst(args: unknown): Promise<{ id: string } | null> }
+    >;
+    const found = await client[model]
+      .findFirst({ where: { id, organisationId }, select: { id: true } })
+      .catch(() => null);
+    return found?.id ?? null;
+  }
+
 }

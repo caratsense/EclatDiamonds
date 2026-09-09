@@ -1,6 +1,36 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from './auth-user';
+
+type AuditPersistenceClient = Pick<PrismaService, 'auditLog'>;
+
+/**
+ * The automations allowed to write a system-attributed row, and the name each
+ * one appears under in the trail.
+ *
+ * A closed list on purpose: "the system did it" is only useful to an auditor if
+ * it names WHICH piece of the system, and a free-form string would let that
+ * degrade into an untraceable catch-all one call site at a time.
+ */
+export const SYSTEM_ACTORS = {
+  /** The fair round-robin queue placing a lead or conversation with a salesperson. */
+  round_robin: 'Automatic assignment',
+  /** A visitor submitting the public QR enquiry form. */
+  qr_lead_capture: 'QR lead capture',
+} as const;
+
+export type SystemActor = keyof typeof SYSTEM_ACTORS;
+
+/** The actor columns of an AuditLog row. Exactly one identity is non-null. */
+interface AuditActor {
+  organisationId: string;
+  actorId: string | null;
+  machineActorId: string | null;
+  systemActorId: string | null;
+  actorName: string;
+  actorRole: Role;
+}
 
 /** The mutation-specific detail an audited action records. */
 export interface AuditEvent {
@@ -15,9 +45,10 @@ export interface AuditEvent {
 /**
  * AuditService — append an immutable trail row for a sensitive decision.
  *
- * Best-effort by contract: an audit-write failure must NEVER break the main
- * mutation, so every write is wrapped in try/catch and errors are swallowed
- * (logged, not thrown). Call it AFTER the primary write has succeeded.
+ * Human call sites are best-effort by default: an audit-write failure is logged
+ * after the primary mutation. Security-sensitive connector ingestion supplies
+ * its active transaction instead, making the domain write and audit trail one
+ * atomic unit.
  *
  * Global (exported from CommonModule) so any service can inject it.
  */
@@ -27,14 +58,76 @@ export class AuditService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Write one AuditLog row. Swallows all errors (audit is never load-bearing). */
-  async record(user: AuthUser, e: AuditEvent): Promise<void> {
-    try {
-      await this.prisma.auditLog.create({
+  /**
+   * Write one AuditLog row.
+   *
+   * Ordinary mutations retain the historical best-effort contract. A caller
+   * may provide its active transaction for security-sensitive machine writes;
+   * that form deliberately propagates an audit failure so the domain mutation
+   * and its audit trail commit or roll back together.
+   */
+  async record(
+    user: AuthUser,
+    e: AuditEvent,
+    transaction?: AuditPersistenceClient,
+  ): Promise<void> {
+    return this.persist(e, transaction, () => {
+      if (user.isMachine && !user.agentId) {
+        throw new Error('Machine audit identity is missing its Connect agent id.');
+      }
+      return {
+        organisationId: user.organisationId,
+        actorId: user.isMachine ? null : user.id,
+        machineActorId: user.isMachine ? user.agentId! : null,
+        systemActorId: null,
+        actorName: user.name,
+        actorRole: user.role,
+      };
+    });
+  }
+
+  /**
+   * Write one AuditLog row for something the software decided on its own.
+   *
+   * There are decisions no person makes: an inbound message placing a
+   * conversation in the round-robin queue, a public QR form creating a lead.
+   * Ownership genuinely changes hands, so the trail must show it — but there is
+   * no `AuthUser` to attribute it to, and inventing one would be worse than the
+   * gap: a fabricated user id breaks the actor foreign key, and borrowing the
+   * Connect-agent column would report automation as a customer's own machine.
+   *
+   * So the row names the automation itself in a third identity column. That
+   * keeps 'exactly one actor' a database CHECK rather than a convention, and
+   * gives `GET /audit` an honest third answer beside `user` and `connect_agent`.
+   */
+  async recordSystem(
+    organisationId: string,
+    automation: SystemActor,
+    e: AuditEvent,
+    transaction?: AuditPersistenceClient,
+  ): Promise<void> {
+    return this.persist(e, transaction, () => ({
+      organisationId,
+      actorId: null,
+      machineActorId: null,
+      systemActorId: automation,
+      actorName: SYSTEM_ACTORS[automation],
+      // actorRole is NOT NULL and Role has no automation member. head_office is
+      // the widest scope and matches what these paths can reach; systemActorId
+      // is what marks the row as automated, never the role.
+      actorRole: Role.head_office,
+    }));
+  }
+
+  private async persist(
+    e: AuditEvent,
+    transaction: AuditPersistenceClient | undefined,
+    actor: () => AuditActor,
+  ): Promise<void> {
+    const write = async (db: AuditPersistenceClient) => {
+      await db.auditLog.create({
         data: {
-          actorId: user.id,
-          actorName: user.name,
-          actorRole: user.role,
+          ...actor(),
           action: e.action,
           entityType: e.entityType,
           entityId: e.entityId,
@@ -43,6 +136,14 @@ export class AuditService {
           metadata: e.metadata ?? undefined,
         },
       });
+    };
+
+    if (transaction) {
+      await write(transaction);
+      return;
+    }
+    try {
+      await write(this.prisma);
     } catch (err) {
       this.logger.warn(
         `audit.record failed for ${e.action} ${e.entityType}#${e.entityId}: ${

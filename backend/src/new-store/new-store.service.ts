@@ -61,10 +61,12 @@ export class NewStoreService {
    * sees only launches in their assigned region(s).
    */
   async projects(user: AuthUser) {
-    let where: Prisma.NewStoreProjectWhereInput = {};
+    // Always organisation-bounded: HO (allStores) sees every launch IN THIS ORG,
+    // never DB-wide. Lower roles narrow further by their region(s).
+    let where: Prisma.NewStoreProjectWhereInput = { organisationId: user.organisationId };
     if (!user.allStores) {
       const regionIds = await this.userRegionIds(user);
-      where = { regionId: { in: regionIds } };
+      where = { organisationId: user.organisationId, regionId: { in: regionIds } };
     }
 
     const projects = await this.prisma.newStoreProject.findMany({
@@ -146,6 +148,7 @@ export class NewStoreService {
 
     const project = await this.prisma.newStoreProject.create({
       data: {
+        organisationId: user.organisationId,
         name: dto.name,
         city: dto.city,
         launchDate: dto.launchDate ? new Date(dto.launchDate) : null,
@@ -332,8 +335,15 @@ export class NewStoreService {
   }
 
   /** Enforce OP-4 region scoping on a project the user is trying to mutate. */
-  private async assertProjectInScope(user: AuthUser, project: { regionId: string | null }) {
-    // head_office (allStores) sees every launch.
+  private async assertProjectInScope(
+    user: AuthUser,
+    project: { regionId: string | null; organisationId: string },
+  ) {
+    // Organisation is the hard boundary — a project from another org is never in
+    // scope, not even for head_office. HO/allStores of THIS org sees every launch.
+    if (project.organisationId !== user.organisationId) {
+      throw new ForbiddenException('Project not in your organisation');
+    }
     if (user.allStores || user.role === 'head_office') return;
     // Non-HO managers (store managers now hold the former area-manager authority)
     // are scoped to their own region's launches.

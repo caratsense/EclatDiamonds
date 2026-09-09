@@ -14,6 +14,8 @@ import {
   BarChart3,
   GitCompare,
   Search,
+  Inbox,
+  ListChecks,
   ChevronDown,
   ChevronUp,
   X,
@@ -25,6 +27,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { type Role } from "@/lib/types";
 import { useSession } from "@/store/use-session";
+import { useEnabledNavigation } from "@/lib/queries/tenant-config";
 import {
   useFinishTour,
   useRecordTourView,
@@ -61,6 +64,13 @@ interface TourStep {
   body: string;
   /** Page this step is about. Only ever opened when the user asks. */
   route?: string;
+  /**
+   * Navigation slug that must be part of the tenant's product for this step to
+   * appear. Defaults to the route without its leading slash; set it explicitly
+   * where the two differ — `/check-in` is the attendance gate, and the nav item
+   * that grants it is `hrms`.
+   */
+  requires?: string;
   icon: LucideIcon;
 }
 
@@ -77,15 +87,39 @@ function buildSteps(role: Role, firstName: string): TourStep[] {
     title: `Hello ${firstName} — welcome to CaratSense`,
     where: "Everywhere",
     body:
-      "Everything the shop does in a day — sales, customers, orders and staff attendance — is kept here in one place, instead of across registers and phones. Press Next and this guide walks you through the handful of pages you will actually use, opening each one for you. It takes about a minute, and you can close it whenever you like.",
+      "Everything your business does in a day — sales, customers, orders and staff attendance — is kept here in one place, instead of across registers and phones. Press Next and this guide walks you through the handful of pages you will actually use, opening each one for you. It takes about a minute, and you can close it whenever you like.",
     icon: Sparkles,
+  };
+
+  /*
+   * Universal steps. Every industry pack enables `conversations`, so these are
+   * the two that survive the route filter for a tenant whose product is the
+   * core suite — without them a non-jewellery manager's guide was welcome, CRM
+   * and a keyboard shortcut.
+   */
+  const inbox: TourStep = {
+    title: "Every message in one inbox",
+    where: "Conversations",
+    body:
+      "Messages from your customers land here whichever way they were sent, so nothing sits unanswered on someone's personal phone. Reply from the same screen, and the conversation stays attached to that customer's record.",
+    route: "/conversations",
+    icon: Inbox,
+  };
+
+  const gettingStarted: TourStep = {
+    title: "What is still left to set up",
+    where: "Getting Started",
+    body:
+      "A live checklist of your setup — your industry, your branches, your team, your data and the channels you have connected. It reads your actual state each time you open it, so it is never out of date.",
+    route: "/settings/onboarding",
+    icon: ListChecks,
   };
 
   const searchTip: TourStep = {
     title: "Finding things quickly",
     where: "The search box at the top",
     body:
-      "Hold Ctrl and press K (on a Mac, Command and K) from any page to jump straight to a customer, a piece or an order — no need to hunt through menus. You can open this guide again whenever you want from your name in the top-right corner.",
+      "Hold Ctrl and press K (on a Mac, Command and K) from any page to jump straight to a customer, a product or an order — no need to hunt through menus. You can open this guide again whenever you want from your name in the top-right corner.",
     icon: Search,
   };
 
@@ -96,8 +130,9 @@ function buildSteps(role: Role, firstName: string): TourStep[] {
         title: "Start your day by marking attendance",
         where: "HRMS & Attendance",
         body:
-          "One tap to say you have reached the shop — no register to sign. Your phone confirms you are at the shop when you do it, so your hours are recorded correctly and your day can begin.",
+          "One tap to say you have reached work — no register to sign. Your phone confirms you are at your branch when you do it, so your hours are recorded correctly and your day can begin.",
         route: "/check-in",
+        requires: "hrms",
         icon: Fingerprint,
       },
       {
@@ -108,6 +143,7 @@ function buildSteps(role: Role, firstName: string): TourStep[] {
         route: "/crm",
         icon: Users,
       },
+      inbox,
       {
         title: "Give a price, or take a made-to-order piece",
         where: "Quotation & Orders",
@@ -120,7 +156,7 @@ function buildSteps(role: Role, firstName: string): TourStep[] {
         title: "See what is in stock, anywhere",
         where: "Catalogue",
         body:
-          "Look through the pieces at every one of our shops, not just yours. If a customer shows you a photo of something they like, upload it and the app finds the closest pieces we have.",
+          "Look through the products at every one of your branches, not just yours. If a customer shows you a photo of something they like, upload it and the app finds the closest matches you have.",
         route: "/catalogue",
         icon: Gem,
       },
@@ -151,10 +187,11 @@ function buildSteps(role: Role, firstName: string): TourStep[] {
       title: "Every customer enquiry, in one list",
       where: "CRM & Leads",
       body:
-        "Walk-ins, phone calls and referrals from all your shops together. You can see at a glance who has been followed up and who has been left waiting.",
+        "Walk-ins, phone calls and referrals from all your branches together. You can see at a glance who has been followed up and who has been left waiting.",
       route: "/crm",
       icon: Users,
     },
+    inbox,
     {
       title: "Prices and made-to-order pieces",
       where: "Quotation & Orders",
@@ -192,6 +229,7 @@ function buildSteps(role: Role, firstName: string): TourStep[] {
     });
   }
 
+  if (role === "head_office") steps.push(gettingStarted);
   steps.push(searchTip);
   return steps;
 }
@@ -239,7 +277,29 @@ export function WelcomeTour() {
   const cardRef = useRef<HTMLDivElement | null>(null);
 
   const firstName = user.name.split(" ")[0] || user.name;
-  const steps = useMemo(() => buildSteps(role, firstName), [role, firstName]);
+  const enabledNavigation = useEnabledNavigation();
+  /*
+   * Only steps whose page this tenant's product actually includes.
+   *
+   * The guide DRIVES — pressing Next calls router.push on the step's route — and
+   * it was built role-aware but not industry-aware. So a clinic's first minute
+   * in the product was a guided tour of a jewellery ERP: Next pushed them into
+   * /quotation, /loyalty, /approvals, /reporting and /store-comparison, none of
+   * which appear in their navigation. Filtering here rather than inside
+   * buildSteps keeps the copy in one place and makes the rule the same one the
+   * sidebar uses: a step is shown when its route is part of the product.
+   *
+   * Steps with no route (the welcome and the search tip) are universal and
+   * always survive, so the guide is never empty.
+   */
+  const steps = useMemo(
+    () =>
+      buildSteps(role, firstName).filter((s) => {
+        const slug = s.requires ?? s.route?.slice(1);
+        return !slug || !enabledNavigation || enabledNavigation.includes(slug);
+      }),
+    [role, firstName, enabledNavigation],
+  );
 
   // Derived, not stored: the role (and so the step count) can change under us.
   const safeStep = Math.min(step, steps.length - 1);

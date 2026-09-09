@@ -19,7 +19,6 @@ interface ProductCardProps {
 }
 
 export function ProductCard({ product, onOpen, similarity }: ProductCardProps) {
-  const inStock = product.availability === "in_stock";
   const src = assetUrl(product.imageUrl);
 
   return (
@@ -41,17 +40,6 @@ export function ProductCard({ product, onOpen, similarity }: ProductCardProps) {
         ) : (
           <Gem className="h-10 w-10 text-muted-foreground/40" />
         )}
-        <div className="absolute left-2 top-2">
-          <Badge variant={inStock ? "success" : "secondary"}>
-            {inStock ? (
-              "In-Stock"
-            ) : (
-              <>
-                Lead-Time · <span className="num">{product.leadTimeDays}d</span>
-              </>
-            )}
-          </Badge>
-        </div>
         {similarity !== undefined ? (
           <div className="absolute right-2 top-2">
             <Badge variant="default">

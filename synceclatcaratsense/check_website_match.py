@@ -27,15 +27,16 @@ from datetime import datetime
 
 import requests
 
+from gati_target_safety import require_approved_website
+
 SQL_SERVER = os.getenv("SJEP_SQL_SERVER", r"localhost\SQLEXPRESS")
 SQL_DB     = os.getenv("SJEP_SQL_DB", "APRSSJEP")
 SQL_USER   = os.getenv("SJEP_SQL_USER", "")
 SQL_PASS   = os.getenv("SJEP_SQL_PASS", "")
 
-WEBSITE_API = os.getenv(
-    "ECLAT_WEBSITE_API",
-    "https://apis.eclatdiamonds.in/v1/api/products/customer?page=1&limit=2000",
-)
+WEBSITE_API = (os.getenv("ECLAT_WEBSITE_API") or "").strip()
+APPROVED_WEBSITE_API = (os.getenv("ECLAT_APPROVED_WEBSITE_API") or "").strip()
+WEBSITE_ORIGIN = (os.getenv("ECLAT_WEBSITE_ORIGIN") or "").strip()
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPORT_DIR = os.path.join(HERE, "reports")
@@ -92,13 +93,19 @@ def gati_codes():
 
 
 def website_products():
-    r = requests.get(
-        WEBSITE_API,
-        headers={"User-Agent": "Mozilla/5.0",
-                 "Origin": "https://eclatdiamonds.in",
-                 "Referer": "https://eclatdiamonds.in/"},
-        timeout=90,
+    endpoint, public_origin = require_approved_website(
+        WEBSITE_API, APPROVED_WEBSITE_API, WEBSITE_ORIGIN
     )
+    r = requests.get(
+        endpoint,
+        headers={"User-Agent": "Mozilla/5.0",
+                 "Origin": public_origin,
+                 "Referer": f"{public_origin}/"},
+        timeout=90,
+        allow_redirects=False,
+    )
+    if 300 <= r.status_code < 400:
+        raise RuntimeError("the website feed redirected; review and approve the final endpoint")
     r.raise_for_status()
     d = r.json()
     if isinstance(d, list):

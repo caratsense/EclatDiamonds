@@ -69,7 +69,7 @@ import {
   type ApiNewStoreProject,
   type ApiVendor,
 } from "@/lib/queries/new-store";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, isRealName } from "@/lib/utils";
 
 const CHECKLIST_STATUS_OPTIONS: { value: ChecklistStatus; label: string }[] = [
   { value: "todo", label: "To do" },
@@ -581,12 +581,22 @@ function AddChecklistDialog({
 }) {
   const addTask = useAddChecklistItem();
   const [title, setTitle] = useState("");
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const meta = DEPARTMENTS.find((d) => d.key === dept);
+
+  function clearError(field: string) {
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
+  }
 
   function save() {
     if (!dept) return;
-    if (!title.trim()) {
-      toast.error("Task title is required.");
+    const next: Record<string, string> = {};
+    if (!title.trim()) next.title = "Task title is required.";
+    else if (!isRealName(title))
+      next.title = "Enter a real title (letters, not just a number).";
+    if (Object.keys(next).length > 0) {
+      setErrors(next);
+      toast.error("Please fill in the required fields.");
       return;
     }
     addTask.mutate(
@@ -595,6 +605,7 @@ function AddChecklistDialog({
         onSuccess: () => {
           toast.success("Task added");
           setTitle("");
+          setErrors({});
           onOpenChange(false);
         },
         onError: (err) => toast.error(apiErrorMessage(err, "Could not add the task.")),
@@ -613,13 +624,22 @@ function AddChecklistDialog({
         </DialogHeader>
         <div className="grid gap-3">
           <div className="grid gap-1.5">
-            <Label htmlFor="task-title">Task</Label>
+            <Label htmlFor="task-title">
+              Task <span className="text-destructive">*</span>
+            </Label>
             <Input
               id="task-title"
               placeholder="e.g. Configure billing software"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              aria-invalid={!!errors.title}
+              onChange={(e) => {
+                setTitle(e.target.value);
+                clearError("title");
+              }}
             />
+            {errors.title ? (
+              <p className="mt-1 text-xs text-destructive">{errors.title}</p>
+            ) : null}
           </div>
         </div>
         <DialogFooter>
@@ -649,21 +669,29 @@ function AddMilestoneDialog({
   const [phase, setPhase] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [summary, setSummary] = useState("");
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  function clearError(field: string) {
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
+  }
 
   function reset() {
     setTitle("");
     setPhase("");
     setDueDate("");
     setSummary("");
+    setErrors({});
   }
 
   function save() {
-    if (!title.trim()) {
-      toast.error("Milestone title is required.");
-      return;
-    }
-    if (!dueDate) {
-      toast.error("A milestone date is required.");
+    const next: Record<string, string> = {};
+    if (!title.trim()) next.title = "Milestone title is required.";
+    else if (!isRealName(title))
+      next.title = "Enter a real title (letters, not just a number).";
+    if (!dueDate) next.dueDate = "A milestone date is required.";
+    if (Object.keys(next).length > 0) {
+      setErrors(next);
+      toast.error("Please fill in the required fields.");
       return;
     }
     addMilestone.mutate(
@@ -696,13 +724,22 @@ function AddMilestoneDialog({
         </DialogHeader>
         <div className="grid gap-3">
           <div className="grid gap-1.5">
-            <Label htmlFor="ms-title">Title</Label>
+            <Label htmlFor="ms-title">
+              Title <span className="text-destructive">*</span>
+            </Label>
             <Input
               id="ms-title"
               placeholder="e.g. Stock & dry-run complete"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              aria-invalid={!!errors.title}
+              onChange={(e) => {
+                setTitle(e.target.value);
+                clearError("title");
+              }}
             />
+            {errors.title ? (
+              <p className="mt-1 text-xs text-destructive">{errors.title}</p>
+            ) : null}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">
@@ -715,13 +752,22 @@ function AddMilestoneDialog({
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="ms-date">Date</Label>
+              <Label htmlFor="ms-date">
+                Date <span className="text-destructive">*</span>
+              </Label>
               <Input
                 id="ms-date"
                 type="date"
                 value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
+                aria-invalid={!!errors.dueDate}
+                onChange={(e) => {
+                  setDueDate(e.target.value);
+                  clearError("dueDate");
+                }}
               />
+              {errors.dueDate ? (
+                <p className="mt-1 text-xs text-destructive">{errors.dueDate}</p>
+              ) : null}
             </div>
           </div>
           <div className="grid gap-1.5">
@@ -761,26 +807,32 @@ function AddVendorDialog({
   const [scope, setScope] = useState("");
   const [amount, setAmount] = useState("");
   const [status, setStatus] = useState("pending");
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  function clearError(field: string) {
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
+  }
 
   function reset() {
     setName("");
     setScope("");
     setAmount("");
     setStatus("pending");
+    setErrors({});
   }
 
   function save() {
-    if (!name.trim()) {
-      toast.error("Vendor name is required.");
-      return;
-    }
-    if (!scope.trim()) {
-      toast.error("Vendor scope is required.");
-      return;
-    }
     const amountNum = amount.trim() ? Number(amount) : undefined;
-    if (amountNum != null && (Number.isNaN(amountNum) || amountNum < 0)) {
-      toast.error("Enter a valid amount.");
+    const next: Record<string, string> = {};
+    if (!name.trim()) next.name = "Vendor name is required.";
+    else if (!isRealName(name))
+      next.name = "Enter a real name (letters, not just a number).";
+    if (!scope.trim()) next.scope = "Vendor scope is required.";
+    if (amountNum != null && (Number.isNaN(amountNum) || amountNum < 0))
+      next.amount = "Enter a valid amount (0 or more).";
+    if (Object.keys(next).length > 0) {
+      setErrors(next);
+      toast.error("Please fill in the required fields.");
       return;
     }
     addVendor.mutate(
@@ -813,22 +865,40 @@ function AddVendorDialog({
         </DialogHeader>
         <div className="grid gap-3">
           <div className="grid gap-1.5">
-            <Label htmlFor="vendor-name">Vendor name</Label>
+            <Label htmlFor="vendor-name">
+              Vendor name <span className="text-destructive">*</span>
+            </Label>
             <Input
               id="vendor-name"
               placeholder="e.g. Shreeji Fixtures Pvt Ltd"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              aria-invalid={!!errors.name}
+              onChange={(e) => {
+                setName(e.target.value);
+                clearError("name");
+              }}
             />
+            {errors.name ? (
+              <p className="mt-1 text-xs text-destructive">{errors.name}</p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="vendor-scope">Scope</Label>
+            <Label htmlFor="vendor-scope">
+              Scope <span className="text-destructive">*</span>
+            </Label>
             <Input
               id="vendor-scope"
               placeholder="e.g. Display showcases & vault"
               value={scope}
-              onChange={(e) => setScope(e.target.value)}
+              aria-invalid={!!errors.scope}
+              onChange={(e) => {
+                setScope(e.target.value);
+                clearError("scope");
+              }}
             />
+            {errors.scope ? (
+              <p className="mt-1 text-xs text-destructive">{errors.scope}</p>
+            ) : null}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">
@@ -839,8 +909,15 @@ function AddVendorDialog({
                 min={0}
                 placeholder="e.g. 3850000"
                 value={amount}
-                onChange={(e) => setAmount(e.target.value)}
+                aria-invalid={!!errors.amount}
+                onChange={(e) => {
+                  setAmount(e.target.value);
+                  clearError("amount");
+                }}
               />
+              {errors.amount ? (
+                <p className="mt-1 text-xs text-destructive">{errors.amount}</p>
+              ) : null}
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="vendor-status">Status</Label>
@@ -884,10 +961,23 @@ function NewProjectDialog({
   const [city, setCity] = useState("");
   const [launchDate, setLaunchDate] = useState("");
   const [leadName, setLeadName] = useState("");
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  function clearError(field: string) {
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
+  }
 
   function save() {
-    if (!name.trim()) {
-      toast.error("Project name is required.");
+    const next: Record<string, string> = {};
+    if (!name.trim()) next.name = "Project name is required.";
+    else if (!isRealName(name))
+      next.name = "Enter a real name (letters, not just a number).";
+    if (!city.trim()) next.city = "City is required.";
+    else if (!isRealName(city))
+      next.city = "Enter a real city name (letters, not just a number).";
+    if (Object.keys(next).length > 0) {
+      setErrors(next);
+      toast.error("Please fill in the required fields.");
       return;
     }
     createProject.mutate(
@@ -904,6 +994,7 @@ function NewProjectDialog({
           setCity("");
           setLaunchDate("");
           setLeadName("");
+          setErrors({});
           onOpenChange(false);
         },
         onError: (err) => toast.error(apiErrorMessage(err, "Could not create the project.")),
@@ -922,22 +1013,40 @@ function NewProjectDialog({
         </DialogHeader>
         <div className="grid gap-3">
           <div className="grid gap-1.5">
-            <Label htmlFor="proj-name">Project name</Label>
+            <Label htmlFor="proj-name">
+              Project name <span className="text-destructive">*</span>
+            </Label>
             <Input
               id="proj-name"
               placeholder="e.g. Pune — Koregaon Park launch"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              aria-invalid={!!errors.name}
+              onChange={(e) => {
+                setName(e.target.value);
+                clearError("name");
+              }}
             />
+            {errors.name ? (
+              <p className="mt-1 text-xs text-destructive">{errors.name}</p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="proj-city">City</Label>
+            <Label htmlFor="proj-city">
+              City <span className="text-destructive">*</span>
+            </Label>
             <Input
               id="proj-city"
               placeholder="e.g. Pune"
               value={city}
-              onChange={(e) => setCity(e.target.value)}
+              aria-invalid={!!errors.city}
+              onChange={(e) => {
+                setCity(e.target.value);
+                clearError("city");
+              }}
             />
+            {errors.city ? (
+              <p className="mt-1 text-xs text-destructive">{errors.city}</p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="proj-launch">Launch date</Label>

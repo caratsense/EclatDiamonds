@@ -24,7 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatINR, formatPercent } from "@/lib/format";
-import { cn, apiErrorMessage } from "@/lib/utils";
+import { cn, apiErrorMessage, isRealName } from "@/lib/utils";
 import { ROLE_LABELS } from "@/lib/types";
 import {
   DISCOUNT_STATUS_LABELS,
@@ -100,7 +100,9 @@ export function DiscountRequestDialog({
     }
     const fe: Record<string, string> = {};
     if (!customer.trim()) fe.customer = "Customer name is required.";
+    else if (!isRealName(customer)) fe.customer = "Enter a real name — letters, not just a number.";
     if (!item.trim()) fe.item = "Item name is required.";
+    else if (!isRealName(item)) fe.item = "Enter a real item name.";
     if (!hasDiscount)
       fe.discount = "Enter a diamond % or making % — gold is never discounted.";
     setErrors(fe);

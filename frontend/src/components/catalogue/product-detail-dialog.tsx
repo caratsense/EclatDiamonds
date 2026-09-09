@@ -5,6 +5,11 @@ import { Gem, Tag, Upload } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
+import { CustomAttributeList } from "@/components/common/custom-attributes";
+import {
+  useConfigBootstrap,
+  useFieldVisible,
+} from "@/lib/queries/tenant-config";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -44,6 +49,18 @@ export function ProductDetailDialog({
   const { stores, role } = useSession();
   const fileRef = useRef<HTMLInputElement>(null);
   const upload = useUploadProductImage();
+  /*
+   * The same industry policy the create form obeys.
+   *
+   * Without it a pharmacy's paracetamol opened onto a spec list reading Metal:
+   * 22K Gold, Purity: 22K, Gross weight — measurements nobody entered and that
+   * describe nothing about the product.
+   */
+  const { data: config } = useConfigBootstrap();
+  const fieldVisible = useFieldVisible(config);
+  const showsMetal = fieldVisible("product", "metal");
+  const showsKarat = fieldVisible("product", "purity");
+  const showsWeight = fieldVisible("product", "grossWeight");
   // Real physical pieces (actual tag price + tracking); only while the dialog is open.
   const piecesQuery = useProductPieces(open && product ? product.id : null);
   if (!product) return null;
@@ -58,9 +75,6 @@ export function ProductDetailDialog({
   const pieceWeights = pieces.map((p) => p.grossWeight).filter((v) => v > 0);
   const grossWeight = product.weightGrams > 0 ? product.weightGrams : pieceWeights[0] ?? 0;
 
-  const inStock = product.availability === "in_stock";
-  // The lead time is only meaningful when a positive number of days was recorded.
-  const leadDays = product.leadTimeDays && product.leadTimeDays > 0 ? product.leadTimeDays : 0;
   // Where it is actually held: the branches holding pieces, else the design's own store.
   const pieceStores = [...new Set(pieces.map((p) => p.storeName).filter(Boolean))];
   const store = stores.find((s) => s.id === product.storeId)?.name ?? product.storeId;
@@ -148,40 +162,47 @@ export function ProductDetailDialog({
               </>
             )}
           </div>
-          <Badge variant={inStock ? "success" : "secondary"}>
-            {inStock ? (
-              "In-Stock"
-            ) : leadDays > 0 ? (
-              <>
-                Lead-Time · <span className="num">{leadDays} days</span>
-              </>
-            ) : (
-              "Made to order"
-            )}
-          </Badge>
         </div>
 
         <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-          <Spec label="Metal">{METAL_LABELS[product.metal]}</Spec>
-          {product.karat > 0 ? (
+          {showsMetal ? (
+            <Spec label="Metal">{METAL_LABELS[product.metal]}</Spec>
+          ) : product.materialLabel ? (
+            /* The tenant's own word for what it is made of, when the jewellery
+               metal enum has nothing true to say. */
+            <Spec label="Material">{product.materialLabel}</Spec>
+          ) : null}
+          {!showsMetal && product.categoryLabel ? (
+            <Spec label="Category">{product.categoryLabel}</Spec>
+          ) : null}
+          {!showsMetal && product.unitOfMeasure ? (
+            <Spec label="Sold in">{product.unitOfMeasure}</Spec>
+          ) : null}
+          {showsKarat && product.karat > 0 ? (
             <Spec label="Purity">
               <span className="num">{formatPurity(product.karat)}</span>
             </Spec>
           ) : null}
-          <Spec label="Gross weight">
-            {grossWeight > 0 ? (
-              <span className="num">{formatGrams(grossWeight)}</span>
-            ) : (
-              "—"
-            )}
-          </Spec>
-          {product.caratWeight > 0 ? (
+          {showsWeight ? (
+            <Spec label="Gross weight">
+              {grossWeight > 0 ? (
+                <span className="num">{formatGrams(grossWeight)}</span>
+              ) : (
+                "—"
+              )}
+            </Spec>
+          ) : null}
+          {showsWeight && product.caratWeight > 0 ? (
             <Spec label="Stones">
               <span className="num">{formatCarats(product.caratWeight)}</span>
             </Spec>
           ) : null}
           <Spec label="Held at">{heldAt}</Spec>
         </dl>
+
+        {/* Whatever this business tracks beyond the built-in fields. Renders
+            nothing for a tenant that has defined no custom attributes. */}
+        <CustomAttributeList entity="product" values={product.attributes} />
 
         {/* Physical pieces — the real per-piece tag price + tracking (tag / batch
             no, hallmark, certificate) the single design price cannot show. */}

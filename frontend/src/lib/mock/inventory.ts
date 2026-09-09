@@ -190,99 +190,10 @@ export const MOCK_ROTATION_SUGGESTIONS: RotationSuggestion[] = [
 ];
 
 /** Items routed into the melting & scrap workflow. */
-export type MeltStage = "Flagged" | "Approved" | "At refinery" | "Recovered";
-
-export interface MeltJob {
-  id: string;
-  sku: string;
-  name: string;
-  storeName: string;
-  grossGrams: number;
-  /** Expected pure-metal recovery after refining. */
-  expectedFineGrams: number;
-  stage: MeltStage;
-}
-
-export const MOCK_MELT_JOBS: MeltJob[] = [
-  {
-    id: "melt-01",
-    sku: "NCK-22-0904",
-    name: "22K Broken Chain Lot",
-    storeName: "Surat — Main",
-    grossGrams: 64.2,
-    expectedFineGrams: 58.5,
-    stage: "At refinery",
-  },
-  {
-    id: "melt-02",
-    sku: "MIX-OLD-0042",
-    name: "Old-gold trade-in lot",
-    storeName: "Mumbai — Bandra",
-    grossGrams: 138.7,
-    expectedFineGrams: 119.2,
-    stage: "Approved",
-  },
-  {
-    id: "melt-03",
-    sku: "PND-18-0712",
-    name: "18K Solitaire Pendant (dead stock)",
-    storeName: "Ahmedabad — C.G. Road",
-    grossGrams: 2.4,
-    expectedFineGrams: 1.7,
-    stage: "Flagged",
-  },
-  {
-    id: "melt-04",
-    sku: "RNG-22-0088",
-    name: "22K Defective Ring Batch",
-    storeName: "Surat — Main",
-    grossGrams: 31.0,
-    expectedFineGrams: 28.3,
-    stage: "Recovered",
-  },
-];
-
-/** Auto-reorder alert when on-hand falls below threshold. */
-export interface ReorderAlert {
-  id: string;
-  sku: string;
-  name: string;
-  storeName: string;
-  onHand: number;
-  threshold: number;
-  /** Recommended PO quantity. */
-  recommendedQty: number;
-}
-
-export const MOCK_REORDER_ALERTS: ReorderAlert[] = [
-  {
-    id: "ro-01",
-    sku: "RNG-22-LT",
-    name: "22K Light-weight Daily Rings",
-    storeName: "Surat — Main",
-    onHand: 4,
-    threshold: 15,
-    recommendedQty: 20,
-  },
-  {
-    id: "ro-02",
-    sku: "CHN-22-LT",
-    name: "22K Light-weight Chains",
-    storeName: "Mumbai — Bandra",
-    onHand: 6,
-    threshold: 20,
-    recommendedQty: 24,
-  },
-  {
-    id: "ro-03",
-    sku: "MNG-22-STD",
-    name: "22K Standard Mangalsutra",
-    storeName: "Ahmedabad — C.G. Road",
-    onHand: 2,
-    threshold: 10,
-    recommendedQty: 12,
-  },
-];
+// The melting workflow and reorder alerts previously lived here as fabricated
+// rows rendered straight onto the Inventory screen. Melting now reads the real
+// stock ledger (status "melted"); reorder alerts have no reorder-point data to
+// read, so that panel says so instead of inventing quantities.
 
 /** Default dead-stock threshold (days) used to highlight aging rows. */
 export const DEAD_STOCK_THRESHOLD_DAYS = 180;

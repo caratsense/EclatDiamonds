@@ -4,6 +4,7 @@ import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
 import { Roles } from '../auth/roles.decorator';
 import {
+  ComplianceQueryDto,
   CreateDailyReportDto,
   DailyReportQueryDto,
   ReportSummaryQueryDto,
@@ -54,6 +55,21 @@ export class ReportingController {
     @StoreHeader() store?: string,
   ) {
     return this.reporting.send(user, dto, store);
+  }
+
+  /**
+   * GET /reporting/compliance?days=7&storeId= — which branches have filed a
+   * daily report and which have not. Manager+ (a salesperson has no use for a
+   * cross-branch adherence view). Store-scoped, organisation-bounded in the service.
+   */
+  @Roles('store_manager', 'head_office')
+  @Get('compliance')
+  compliance(
+    @CurrentUser() user: AuthUser,
+    @Query() query: ComplianceQueryDto,
+    @StoreHeader() store?: string,
+  ) {
+    return this.reporting.compliance(user, query, store);
   }
 
   /** POST /reporting/daily — capture a store-close Daily Sales Report (Module 10). */

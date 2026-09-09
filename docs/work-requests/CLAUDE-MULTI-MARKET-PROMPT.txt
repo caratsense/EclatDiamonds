@@ -1,0 +1,318 @@
+CLAUDE TASK — MULTI-MARKET PRODUCT LAYER ONLY
+Date: 2026-09-08
+
+OBJECTIVE
+Turn the existing universal suite (AI CRM, cataloguing, attendance, data/imports)
+into a clean multi-market product without changing the working Eclat jewellery
+pack. A tenant chooses its industry at signup/onboarding; the product provisions
+that industry's vocabulary, qualification fields, default CRM pipeline and
+visible navigation. Eclat remains the jewellery vertical and its credentials,
+data and operational screens must remain unchanged.
+
+STRICT OWNERSHIP — DO NOT MIX WITH CODEX
+
+Claude MAY edit only:
+  backend/src/config/industry-packs/**
+  backend/src/config/tenant-config.controller.ts
+  backend/src/config/tenant-config.service.ts
+  backend/src/config/tenant-config.module.ts
+  backend/src/config/dto/tenant-config.dto.ts
+  frontend signup/onboarding/tenant-configuration/navigation/generic-label UI
+  backend/test/industry-onboarding.e2e-spec.ts
+  backend/test/tenant-config.e2e-spec.ts
+  new tests dedicated to this product-layer task
+  documentation that does not describe connector internals
+
+Claude MUST NOT edit:
+  connectors/**
+  backend/src/integration/**
+  backend/src/sync/**
+  backend/prisma/schema.prisma or migrations
+  backend/package*.json or frontend/package*.json
+  docs/work-requests/CLAUDE-SHARED-FILE-REQUEST.txt
+  attendance implementation or catalogue/inference implementation
+  any Eclat credential, environment file, seed identity or production data
+
+Codex exclusively owns the generic Connect Agent, BUSY/Tally/Gati adapters,
+canonical ingestion, connector registry and those tests. If Claude needs a
+shared/schema/connector change, append a numbered request to this file; do not
+make the change.
+
+IMPLEMENTATION WORK
+
+1. Inspect what already exists before editing. Industry packs currently include
+   jewellery, retail, healthcare, manufacturing, professional services, real
+   estate, education, hospitality, automotive, wholesale/distribution,
+   financial services, technology, logistics, pharmacy, textile and other.
+   Refine; do not duplicate this system.
+
+2. Signup/onboarding:
+   - require an industry choice for a new organisation;
+   - include a safe "Other / custom business" path;
+   - save credentials exactly as today and never rotate/delete/copy Eclat creds;
+   - applying a pack must remain additive/idempotent and must not overwrite
+     tenant-owned labels, fields or pipeline customisations.
+
+3. Universal suite outside jewellery:
+   - expose AI CRM, conversations/customers, AI-ready catalogue, attendance,
+     stores/team, data imports, integrations and audit;
+   - do not expose jewellery finance, metal rates, karat/making-charge inputs,
+     gold schemes, jewellery returns or manufacturing-bag workflows merely
+     because the tables exist;
+   - preserve every existing Eclat route and label when pack=jewellery.
+
+4. Industry behaviour:
+   - use configurable labels/taxonomies/attributes rather than new enums or
+     industry-specific database columns;
+   - healthcare should use patient/enquiry vocabulary, manufacturing should use
+     account/order vocabulary, textile should use buyer/article vocabulary, etc.;
+   - never claim regulated workflows (clinical EMR, statutory accounting,
+     laboratory compliance) that are not implemented.
+
+5. CRM defaults:
+   - each pack needs useful AI context, qualification fields and a three-stage
+     default pipeline bridged to existing system values;
+   - generic core logic must continue using canonical terms internally;
+   - presentation labels may vary by pack.
+
+6. Tests and acceptance:
+   - jewellery/Eclat navigation and defaults unchanged;
+   - at least healthcare, manufacturing, textile, retail and Other provision
+     correctly and independently;
+   - provisioning twice is idempotent and preserves a tenant-owned edit;
+   - no credentials are read or written during pack application;
+   - tenant A pack configuration cannot affect tenant B;
+   - backend tsc/build and focused tests pass;
+   - frontend tsc/build passes; report global lint truthfully rather than
+     changing unrelated held modules.
+
+DELIVERY REPORT
+List every changed file, tests with exact counts, any request left for Codex,
+and distinguish code-complete behaviour from provider/live integrations. Do not
+commit, push, deploy or touch credentials.
+
+
+
+================================================================================
+NUMBERED REQUESTS FROM CLAUDE — raised 2026-09-08, after the product-layer work
+================================================================================
+
+Everything below was found while building the multi-market layer and is OUTSIDE
+the files Claude may edit. Nothing here was changed. Ordered by how badly it
+breaks the promise "a non-jewellery tenant does not see jewellery workflows".
+
+Context that matters for reading these: navigation is now DERIVED from the
+applied industry pack and served on GET /config/bootstrap as
+`industry.enabledNavigation`. That is a UI list. It is not, and has never been,
+an authorization boundary.
+
+
+--------------------------------------------------------------------------------
+MM-01  Module entitlement is not enforced anywhere.            SEVERITY: HIGH
+        Owner: backend/src/auth/** + backend/src/common/** + frontend layout
+--------------------------------------------------------------------------------
+`enabledNavigation` is consulted by four components (sidebar, mobile nav, and
+now the gold-rate chip and the welcome tour). There is no route guard in
+frontend/src/app/(app)/layout.tsx, no middleware.ts anywhere, and no backend
+guard: a grep for enabledNavigation / industryPackCode across backend/src
+returns only auth/auth.service.ts and config/*.
+
+So a pharmacy's store manager who types /finance still gets the page, and
+FinanceController answers it — its whole gate is
+@Roles('store_manager','head_office'). The industry layer currently hides
+doors; it does not lock them.
+
+Requested: a pack-aware guard alongside RolesGuard, registered in app.module.ts,
+plus a client-side route check. Claude cannot add either — auth/, common/ and
+app.module.ts are all outside the fence.
+
+Related, same area: GET /integrations/gold-rate (integrations.controller.ts,
+around line 166) carries NO @Roles decorator at all.
+
+
+--------------------------------------------------------------------------------
+MM-02  The product form writes jewellery data for every tenant. SEVERITY: HIGH
+        Owner: catalogue implementation (held) + prisma/schema.prisma
+--------------------------------------------------------------------------------
+The most consequential finding, and a DATA problem rather than a labelling one,
+so no amount of relabelling reaches it.
+
+frontend/src/app/(app)/catalogue/page.tsx defaults a new product to category
+'necklace' and metal 'gold_22k'. Both are required by CreateProductDto, and
+Product.metal is NOT NULL with no industry-neutral member in enum MetalKind.
+
+Result: every product a pharmacy, clinic or factory creates is STORED as a 22K
+gold necklace. The comment in packs.ts promising that non-jewellery categories
+"map to `other` at the column" is not true of the write path.
+
+Requested:
+  a) an industry-neutral option for Product.metal — nullable, or an `na` member
+     — in schema.prisma plus a migration and products/dto/product.dto.ts;
+  b) the create form defaulting to it.
+
+
+--------------------------------------------------------------------------------
+MM-03  FieldPolicy is provisioned and never honoured.           SEVERITY: HIGH
+        Owner: catalogue implementation (held)
+--------------------------------------------------------------------------------
+Every non-jewellery pack writes FieldPolicy rows hiding product.purity,
+grossWeight, netWeight, makingChargeType and huid. The reader that would apply
+them, useFieldVisible in frontend/src/lib/queries/tenant-config.ts, has ZERO
+call sites repo-wide. Nothing on the backend enforces them either.
+
+So the Add Product dialog still renders Karat and Gross wt (g), and
+ProductDetailDialog still renders Purity, Gross weight, Stones (ct) and
+Hallmark, for every tenant. The pack comment "a pharmacist never sees an empty
+karat box" is currently false.
+
+Requested: call useFieldVisible in catalogue/page.tsx (the metal select, karat,
+gross weight, and their validation branches) and in
+components/catalogue/product-detail-dialog.tsx (the spec rows).
+
+NOTE FOR HONESTY: backend/test/industry-onboarding.e2e-spec.ts asserts that
+these hidden rows are written. That assertion is true about the database and
+says nothing about the screen. It is not evidence the fields are hidden.
+
+
+--------------------------------------------------------------------------------
+MM-04  Catalogue vocabulary and units are jewellery-only.       SEVERITY: MEDIUM
+        Owner: catalogue implementation (held)
+--------------------------------------------------------------------------------
+The lexicon added in this work reaches navigation and section headers. It does
+not reach page bodies, and the Catalogue is where that shows most:
+  - "N pieces" and "No pieces match these filters." (catalogue/page.tsx)
+  - formatPurity -> "22K" and formatCarats -> "1.20 ct" (lib/format.ts), called
+    unconditionally from product-card.tsx and product-detail-dialog.tsx
+  - "design photo or sketch", "Found N similar design(s)"
+    (components/catalogue/image-search.tsx) — "design" in the jewellery-trade
+    sense
+  - the endpoint path /products/jewelry/similarity-search, visible in devtools
+
+GET /config/bootstrap now serves `lexicon.product_plural`; nothing outside the
+app chrome reads it. Whoever owns the catalogue can consume it directly.
+
+Already fixed by Claude in an allowed file, for reference: CATEGORY_LABELS.other
+said "Jewellery" (it now says "Other"). That one string put the word "Jewellery"
+under every product tile of every non-jewellery tenant.
+
+
+--------------------------------------------------------------------------------
+MM-05  Check-in and lead-source inputs ignore tenant vocabulary. SEVERITY: MEDIUM
+        Owner: CRM and check-in screens
+--------------------------------------------------------------------------------
+Packs seed checkin_purpose and lead_source terms, and exactly one component
+reads them (customers/[id]/page.tsx, via useTermLabel). Every INPUT that writes
+those values ships a hardcoded jewellery list: PURPOSE_OPTIONS and
+PURPOSE_TO_ENUM in checkins/page.tsx offer "Gold Coin / Investment",
+"Gold Scheme" and "Bridal"; LEAD_SOURCE_LABELS in lib/mock/crm.ts is used by
+four screens.
+
+Requested: read config.taxonomies['checkin_purpose'] and use
+useTermLabel(config)('lead_source', …) at those call sites.
+
+
+--------------------------------------------------------------------------------
+MM-06  The gold-rate job runs for every tenant.                 SEVERITY: MEDIUM
+        Owner: backend/src/scheduler/**, backend/src/integrations/**
+--------------------------------------------------------------------------------
+scheduler.service.ts refreshes metal rates for every organisation that has an
+active non-aggregate store, unfiltered by industry, and GoldRateService.enabled
+is hardcoded true. A clinic therefore accumulates MetalRate rows forever.
+
+Claude suppressed the topbar CHIP for tenants whose pack has no settings/rates
+route, and verified both directions in a browser: with an identical live rate
+row in the database, Eclat shows "₹9,251/g 22K" and the clinic shows nothing.
+That is a display fix. The job still writes the rows.
+
+
+--------------------------------------------------------------------------------
+MM-07  Every tenant's app is branded Éclat Diamonds.            SEVERITY: MEDIUM
+        Owner: a product/branding decision, then frontend brand + metadata
+--------------------------------------------------------------------------------
+Not fixed, deliberately: this needs a per-tenant branding story (an uploaded
+logo, a stored display name), which is a feature rather than a label swap, and
+guessing at it would have meant changing Eclat's own identity uninstructed.
+
+  - components/brand/logo.tsx renders public/eclat-logo.svg at the top of the
+    sidebar on EVERY route of every tenant
+  - app/layout.tsx metadata: title "CaratSense — Eclat", description naming
+    "multi-store jewelry retail"
+  - app/manifest.ts: the installed PWA is named "CaratSense — Éclat Diamonds"
+  - the SIGN-IN branch of app/login/page.tsx (hero image, the "Éclat Diamonds"
+    eyebrow, "Where dreams meet diamonds.", the footer). Only the
+    create-organisation branch was made industry-neutral.
+  - settings/team/page.tsx tells every tenant's admin that logins are generated
+    at eclatdiamonds.in
+
+`Organisation.settings.branding.displayName` is already written at signup and is
+now published on GET /config/bootstrap, so a consumer exists whenever this is
+picked up.
+
+
+--------------------------------------------------------------------------------
+MM-08  auth/** residuals.                                       SEVERITY: MEDIUM
+        Owner: backend/src/auth/**
+--------------------------------------------------------------------------------
+  a) createOrganisation still writes settings.featureProfile.enabledNavigation,
+     and buildSession still returns it as productProfile.enabledNavigation. Now
+     that bootstrap DERIVES the list from the applied pack, that stored copy is
+     a second source of truth which goes stale the moment a tenant changes
+     industry. Its only consumer is the post-login redirect. Either stop writing
+     it, or have buildSession derive it the way bootstrap does.
+  b) createOrganisation returns 409 "An account with this email already exists"
+     for an email in ANY organisation, while /auth/login deliberately returns a
+     generic message. That makes the public signup route an account-existence
+     oracle for the whole platform.
+  c) createOrganisation writes settings.crmAiIndustryContext and
+     settings.crmQualificationFields; neither is read anywhere. The useful copy
+     is settings.crmQualification.questions. (aiCrmContext is now surfaced as
+     industry.aiContext on bootstrap and rendered on the configuration screen,
+     so the pack field itself is no longer dead.)
+  d) signup sets crmQualification.enabled = true, while
+     DEFAULT_QUALIFICATION_POLICY.enabled is false and its comment explains why.
+
+
+--------------------------------------------------------------------------------
+MM-09  Organisation.settings has three racing writers.          SEVERITY: LOW
+        Owner: backend/src/crm/**
+--------------------------------------------------------------------------------
+crm/ai-responder.ts, crm/qualification.service.ts and crm/adset-rules.service.ts
+each do a non-transactional read-modify-write of the whole settings JSON column.
+Two of them running concurrently on different keys silently lose one write.
+
+Not blocking this work — the industry lexicon and navigation are deliberately
+NOT stored in settings, so nothing added here is exposed to it. Worth a
+SELECT ... FOR UPDATE or a jsonb_set when that area is next touched.
+
+
+--------------------------------------------------------------------------------
+MM-10  One item Claude fixed, flagged because it is outside the fence
+--------------------------------------------------------------------------------
+frontend/src/app/(app)/crm/page.tsx built its WhatsApp re-engagement message as
+"...your enquiry for ${lead.interest || 'jewellery'}". That is CUSTOMER-FACING
+text: a clinic's patient received "following up regarding your enquiry for
+jewellery." The fallback noun was removed rather than replaced, since naming
+nothing is correct for every industry, jewellery included. Revert if that file's
+owner disagrees; the leak should not survive either way.
+
+
+--------------------------------------------------------------------------------
+MM-11  The full e2e suite cannot pass on a freshly seeded DB.   SEVERITY: MEDIUM
+        Owner: prisma/seed.mjs + backend/src/discounts/**
+--------------------------------------------------------------------------------
+Found while running the full regression for this work. Pre-existing, unrelated
+to the product layer, and reproducible on any fresh seeded database.
+
+prisma/seed.mjs hardcodes two discount requests with ref "DR-1001" and
+"DR-1002" (seed.mjs:423,432). discounts.service.ts:196 generates its ref as
+`DR-${1000 + seq}` from SequenceService.next('DR:global'), and the seed never
+advances that sequence — so the first discount created through the API asks for
+"DR-1001" and hits the unique constraint.
+
+Effect: app.e2e-spec.ts "Discount ceilings + mass-assignment guard (M15)" fails
+both of its cases with a 500 (Unique constraint failed on the fields: (`ref`)).
+That is 2 of the 559 tests in the suite.
+
+Fix is either end: have the seed advance 'DR:global' past the rows it writes, or
+have the seed use refs the sequence will never mint. Claude did not change it —
+both files are outside the fence for this task.

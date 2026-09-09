@@ -1095,11 +1095,8 @@ export const SHIFTS: Shift[] = [
 /* ------------------------------------------------------------------ */
 
 /** Current weekly-off day per store, indexed 0 (Sun) – 6 (Sat). */
-export const MOCK_WEEK_OFF: Record<string, number> = {
-  "surat-main": 2, // Tuesday
-  "mumbai-bandra": 1, // Monday
-  "ahmedabad-cg": 3, // Wednesday
-};
+// MOCK_WEEK_OFF removed: the weekly-off card now reads each store's own saved
+// weekOffDay from the stores API rather than seeding from these constants.
 
 export const HOLIDAYS: Holiday[] = [
   { id: "hol-01", storeId: "surat-main", date: "2026-08-15", label: "Independence Day" },

@@ -26,6 +26,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { homeForRole } from "@/lib/navigation";
+import { useEnabledNavigation } from "@/lib/queries/tenant-config";
 import { markAttendanceHandled } from "@/lib/attendance-gate";
 import { useSession } from "@/store/use-session";
 import type { SelfAttendance } from "@/lib/mock/hrms";
@@ -176,8 +177,11 @@ export default function CheckInPage() {
   // Pending redirect after a successful punch (cleared on unmount).
   const redirectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const enabledNavigation = useEnabledNavigation();
   const firstName = user.name.split(" ")[0] || user.name;
-  const home = homeForRole(role);
+  // With the tenant's navigation, so a manager whose industry has no Dashboards
+  // is not bounced from the attendance gate onto a screen their product omits.
+  const home = homeForRole(role, enabledNavigation);
   const storeName = geofence?.storeName ?? currentStore.name;
   const radius = geofence?.geofenceRadiusM ?? 0;
 

@@ -61,6 +61,34 @@ export class MlInferenceService {
     return Boolean(this.url);
   }
 
+  /**
+   * One retry, for a service that is allowed to be asleep.
+   *
+   * The inference container runs with Railway Serverless on: after ten idle
+   * minutes it is stopped, and the request that wakes it either times out while
+   * two vision models load or comes back 502. Both are normal, both are
+   * transient, and without this the caller sees an ordinary failure and quietly
+   * returns no vector -- an image search that silently finds nothing.
+   *
+   * Deliberately one retry, not a backoff loop: if the second attempt also fails
+   * the service is broken rather than sleeping, and hammering it helps nobody.
+   * The retry is given a longer budget because a cold start is the slow case by
+   * definition.
+   */
+  private async wakeAware<T>(
+    what: string,
+    call: (timeoutMs: number) => Promise<T>,
+    warmMs: number,
+    coldMs: number,
+  ): Promise<T> {
+    try {
+      return await call(warmMs);
+    } catch (err) {
+      this.logger.log(`inference ${what} failed (${err instanceof Error ? err.message : err}); retrying once in case it was asleep`);
+      return await call(coldMs);
+    }
+  }
+
   private headers(): Record<string, string> {
     const h: Record<string, string> = { 'content-type': 'application/json' };
     if (this.key) h.authorization = `Bearer ${this.key}`;
@@ -94,12 +122,19 @@ export class MlInferenceService {
   async embed(bytes: Buffer | undefined, mime: string): Promise<DualEmbedding | null> {
     if (!this.available || !bytes?.length) return null;
     try {
-      const data = await fetchJson(`${this.url}/embed`, {
-        method: 'POST',
-        headers: this.headers(),
-        timeoutMs: 30_000,
-        body: JSON.stringify({ image_b64: bytes.toString('base64'), mime }),
-      });
+      const body = JSON.stringify({ image_b64: bytes.toString('base64'), mime });
+      const data = await this.wakeAware(
+        '/embed',
+        (timeoutMs) =>
+          fetchJson(`${this.url}/embed`, {
+            method: 'POST',
+            headers: this.headers(),
+            timeoutMs,
+            body,
+          }),
+        30_000,
+        180_000,
+      );
       const dino = parseEmbedding(data?.dino);
       const siglip = parseEmbedding(data?.siglip);
       if (!dino || !siglip) {
@@ -129,14 +164,21 @@ export class MlInferenceService {
    */
   async embedBatch(items: BatchItem[]): Promise<{ results: BatchResult[]; errors: { id: string; error: string }[] }> {
     if (!this.available || !items.length) return { results: [], errors: [] };
-    const data = await fetchJson(`${this.url}/embed/batch`, {
-      method: 'POST',
-      headers: this.headers(),
-      timeoutMs: 120_000,
-      body: JSON.stringify({
-        images: items.map((i) => ({ id: i.id, image_b64: i.bytes.toString('base64'), mime: i.mime })),
-      }),
+    const batchBody = JSON.stringify({
+      images: items.map((i) => ({ id: i.id, image_b64: i.bytes.toString('base64'), mime: i.mime })),
     });
+    const data = await this.wakeAware(
+      '/embed/batch',
+      (timeoutMs) =>
+        fetchJson(`${this.url}/embed/batch`, {
+          method: 'POST',
+          headers: this.headers(),
+          timeoutMs,
+          body: batchBody,
+        }),
+      120_000,
+      300_000,
+    );
     const results: BatchResult[] = [];
     for (const r of data?.results ?? []) {
       const dino = parseEmbedding(r?.dino);

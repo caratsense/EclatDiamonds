@@ -249,7 +249,7 @@ export function SendReportDialog({
               id="report-recipient"
               type={isEmail ? "email" : "tel"}
               inputMode={isEmail ? "email" : "tel"}
-              placeholder={isEmail ? "owner@eclatdiamonds.in" : "9876500000"}
+              placeholder={isEmail ? "reports@example.com" : "9876500000"}
               value={to}
               aria-invalid={recipientError}
               onChange={(e) => {

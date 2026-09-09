@@ -60,6 +60,13 @@ export function useSaleDetail(id: string | null) {
 export interface CreateSaleInput {
   storeId: string;
   customerName: string;
+  /**
+   * Optional. When supplied, the sale is linked to a real customer record and
+   * appears on their Customer 360 timeline; without it the sale is recorded
+   * exactly as before, with the name kept as a historical snapshot. Never
+   * required — a customer who declines to give a number must still be billable.
+   */
+  phone?: string;
   description?: string;
   invoiceNo: string;
   salesValue: number;

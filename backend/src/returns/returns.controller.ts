@@ -21,21 +21,21 @@ export class ReturnsController {
 
   /** Current gold (per karat/gram) + diamond (per spec) rates for the calculator UI. */
   @Get('rates')
-  rates(@StoreHeader() store?: string) {
-    return this.returns.rates(store);
+  rates(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
+    return this.returns.rates(user, store);
   }
 
   /** HO-managed diamond-rate table (list). */
   @Get('diamond-rates')
-  diamondRates(@StoreHeader() store?: string) {
-    return this.returns.diamondRates(store);
+  diamondRates(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
+    return this.returns.diamondRates(user, store);
   }
 
   /** HO sets/updates a diamond rate for a spec/code. */
   @Roles('head_office')
   @Post('diamond-rates')
-  createDiamondRate(@Body() dto: CreateDiamondRateDto) {
-    return this.returns.createDiamondRate(dto);
+  createDiamondRate(@CurrentUser() user: AuthUser, @Body() dto: CreateDiamondRateDto) {
+    return this.returns.createDiamondRate(user, dto);
   }
 
   /** Preview the exchange/buyback values without persisting. */

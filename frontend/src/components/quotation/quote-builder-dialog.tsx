@@ -505,9 +505,11 @@ export function QuoteBuilderDialog({
     // Name must contain a letter, not just digits/spaces (backend @Matches).
     else if (!/[^\d\s]/.test(name))
       next.customer = "Enter a valid name (letters, not just numbers).";
-    // Phone is optional, but if typed it must be a valid Indian mobile.
-    const normalizedPhone = phone.trim() ? normalizeIndianMobile(phone) : null;
-    if (phone.trim() && !normalizedPhone)
+    // Phone is mandatory on quote creation and must be a valid Indian mobile —
+    // the backend enforces @IsIndianMobile, so block/normalise client-side.
+    const normalizedPhone = normalizeIndianMobile(phone);
+    if (!phone.trim()) next.phone = "Phone number is required.";
+    else if (!normalizedPhone)
       next.phone = "Enter a valid 10-digit mobile number.";
     if (Object.keys(next).length > 0) {
       setErrors(next);
@@ -669,7 +671,9 @@ export function QuoteBuilderDialog({
               ) : null}
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="qb-phone">Phone</Label>
+              <Label htmlFor="qb-phone">
+                Phone <span className="text-destructive">*</span>
+              </Label>
               <Input
                 id="qb-phone"
                 value={phone}

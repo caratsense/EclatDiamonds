@@ -6,10 +6,13 @@ import {
   IsOptional,
   IsString,
   Max,
+  MaxLength,
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { IsIndianMobile } from '../../common/contact.util';
 import { PaymentMode } from '@prisma/client';
+import { IsRealName } from '../../common/contact.util';
 
 /**
  * Sales (Direct Sales) format — a simple manual direct-sale entry for reporting
@@ -22,18 +25,38 @@ import { PaymentMode } from '@prisma/client';
  */
 export class CreateSaleDto {
   @IsString()
+  @IsNotEmpty()
   storeId!: string;
 
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  @IsRealName()
   customerName!: string;
+
+  /**
+   * Customer's phone, optional (Phase A6).
+   *
+   * Optional on purpose — this form has always worked without it and must keep
+   * working, so making it required would break every till that files a walk-in
+   * sale for a customer who declines to give a number. When it IS supplied the
+   * sale links to a real customer record and appears on their Customer 360
+   * timeline; without it the sale is recorded exactly as before, unattributed.
+   */
+  @IsOptional()
+  @IsIndianMobile()
+  phone?: string;
 
   /** Product description (free text). */
   @IsOptional()
   @IsString()
+  @MaxLength(200)
+  @IsRealName()
   description?: string;
 
   /** Actual bill / invoice number — becomes Sale.docNo (unique per store+docType). */
   @IsString()
+  @IsNotEmpty()
   invoiceNo!: string;
 
   /** Sales value before discount (INR) → Sale.grossAmount. */

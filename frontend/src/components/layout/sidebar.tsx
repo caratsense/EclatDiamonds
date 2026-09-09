@@ -7,7 +7,12 @@ import { cn } from "@/lib/utils";
 import { Logo } from "@/components/brand/logo";
 import { homeForRole, visibleNavGroups } from "@/lib/navigation";
 import { pendingDueCount, useReminders } from "@/lib/queries/reminders";
+import {
+  useConfigBootstrap,
+  useEnabledNavigation,
+} from "@/lib/queries/tenant-config";
 import { useSession } from "@/store/use-session";
+import { brandingName, ECLAT_SLUG } from "@/lib/branding";
 import { useT } from "@/lib/i18n";
 
 export function Sidebar() {
@@ -15,7 +20,23 @@ export function Sidebar() {
   const t = useT();
   // Role-aware nav: HO-only sections (e.g. Store Setup) stay hidden otherwise.
   const role = useSession((s) => s.role);
-  const groups = visibleNavGroups(role);
+  const { data: config } = useConfigBootstrap();
+  // Derived from the applied industry pack, so changing industry moves the
+  // sidebar immediately instead of leaving it on whatever was frozen at signup.
+  const enabledNavigation = useEnabledNavigation();
+  /*
+   * Whose product this is.
+   *
+   * `slug` identifies the organisation that owns the Éclat artwork; every other
+   * tenant is shown their own name. The tenant's chosen display name wins over
+   * the legal organisation name when they have set one.
+   */
+  const brandName = brandingName(config?.organisation.settings) ?? config?.organisation.name ?? null;
+  const isEclat = config?.organisation.slug === ECLAT_SLUG;
+  const groups = visibleNavGroups(
+    role,
+    enabledNavigation,
+  );
   // Pending follow-ups due today or overdue → the Reminders nav badge.
   const { data: reminders } = useReminders("pending");
   const dueCount = pendingDueCount(reminders);
@@ -24,8 +45,11 @@ export function Sidebar() {
     <aside className="hidden w-64 shrink-0 flex-col bg-sidebar text-sidebar-foreground md:flex">
       {/* Brand */}
       <div className="flex h-16 items-center border-b border-sidebar-border px-5">
-        <Link href={homeForRole(role)} aria-label="Éclat Diamonds">
-          <Logo className="h-8 w-auto" />
+        <Link
+          href={homeForRole(role, enabledNavigation)}
+          aria-label={brandName ?? "CaratSense"}
+        >
+          <Logo className="h-8 w-auto" name={brandName} isEclat={isEclat} />
         </Link>
       </div>
 
@@ -88,7 +112,13 @@ export function Sidebar() {
 
       <div className="border-t border-sidebar-border px-5 py-3">
         <p className="text-[11px] tracking-wide text-sidebar-foreground/50">
-          Éclat · CaratSense
+          {/*
+            No tenant name as the fallback. The bootstrap is a network call, so
+            on first paint and on any failure this line read "Eclat · CaratSense"
+            in every tenant's sidebar — one customer's name shown to all the
+            others. Until the real name arrives, show the product alone.
+          */}
+          {brandName ? `${brandName} · CaratSense` : "CaratSense"}
         </p>
       </div>
     </aside>

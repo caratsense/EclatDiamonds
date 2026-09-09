@@ -1,6 +1,7 @@
 import {
   IsDateString,
   IsEnum,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
@@ -19,6 +20,7 @@ import { LedgerKind, LedgerSide } from '@prisma/client';
  */
 export class CreateLedgerEntryDto {
   @IsString()
+  @IsNotEmpty()
   storeId!: string;
 
   /** AR | AP | expense | income | asset | liability. */

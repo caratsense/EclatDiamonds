@@ -1,0 +1,1074 @@
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+} from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
+
+import { AuditService } from '../common/audit.service';
+import { AuthUser } from '../common/auth-user';
+import { ConversationsService } from '../crm/conversations.service';
+import { ActivityService } from '../crm/activity.service';
+import { WhatsAppService } from '../integrations/whatsapp.service';
+import { JobContext, JobsService } from '../jobs/jobs.service';
+import { PrismaService } from '../prisma/prisma.service';
+import {
+  QueueOmnichannelMessageDto,
+  RecordConsentDto,
+  UpsertMessageTemplateDto,
+} from './dto/omnichannel.dto';
+import {
+  ConsentState,
+  evaluateDeliveryPolicy,
+  MessagePurpose,
+  OmnichannelChannel,
+  providerTemplateStatus,
+  templateSendability,
+  type ProviderTemplateStatus,
+} from './omnichannel-policy';
+
+export const OMNICHANNEL_DELIVERY_JOB = 'omnichannel.deliver';
+const DELIVERY_MAX_ATTEMPTS = 5;
+const TEMPLATE_ASSET_KIND = 'message_template';
+const MAX_COMPONENT_BYTES = 20_000;
+
+interface DeliveryJobPayload {
+  messageId: string;
+}
+
+interface TemplateMetadata {
+  channel: 'whatsapp';
+  languageCode: string;
+  category: 'authentication' | 'marketing' | 'utility';
+  /**
+   * What an operator recorded locally. Kept for history and for the screen, and
+   * deliberately NOT what authorises a send: a person typing "approved" into a
+   * form is a claim about Meta, not a fact from Meta.
+   */
+  approvalStatus: 'approved' | 'pending' | 'rejected' | 'paused' | 'disabled';
+  /** The provider's own verdict, written only by TemplateSyncService. */
+  providerStatus: ProviderTemplateStatus;
+  /** When that verdict was read. Absent on every row predating template sync. */
+  providerSyncedAt: string | null;
+  bodyPreview?: string;
+  variables: string[];
+  recordedAt: string;
+}
+
+interface MessageInstructions {
+  purpose: MessagePurpose;
+  templateAssetId?: string;
+  templateComponents?: unknown[];
+  queuedAt?: string;
+}
+
+export const CONSENT_PURPOSES = ['service', 'marketing', 'all'] as const;
+export type ConsentPurpose = (typeof CONSENT_PURPOSES)[number];
+
+/**
+ * The purpose recorded on a stored consent event, or undefined when the row
+ * does not carry a recognised one.
+ *
+ * `metadata` is free-form JSON that a past release, an import or another agent
+ * may have written, so its `purpose` is genuinely unknown until checked. An
+ * unreadable purpose must not be treated as `service` or as `all` — the first
+ * would silently grant marketing consent, the second would grant everything.
+ * It is skipped instead, leaving the resolution to fall through to `unknown`.
+ */
+export function consentPurpose(value: unknown): ConsentPurpose | undefined {
+  return typeof value === 'string' &&
+    (CONSENT_PURPOSES as readonly string[]).includes(value)
+    ? (value as ConsentPurpose)
+    : undefined;
+}
+
+export interface ConsentSnapshot {
+  state: ConsentState;
+  purpose: ConsentPurpose;
+  channel: string;
+  eventId?: string;
+  occurredAt?: Date;
+  expiresAt?: Date;
+  source?: string;
+}
+
+/**
+ * Consent, approved templates and the durable outbound outbox.
+ *
+ * The Message row is the user-visible outbox item; JobTask is the delivery
+ * engine and dead-letter record. Keeping those responsibilities separate means
+ * a provider timeout cannot make the inbox claim a message was sent, while a
+ * worker restart cannot lose something a salesperson already queued.
+ */
+@Injectable()
+export class OmnichannelService implements OnModuleInit {
+  private readonly log = new Logger(OmnichannelService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly jobs: JobsService,
+    private readonly conversations: ConversationsService,
+    private readonly activity: ActivityService,
+    private readonly audit: AuditService,
+    private readonly whatsapp: WhatsAppService,
+  ) {}
+
+  onModuleInit(): void {
+    this.jobs.register(OMNICHANNEL_DELIVERY_JOB, (payload, ctx) =>
+      this.deliver(payload as DeliveryJobPayload, ctx),
+    );
+  }
+
+  // ---------------------------------------------------------------- Consent
+
+  /** Record one immutable grant/revocation. The newest applicable event wins. */
+  async recordConsent(user: AuthUser, input: RecordConsentDto) {
+    const party = await this.assertPartyAccess(user, input.partyId);
+    const occurredAt = input.occurredAt ? new Date(input.occurredAt) : new Date();
+    if (occurredAt.getTime() > Date.now() + 5 * 60_000) {
+      throw new BadRequestException('Consent time cannot be in the future.');
+    }
+    const expiresAt = input.expiresAt ? new Date(input.expiresAt) : undefined;
+    if (expiresAt && expiresAt <= occurredAt) {
+      throw new BadRequestException('Consent expiry must be later than the consent time.');
+    }
+
+    if (input.contactPointId) {
+      const contact = await this.prisma.contactPoint.findFirst({
+        where: {
+          id: input.contactPointId,
+          organisationId: user.organisationId,
+          partyId: input.partyId,
+        },
+        select: { id: true },
+      });
+      if (!contact) throw new BadRequestException('Contact point does not belong to this customer.');
+    }
+
+    const dedupeKey = input.idempotencyKey
+      ? `omnichannel:consent:${input.idempotencyKey}`
+      : null;
+    const metadata = compactJson({
+      purpose: input.purpose,
+      source: input.source,
+      contactPointId: input.contactPointId,
+      expiresAt: expiresAt?.toISOString(),
+      reference: input.reference,
+    });
+
+    let event: { id: string; occurredAt: Date };
+    try {
+      event = await this.prisma.activityEvent.create({
+        data: {
+          organisationId: user.organisationId,
+          storeId: party.storeId,
+          partyId: party.id,
+          actorUserId: user.id,
+          type: `consent.${input.status}`,
+          summary: `${input.channel} ${input.purpose} consent ${input.status}`,
+          entityType: 'Party',
+          entityId: party.id,
+          channel: input.channel,
+          sourceSystem: input.source,
+          occurredAt,
+          dedupeKey,
+          metadata,
+        },
+        select: { id: true, occurredAt: true },
+      });
+    } catch (error) {
+      if (!dedupeKey || !isUniqueViolation(error)) throw error;
+      const prior = await this.prisma.activityEvent.findFirst({
+        where: { organisationId: user.organisationId, dedupeKey },
+        select: { id: true, occurredAt: true, partyId: true, channel: true, type: true, metadata: true },
+      });
+      const priorMeta = jsonObject(prior?.metadata);
+      if (
+        !prior ||
+        prior.partyId !== input.partyId ||
+        prior.channel !== input.channel ||
+        prior.type !== `consent.${input.status}` ||
+        priorMeta.purpose !== input.purpose
+      ) {
+        throw new BadRequestException('That idempotency key was already used for another consent event.');
+      }
+      event = { id: prior.id, occurredAt: prior.occurredAt };
+    }
+
+    await this.audit.record(user, {
+      action: `omnichannel.consent.${input.status}`,
+      entityType: 'Party',
+      entityId: party.id,
+      storeId: party.storeId,
+      summary: `${input.channel} ${input.purpose} consent ${input.status}`,
+      metadata: { channel: input.channel, purpose: input.purpose, source: input.source },
+    });
+
+    return {
+      eventId: event.id,
+      partyId: party.id,
+      channel: input.channel,
+      purpose: input.purpose,
+      state: input.status,
+      occurredAt: event.occurredAt,
+      expiresAt: expiresAt ?? null,
+    };
+  }
+
+  async consentFor(
+    user: AuthUser,
+    partyId: string,
+    channel: OmnichannelChannel,
+    purpose: MessagePurpose,
+  ): Promise<ConsentSnapshot> {
+    await this.assertPartyAccess(user, partyId);
+    return this.resolveConsent(user.organisationId, partyId, channel, purpose);
+  }
+
+  /** Used by verified provider webhooks when a customer sends STOP/unsubscribe. */
+  async recordProviderOptOut(input: {
+    organisationId: string;
+    partyId: string;
+    channel: OmnichannelChannel;
+    providerEventId: string;
+    occurredAt?: Date;
+  }): Promise<void> {
+    const party = await this.prisma.party.findFirst({
+      where: { id: input.partyId, organisationId: input.organisationId },
+      select: { id: true, storeId: true },
+    });
+    if (!party) throw new NotFoundException('Customer not found');
+    try {
+      await this.prisma.activityEvent.create({
+        data: {
+          organisationId: input.organisationId,
+          storeId: party.storeId,
+          partyId: party.id,
+          type: 'consent.revoked',
+          summary: `${input.channel} all-purpose consent revoked by recipient`,
+          entityType: 'Party',
+          entityId: party.id,
+          channel: input.channel,
+          sourceSystem: 'provider',
+          occurredAt: input.occurredAt ?? new Date(),
+          dedupeKey: `omnichannel:optout:${input.channel}:${input.providerEventId}`,
+          metadata: { purpose: 'all', source: 'inbound_message' },
+        },
+      });
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+    }
+  }
+
+  private async resolveConsent(
+    organisationId: string,
+    partyId: string,
+    channel: string,
+    purpose: MessagePurpose,
+  ): Promise<ConsentSnapshot> {
+    const rows = await this.prisma.activityEvent.findMany({
+      where: {
+        organisationId,
+        partyId,
+        channel,
+        type: { in: ['consent.granted', 'consent.revoked'] },
+      },
+      orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+      take: 200,
+      select: { id: true, type: true, occurredAt: true, metadata: true },
+    });
+
+    for (const row of rows) {
+      const metadata = jsonObject(row.metadata);
+      const eventPurpose = consentPurpose(metadata.purpose);
+      if (!eventPurpose) continue;
+      if (eventPurpose !== purpose && eventPurpose !== 'all') continue;
+      const expiresAt = typeof metadata.expiresAt === 'string' ? new Date(metadata.expiresAt) : undefined;
+      const state: ConsentState = row.type === 'consent.granted' ? 'granted' : 'revoked';
+      if (state === 'granted' && expiresAt && expiresAt <= new Date()) {
+        return {
+          state: 'unknown',
+          purpose: eventPurpose,
+          channel,
+          eventId: row.id,
+          occurredAt: row.occurredAt,
+          expiresAt,
+          source: typeof metadata.source === 'string' ? metadata.source : undefined,
+        };
+      }
+      return {
+        state,
+        purpose: eventPurpose,
+        channel,
+        eventId: row.id,
+        occurredAt: row.occurredAt,
+        expiresAt,
+        source: typeof metadata.source === 'string' ? metadata.source : undefined,
+      };
+    }
+
+    return { state: 'unknown', purpose, channel };
+  }
+
+  // -------------------------------------------------------------- Templates
+
+  async listTemplates(user: AuthUser, integrationId?: string) {
+    const rows = await this.prisma.integrationAsset.findMany({
+      where: {
+        organisationId: user.organisationId,
+        kind: TEMPLATE_ASSET_KIND,
+        ...(integrationId ? { integrationId } : {}),
+      },
+      orderBy: [{ name: 'asc' }, { externalId: 'asc' }],
+      include: { integration: { select: { id: true, name: true, providerCode: true, status: true } } },
+    });
+    return rows.map((row) => ({ ...row, metadata: templateMetadata(row.metadata) }));
+  }
+
+  async upsertTemplate(
+    user: AuthUser,
+    integrationId: string,
+    input: UpsertMessageTemplateDto,
+  ) {
+    const integration = await this.prisma.integration.findFirst({
+      where: { id: integrationId, organisationId: user.organisationId },
+      select: { id: true, providerCode: true },
+    });
+    if (!integration) throw new NotFoundException('Integration not found');
+    if (integration.providerCode !== 'whatsapp_cloud' || input.channel !== 'whatsapp') {
+      throw new BadRequestException('This template does not match the selected messaging integration.');
+    }
+
+    /*
+     * Recording a template is a local act; approving one is not. This writes the
+     * operator's declaration and preserves whatever the provider last said, but
+     * it can never set or raise `providerStatus` — only TemplateSyncService can,
+     * and only from what Meta actually returned.
+     */
+    const existing = await this.prisma.integrationAsset.findFirst({
+      where: { integrationId, kind: TEMPLATE_ASSET_KIND, externalId: input.name },
+      select: { metadata: true },
+    });
+    const previous = existing ? templateMetadata(existing.metadata) : null;
+    const metadata: TemplateMetadata = {
+      channel: input.channel,
+      languageCode: input.languageCode,
+      category: input.category,
+      approvalStatus: input.status,
+      providerStatus: previous?.providerStatus ?? 'UNKNOWN',
+      providerSyncedAt: previous?.providerSyncedAt ?? null,
+      ...(input.bodyPreview ? { bodyPreview: input.bodyPreview } : {}),
+      variables: input.variables ?? [],
+      recordedAt: new Date().toISOString(),
+    };
+
+    const asset = await this.prisma.integrationAsset.upsert({
+      where: {
+        integrationId_kind_externalId: {
+          integrationId,
+          kind: TEMPLATE_ASSET_KIND,
+          externalId: input.name,
+        },
+      },
+      create: {
+        organisationId: user.organisationId,
+        integrationId,
+        kind: TEMPLATE_ASSET_KIND,
+        externalId: input.name,
+        name: input.name,
+        metadata: metadata as unknown as Prisma.InputJsonValue,
+        isActive: input.status !== 'disabled',
+      },
+      update: {
+        name: input.name,
+        metadata: metadata as unknown as Prisma.InputJsonValue,
+        isActive: input.status !== 'disabled',
+      },
+    });
+
+    await this.audit.record(user, {
+      action: 'omnichannel.template.upsert',
+      entityType: 'IntegrationAsset',
+      entityId: asset.id,
+      summary: `Recorded ${input.name} as ${input.status}`,
+      metadata: {
+        integrationId,
+        channel: input.channel,
+        languageCode: input.languageCode,
+        category: input.category,
+        approvalStatus: input.status,
+      },
+    });
+    return { ...asset, metadata };
+  }
+
+  // ----------------------------------------------------------------- Outbox
+
+  /**
+   * Queue a policy-checked outbound message. Existing CRM/AI queued messages are
+   * also discovered by sweepQueued, so adoption does not require rewriting
+   * every producer in one release.
+   */
+  async queue(user: AuthUser, conversationId: string, input: QueueOmnichannelMessageDto) {
+    const conversation = await this.conversations.assertCanAccess(user, conversationId);
+    if (!input.body?.trim() && !input.templateAssetId) {
+      throw new BadRequestException('A message body or approved template is required.');
+    }
+    this.assertComponentsBounded(input.templateComponents);
+
+    const template = input.templateAssetId
+      ? await this.loadApprovedTemplate(user.organisationId, input.templateAssetId)
+      : null;
+    const consent = conversation.partyId
+      ? await this.resolveConsent(
+          user.organisationId,
+          conversation.partyId,
+          conversation.channel,
+          input.purpose,
+        )
+      : ({ state: 'unknown' } as ConsentSnapshot);
+    const decision = evaluateDeliveryPolicy({
+      channel: conversation.channel,
+      purpose: input.purpose,
+      consent: consent.state,
+      hasApprovedTemplate: !!template,
+      lastInboundAt: conversation.lastInboundAt,
+    });
+    if (!decision.allowed) throw new BadRequestException(decision.reason);
+    if (input.purpose === 'marketing' && !conversation.partyId) {
+      throw new BadRequestException('Marketing messages require a customer with recorded consent.');
+    }
+    await this.resolveRecipient(user.organisationId, conversation);
+
+    const messageId = randomUUID();
+    const now = new Date();
+    const dedupeKey = input.idempotencyKey
+      ? `omnichannel:queue:${input.idempotencyKey}`
+      : null;
+    const instructions: MessageInstructions = {
+      purpose: input.purpose,
+      ...(template ? { templateAssetId: template.id } : {}),
+      ...(input.templateComponents ? { templateComponents: input.templateComponents } : {}),
+      queuedAt: now.toISOString(),
+    };
+
+    let message: Awaited<ReturnType<PrismaService['message']['create']>>;
+    let deduplicated = false;
+    try {
+      message = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.message.create({
+          data: {
+            id: messageId,
+            organisationId: user.organisationId,
+            conversationId,
+            direction: 'outbound',
+            authorType: 'agent',
+            authorUserId: user.id,
+            body: input.body?.trim() || null,
+            status: 'queued',
+            payload: { omnichannel: instructions } as unknown as Prisma.InputJsonValue,
+          },
+        });
+        await tx.conversation.update({
+          where: { id: conversationId },
+          data: {
+            lastMessageAt: now,
+            handling: 'human',
+            assignedUserId: conversation.assignedUserId ?? user.id,
+          },
+        });
+        await tx.activityEvent.create({
+          data: {
+            organisationId: user.organisationId,
+            storeId: conversation.storeId,
+            partyId: conversation.partyId,
+            actorUserId: user.id,
+            type: 'message.queued',
+            summary: `${user.name} queued a ${input.purpose} message on ${conversation.channel}`,
+            entityType: 'Message',
+            entityId: created.id,
+            channel: conversation.channel,
+            dedupeKey,
+            metadata: compactJson({ purpose: input.purpose, templateAssetId: template?.id }),
+          },
+        });
+        return created;
+      });
+    } catch (error) {
+      if (!dedupeKey || !isUniqueViolation(error)) throw error;
+      const prior = await this.prisma.activityEvent.findFirst({
+        where: {
+          organisationId: user.organisationId,
+          dedupeKey,
+          type: 'message.queued',
+          entityType: 'Message',
+        },
+        select: { entityId: true },
+      });
+      if (!prior?.entityId) {
+        throw new BadRequestException('That idempotency key was already used for another operation.');
+      }
+      const existing = await this.prisma.message.findFirst({
+        where: { id: prior.entityId, organisationId: user.organisationId, conversationId },
+      });
+      if (!existing) {
+        throw new BadRequestException('That idempotency key belongs to another message.');
+      }
+      message = existing;
+      deduplicated = true;
+    }
+
+    const job = await this.enqueueMessage(message.organisationId, message.id, user.id);
+    return { message, job, deduplicated, policy: { mode: decision.mode } };
+  }
+
+  /**
+   * Find queued rows THIS MODULE COMPOSED and give each exactly one durable job.
+   *
+   * The filter on `payload.omnichannel` is the whole safety of this method, so
+   * it is worth saying why. `status: 'queued'` is not a request to deliver — it
+   * predates this module and already means something else to two other
+   * producers. `ConversationsService.queueOutbound` documents it as "'queued',
+   * NOT 'sent' … nothing in this repository can deliver a message", and its API
+   * response tells the caller the message "will not reach the customer until a
+   * messaging integration is connected". `AiDraftsService` writes an approved
+   * draft the same way, and the CRM screen and the AI draft panel both render
+   * that promise back to the user as "Reply saved".
+   *
+   * An unfiltered sweep would turn both of those into real customer sends on the
+   * next scheduler tick — every historical row included, oldest first, in every
+   * tenant at once. The first minute after deploy would deliver a backlog nobody
+   * re-read, against a UI still saying it had not been sent.
+   *
+   * So adoption is opt-in and the marker is the delivery instruction itself:
+   * only a message carrying `payload.omnichannel` asked to be delivered, and it
+   * carries the purpose, template and consent decision this module needs anyway.
+   * Migrating the CRM and AI paths is a deliberate change to those producers —
+   * their contract, their copy, their consent story — not a side effect here.
+   */
+  async sweepQueued(organisationId?: string, limit = 200) {
+    const messages = await this.prisma.message.findMany({
+      where: {
+        ...(organisationId ? { organisationId } : {}),
+        direction: 'outbound',
+        status: 'queued',
+        payload: { path: ['omnichannel'], not: Prisma.DbNull },
+      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      take: Math.min(Math.max(limit, 1), 500),
+      select: { id: true, organisationId: true, authorUserId: true },
+    });
+    let created = 0;
+    let deduplicated = 0;
+    for (const message of messages) {
+      const job = await this.enqueueMessage(
+        message.organisationId,
+        message.id,
+        message.authorUserId ?? undefined,
+      );
+      if (job.deduplicated) deduplicated++;
+      else created++;
+    }
+    return { discovered: messages.length, created, deduplicated };
+  }
+
+  async listOutbox(user: AuthUser, opts: { status?: string; limit?: number } = {}) {
+    const allowedStatuses = ['queued', 'sent', 'delivered', 'read', 'failed'];
+    if (opts.status && !allowedStatuses.includes(opts.status)) {
+      throw new BadRequestException(`status must be one of: ${allowedStatuses.join(', ')}.`);
+    }
+    const conversationScope =
+      user.role === 'head_office'
+        ? { OR: [{ storeId: { in: user.storeIds } }, { storeId: null }] }
+        : { storeId: { in: user.storeIds } };
+    const rows = await this.prisma.message.findMany({
+      where: {
+        organisationId: user.organisationId,
+        direction: 'outbound',
+        ...(opts.status ? { status: opts.status } : {}),
+        conversation: { organisationId: user.organisationId, ...conversationScope },
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: Math.min(Math.max(opts.limit ?? 50, 1), 200),
+      include: {
+        conversation: {
+          select: {
+            id: true,
+            channel: true,
+            storeId: true,
+            party: { select: { id: true, name: true } },
+          },
+        },
+      },
+    });
+    const keys = rows.map((row) => deliveryJobKey(user.organisationId, row.id));
+    const jobs = keys.length
+      ? await this.prisma.jobTask.findMany({
+          where: {
+            organisationId: user.organisationId,
+            kind: OMNICHANNEL_DELIVERY_JOB,
+            idempotencyKey: { in: keys },
+          },
+          select: { id: true, idempotencyKey: true, status: true, attempts: true, lastError: true, runAt: true },
+        })
+      : [];
+    const jobsByKey = new Map(jobs.map((job) => [job.idempotencyKey, job]));
+    return rows.map((row) => ({
+      ...row,
+      job: jobsByKey.get(deliveryJobKey(user.organisationId, row.id)) ?? null,
+    }));
+  }
+
+  async retryMessage(user: AuthUser, messageId: string) {
+    const message = await this.prisma.message.findFirst({
+      where: { id: messageId, organisationId: user.organisationId, direction: 'outbound' },
+      select: { id: true, status: true, conversationId: true },
+    });
+    if (!message) throw new NotFoundException('Message not found');
+    await this.conversations.assertCanAccess(user, message.conversationId);
+    if (['sent', 'delivered', 'read'].includes(message.status)) {
+      throw new BadRequestException('A delivered message cannot be queued again.');
+    }
+
+    const key = deliveryJobKey(user.organisationId, message.id);
+    const existing = await this.prisma.jobTask.findUnique({ where: { idempotencyKey: key } });
+    await this.prisma.message.update({
+      where: { id: message.id },
+      data: { status: 'queued', error: null },
+    });
+    if (!existing) return this.enqueueMessage(user.organisationId, message.id, user.id);
+    if (existing.status === 'pending' || existing.status === 'running') {
+      return { id: existing.id, deduplicated: true, status: existing.status };
+    }
+    const job = await this.jobs.retry(user.organisationId, existing.id);
+    if (!job) throw new BadRequestException('Delivery job cannot be retried in its current state.');
+    return { id: job.id, deduplicated: false, status: job.status };
+  }
+
+  /** Apply a verified provider receipt after tenant ownership has been resolved. */
+  async applyDeliveryReceipt(input: {
+    organisationId: string;
+    providerMessageId: string;
+    status: 'sent' | 'delivered' | 'read' | 'failed';
+    providerEventId?: string;
+    occurredAt?: Date;
+    error?: string;
+  }) {
+    const message = await this.prisma.message.findFirst({
+      where: {
+        organisationId: input.organisationId,
+        externalId: input.providerMessageId,
+        direction: 'outbound',
+      },
+      include: { conversation: { select: { partyId: true, storeId: true, channel: true } } },
+    });
+    if (!message) return { matched: false, updated: false };
+
+    /*
+     * Receipts arrive out of order, so state only ever moves forward.
+     *
+     * `failed` ranks alongside `sent`: both mean the provider has answered for
+     * this attempt. Omitting it — as this map first did — made `failed` rank 0
+     * via the `?? 0` fallback, so a late `sent` receipt for a message the
+     * provider had already rejected walked it backwards from failed to sent. The
+     * outbox would then show a delivered-looking message that never left, which
+     * is the exact lie the rest of this module is built to avoid.
+     */
+    const rank: Record<string, number> = { queued: 0, sent: 1, failed: 1, delivered: 2, read: 3 };
+    if (input.status !== 'failed' && (rank[message.status] ?? 0) >= rank[input.status]) {
+      return { matched: true, updated: false, messageId: message.id, status: message.status };
+    }
+    if (input.status === 'failed' && ['delivered', 'read'].includes(message.status)) {
+      return { matched: true, updated: false, messageId: message.id, status: message.status };
+    }
+
+    const error = input.status === 'failed' ? safeProviderError(input.error ?? 'Provider reported delivery failure.') : null;
+    const updated = await this.prisma.message.update({
+      where: { id: message.id },
+      data: { status: input.status, error },
+    });
+    await this.activity.record({
+      organisationId: input.organisationId,
+      storeId: message.conversation.storeId,
+      partyId: message.conversation.partyId,
+      type: `message.${input.status}`,
+      summary: `Provider marked a ${message.conversation.channel} message ${input.status}`,
+      entityType: 'Message',
+      entityId: message.id,
+      channel: message.conversation.channel,
+      sourceSystem: 'provider',
+      occurredAt: input.occurredAt,
+      dedupeKey: input.providerEventId
+        ? `omnichannel:receipt:${input.providerEventId}`
+        : `omnichannel:receipt:${input.providerMessageId}:${input.status}`,
+      metadata: { providerMessageId: input.providerMessageId },
+    });
+    return { matched: true, updated: true, messageId: updated.id, status: updated.status };
+  }
+
+  // --------------------------------------------------------------- Delivery
+
+  private enqueueMessage(organisationId: string, messageId: string, createdById?: string) {
+    return this.jobs.enqueue({
+      kind: OMNICHANNEL_DELIVERY_JOB,
+      organisationId,
+      payload: { messageId },
+      idempotencyKey: deliveryJobKey(organisationId, messageId),
+      maxAttempts: DELIVERY_MAX_ATTEMPTS,
+      createdById,
+    });
+  }
+
+  private async deliver(payload: DeliveryJobPayload, ctx: JobContext) {
+    if (!ctx.organisationId || !payload || typeof payload.messageId !== 'string') {
+      throw new Error('Delivery job is missing its tenant or message id.');
+    }
+    const message = await this.prisma.message.findFirst({
+      where: {
+        id: payload.messageId,
+        organisationId: ctx.organisationId,
+        direction: 'outbound',
+      },
+      include: {
+        conversation: {
+          include: {
+            party: {
+              select: {
+                id: true,
+                phone: true,
+                whatsapp: true,
+                contactPoints: {
+                  where: { kind: { in: ['whatsapp', 'phone'] } },
+                  orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+                  select: { kind: true, value: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!message) throw new Error('Outbound message no longer exists in this tenant.');
+    if (['sent', 'delivered', 'read'].includes(message.status)) {
+      return { delivered: true, alreadySettled: true, status: message.status };
+    }
+
+    const instructions = messageInstructions(message.payload);
+    let template: Awaited<ReturnType<OmnichannelService['loadApprovedTemplate']>> | null = null;
+    if (instructions.templateAssetId) {
+      try {
+        template = await this.loadApprovedTemplate(ctx.organisationId, instructions.templateAssetId);
+      } catch (error) {
+        return this.failPermanently(message, 'template_unavailable', errorMessage(error));
+      }
+    }
+    const consent = message.conversation.partyId
+      ? await this.resolveConsent(
+          ctx.organisationId,
+          message.conversation.partyId,
+          message.conversation.channel,
+          instructions.purpose,
+        )
+      : ({ state: 'unknown' } as ConsentSnapshot);
+    const policy = evaluateDeliveryPolicy({
+      channel: message.conversation.channel,
+      purpose: instructions.purpose,
+      consent: consent.state,
+      hasApprovedTemplate: !!template,
+      lastInboundAt: message.conversation.lastInboundAt,
+    });
+    if (!policy.allowed) return this.failPermanently(message, policy.code, policy.reason);
+    if (instructions.purpose === 'marketing' && !message.conversation.partyId) {
+      return this.failPermanently(
+        message,
+        'consent_required',
+        'Marketing messages require a customer with recorded consent.',
+      );
+    }
+    if (!template && !message.body?.trim()) {
+      return this.failPermanently(message, 'content_missing', 'The queued message has no text to send.');
+    }
+    if (message.mediaUrl || message.mediaType) {
+      return this.failPermanently(
+        message,
+        'media_not_supported',
+        'WhatsApp media delivery is not connected yet; the attachment was not sent.',
+      );
+    }
+
+    let recipient: string;
+    try {
+      recipient = await this.resolveRecipient(ctx.organisationId, message.conversation);
+    } catch (error) {
+      return this.failPermanently(message, 'recipient_missing', errorMessage(error));
+    }
+
+    const result = template
+      ? await this.whatsapp.sendTemplate(
+          ctx.organisationId,
+          recipient,
+          template.externalId,
+          template.metadata.languageCode,
+          instructions.templateComponents,
+        )
+      : await this.whatsapp.sendText(ctx.organisationId, recipient, message.body!.trim());
+
+    if (!result.delivered || result.dryRun || !result.messageId) {
+      const reason = safeProviderError(
+        result.error ?? result.reason ?? (!result.messageId ? 'Provider accepted no message id.' : 'Provider refused delivery.'),
+      );
+      await this.markTransientFailure(message, reason, ctx.attempt);
+      throw new Error(reason);
+    }
+
+    const sentAt = new Date();
+    const currentPayload = jsonObject(message.payload);
+    const updatedPayload = {
+      ...currentPayload,
+      delivery: {
+        provider: 'whatsapp_cloud',
+        credentialScope: result.credentialScope,
+        acceptedAt: sentAt.toISOString(),
+        attempt: ctx.attempt,
+      },
+    };
+    await this.prisma.message.update({
+      where: { id: message.id },
+      data: {
+        status: 'sent',
+        externalId: result.messageId,
+        error: null,
+        sentAt,
+        payload: updatedPayload as Prisma.InputJsonValue,
+      },
+    });
+    await this.activity.record({
+      organisationId: ctx.organisationId,
+      storeId: message.conversation.storeId,
+      partyId: message.conversation.partyId,
+      type: 'message.sent',
+      summary: `WhatsApp accepted an outbound ${instructions.purpose} message`,
+      entityType: 'Message',
+      entityId: message.id,
+      channel: 'whatsapp',
+      sourceSystem: 'whatsapp_cloud',
+      dedupeKey: `omnichannel:sent:${message.id}`,
+      metadata: { providerMessageId: result.messageId },
+    });
+    return { delivered: true, status: 'sent', messageId: message.id, providerMessageId: result.messageId };
+  }
+
+  private async failPermanently(
+    message: { id: string; payload: unknown },
+    code: string,
+    reason: string,
+  ) {
+    const safeReason = safeProviderError(reason);
+    await this.prisma.message.update({
+      where: { id: message.id },
+      data: {
+        status: 'failed',
+        error: `${code}: ${safeReason}`.slice(0, 2000),
+        payload: {
+          ...jsonObject(message.payload),
+          delivery: { blockedAt: new Date().toISOString(), code },
+        } as Prisma.InputJsonValue,
+      },
+    });
+    return { delivered: false, blocked: true, code, reason: safeReason, messageId: message.id };
+  }
+
+  private async markTransientFailure(
+    message: { id: string; payload: unknown },
+    reason: string,
+    attempt: number,
+  ): Promise<void> {
+    const exhausted = attempt >= DELIVERY_MAX_ATTEMPTS;
+    await this.prisma.message.update({
+      where: { id: message.id },
+      data: {
+        status: exhausted ? 'failed' : 'queued',
+        error: reason.slice(0, 2000),
+        payload: {
+          ...jsonObject(message.payload),
+          delivery: {
+            failedAt: new Date().toISOString(),
+            attempt,
+            retrying: !exhausted,
+          },
+        } as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  private async loadApprovedTemplate(organisationId: string, assetId: string) {
+    const asset = await this.prisma.integrationAsset.findFirst({
+      where: {
+        id: assetId,
+        organisationId,
+        kind: TEMPLATE_ASSET_KIND,
+        isActive: true,
+        integration: { providerCode: 'whatsapp_cloud' },
+      },
+      include: { integration: { select: { id: true, status: true, providerCode: true } } },
+    });
+    if (!asset) throw new BadRequestException('Message template not found for this tenant.');
+    const metadata = templateMetadata(asset.metadata);
+    /*
+     * The gate used to be `metadata.approvalStatus !== 'approved'` — one string
+     * a head-office user typed into a form. It is now the provider's own verdict
+     * plus how old that verdict is, because Meta pauses templates for quality
+     * without telling anyone and a week-old approval is a guess.
+     */
+    const verdict = templateSendability({
+      isActive: asset.isActive,
+      providerStatus: metadata.providerStatus,
+      providerSyncedAt: asset.lastVerifiedAt ?? null,
+    });
+    if (!verdict.sendable) throw new BadRequestException(verdict.reason);
+    return { ...asset, metadata };
+  }
+
+  private async resolveRecipient(
+    organisationId: string,
+    conversation: {
+      externalThreadId?: string | null;
+      partyId?: string | null;
+      party?: {
+        phone?: string | null;
+        whatsapp?: string | null;
+        contactPoints?: { kind: string; value: string }[];
+      } | null;
+    },
+  ): Promise<string> {
+    let party = conversation.party;
+    if (!party && conversation.partyId) {
+      party = await this.prisma.party.findFirst({
+        where: { id: conversation.partyId, organisationId },
+        select: {
+          phone: true,
+          whatsapp: true,
+          contactPoints: {
+            where: { kind: { in: ['whatsapp', 'phone'] } },
+            orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+            select: { kind: true, value: true },
+          },
+        },
+      });
+    }
+    const contact = party?.contactPoints?.find((point) => point.kind === 'whatsapp')?.value
+      ?? party?.contactPoints?.find((point) => point.kind === 'phone')?.value
+      ?? party?.whatsapp
+      ?? party?.phone
+      ?? conversation.externalThreadId;
+    const digits = contact?.replace(/\D/g, '') ?? '';
+    if (digits.length < 6 || digits.length > 20) {
+      throw new BadRequestException('No usable WhatsApp recipient is linked to this conversation.');
+    }
+    return contact!;
+  }
+
+  private async assertPartyAccess(user: AuthUser, partyId: string) {
+    const party = await this.prisma.party.findFirst({
+      where: { id: partyId, organisationId: user.organisationId },
+      select: { id: true, storeId: true },
+    });
+    if (!party) throw new NotFoundException('Customer not found');
+    const centralAllowed = user.role === 'head_office';
+    if ((party.storeId && !user.storeIds.includes(party.storeId)) || (!party.storeId && !centralAllowed)) {
+      // A 404 avoids confirming that an out-of-scope customer id exists.
+      throw new NotFoundException('Customer not found');
+    }
+    return party;
+  }
+
+  private assertComponentsBounded(components?: unknown[]): void {
+    if (!components) return;
+    let bytes = 0;
+    try {
+      bytes = Buffer.byteLength(JSON.stringify(components), 'utf8');
+    } catch {
+      throw new BadRequestException('Template components must be valid JSON.');
+    }
+    if (bytes > MAX_COMPONENT_BYTES) {
+      throw new BadRequestException(`Template components exceed ${MAX_COMPONENT_BYTES} bytes.`);
+    }
+  }
+}
+
+function deliveryJobKey(organisationId: string, messageId: string): string {
+  return `omnichannel:deliver:${organisationId}:${messageId}`;
+}
+
+function messageInstructions(value: unknown): MessageInstructions {
+  const root = jsonObject(value);
+  const raw = jsonObject(root.omnichannel);
+  return {
+    purpose: raw.purpose === 'marketing' ? 'marketing' : 'service',
+    ...(typeof raw.templateAssetId === 'string' ? { templateAssetId: raw.templateAssetId } : {}),
+    ...(Array.isArray(raw.templateComponents) ? { templateComponents: raw.templateComponents } : {}),
+    ...(typeof raw.queuedAt === 'string' ? { queuedAt: raw.queuedAt } : {}),
+  };
+}
+
+function templateMetadata(value: unknown): TemplateMetadata {
+  const raw = jsonObject(value);
+  return {
+    channel: 'whatsapp',
+    languageCode: typeof raw.languageCode === 'string' ? raw.languageCode : 'en',
+    category:
+      raw.category === 'authentication' || raw.category === 'marketing'
+        ? raw.category
+        : 'utility',
+    approvalStatus:
+      raw.approvalStatus === 'approved' ||
+      raw.approvalStatus === 'pending' ||
+      raw.approvalStatus === 'rejected' ||
+      raw.approvalStatus === 'paused' ||
+      raw.approvalStatus === 'disabled'
+        ? raw.approvalStatus
+        : 'pending',
+    // Anything unrecognised, and every row written before template sync existed,
+    // reads as UNKNOWN with no verdict time — which is not sendable.
+    providerStatus: providerTemplateStatus(raw.providerStatus),
+    providerSyncedAt: typeof raw.providerSyncedAt === 'string' ? raw.providerSyncedAt : null,
+    ...(typeof raw.bodyPreview === 'string' ? { bodyPreview: raw.bodyPreview } : {}),
+    variables: Array.isArray(raw.variables)
+      ? raw.variables.filter((item): item is string => typeof item === 'string')
+      : [],
+    recordedAt: typeof raw.recordedAt === 'string' ? raw.recordedAt : '',
+  };
+}
+
+function jsonObject(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function compactJson(value: Record<string, unknown>): Prisma.InputJsonObject {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, item]) => item !== undefined),
+  ) as Prisma.InputJsonObject;
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError
+    ? error.code === 'P2002'
+    : (error as { code?: string } | null)?.code === 'P2002';
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function safeProviderError(value: string): string {
+  return value
+    .replace(/Bearer\s+[A-Za-z0-9._~+/-]+/gi, 'Bearer [redacted]')
+    .replace(/([?&](?:access_token|token|secret)=)[^&\s]+/gi, '$1[redacted]')
+    .slice(0, 1800);
+}
+

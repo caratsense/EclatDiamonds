@@ -1,5 +1,6 @@
-import { IsIn, IsNotEmpty, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsIn, IsNotEmpty, IsNumber, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { Role } from '@prisma/client';
+import { IsRealName } from '../../common/contact.util';
 
 /**
  * Module 15 create payload. Gold is NEVER discounted — only diamond% and making%.
@@ -8,13 +9,19 @@ import { Role } from '@prisma/client';
  */
 export class CreateDiscountRequestDto {
   @IsString()
+  @IsNotEmpty()
   storeId!: string;
 
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  @IsRealName()
   customerName!: string;
 
   @IsString()
   @IsNotEmpty()
+  @MaxLength(120)
+  @IsRealName()
   item!: string;
 
   /** Optional link to the piece; used to snapshot selling & cost price. */

@@ -29,6 +29,12 @@ export interface CheckIn {
   customer: string;
   /** New walk-in vs returning CRM customer. */
   returning: boolean;
+  /**
+   * The linked customer record, when the phone resolved to one. Null is a real
+   * answer — no phone was given, or it matched nobody — and the UI must not
+   * offer customer actions that would have nothing to act on.
+   */
+  partyId?: string | null;
   phone: string;
   partySize: number;
   purpose: VisitPurpose;

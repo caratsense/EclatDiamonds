@@ -1,6 +1,7 @@
 import {
   IsIn,
   IsInt,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
@@ -8,6 +9,7 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
+import { IsRealName } from '../../common/contact.util';
 
 /** Roll-up window: the day / ISO-week / calendar-month containing `date`. */
 export type ReportPeriod = 'daily' | 'weekly' | 'monthly';
@@ -31,6 +33,21 @@ export class ReportSummaryQueryDto {
   date?: string;
 }
 
+/** GET /reporting/compliance?days=&storeId= */
+export class ComplianceQueryDto {
+  /** How many days back to show, ending today. 1–31, default 7. */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  days?: number;
+
+  /** Narrow to one branch (validated against the caller's scope). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  storeId?: string;
+}
+
 /** POST /reporting/send */
 export class SendReportDto {
   @IsIn(REPORT_PERIODS)
@@ -46,6 +63,7 @@ export class SendReportDto {
 
   /** Destination: a phone number for WhatsApp, an email address for email. */
   @IsString()
+  @IsNotEmpty()
   @MaxLength(255)
   to!: string;
 }
@@ -57,6 +75,7 @@ export class SendReportDto {
  */
 export class CreateDailyReportDto {
   @IsString()
+  @IsNotEmpty()
   @MaxLength(64)
   storeId!: string;
 
@@ -125,6 +144,7 @@ export class CreateDailyReportDto {
   @IsOptional()
   @IsString()
   @MaxLength(120)
+  @IsRealName()
   submittedBy?: string;
 }
 
@@ -148,6 +168,7 @@ export class SendDailyReportDto {
 
   /** Destination: a phone number for WhatsApp, an email address for email. */
   @IsString()
+  @IsNotEmpty()
   @MaxLength(255)
   to!: string;
 }

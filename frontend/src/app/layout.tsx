@@ -44,9 +44,18 @@ const mono = IBM_Plex_Mono({
 
 
 export const metadata: Metadata = {
-  title: "CaratSense — Eclat",
+  /*
+   * The PRODUCT, not one of its customers.
+   *
+   * This is static, server-rendered metadata: it is produced before any tenant
+   * is known and is identical for everyone, so naming a single customer here
+   * put a jeweller's name in the browser tab and the installed-app title of
+   * every clinic, factory and pharmacy on the platform. A per-tenant title would
+   * need the tenant resolved at request time, which this file cannot do.
+   */
+  title: "CaratSense",
   description:
-    "Unified operations platform for multi-store jewelry retail: sales, inventory, finance, HR and customer management.",
+    "Unified operations platform: customers, catalogue, attendance, finance and team across every branch.",
   // iOS Safari ignores the web manifest for "Add to Home Screen"; these enable
   // a standalone, app-like launch with the correct name and status-bar style.
   appleWebApp: {

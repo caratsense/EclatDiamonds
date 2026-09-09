@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "busy-bds-starter",
+  "displayName": "BUSY .bds starter",
+  "sourceSystem": "busy",
+  "notes": "Verified against BUSY Master1 layouts used by Eclat and Ashish Textile. Preview is mandatory because optional contact columns vary by installation.",
+  "transport": {
+    "kind": "access_file",
+    "pathEnv": "CONNECT_SOURCE_FILE",
+    "passwordEnv": "CONNECT_SOURCE_PASSWORD",
+    "driver": "Microsoft Access Driver (*.mdb, *.accdb)"
+  },
+  "entities": {
+    "customers": {
+      "query": "SELECT a.[code] AS [external_id], a.[name] AS [name], g.[name] AS [parent_group] FROM [Master1] a LEFT JOIN [Master1] g ON a.[parentgrp] = g.[code] WHERE a.[mastertype] = 2 AND g.[name] LIKE '%Debtor%' ORDER BY a.[code]",
+      "fields": {
+        "code": ["external_id"],
+        "name": ["name"],
+        "_parent": ["parent_group"]
+      },
+      "prefixValues": {
+        "code": "busy:"
+      }
+    },
+    "products": {
+      "query": "SELECT [code] AS [external_id], [code] AS [sku], [name] AS [name] FROM [Master1] WHERE [mastertype] = 6 ORDER BY [code]",
+      "fields": {
+        "sku": ["sku", "external_id"],
+        "name": ["name"]
+      },
+      "prefixValues": {
+        "sku": "busy:"
+      }
+    }
+  }
+}

@@ -3,12 +3,15 @@ import {
   IsDateString,
   IsEnum,
   IsIn,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
+  MaxLength,
   Min,
 } from 'class-validator';
 import { CampaignStatus, CampaignType } from '@prisma/client';
+import { IsRealName } from '../../common/contact.util';
 
 /** Raw MarketingAsset status values (deliverables + agency tasks share the column). */
 const ASSET_STATUSES = [
@@ -22,6 +25,9 @@ const ASSET_STATUSES = [
 
 export class CreateCampaignDto {
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  @IsRealName()
   name!: string;
 
   @IsEnum(CampaignType)
@@ -46,10 +52,14 @@ export class CreateCampaignDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(120)
+  @IsRealName()
   ownerName?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(120)
+  @IsRealName()
   agency?: string;
 
   /** Target stores (join rows). Omit for a pan-India campaign. */
@@ -71,9 +81,14 @@ export class CreateAssetDto {
   campaignId?: string;
 
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  @IsRealName()
   title!: string;
 
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(60)
   type!: string;
 
   @IsOptional()
@@ -92,10 +107,15 @@ export class CreateAgencyTaskDto {
   campaignId?: string;
 
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  @IsRealName()
   title!: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(120)
+  @IsRealName()
   assignee?: string;
 
   @IsOptional()

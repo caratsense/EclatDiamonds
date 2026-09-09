@@ -19,6 +19,7 @@ import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
 import { parsePagination } from '../common/pagination';
 import { Roles } from '../auth/roles.decorator';
+import { RateLimit } from '../common/rate-limit';
 
 @Controller('products')
 export class ProductsController {
@@ -32,6 +33,7 @@ export class ProductsController {
    * Jewelry visual similarity (M5): upload a photo → ranked catalogue matches via
    * dual DINOv3 + SigLIP 2 embeddings. Sales tool — salesperson and above.
    */
+  @RateLimit('expensive')
   @Post('jewelry/similarity-search')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 12 * 1024 * 1024 } }))
   similaritySearch(
@@ -54,6 +56,7 @@ export class ProductsController {
   }
 
   /** AI image search (M5): upload a design photo → ranked catalogue matches. */
+  @RateLimit('expensive')
   @Post('image-search')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 12 * 1024 * 1024 } }))
   imageSearch(
@@ -71,6 +74,7 @@ export class ProductsController {
    * to a single design (single-product reindex / failed-row retry).
    */
   @Roles('head_office')
+  @RateLimit('expensive')
   @Post('embeddings/reindex')
   reindexEmbeddings(
     @CurrentUser() user: AuthUser,

@@ -43,14 +43,22 @@ import {
   FootfallByStoreChart,
 } from "@/components/checkins/footfall-charts";
 import { CheckInLog, LiveInStore } from "@/components/checkins/checkin-tables";
+import { CustomerRecognition } from "@/components/crm/customer-recognition";
 import {
   PURPOSE_TO_ENUM,
   useCheckins,
   useCheckoutCheckin,
   useCreateCheckin,
   type CheckinOutcomeInput,
+  type CheckinPurposeInput,
 } from "@/lib/queries/checkins";
-import { apiErrorMessage, normalizeIndianMobile } from "@/lib/utils";
+import { useConfigBootstrap } from "@/lib/queries/tenant-config";
+import {
+  apiErrorMessage,
+  capIndianPhone,
+  isRealName,
+  normalizeIndianMobile,
+} from "@/lib/utils";
 
 /** Bucket "HH:mm" into an hour label like "10a" / "1p" for the hourly chart. */
 function hourLabel(timeIn: string | null): string | null {
@@ -243,16 +251,25 @@ function CloseVisitDialog({
 }) {
   const checkout = useCheckoutCheckin();
   const [outcome, setOutcome] = useState<CheckinOutcomeInput | "">("");
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  function clearError(field: string) {
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
+  }
 
   // Reset the selection whenever a new visit is opened for closing.
   useEffect(() => {
-    if (open) setOutcome("");
+    if (open) {
+      setOutcome("");
+      setErrors({});
+    }
   }, [open, checkin?.id]);
 
   function submit() {
     if (!checkin) return;
     if (!outcome) {
-      toast.error("Select the visit outcome.");
+      setErrors({ outcome: "Select the visit outcome." });
+      toast.error("Please fix the highlighted fields.");
       return;
     }
     checkout.mutate(
@@ -279,12 +296,17 @@ function CloseVisitDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-1.5">
-          <Label htmlFor="close-outcome">Outcome</Label>
+          <Label htmlFor="close-outcome">
+            Outcome <span className="text-destructive">*</span>
+          </Label>
           <Select
             value={outcome}
-            onValueChange={(v) => setOutcome(v as CheckinOutcomeInput)}
+            onValueChange={(v) => {
+              setOutcome(v as CheckinOutcomeInput);
+              clearError("outcome");
+            }}
           >
-            <SelectTrigger id="close-outcome">
+            <SelectTrigger id="close-outcome" aria-invalid={!!errors.outcome}>
               <SelectValue placeholder="Select the visit outcome" />
             </SelectTrigger>
             <SelectContent>
@@ -295,6 +317,9 @@ function CloseVisitDialog({
               ))}
             </SelectContent>
           </Select>
+          {errors.outcome ? (
+            <p className="mt-1 text-xs text-destructive">{errors.outcome}</p>
+          ) : null}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
@@ -330,26 +355,55 @@ function AddCheckinDialog({
   const create = useCreateCheckin();
   const [customer, setCustomer] = useState("");
   const [phone, setPhone] = useState("");
-  const [purpose, setPurpose] = useState<VisitPurpose>("Browsing");
+  /*
+   * The CANONICAL value, not the display label.
+   *
+   * This used to hold a jeweller's English ("Gold Coin / Investment") and map it
+   * to the enum on submit, so the list a clinic saw was Bridal / Gold Scheme /
+   * Repair whatever their pack had configured. Holding the enum value means the
+   * options can come from the tenant's own vocabulary while what gets STORED is
+   * unchanged — the same `CheckinPurpose` member either way.
+   */
+  const [purpose, setPurpose] = useState<CheckinPurposeInput>("browsing");
+  const { data: checkinConfig } = useConfigBootstrap();
+  /*
+   * The tenant's configured visit purposes, falling back to the built-in list.
+   *
+   * A term only qualifies if it declares a `systemValue`, because that is the
+   * enum member the column accepts; a label-only term the tenant invented has
+   * nowhere to be stored and would fail on save.
+   */
+  const purposeOptions: { value: CheckinPurposeInput; label: string }[] = (() => {
+    const terms = checkinConfig?.taxonomies?.checkin_purpose?.terms ?? [];
+    const configured = terms
+      .filter((t) => !!t.systemValue)
+      .map((t) => ({ value: t.systemValue as CheckinPurposeInput, label: t.label }));
+    if (configured.length) return configured;
+    return PURPOSE_OPTIONS.map((label) => ({ value: PURPOSE_TO_ENUM[label], label }));
+  })();
+  // Inline validation errors, keyed by field. Cleared per-field on change.
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Phone is optional — but if typed it must be a valid Indian mobile (backend
-  // now enforces @IsIndianMobile). Blank passes through; present-and-invalid
-  // blocks submit and shows an inline error.
-  const trimmedPhone = phone.trim();
-  const normalizedPhone = trimmedPhone ? normalizeIndianMobile(trimmedPhone) : null;
-  const phoneInvalid = trimmedPhone.length > 0 && normalizedPhone == null;
+  function clearError(field: string) {
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
+  }
 
   function save() {
     if (!targetStoreId) {
       toast.error("Select a store to log this walk-in against.");
       return;
     }
-    if (!customer.trim()) {
-      toast.error("Customer name is required.");
-      return;
-    }
-    if (phoneInvalid) {
-      toast.error("Enter a valid 10-digit mobile number.");
+    const next: Record<string, string> = {};
+    if (!customer.trim()) next.customer = "Customer name is required.";
+    else if (!isRealName(customer))
+      next.customer = "Enter a real name — letters, not just a number.";
+    // Phone is optional; only validate a non-empty value (backend @IsIndianMobile).
+    const normalizedPhone = phone.trim() ? normalizeIndianMobile(phone) : null;
+    if (phone.trim() && !normalizedPhone)
+      next.phone = "Enter a valid 10-digit mobile number.";
+    if (Object.keys(next).length > 0) {
+      setErrors(next);
+      toast.error("Please fix the highlighted fields.");
       return;
     }
     create.mutate(
@@ -357,14 +411,15 @@ function AddCheckinDialog({
         storeId: targetStoreId,
         customerName: customer.trim(),
         phone: normalizedPhone ?? undefined,
-        purpose: PURPOSE_TO_ENUM[purpose],
+        purpose,
       },
       {
         onSuccess: () => {
           toast.success("Check-in logged");
           setCustomer("");
           setPhone("");
-          setPurpose("Browsing");
+          setPurpose("browsing");
+          setErrors({});
           onOpenChange(false);
         },
         onError: (err) => toast.error(apiErrorMessage(err, "Could not log the walk-in.")),
@@ -385,42 +440,66 @@ function AddCheckinDialog({
           <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
 
           <div className="grid gap-1.5">
-            <Label htmlFor="ci-cust">Customer name</Label>
+            <Label htmlFor="ci-cust">
+              Customer name <span className="text-destructive">*</span>
+            </Label>
             <Input
               id="ci-cust"
               placeholder="e.g. Rajesh Agarwal"
               value={customer}
-              onChange={(e) => setCustomer(e.target.value)}
+              aria-invalid={!!errors.customer}
+              onChange={(e) => {
+                setCustomer(e.target.value);
+                clearError("customer");
+              }}
             />
+            {errors.customer ? (
+              <p className="mt-1 text-xs text-destructive">{errors.customer}</p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="ci-phone">Phone</Label>
             <Input
               id="ci-phone"
               placeholder="+91 ..."
+              inputMode="tel"
               value={phone}
-              aria-invalid={phoneInvalid}
-              onChange={(e) => setPhone(e.target.value)}
+              aria-invalid={!!errors.phone}
+              onChange={(e) => {
+                setPhone(capIndianPhone(e.target.value));
+                clearError("phone");
+              }}
             />
-            {phoneInvalid ? (
-              <p className="mt-1 text-xs text-destructive">
-                Enter a valid 10-digit mobile number.
-              </p>
+            {errors.phone ? (
+              <p className="mt-1 text-xs text-destructive">{errors.phone}</p>
             ) : null}
+            {/* Recognition before creation: the counter finds out who this is
+                while they are still typing, and a returning customer's name is
+                filled in rather than re-typed (and possibly re-spelled, which
+                is how one person becomes two records). */}
+            <CustomerRecognition
+              phone={phone}
+              onRecognised={(c) => {
+                if (!customer.trim()) {
+                  setCustomer(c.name);
+                  clearError("customer");
+                }
+              }}
+            />
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="ci-purpose">Purpose</Label>
             <Select
               value={purpose}
-              onValueChange={(v) => setPurpose(v as VisitPurpose)}
+              onValueChange={(v) => setPurpose(v as CheckinPurposeInput)}
             >
               <SelectTrigger id="ci-purpose">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {PURPOSE_OPTIONS.map((p) => (
-                  <SelectItem key={p} value={p}>
-                    {p}
+                {purposeOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
                   </SelectItem>
                 ))}
               </SelectContent>

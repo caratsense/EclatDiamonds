@@ -73,12 +73,16 @@ export class StockTransfersService {
     }
   }
 
-  private async load(id: string) {
+  private async load(user: AuthUser, id: string) {
     const t = await this.prisma.stockTransfer.findUnique({
       where: { id },
       include: { items: true },
     });
     if (!t) throw new NotFoundException('Transfer not found');
+    // Tenant boundary for EVERY transition (incl. HO approve/reject, which reserve
+    // inventory). storeId re-checks below cover branch operators; this covers HO,
+    // whose scope is org-wide but must still not cross organisations.
+    this.scope.assertOrgAllowed(user, t.organisationId);
     return t;
   }
 
@@ -97,9 +101,12 @@ export class StockTransfersService {
 
     const dest = await this.prisma.store.findUnique({
       where: { id: dto.toStoreId },
-      select: { id: true, isActive: true },
+      select: { id: true, isActive: true, organisationId: true },
     });
     if (!dest) throw new BadRequestException('Destination store not found');
+    // A transfer can NEVER cross organisations. The source is already in the
+    // caller's (org-bounded) scope; the destination must be the same organisation.
+    this.scope.assertOrgAllowed(user, dest.organisationId);
     if (!dest.isActive) {
       throw new BadRequestException('Destination store is not active');
     }
@@ -133,6 +140,7 @@ export class StockTransfersService {
 
     const transfer = await this.prisma.stockTransfer.create({
       data: {
+        organisationId: user.organisationId,
         ref,
         status: 'draft',
         fromStoreId: dto.fromStoreId,
@@ -169,7 +177,7 @@ export class StockTransfersService {
   /** draft → submitted (source store_manager). */
   async submit(user: AuthUser, id: string) {
     this.assertStoreOperator(user);
-    const t = await this.load(id);
+    const t = await this.load(user, id);
     this.scope.assertStoreAllowed(user, t.fromStoreId);
     assertTransition(t.status, 'submitted');
 
@@ -216,7 +224,7 @@ export class StockTransfersService {
     if (user.role !== 'head_office') {
       throw new ForbiddenException('Only head office approves transfers');
     }
-    const t = await this.load(id);
+    const t = await this.load(user, id);
     assertTransition(t.status, 'ho_approved');
 
     await this.prisma.$transaction(async (tx) => {
@@ -275,7 +283,7 @@ export class StockTransfersService {
     if (user.role !== 'head_office') {
       throw new ForbiddenException('Only head office rejects transfers');
     }
-    const t = await this.load(id);
+    const t = await this.load(user, id);
     assertTransition(t.status, 'rejected');
 
     const { count } = await this.prisma.stockTransfer.updateMany({
@@ -316,7 +324,7 @@ export class StockTransfersService {
    * stay reserved and stay at the source in the ledger until received. */
   async dispatch(user: AuthUser, id: string) {
     this.assertStoreOperator(user);
-    const t = await this.load(id);
+    const t = await this.load(user, id);
     this.scope.assertStoreAllowed(user, t.fromStoreId);
     assertTransition(t.status, 'dispatched');
 
@@ -362,7 +370,7 @@ export class StockTransfersService {
    */
   async receive(user: AuthUser, id: string) {
     this.assertStoreOperator(user);
-    const t = await this.load(id);
+    const t = await this.load(user, id);
     this.scope.assertStoreAllowed(user, t.toStoreId);
     assertTransition(t.status, 'received');
 
@@ -389,6 +397,7 @@ export class StockTransfersService {
         }
         await tx.stockMovement.create({
           data: {
+            organisationId: user.organisationId,
             stockItemId: item.stockItemId,
             fromStoreId: t.fromStoreId,
             toStoreId: t.toStoreId,
@@ -415,7 +424,7 @@ export class StockTransfersService {
    * a final sign-off that the physical count matched. Terminal. */
   async acknowledge(user: AuthUser, id: string) {
     this.assertStoreOperator(user);
-    const t = await this.load(id);
+    const t = await this.load(user, id);
     this.scope.assertStoreAllowed(user, t.toStoreId);
     assertTransition(t.status, 'acknowledged');
 
@@ -443,7 +452,7 @@ export class StockTransfersService {
    */
   async cancel(user: AuthUser, id: string, dto: ReasonDto) {
     this.assertStoreOperator(user);
-    const t = await this.load(id);
+    const t = await this.load(user, id);
     this.scope.assertStoreAllowed(user, t.fromStoreId);
     assertTransition(t.status, 'cancelled');
 
@@ -488,7 +497,9 @@ export class StockTransfersService {
 
     let storeWhere: Prisma.StockTransferWhereInput;
     if (user.allStores && (!headerStore || headerStore === 'all')) {
-      storeWhere = {}; // HO sees every transfer
+      // HO sees every transfer IN THEIR ORGANISATION — never a global {} that would
+      // list another tenant's transfers.
+      storeWhere = { organisationId: user.organisationId };
     } else if (direction === 'in') {
       storeWhere = { toStoreId: { in: ids } };
     } else if (direction === 'out') {
@@ -516,6 +527,8 @@ export class StockTransfersService {
       },
     });
     if (!t) throw new NotFoundException('Transfer not found');
+    // Tenant boundary first: even org-wide HO must not read another org's transfer.
+    this.scope.assertOrgAllowed(user, t.organisationId);
     // Visible to HO, or to a store_manager on either side of the transfer.
     if (!user.allStores) {
       const onSource = user.storeIds.includes(t.fromStoreId);

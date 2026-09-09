@@ -132,12 +132,28 @@ export class StorageService {
   /**
    * Persist a file buffer and return its public URL.
    *
-   * Local provider → `/uploads/<folder>/<filename>`; the frontend prefixes that
-   * with NEXT_PUBLIC_API_URL. Cloudinary → an absolute https CDN URL. Callers
-   * only ever see a string, so they do not care which one ran.
+   * Local provider → `/uploads/org/<org>/<folder>/<filename>`; the frontend
+   * prefixes that with NEXT_PUBLIC_API_URL. Cloudinary → an absolute https CDN
+   * URL. Callers only ever see a string, so they do not care which one ran.
+   *
+   * `organisationId` (from the authenticated user, never the request) namespaces
+   * every NEW key as `org/<organisationId>/<folder>/<filename>` so one tenant
+   * cannot guess or collide with another's objects. It is required, not
+   * defaulted: a missing org is a bug at the call site, not something to paper
+   * over with a shared bucket path. Backward compatibility is free — existing
+   * rows keep their old (un-prefixed) URLs and we never rewrite them; only new
+   * writes get the prefix.
    */
-  async save(folder: string, filename: string, buffer: Buffer): Promise<string> {
-    const safeFolder = folder.replace(/[^a-zA-Z0-9._/-]/g, '_');
+  async save(
+    organisationId: string,
+    folder: string,
+    filename: string,
+    buffer: Buffer,
+  ): Promise<string> {
+    if (!organisationId) {
+      throw new Error('StorageService.save requires an organisationId to namespace the object key');
+    }
+    const safeFolder = `org/${organisationId}/${folder}`.replace(/[^a-zA-Z0-9._/-]/g, '_');
     const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
 
     if (this.usingR2) {
@@ -281,4 +297,60 @@ export class StorageService {
     this.logger.log(`stored ${buffer.length}B -> ${json.secure_url}`);
     return json.secure_url;
   }
+
+  /* -------------------------------------------- media access (Phase B2) */
+
+  /**
+   * The read seam for stored media.
+   *
+   * ## Honest current behaviour
+   *
+   * This returns the object's PUBLIC URL. R2 is configured for public read, so
+   * an object URL is a bearer capability: anyone holding the link can fetch it
+   * with no tenant check. Keys are namespaced `org/{organisationId}/…`, so one
+   * tenant cannot GUESS another's objects — but segregation is not
+   * authorisation, and this method does not pretend otherwise.
+   *
+   * ## Why it exists before it does anything
+   *
+   * Every read path now calls one function instead of interpolating a base URL,
+   * so making media private later is a change to THIS method plus a credential,
+   * rather than an archaeology exercise across two applications. The seam is the
+   * deliverable; the signing is not, and is explicitly not claimed.
+   *
+   * ## What making it private actually requires
+   *
+   *   1. Turn off public read on the bucket.
+   *   2. Sign here, with a short expiry, after checking the caller's
+   *      organisation against the `org/{id}/` prefix in the key.
+   *   3. Migrate URLs already persisted in `Product.imageUrl`, `ReturnPhoto`,
+   *      `QuotePhoto` and the order-receipt columns — they are absolute today.
+   *   4. Stop the frontend caching them indefinitely; a signed URL expires and a
+   *      cached one becomes a broken image.
+   *   5. Re-check the AI image-search result set, which returns image URLs in
+   *      bulk and would otherwise sign hundreds per request.
+   *
+   * Steps 3-5 are why this was not done in the hardening pass: a half-migrated
+   * media path is worse than an honest public one, because nobody can tell which
+   * objects are protected. Tracked in docs/OPERATIONS.md.
+   */
+  mediaUrl(storedPath: string | null | undefined): string | null {
+    if (!storedPath) return null;
+    if (/^https?:\/\//.test(storedPath)) return storedPath;
+    return storedPath.startsWith('/') ? storedPath : `/${storedPath}`;
+  }
+
+  /**
+   * Does this object key belong to the given organisation?
+   *
+   * The check a signed-URL implementation will need, available now so the rule
+   * has one definition rather than being re-derived at each call site when the
+   * migration happens. Objects written before key namespacing carry no prefix
+   * and return false — they are legacy and must be treated as unattributed
+   * rather than silently granted to whoever asks.
+   */
+  static keyBelongsTo(key: string, organisationId: string): boolean {
+    return key.includes(`org/${organisationId}/`);
+  }
+
 }
