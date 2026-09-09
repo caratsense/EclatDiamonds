@@ -16,6 +16,7 @@ import {
   classifyTarget,
   collectTargets,
   manifestDestinations,
+  parseAllowFlags,
   parseEnvFile,
   resolveEnvValue,
 } from './assert-local-api.mjs';
@@ -88,7 +89,10 @@ describe('classifyTarget — reject public hosts', () => {
     test(`rejects ${value}`, () => {
       const v = classifyTarget(value);
       assert.equal(v.ok, false);
-      assert.match(v.reason, /not loopback/);
+      // A production host is refused for being production; everything else for
+      // not being loopback. Both are rejections; the reason differs on purpose,
+      // because only one of them can never be widened by --allow.
+      assert.match(v.reason, /not loopback|production origin/);
     });
   }
 
@@ -439,5 +443,43 @@ describe('collectTargets + auditTargets — the incident, reproduced', () => {
 describe('the allowlist itself', () => {
   test('is exactly the three loopback forms, so it cannot quietly widen', () => {
     assert.deepEqual([...LOOPBACK_HOSTS], ['localhost', '127.0.0.1', '::1']);
+  });
+});
+
+
+describe('--allow, and the line it may not cross', () => {
+  const STAGING = 'https://backend-staging-e5cd.up.railway.app';
+
+  test('a named staging origin is accepted only when allowed', () => {
+    assert.equal(classifyTarget(STAGING).ok, false);
+    assert.equal(classifyTarget(STAGING, ['backend-staging-e5cd.up.railway.app']).ok, true);
+  });
+
+  test('allowing one remote does not admit another', () => {
+    const v = classifyTarget('https://backend-other.up.railway.app', ['backend-staging-e5cd.up.railway.app']);
+    assert.equal(v.ok, false);
+  });
+
+  test('a production host stays refused even when named in --allow', () => {
+    const v = classifyTarget('https://backend-production-89dd.up.railway.app', [
+      'backend-production-89dd.up.railway.app',
+    ]);
+    assert.equal(v.ok, false);
+    assert.match(v.reason, /production origin/);
+  });
+
+  test('parseAllowFlags refuses a production origin outright', () => {
+    assert.throws(
+      () => parseAllowFlags(['--allow', 'https://backend-production-89dd.up.railway.app']),
+      /production origin/,
+    );
+  });
+
+  test('parseAllowFlags reads the hostname from an origin', () => {
+    assert.deepEqual(parseAllowFlags(['--allow', STAGING]), ['backend-staging-e5cd.up.railway.app']);
+  });
+
+  test('parseAllowFlags rejects a bare hostname', () => {
+    assert.throws(() => parseAllowFlags(['--allow', 'backend-staging-e5cd.up.railway.app']), /parseable/);
   });
 });

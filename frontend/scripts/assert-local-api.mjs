@@ -40,14 +40,42 @@
  *   node scripts/assert-local-api.mjs            # env + built manifest if present
  *   node scripts/assert-local-api.mjs --built    # manifest REQUIRED (before browsing)
  *   node scripts/assert-local-api.mjs --pre-build # env only (before building)
+ *
+ * ## Verifying against a named remote (staging)
+ *
+ *   node scripts/assert-local-api.mjs --built --allow https://backend-staging-x.up.railway.app
+ *
+ * Loopback is the default because it needs no argument and cannot be wrong. A
+ * staging verification genuinely has to reach a remote host, so `--allow` widens
+ * the set by exactly one origin that the operator names on the command line.
+ *
+ * What `--allow` can never do is admit a production host: those are refused
+ * unconditionally, below, whatever is passed. The point of this script is that
+ * a verification run cannot touch production, and an escape hatch that could be
+ * pointed at production would not be a guard at all.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/** The only hosts a local verification may talk to. */
+/** The only hosts a local verification may talk to without --allow. */
 export const LOOPBACK_HOSTS = Object.freeze(['localhost', '127.0.0.1', '::1']);
+
+/**
+ * Hosts no verification run may EVER reach, regardless of --allow.
+ *
+ * Matched on the whole hostname and on any subdomain of it. This is the line
+ * that makes --allow safe to have.
+ */
+export const FORBIDDEN_HOSTS = Object.freeze([
+  'backend-production-89dd.up.railway.app',
+  'eclat-diamonds-pi.vercel.app',
+]);
+
+function isForbidden(host) {
+  return FORBIDDEN_HOSTS.some((bad) => host === bad || host.endsWith(`.${bad}`));
+}
 
 /** Env keys that decide where API traffic ends up. */
 export const TARGET_KEYS = Object.freeze(['BACKEND_ORIGIN', 'NEXT_PUBLIC_API_URL']);
@@ -60,7 +88,7 @@ export const TARGET_KEYS = Object.freeze(['BACKEND_ORIGIN', 'NEXT_PUBLIC_API_URL
  *   'loopback' — an absolute URL on an allowed host
  *   'reject'   — anything else, with a reason fit to print
  */
-export function classifyTarget(raw) {
+export function classifyTarget(raw, allowedHosts = []) {
   if (raw === undefined || raw === null) {
     return { ok: false, kind: 'reject', reason: 'not set (next.config.ts would fall back to its production default)' };
   }
@@ -98,12 +126,27 @@ export function classifyTarget(raw) {
   // URL keeps IPv6 hosts in brackets; compare on the bare address.
   const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
 
+  if (isForbidden(host)) {
+    return {
+      ok: false,
+      kind: 'reject',
+      host,
+      reason: `host "${host}" is a production origin and can never be a verification target`,
+    };
+  }
+
+  if (allowedHosts.includes(host)) {
+    return { ok: true, kind: 'allowed', host };
+  }
+
   if (!LOOPBACK_HOSTS.includes(host)) {
     return {
       ok: false,
       kind: 'reject',
       host,
-      reason: `host "${host}" is not loopback (allowed: ${LOOPBACK_HOSTS.join(', ')})`,
+      reason: `host "${host}" is not loopback (allowed: ${LOOPBACK_HOSTS.join(', ')}${
+        allowedHosts.length ? `, plus --allow ${allowedHosts.join(', ')}` : ''
+      })`,
     };
   }
 
@@ -286,9 +329,30 @@ export function collectTargets({ dir, env, mode = 'auto', readFile }) {
  * A row marked `advisory` is printed but cannot fail the run — see the note on
  * pre-build manifests in `collectTargets`.
  */
-export function auditTargets(targets) {
-  const rows = targets.map((t) => ({ ...t, verdict: classifyTarget(t.value) }));
+export function auditTargets(targets, allowedHosts = []) {
+  const rows = targets.map((t) => ({ ...t, verdict: classifyTarget(t.value, allowedHosts) }));
   return { rows, ok: rows.every((r) => r.advisory || r.verdict.ok) };
+}
+
+/** Hostnames from every `--allow <origin>` on the command line. */
+export function parseAllowFlags(argv) {
+  const hosts = [];
+  for (let i = 0; i < argv.length; i += 1) {
+    if (argv[i] !== '--allow') continue;
+    const raw = argv[i + 1];
+    if (!raw) throw new Error('--allow needs an origin, e.g. --allow https://backend-staging-x.up.railway.app');
+    let host;
+    try {
+      host = new URL(raw).hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    } catch {
+      throw new Error(`--allow "${raw}" is not a parseable absolute URL`);
+    }
+    if (isForbidden(host)) {
+      throw new Error(`--allow "${host}" is a production origin and is refused`);
+    }
+    hosts.push(host);
+  }
+  return hosts;
 }
 
 /* ────────────────────────────── CLI ────────────────────────────── */
@@ -309,8 +373,12 @@ function main(argv) {
       : 'auto';
 
   const dir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  const allowedHosts = parseAllowFlags(argv);
   const targets = collectTargets({ dir, env: process.env, mode, readFile: readFileOrNull });
-  const { rows, ok } = auditTargets(targets);
+  const { rows, ok } = auditTargets(targets, allowedHosts);
+  if (allowedHosts.length) {
+    console.log(`Explicitly allowed for this run: ${allowedHosts.join(', ')}`);
+  }
 
   const width = Math.max(...rows.map((r) => r.label.length), 10);
   console.log(`\nLocal API preflight — mode: ${mode}\n`);
