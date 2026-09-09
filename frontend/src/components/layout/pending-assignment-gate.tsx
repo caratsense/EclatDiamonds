@@ -8,6 +8,7 @@ import { Building2, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { setStoredStoreId, setStoredToken } from "@/lib/api";
 import { useSession } from "@/store/use-session";
+import { useHydrated } from "@/lib/use-reset-on";
 
 /**
  * PendingAssignmentGate — a friendly full-screen stop for an authenticated user
@@ -33,8 +34,9 @@ export function PendingAssignmentGate({
   const role = useSession((s) => s.role);
   const stores = useSession((s) => s.stores);
 
-  const [mounted, setMounted] = React.useState(false);
-  React.useEffect(() => setMounted(true), []);
+  // False on the server and through hydration, true afterwards — the same
+  // guard as before, without scheduling an extra render on every mount.
+  const mounted = useHydrated();
 
   const hasStore = stores.length > 0; // real branch or "All Stores" aggregate
   const blocked = mounted && role !== "head_office" && !hasStore;

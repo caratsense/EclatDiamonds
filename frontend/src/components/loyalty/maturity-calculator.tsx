@@ -28,13 +28,13 @@ import type { SchemePlan } from "@/lib/mock/loyalty";
  */
 export function MaturityCalculator() {
   const { data: plans = [], isLoading } = useSchemePlans();
-  const [planId, setPlanId] = React.useState<string>("");
+  const [chosenPlanId, setPlanId] = React.useState<string>("");
   const [installment, setInstallment] = React.useState(10000);
 
-  // Default the selection to the first configured plan once plans load.
-  React.useEffect(() => {
-    if (!planId && plans.length > 0) setPlanId(plans[0].id);
-  }, [planId, plans]);
+  // Derived, not stored: "the first plan" is what an unmade choice MEANS, and
+  // writing it into state from an effect rendered one frame with no selection
+  // before correcting itself.
+  const planId = chosenPlanId || plans[0]?.id || "";
 
   if (isLoading) {
     return (

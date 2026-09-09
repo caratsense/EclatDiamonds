@@ -56,6 +56,7 @@ import {
   isRealName,
   normalizeIndianMobile,
 } from "@/lib/utils";
+import { useResetOn } from "@/lib/use-reset-on";
 
 const STATUS_VARIANT: Record<
   SchemeStatus,
@@ -95,7 +96,7 @@ export default function LoyaltyPage() {
   // Enrollment form state.
   const [customer, setCustomer] = React.useState("");
   const [phone, setPhone] = React.useState("");
-  const [planId, setPlanId] = React.useState("");
+  const [chosenPlanId, setPlanId] = React.useState("");
   const [installment, setInstallment] = React.useState(10000);
   // Inline validation errors, keyed by field. Cleared per-field on change.
   const [errors, setErrors] = React.useState<Record<string, string>>({});
@@ -104,17 +105,18 @@ export default function LoyaltyPage() {
     setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
   }
 
-  // Default the plan select to the first plan once plans load.
-  React.useEffect(() => {
-    if (!planId && plans.length > 0) setPlanId(plans[0].id);
-  }, [plans, planId]);
+  // Derived, not stored: an unmade choice MEANS the first plan, so there is no
+  // frame in which the select renders empty and then corrects itself.
+  const planId = chosenPlanId || plans[0]?.id || "";
 
   // Pre-fill the monthly amount from the selected plan's suggested installment
-  // (e.g. a "₹5,000 × 11 months" scheme) so staff are not retyping it.
-  React.useEffect(() => {
+  // (e.g. a "₹5,000 × 11 months" scheme) so staff are not retyping it. This one
+  // IS state — the staff member may overwrite it — so it is re-seeded when the
+  // plan changes, during render rather than a frame later.
+  useResetOn(planId, () => {
     const suggested = plans.find((p) => p.id === planId)?.defaultInstallment;
     if (suggested != null) setInstallment(suggested);
-  }, [planId, plans]);
+  });
 
   const atRisk = rows.filter(
     (m) => m.missedMonths > 0 && m.status !== "matured",

@@ -5,9 +5,32 @@ import { useEffect, useRef } from "react";
 const CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
 const GSI_SRC = "https://accounts.google.com/gsi/client";
 
+/**
+ * The slice of Google Identity Services this component actually uses.
+ *
+ * `any` said "we do not know what this is", which is untrue — three call sites
+ * use exactly these four members, and a typo in any of them used to be a
+ * runtime failure on the sign-in screen rather than a build error.
+ */
+interface GoogleIdentityServices {
+  accounts: {
+    id: {
+      initialize(config: {
+        client_id: string;
+        nonce?: string;
+        callback: (response: { credential?: string }) => void;
+        ux_mode?: string;
+      }): void;
+      renderButton(parent: HTMLElement, options: Record<string, unknown>): void;
+      prompt?(): void;
+    };
+  };
+}
+
 declare global {
-  // eslint-disable-next-line no-var
-  var google: any;
+  interface Window {
+    google?: GoogleIdentityServices;
+  }
 }
 
 let sessionNonce: string | null = null;
@@ -47,12 +70,15 @@ export function GoogleSignInButton({
 
   useEffect(() => {
     if (!CLIENT_ID || !ref.current) return;
+    // Bound here so the narrowing survives into `init`, which TypeScript cannot
+    // prove runs after the guard above.
+    const clientId: string = CLIENT_ID;
 
     function init() {
-      const g = (window as any).google;
+      const g = window.google;
       if (!g?.accounts?.id || !ref.current) return;
       g.accounts.id.initialize({
-        client_id: CLIENT_ID,
+        client_id: clientId,
         nonce,
         callback: (resp: { credential?: string }) => {
           if (resp?.credential) onCredential(resp.credential, nonce);
@@ -67,7 +93,7 @@ export function GoogleSignInButton({
       });
     }
 
-    if ((window as any).google?.accounts?.id) {
+    if (window.google?.accounts?.id) {
       init();
       return;
     }

@@ -1,5 +1,6 @@
 "use client";
 
+import { createElement } from "react";
 import Link from "next/link";
 import {
   Activity,
@@ -71,7 +72,10 @@ export function KpiCard({
   const hasDelta = delta != null;
   const positive = invertDelta ? delta! < 0 : delta! > 0;
   const Arrow = delta! >= 0 ? ArrowUpRight : ArrowDownRight;
-  const Icon = pickIcon(label);
+  // createElement, not `const Icon = …`: a capitalised local holding a
+  // per-render lookup reads as a component defined during render, and React
+  // remounts a component whose type identity changes.
+  const icon = createElement(pickIcon(label), { className: "h-5 w-5" });
   const isHero = (index ?? 0) === 0;
 
   const card = (
@@ -102,7 +106,7 @@ export function KpiCard({
                 : "bg-secondary text-muted-foreground",
             )}
           >
-            <Icon className="h-5 w-5" />
+            {icon}
           </span>
           {hasDelta ? (
             <span

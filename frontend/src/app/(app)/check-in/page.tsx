@@ -32,6 +32,7 @@ import { useSession } from "@/store/use-session";
 import type { SelfAttendance } from "@/lib/mock/hrms";
 import { useCheckIn, useGeofence, useMyAttendance } from "@/lib/queries/hrms";
 import { apiErrorMessage } from "@/lib/utils";
+import { useHydrated } from "@/lib/use-reset-on";
 
 /** HH:mm from an ISO instant, or an em-dash. */
 function formatTime(iso: string | null): string {
@@ -156,7 +157,11 @@ export default function CheckInPage() {
     null,
   );
   // True once the browser denies permission / geolocation is unsupported.
-  const [geoDenied, setGeoDenied] = useState(false);
+  // Permission refusals arrive from the browser and are state; "this device has
+  // no geolocation API at all" is a fact about the device, read below rather
+  // than copied into state by an effect.
+  const [permissionDenied, setGeoDenied] = useState(false);
+  const hydrated = useHydrated();
   // An off-site punch needs a written reason before the API will record it, so
   // "Check in anyway" opens this instead of firing a request that must fail.
   const [reasonOpen, setReasonOpen] = useState(false);
@@ -294,10 +299,7 @@ export default function CheckInPage() {
   useEffect(() => {
     if (alreadyIn || lastPunch) return;
     if (!geofence?.hasCoords) return;
-    if (typeof navigator === "undefined" || !navigator.geolocation) {
-      setGeoDenied(true);
-      return;
-    }
+    if (typeof navigator === "undefined" || !navigator.geolocation) return;
     const id = navigator.geolocation.watchPosition(
       (pos) => {
         const next = { lat: pos.coords.latitude, lng: pos.coords.longitude };
@@ -325,6 +327,10 @@ export default function CheckInPage() {
     };
   }, [alreadyIn, lastPunch, geofence?.hasCoords]);
 
+  // Either reason puts the screen on the manual-check-in fallback.
+  const geoUnsupported = hydrated && !navigator.geolocation;
+  const geoDenied = permissionDenied || geoUnsupported;
+
   // --- Auto-fire the check-in once, the moment we land inside the fence. ---
   useEffect(() => {
     if (punchedRef.current || checkIn.isPending) return;
@@ -342,7 +348,6 @@ export default function CheckInPage() {
       clearWatcher();
       if (redirectRef.current) clearTimeout(redirectRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Already checked in when the page loaded (not a fresh punch): mark handled

@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState } from "react";
+import { createElement, use, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -549,11 +549,16 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 function TimelineRow({ event }: { event: TimelineEvent }) {
-  const Icon = timelineIcon(event.type);
+  // createElement, not `const Icon = …`: the icon is looked up per row, and a
+  // capitalised local reads to React (and to the linter) as a component defined
+  // during render, which would remount the icon on every update.
+  const icon = createElement(timelineIcon(event.type), {
+    className: "h-4 w-4 text-muted-foreground",
+  });
   return (
     <li className="flex gap-3">
       <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border bg-muted">
-        <Icon className="h-4 w-4 text-muted-foreground" />
+        {icon}
       </div>
       <div className="min-w-0 flex-1">
         <p className="text-sm">{event.summary}</p>

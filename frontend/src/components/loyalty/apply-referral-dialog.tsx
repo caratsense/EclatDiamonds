@@ -27,6 +27,7 @@ import {
   useStoreScope,
 } from "@/components/common/store-scope-field";
 import { apiErrorMessage } from "@/lib/utils";
+import { useResetOn } from "@/lib/use-reset-on";
 
 /** Parse a numeric input into a number, or undefined when blank/invalid. */
 function toNumber(v: string): number | undefined {
@@ -71,9 +72,9 @@ export function ApplyReferralDialog({
   const [result, setResult] = React.useState<Referral | null>(null);
 
   // Re-seed the code whenever the dialog is (re)opened for a specific row.
-  React.useEffect(() => {
+  useResetOn(open ? (initialCode ?? "") : null, () => {
     if (open) setCode(initialCode ?? "");
-  }, [open, initialCode]);
+  });
 
   function reset() {
     setCode(initialCode ?? "");

@@ -149,13 +149,11 @@ export function QuoteBuilderDialog({
 
   // Reference photos (uploaded after the quote id is known)
   const [refFiles, setRefFiles] = useState<File[]>([]);
-  const [refUrls, setRefUrls] = useState<string[]>([]);
   const refInput = useRef<HTMLInputElement>(null);
 
   // Diamond pricing reference (client's chart — placeholder until provided)
   const [chartOpen, setChartOpen] = useState(false);
   const [chartFile, setChartFile] = useState<File | null>(null);
-  const [chartUrl, setChartUrl] = useState<string | null>(null);
   const chartInput = useRef<HTMLInputElement>(null);
 
   // Custom-order details (revealed for the "Custom Order" action)
@@ -171,22 +169,24 @@ export function QuoteBuilderDialog({
   const metalColor =
     metalColorSel === "other" ? metalColorOther.trim() : metalColorSel;
 
-  // Object-URL previews for the reference files; revoke on change to avoid leaks.
-  useEffect(() => {
-    const urls = refFiles.map((f) => URL.createObjectURL(f));
-    setRefUrls(urls);
-    return () => urls.forEach((u) => URL.revokeObjectURL(u));
-  }, [refFiles]);
+  /*
+   * Object-URL previews are DERIVED from the picked files, not state that
+   * happens to follow them. Computing them in an effect meant one render with
+   * the previous files' URLs still on screen; a memo has the right value on the
+   * first render, and the effect below exists only to release them.
+   */
+  const refUrls = useMemo(() => refFiles.map((f) => URL.createObjectURL(f)), [refFiles]);
+  useEffect(() => () => refUrls.forEach((u) => URL.revokeObjectURL(u)), [refUrls]);
 
+  const chartUrl = useMemo(
+    () => (chartFile ? URL.createObjectURL(chartFile) : null),
+    [chartFile],
+  );
   useEffect(() => {
-    if (!chartFile) {
-      setChartUrl(null);
-      return;
-    }
-    const u = URL.createObjectURL(chartFile);
-    setChartUrl(u);
+    if (!chartUrl) return;
+    const u = chartUrl;
     return () => URL.revokeObjectURL(u);
-  }, [chartFile]);
+  }, [chartUrl]);
 
   const weightNum = toNumber(weight) ?? 0;
   const makingNum = makingMode === "per_gram" 

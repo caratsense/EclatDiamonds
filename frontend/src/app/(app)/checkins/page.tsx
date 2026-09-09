@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { DoorOpen, Users, UserCheck, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 
@@ -59,6 +59,7 @@ import {
   isRealName,
   normalizeIndianMobile,
 } from "@/lib/utils";
+import { useResetOn } from "@/lib/use-reset-on";
 
 /** Bucket "HH:mm" into an hour label like "10a" / "1p" for the hourly chart. */
 function hourLabel(timeIn: string | null): string | null {
@@ -257,13 +258,13 @@ function CloseVisitDialog({
     setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
   }
 
-  // Reset the selection whenever a new visit is opened for closing.
-  useEffect(() => {
-    if (open) {
-      setOutcome("");
-      setErrors({});
-    }
-  }, [open, checkin?.id]);
+  // Reset the selection whenever a new visit is opened for closing. Done during
+  // render, so the dialog is never painted holding the previous visit's outcome.
+  useResetOn(open ? checkin?.id ?? "open" : null, () => {
+    if (!open) return;
+    setOutcome("");
+    setErrors({});
+  });
 
   function submit() {
     if (!checkin) return;

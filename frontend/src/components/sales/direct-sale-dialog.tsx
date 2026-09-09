@@ -42,6 +42,7 @@ import {
   StoreScopeField,
   useStoreScope,
 } from "@/components/common/store-scope-field";
+import { useResetOn } from "@/lib/use-reset-on";
 
 /** Parse a currency input into a number, or undefined when blank/invalid. */
 function toNumber(v: string): number | undefined {
@@ -113,14 +114,14 @@ export function DirectSaleDialog({
 
   // Completion mode: on open, pre-fill from the approved request and pin the
   // discount %s to the approved values (the % inputs render read-only below).
-  useEffect(() => {
+  useResetOn(open ? (approval?.id ?? "open") : null, () => {
     if (open && approval) {
       setCustomer(approval.customer);
       setDescription(approval.item);
       setDiamondPct(String(approval.diamondPercent));
       setMakingPct(String(approval.makingPercent));
     }
-  }, [open, approval]);
+  });
 
   const salesNum = toNumber(salesValue);
   const advanceNum = toNumber(advance);
