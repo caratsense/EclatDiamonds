@@ -2,7 +2,17 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Globe, KanbanSquare, QrCode, Table as TableIcon, Users } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Globe,
+  KanbanSquare,
+  MessageSquare,
+  Phone,
+  QrCode,
+  Rows3,
+  Users,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { LeadCard } from "@/components/crm/lead-card";
@@ -29,6 +39,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { StatusPill, TEMPERATURE_TONE } from "@/components/ui/status-pill";
 import {
   Table,
   TableBody,
@@ -57,6 +68,7 @@ import {
 import { OmnichannelKpis } from "@/components/crm/omnichannel-kpis";
 import { useLeadStages } from "@/lib/queries/crm";
 import { useSession } from "@/store/use-session";
+import { useQuickAction } from "@/store/use-quick-action";
 import {
   StoreScopeField,
   useStoreScope,
@@ -64,6 +76,43 @@ import {
 import { apiErrorMessage, normalizeIndianMobile } from "@/lib/utils";
 
 const nav = getNavItem("crm")!;
+
+/** Which column the dense table is ordered by. */
+type SortKey = "customer" | "source" | "temperature" | "rep" | "due" | "created";
+
+/**
+ * The next follow-up somebody still owes this customer, as yyyy-mm-dd.
+ *
+ * Null when every follow-up is done — which is a different thing from "no date"
+ * and is rendered as such. The two SOP follow-ups arrive in no guaranteed
+ * order, so the earliest open one is taken rather than the first in the array.
+ */
+function nextDue(lead: Lead): string | null {
+  const open = (lead.followUps ?? []).filter((f) => !f.done).map((f) => f.dueDate);
+  return open.length ? open.sort()[0] : null;
+}
+
+/** The value a row sorts on for a given column. Strings compare lexically. */
+function sortValue(lead: Lead, key: SortKey): string {
+  switch (key) {
+    case "customer":
+      return lead.customer.toLocaleLowerCase();
+    case "source":
+      return LEAD_SOURCE_LABELS[lead.source] ?? lead.source;
+    case "temperature":
+      // Ranked, not alphabetical: "cold" before "hot" before "warm" is nobody's
+      // idea of a priority order.
+      return { hot: "1", warm: "2", cold: "3" }[lead.temperature] ?? "9";
+    case "rep":
+      // Unassigned sorts last in ascending order rather than first, because an
+      // empty string beats every name and would fill the top of the table.
+      return lead.assignedRep?.toLocaleLowerCase() || "￿";
+    case "due":
+      return nextDue(lead) ?? "￿";
+    case "created":
+      return lead.createdAt;
+  }
+}
 
 /** Outcome facet tabs applied to the list view. */
 const OUTCOME_TABS: { value: LeadOutcomeFilter; label: string }[] = [
@@ -103,6 +152,26 @@ export default function CrmPage() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
+  // Sort key for the dense table. The board has its own order (the pipeline).
+  const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({
+    key: "created",
+    desc: true,
+  });
+
+  /*
+   * "New lead" from the sidebar's Quick Action lands here.
+   *
+   * Derived, not copied into state by an effect: the dialog is open when either
+   * this screen opened it or somebody asked for it on the way in, and closing
+   * clears both. Nothing renders once and then corrects itself.
+   */
+  const quickLead = useQuickAction((s) => s.pending === "lead");
+  const clearQuick = useQuickAction((s) => s.clear);
+  const addDialogOpen = addOpen || quickLead;
+  const setAddDialogOpen = (open: boolean) => {
+    setAddOpen(open);
+    if (!open) clearQuick();
+  };
 
   // Source facet applies to both views.
   const sourceScoped =
@@ -119,6 +188,17 @@ export default function CrmPage() {
       : sourceScoped.filter((l) => l.outcome === outcome);
   // Which dataset drives the empty-state / count for the active view.
   const visible = view === "board" ? sourceScoped : listLeads;
+  /*
+   * The dense table is sorted here, over the page that was fetched.
+   *
+   * The board is not: its order IS the pipeline, and a stage column sorted by
+   * anything else stops being a queue. `toSorted` leaves `listLeads` alone, so
+   * the outcome facet above still reads from an unmutated array.
+   */
+  const sortedLeads = [...listLeads].sort((a, b) => {
+    const cmp = sortValue(a, sort.key).localeCompare(sortValue(b, sort.key));
+    return sort.desc ? -cmp : cmp;
+  });
 
   // Keep the open dialog's lead in sync with refetched data; fall back to
   // the last snapshot when the lead drops out of the current facet
@@ -164,7 +244,7 @@ export default function CrmPage() {
         ? "Showing leads across all stores"
         : `Showing the ${currentStore.name} pipeline`;
 
-  const openCreateDialog = () => setAddOpen(true);
+  const openCreateDialog = () => setAddDialogOpen(true);
 
   return (
     <>
@@ -186,6 +266,21 @@ export default function CrmPage() {
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div className="flex flex-wrap items-end gap-3">
           <p className="mb-1.5 text-sm text-muted-foreground">{scopeNote}</p>
+          {/* Beside the scope, because "which branch" and "how do I want to
+              look at it" are the two things changed together. */}
+          <Tabs
+            value={view}
+            onValueChange={(v) => setView(v as "board" | "list")}
+          >
+            <TabsList className="h-9">
+              <TabsTrigger value="board">
+                <KanbanSquare className="mr-1.5 h-4 w-4" /> Pipeline Kanban
+              </TabsTrigger>
+              <TabsTrigger value="list">
+                <Rows3 className="mr-1.5 h-4 w-4" /> Dense Table
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
           <Tabs
             value={outcome}
             onValueChange={(v) => setOutcome(v as LeadOutcomeFilter)}
@@ -275,19 +370,6 @@ export default function CrmPage() {
               <Globe className="mr-1.5 h-4 w-4" /> Web form
             </Link>
           </Button>
-          <Tabs
-            value={view}
-            onValueChange={(v) => setView(v as "board" | "list")}
-          >
-            <TabsList>
-              <TabsTrigger value="board">
-                <KanbanSquare className="mr-1.5 h-4 w-4" /> Board
-              </TabsTrigger>
-              <TabsTrigger value="list">
-                <TableIcon className="mr-1.5 h-4 w-4" /> List
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
         </div>
       </div>
 
@@ -390,74 +472,139 @@ export default function CrmPage() {
         </div>
         </>
       ) : (
-        <div className="rounded-xl border">
+        <div className="overflow-x-auto rounded-xl border border-border/80 bg-card shadow-sm">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Lead</TableHead>
-                <TableHead>Customer</TableHead>
-                <TableHead>Location / Area</TableHead>
-                <TableHead>Source</TableHead>
-                <TableHead>Stage</TableHead>
-                <TableHead>Salesperson</TableHead>
+                <SortHead label="Customer" column="customer" sort={sort} onSort={setSort} />
+                <TableHead>Phone</TableHead>
+                <SortHead label="Source" column="source" sort={sort} onSort={setSort} />
+                <SortHead label="Priority" column="temperature" sort={sort} onSort={setSort} />
+                <SortHead label="Attended by" column="rep" sort={sort} onSort={setSort} />
+                <SortHead label="Next follow-up" column="due" sort={sort} onSort={setSort} />
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {listLeads.map((lead) => (
-                <TableRow
-                  key={lead.id}
-                  className="cursor-pointer"
-                  onClick={() => openLead(lead)}
-                >
-                  <TableCell className="font-medium">{lead.ref}</TableCell>
-                  <TableCell>
-                    <div>{lead.customer}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {lead.interest}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <span className="text-xs font-medium">
-                      {lead.location || lead.address || "—"}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline">
-                      {LEAD_SOURCE_LABELS[lead.source]}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    {leadStages.find((s) => s.id === lead.stage)?.label ??
-                      lead.stage.replace(/_/g, " ")}
-                  </TableCell>
-                  <TableCell>{lead.assignedRep}</TableCell>
-                  <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      title="WhatsApp Re-engagement"
-                      onClick={() => {
-                        const cleanPhone = lead.phone.replace(/[^0-9]/g, "");
-                        // No industry noun in the fallback. This text is sent to
-                        // a real customer, and "your enquiry for jewellery" is
-                        // wrong for every tenant that is not a jeweller — and
-                        // wrong for a jeweller too, whenever the interest was
-                        // simply never recorded. Naming nothing is always true.
-                        const about = lead.interest ? ` for ${lead.interest}` : "";
-                        const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(
-                          `Hello ${lead.customer}, following up regarding your enquiry${about}.`
-                        )}`;
-                        window.open(waUrl, "_blank");
-                      }}
+              {sortedLeads.map((lead) => {
+                const due = nextDue(lead);
+                const stageLabel =
+                  leadStages.find((st) => st.id === lead.stage)?.label ??
+                  lead.stage.replace(/_/g, " ");
+                // Digits only. `tel:` and wa.me both reject the spacing and the
+                // "+" a person types into the form.
+                const dialable = lead.phone.replace(/[^0-9]/g, "");
+                return (
+                  <TableRow
+                    key={lead.id}
+                    className="cursor-pointer"
+                    onClick={() => openLead(lead)}
+                  >
+                    <TableCell>
+                      <div className="font-medium">{lead.customer}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {lead.ref}
+                        {lead.interest ? ` \u00b7 ${lead.interest}` : ""}
+                      </div>
+                    </TableCell>
+                    <TableCell className="font-[family-name:var(--font-mono-face)] text-xs">
+                      {lead.phone || "\u2014"}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="whitespace-nowrap">
+                        {LEAD_SOURCE_LABELS[lead.source]}
+                      </Badge>
+                      <div className="mt-1 text-[11px] text-muted-foreground">
+                        {stageLabel}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      {/*
+                        The word is "Priority", not "Intent". This pill is
+                        computed from how recently the lead moved, whether a
+                        follow-up falls due within three days and whether a
+                        birthday is near \u2014 a recency signal, and a good one.
+                        It is NOT the conversational intent score, which lives on
+                        the qualification record and is very often absent.
+                        Labelling recency as intent would put a confident reading
+                        on a screen where none was ever taken.
+                      */}
+                      <StatusPill
+                        tone={TEMPERATURE_TONE[lead.temperature] ?? "mute"}
+                        title="Priority from recent activity, an imminent follow-up or a nearby occasion"
+                      >
+                        {lead.temperature}
+                      </StatusPill>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-sm">
+                      {lead.assignedRep || (
+                        <span className="text-muted-foreground">Unassigned</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-sm tabular-nums">
+                      {due ? (
+                        new Date(due).toLocaleDateString()
+                      ) : (
+                        <span
+                          className="text-muted-foreground"
+                          title="Both SOP follow-ups are done"
+                        >
+                          \u2014
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell
+                      className="text-right"
+                      onClick={(e) => e.stopPropagation()}
                     >
-                      WhatsApp
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0"
+                          disabled={!dialable}
+                          title={dialable ? `Call ${lead.customer}` : "No number on file"}
+                          asChild={!!dialable}
+                        >
+                          {dialable ? (
+                            <a href={`tel:${dialable}`} aria-label={`Call ${lead.customer}`}>
+                              <Phone className="h-4 w-4" />
+                            </a>
+                          ) : (
+                            <Phone className="h-4 w-4" />
+                          )}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0"
+                          disabled={!dialable}
+                          title="Open WhatsApp"
+                          aria-label={`WhatsApp ${lead.customer}`}
+                          onClick={() => {
+                            // No industry noun in the fallback. This text is sent
+                            // to a real customer, and "your enquiry for jewellery"
+                            // is wrong for every tenant that is not a jeweller \u2014
+                            // and wrong for a jeweller too, whenever the interest
+                            // was simply never recorded. Naming nothing is always
+                            // true.
+                            const about = lead.interest ? ` for ${lead.interest}` : "";
+                            window.open(
+                              `https://wa.me/${dialable}?text=${encodeURIComponent(
+                                `Hello ${lead.customer}, following up regarding your enquiry${about}.`,
+                              )}`,
+                              "_blank",
+                            );
+                          }}
+                        >
+                          <MessageSquare className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
-
           </Table>
         </div>
       )}
@@ -469,8 +616,46 @@ export default function CrmPage() {
         onLeadChange={setActive}
       />
 
-      <AddLeadDialog open={addOpen} onOpenChange={setAddOpen} />
+      <AddLeadDialog open={addDialogOpen} onOpenChange={setAddDialogOpen} />
     </>
+  );
+}
+
+/** A column header that sorts, and says which way it is sorting. */
+function SortHead({
+  label,
+  column,
+  sort,
+  onSort,
+}: {
+  label: string;
+  column: SortKey;
+  sort: { key: SortKey; desc: boolean };
+  onSort: (next: { key: SortKey; desc: boolean }) => void;
+}) {
+  const on = sort.key === column;
+  return (
+    <TableHead className="whitespace-nowrap">
+      <button
+        type="button"
+        // Announced, not just drawn: a header that only shows an arrow tells a
+        // screen reader nothing about the order it has just applied.
+        aria-sort={on ? (sort.desc ? "descending" : "ascending") : "none"}
+        onClick={() => onSort({ key: column, desc: on ? !sort.desc : false })}
+        className="-ml-1 inline-flex items-center gap-1 rounded px-1 py-0.5 font-semibold hover:text-foreground"
+      >
+        {label}
+        {on ? (
+          sort.desc ? (
+            <ArrowDown className="h-3 w-3" aria-hidden />
+          ) : (
+            <ArrowUp className="h-3 w-3" aria-hidden />
+          )
+        ) : (
+          <ArrowUp className="h-3 w-3 opacity-25" aria-hidden />
+        )}
+      </button>
+    </TableHead>
   );
 }
 
