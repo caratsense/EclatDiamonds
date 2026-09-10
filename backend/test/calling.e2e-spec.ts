@@ -5,6 +5,7 @@ import * as bcrypt from 'bcryptjs';
 
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { businessDate } from '../src/common/tz.util';
 
 /**
  * The central calling / follow-up workspace.
@@ -460,7 +461,18 @@ describe('Calling workspace (e2e)', () => {
       expect(res.body.callId).toBeTruthy();
       const task = await prisma.task.findUnique({ where: { id: taskId } });
       expect(task?.status).toBe('open');
-      expect(task?.dueDate?.toISOString().slice(0, 10)).toBe(callBack.slice(0, 10));
+      /*
+       * The BRANCH's calendar day, not the server's.
+       *
+       * This compared a UTC date string against a date the service resolves in
+       * Asia/Kolkata, so it agreed only while the two happened to name the same
+       * day — and failed on every run between 18:30 and midnight UTC, which is
+       * the whole Indian working morning. Asserting through the same helper the
+       * service uses makes it right at every hour instead of most of them.
+       */
+      expect(task?.dueDate?.toISOString().slice(0, 10)).toBe(
+        businessDate(new Date(callBack), 'Asia/Kolkata').toISOString().slice(0, 10),
+      );
     });
 
     it('records the call as manual when no provider supplied it', async () => {
