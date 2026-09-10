@@ -127,35 +127,35 @@ export const ROUTE_FAMILIES: readonly RouteFamily[] = Object.freeze([
   { prefix: '/new-store', capability: 'new-store', why: 'New-branch opening projects.' },
   {
     prefix: '/calling',
-    capability: 'calling',
+    capability: null,
     why:
-      'The central follow-up / tele-calling queue. Gated so a tenant with no ' +
-      'calling team can hide it, and in core navigation because chasing a ' +
-      'follow-up is what every CRM is for.',
+      'The central follow-up / tele-calling queue. Chasing a follow-up is what ' +
+      'every CRM is for, so it is classified like /crm and /checkins: universal, ' +
+      'with visibility controlled by whether the pack lists the `calling` ' +
+      'navigation slug rather than by a capability gate on the API.',
   },
   {
     prefix: '/instore',
-    capability: 'instore',
+    capability: null,
     why:
-      'The floor/field application. Gated so a tenant that does not run one can ' +
-      'hide it, but present in core navigation because every industry that ' +
-      'meets customers in person needs it — a clinic reception, a plant desk, ' +
-      'a showroom counter.',
+      'The floor/field application — a clinic reception, a plant visitor desk ' +
+      'and a showroom counter are the same workflow. Universal for the same ' +
+      'reason as /checkins, which it writes to.',
   },
   {
     prefix: '/campaigns',
-    capability: 'campaigns',
+    capability: null,
     why:
-      'Reaching customers is universal — a clinic, a mill and a dealership all ' +
-      'do it — so this deliberately does NOT sit under the jewellery-only ' +
-      '`marketing` gate, which covers agency planning (briefs, budgets, a ' +
-      'bridal/festive campaign type). It is also a separate prefix because ' +
-      '/marketing/campaigns is already a live route on that planning module.',
+      'Reaching customers is universal: a clinic, a mill and a dealership all ' +
+      'do it. Deliberately NOT under the jewellery-only `marketing` gate, which ' +
+      'covers agency planning (briefs, budgets, a bridal/festive campaign type) ' +
+      '— and a separate prefix anyway, because /marketing/campaigns is already ' +
+      'a live route on that planning module.',
   },
   {
     prefix: '/audiences',
-    capability: 'campaigns',
-    why: 'The audience builder exists only to feed campaigns; same gate, same reasoning.',
+    capability: null,
+    why: 'The audience builder exists only to feed campaigns; same classification.',
   },
   {
     prefix: '/integrations/gold-rate',

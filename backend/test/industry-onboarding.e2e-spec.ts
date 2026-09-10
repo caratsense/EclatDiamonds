@@ -93,6 +93,24 @@ const UNIVERSAL_ROUTES = [
   'catalogue',
   'checkins',
   'hrms',
+  /*
+   * Added deliberately, and this list is exactly where that decision has to be
+   * declared — the assertion below is `toEqual`, so widening the universal suite
+   * cannot happen by accident.
+   *
+   * All four are cross-industry by nature, not jewellery operations:
+   *   campaigns   — a clinic, a mill and a dealership all message customers
+   *   lead-forms  — every industry has a website that takes enquiries
+   *   instore     — a clinic reception and a showroom counter are one workflow
+   *   calling     — chasing a follow-up is what a CRM is for
+   *
+   * The jewellery-only list below is untouched, which is the invariant that
+   * actually matters: no pack gains finance, loyalty, returns or stock.
+   */
+  'campaigns',
+  'lead-forms',
+  'instore',
+  'calling',
   'settings/onboarding',
   'settings/stores',
   'settings/team',
