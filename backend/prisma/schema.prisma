@@ -2353,6 +2353,9 @@ model CheckIn {
   store Store  @relation(fields: [storeId], references: [id])
   party Party? @relation(fields: [partyId], references: [id])
 
+  /// What the customer asked about during this visit.
+  productInteractions ProductInteraction[]
+
   @@index([storeId, timeIn])
   @@index([organisationId])
 }
@@ -3766,6 +3769,15 @@ model ProductInteraction {
   leadId  String?
   lead    Lead?   @relation(fields: [leadId], references: [id], onDelete: Cascade)
 
+  /// The visit this interest was shown during, when it was shown at a counter.
+  ///
+  /// Nullable because interest is also shown over WhatsApp and on the website,
+  /// where there is no visit at all, and because rows written before this column
+  /// existed have no visit to point at. Reconstructing it from partyId and a
+  /// time window would attach one customer's enquiries to another's visit.
+  checkInId String?
+  checkIn   CheckIn? @relation(fields: [checkInId], references: [id], onDelete: SetNull)
+
   productId String?
   product   Product? @relation(fields: [productId], references: [id])
   /// The identifier as scanned/typed, when it matches no catalogue row.
@@ -3789,6 +3801,7 @@ model ProductInteraction {
   createdAt DateTime @default(now())
 
   @@index([organisationId, partyId, occurredAt])
+  @@index([organisationId, checkInId])
   @@index([organisationId, productId, kind])
   @@index([organisationId, leadId, occurredAt])
   @@index([organisationId, storeId, occurredAt])

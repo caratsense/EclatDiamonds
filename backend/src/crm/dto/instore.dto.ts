@@ -8,6 +8,7 @@ import {
   IsOptional,
   IsString,
   Length,
+  Matches,
   MaxLength,
   Max,
   Min,
@@ -28,6 +29,31 @@ export class InStoreSearchDto {
 
 export class ScanItemDto {
   @IsString() @Length(1, 120) code!: string;
+}
+
+/**
+ * A day at a branch.
+ *
+ * `date` is a calendar date AT THE STORE ("2026-09-10"), not an instant. The
+ * service resolves it in the branch's own timezone, so a floor app in Mumbai
+ * and an API container in Frankfurt agree on which visits happened today.
+ */
+export class VisitFeedDto {
+  @IsOptional() @IsString() @Length(1, 40) storeId?: string;
+  @IsOptional() @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Use a date like 2026-09-10.' })
+  date?: string;
+  @IsOptional() @IsString() @Length(1, 40) cursor?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
+}
+
+export class StoreDayDto {
+  @IsOptional() @IsString() @Length(1, 40) storeId?: string;
+  @IsOptional() @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Use a date like 2026-09-10.' })
+  date?: string;
+}
+
+export class FloorFormsDto {
+  @IsOptional() @IsString() @Length(1, 40) storeId?: string;
 }
 
 /**

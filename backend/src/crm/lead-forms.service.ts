@@ -41,8 +41,21 @@ export class LeadFormsService {
 
   async list(user: AuthUser) {
     const forms = await this.prisma.leadForm.findMany({
-      where: { organisationId: user.organisationId },
+      /*
+       * Branch-scoped, like every other operation on this model.
+       *
+       * `create` and `update` both call `assertStoreAllowed`; this one filtered
+       * on organisation alone, so a manager assigned only to Branch A received
+       * every branch's forms INCLUDING their `publicKey` — which this file
+       * elsewhere describes as a capability: anyone holding it can file leads
+       * into that branch. Reading a list is not supposed to hand out authority
+       * the caller does not otherwise have.
+       */
+      where: { organisationId: user.organisationId, ...this.scope.storeFilter(user) },
       orderBy: { createdAt: 'desc' },
+      // Bounded. Unbounded plus unfiltered is how one tenant's list becomes a
+      // response nobody can render.
+      take: 200,
       select: {
         id: true, publicKey: true, name: true, storeId: true, defaultInterest: true,
         campaign: true, allowedOrigins: true, enabled: true, createdAt: true,

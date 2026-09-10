@@ -24,6 +24,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AddVisitDialog } from "@/components/instore/add-visit-dialog";
+import { DayTab, FormsTab, TasksTab, VisitsTab } from "@/components/instore/floor-tabs";
 import { useT } from "@/lib/i18n";
 import {
   useInStoreLeads,
@@ -243,6 +244,18 @@ export default function InStorePage() {
   const search = useInStoreSearch(query);
   const searching = query.trim().length >= 3;
 
+  /*
+   * The branch every tab below is scoped to.
+   *
+   * The aggregate ("All branches") pseudo-store is not a branch and the API
+   * rejects it, so it is sent as undefined — which the server reads as "every
+   * branch this person works at". That is the right answer for a head-office
+   * user opening the floor app, and the only possible one for a salesperson,
+   * who has exactly one.
+   */
+  const scopedStoreId =
+    currentStore && !currentStore.isAggregate ? currentStore.id : undefined;
+
   return (
     <div className="pb-40 md:pb-24">
       {/* Scope, always visible. A salesperson has to know which branch they are
@@ -385,42 +398,14 @@ export default function InStorePage() {
                 ))
               )}
             </div>
+          ) : tab === "visits" ? (
+            <VisitsTab storeId={scopedStoreId} />
+          ) : tab === "dashboard" ? (
+            <DayTab storeId={scopedStoreId} />
+          ) : tab === "tasks" ? (
+            <TasksTab storeId={scopedStoreId} />
           ) : (
-            /*
-             * The other tabs are honest placeholders pointing at the full screens
-             * that already exist, rather than a second half-built copy of them.
-             */
-            <Card>
-              <CardContent className="space-y-3 py-10 text-center">
-                <p className="text-sm font-medium">
-                  {TABS.find((x) => x.value === tab)?.label}
-                </p>
-                <p className="mx-auto max-w-xs text-xs text-muted-foreground">
-                  {tab === "visits"
-                    ? "Visits you record here appear on each customer's timeline and in the check-ins report."
-                    : tab === "tasks"
-                      ? "Your follow-ups live on the Tasks screen, which works on this device too."
-                      : tab === "forms"
-                        ? "Enquiry forms are published from the Enquiry Forms screen."
-                        : "Today's figures are on the dashboard."}
-                </p>
-                <Button size="sm" variant="outline" asChild>
-                  <Link
-                    href={
-                      tab === "visits"
-                        ? "/checkins"
-                        : tab === "tasks"
-                          ? "/tasks"
-                          : tab === "forms"
-                            ? "/lead-forms"
-                            : "/dashboards"
-                    }
-                  >
-                    Open it
-                  </Link>
-                </Button>
-              </CardContent>
-            </Card>
+            <FormsTab storeId={scopedStoreId} />
           )}
         </>
       )}
