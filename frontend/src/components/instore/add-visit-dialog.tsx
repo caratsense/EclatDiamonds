@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2, Plus, ScanLine, Trash2 } from "lucide-react";
+import { Camera, Loader2, Plus, ScanLine, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+
+import { FaceScannerDialog } from "@/components/biometrics/face-scanner-dialog";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -84,6 +86,9 @@ export function AddVisitDialog({ open, onOpenChange, partyId, customerName }: Pr
 
   const [scannerOpen, setScannerOpen] = useState(false);
   const [enquiries, setEnquiries] = useState<EnquiryRow[]>([]);
+  // Optional counter photo. Held until submit so the visit is written once.
+  const [photo, setPhoto] = useState<string | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const [notes, setNotes] = useState("");
   const [storeId, setStoreId] = useState(
     () => (currentStore?.isAggregate ? "" : currentStore?.id) ?? "",
@@ -122,6 +127,7 @@ export function AddVisitDialog({ open, onOpenChange, partyId, customerName }: Pr
         partyId,
         ...(storeId ? { storeId } : {}),
         ...(notes.trim() ? { notes: notes.trim() } : {}),
+        ...(photo ? { photo } : {}),
         // `label` is display-only state; the API takes the item reference.
         enquiries: enquiries.map((e) => ({
           productId: e.productId,
@@ -265,6 +271,37 @@ export function AddVisitDialog({ open, onOpenChange, partyId, customerName }: Pr
             </div>
 
             <div className="space-y-1.5">
+              <Label>Photo (optional)</Label>
+              {photo ? (
+                <div className="flex items-center gap-3">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={photo}
+                    alt="Photo taken for this visit"
+                    className="h-16 w-16 rounded-md border border-border object-cover"
+                  />
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" onClick={() => setCameraOpen(true)}>
+                      Retake
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setPhoto(null)}>
+                      Remove
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <Button size="sm" variant="outline" onClick={() => setCameraOpen(true)}>
+                  <Camera className="mr-1.5 h-3.5 w-3.5" />
+                  Take a photo
+                </Button>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Kept with the visit so anyone picking it up later can see who came in. Nothing is
+                matched against it.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
               <Label>Notes (optional)</Label>
               <Textarea
                 value={notes}
@@ -287,6 +324,17 @@ export function AddVisitDialog({ open, onOpenChange, partyId, customerName }: Pr
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <FaceScannerDialog
+        open={cameraOpen}
+        onOpenChange={setCameraOpen}
+        onCapture={(shot) => {
+          setPhoto(shot);
+          setCameraOpen(false);
+        }}
+        title="Photo for this visit"
+        confirmLabel="Use this photo"
+      />
 
       <BarcodeScannerSheet
         open={scannerOpen}

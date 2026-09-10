@@ -8,6 +8,7 @@ import {
   IsOptional,
   IsString,
   Length,
+  MaxLength,
   Max,
   Min,
   ValidateNested,
@@ -55,6 +56,12 @@ export class RecordVisitDto {
 
   /** Tenant-defined visit fields (occasion, counter, department, …). */
   @IsOptional() @IsObject() fields?: Record<string, unknown>;
+
+  /**
+   * A `data:image/...;base64,` frame from the counter camera. A picture of the
+   * visit, never an identification — see `saveCapturedPhoto`.
+   */
+  @IsOptional() @IsString() @MaxLength(3_000_000) photo?: string;
 
   @IsOptional()
   @IsArray()

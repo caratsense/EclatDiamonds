@@ -2125,6 +2125,15 @@ model AttendanceRecord {
   /// Mandatory justification when a punch lands OUTSIDE the store geofence.
   checkInNote       String?
   checkOutNote      String?
+  /// A photo taken by the device camera at punch time, as a storage URL.
+  ///
+  /// Evidence, not identification. Nothing compares this to an enrolled face,
+  /// so it never asserts WHO punched — it records that a camera produced this
+  /// image here, at this moment, which is what a manager reviewing a suspicious
+  /// punch needs next to `checkInDistanceM` and `isMockLocation`.
+  checkInPhotoUrl   String?
+  checkOutPhotoUrl  String?
+
   /// Provenance of the row: self (phone punch) | manager (marked for staff) |
   /// regularization (approved fix) | auto (day-close job).
   source            String   @default("self")
@@ -2323,6 +2332,11 @@ model CheckIn {
 
   /// Free text from the person who attended the visit.
   notes String?
+
+  /// A photo taken at the counter when the visit was recorded, as a storage URL.
+  /// A picture, not an identification: nothing compares it to anything, and who
+  /// the visitor is comes from the customer record this visit is attached to.
+  photoUrl String?
 
   /// Who actually attended, as an id. `repName` is a display string kept for
   /// rows written before this existed; a name is not an identity.

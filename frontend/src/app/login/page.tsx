@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import Image from "next/image";
 import { useRouter } from "next/navigation";
 import {
   ArrowRight,
@@ -680,22 +679,20 @@ export default function LoginPage() {
     <div className="grid min-h-dvh bg-[#071e16] text-[#f6f3ed] lg:grid-cols-[1.1fr_1fr]">
       {/* ── Left Realistic Luxury Showroom Panel ───────────────────── */}
       <aside className="relative hidden flex-col justify-between overflow-hidden p-10 lg:flex xl:p-14">
-        {/* Rich background image overlay */}
+        {/*
+          A generated ground rather than a photograph. The panel used to carry a
+          jewellery hero image, which quietly told a clinic, a mill and a
+          school that this product was not for them. Two soft radial washes cost
+          nothing to ship and belong to no industry.
+        */}
         <div
-          className={
-            "absolute inset-0 z-0 transition-opacity " +
-            (creatingOrganisation ? "opacity-10" : "opacity-40")
-          }
-        >
-          <Image
-            src="/images/luxury_jewelry_hero.png"
-            alt=""
-            fill
-            sizes="(min-width: 1024px) 55vw, 0px"
-            className="object-cover object-center"
-            priority
-          />
-        </div>
+          className="absolute inset-0 z-0"
+          style={{
+            backgroundImage:
+              "radial-gradient(60rem 40rem at 15% 10%, rgba(200,162,79,0.16), transparent 60%)," +
+              "radial-gradient(50rem 36rem at 85% 85%, rgba(16,120,86,0.22), transparent 62%)",
+          }}
+        />
         {/* Soft luxury emerald gradient overlay */}
         <div className="absolute inset-0 z-0 bg-gradient-to-b from-[#071e16]/80 via-[#071e16]/95 to-[#031a13]" />
 
@@ -713,7 +710,7 @@ export default function LoginPage() {
           )}
           <span className="inline-flex items-center gap-2 rounded-full border border-[#c8a24f]/30 bg-[#c8a24f]/10 px-3.5 py-1 text-xs font-medium text-[#c8a24f]">
             <Sparkles className="h-3.5 w-3.5 text-[#c8a24f]" />
-            {creatingOrganisation ? "Universal AI CRM" : "Live Showroom Platform"}
+            {creatingOrganisation ? "Universal AI CRM" : "Omnichannel AI CRM"}
           </span>
         </div>
 
@@ -732,14 +729,14 @@ export default function LoginPage() {
               ) : (
                 <>
                   One place for{" "}
-                  <span className="italic text-[#c8a24f]">every counter.</span>
+                  <span className="italic text-[#c8a24f]">every enquiry.</span>
                 </>
               )}
             </h1>
             <p className="mt-4 text-base leading-relaxed text-[#f6f3ed]/75">
               {creatingOrganisation
                 ? "Start with industry-specific fields and workflows, while omnichannel CRM, AI cataloguing, attendance and integrations stay at the core."
-                : "The unified front-of-house operations platform behind your counter — customers, catalogue, attendance and team in one calm place."}
+                : "Every enquiry, visit and follow-up your team handles, in one place — whichever channel it arrived on."}
             </p>
           </div>
 
@@ -763,16 +760,16 @@ export default function LoginPage() {
                   <p className="text-sm font-semibold text-[#f6f3ed]">
                     {creatingOrganisation
                       ? "Industry-ready from signup"
-                      : "3 Branches Active"}
+                      : "Every branch, one view"}
                   </p>
                   <span className="text-[11px] font-mono text-emerald-400">
-                    {creatingOrganisation ? "AI Ready" : "Live Sync"}
+                    {creatingOrganisation ? "AI Ready" : "Multi-branch"}
                   </span>
                 </div>
                 <p className="mt-0.5 text-xs text-[#f6f3ed]/65">
                   {creatingOrganisation
                     ? "CRM · AI catalogue · attendance · integrations"
-                    : "Surat Main · Mumbai Bandra · Ahmedabad CG"}
+                    : "Leads · visits · follow-ups · attendance"}
                 </p>
               </div>
             </div>
@@ -791,7 +788,7 @@ export default function LoginPage() {
                 <p className="mt-0.5 text-xs text-[#f6f3ed]/65">
                   {creatingOrganisation
                     ? "Your data, users and connection credentials stay inside your organisation."
-                    : "Sales staff see selling price only; margins masked automatically."}
+                    : "Each person sees their own branch and their own customers; cost and margin stay with the people who set them."}
                 </p>
               </div>
             </div>
@@ -843,17 +840,34 @@ export default function LoginPage() {
 
           {mode === "signin" ? (
           <>
-          {/* Google Sign-In if configured */}
-          {process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ? (
-            <div>
+          {/*
+            Google sign-in is always on the page.
+
+            It used to be wrapped in a check for NEXT_PUBLIC_GOOGLE_CLIENT_ID,
+            and the button itself ALSO returns null without one — so on a
+            workspace where nobody had set the variable there was no button and
+            no explanation, which reads as "this product has no Google sign-in"
+            rather than "this workspace has not turned it on". The unconfigured
+            state now says which of the two it is, and says it to the only person
+            who can fix it.
+          */}
+          <div>
+            {process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ? (
               <GoogleSignInButton onCredential={onGoogle} />
-              <div className="mt-4 flex items-center gap-3 text-xs text-[#f6f3ed]/40">
-                <div className="h-px flex-1 bg-[#1b3a2c]" />
-                or continue with credentials
-                <div className="h-px flex-1 bg-[#1b3a2c]" />
+            ) : (
+              <div className="rounded-xl border border-dashed border-[#1b3a2c] bg-[#0c261c]/50 px-4 py-3 text-center">
+                <p className="text-sm text-[#f6f3ed]/70">Sign in with Google</p>
+                <p className="mt-1 text-xs text-[#f6f3ed]/45">
+                  Not set up for this workspace yet. Use your email and password below.
+                </p>
               </div>
+            )}
+            <div className="mt-4 flex items-center gap-3 text-xs text-[#f6f3ed]/40">
+              <div className="h-px flex-1 bg-[#1b3a2c]" />
+              or continue with credentials
+              <div className="h-px flex-1 bg-[#1b3a2c]" />
             </div>
-          ) : null}
+          </div>
 
           {/* Auth Form Container */}
           <div className="rounded-2xl border border-[#1b3a2c] bg-[#0c261c]/80 p-5 shadow-xl">

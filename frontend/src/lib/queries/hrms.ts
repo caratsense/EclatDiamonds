@@ -188,6 +188,15 @@ export interface PunchInput {
   note?: string;
   /** The device reported a mock/spoofed location provider (check-in only). */
   isMockLocation?: boolean;
+  /**
+   * A `data:image/jpeg;base64,` frame from the device camera, taken at the
+   * moment of the punch.
+   *
+   * Corroboration, not identification: nothing compares it to an enrolled face,
+   * so the record it produces never claims WHO punched. Always optional — a
+   * punch is never refused for the want of a working camera.
+   */
+  photo?: string;
 }
 
 /**
@@ -232,7 +241,7 @@ export function useCheckIn() {
 export function useCheckOut() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { lat: number; lng: number; note?: string }) => {
+    mutationFn: async (input: { lat: number; lng: number; note?: string; photo?: string }) => {
       const { data } = await api.post<SelfAttendance>(
         "/hrms/attendance/check-out",
         input,

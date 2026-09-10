@@ -217,6 +217,24 @@ export class CheckInDto {
   @IsOptional()
   @IsBoolean()
   isMockLocation?: boolean;
+
+  /**
+   * A `data:image/...;base64,` frame from the device camera, captured at the
+   * moment of the punch.
+   *
+   * EVIDENCE, not identification. Nothing compares it to an enrolled face, so
+   * accepting it never means "this is who they say they are" — it means a camera
+   * on this device produced this image now. The distinction matters: a record
+   * that claims a verified identity it never checked is worse than no record.
+   *
+   * Optional in every case. A punch is never refused for the want of a camera:
+   * an old handset, a denied permission or a dark stockroom must not stop
+   * someone clocking in for their shift.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(3_000_000)
+  photo?: string;
 }
 
 /** POST /hrms/attendance/check-out — self-service geo check-out (Module 6). */
@@ -239,6 +257,12 @@ export class CheckOutDto {
   @IsString()
   @MaxLength(300)
   note?: string;
+
+  /** Same contract as {@link CheckInDto.photo} — evidence, never identification. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(3_000_000)
+  photo?: string;
 }
 
 /**

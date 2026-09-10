@@ -10,6 +10,8 @@ import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuditService } from '../common/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { StorageService } from '../storage/storage.service';
+import { saveCapturedPhoto } from '../storage/capture-photo';
 import { ROLE_LABELS, ROLE_RANK } from '../common/role.util';
 import {
   assertNotSelfApproval,
@@ -180,11 +182,39 @@ export class HrmsService {
     private readonly scope: StoreScopeService,
     private readonly audit: AuditService,
     private readonly notifications: NotificationsService,
+    private readonly storage: StorageService,
   ) {}
 
-  // ==========================================================================
-  // Store context — the anchor for all time maths
-  // ==========================================================================
+  /**
+   * Store a punch photo and return its URL, or null when there is nothing
+   * storable.
+   *
+   * Never throws. A punch must not fail because a camera frame was malformed or
+   * object storage was having a bad minute — the attendance record is the thing
+   * that matters, and the photo is corroboration. A failure is logged and the
+   * punch proceeds without it, which is honest: the row then simply has no
+   * photo, rather than a broken link that looks like evidence.
+   *
+   * Only real raster images are accepted, decoded from the declared MIME type
+   * rather than trusted: `data:` is a URL scheme, and anyone can put anything
+   * after the comma.
+   */
+  /**
+   * Store a punch photo, or return null when there is nothing storable.
+   *
+   * The rules live in `saveCapturedPhoto` because the counter-visit screen needs
+   * exactly the same ones. Never throws: the attendance record matters more than
+   * the picture beside it.
+   */
+  private savePunchPhoto(user: AuthUser, kind: 'in' | 'out', photo: string | undefined) {
+    return saveCapturedPhoto(
+      this.storage,
+      user.organisationId,
+      'attendance',
+      `${user.id}-${kind}-${Date.now()}`,
+      photo,
+    );
+  }
 
   /**
    * Load the store facts attendance depends on, with its IANA timezone resolved
@@ -530,10 +560,13 @@ export class HrmsService {
       shiftId = shift.id;
     }
 
+    const photoUrl = await this.savePunchPhoto(user, 'in', dto.photo);
+
     const payload = {
       checkInAt: now,
       checkInLat: dto.lat,
       checkInLng: dto.lng,
+      checkInPhotoUrl: photoUrl,
       geoVerified: withinFence,
       checkInDistanceM: distanceM,
       checkInNote: dto.note?.trim() || null,
@@ -638,12 +671,15 @@ export class HrmsService {
     const workedMins = Math.round((now.getTime() - record.checkInAt.getTime()) / 60000);
     const dayFraction = computeDayFraction(workedMins, shift);
 
+    const outPhotoUrl = await this.savePunchPhoto(user, 'out', dto.photo);
+
     const row = await this.prisma.attendanceRecord.update({
       where: { id: record.id },
       data: {
         checkOutAt: now,
         checkOutLat: dto.lat,
         checkOutLng: dto.lng,
+        checkOutPhotoUrl: outPhotoUrl,
         checkOutDistanceM: distanceM,
         checkOutVerified: withinFence,
         checkOutNote: dto.note?.trim() || null,
@@ -703,6 +739,8 @@ export class HrmsService {
       checkOutLocal: formatHHMMInTz(r.checkOutAt, tz),
       timezone: tz,
       checkInDistanceM: r.checkInDistanceM ?? null,
+      checkInPhotoUrl: r.checkInPhotoUrl ?? null,
+      checkOutPhotoUrl: r.checkOutPhotoUrl ?? null,
       checkOutDistanceM: r.checkOutDistanceM ?? null,
       withinFence: r.geoVerified,
       checkOutWithinFence: r.checkOutVerified ?? false,
@@ -1118,6 +1156,8 @@ export class HrmsService {
       checkInLat: r.checkInLat != null ? num(r.checkInLat) : null,
       checkInLng: r.checkInLng != null ? num(r.checkInLng) : null,
       checkInDistanceM: r.checkInDistanceM ?? null,
+      checkInPhotoUrl: r.checkInPhotoUrl ?? null,
+      checkOutPhotoUrl: r.checkOutPhotoUrl ?? null,
       withinFence: r.geoVerified,
       checkInNote: r.checkInNote ?? null,
       isMockLocation: r.isMockLocation ?? false,
@@ -1230,6 +1270,8 @@ export class HrmsService {
         checkInLat: r.checkInLat != null ? num(r.checkInLat) : null,
         checkInLng: r.checkInLng != null ? num(r.checkInLng) : null,
         checkInDistanceM: r.checkInDistanceM ?? null,
+        checkInPhotoUrl: r.checkInPhotoUrl ?? null,
+        checkOutPhotoUrl: r.checkOutPhotoUrl ?? null,
         withinFence: r.geoVerified,
         checkInNote: r.checkInNote ?? null,
         isMockLocation: r.isMockLocation ?? false,

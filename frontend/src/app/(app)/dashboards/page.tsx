@@ -5,6 +5,7 @@ import { format, parseISO } from "date-fns";
 import { toast } from "sonner";
 
 import { SectionHeader } from "@/components/section/section-header";
+import { OmnichannelKpis } from "@/components/crm/omnichannel-kpis";
 import { KpiCard } from "@/components/dashboards/kpi-card";
 import { AgendaPanel } from "@/components/dashboards/agenda-panel";
 import { HandoffsPanel } from "@/components/dashboards/handoffs-panel";
@@ -80,7 +81,7 @@ function kpiHref(id: string): string | undefined {
 
 export default function DashboardsPage() {
   const item = getNavItem("dashboards");
-  const { role } = useSession();
+  const { role, currentStore } = useSession();
   const [taskOpen, setTaskOpen] = useState(false);
 
   // KPIs + charts come live from the API, store-scoped via X-Store-Id.
@@ -149,6 +150,18 @@ export default function DashboardsPage() {
           </div>
         </>
       )}
+
+      {/*
+        Where the business came from, measured server-side over its own window.
+        Below the day's KPIs because those answer "what is happening now" and
+        these answer "where has it been coming from" — different questions, and
+        a reader who conflates them reads a quiet Tuesday as a failing channel.
+      */}
+      <div className="mt-6">
+        <OmnichannelKpis
+          storeId={currentStore.isAggregate ? undefined : currentStore.id}
+        />
+      </div>
 
       <div className="mt-4">
         <MyTasksCard tasks={tasks} isLoading={tasksQuery.isLoading} />

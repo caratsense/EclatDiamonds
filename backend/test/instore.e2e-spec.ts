@@ -290,6 +290,43 @@ describe('In-store / field application (e2e)', () => {
       expect([400, 403]).toContain(res.status);
     });
 
+    it('keeps a counter photo with the visit, and never calls it an identification', async () => {
+      const PNG_1PX =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+      const res = await request(server())
+        .post('/instore/visits')
+        .set(auth())
+        .send({ partyId: 'p_is1', storeId: A.store, photo: `data:image/png;base64,${PNG_1PX}` })
+        .expect(201);
+
+      const row = await prisma.checkIn.findUniqueOrThrow({
+        where: { id: res.body.checkInId },
+      });
+      expect(row.photoUrl).toBeTruthy();
+      // A pointer, not the bytes.
+      expect(row.photoUrl).not.toContain('base64');
+      // Namespaced to this tenant, like every other stored object.
+      expect(row.photoUrl).toContain(`org/${A.org}`);
+      // Nothing anywhere claims the picture established who walked in.
+      const body = JSON.stringify(res.body).toLowerCase();
+      expect(body).not.toContain('recognis');
+      expect(body).not.toContain('biometric');
+      expect(body).not.toContain('confidence');
+    });
+
+    it('records the visit anyway when the frame is not a real image', async () => {
+      const lie = Buffer.from('definitely not a png').toString('base64');
+      const res = await request(server())
+        .post('/instore/visits')
+        .set(auth())
+        .send({ partyId: 'p_is1', storeId: A.store, photo: `data:image/png;base64,${lie}` })
+        .expect(201);
+      const row = await prisma.checkIn.findUniqueOrThrow({ where: { id: res.body.checkInId } });
+      expect(row.photoUrl).toBeNull();
+      // The visit is the thing that matters; the photo is beside it.
+      expect(row.timeIn).toBeTruthy();
+    });
+
     it('refuses an item belonging to another tenant', async () => {
       const other = await prisma.product.create({
         data: { organisationId: B.org, sku: 'B-ONLY-2', name: 'Theirs', category: 'other', metal: 'unspecified' },

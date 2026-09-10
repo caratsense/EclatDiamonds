@@ -7,6 +7,8 @@ import { StoreScopeService } from '../common/store-scope.service';
 import { ActivityService } from './activity.service';
 import { Customer360Service } from './customer360.service';
 import { IdentityService } from './identity.service';
+import { StorageService } from '../storage/storage.service';
+import { saveCapturedPhoto } from '../storage/capture-photo';
 
 /**
  * The in-store / field application.
@@ -57,6 +59,7 @@ export class InStoreService {
     private readonly identity: IdentityService,
     private readonly customer360: Customer360Service,
     private readonly activity: ActivityService,
+    private readonly storage: StorageService,
   ) {}
 
   /**
@@ -294,6 +297,15 @@ export class InStoreService {
       attendedByUserId?: string;
       /** Tenant vocabulary: occasion, counter, department — whatever the pack defines. */
       fields?: Record<string, unknown>;
+      /**
+       * A `data:image/...;base64,` frame taken at the counter.
+       *
+       * A picture of the visit, not an identification: who this is comes from
+       * the customer record the visit is attached to, and nothing compares the
+       * image to anything. Optional, and a failure to store it never stops the
+       * visit being recorded.
+       */
+      photo?: string;
       enquiries?: {
         productId?: string;
         sku?: string;
@@ -342,6 +354,17 @@ export class InStoreService {
     const converted = enquiries.some((e) => e.converted);
     const partially = converted && enquiries.some((e) => !e.converted);
 
+    // Uploaded BEFORE the transaction opens. An upload can be slow on a shop's
+    // connection, and holding a write transaction open across it would make one
+    // person's photo block everyone else's visit.
+    const photoUrl = await saveCapturedPhoto(
+      this.storage,
+      user.organisationId,
+      'visits',
+      `${party.id}-${Date.now()}`,
+      input.photo,
+    );
+
     return this.prisma.$transaction(async (tx) => {
       const checkIn = await tx.checkIn.create({
         data: {
@@ -362,6 +385,7 @@ export class InStoreService {
             ? (input.purpose as never)
             : ('other' as never),
           purposeCode: input.purpose ?? null,
+          photoUrl,
           outcome: (converted ? 'sale_closed' : partially ? 'follow_up' : 'in_store') as never,
           notes: input.notes ?? null,
           attendedById: attendedBy,

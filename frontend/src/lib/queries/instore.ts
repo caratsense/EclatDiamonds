@@ -135,6 +135,11 @@ export function useRecordVisit() {
       notes?: string;
       fields?: Record<string, unknown>;
       enquiries?: VisitEnquiryInput[];
+      /**
+       * A `data:image/jpeg;base64,` frame taken at the counter. A picture of the
+       * visit, never an identification — nothing is matched against it.
+       */
+      photo?: string;
     }) => {
       const { data } = await api.post<{
         checkInId: string;
