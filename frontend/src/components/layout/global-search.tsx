@@ -41,6 +41,9 @@ import {
  * here later without changing the palette.
  */
 
+/** Anything on screen can open the palette by dispatching this on `window`. */
+export const OPEN_SEARCH_EVENT = "caratos:open-search";
+
 /** Row click → module landing page (no per-record routes in v1). */
 const GROUP_ROUTES: Record<SearchGroupKey, string> = {
   customers: "/crm",
@@ -206,8 +209,18 @@ export function GlobalSearch() {
         setOpen(true);
       }
     }
+    // The sidebar pill asks for the palette by name rather than by faking a
+    // keystroke, so the two entry points share one listener and neither has to
+    // know how the other is wired.
+    function onRequest() {
+      setOpen(true);
+    }
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener(OPEN_SEARCH_EVENT, onRequest);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener(OPEN_SEARCH_EVENT, onRequest);
+    };
   }, []);
 
   function handleOpenChange(next: boolean) {

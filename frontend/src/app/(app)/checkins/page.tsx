@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSession } from "@/store/use-session";
+import { useQuickAction } from "@/store/use-quick-action";
 import {
   StoreScopeField,
   useStoreScope,
@@ -126,6 +127,20 @@ export default function CheckinsPage() {
   // The visit currently being closed (drives the "Close visit" dialog).
   const [closing, setClosing] = useState<CheckIn | null>(null);
 
+  /*
+   * "Log walk-in" from the sidebar's Quick Action lands here.
+   *
+   * Derived rather than copied in by an effect, so the dialog is open on the
+   * first paint after the route change instead of on the one after that.
+   */
+  const quickCheckin = useQuickAction((s) => s.pending === "checkin");
+  const clearQuick = useQuickAction((s) => s.clear);
+  const addDialogOpen = addOpen || quickCheckin;
+  const setAddDialogOpen = (open: boolean) => {
+    setAddOpen(open);
+    if (!open) clearQuick();
+  };
+
   // Headline numbers derived from the live log, narrowed to today. "Week" has no
   // endpoint, so the single-store view surfaces today's count and says so.
   const todaysVisits = useMemo(
@@ -175,7 +190,7 @@ export default function CheckinsPage() {
         title={nav?.title ?? "Check-ins & Footfall"}
         purpose={nav?.purpose ?? ""}
         primaryAction={nav?.primaryAction}
-        onPrimaryAction={() => setAddOpen(true)}
+        onPrimaryAction={() => setAddDialogOpen(true)}
       />
 
       <div className="space-y-4">
@@ -247,7 +262,7 @@ export default function CheckinsPage() {
         )}
       </div>
 
-      <AddCheckinDialog open={addOpen} onOpenChange={setAddOpen} />
+      <AddCheckinDialog open={addDialogOpen} onOpenChange={setAddDialogOpen} />
       <CloseVisitDialog
         checkin={closing}
         open={closing != null}

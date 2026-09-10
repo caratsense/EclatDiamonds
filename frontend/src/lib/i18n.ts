@@ -25,12 +25,14 @@ import { useConfigBootstrap } from "@/lib/queries/tenant-config";
  */
 export const DICT: Record<string, string> = {
   // Sidebar / mobile section headers
-  "group.Overview": "Overview",
-  "group.Sales": "Sales",
-  "group.Operations": "Operations",
-  "group.People": "People",
-  "group.Management": "Management",
-  "group.Back-office": "Back-office",
+  "group.Overview & Analytics": "Overview & Analytics",
+  "group.Omnichannel & CRM": "Omnichannel & CRM",
+  "group.Showroom Floor": "Showroom Floor",
+  "group.Commerce & Orders": "Commerce & Orders",
+  "group.Inventory & Supply": "Inventory & Supply",
+  "group.Marketing & Inbound": "Marketing & Inbound",
+  "group.Team & Workforce": "Team & Workforce",
+  "group.Back-office & Approvals": "Back-office & Approvals",
   "group.Administration": "Administration",
 
   // Words a screen has to say inline, not just as a heading. Kept as keys so a
