@@ -187,7 +187,11 @@ function NavRow({
         className={cn(
           "group relative flex items-center gap-3 rounded-lg py-2 pl-3 pr-2 text-sm transition-all duration-150",
           active
-            ? "bg-white/[0.09] font-semibold text-white"
+            ? // The pill, plus a hairline of the accent along its top edge and
+              // the faintest bloom of it underneath. On obsidian a flat white
+              // wash reads as a smudge; the lit edge is what makes it read as
+              // a surface the light is on.
+              "bg-white/[0.09] font-semibold text-white shadow-[inset_0_1px_0_0_rgba(255,255,255,0.09),0_0_18px_-6px_var(--sidebar-primary)]"
             : "text-sidebar-foreground hover:bg-white/[0.04] hover:text-white",
         )}
       >

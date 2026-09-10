@@ -10,10 +10,11 @@ import {
   Eye,
   EyeOff,
   Loader2,
+  Inbox,
   MailCheck,
   ShieldCheck,
   Sparkles,
-  Store,
+  TrendingUp,
   UserPlus,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -60,8 +61,23 @@ const SIGNUP_ROLES: { value: Role; label: string; hint: string }[] = [
   },
 ];
 
+/*
+ * One field treatment for the whole auth surface.
+ *
+ * The ring is a HAIRLINE, not a halo: `ring-1` at 40% over a border that lifts
+ * to full indigo. A thick glow around a text box on a dark ground bleeds into
+ * whatever sits beside it and makes a form of six fields look like six alerts.
+ * `outline-none` is safe here only because the border and ring together are the
+ * visible focus state — remove them and this becomes a keyboard trap.
+ */
+const FIELD =
+  "border-white/10 bg-white/[0.02] text-[#f8fafc] placeholder:text-[#f8fafc]/25 " +
+  "focus:border-[#6366f1]/80 focus:ring-1 focus:ring-[#6366f1]/40";
+
+/** The same, as a complete class list for the bare <input>/<select> elements. */
 const inputCls =
-  "w-full rounded-md border border-[#1b3a2c] bg-[#071e16] px-3 py-2 text-sm text-[#f6f3ed] placeholder:text-[#f6f3ed]/30 focus:border-[#c8a24f] focus:outline-none focus:ring-1 focus:ring-[#c8a24f]";
+  "w-full rounded-md border border-white/10 bg-white/[0.02] px-3 py-2 text-sm text-[#f8fafc] " +
+  "placeholder:text-[#f8fafc]/25 focus:border-[#6366f1]/80 focus:outline-none focus:ring-1 focus:ring-[#6366f1]/40";
 
 /**
  * Organisation slugs, as the server mints them: lowercase, alphanumeric, single
@@ -181,28 +197,28 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
 
   if (done) {
     return (
-      <div className="rounded-2xl border border-[#c8a24f]/40 bg-[#0c261c]/80 p-6 text-center shadow-xl">
-        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[#c8a24f]/15 text-[#c8a24f]">
+      <div className="glass facet-top relative rounded-2xl p-6 text-center">
+        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[#818cf8]/15 text-[#818cf8]">
           <MailCheck className="h-6 w-6" />
         </div>
-        <h3 className="text-lg font-semibold text-[#f6f3ed]">Request sent</h3>
-        <p className="mt-2 text-sm text-[#f6f3ed]/75">{done.message}</p>
-        <div className="mt-4 rounded-lg border border-[#1b3a2c] bg-[#071e16] p-3 text-left">
-          <p className="text-[11px] uppercase tracking-wider text-[#c8a24f]">
+        <h3 className="text-lg font-semibold text-[#f8fafc]">Request sent</h3>
+        <p className="mt-2 text-sm text-[#f8fafc]/75">{done.message}</p>
+        <div className="mt-4 rounded-lg border border-white/[0.08] bg-black/25 p-3 text-left">
+          <p className="text-[11px] uppercase tracking-wider text-[#818cf8]">
             Your sign-in email
           </p>
-          <p className="mt-0.5 break-all font-mono text-sm text-[#f6f3ed]">
+          <p className="mt-0.5 break-all font-mono text-sm text-[#f8fafc]">
             {done.loginEmail}
           </p>
         </div>
-        <p className="mt-3 text-xs text-[#f6f3ed]/50">
+        <p className="mt-3 text-xs text-[#f8fafc]/50">
           Save this — you&apos;ll sign in with this email and your password once
           approved.
         </p>
         <Button
           type="button"
           onClick={onBackToSignin}
-          className="mt-5 w-full bg-[#c8a24f] text-[#071e16] font-semibold hover:bg-[#b8903c]"
+          className="mt-5 w-full bg-[#6366f1] text-white font-semibold hover:bg-[#4f46e5]"
         >
           Back to sign in
         </Button>
@@ -213,10 +229,10 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
   return (
     <form
       onSubmit={submit}
-      className="space-y-3.5 rounded-2xl border border-[#1b3a2c] bg-[#0c261c]/80 p-5 shadow-xl"
+      className="glass facet-top relative space-y-3.5 rounded-2xl p-5"
     >
       <div className="space-y-1.5">
-        <Label className="text-xs text-[#f6f3ed]/80">Organisation code</Label>
+        <Label className="text-xs text-[#f8fafc]/80">Organisation code</Label>
         <input
           className={inputCls}
           value={organisationCode}
@@ -227,12 +243,12 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
           placeholder="e.g. your-company"
           required
         />
-        <p className="text-[11px] text-[#f6f3ed]/45">
+        <p className="text-[11px] text-[#f8fafc]/45">
           Ask your administrator for your organisation code.
         </p>
       </div>
       <div className="space-y-1.5">
-        <Label className="text-xs text-[#f6f3ed]/80">Full name</Label>
+        <Label className="text-xs text-[#f8fafc]/80">Full name</Label>
         <input
           className={inputCls}
           value={name}
@@ -242,8 +258,8 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
         />
       </div>
       <div className="space-y-1.5">
-        <Label className="text-xs text-[#f6f3ed]/80">
-          Personal email <span className="text-[#f6f3ed]/40">(optional)</span>
+        <Label className="text-xs text-[#f8fafc]/80">
+          Personal email <span className="text-[#f8fafc]/40">(optional)</span>
         </Label>
         <input
           type="email"
@@ -253,13 +269,13 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
           onChange={(e) => setEmail(e.target.value)}
           placeholder="name@email.com"
         />
-        <p className="text-[11px] text-[#f6f3ed]/45">
+        <p className="text-[11px] text-[#f8fafc]/45">
           For contact only. We create your unique sign-in email for you.
         </p>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
-          <Label className="text-xs text-[#f6f3ed]/80">Password</Label>
+          <Label className="text-xs text-[#f8fafc]/80">Password</Label>
           <div className="relative">
             <input
               type={showPw ? "text" : "password"}
@@ -275,14 +291,14 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
               onClick={() => setShowPw((s) => !s)}
               aria-label={showPw ? "Hide password" : "Show password"}
               tabIndex={-1}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-[#f6f3ed]/50 transition-colors hover:text-[#f6f3ed]"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-[#f8fafc]/50 transition-colors hover:text-[#f8fafc]"
             >
               {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
           </div>
         </div>
         <div className="space-y-1.5">
-          <Label className="text-xs text-[#f6f3ed]/80">Phone (optional)</Label>
+          <Label className="text-xs text-[#f8fafc]/80">Phone (optional)</Label>
           <input
             inputMode="numeric"
             className={inputCls}
@@ -293,31 +309,31 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
         </div>
       </div>
       <div className="space-y-1.5">
-        <Label className="text-xs text-[#f6f3ed]/80">I am a…</Label>
+        <Label className="text-xs text-[#f8fafc]/80">I am a…</Label>
         <select
           className={inputCls}
           value={requestedRole}
           onChange={(e) => setRequestedRole(e.target.value as Role)}
         >
           {SIGNUP_ROLES.map((r) => (
-            <option key={r.value} value={r.value} className="bg-[#071e16]">
+            <option key={r.value} value={r.value} className="bg-[#090b10]">
               {r.label}
             </option>
           ))}
         </select>
         {roleHint ? (
-          <p className="text-[11px] text-[#f6f3ed]/55">{roleHint}</p>
+          <p className="text-[11px] text-[#f8fafc]/55">{roleHint}</p>
         ) : null}
       </div>
       <div className="space-y-1.5">
-        <Label className="text-xs text-[#f6f3ed]/80">Location / store</Label>
+        <Label className="text-xs text-[#f8fafc]/80">Location / store</Label>
         <select
           className={inputCls}
           value={requestedStoreId}
           onChange={(e) => setRequestedStoreId(e.target.value)}
           required
         >
-          <option value="" className="bg-[#071e16]">
+          <option value="" className="bg-[#090b10]">
             {!slugUsable
               ? "Enter your organisation code first"
               : storesQuery.isLoading
@@ -325,7 +341,7 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
                 : "Select your store"}
           </option>
           {stores.map((s) => (
-            <option key={s.id} value={s.id} className="bg-[#071e16]">
+            <option key={s.id} value={s.id} className="bg-[#090b10]">
               {s.name}
               {s.city ? ` — ${s.city}` : ""}
             </option>
@@ -334,7 +350,7 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
       </div>
       <Button
         type="submit"
-        className="w-full bg-[#c8a24f] text-[#071e16] font-semibold hover:bg-[#b8903c]"
+        className="w-full bg-[#6366f1] text-white font-semibold hover:bg-[#4f46e5]"
         disabled={signup.isPending}
       >
         {signup.isPending ? (
@@ -427,11 +443,11 @@ function OrganisationSignupCard({
   return (
     <form
       onSubmit={submit}
-      className="space-y-3.5 rounded-2xl border border-[#c8a24f]/35 bg-[#0c261c]/80 p-5 shadow-xl"
+      className="glass facet-top relative space-y-3.5 rounded-2xl p-5"
     >
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1.5">
-          <Label className="text-xs text-[#f6f3ed]/80">
+          <Label className="text-xs text-[#f8fafc]/80">
             Organisation name
           </Label>
           <input
@@ -443,7 +459,7 @@ function OrganisationSignupCard({
           />
         </div>
         <div className="space-y-1.5">
-          <Label className="text-xs text-[#f6f3ed]/80">
+          <Label className="text-xs text-[#f8fafc]/80">
             What industry do you cater to?
           </Label>
           <select
@@ -459,7 +475,7 @@ function OrganisationSignupCard({
               itself is the server's — nothing here hardcodes a pack code, so
               adding or renaming a pack needs no frontend release.
             */}
-            <option value="" disabled className="bg-[#071e16]">
+            <option value="" disabled className="bg-[#090b10]">
               {industriesQuery.isLoading
                 ? "Loading industries…"
                 : industriesQuery.isError
@@ -470,7 +486,7 @@ function OrganisationSignupCard({
               <option
                 key={industry.code}
                 value={industry.code}
-                className="bg-[#071e16]"
+                className="bg-[#090b10]"
               >
                 {industry.name}
               </option>
@@ -480,13 +496,13 @@ function OrganisationSignupCard({
       </div>
 
       {selectedIndustry ? (
-        <div className="flex gap-2.5 rounded-lg border border-[#1b3a2c] bg-[#071e16]/70 p-3">
-          <Bot className="mt-0.5 h-4 w-4 shrink-0 text-[#c8a24f]" />
+        <div className="flex gap-2.5 rounded-lg border border-white/[0.08] bg-black/25 p-3">
+          <Bot className="mt-0.5 h-4 w-4 shrink-0 text-[#818cf8]" />
           <div>
-            <p className="text-xs font-medium text-[#f6f3ed]">
+            <p className="text-xs font-medium text-[#f8fafc]">
               Industry-ready CRM setup
             </p>
-            <p className="mt-0.5 text-[11px] leading-relaxed text-[#f6f3ed]/55">
+            <p className="mt-0.5 text-[11px] leading-relaxed text-[#f8fafc]/55">
               {selectedIndustry.description}
             </p>
           </div>
@@ -495,7 +511,7 @@ function OrganisationSignupCard({
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1.5">
-          <Label className="text-xs text-[#f6f3ed]/80">Owner name</Label>
+          <Label className="text-xs text-[#f8fafc]/80">Owner name</Label>
           <input
             className={inputCls}
             value={ownerName}
@@ -505,7 +521,7 @@ function OrganisationSignupCard({
           />
         </div>
         <div className="space-y-1.5">
-          <Label className="text-xs text-[#f6f3ed]/80">
+          <Label className="text-xs text-[#f8fafc]/80">
             Work email / login
           </Label>
           <input
@@ -522,7 +538,7 @@ function OrganisationSignupCard({
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1.5">
-          <Label className="text-xs text-[#f6f3ed]/80">Password</Label>
+          <Label className="text-xs text-[#f8fafc]/80">Password</Label>
           <div className="relative">
             <input
               type={showPw ? "text" : "password"}
@@ -538,7 +554,7 @@ function OrganisationSignupCard({
               onClick={() => setShowPw((value) => !value)}
               aria-label={showPw ? "Hide password" : "Show password"}
               tabIndex={-1}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-[#f6f3ed]/50 hover:text-[#f6f3ed]"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-[#f8fafc]/50 hover:text-[#f8fafc]"
             >
               {showPw ? (
                 <EyeOff className="h-4 w-4" />
@@ -549,8 +565,8 @@ function OrganisationSignupCard({
           </div>
         </div>
         <div className="space-y-1.5">
-          <Label className="text-xs text-[#f6f3ed]/80">
-            Phone <span className="text-[#f6f3ed]/40">(optional)</span>
+          <Label className="text-xs text-[#f8fafc]/80">
+            Phone <span className="text-[#f8fafc]/40">(optional)</span>
           </Label>
           <input
             type="tel"
@@ -565,7 +581,7 @@ function OrganisationSignupCard({
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1.5">
-          <Label className="text-xs text-[#f6f3ed]/80">
+          <Label className="text-xs text-[#f8fafc]/80">
             First location
           </Label>
           <input
@@ -577,7 +593,7 @@ function OrganisationSignupCard({
           />
         </div>
         <div className="space-y-1.5">
-          <Label className="text-xs text-[#f6f3ed]/80">City</Label>
+          <Label className="text-xs text-[#f8fafc]/80">City</Label>
           <input
             className={inputCls}
             value={city}
@@ -588,7 +604,7 @@ function OrganisationSignupCard({
         </div>
       </div>
 
-      <p className="text-[11px] leading-relaxed text-[#f6f3ed]/50">
+      <p className="text-[11px] leading-relaxed text-[#f8fafc]/50">
         Omnichannel CRM, AI catalogue, attendance, imports and integrations are
         included. AI qualification and draft assistance start enabled; automatic
         sending stays off until you connect and approve a provider.
@@ -596,7 +612,7 @@ function OrganisationSignupCard({
 
       <Button
         type="submit"
-        className="w-full bg-[#c8a24f] font-semibold text-[#071e16] hover:bg-[#b8903c]"
+        className="w-full bg-[#6366f1] font-semibold text-white hover:bg-[#4f46e5]"
         disabled={createOrganisation.isPending || industriesQuery.isLoading}
       >
         {createOrganisation.isPending ? (
@@ -709,31 +725,36 @@ function LoginPage() {
     mode === "signup" && signupKind === "organisation";
 
   return (
-    <div className="grid min-h-dvh bg-[#071e16] text-[#f6f3ed] lg:grid-cols-[1.1fr_1fr]">
+    <div className="grid min-h-dvh bg-[#090b10] text-[#f8fafc] lg:grid-cols-[1.1fr_1fr]">
       {/* ── Left Realistic Luxury Showroom Panel ───────────────────── */}
       <aside className="relative hidden flex-col justify-between overflow-hidden p-10 lg:flex xl:p-14">
         {/*
           A generated ground rather than a photograph. The panel used to carry a
           jewellery hero image, which quietly told a clinic, a mill and a
-          school that this product was not for them. Two soft radial washes cost
-          nothing to ship and belong to no industry.
+          school that this product was not for them. Two offset radial sources
+          cost nothing to ship and belong to no industry.
+
+          Two sources, not one, and in two hues: a single centred wash reads as
+          a vignette, while indigo at the top-left against cyan at the
+          bottom-right gives the ground a direction and keeps the glass cards
+          in front of it from all catching the same flat light.
         */}
         <div
           className="absolute inset-0 z-0"
           style={{
             backgroundImage:
-              "radial-gradient(60rem 40rem at 15% 10%, rgba(200,162,79,0.16), transparent 60%)," +
-              "radial-gradient(50rem 36rem at 85% 85%, rgba(16,120,86,0.22), transparent 62%)",
+              "radial-gradient(40rem 30rem at 20% 20%, rgba(99,102,241,0.18), transparent 70%)," +
+              "radial-gradient(40rem 30rem at 80% 80%, rgba(56,189,248,0.12), transparent 70%)",
           }}
         />
-        {/* Soft luxury emerald gradient overlay */}
-        <div className="absolute inset-0 z-0 bg-gradient-to-b from-[#071e16]/80 via-[#071e16]/95 to-[#031a13]" />
+        {/* Vertical settle, so the footer rule reads against a darker ground. */}
+        <div className="absolute inset-0 z-0 bg-gradient-to-b from-transparent via-[#090b10]/40 to-[#06080d]/90" />
 
         {/* Top Header */}
         <div className="relative z-10 flex items-center justify-between">
           {creatingOrganisation ? (
-            <div className="flex items-center gap-2 text-[#c8a24f]">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#c8a24f]/40 bg-[#c8a24f]/10">
+            <div className="flex items-center gap-2 text-[#818cf8]">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#818cf8]/40 bg-[#818cf8]/10">
                 <Bot className="h-5 w-5" />
               </div>
               <span className="font-display text-xl font-bold">CaratSense</span>
@@ -741,8 +762,8 @@ function LoginPage() {
           ) : (
             <Logo className="h-10 w-auto" />
           )}
-          <span className="inline-flex items-center gap-2 rounded-full border border-[#c8a24f]/30 bg-[#c8a24f]/10 px-3.5 py-1 text-xs font-medium text-[#c8a24f]">
-            <Sparkles className="h-3.5 w-3.5 text-[#c8a24f]" />
+          <span className="inline-flex items-center gap-2 rounded-full border border-[#818cf8]/30 bg-[#818cf8]/10 px-3.5 py-1 text-xs font-medium text-[#818cf8]">
+            <Sparkles className="h-3.5 w-3.5 text-[#818cf8]" />
             {creatingOrganisation ? "Universal AI CRM" : "Omnichannel AI CRM"}
           </span>
         </div>
@@ -750,86 +771,93 @@ function LoginPage() {
         {/* Middle Content & Live Glassmorphism Widgets */}
         <div className="relative z-10 my-auto max-w-lg space-y-7 py-8">
           <div>
-            <span className="text-xs font-medium uppercase tracking-[0.2em] text-[#c8a24f]">
+            <span className="text-xs font-medium uppercase tracking-[0.2em] text-[#818cf8]">
               {creatingOrganisation ? "Built for every industry" : "CaratSense"}
             </span>
-            <h1 className="mt-2 font-display text-4xl font-bold leading-[1.1] text-[#f6f3ed] xl:text-5xl">
+            <h1 className="mt-3 font-display text-4xl font-bold leading-[1.05] tracking-tight text-[#f8fafc] xl:text-[3.25rem]">
               {creatingOrganisation ? (
                 <>
                   One AI CRM, shaped around{" "}
-                  <span className="italic text-[#c8a24f]">your business.</span>
+                  <span className="text-gradient-accent">your business.</span>
                 </>
               ) : (
                 <>
                   One place for{" "}
-                  <span className="italic text-[#c8a24f]">every enquiry.</span>
+                  <span className="text-gradient-accent">every enquiry.</span>
                 </>
               )}
             </h1>
-            <p className="mt-4 text-base leading-relaxed text-[#f6f3ed]/75">
+            <p className="mt-4 text-base leading-relaxed text-[#f8fafc]/75">
               {creatingOrganisation
                 ? "Start with industry-specific fields and workflows, while omnichannel CRM, AI cataloguing, attendance and integrations stay at the core."
                 : "Every enquiry, visit and follow-up your team handles, in one place — whichever channel it arrived on."}
             </p>
           </div>
 
-          {/* Live Interactive Widgets */}
-          <div className="grid gap-3.5">
-            {/* Widget 1: Multi-Store Live Pulse */}
-            <div className="flex items-center gap-3.5 rounded-2xl border border-[#1b3a2c] bg-[#0c261c]/80 p-4 shadow-lg backdrop-blur-md">
-              <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#c8a24f]/15 text-[#c8a24f]">
-                {creatingOrganisation ? (
-                  <Bot className="h-5 w-5" />
-                ) : (
-                  <Store className="h-5 w-5" />
-                )}
-                <span className="absolute -right-0.5 -top-0.5 flex h-3 w-3">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                  <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500" />
-                </span>
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-semibold text-[#f6f3ed]">
-                    {creatingOrganisation
-                      ? "Industry-ready from signup"
-                      : "Every branch, one view"}
-                  </p>
-                  <span className="text-[11px] font-mono text-emerald-400">
-                    {creatingOrganisation ? "AI Ready" : "Multi-branch"}
-                  </span>
-                </div>
-                <p className="mt-0.5 text-xs text-[#f6f3ed]/65">
-                  {creatingOrganisation
-                    ? "CRM · AI catalogue · attendance · integrations"
-                    : "Leads · visits · follow-ups · attendance"}
-                </p>
-              </div>
-            </div>
+          {/*
+            THREE CAPABILITIES, AND NOT ONE FIGURE.
 
-            {/* Widget 2: Security & Role Isolation */}
-            <div className="flex items-center gap-3.5 rounded-2xl border border-[#1b3a2c] bg-[#0c261c]/80 p-4 shadow-lg backdrop-blur-md">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#c8a24f]/15 text-[#c8a24f]">
-                <ShieldCheck className="h-5 w-5" />
+            A sign-in panel is a shop window, and the temptation is to fill it
+            with numbers — messages handled, leads scored, uptime. There is no
+            tenant here: nobody has signed in, no organisation is resolved, and
+            any number printed on this page would be invented. So these say what
+            the product DOES, in the product's own words, and stop there.
+          */}
+          <div className="grid gap-3">
+            {[
+              {
+                icon: creatingOrganisation ? Bot : Inbox,
+                title: creatingOrganisation
+                  ? "Industry-ready from signup"
+                  : "Every channel, one stream",
+                body: creatingOrganisation
+                  ? "Your industry decides the fields, the pipeline and the vocabulary. CRM, cataloguing, attendance and integrations stay at the core."
+                  : "WhatsApp, ads, web forms, the counter and the phone all arrive in one inbox, against one customer record.",
+                live: true,
+              },
+              {
+                icon: TrendingUp,
+                title: "Intent, with its reasoning attached",
+                body: "Each conversation carries the signals that moved its score and the words that fired them — or says plainly that it has not been assessed.",
+              },
+              {
+                icon: ShieldCheck,
+                title: creatingOrganisation
+                  ? "Tenant-isolated from day one"
+                  : "Every send leaves a receipt",
+                body: creatingOrganisation
+                  ? "Your data, your team and your connection credentials stay inside your organisation."
+                  : "Queued, sent, delivered, failed — each state is recorded as the provider reports it, never assumed.",
+              },
+            ].map((card) => (
+              <div
+                key={card.title}
+                className="glass flex items-start gap-3.5 rounded-2xl p-4"
+              >
+                <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#818cf8]/15 text-[#818cf8]">
+                  <card.icon className="h-5 w-5" />
+                  {card.live ? (
+                    <span className="absolute -right-0.5 -top-0.5 flex h-2.5 w-2.5">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#818cf8] opacity-70" />
+                      <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#6366f1]" />
+                    </span>
+                  ) : null}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold tracking-tight text-[#f8fafc]">
+                    {card.title}
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-[#f8fafc]/60">
+                    {card.body}
+                  </p>
+                </div>
               </div>
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-[#f6f3ed]">
-                  {creatingOrganisation
-                    ? "Tenant-isolated from day one"
-                    : "Role-Aware Security & Cost Protection"}
-                </p>
-                <p className="mt-0.5 text-xs text-[#f6f3ed]/65">
-                  {creatingOrganisation
-                    ? "Your data, users and connection credentials stay inside your organisation."
-                    : "Each person sees their own branch and their own customers; cost and margin stay with the people who set them."}
-                </p>
-              </div>
-            </div>
+            ))}
           </div>
         </div>
 
         {/* Bottom Footer */}
-        <div className="relative z-10 flex items-center justify-between border-t border-[#1b3a2c] pt-5 text-xs text-[#f6f3ed]/50">
+        <div className="relative z-10 flex items-center justify-between border-t border-white/[0.08] pt-5 text-xs text-[#f8fafc]/45">
           {/*
             The name, and no version number. "v2.4" was typed here once and no
             process has updated it since — a release number on a public page
@@ -846,12 +874,12 @@ function LoginPage() {
       </aside>
 
       {/* ── Right Live Interactive Sign-in Form ─────────────────────── */}
-      <main className="relative flex flex-col justify-between bg-[#071e16] px-6 py-10 sm:px-12 lg:px-16">
+      <main className="relative flex flex-col justify-between bg-[#090b10] px-6 py-10 sm:px-12 lg:px-16">
         <div className="mx-auto my-auto w-full max-w-xl space-y-7">
           {/* Mobile Logo */}
           <div className="mb-4 lg:hidden">
             {creatingOrganisation ? (
-              <div className="flex items-center gap-2 text-[#c8a24f]">
+              <div className="flex items-center gap-2 text-[#818cf8]">
                 <Bot className="h-6 w-6" />
                 <span className="font-display text-xl font-bold">CaratSense</span>
               </div>
@@ -861,14 +889,14 @@ function LoginPage() {
           </div>
 
           <div>
-            <h2 className="font-display text-3xl font-bold tracking-tight text-[#f6f3ed]">
+            <h2 className="font-display text-3xl font-bold tracking-tight text-[#f8fafc]">
               {mode === "signin"
                 ? "Sign in to your workspace"
                 : signupKind === "organisation"
                   ? "Set up your organisation"
                   : "Join your organisation"}
             </h2>
-            <p className="mt-1.5 text-sm text-[#f6f3ed]/70">
+            <p className="mt-1.5 text-sm text-[#f8fafc]/70">
               {mode === "signin"
                 ? "Enter your email and password to start the session."
                 : signupKind === "organisation"
@@ -902,36 +930,36 @@ function LoginPage() {
             ) : (
               <GoogleButtonShell reason="Not set up for this workspace yet — use your email and password below." />
             )}
-            <div className="mt-4 flex items-center gap-3 text-xs text-[#f6f3ed]/40">
-              <div className="h-px flex-1 bg-[#1b3a2c]" />
+            <div className="mt-4 flex items-center gap-3 text-xs text-[#f8fafc]/40">
+              <div className="h-px flex-1 bg-white/[0.08]" />
               or continue with credentials
-              <div className="h-px flex-1 bg-[#1b3a2c]" />
+              <div className="h-px flex-1 bg-white/[0.08]" />
             </div>
           </div>
 
           {/* Auth Form Container */}
-          <div className="rounded-2xl border border-[#1b3a2c] bg-[#0c261c]/80 p-5 shadow-xl">
+          <div className="glass facet-top relative rounded-2xl p-5">
             <form onSubmit={onSubmitPassword} className="space-y-4">
                 <div className="space-y-1.5">
-                  <Label htmlFor="email" className="text-xs text-[#f6f3ed]/80">Email address</Label>
+                  <Label htmlFor="email" className="text-xs text-[#f8fafc]/80">Email address</Label>
                   <Input
                     id="email"
                     type="email"
                     autoComplete="username"
-                    className="border-[#1b3a2c] bg-[#071e16] text-[#f6f3ed] focus:border-[#c8a24f]"
+                    className={FIELD}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="password" className="text-xs text-[#f6f3ed]/80">Password</Label>
+                  <Label htmlFor="password" className="text-xs text-[#f8fafc]/80">Password</Label>
                   <div className="relative">
                     <Input
                       id="password"
                       type={showPassword ? "text" : "password"}
                       autoComplete="current-password"
-                      className="border-[#1b3a2c] bg-[#071e16] pr-10 text-[#f6f3ed] focus:border-[#c8a24f]"
+                      className={`${FIELD} pr-10`}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       required
@@ -941,7 +969,7 @@ function LoginPage() {
                       onClick={() => setShowPassword((s) => !s)}
                       aria-label={showPassword ? "Hide password" : "Show password"}
                       tabIndex={-1}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-[#f6f3ed]/50 transition-colors hover:text-[#f6f3ed]"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-[#f8fafc]/50 transition-colors hover:text-[#f8fafc]"
                     >
                       {showPassword ? (
                         <EyeOff className="h-4 w-4" />
@@ -953,7 +981,7 @@ function LoginPage() {
                 </div>
                 <Button
                   type="submit"
-                  className="w-full bg-[#c8a24f] text-[#071e16] font-semibold hover:bg-[#b8903c]"
+                  className="w-full bg-[#6366f1] text-white font-semibold hover:bg-[#4f46e5]"
                   disabled={login.isPending}
                 >
                   {login.isPending ? (
@@ -970,15 +998,15 @@ function LoginPage() {
           </>
           ) : (
             <div className="space-y-3.5">
-              <div className="grid grid-cols-2 gap-2 rounded-xl border border-[#1b3a2c] bg-[#061a13] p-1.5">
+              <div className="grid grid-cols-2 gap-2 rounded-xl border border-white/[0.08] bg-black/25 p-1.5">
                 <button
                   type="button"
                   onClick={() => setSignupKind("join")}
                   className={
                     "flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-colors " +
                     (signupKind === "join"
-                      ? "bg-[#c8a24f] text-[#071e16]"
-                      : "text-[#f6f3ed]/65 hover:bg-white/5")
+                      ? "bg-[#6366f1] text-white"
+                      : "text-[#f8fafc]/65 hover:bg-white/5")
                   }
                 >
                   <UserPlus className="h-3.5 w-3.5" /> Join a team
@@ -989,8 +1017,8 @@ function LoginPage() {
                   className={
                     "flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-colors " +
                     (signupKind === "organisation"
-                      ? "bg-[#c8a24f] text-[#071e16]"
-                      : "text-[#f6f3ed]/65 hover:bg-white/5")
+                      ? "bg-[#6366f1] text-white"
+                      : "text-[#f8fafc]/65 hover:bg-white/5")
                   }
                 >
                   <Building2 className="h-3.5 w-3.5" /> Create organisation
@@ -1008,7 +1036,7 @@ function LoginPage() {
           <button
             type="button"
             onClick={() => setMode((m) => (m === "signin" ? "signup" : "signin"))}
-            className="flex w-full items-center justify-center gap-1.5 text-sm text-[#f6f3ed]/70 transition-colors hover:text-[#c8a24f]"
+            className="flex w-full items-center justify-center gap-1.5 text-sm text-[#f8fafc]/70 transition-colors hover:text-[#818cf8]"
           >
             {mode === "signin" ? (
               <>
@@ -1024,7 +1052,7 @@ function LoginPage() {
           <InstallAppButton
             label="Install App on Phone"
             variant="ghost"
-            className="mt-2 w-full border border-[#1b3a2c] text-[#f6f3ed]/70 hover:bg-[#0c261c] hover:text-[#f6f3ed]"
+            className="mt-2 w-full border border-white/[0.08] text-[#f8fafc]/70 hover:bg-white/[0.04] hover:text-[#f8fafc]"
           />
         </div>
       </main>

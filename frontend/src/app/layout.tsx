@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Hanken_Grotesk, Fraunces, IBM_Plex_Mono } from "next/font/google";
+import { Hanken_Grotesk, Plus_Jakarta_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 
 import { Providers } from "@/components/providers";
@@ -9,10 +9,19 @@ import { ServiceWorkerRegister } from "@/components/pwa/sw-register";
  * Three faces, three jobs (see docs/DESIGN_SYSTEM.md):
  *  - Hanken Grotesk (--font-sans-face): the workhorse UI face for dense
  *    operational data — a premium grotesk, deliberately not the ubiquitous Inter.
- *  - Fraunces (--font-display-face): the jewellery-house serif for page titles
- *    and the single hero figure per screen. Chosen over Cormorant Garamond
- *    because it carries a genuine bold — Cormorant is delicate by design and
- *    stays wispy even at 700, which is the opposite of what a heading needs.
+ *  - Plus Jakarta Sans (--font-display-face): page titles and the single hero
+ *    figure per screen. This slot used to hold Fraunces, a jewellery-house
+ *    serif — which was right when this was one jeweller's system and wrong the
+ *    moment it became a universal operations platform. A bookish serif on a
+ *    clinic's roster or a mill's stock ledger reads as dated rather than
+ *    considered, and it fought the dense grotesk beside it on every screen.
+ *    Jakarta is a geometric sans with real weight at 700 and slightly more
+ *    character than the grotesk under it, so the two pair without competing.
+ *
+ *    The VARIABLE NAME is deliberately unchanged. Forty-six call sites reach
+ *    for `--font-display-face` or the `font-display` utility; renaming the slot
+ *    would have meant touching every one of them to change one typeface, and
+ *    the slot's job ("the display face") has not changed at all.
  *  - IBM Plex Mono (--font-mono-face): the "assay readout" — tabular figures for
  *    weights, carats, prices and every numeric column. Not a variable font, so
  *    its weights are listed explicitly.
@@ -29,7 +38,7 @@ const sans = Hanken_Grotesk({
   display: "swap",
 });
 
-const displayFace = Fraunces({
+const displayFace = Plus_Jakarta_Sans({
   subsets: ["latin"],
   variable: "--font-display-face",
   display: "swap",
@@ -77,7 +86,9 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#0F2A1E",
+  // The obsidian canvas, so the browser chrome and the installed-app splash
+  // match the first painted pixel instead of the colour the product used to be.
+  themeColor: "#090B10",
 };
 
 export default function RootLayout({

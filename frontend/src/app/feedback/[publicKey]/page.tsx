@@ -109,7 +109,7 @@ export default function PublicFeedbackPage() {
     return (
       <main className="flex min-h-dvh items-center justify-center bg-background px-5 py-10">
         <div className="w-full max-w-sm text-center">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#0F2A1E] text-[#c8a24f]">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#0f172a] text-[#818cf8]">
             <CheckCircle2 className="h-7 w-7" />
           </div>
           <h1 className="mt-5 font-[family-name:var(--font-display-face)] text-2xl">Thank you</h1>
@@ -123,7 +123,7 @@ export default function PublicFeedbackPage() {
               href={done.reviewLink}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-6 inline-flex h-11 items-center justify-center rounded-md bg-[#0F2A1E] px-5 text-sm font-medium text-[#f6f3ed]"
+              className="mt-6 inline-flex h-11 items-center justify-center rounded-md bg-[#0f172a] px-5 text-sm font-medium text-[#f8fafc]"
             >
               Leave a public review
             </a>
@@ -161,7 +161,7 @@ export default function PublicFeedbackPage() {
                   <Star
                     className={`h-9 w-9 transition-colors ${
                       n <= (hover || rating)
-                        ? "fill-[#c8a24f] text-[#c8a24f]"
+                        ? "fill-[#818cf8] text-[#818cf8]"
                         : "text-muted-foreground"
                     }`}
                   />
@@ -196,7 +196,7 @@ export default function PublicFeedbackPage() {
           <button
             type="submit"
             disabled={busy}
-            className="flex h-11 w-full items-center justify-center rounded-md bg-[#0F2A1E] text-sm font-medium text-[#f6f3ed] transition-opacity disabled:opacity-60"
+            className="flex h-11 w-full items-center justify-center rounded-md bg-[#0f172a] text-sm font-medium text-[#f8fafc] transition-opacity disabled:opacity-60"
           >
             {busy ? (
               <>

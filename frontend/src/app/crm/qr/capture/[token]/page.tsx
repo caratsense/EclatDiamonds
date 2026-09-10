@@ -121,7 +121,7 @@ export default function QrCapturePage() {
     return (
       <main className="flex min-h-dvh items-center justify-center bg-background px-5 py-10">
         <div className="w-full max-w-sm text-center">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#0F2A1E] text-[#c8a24f]">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#0f172a] text-[#818cf8]">
             <CheckCircle2 className="h-7 w-7" />
           </div>
           <h1 className="mt-5 font-[family-name:var(--font-display-face)] text-2xl">
@@ -230,7 +230,7 @@ export default function QrCapturePage() {
               type="checkbox"
               checked={consent}
               onChange={(e) => setConsent(e.target.checked)}
-              className="mt-0.5 h-4 w-4 shrink-0 accent-[#0F2A1E]"
+              className="mt-0.5 h-4 w-4 shrink-0 accent-[#0f172a]"
             />
             <span className="text-xs leading-relaxed text-muted-foreground">
               Yes, please contact me about this enquiry. We will only use your
@@ -250,7 +250,7 @@ export default function QrCapturePage() {
           <button
             type="submit"
             disabled={busy}
-            className="flex h-11 w-full items-center justify-center rounded-md bg-[#0F2A1E] text-sm font-medium text-[#f6f3ed] transition-opacity disabled:opacity-60"
+            className="flex h-11 w-full items-center justify-center rounded-md bg-[#0f172a] text-sm font-medium text-[#f8fafc] transition-opacity disabled:opacity-60"
           >
             {busy ? (
               <>

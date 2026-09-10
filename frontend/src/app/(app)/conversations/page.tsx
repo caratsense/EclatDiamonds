@@ -438,15 +438,26 @@ function Thread({ id }: { id: string }) {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {/*
+            The colour comes from the VARIANT, not from a hardcoded one.
+
+            This carried `text-emerald-600` alongside `variant="default"`, so
+            pressing it filled the button with the primary colour and left the
+            label green on top of it — unreadable, and the last emerald left on
+            a screen where emerald now means "succeeded" and nothing else.
+          */}
           <Button
             size="sm"
             variant={showIntent ? "default" : "outline"}
-            className="gap-1 border-emerald-500/40 text-xs text-emerald-600 hover:text-emerald-700 dark:text-emerald-400"
+            className="gap-1 text-xs"
+            aria-pressed={showIntent}
             onClick={() => setShowIntent((v) => !v)}
           >
             <TrendingUp className="h-3.5 w-3.5" />
-            Intent score &gt;
-            <Badge variant="secondary" className="ml-0.5 text-[9px] px-1 py-0 uppercase">Beta</Badge>
+            Intent
+            <Badge variant="secondary" className="ml-0.5 px-1 py-0 text-[9px] uppercase">
+              Beta
+            </Badge>
           </Button>
           {canReassign && (
             <AssignConversationDialog

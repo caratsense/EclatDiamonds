@@ -30,14 +30,14 @@ export function GoogleButtonShell({ reason }: { reason: string }) {
         type="button"
         disabled
         aria-describedby="google-signin-unavailable"
-        className="flex h-11 w-full cursor-not-allowed items-center justify-center gap-3 rounded-md border border-[#1b3a2c] bg-[#0c261c]/60 px-4 text-sm font-medium text-[#f6f3ed]/45"
+        className="flex h-11 w-full cursor-not-allowed items-center justify-center gap-3 rounded-md border border-white/[0.08] bg-white/[0.02] px-4 text-sm font-medium text-[#f8fafc]/45"
       >
         <GoogleMark className="h-[18px] w-[18px] opacity-45" />
         Sign in with Google
       </button>
       <p
         id="google-signin-unavailable"
-        className="mt-2 text-center text-xs text-[#f6f3ed]/45"
+        className="mt-2 text-center text-xs text-[#f8fafc]/45"
       >
         {reason}
       </p>
