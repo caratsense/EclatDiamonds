@@ -1,11 +1,25 @@
-import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional, forwardRef } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { ActivityService } from './activity.service';
 import { KnowledgeRetrievalService } from './ai/knowledge-retrieval';
-import { MIN_CONFIDENCE, POLICY_VERSION, screenInbound } from './ai/policy';
+import {
+  AUTO_SEND_MIN_CONFIDENCE,
+  MIN_CONFIDENCE,
+  POLICY_VERSION,
+  screenForAutoSend,
+  screenInbound,
+} from './ai/policy';
+
+/** Tenant settings keys for the auto-reply cap and breaker. */
+const AUTO_SEND_STATE_KEY = 'crmAiAutoSendState';
+const AUTO_SEND_LIMIT_KEY = 'crmAiAutoSendDailyLimit';
+const DEFAULT_AUTO_SEND_DAILY_LIMIT = 200;
+const CIRCUIT_BREAKER_FAILURES = 5;
+const CIRCUIT_BREAKER_COOLDOWN_MS = 15 * 60_000;
 import { updateOrgSettings } from '../config/org-settings';
+import { OmnichannelService } from '../omnichannel/omnichannel.service';
 
 /**
  * The conversational-AI boundary (provider-neutral).
@@ -109,7 +123,10 @@ export interface AiGateDecision {
     | 'provider_failed'        // adapter threw or timed out
     | 'low_confidence'         // adapter answered but not well enough to use
     | 'screened_out'           // complaint / opt-out / legal: never sent to a provider
-    | 'no_knowledge';          // nothing to answer from, so nothing is invented
+    | 'no_knowledge'           // nothing to answer from, so nothing is invented
+    | 'auto_sent';             // queued for delivery with no human in the loop
+  /** Populated when a draft existed but was NOT auto-sent, saying which gate stopped it. */
+  autoSendBlockedBy?: string;
   reason: string;
 }
 
@@ -135,6 +152,8 @@ export class ConversationAiGate {
     private readonly prisma: PrismaService,
     private readonly activity: ActivityService,
     private readonly retrieval: KnowledgeRetrievalService,
+    @Inject(forwardRef(() => OmnichannelService))
+    private readonly omnichannel: OmnichannelService,
     @Optional() @Inject(AI_RESPONDER) private readonly responder?: AiResponder,
   ) {}
 
@@ -318,7 +337,7 @@ export class ConversationAiGate {
     // The draft and its provenance are written TOGETHER. A draft whose record of
     // provider, model, confidence and sources went missing is a message nobody
     // can account for, and the reviewer would be approving it blind.
-    await this.prisma.$transaction(async (tx) => {
+    const draftMessageId = await this.prisma.$transaction(async (tx) => {
       const message = await tx.message.create({
         data: {
           organisationId: context.organisationId,
@@ -346,6 +365,7 @@ export class ConversationAiGate {
           review: 'pending',
         },
       });
+      return message.id;
     });
 
     await this.activity.record({
@@ -361,7 +381,187 @@ export class ConversationAiGate {
       entityId: convo.id,
     });
 
-    return { invoked: true, outcome: 'replied_draft', reason: 'Draft stored for review; nothing was sent.' };
+    /*
+     * Only now, with a stored draft and its provenance already durable, is
+     * sending without a person even considered. Ordering is deliberate: if
+     * anything below throws, what exists is a draft awaiting review — the
+     * product's default — rather than a message that went nowhere and left no
+     * record.
+     */
+    const auto = await this.maybeAutoSend({
+      organisationId: context.organisationId,
+      conversationId: convo.id,
+      storeId: convo.storeId,
+      partyId: convo.partyId,
+      messageId: draftMessageId,
+      inboundText: context.inboundText,
+      confidence: reply.confidence,
+      settings,
+    });
+
+    if (auto.sent) {
+      return {
+        invoked: true,
+        outcome: 'auto_sent',
+        reason: 'Reply queued for delivery through the outbox with no human review.',
+      };
+    }
+    return {
+      invoked: true,
+      outcome: 'replied_draft',
+      reason: 'Draft stored for review; nothing was sent.',
+      autoSendBlockedBy: auto.reason,
+    };
+  }
+
+
+  /**
+   * Every gate that stands between a confident draft and an unattended send.
+   *
+   * Each returns a REASON, not a boolean, because "the assistant did not reply"
+   * is useless to the manager who has to explain it, and because the reason is
+   * what the admin screen shows when a tenant asks why auto-reply is quiet.
+   *
+   * Nothing here delivers anything itself. The final step hands the message to
+   * OmnichannelService.queue, which is the single chokepoint enforcing consent,
+   * the 24-hour window, approved templates, the outbox, retries and audit. An
+   * auto-reply is therefore subject to exactly the rules a human's message is —
+   * there is no faster path for the machine.
+   */
+  private async maybeAutoSend(input: {
+    organisationId: string;
+    conversationId: string;
+    storeId: string | null;
+    partyId: string | null;
+    messageId: string;
+    inboundText: string | null;
+    confidence: number;
+    settings: AiSettings;
+  }): Promise<{ sent: boolean; reason: string }> {
+    if (!input.settings.autoSendEnabled) {
+      return { sent: false, reason: 'Auto-reply is switched off for this organisation.' };
+    }
+
+    // The kill switch, checked immediately before sending rather than at the
+    // start of the turn. A manager who switches auto-reply off while a draft is
+    // being composed means "stop now", not "stop from the next message".
+    const live = await this.settings(input.organisationId);
+    if (!live.autoSendEnabled) {
+      return { sent: false, reason: 'Auto-reply was switched off while this reply was being composed.' };
+    }
+
+    const breaker = await this.autoSendState(input.organisationId);
+    if (breaker.open) {
+      return { sent: false, reason: breaker.reason };
+    }
+
+    if (input.confidence < AUTO_SEND_MIN_CONFIDENCE) {
+      return {
+        sent: false,
+        reason:
+          `Confidence ${input.confidence.toFixed(2)} is below the ${AUTO_SEND_MIN_CONFIDENCE} ` +
+          'required to reply without review.',
+      };
+    }
+
+    const strict = screenForAutoSend(input.inboundText);
+    if (strict.blocked) {
+      return { sent: false, reason: strict.reason ?? 'Held for review.' };
+    }
+
+    if (!input.partyId) {
+      // No customer record means no consent record either, and consent is not
+      // something to assume about someone we cannot identify.
+      return { sent: false, reason: 'The sender is not a known customer, so consent cannot be checked.' };
+    }
+    if (!input.storeId) {
+      return { sent: false, reason: 'The conversation has no branch, so nobody owns this reply.' };
+    }
+
+    try {
+      const result = await this.omnichannel.queueAiReply({
+        organisationId: input.organisationId,
+        conversationId: input.conversationId,
+        messageId: input.messageId,
+      });
+      // A policy refusal is an expected answer, not a provider failure, so it
+      // must not advance the circuit breaker — otherwise a tenant whose
+      // customers simply fall outside the 24-hour window would trip the breaker
+      // and lose auto-reply for everyone else too.
+      if (!result.queued) return { sent: false, reason: result.reason };
+      await this.recordAutoSend(input.organisationId, true);
+      return { sent: true, reason: result.reason };
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      await this.recordAutoSend(input.organisationId, false);
+      return { sent: false, reason };
+    }
+  }
+
+  /**
+   * Daily cap and circuit breaker, held in tenant settings.
+   *
+   * Two different failures, one place: a provider that has started erroring
+   * should stop being called at all rather than burning quota per message, and a
+   * tenant should not be able to discover a runaway loop from its invoice.
+   */
+  private async autoSendState(
+    organisationId: string,
+  ): Promise<{ open: boolean; reason: string }> {
+    const org = await this.prisma.organisation.findUnique({
+      where: { id: organisationId },
+      select: { settings: true },
+    });
+    const settings = (org?.settings ?? {}) as Record<string, unknown>;
+    const state = (settings[AUTO_SEND_STATE_KEY] ?? {}) as Record<string, unknown>;
+    const limit = Number(settings[AUTO_SEND_LIMIT_KEY]);
+    const dailyLimit = Number.isFinite(limit) && limit > 0 ? Math.min(limit, 10_000) : DEFAULT_AUTO_SEND_DAILY_LIMIT;
+
+    const today = new Date().toISOString().slice(0, 10);
+    const count = state.date === today ? Number(state.count ?? 0) : 0;
+    if (count >= dailyLimit) {
+      return {
+        open: true,
+        reason: `This organisation has reached its ${dailyLimit} automatic replies for today.`,
+      };
+    }
+
+    const failures = Number(state.consecutiveFailures ?? 0);
+    if (failures >= CIRCUIT_BREAKER_FAILURES) {
+      const openedAt = typeof state.openedAt === 'string' ? Date.parse(state.openedAt) : 0;
+      if (Number.isFinite(openedAt) && Date.now() - openedAt < CIRCUIT_BREAKER_COOLDOWN_MS) {
+        return {
+          open: true,
+          reason:
+            `Automatic replies are paused after ${failures} consecutive failures. ` +
+            'They resume by themselves shortly, or immediately once the cause is fixed.',
+        };
+      }
+    }
+
+    return { open: false, reason: '' };
+  }
+
+  /** Advance the daily counter and the consecutive-failure run. */
+  private async recordAutoSend(organisationId: string, ok: boolean): Promise<void> {
+    const today = new Date().toISOString().slice(0, 10);
+    await updateOrgSettings(this.prisma, organisationId, (current) => {
+      const state = (current[AUTO_SEND_STATE_KEY] ?? {}) as Record<string, unknown>;
+      const sameDay = state.date === today;
+      const failures = ok ? 0 : Number(state.consecutiveFailures ?? 0) + 1;
+      return {
+        ...current,
+        [AUTO_SEND_STATE_KEY]: {
+          date: today,
+          count: (sameDay ? Number(state.count ?? 0) : 0) + (ok ? 1 : 0),
+          consecutiveFailures: failures,
+          openedAt:
+            failures >= CIRCUIT_BREAKER_FAILURES && !ok
+              ? new Date().toISOString()
+              : (state.openedAt ?? null),
+        },
+      };
+    }).catch(() => undefined);
   }
 
   /** Make the thread a person's problem, visibly, with the reason attached. */

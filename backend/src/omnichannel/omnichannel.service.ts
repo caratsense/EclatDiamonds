@@ -677,6 +677,138 @@ export class OmnichannelService implements OnModuleInit {
     return { message, job, deduplicated, policy: { mode: decision.mode } };
   }
 
+
+  /**
+   * Deliver a reply the assistant wrote, with no person in the loop.
+   *
+   * Separate from `queue()` for three reasons, each of which would be a real
+   * defect if this reused that method with a synthetic principal:
+   *
+   *  1. `queue()` sets `handling: 'human'`, which is correct when a colleague
+   *     takes a thread over and wrong here — it would silently make auto-reply
+   *     fire exactly once per conversation and then go quiet forever.
+   *  2. `queue()` stamps `authorUserId`, which is a foreign key to a real
+   *     person. Inventing an id to satisfy it would either fail the insert or
+   *     put a phantom employee's name on customer messages.
+   *  3. The assistant already wrote a message row. Composing a second would
+   *     leave two outbound records for one reply and make the thread read as
+   *     though the customer was answered twice.
+   *
+   * What it does NOT do differently is safety. Consent, opt-out, the 24-hour
+   * window and the approved-template rule are evaluated by the same
+   * `evaluateDeliveryPolicy` on the same inputs, and delivery still happens by
+   * marking the row with `payload.omnichannel` and handing it to the durable job
+   * runner. There is no path here that reaches a provider directly, and a
+   * refusal is returned as a reason rather than thrown, because "consent was
+   * withdrawn" is an expected answer, not an incident.
+   */
+  async queueAiReply(input: {
+    organisationId: string;
+    conversationId: string;
+    /** The draft the assistant already stored. Promoted, never duplicated. */
+    messageId: string;
+  }): Promise<{ queued: boolean; reason: string; jobId?: string }> {
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { id: input.conversationId, organisationId: input.organisationId },
+      select: {
+        id: true, channel: true, partyId: true, storeId: true,
+        externalThreadId: true, lastInboundAt: true,
+        party: {
+          select: {
+            phone: true, whatsapp: true,
+            contactPoints: { select: { kind: true, value: true } },
+          },
+        },
+      },
+    });
+    if (!conversation) return { queued: false, reason: 'Conversation not found.' };
+    if (!conversation.partyId) {
+      return { queued: false, reason: 'No customer is attached, so consent cannot be checked.' };
+    }
+
+    const consent = await this.resolveConsent(
+      input.organisationId,
+      conversation.partyId,
+      conversation.channel,
+      'service',
+    );
+
+    /*
+     * An assistant reply is always `service` purpose and never carries a
+     * template. That is a deliberate ceiling, not an omission: a template is a
+     * pre-approved marketing artefact, and letting an unattended assistant pick
+     * one would let it start conversations rather than continue them. Outside
+     * the 24-hour window this therefore refuses, which is the correct outcome —
+     * the draft is still there for a person to send properly.
+     */
+    const decision = evaluateDeliveryPolicy({
+      channel: conversation.channel,
+      purpose: 'service',
+      consent: consent.state,
+      hasApprovedTemplate: false,
+      lastInboundAt: conversation.lastInboundAt,
+    });
+    if (!decision.allowed) {
+      return { queued: false, reason: decision.reason ?? 'Delivery policy refused this message.' };
+    }
+
+    try {
+      await this.resolveRecipient(input.organisationId, conversation);
+    } catch (err) {
+      return {
+        queued: false,
+        reason: err instanceof Error ? err.message : 'No reachable address for this customer.',
+      };
+    }
+
+    const now = new Date();
+    const instructions: MessageInstructions = {
+      purpose: 'service',
+      queuedAt: now.toISOString(),
+    };
+
+    // Promote the existing draft in place. The guard on `status: 'draft'` makes
+    // a concurrent second attempt a no-op rather than a second send.
+    const promoted = await this.prisma.message.updateMany({
+      where: {
+        id: input.messageId,
+        organisationId: input.organisationId,
+        conversationId: conversation.id,
+        status: 'draft',
+      },
+      data: {
+        status: 'queued',
+        payload: { omnichannel: instructions } as unknown as Prisma.InputJsonValue,
+      },
+    });
+    if (promoted.count === 0) {
+      return { queued: false, reason: 'The draft was already sent, approved or withdrawn.' };
+    }
+
+    await this.prisma.conversation.update({
+      where: { id: conversation.id },
+      data: { lastMessageAt: now },
+    });
+
+    await this.prisma.activityEvent.create({
+      data: {
+        organisationId: input.organisationId,
+        storeId: conversation.storeId,
+        partyId: conversation.partyId,
+        type: 'message.queued',
+        summary: 'The assistant replied automatically and the message was queued for delivery.',
+        entityType: 'Message',
+        entityId: input.messageId,
+        channel: conversation.channel,
+        dedupeKey: `ai-autoreply:${input.messageId}`,
+        metadata: compactJson({ purpose: 'service', automatic: true }),
+      },
+    });
+
+    const job = await this.enqueueMessage(input.organisationId, input.messageId, undefined);
+    return { queued: true, reason: 'Queued for delivery.', jobId: job?.id };
+  }
+
   /**
    * Find queued rows THIS MODULE COMPOSED and give each exactly one durable job.
    *

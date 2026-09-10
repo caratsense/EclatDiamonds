@@ -1,6 +1,7 @@
-import { Global, Module } from '@nestjs/common';
+import { Global, Module, forwardRef } from '@nestjs/common';
 
 import { KnowledgeModule } from '../knowledge/knowledge.module';
+import { OmnichannelModule } from '../omnichannel/omnichannel.module';
 import { AiDraftsController } from './ai/ai-drafts.controller';
 import { AiDraftsService } from './ai/ai-drafts.service';
 import { KnowledgeRetrievalService } from './ai/knowledge-retrieval';
@@ -53,7 +54,17 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
   // KnowledgeModule is not @Global, so retrieval needs it named here. The
   // dependency runs one way only (CRM reads knowledge; knowledge knows nothing
   // of CRM), so there is no cycle.
-  imports: [KnowledgeModule],
+  /*
+   * OmnichannelModule is a genuine two-way edge, not an accident.
+   *
+   * OmnichannelService needs ConversationsService to check that a caller may
+   * touch a thread; ConversationAiGate needs OmnichannelService so an automatic
+   * reply goes out through the same consent, window, template, outbox and audit
+   * path a person's message does. Breaking it would mean duplicating a
+   * permission check into the messaging layer, and a second copy of an access
+   * rule is how the two copies eventually disagree.
+   */
+  imports: [KnowledgeModule, forwardRef(() => OmnichannelModule)],
   controllers: [
     CrmCustomersController,
     CrmIdentityController,
