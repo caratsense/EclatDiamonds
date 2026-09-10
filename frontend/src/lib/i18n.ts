@@ -33,6 +33,12 @@ export const DICT: Record<string, string> = {
   "group.Back-office": "Back-office",
   "group.Administration": "Administration",
 
+  // Words a screen has to say inline, not just as a heading. Kept as keys so a
+  // pack's lexicon can substitute them the same way it substitutes nav labels.
+  "label.store": "Branch",
+  "label.customer": "Customer",
+  "label.item": "Item",
+
   // Nav items (keyed by slug)
   "nav.dashboards": "Dashboards",
   "nav.reporting": "Reporting & DSR",

@@ -118,6 +118,12 @@ const CORE_NAVIGATION = [
    * why the screen existed but could not be reached from the sidebar.
    */
   'lead-forms',
+  /*
+   * The floor/field app. Universal: a clinic reception, a plant visitor desk and
+   * a showroom counter are the same workflow — find the person, see what they
+   * came for, record what happened.
+   */
+  'instore',
   'settings/onboarding',
   'settings/stores',
   'settings/team',

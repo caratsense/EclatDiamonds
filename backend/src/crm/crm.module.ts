@@ -22,6 +22,8 @@ import { AdvancedCrmService } from './advanced-crm.service';
 import { LeadIntakeService } from './lead-intake.service';
 import { LeadFormsService } from './lead-forms.service';
 import { CampaignsService } from './campaigns.service';
+import { InStoreService } from './instore.service';
+import { InStoreController } from './instore.controller';
 import { AudiencesController, CampaignsController } from './campaigns.controller';
 import { CrmImportLeadsController, CrmLeadFormsController, PublicLeadFormsController } from './lead-forms.controller';
 import {
@@ -87,6 +89,7 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
     CrmImportLeadsController,
     AudiencesController,
     CampaignsController,
+    InStoreController,
   ],
   providers: [
     IdentityService,
@@ -106,6 +109,7 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
     LeadIntakeService,
     LeadFormsService,
     CampaignsService,
+    InStoreService,
     // The default binding: honestly reports "no provider configured" rather than
     // leaving the token undefined. A real adapter replaces this when credentials
     // exist; tests replace it with a spy to assert invoked / not invoked.
@@ -131,6 +135,7 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
     LeadIntakeService,
     LeadFormsService,
     CampaignsService,
+    InStoreService,
   ],
 })
 export class CrmModule {}

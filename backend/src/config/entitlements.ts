@@ -126,6 +126,15 @@ export const ROUTE_FAMILIES: readonly RouteFamily[] = Object.freeze([
   { prefix: '/targets', capability: 'settings/targets', why: 'Sales-target administration.' },
   { prefix: '/new-store', capability: 'new-store', why: 'New-branch opening projects.' },
   {
+    prefix: '/instore',
+    capability: 'instore',
+    why:
+      'The floor/field application. Gated so a tenant that does not run one can ' +
+      'hide it, but present in core navigation because every industry that ' +
+      'meets customers in person needs it — a clinic reception, a plant desk, ' +
+      'a showroom counter.',
+  },
+  {
     prefix: '/campaigns',
     capability: 'campaigns',
     why:

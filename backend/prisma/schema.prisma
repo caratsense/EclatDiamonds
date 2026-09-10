@@ -808,6 +808,7 @@ model User {
 
   resolvedRoutingConflicts ConversationRoutingConflict[] @relation("RoutingConflictResolver")
   aiDraftsReviewed         AiDraftRecord[]               @relation("AiDraftReviewer")
+  checkInsAttended         CheckIn[]                     @relation("CheckInAttendedBy")
 
   @@unique([organisationId, legacyId])
   @@index([role])
@@ -2303,6 +2304,29 @@ model CheckIn {
   repName        String?
   timeIn         DateTime
   timeOut        DateTime?
+
+  /// The tenant's OWN visit purpose, as a `checkin_purpose` taxonomy code.
+  ///
+  /// `purpose` above is a jewellery enum (bridal, investment, repair, scheme)
+  /// and cannot be extended per tenant without a migration each time. Every
+  /// industry pack already seeds its own visit vocabulary — "Appointment" for a
+  /// clinic, "Site visit" for a developer — so this is where a non-jewellery
+  /// tenant's real answer lives. The enum stays for the existing rows and
+  /// defaults to `other` for everyone else.
+  purposeCode String?
+
+  /// Free text from the person who attended the visit.
+  notes String?
+
+  /// Who actually attended, as an id. `repName` is a display string kept for
+  /// rows written before this existed; a name is not an identity.
+  attendedById String?
+  attendedBy   User?   @relation("CheckInAttendedBy", fields: [attendedById], references: [id])
+
+  /// Tenant-defined visit fields, keyed by AttributeDefinition.key
+  /// (entity='checkin'): a jeweller's counter and occasion, a clinic's
+  /// department. Industry vocabulary lives here instead of in new columns.
+  metadata Json?
 
   createdAt DateTime @default(now())
 
