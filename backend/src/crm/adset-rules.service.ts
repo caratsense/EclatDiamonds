@@ -16,6 +16,15 @@ import { updateOrgSettings } from '../config/org-settings';
  * supply them — until then they simply never match, which is the honest result.
  */
 export type AdSetMatchField = 'ad_id' | 'ad_set_id' | 'ad_set_name' | 'tag';
+
+/**
+ * Prompt size limits, shared by the write guard and the defensive read slice.
+ * The editor counts against these same two numbers, so the screen and the
+ * server can never disagree about what will fit.
+ */
+export const AI_CONTEXT_MAX = 5000;
+export const AI_GUARDRAILS_MAX = 2000;
+
 export type AdSetHandling = 'ai' | 'human';
 
 export interface AdSetAutomationRule {
@@ -28,6 +37,8 @@ export interface AdSetAutomationRule {
   storeId: string | null;
   assignedUserId: string | null;
   handling: AdSetHandling;
+  aiContext?: string | null;
+  aiGuardrails?: string | null;
 }
 
 export interface AdSetRoutingContext {
@@ -44,6 +55,8 @@ export interface AdSetRoutingDecision {
   storeId: string | null;
   assignedUserId: string | null;
   handling: AdSetHandling;
+  aiContext?: string | null;
+  aiGuardrails?: string | null;
 }
 
 /** Tenant-owned rules for routing an ad response before it reaches the inbox. */
@@ -64,6 +77,30 @@ export class AdSetRulesService {
   }
 
   async replace(user: AuthUser, input: AdSetAutomationRule[]) {
+    /*
+     * Length is REFUSED here, not trimmed.
+     *
+     * `normaliseRules` slices an over-long prompt because it also runs on read,
+     * where a stored value has to be made safe rather than rejected. On a write
+     * that same slice is a silent edit: somebody pastes a brief, is told it
+     * saved, and the assistant is then briefed with a sentence that stops
+     * mid-word. The limits match the character counters in the editor, so a
+     * refusal here can only mean the client's own guard was bypassed.
+     */
+    for (const rule of input ?? []) {
+      const name = typeof rule?.name === 'string' ? rule.name : '';
+      if (typeof rule?.aiContext === 'string' && rule.aiContext.length > AI_CONTEXT_MAX) {
+        throw new BadRequestException(
+          `The AI context for "${name}" is ${rule.aiContext.length} characters; the limit is ${AI_CONTEXT_MAX}.`,
+        );
+      }
+      if (typeof rule?.aiGuardrails === 'string' && rule.aiGuardrails.length > AI_GUARDRAILS_MAX) {
+        throw new BadRequestException(
+          `The guardrails for "${name}" are ${rule.aiGuardrails.length} characters; the limit is ${AI_GUARDRAILS_MAX}.`,
+        );
+      }
+    }
+
     const rules = normaliseRules(input);
     if (rules.length !== input.length) {
       throw new BadRequestException('Every ad-set rule must have a unique id, name and match value.');
@@ -126,6 +163,8 @@ export class AdSetRulesService {
           storeId: rule.storeId,
           assignedUserId: rule.assignedUserId,
           handling: rule.handling,
+          aiContext: rule.aiContext ?? null,
+          aiGuardrails: rule.aiGuardrails ?? null,
         }
       : null;
   }
@@ -165,6 +204,8 @@ function normaliseRules(value: unknown): AdSetAutomationRule[] {
       storeId: typeof rule.storeId === 'string' && rule.storeId ? rule.storeId : null,
       assignedUserId: typeof rule.assignedUserId === 'string' && rule.assignedUserId ? rule.assignedUserId : null,
       handling: rule.handling!,
+      aiContext: typeof rule.aiContext === 'string' && rule.aiContext.trim() ? rule.aiContext.trim().slice(0, AI_CONTEXT_MAX) : null,
+      aiGuardrails: typeof rule.aiGuardrails === 'string' && rule.aiGuardrails.trim() ? rule.aiGuardrails.trim().slice(0, AI_GUARDRAILS_MAX) : null,
     }];
   });
 }

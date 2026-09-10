@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Bot, Plus, Trash2, UserRound } from "lucide-react";
+import { Bot, Plus, Sparkles, Trash2, UserRound } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +17,7 @@ import {
 } from "@/lib/queries/crm-ai";
 import { useStoresAdmin } from "@/lib/queries/stores";
 import { apiErrorMessage } from "@/lib/utils";
+import { ConfigureAiModal } from "./configure-ai-modal";
 
 export function AdSetAutomationConfig() {
   const { data, isLoading } = useAdSetRules();
@@ -28,6 +29,9 @@ function AdSetRulesEditor({ initialRules }: { initialRules: AdSetAutomationRule[
   const { data: stores } = useStoresAdmin();
   const saveRules = useSaveAdSetRules();
   const [rules, setRules] = useState<AdSetAutomationRule[]>(initialRules);
+  const [configuringRuleId, setConfiguringRuleId] = useState<string | null>(null);
+
+  const configuringRule = rules.find((r) => r.id === configuringRuleId) ?? null;
 
   const add = () => setRules((current) => [
     ...current,
@@ -47,18 +51,29 @@ function AdSetRulesEditor({ initialRules }: { initialRules: AdSetAutomationRule[
   const update = (id: string, patch: Partial<AdSetAutomationRule>) =>
     setRules((current) => current.map((rule) => rule.id === id ? { ...rule, ...patch } : rule));
 
-  const save = async () => {
-    if (rules.some((rule) => !rule.name.trim() || !rule.matchValue.trim())) {
+  /**
+   * Write the rules and say so only if the server accepted them.
+   *
+   * Takes the list to save as an argument rather than reading `rules`: React
+   * state is not updated synchronously, so a caller that patches a rule and
+   * then saves would send the list from BEFORE its own edit.
+   */
+  const persist = async (next: AdSetAutomationRule[], done: string) => {
+    if (next.some((rule) => !rule.name.trim() || !rule.matchValue.trim())) {
       toast.error("Every rule needs a name and a match value.");
-      return;
+      return false;
     }
     try {
-      await saveRules.mutateAsync(rules);
-      toast.success("Ad-set automation rules saved");
+      await saveRules.mutateAsync(next);
+      toast.success(done);
+      return true;
     } catch (error) {
       toast.error(apiErrorMessage(error, "Could not save the routing rules."));
+      return false;
     }
   };
+
+  const save = () => persist(rules, "Ad-set automation rules saved");
 
   return (
     <div className="space-y-4">
@@ -98,6 +113,23 @@ function AdSetRulesEditor({ initialRules }: { initialRules: AdSetAutomationRule[
                 {rule.handling === "ai" ? <Bot className="mr-1 h-3 w-3" /> : <UserRound className="mr-1 h-3 w-3" />}
                 {rule.handling === "ai" ? "AI first" : "Human only"}
               </Badge>
+              {rule.handling === "ai" && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs gap-1 border-primary/30 text-primary hover:bg-primary/10"
+                  onClick={() => setConfiguringRuleId(rule.id)}
+                >
+                  <Sparkles className="h-3 w-3 text-amber-500" />
+                  Configure AI ⚡
+                </Button>
+              )}
+              {rule.aiContext && (
+                <Badge variant="outline" className="gap-1 border-emerald-500/40 text-emerald-600 text-xs">
+                  Prompt Active ({rule.aiContext.length} chars)
+                </Badge>
+              )}
               <label className="flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"
@@ -145,6 +177,34 @@ function AdSetRulesEditor({ initialRules }: { initialRules: AdSetAutomationRule[
         <Button variant="outline" onClick={add}><Plus className="mr-1 h-4 w-4" />Add rule</Button>
         <Button onClick={save} disabled={saveRules.isPending}>{saveRules.isPending ? "Saving…" : "Save rules"}</Button>
       </div>
+
+      {configuringRule && (
+        <ConfigureAiModal
+          open={!!configuringRule}
+          onOpenChange={(open) => !open && setConfiguringRuleId(null)}
+          ruleName={configuringRule.name}
+          matchValue={configuringRule.matchValue}
+          initialContext={configuringRule.aiContext}
+          initialGuardrails={configuringRule.aiGuardrails}
+          onSave={async (ctx, gr) => {
+            /*
+             * Saved, not staged.
+             *
+             * This used to patch local state and toast "prompt configured" —
+             * a success message for something that existed only in the
+             * browser. Anyone who closed the tab without also pressing "Save
+             * rules" lost the brief they had just been told was configured.
+             */
+            const next = rules.map((rule) =>
+              rule.id === configuringRule.id
+                ? { ...rule, aiContext: ctx, aiGuardrails: gr }
+                : rule,
+            );
+            setRules(next);
+            await persist(next, `AI prompt saved for ${configuringRule.name}`);
+          }}
+        />
+      )}
     </div>
   );
 }

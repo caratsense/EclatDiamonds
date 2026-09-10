@@ -129,6 +129,8 @@ export interface AdSetAutomationRule {
   storeId: string | null;
   assignedUserId: string | null;
   handling: "ai" | "human";
+  aiContext?: string | null;
+  aiGuardrails?: string | null;
 }
 
 export function useAdSetRules() {
