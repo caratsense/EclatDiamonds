@@ -91,6 +91,89 @@ It currently holds a placeholder that matches nobody, so **staging can message
 no one until you do step 2**. That is deliberate — an empty or unmatched list
 means "nobody", never "everybody".
 
+### E.1 Setting it from the CLI
+
+The dashboard is the authoritative path and the one to use if you are unsure.
+These commands do the same thing without a browser.
+
+**Point the CLI at staging, and prove it.** `railway variables --set` writes to
+whatever service and environment the CLI is currently linked to, and it does not
+ask twice. Run the gate in §E.2 before the `--set` line, every time.
+
+```bash
+# 1. Link. Choose the Eclat Diamonds project, the STAGING environment, backend.
+railway link
+
+# 2. Show what is linked. Read the environment name out loud before continuing.
+railway status
+
+# 3. Set the allowlist. Your own number, in country-code form.
+railway variables --set "MESSAGING_RECIPIENT_ALLOWLIST=+919812345678"
+
+# 4. Read the names back. `--kv` prints values too — do not use it in a shared
+#    terminal, a recording or a screen share.
+railway variables
+```
+
+Several numbers go in comma-separated:
+`"MESSAGING_RECIPIENT_ALLOWLIST=+919812345678,+919812345679"`.
+
+`+`, spaces and brackets are all fine — the service normalises to digits before
+matching, so `+91 98123 45678` and `919812345678` are the same entry. What is
+NOT fine is a number that is not also on Meta's own "To" list from step 1: the
+two lists are independent, and a number missing from either one is refused.
+
+Changing a variable triggers a redeploy. Wait for it to finish before testing —
+the old container keeps serving until it does, still holding the old allowlist.
+
+### E.2 The gate — three checks before you change anything
+
+Run all three. Any one of them failing means you are not where you think you
+are, and you stop.
+
+```bash
+# 1. The URL answers, and it is the staging host.
+curl -s -o /dev/null -w "%{http_code}\n" https://backend-staging-e5cd.up.railway.app/health
+# expect: 200
+
+# 2. It is NOT production. Production credentials must not work here — the
+#    staging database is separate and starts empty.
+curl -s -o /dev/null -w "%{http_code}\n" -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"head.office@caratsense.in","password":"password123"}' \
+  https://backend-staging-e5cd.up.railway.app/auth/login
+# expect: 401. A 200 here means you are pointed at a database with real users.
+#         STOP.
+
+# 3. The webhook door is shut to a wrong token.
+curl -s -o /dev/null -w "%{http_code}\n" \
+  "https://backend-staging-e5cd.up.railway.app/integrations/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=deliberately-wrong&hub.challenge=1"
+# expect: 403
+```
+
+The second check is the one that matters. The first and third would pass against
+production too.
+
+Measured on 2026-09-11 against staging: **200 / 401 / 403**, as above.
+
+### E.3 The telephony webhook, once it is deployed there
+
+The inbound-call door authenticates per tenant with a token, not a signature, so
+its gate is one line:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}
+" -X POST   -H 'Content-Type: application/json'   -H 'x-caratos-telephony-token: deliberately-wrong'   -d '{"fromNumber":"919000000001","toNumber":"919000000002","callId":"gate-check"}'   https://backend-staging-e5cd.up.railway.app/integrations/telephony/webhook
+# expect: 403 once this branch is deployed to staging.
+# A 404 means it is not deployed there yet, which is where staging stands today
+# (measured 2026-09-11). A 200 would mean an unauthenticated write was accepted
+# and is the one result that must never appear.
+```
+
+Issue the real token from **Settings → Integrations → Telephony / IVR
+(inbound) → Issue webhook token**. It is shown once and only its hash is stored,
+so there is nothing to read back out of the database or paste into this file.
+
 ---
 
 ## F. One inbound message

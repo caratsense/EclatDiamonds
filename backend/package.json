@@ -19,6 +19,7 @@
     "migrate:reset": "prisma migrate reset",
     "db:studio": "prisma studio",
     "db:seed": "node prisma/seed.mjs",
+    "seed:local": "node scripts/seed-conversations.mjs",
     "db:backup": "node scripts/db-backup.mjs",
     "db:restore:verify": "node scripts/db-restore-verify.mjs",
     "db:restore:drill": "node scripts/db-restore-drill.mjs",
