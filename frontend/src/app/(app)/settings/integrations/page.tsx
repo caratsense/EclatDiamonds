@@ -476,6 +476,11 @@ function AdministrationLinks() {
       blurb: "Print a code for a counter so a walk-in becomes a lead.",
     },
     {
+      href: "/crm/lead-forms",
+      title: "Website enquiry forms",
+      blurb: "A link for your own site that files enquiries as leads.",
+    },
+    {
       href: "/settings/integrations/outbox",
       title: "Outbound messages",
       blurb: "What has left the building, what is waiting, and what failed.",

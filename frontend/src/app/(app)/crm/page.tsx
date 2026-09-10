@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { KanbanSquare, QrCode, Table as TableIcon, Users } from "lucide-react";
+import { Globe, KanbanSquare, QrCode, Table as TableIcon, Users } from "lucide-react";
 import { toast } from "sonner";
 
 import { LeadCard } from "@/components/crm/lead-card";
@@ -41,6 +41,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { getNavItem } from "@/lib/navigation";
 import {
+  LEAD_SOURCE_FILTER_OPTIONS,
   LEAD_SOURCE_LABELS,
   LEAD_SOURCE_OPTIONS,
   type Lead,
@@ -204,7 +205,7 @@ export default function CrmPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All sources</SelectItem>
-                {LEAD_SOURCE_OPTIONS.map((opt) => (
+                {LEAD_SOURCE_FILTER_OPTIONS.map((opt) => (
                   <SelectItem key={opt.value} value={opt.value}>
                     {opt.label}
                   </SelectItem>
@@ -257,6 +258,12 @@ export default function CrmPage() {
           <Button asChild variant="outline" size="sm" className="h-9">
             <Link href="/crm/qr">
               <QrCode className="mr-1.5 h-4 w-4" /> QR code
+            </Link>
+          </Button>
+          {/* Enquiries that arrive from the tenant's own website. */}
+          <Button asChild variant="outline" size="sm" className="h-9">
+            <Link href="/crm/lead-forms">
+              <Globe className="mr-1.5 h-4 w-4" /> Web form
             </Link>
           </Button>
           <Tabs
