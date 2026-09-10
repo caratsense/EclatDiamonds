@@ -194,8 +194,14 @@ export class WhatsAppService {
    */
   verifyWebhook(mode?: string, token?: string, challenge?: string): string | null {
     const expected = this.config.get<string>('WHATSAPP_WEBHOOK_VERIFY_TOKEN');
-    if (mode === 'subscribe' && expected && token === expected) return challenge ?? '';
-    return null;
+    if (mode !== 'subscribe' || !expected || !token) return null;
+    // Constant-time, like the Lead Ads handshake beside it. `===` returns as
+    // soon as two bytes differ, so the time it takes leaks how much of the
+    // token a caller has right — and this endpoint is public and unrated
+    // enough to guess against. `safeEqual` was already imported for the
+    // signature check in this same file and simply was not used here.
+    if (!safeEqual(token, expected)) return null;
+    return challenge ?? '';
   }
 
   /**
