@@ -121,7 +121,13 @@ function Totals({
   loading: boolean;
   t: (key: string, fallback?: string) => string;
 }) {
-  const cards = [
+  const cards: {
+    key: string;
+    label: string;
+    title?: string;
+    value: number | undefined;
+    icon: typeof TrendingUp;
+  }[] = [
     { key: "leads", label: t("lead_plural", "Leads"), value: data?.totals.leads, icon: TrendingUp },
     { key: "visits", label: "Visits", value: data?.totals.visits, icon: StoreIcon },
     { key: "enquiries", label: "Enquiries", value: data?.totals.enquiries, icon: MessageCircle },
@@ -145,7 +151,8 @@ function Totals({
     },
     {
       key: "withVisits",
-      label: "Leads who came in",
+      label: "Also visited",
+      title: "Leads in this period whose customer also checked in",
       value: data?.totals.newLeadsWithVisits,
       icon: StoreIcon,
     },
@@ -157,7 +164,11 @@ function Totals({
         <div key={c.key} className="rounded-md border border-border p-3">
           <div className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
             <c.icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            <span className="truncate">{c.label}</span>
+            {/* The title carries the full wording: at seven across, a long
+                label clips, and a clipped label is a number nobody can read. */}
+            <span className="truncate" title={c.title ?? c.label}>
+              {c.label}
+            </span>
           </div>
           <div className="font-[family-name:var(--font-display-face)] text-2xl tabular-nums">
             {loading ? <span className="text-muted-foreground">—</span> : formatCount(c.value)}
