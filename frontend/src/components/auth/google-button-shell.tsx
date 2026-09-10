@@ -1,0 +1,70 @@
+"use client";
+
+/**
+ * The Google button when Google is not set up for this workspace.
+ *
+ * ## Why a real-looking button rather than a notice
+ *
+ * The control used to disappear entirely when `NEXT_PUBLIC_GOOGLE_CLIENT_ID`
+ * was unset, which reads as "this product has no Google sign-in". It was then
+ * replaced by a dashed box, which is honest but is not a control — someone
+ * looking for the button still has to work out that the paragraph IS the
+ * button's place. This is the button, in its disabled state, which is the
+ * ordinary way an interface says "this exists and is not available to you".
+ *
+ * ## What it must never do
+ *
+ * Work. There is no local token, no demo credential, no bypass: without a
+ * client id there is nothing to verify a Google identity against, and a button
+ * that signed someone in anyway would be an authentication hole wearing
+ * Google's logo. It is `disabled`, and it says why.
+ *
+ * The explanation is wired with `aria-describedby`, so a screen reader reaching
+ * the disabled button is told the reason rather than just that it cannot be
+ * pressed.
+ */
+export function GoogleButtonShell({ reason }: { reason: string }) {
+  return (
+    <div>
+      <button
+        type="button"
+        disabled
+        aria-describedby="google-signin-unavailable"
+        className="flex h-11 w-full cursor-not-allowed items-center justify-center gap-3 rounded-md border border-[#1b3a2c] bg-[#0c261c]/60 px-4 text-sm font-medium text-[#f6f3ed]/45"
+      >
+        <GoogleMark className="h-[18px] w-[18px] opacity-45" />
+        Sign in with Google
+      </button>
+      <p
+        id="google-signin-unavailable"
+        className="mt-2 text-center text-xs text-[#f6f3ed]/45"
+      >
+        {reason}
+      </p>
+    </div>
+  );
+}
+
+/** Google's four-colour G, inline so no external asset is needed. */
+function GoogleMark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 48 48" className={className} aria-hidden focusable="false">
+      <path
+        fill="#EA4335"
+        d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
+      />
+      <path
+        fill="#4285F4"
+        d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M10.53 28.59A14.4 14.4 0 0 1 9.77 24c0-1.6.27-3.15.76-4.59l-7.98-6.19A23.94 23.94 0 0 0 0 24c0 3.88.93 7.54 2.56 10.78l7.97-6.19z"
+      />
+      <path
+        fill="#34A853"
+        d="M24 48c6.48 0 11.93-2.13 15.9-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.17 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
+      />
+    </svg>
+  );
+}

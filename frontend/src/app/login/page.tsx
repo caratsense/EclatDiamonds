@@ -24,6 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Logo } from "@/components/brand/logo";
 import { GoogleSignInButton } from "@/components/auth/google-sign-in-button";
+import { GoogleButtonShell } from "@/components/auth/google-button-shell";
 import { InstallAppButton } from "@/components/pwa/install-app-button";
 import { homeForRole } from "@/lib/navigation";
 import { clearAttendanceHandled } from "@/lib/attendance-gate";
@@ -797,7 +798,13 @@ export default function LoginPage() {
 
         {/* Bottom Footer */}
         <div className="relative z-10 flex items-center justify-between border-t border-[#1b3a2c] pt-5 text-xs text-[#f6f3ed]/50">
-          <span className="font-mono uppercase tracking-[0.16em]">CaratSense OS v2.4</span>
+          {/*
+            The name, and no version number. "v2.4" was typed here once and no
+            process has updated it since — a release number on a public page
+            that nothing increments is worse than no release number, because
+            people quote it.
+          */}
+          <span className="font-mono uppercase tracking-[0.16em]">CaratSense OS</span>
           <span>
             {creatingOrganisation
               ? "Universal CRM · Isolated workspaces"
@@ -841,26 +848,27 @@ export default function LoginPage() {
           {mode === "signin" ? (
           <>
           {/*
-            Google sign-in is always on the page.
+            Google sign-in is always on the page, in one of its two real states.
 
             It used to be wrapped in a check for NEXT_PUBLIC_GOOGLE_CLIENT_ID,
             and the button itself ALSO returns null without one — so on a
             workspace where nobody had set the variable there was no button and
             no explanation, which reads as "this product has no Google sign-in"
-            rather than "this workspace has not turned it on". The unconfigured
-            state now says which of the two it is, and says it to the only person
-            who can fix it.
+            rather than "this workspace has not turned it on".
+
+            Configured: the working Google control. Unconfigured: the same
+            control, disabled, with the reason attached to it — which is the
+            ordinary way an interface says "this exists and is not available
+            to you". There is deliberately no third state where it appears to
+            work: with no client id there is nothing to verify an identity
+            against, and a button that signed someone in anyway would be an
+            authentication hole wearing Google's logo.
           */}
           <div>
             {process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ? (
               <GoogleSignInButton onCredential={onGoogle} />
             ) : (
-              <div className="rounded-xl border border-dashed border-[#1b3a2c] bg-[#0c261c]/50 px-4 py-3 text-center">
-                <p className="text-sm text-[#f6f3ed]/70">Sign in with Google</p>
-                <p className="mt-1 text-xs text-[#f6f3ed]/45">
-                  Not set up for this workspace yet. Use your email and password below.
-                </p>
-              </div>
+              <GoogleButtonShell reason="Not set up for this workspace yet — use your email and password below." />
             )}
             <div className="mt-4 flex items-center gap-3 text-xs text-[#f6f3ed]/40">
               <div className="h-px flex-1 bg-[#1b3a2c]" />
