@@ -21,10 +21,43 @@ Everything described below is now **committed and pushed**, on branch
 | Branch | `phase-6-meta-integrations` (pushed) |
 | Pull request | https://github.com/caratsense/EclatDiamonds/pull/3 — open, **not merged** |
 | `main` | still `9589ac5` (2026-08-19), untouched |
-| Commits | `783e8f5` platform + integrations · `102e5ad` docs/screenshots · `ba52892` legacy-send + template identity · `ba843c4` QR secret, job alerts, allowlist · `86f6223` frontend lint · `4a4502f` staging |
+| Commits | `783e8f5` platform + integrations · `102e5ad` docs/screenshots · `ba52892` legacy-send + template identity · `ba843c4` QR secret, job alerts, allowlist · `86f6223` frontend lint · `4a4502f` staging · `4e6508a` handoff · `7ddc00b` QR screens · `88b5223` lead-path consistency |
 
 The older "still uncommitted, HEAD is 9589ac5" note in the 2026-09-09 section below is
 **no longer true** — it described the state before these commits.
+
+### Competitor parity — audited, not finished
+
+The competitor is **Zithara.ai** (seed-stage, Hyderabad). The circulated meeting notes
+name it "Satara AI", which is a mis-hearing; the product on screen throughout the
+40:24 recording is `app.zithara.com`. Treat anything else in those notes that was
+*heard* rather than *seen* with the same caution — the pricing was separately confirmed
+against the transcript and is correct.
+
+**[docs/handovers/COMPETITOR-PARITY-STATUS.docx](handovers/COMPETITOR-PARITY-STATUS.docx)
+is the audit**: 38 capabilities, each classified BUILT / FIXTURE / LIVE / PARTIAL /
+MISSING / BLOCKED with the file that proves it. Read it before starting parity work —
+it exists so the programme is sequenced against evidence rather than a feature list.
+Current split: 19 built, 4 fixture-only, 2 live, 3 partial, 9 missing, 1 externally
+blocked.
+
+Two items moved to BUILT on 2026-09-10 in `88b5223`:
+
+- A Meta lead whose routing rule chose a store but named no assignee now joins the
+  branch's fair queue, like every other door.
+- An ad click that matched no rule, and was therefore routed by hand later, now opens
+  its lead — exactly once across both paths, with the measured attribution touch
+  **relinked** rather than re-recorded (re-recording would count the click twice in
+  ROAS, because the dedupe key embeds the subject).
+
+**The largest remaining product gap is the AI agent.** Zithara's AI converses with the
+customer; ours writes a draft and waits for a person. That is deliberate and documented
+in `ai-responder.ts` ("Nothing here delivers a message"), but it is the capability their
+pitch is built on, so do not describe ours as equivalent.
+
+Known inconsistency left in place on purpose: CTWA leads get no +7d/+30d follow-ups
+while QR and manual leads do. Changing that affects every existing CTWA lead and is a
+product decision, not a bug fix.
 
 ### Staging
 
