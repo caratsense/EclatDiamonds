@@ -202,6 +202,14 @@ export function useUpdateTaskStatus() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["dashboard", "tasks"] });
+      /*
+       * The calling queue reads the SAME Task rows through a different endpoint,
+       * so closing one here has to refresh there too. It did not: marking a
+       * follow-up done from the floor app left the four KPI cards showing the
+       * old counts, and the row still sitting in the list, until something else
+       * happened to refetch.
+       */
+      qc.invalidateQueries({ queryKey: ["calling"] });
     },
   });
 }
