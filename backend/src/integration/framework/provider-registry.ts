@@ -266,19 +266,38 @@ export const PROVIDERS: ProviderDefinition[] = [
     webhooks: true,
   },
   {
+    /*
+     * INBOUND ONLY, and available because the inbound half is real.
+     *
+     * `available` gates `IntegrationsRegistryService.create`, so a provider
+     * marked false cannot be connected at all — and a webhook nobody can
+     * connect is a webhook that returns 404 to everyone. This flipped to true
+     * when the inbound door was built and tested end to end against the
+     * application's own container: a tenant connects this, issues a webhook
+     * token, points their provider at it, and a missed call becomes a customer,
+     * an enquiry, a call log and a follow-up task due today.
+     *
+     * The description says what is NOT here, because "Telephony" as a word
+     * promises more than this delivers. There is no outbound dialling, no
+     * click-to-call, and no adapter for any particular vendor — the payload is
+     * normalised and the tenant's provider has to be mapped onto it. Nothing in
+     * this system has yet spoken to a real telephony network.
+     */
     code: 'telephony',
-    name: 'Telephony / IVR',
+    name: 'Telephony / IVR (inbound)',
     category: 'messaging',
     description:
-      'Click-to-call, call recordings and IVR routing. Call logs, dispositions and ' +
-      'recording references are modelled and the inbound webhook is normalised ' +
-      'provider-neutrally; a manual call log needs no provider at all.',
-    available: false,
-    blockedReason:
-      'No telephony account exists. Call logging works today with provider ' +
-      '"manual" — a person dials and records the outcome — and those rows are ' +
-      'labelled as such so they are never confused with a call the network ' +
-      'confirmed. Connecting a provider adds automatic logs and recordings.',
+      'Inbound calls become CRM records: the caller is matched to a customer, an ' +
+      'enquiry is opened against the branch that owns the dialled number, the call ' +
+      'is logged with its disposition and a link to the provider\u2019s recording, and a ' +
+      'follow-up task falls due the same day. A call to an unmapped number is logged ' +
+      'and reported as unrouted rather than filed against a guessed branch. ' +
+      'OUTBOUND IS NOT BUILT: no dialling and no click-to-call. No vendor-specific ' +
+      'adapter exists either \u2014 point your provider at the webhook and map its ' +
+      'payload onto the normalised one. A manual call log still needs no provider ' +
+      'at all, and is labelled as manual so it is never confused with a call the ' +
+      'network confirmed.',
+    available: true,
     credentialScope: 'tenant',
     credentialKinds: ['api_key', 'api_secret'],
     webhooks: true,

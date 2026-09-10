@@ -18,6 +18,7 @@ import {
   useJobSummary,
   useProviderCatalogue,
   useRemoveIntegration,
+  useRotateTelephonyToken,
   useSetCredential,
   useSetIntegrationAsset,
   type ProviderRow,
@@ -317,6 +318,10 @@ function IntegrationCard({
         </div>
       )}
 
+      {integration.providerCode === "telephony" ? (
+        <TelephonyWebhookPanel />
+      ) : null}
+
       {provider?.credentialScope === "platform_env" ? (
         <p className="mt-3 rounded-md border border-amber-500/50 bg-amber-500/5 p-2 text-xs text-muted-foreground">
           This connection is configured by the platform operator. Tenant credentials cannot be
@@ -520,5 +525,74 @@ function AdministrationLinks() {
         ))}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * The one thing a telephony provider needs from CaratOS: where to POST a call,
+ * and the token that proves the call is this tenant's.
+ *
+ * The token is shown once and held only in this component's state — there is no
+ * hash to reverse and no copy in the query cache, so navigating away really
+ * does lose it. That is the point: a token a screen can re-display is a token
+ * an admin screen has stored in the clear.
+ */
+function TelephonyWebhookPanel() {
+  const rotate = useRotateTelephonyToken();
+  const [issued, setIssued] = useState<{
+    token: string;
+    path: string;
+    header: string;
+  } | null>(null);
+
+  return (
+    <div className="mt-3 space-y-2 rounded-md border border-border bg-muted/30 p-3">
+      <p className="text-xs text-muted-foreground">
+        Point your provider at{" "}
+        <code className="font-[family-name:var(--font-mono-face)]">
+          POST {issued?.path ?? "/integrations/telephony/webhook"}
+        </code>{" "}
+        on your CaratOS API host, sending the token below as the{" "}
+        <code className="font-[family-name:var(--font-mono-face)]">
+          {issued?.header ?? "x-caratos-telephony-token"}
+        </code>{" "}
+        header. A call to a number no branch owns is logged and reported as
+        unrouted — it never opens an enquiry against a guessed location.
+      </p>
+
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={rotate.isPending}
+        onClick={async () => {
+          try {
+            const result = await rotate.mutateAsync();
+            setIssued(result);
+            toast.success("Webhook token issued");
+          } catch (e) {
+            toast.error(apiErrorMessage(e, "Could not issue a webhook token."));
+          }
+        }}
+      >
+        <KeyRound className="mr-1.5 h-3.5 w-3.5" />
+        {rotate.isPending
+          ? "Issuing\u2026"
+          : issued
+            ? "Issue a new token"
+            : "Issue webhook token"}
+      </Button>
+
+      {issued ? (
+        <div className="space-y-1.5">
+          <p className="break-all rounded border border-border bg-background p-2 font-[family-name:var(--font-mono-face)] text-xs">
+            {issued.token}
+          </p>
+          <p className="text-xs text-amber-600">
+            Copy it now. This is the only time it is shown, and issuing another
+            stops this one working immediately.
+          </p>
+        </div>
+      ) : null}
+    </div>
   );
 }

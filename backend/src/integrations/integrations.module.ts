@@ -15,6 +15,7 @@ import { MetaWebhookService } from './meta-webhook.service';
 import { MetaDeliveryReceiptAdapter } from './meta-delivery-receipt.adapter';
 import { MetaLeadAdapter } from './meta-lead.adapter';
 import { MetaHealthService } from './meta-health.service';
+import { TelephonyService } from './telephony.service';
 
 /**
  * External integrations (Phase 4): WhatsApp Business, Razorpay, gold-rate feed,
@@ -49,6 +50,10 @@ import { MetaHealthService } from './meta-health.service';
     // is the onModuleInit side effect.
     MetaLeadAdapter,
     MetaHealthService,
+    // Injects IdentityService and LeadIntakeService, which CrmModule exports
+    // as @Global — the same edge MetaLeadAdapter already relies on, and it
+    // runs one way only (integrations reach into CRM; CRM never reaches back).
+    TelephonyService,
   ],
   exports: [
     WhatsAppService,
@@ -61,6 +66,7 @@ import { MetaHealthService } from './meta-health.service';
     MetaGraphClient,
     MetaLeadAdsService,
     MetaWebhookService,
+    TelephonyService,
   ],
 })
 export class IntegrationsModule {}

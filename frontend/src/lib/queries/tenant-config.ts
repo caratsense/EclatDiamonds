@@ -353,6 +353,29 @@ export function useSetIntegrationAsset(integrationId: string) {
   });
 }
 
+/**
+ * Issue this tenant's telephony webhook token. Head office only.
+ *
+ * The plaintext comes back ONCE and is never stored in the query cache: the
+ * caller holds it in component state for as long as the panel is open and it is
+ * gone on the next render of the page. Only its hash exists server-side.
+ */
+export function useRotateTelephonyToken() {
+  return useMutation({
+    mutationFn: async () =>
+      (
+        await api.post<{
+          token: string;
+          tokenPrefix: string;
+          integrationId: string;
+          path: string;
+          header: string;
+          warning: string;
+        }>("/integrations/telephony/webhook-token")
+      ).data,
+  });
+}
+
 export function useRemoveIntegration() {
   const qc = useQueryClient();
   return useMutation({

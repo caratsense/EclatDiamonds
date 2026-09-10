@@ -26,6 +26,8 @@ export const SYSTEM_ACTORS = {
   import_lead_capture: 'Import lead capture',
   /** The background job turning an approved campaign audience into recipients. */
   campaign_expansion: 'Campaign audience expansion',
+  /** A verified telephony provider notification opening an enquiry from a call. */
+  telephony_webhook: 'Inbound call',
 } as const;
 
 export type SystemActor = keyof typeof SYSTEM_ACTORS;

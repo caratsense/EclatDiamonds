@@ -34,6 +34,8 @@ import { RateLimit } from '../common/rate-limit';
 import { MetaWebhookService } from './meta-webhook.service';
 import { MetaHealthService } from './meta-health.service';
 import { MetaAssetOwnershipService } from './meta-asset-ownership.service';
+import { TelephonyService } from './telephony.service';
+import { TelephonyWebhookDto } from './dto/telephony.dto';
 import { OmnichannelService } from '../omnichannel/omnichannel.service';
 
 /**
@@ -59,6 +61,7 @@ export class IntegrationsController {
     private readonly metaAssets: MetaAssetOwnershipService,
     private readonly metaHealth: MetaHealthService,
     private readonly omnichannel: OmnichannelService,
+    private readonly telephony: TelephonyService,
   ) {}
 
   /**
@@ -194,6 +197,62 @@ export class IntegrationsController {
   @Post('meta/assets')
   registerMetaAsset(@CurrentUser() user: AuthUser, @Body() dto: RegisterMetaAssetDto) {
     return this.metaAssets.register(user, dto);
+  }
+
+  // ── Telephony / IVR ─────────────────────────────────────────────────────────
+
+  /**
+   * Issue this tenant's telephony webhook token. Shown once; head office only.
+   *
+   * Paste it into the provider's webhook settings as the
+   * `x-caratos-telephony-token` header. Rotating invalidates the previous one
+   * immediately, which is what rotating is for.
+   */
+  @Roles('head_office')
+  @Post('telephony/webhook-token')
+  rotateTelephonyToken(@CurrentUser() user: AuthUser) {
+    return this.telephony.rotateWebhookToken(user);
+  }
+
+  /**
+   * An inbound call, from a telephony / IVR provider.
+   *
+   * @Public because a provider carries no session. The TOKEN is both the
+   * authentication and the tenant resolution — there is no other way to know
+   * whose call this is, and an unauthenticated body that opens leads would be
+   * an open write endpoint on somebody else's CRM.
+   *
+   * Persist-then-process, keyed per TENANT as well as per call: two tenants
+   * whose providers happen to mint the same call id must not silence each
+   * other's second delivery.
+   */
+  @Public()
+  @Post('telephony/webhook')
+  @HttpCode(200)
+  async receiveTelephony(
+    @Body() dto: TelephonyWebhookDto,
+    @Headers('x-caratos-telephony-token') token?: string,
+  ) {
+    const auth = await this.telephony.authenticate(token);
+    return this.intake.intake(
+      {
+        providerCode: 'telephony',
+        externalId: `${auth.organisationId}:${dto.callId}`,
+        /*
+         * The flag intake actually reads is "was this delivery authenticated?"
+         * — a false one is recorded and DISCARDED unprocessed, which is right
+         * for an unsigned Meta payload and wrong here. This provider has no
+         * HMAC scheme; the shared token above is its authentication, and it was
+         * checked before this call. The field's name is narrower than its job.
+         */
+        signatureVerified: true,
+        payload: dto as unknown,
+        // No headers. The only one that matters here authenticates as the
+        // tenant, and a stored copy of it would be a stored credential.
+        headers: {},
+      },
+      () => this.telephony.receive(auth, dto),
+    );
   }
 
   // ── Razorpay ────────────────────────────────────────────────────────────────

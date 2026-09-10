@@ -105,6 +105,61 @@ describe('provider and connector registry consistency', () => {
     expect(provider?.blockedReason).toMatch(/adapter and app review/i);
   });
 
+  /**
+   * Telephony flipped to connectable, and only as far as the inbound half goes.
+   *
+   * `available: false` is not cosmetic — it makes a provider unconnectable, and
+   * a webhook nobody can connect returns 404 to every tenant. It flips because
+   * the inbound door now exists, is authenticated per tenant, and is covered
+   * end to end in telephony-webhook.e2e-spec.ts.
+   *
+   * What it must NOT do is let the word "telephony" imply the outbound half.
+   * The description is the only thing a tenant reads before connecting, so the
+   * absence is asserted there rather than trusted to stay written.
+   */
+  it('offers inbound telephony, and says plainly that outbound is not built', () => {
+    const provider = getProvider('telephony');
+
+    expect(provider).toMatchObject({
+      available: true,
+      category: 'messaging',
+      credentialScope: 'tenant',
+      webhooks: true,
+    });
+    // An available provider must not also carry an excuse.
+    expect(provider?.blockedReason).toBeUndefined();
+    // The name itself carries the limit, for the card that shows only a name.
+    expect(provider?.name).toMatch(/inbound/i);
+    expect(provider?.description).toMatch(/OUTBOUND IS NOT BUILT/);
+    expect(provider?.description).toMatch(/no vendor-specific adapter/i);
+    // The routing promise this whole lane rests on.
+    expect(provider?.description).toMatch(/unrouted/i);
+    // Universal surface: no vertical vocabulary.
+    expect(provider?.description).not.toMatch(/jewel|gold|carat|diamond|eclat/i);
+  });
+
+  /**
+   * Everything still unbuilt stays unbuilt.
+   *
+   * Pinned as a LIST rather than one case each, so that flipping any of them
+   * has to be a deliberate edit to this line. Each of these would need an
+   * adapter, an app review, or a commercial account that does not exist — and
+   * each has been asked about often enough that "it's nearly there" is a
+   * standing temptation.
+   */
+  it.each(['instagram', 'facebook_messenger', 'email', 'sms', 'rcs', 'google_business'])(
+    'keeps %s unavailable, with a reason',
+    (code) => {
+      const provider = getProvider(code);
+      // Named, not sampled: a code that quietly stops being registered would
+      // otherwise make this assertion pass by vanishing.
+      expect([code, Boolean(provider)]).toEqual([code, true]);
+      if (!provider) return;
+      expect([code, provider.available]).toEqual([code, false]);
+      expect([code, Boolean(provider.blockedReason)]).toEqual([code, true]);
+    },
+  );
+
   it('states a blockedReason for every provider it refuses to offer', () => {
     for (const provider of listProviders()) {
       if (provider.available) {
