@@ -126,6 +126,8 @@ const CORE_NAVIGATION = [
   'instore',
   /* Chasing a follow-up is what every CRM is for. */
   'calling',
+  /* Asking how it went, and keeping an unhappy answer off a public review page. */
+  'feedback',
   'settings/onboarding',
   'settings/stores',
   'settings/team',

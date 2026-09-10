@@ -37,6 +37,7 @@ import {
   Globe,
   Smartphone,
   PhoneCall,
+  MessageSquareHeart,
 } from "lucide-react";
 
 import type { Role } from "@/lib/types";
@@ -287,6 +288,16 @@ export const NAV_GROUPS: NavGroup[] = [
         primaryAction: "New Project",
         icon: Building2,
         roles: ["head_office"],
+      },
+      {
+        module: 1,
+        slug: "feedback",
+        title: "Feedback",
+        purpose:
+          "Ask a customer how it went; an unhappy answer reaches a person, not a public review page.",
+        primaryAction: "",
+        icon: MessageSquareHeart,
+        roles: ["salesperson", "store_manager", "area_manager", "head_office"],
       },
       {
         module: 1,

@@ -500,6 +500,7 @@ model Organisation {
   leadForms                    LeadForm[]
   audienceSegments             AudienceSegment[]
   callLogs                     CallLog[]
+  feedbackRequests             FeedbackRequest[]
   messagingCampaigns           MessagingCampaign[]
   campaignRecipients           CampaignRecipient[]
 }
@@ -1113,6 +1114,7 @@ model Party {
   tasks              Task[]
   leadQualifications LeadQualification[]
   callLogs           CallLog[]
+  feedbackRequests   FeedbackRequest[]
 
   @@unique([organisationId, legacyId])
   @@index([storeId, createdAt])
@@ -4684,4 +4686,72 @@ model CallLog {
   @@index([organisationId, startedAt])
   @@index([organisationId, taskId])
   @@index([organisationId, partyId, startedAt])
+}
+
+// ============================================================================
+// CARATOS BLOCK 4 — FEEDBACK, AND THE LINE BETWEEN INTERNAL AND PUBLIC
+//
+// The single rule this model exists to enforce: a customer is asked ONE
+// question, and where their answer goes afterwards depends on what they said.
+// A happy customer may be offered the tenant's public review link. An unhappy
+// one is routed to a human and is NEVER shown that link.
+//
+// Inverting that — inviting everyone to review publicly and hoping — is review
+// gating in the other direction and is how a business collects its own worst
+// reviews. It is also why `escalatedTaskId` exists: a bad rating that nobody is
+// made to answer is just a number in a report.
+// ============================================================================
+
+model FeedbackRequest {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  storeId String?
+  partyId String?
+  party   Party?  @relation(fields: [partyId], references: [id], onDelete: SetNull)
+
+  /// What prompted the ask. All nullable: a tenant may ask after a visit, an
+  /// order, or a closed task, and adding a column per trigger would mean a
+  /// migration each time a tenant invents a new one.
+  checkInId String?
+  saleId    String?
+  taskId    String?
+
+  /// Unguessable, and the only thing the public response page accepts. The
+  /// tenant is resolved FROM this server-side, never from the request, so a
+  /// caller cannot choose whose CRM to write into.
+  publicKey String @unique
+
+  /// 'pending' | 'sent' | 'responded' | 'expired' | 'cancelled'
+  status String @default("pending")
+
+  /// The outbound Message, when one was sent. Null for a request created but
+  /// not yet delivered, or one collected in person.
+  messageId String?
+
+  sentAt      DateTime?
+  respondedAt DateTime?
+  expiresAt   DateTime?
+
+  /// 1..5. Null until they answer.
+  rating  Int?
+  comment String?
+
+  /// Set when the rating was low enough that a human was put on it. Holding the
+  /// id rather than a boolean means the escalation can be followed to the person
+  /// who owns it.
+  escalatedTaskId String?
+
+  /// True once this response was offered the public review link. Recorded so a
+  /// tenant can prove it never invited an unhappy customer to review publicly.
+  reviewLinkOffered Boolean @default(false)
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([organisationId, status, createdAt])
+  @@index([organisationId, storeId, respondedAt])
+  @@index([organisationId, partyId])
 }

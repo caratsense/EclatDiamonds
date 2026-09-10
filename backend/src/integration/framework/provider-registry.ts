@@ -193,6 +193,113 @@ export const PROVIDERS: ProviderDefinition[] = [
     entities: ['leads', 'ad_insights'],
     webhooks: true,
   },
+
+  /*
+   * The remaining channels.
+   *
+   * Every one below is `available: false` with a blockedReason naming exactly
+   * what is missing. That is deliberate and is the whole point of this registry:
+   * an entry marked available whose adapter has never spoken to the provider
+   * makes an admin screen report "connected" because environment variables
+   * exist, which is the specific lie this state machine was built to prevent.
+   *
+   * Their contracts and fixture adapters DO ship — a campaign can be authored
+   * against them and the tests drive them — but a tenant cannot connect one, and
+   * the campaign service refuses to create a campaign on a channel that cannot
+   * deliver rather than scheduling silence.
+   */
+  {
+    code: 'facebook_messenger',
+    name: 'Facebook Messenger',
+    category: 'messaging',
+    description: 'Receive and reply to Page messages as a CRM channel.',
+    available: false,
+    blockedReason:
+      'Needs a reviewed Meta app with pages_messaging and a Page access token. ' +
+      'The Conversation model already carries the channel and the inbound webhook ' +
+      'shape is shared with WhatsApp, so this needs an adapter and app review, ' +
+      'not a redesign.',
+    credentialScope: 'tenant',
+    credentialKinds: ['access_token'],
+    webhooks: true,
+  },
+  {
+    code: 'email',
+    name: 'Email',
+    category: 'messaging',
+    description: 'Send campaign and transactional email, and receive replies as conversations.',
+    available: false,
+    blockedReason:
+      'No sending domain is verified and no ESP account exists. Sending from an ' +
+      'unverified domain is delivered to spam at best, so this stays unavailable ' +
+      'until a tenant completes SPF, DKIM and DMARC.',
+    credentialScope: 'tenant',
+    credentialKinds: ['api_key'],
+    webhooks: true,
+  },
+  {
+    code: 'sms',
+    name: 'SMS',
+    category: 'messaging',
+    description: 'Transactional and campaign SMS.',
+    available: false,
+    blockedReason:
+      'In India this needs a DLT-registered sender id and pre-approved templates ' +
+      'with the operator, plus an aggregator account. None of that is registered, ' +
+      'and sending without it is rejected by the operator rather than merely ' +
+      'undelivered.',
+    credentialScope: 'tenant',
+    credentialKinds: ['api_key', 'sender_id'],
+    webhooks: true,
+  },
+  {
+    code: 'rcs',
+    name: 'RCS Business Messaging',
+    category: 'messaging',
+    description: 'Rich cards and carousels on Android, with SMS fallback.',
+    available: false,
+    blockedReason:
+      'Needs a verified RCS agent approved by Google and the carrier, which is a ' +
+      'brand-verification process measured in weeks. No agent has been submitted.',
+    credentialScope: 'tenant',
+    credentialKinds: ['service_account'],
+    webhooks: true,
+  },
+  {
+    code: 'telephony',
+    name: 'Telephony / IVR',
+    category: 'messaging',
+    description:
+      'Click-to-call, call recordings and IVR routing. Call logs, dispositions and ' +
+      'recording references are modelled and the inbound webhook is normalised ' +
+      'provider-neutrally; a manual call log needs no provider at all.',
+    available: false,
+    blockedReason:
+      'No telephony account exists. Call logging works today with provider ' +
+      '"manual" — a person dials and records the outcome — and those rows are ' +
+      'labelled as such so they are never confused with a call the network ' +
+      'confirmed. Connecting a provider adds automatic logs and recordings.',
+    credentialScope: 'tenant',
+    credentialKinds: ['api_key', 'api_secret'],
+    webhooks: true,
+  },
+  {
+    code: 'google_business',
+    name: 'Google Business Profile',
+    category: 'reviews',
+    description:
+      'Send review invitations to a location’s Google review link, and read back ' +
+      'the reviews that arrive.',
+    available: false,
+    blockedReason:
+      'Reading reviews needs the Google Business Profile API, which requires an ' +
+      'approved quota request against a verified business. The INVITATION half ' +
+      'needs none of that: a tenant can paste its own review link today and ' +
+      'CaratOS will send customers to it. Only the read-back is blocked.',
+    credentialScope: 'tenant',
+    credentialKinds: ['oauth_refresh_token'],
+    webhooks: false,
+  },
 ];
 
 const BY_CODE = new Map(PROVIDERS.map((p) => [p.code, p]));

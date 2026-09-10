@@ -126,6 +126,14 @@ export const ROUTE_FAMILIES: readonly RouteFamily[] = Object.freeze([
   { prefix: '/targets', capability: 'settings/targets', why: 'Sales-target administration.' },
   { prefix: '/new-store', capability: 'new-store', why: 'New-branch opening projects.' },
   {
+    prefix: '/feedback',
+    capability: null,
+    why:
+      'Asking a customer how it went, and routing an unhappy answer to a person ' +
+      'instead of to a public review page. Universal: every industry that serves ' +
+      'someone can ask. Visibility is the pack navigation slug, as with /crm.',
+  },
+  {
     prefix: '/calling',
     capability: null,
     why:

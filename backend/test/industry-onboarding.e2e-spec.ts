@@ -111,6 +111,7 @@ const UNIVERSAL_ROUTES = [
   'lead-forms',
   'instore',
   'calling',
+  'feedback',
   'settings/onboarding',
   'settings/stores',
   'settings/team',
