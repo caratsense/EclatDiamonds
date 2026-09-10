@@ -50,14 +50,50 @@ Two items moved to BUILT on 2026-09-10 in `88b5223`:
   **relinked** rather than re-recorded (re-recording would count the click twice in
   ROAS, because the dedupe key embeds the subject).
 
-**The largest remaining product gap is the AI agent.** Zithara's AI converses with the
-customer; ours writes a draft and waits for a person. That is deliberate and documented
-in `ai-responder.ts` ("Nothing here delivers a message"), but it is the capability their
-pitch is built on, so do not describe ours as equivalent.
+### Parity work done 2026-09-10 (commits `f7ae487`, `5d28b9b`, `cc4295c`)
 
-Known inconsistency left in place on purpose: CTWA leads get no +7d/+30d follow-ups
-while QR and manual leads do. Changing that affects every existing CTWA lead and is a
-product decision, not a bug fix.
+Four capabilities moved from MISSING to BUILT. Split is now 23 built, 4 fixture-only,
+2 live, 3 partial, 5 missing, 1 externally blocked.
+
+**Lead capture is closed.** Three new doors, all routed through a new
+`LeadIntakeService` so one pipeline (identity → branch → follow-ups → activity → audit →
+fair queue) applies whichever way a customer arrives:
+
+- **Website form** — `LeadForm` table with an unguessable public key; the public
+  endpoint resolves the tenant *from the key*, never from the body. Screens at
+  `/crm/lead-forms` and `/enquiry/[publicKey]`.
+- **Convert to lead** — organic WhatsApp still opens nothing on its own; a person
+  decides, and converting is also when an anonymous thread legitimately gains an
+  identity. Idempotent per conversation.
+- **Import → leads** — a separate command per batch, not a checkbox in the wizard. Only
+  rows the batch *created*. New `LeadSource.imported`, because the file never said how
+  those people found the business.
+
+**AI auto-reply exists and is off by default.** `ConversationAiGate.maybeAutoSend`
+delivers via `OmnichannelService.queueAiReply`, which promotes the existing draft in
+place rather than composing a second message, and does **not** set `handling: 'human'`
+(doing so would make auto-reply fire once per conversation and then go quiet forever).
+Consent, opt-out, the 24-hour window and templates are the same evaluation a person's
+message gets. Confidence bar for sending is 0.85 against 0.55 for a draft. Daily cap and
+a circuit breaker live in tenant settings.
+
+`CrmModule` and `OmnichannelModule` are now a declared `forwardRef` pair — a real
+two-way edge, documented in `crm.module.ts`.
+
+### Still open, and why
+
+- **Not live-verified.** The staging deploy and local DB setup were both refused by the
+  session's permission classifier, so none of the above has run against staging. The
+  backend is proven through 1033 e2e tests over real HTTP; the two new frontend pages
+  are typechecked, linted and built but never browser-driven.
+- **Blocks 3–10 of the parity brief are untouched**: campaign orchestration, extra
+  channel adapters, feedback/reviews, in-store parity, loyalty refactor, connector
+  completion, the universal UX audit and most admin screens.
+- **CTWA leads still get no +7d/+30d follow-ups** while every other door does. Changing
+  that affects every existing CTWA lead and is a product decision, not a bug fix.
+- **QR capture still carries its own copy** of the intake sequence rather than calling
+  `LeadIntakeService`. Folding it in needs round-robin lifted into its own service
+  first; a `forwardRef` there would be papering over it.
 
 ### Staging
 
