@@ -126,6 +126,21 @@ export const ROUTE_FAMILIES: readonly RouteFamily[] = Object.freeze([
   { prefix: '/targets', capability: 'settings/targets', why: 'Sales-target administration.' },
   { prefix: '/new-store', capability: 'new-store', why: 'New-branch opening projects.' },
   {
+    prefix: '/campaigns',
+    capability: 'campaigns',
+    why:
+      'Reaching customers is universal — a clinic, a mill and a dealership all ' +
+      'do it — so this deliberately does NOT sit under the jewellery-only ' +
+      '`marketing` gate, which covers agency planning (briefs, budgets, a ' +
+      'bridal/festive campaign type). It is also a separate prefix because ' +
+      '/marketing/campaigns is already a live route on that planning module.',
+  },
+  {
+    prefix: '/audiences',
+    capability: 'campaigns',
+    why: 'The audience builder exists only to feed campaigns; same gate, same reasoning.',
+  },
+  {
     prefix: '/integrations/gold-rate',
     capability: 'settings/rates',
     why: 'The metal rate is a jewellery screen inside the otherwise-universal integrations controller.',

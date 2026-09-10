@@ -24,6 +24,8 @@ export const SYSTEM_ACTORS = {
   conversation_conversion: 'Conversation converted to a lead',
   /** A spreadsheet or connector import electing to open leads, not just customers. */
   import_lead_capture: 'Import lead capture',
+  /** The background job turning an approved campaign audience into recipients. */
+  campaign_expansion: 'Campaign audience expansion',
 } as const;
 
 export type SystemActor = keyof typeof SYSTEM_ACTORS;

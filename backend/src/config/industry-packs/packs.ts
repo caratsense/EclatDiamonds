@@ -100,6 +100,24 @@ const CORE_NAVIGATION = [
    */
   'checkins',
   'hrms',
+  /*
+   * Campaigns are universal, and deliberately NOT the same capability as
+   * `marketing`.
+   *
+   * `marketing` is Eclat's agency-planning module: briefs, budgets, deliverables,
+   * and a `CampaignType` enum that reads bridal/festive. Reaching customers on
+   * WhatsApp is something a clinic, a mill and a dealership all do, and gating it
+   * behind the jewellery module would have meant every other tenant either lost
+   * outreach entirely or had to claim it was running a bridal campaign.
+   */
+  'campaigns',
+  /*
+   * The website enquiry form. Universal for the same reason as campaigns: every
+   * industry has a website, and the form files into the same CRM pipeline every
+   * other lead door uses. It had no navigation slug at all until now, which is
+   * why the screen existed but could not be reached from the sidebar.
+   */
+  'lead-forms',
   'settings/onboarding',
   'settings/stores',
   'settings/team',

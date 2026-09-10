@@ -33,6 +33,8 @@ import {
   Plug,
   Database,
   ListChecks,
+  Send,
+  Globe,
 } from "lucide-react";
 
 import type { Role } from "@/lib/types";
@@ -283,6 +285,32 @@ export const NAV_GROUPS: NavGroup[] = [
         primaryAction: "New Project",
         icon: Building2,
         roles: ["head_office"],
+      },
+      {
+        /*
+         * Module 1 (CRM), not 16 (Marketing). Campaigns are outreach to the
+         * CRM's own customers and are enabled for every industry pack;
+         * "Marketing" below is Eclat's agency-planning module and stays
+         * jewellery-gated.
+         */
+        module: 1,
+        slug: "campaigns",
+        title: "Campaigns",
+        purpose:
+          "Send one approved message to a group of customers, with consent checked per person.",
+        primaryAction: "New Campaign",
+        icon: Send,
+        roles: ["store_manager", "area_manager", "head_office"],
+      },
+      {
+        module: 1,
+        slug: "lead-forms",
+        title: "Enquiry Forms",
+        purpose:
+          "Publish a form for your own website that files enquiries straight into a branch.",
+        primaryAction: "Publish Form",
+        icon: Globe,
+        roles: ["store_manager", "area_manager", "head_office"],
       },
       {
         module: 16,

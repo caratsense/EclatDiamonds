@@ -494,61 +494,64 @@ model Organisation {
   leadQualifications           LeadQualification[]
   connectAgents                ConnectAgent[]
   conversationRoutingConflicts ConversationRoutingConflict[]
-  aiDraftRecords AiDraftRecord[]
+  aiDraftRecords               AiDraftRecord[]
   adSpendDays                  AdSpendDaily[]
   adSpendCoverage              AdSpendCoverage[]
   leadForms                    LeadForm[]
+  audienceSegments             AudienceSegment[]
+  messagingCampaigns           MessagingCampaign[]
+  campaignRecipients           CampaignRecipient[]
 }
 
 /// CaratOS import-engine provenance + reconciliation record. One row per import
 /// run (Excel/CSV upload, later a connector sync): what source, which entity,
 /// and the reconciliation counts so nothing is ever silently dropped.
 model ImportBatch {
-  id             String       @id @default(cuid())
-  organisationId String
-  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  id                 String       @id @default(cuid())
+  organisationId     String
+  organisation       Organisation @relation(fields: [organisationId], references: [id])
   /// Effective branch target resolved from the authenticated principal. Null is
   /// an organisation-wide/head-office import, never an omitted client choice.
-  targetStoreId  String?
-  targetStore    Store?       @relation("ImportBatchTargetStore", fields: [targetStoreId], references: [id], onDelete: SetNull)
+  targetStoreId      String?
+  targetStore        Store?       @relation("ImportBatchTargetStore", fields: [targetStoreId], references: [id], onDelete: SetNull)
   /// 'csv' | 'excel' | connector source system.
-  sourceSystem   String
+  sourceSystem       String
   /// Canonical entity imported, e.g. 'customers'.
-  entity         String
-  fileName       String?
+  entity             String
+  fileName           String?
   /// 'running' | 'completed' | 'needs_review' | 'failed'.
-  status         String       @default("completed")
-  discovered     Int          @default(0)
-  imported       Int          @default(0)
-  updated        Int          @default(0)
-  skipped        Int          @default(0)
-  failed         Int          @default(0)
-  duplicate      Int          @default(0)
-  createdById    String?
+  status             String       @default("completed")
+  discovered         Int          @default(0)
+  imported           Int          @default(0)
+  updated            Int          @default(0)
+  skipped            Int          @default(0)
+  failed             Int          @default(0)
+  duplicate          Int          @default(0)
+  createdById        String?
   /// SHA-256 idempotency key supplied by an enrolled Connect agent. Human file
   /// imports leave it null. The unique scope makes a committed response safe to
   /// replay after a network timeout without applying the same snapshot twice.
-  runKey          String?
-  profileId       String?
-  profileHash     String?
+  runKey             String?
+  profileId          String?
+  profileHash        String?
   sourceInstanceHash String?
   /// Opaque server-issued Connect configuration generation used for this
   /// machine receipt. Human file imports leave it null.
-  configRevision  String?
-  payloadHash     String?
+  configRevision     String?
+  payloadHash        String?
   /// Short-lived ownership for crash recovery. Only the worker holding this
   /// token may refresh or finalise a machine receipt.
-  leaseToken      String?
-  leaseExpiresAt  DateTime?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-  parties        Party[]
-  products       Product[]
-  stores         Store[]      @relation("ImportBatchCreatedStores")
+  leaseToken         String?
+  leaseExpiresAt     DateTime?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  parties            Party[]
+  products           Product[]
+  stores             Store[]      @relation("ImportBatchCreatedStores")
 
+  @@unique([organisationId, sourceSystem, entity, runKey])
   @@index([organisationId, createdAt])
   @@index([organisationId, targetStoreId, createdAt])
-  @@unique([organisationId, sourceSystem, entity, runKey])
 }
 
 /// A private reference file supplied to the AI CRM knowledge library. The
@@ -666,51 +669,51 @@ model Store {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  region              Region?                    @relation(fields: [regionId], references: [id])
-  userStores          UserStore[]
-  parties             Party[]
-  products            Product[]
-  stockItems          StockItem[]
-  transfersFrom       StockTransfer[]            @relation("StockTransferFrom")
-  transfersTo         StockTransfer[]            @relation("StockTransferTo")
-  leads               Lead[]
-  quotes              Quote[]
-  sales               Sale[]
-  manufacturingOrders ManufacturingOrder[]
-  customOrders        CustomOrder[]
-  ledgerEntries       LedgerEntry[]
-  payments            Payment[]
-  attendanceRecords   AttendanceRecord[]
-  leaveRequests       LeaveRequest[]
-  regularizations     AttendanceRegularization[]
-  shifts              Shift[]
-  holidays            StoreHoliday[]
-  checkIns            CheckIn[]
-  schemeMembers       SchemeMember[]
-  tickets             Ticket[]
-  returns             ReturnRecord[]
-  discountRequests    DiscountRequest[]
-  campaignStores      CampaignStore[]
-  dailyReports        DailyReport[]
-  salesTargets        SalesTarget[]
-  handoffs            Handoff[]
-  specialRequests     SpecialRequest[]
+  region                Region?                    @relation(fields: [regionId], references: [id])
+  userStores            UserStore[]
+  parties               Party[]
+  products              Product[]
+  stockItems            StockItem[]
+  transfersFrom         StockTransfer[]            @relation("StockTransferFrom")
+  transfersTo           StockTransfer[]            @relation("StockTransferTo")
+  leads                 Lead[]
+  quotes                Quote[]
+  sales                 Sale[]
+  manufacturingOrders   ManufacturingOrder[]
+  customOrders          CustomOrder[]
+  ledgerEntries         LedgerEntry[]
+  payments              Payment[]
+  attendanceRecords     AttendanceRecord[]
+  leaveRequests         LeaveRequest[]
+  regularizations       AttendanceRegularization[]
+  shifts                Shift[]
+  holidays              StoreHoliday[]
+  checkIns              CheckIn[]
+  schemeMembers         SchemeMember[]
+  tickets               Ticket[]
+  returns               ReturnRecord[]
+  discountRequests      DiscountRequest[]
+  campaignStores        CampaignStore[]
+  dailyReports          DailyReport[]
+  salesTargets          SalesTarget[]
+  handoffs              Handoff[]
+  specialRequests       SpecialRequest[]
   // CaratOS Phase A3.
-  activityEvents      ActivityEvent[]
-  conversations       Conversation[]
-  productInteractions ProductInteraction[]
+  activityEvents        ActivityEvent[]
+  conversations         Conversation[]
+  productInteractions   ProductInteraction[]
   /// Phase A7 — the file or Connect import run that created this row. Later
   /// updates do not rewrite creation provenance; legacyId identifies its source.
-  importBatchId       String?
-  importBatch         ImportBatch?               @relation("ImportBatchCreatedStores", fields: [importBatchId], references: [id])
-  targetedImportBatches ImportBatch[]             @relation("ImportBatchTargetStore")
-  connectAgents       ConnectAgent[]
+  importBatchId         String?
+  importBatch           ImportBatch?               @relation("ImportBatchCreatedStores", fields: [importBatchId], references: [id])
+  targetedImportBatches ImportBatch[]              @relation("ImportBatchTargetStore")
+  connectAgents         ConnectAgent[]
+  leadForms             LeadForm[]
 
   @@unique([organisationId, legacyId])
   @@unique([organisationId, code])
   @@index([regionId])
   @@index([organisationId])
-  leadForms LeadForm[]
 }
 
 /// Application user (staff login). Legacy: SPM_Users (logins only).
@@ -804,11 +807,11 @@ model User {
   assignedTasks         Task[]               @relation("TaskAssignee")
 
   resolvedRoutingConflicts ConversationRoutingConflict[] @relation("RoutingConflictResolver")
+  aiDraftsReviewed         AiDraftRecord[]               @relation("AiDraftReviewer")
 
   @@unique([organisationId, legacyId])
   @@index([role])
   @@index([organisationId])
-  aiDraftsReviewed AiDraftRecord[] @relation("AiDraftReviewer")
 }
 
 /// User <-> Store assignment. A salesperson maps to one store; area/HO map to many
@@ -3618,12 +3621,12 @@ model Message {
   /// replayed rather than guessed at.
   payload Json?
 
-  createdAt DateTime @default(now())
+  createdAt DateTime       @default(now())
+  aiDraft   AiDraftRecord?
 
   @@unique([organisationId, externalId])
   @@index([conversationId, sentAt])
   @@index([organisationId, sentAt])
-  aiDraft AiDraftRecord?
 }
 
 /// A tenant-configurable funnel. `LeadStage` is a closed three-value enum
@@ -3789,8 +3792,8 @@ model Integration {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  credentials IntegrationCredential[]
-  assets      IntegrationAsset[]
+  credentials     IntegrationCredential[]
+  assets          IntegrationAsset[]
   adSpendDays     AdSpendDaily[]
   adSpendCoverage AdSpendCoverage[]
 
@@ -3958,7 +3961,7 @@ model IntegrationAsset {
   /// `whatsapp_cloud:phone_number:<externalId>` while that sender is active.
   /// NULL for inactive/provider-local assets. The unique index is the final race
   /// backstop against two tenants claiming the same inbound routing identity.
-  ownershipKey String? @unique
+  ownershipKey              String?   @unique
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4263,7 +4266,7 @@ model ConnectAgent {
   store   Store?  @relation(fields: [storeId], references: [id])
 
   /// Which source it reads. A registry key ('gati'), never a free-form name.
-  sourceSystem String
+  sourceSystem       String
   /// Hash of the reviewed connection descriptor. Preview is zero-write; this is
   /// pinned atomically when the first approved live sync starts so one token
   /// cannot later be repointed to overwrite another source descriptor.
@@ -4381,8 +4384,8 @@ model AiDraftRecord {
 
   conversationId String
 
-  provider String
-  model    String
+  provider      String
+  model         String
   /// 0.000-1.000. Stored exactly rather than as a float so a threshold
   /// comparison means the same thing everywhere.
   confidence    Decimal @db.Decimal(4, 3)
@@ -4407,4 +4410,167 @@ model AiDraftRecord {
 
   @@index([organisationId, review, createdAt])
   @@index([conversationId])
+}
+
+// ============================================================================
+// CARATOS BLOCK 3 — CAMPAIGN ORCHESTRATION
+//
+// Deliberately SEPARATE from MarketingCampaign. That model plans agency work:
+// budget, brief, deliverables, a jewellery-flavoured `CampaignType`. This one
+// SENDS, and sending has a different lifecycle, a different audit surface and
+// must stay industry-neutral. Conflating them would force `bridal`/`festive`
+// onto a hospital's appointment reminder. The optional link below is how a send
+// is credited back to a plan when the tenant runs both.
+//
+// Nothing here talks to a provider. Every recipient is delivered by
+// OmnichannelService.queueToContact, which is the single chokepoint that
+// enforces consent, the WhatsApp window, approved templates and the outbox.
+// ============================================================================
+
+enum MessagingCampaignStatus {
+  draft
+  awaiting_approval
+  approved
+  scheduled
+  expanding
+  queued
+  sending
+  completed
+  partially_failed
+  cancelled
+  failed
+}
+
+/// A saved, re-runnable audience rule. `definition` is a neutral condition tree
+/// compiled to a Prisma filter in code (see audience-segment.dsl.ts) rather than
+/// stored SQL — a stored predicate is an injection surface and cannot be
+/// tenant-checked at read time.
+model AudienceSegment {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  name        String
+  description String?
+
+  /// `{ match: 'all' | 'any', conditions: [{ field, op, value }] }`.
+  definition Json
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  campaigns MessagingCampaign[]
+
+  @@unique([organisationId, name])
+  @@index([organisationId, updatedAt])
+}
+
+model MessagingCampaign {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  name        String
+  description String?
+
+  /// 'whatsapp' today. Email/SMS/RCS adapters exist as contracts and fixtures;
+  /// a campaign may not be approved on a channel whose adapter is not live.
+  channel String @default("whatsapp")
+
+  status MessagingCampaignStatus @default(draft)
+
+  segmentId String?
+  segment   AudienceSegment? @relation(fields: [segmentId], references: [id], onDelete: SetNull)
+
+  /// The segment definition FROZEN at approval. Expansion reads this, never the
+  /// live segment: editing a saved segment after approval must not silently
+  /// change who a scheduled campaign reaches.
+  audienceSnapshot Json?
+
+  /// Template identity as the provider knows it. Both required for WhatsApp —
+  /// a name without a language is not a template.
+  templateName     String?
+  templateLanguage String?
+  /// Resolved IntegrationAsset at approval time, so a template deleted from the
+  /// tenant afterwards fails loudly instead of sending something else.
+  templateAssetId  String?
+  /// Rendered example for the review screen. NOT what is sent.
+  bodyPreview      String?
+
+  /// Store scope. Empty = every store the approver can see.
+  storeIds String[] @default([])
+
+  scheduledAt DateTime?
+
+  createdById   String?
+  approvedById  String?
+  approvedAt    DateTime?
+  cancelledById String?
+  cancelledAt   DateTime?
+  cancelReason  String?
+
+  /// What the provider looked like at approval: provider code, template verdict
+  /// and its age. Kept so a later dispute can be answered from the record.
+  providerSnapshot Json?
+
+  /// Optional credit back to the planning module.
+  marketingCampaignId String?
+
+  /// Set once expansion succeeds; makes re-expansion a no-op.
+  expandedAt DateTime?
+  /// Terminal-state stamp, so `completed` vs `partially_failed` is not recomputed.
+  finishedAt DateTime?
+  lastError  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  recipients CampaignRecipient[]
+
+  @@index([organisationId, status, scheduledAt])
+  @@index([organisationId, createdAt])
+}
+
+/// One person, one campaign, exactly once.
+///
+/// The unique key is what makes expansion idempotent: a retried or duplicated
+/// expansion job re-inserts the same rows and loses on the constraint instead of
+/// messaging anyone twice. `contactValue` is the NORMALIZED key (E.164), not the
+/// display value, for the same reason identity matching uses it.
+model CampaignRecipient {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  campaignId String
+  campaign   MessagingCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  partyId      String?
+  contactValue String
+
+  /// 'pending' | 'excluded' | 'queued' | 'sent' | 'delivered' | 'read'
+  /// | 'failed' | 'dead' | 'cancelled'
+  status String @default("pending")
+
+  /// Why this row will never be sent. Set with status='excluded' at expansion
+  /// (consent, STOP, no usable number) or at send time when consent changed
+  /// between preview and send — the recheck that makes a stale preview safe.
+  exclusionReason String?
+
+  /// The Message row the outbox created. Delivery receipts flow back to this
+  /// recipient through it.
+  messageId String?
+
+  queuedAt  DateTime?
+  sentAt    DateTime?
+  lastError String?
+  attempts  Int       @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([campaignId, contactValue])
+  @@index([organisationId, campaignId, status])
+  @@index([messageId])
 }
