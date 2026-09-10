@@ -181,6 +181,59 @@ describe('CRM Phase 2B — queues, assignment, conflict resolution (e2e)', () =>
       }
     });
 
+    /**
+     * One customer's threads, which is how "Chat" on a lead card, a floor task
+     * or a calling row now opens a conversation in one tap.
+     *
+     * The filter is a NARROWING, and that is what these three cases pin. A
+     * party filter that were applied instead of the caller's visibility clause
+     * would be a way to read another branch's inbox by guessing an id — the
+     * exact shape of the store filter's own comment two lines above it in the
+     * service.
+     */
+    it('filters to one customer, and only within what the caller may already see', async () => {
+      const thread = await ingest(
+        convos,
+        ctwa('AD_NORTH', 'wa.q.party', '919440000021', 'CL_QP'),
+        'th-q-party',
+      );
+      const row = await prisma.conversation.findUniqueOrThrow({
+        where: { id: thread.conversationId },
+        select: { partyId: true },
+      });
+      const partyId = row.partyId as string;
+      expect(partyId).toBeTruthy();
+
+      const mine = await http()
+        .get('/crm/conversations')
+        .query({ partyId })
+        .set(auth(hoToken));
+      expect(mine.status).toBe(200);
+      expect(mine.body.length).toBeGreaterThan(0);
+      expect(
+        mine.body.every((c: { party: { id: string } | null }) => c.party?.id === partyId),
+      ).toBe(true);
+
+      // The south manager cannot read a north thread, and asking for the
+      // customer by id does not change that.
+      const otherBranch = await http()
+        .get('/crm/conversations')
+        .query({ partyId })
+        .set(auth(southMgrToken));
+      expect(otherBranch.status).toBe(200);
+      expect(otherBranch.body.map((c: { id: string }) => c.id)).not.toContain(
+        thread.conversationId,
+      );
+
+      // Nor can another tenant.
+      const otherTenant = await http()
+        .get('/crm/conversations')
+        .query({ partyId })
+        .set(auth(xToken));
+      expect(otherTenant.status).toBe(200);
+      expect(otherTenant.body).toEqual([]);
+    });
+
     it('counts are per-caller: a store manager is not told how much work exists elsewhere', async () => {
       await ingest(convos, ctwa('AD_SOUTH', 'wa.q.south', '919440000009', 'CL_QS'), 'th-q-south');
 

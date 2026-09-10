@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
+  Camera,
   ClipboardList,
   FileText,
   LayoutDashboard,
@@ -15,6 +16,7 @@ import {
   Store,
   UserPlus,
   Users,
+  X,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +26,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AddVisitDialog } from "@/components/instore/add-visit-dialog";
+import { BarcodeScannerSheet } from "@/components/instore/barcode-scanner-sheet";
 import { DayTab, FormsTab, TasksTab, VisitsTab } from "@/components/instore/floor-tabs";
 import { useT } from "@/lib/i18n";
 import {
@@ -31,6 +34,7 @@ import {
   useInStoreProfile,
   useInStoreSearch,
   type InStoreLead,
+  type ScannedItem,
 } from "@/lib/queries/instore";
 import { apiErrorMessage } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
@@ -239,6 +243,15 @@ export default function InStorePage() {
   const [query, setQuery] = useState("");
   const [openParty, setOpenParty] = useState<{ id: string; name: string } | null>(null);
   const [visitFor, setVisitFor] = useState<{ id: string; name: string } | null>(null);
+  const [scannerOpen, setScannerOpen] = useState(false);
+  /*
+   * An item scanned before a customer was chosen.
+   *
+   * The tag is usually in hand first — somebody is holding the piece and asking
+   * about it, and the name comes after. Held here until a customer is picked,
+   * then handed to the visit dialog so nobody scans the same tag twice.
+   */
+  const [heldScan, setHeldScan] = useState<ScannedItem | null>(null);
 
   const leads = useInStoreLeads();
   const search = useInStoreSearch(query);
@@ -275,6 +288,31 @@ export default function InStorePage() {
           <RefreshCw className={`h-4 w-4 ${leads.isFetching ? "animate-spin" : ""}`} />
         </Button>
       </div>
+
+      {heldScan ? (
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-border/80 bg-card p-3 shadow-sm">
+          <Camera className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+          <div className="min-w-0 flex-1 text-sm">
+            <p className="truncate font-medium">
+              {heldScan.found && heldScan.item
+                ? heldScan.item.name
+                : `${heldScan.code} — not in the catalogue`}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Pick a customer and record a visit; this is attached to it.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 w-7 shrink-0 p-0"
+            aria-label="Discard the scanned item"
+            onClick={() => setHeldScan(null)}
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      ) : null}
 
       {openParty ? (
         <CustomerPanel
@@ -446,12 +484,46 @@ export default function InStorePage() {
         </div>
       </nav>
 
+      {/*
+        Scan from anywhere on the floor app.
+
+        Mobile only: on a desktop there is no camera worth reaching for, and the
+        button would sit over the content of a screen that has room for it
+        inline. `bottom-36` clears BOTH bars — this screen's own tab strip and
+        the app's global mobile nav underneath it — which is the same stacking
+        the tab strip itself had to solve.
+      */}
+      <Button
+        type="button"
+        onClick={() => setScannerOpen(true)}
+        aria-label="Scan an item code"
+        className="fixed bottom-36 right-4 z-30 h-14 w-14 rounded-full p-0 shadow-lg md:hidden"
+      >
+        <Camera className="h-6 w-6" />
+      </Button>
+
+      <BarcodeScannerSheet
+        open={scannerOpen}
+        onOpenChange={setScannerOpen}
+        onResolved={(result) => {
+          setHeldScan(result);
+          setScannerOpen(false);
+        }}
+      />
+
       {visitFor ? (
         <AddVisitDialog
           open
-          onOpenChange={(o) => !o && setVisitFor(null)}
+          onOpenChange={(o) => {
+            if (o) return;
+            setVisitFor(null);
+            // The scan has been carried into the visit; holding it after the
+            // dialog closes would attach it to the next customer too.
+            setHeldScan(null);
+          }}
           partyId={visitFor.id}
           customerName={visitFor.name}
+          initialScan={heldScan}
         />
       ) : null}
     </div>

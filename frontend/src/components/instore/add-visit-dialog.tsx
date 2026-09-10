@@ -66,14 +66,41 @@ interface EnquiryRow extends VisitEnquiryInput {
   label: string;
 }
 
+/**
+ * A scan becomes an enquiry line either way.
+ *
+ * A code the catalogue does not know is still kept, as a raw sku and labelled
+ * as unmatched. Dropping it would lose the fact that a customer asked about
+ * something — which is exactly the fact this screen exists to record.
+ */
+function enquiryFromScan(result: ScannedItem): EnquiryRow {
+  return result.found && result.item
+    ? { productId: result.item.id, label: result.item.name, converted: false }
+    : { sku: result.code, label: `${result.code} (not in catalogue)`, converted: false };
+}
+
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   partyId: string;
   customerName: string;
+  /**
+   * An item already scanned before the customer was chosen.
+   *
+   * On the floor the tag is usually in hand before the name is — somebody is
+   * holding the piece and asking about it. The scan-first path (the camera
+   * button on the floor app) carries the result here so it is not re-scanned.
+   */
+  initialScan?: ScannedItem | null;
 }
 
-export function AddVisitDialog({ open, onOpenChange, partyId, customerName }: Props) {
+export function AddVisitDialog({
+  open,
+  onOpenChange,
+  partyId,
+  customerName,
+  initialScan,
+}: Props) {
   const stores = useSession((s) => s.stores);
   const currentStore = useSession((s) => s.currentStore);
   /*
@@ -85,7 +112,12 @@ export function AddVisitDialog({ open, onOpenChange, partyId, customerName }: Pr
   const storeWord = t("label.store", "Branch");
 
   const [scannerOpen, setScannerOpen] = useState(false);
-  const [enquiries, setEnquiries] = useState<EnquiryRow[]>([]);
+  // Seeded once at mount. The dialog is only rendered while it is open, so a
+  // lazy initializer is enough — no effect, and no way for a stale scan to
+  // reappear on the next customer.
+  const [enquiries, setEnquiries] = useState<EnquiryRow[]>(() =>
+    initialScan ? [enquiryFromScan(initialScan)] : [],
+  );
   // Optional counter photo. Held until submit so the visit is written once.
   const [photo, setPhoto] = useState<string | null>(null);
   const [cameraOpen, setCameraOpen] = useState(false);
@@ -97,22 +129,8 @@ export function AddVisitDialog({ open, onOpenChange, partyId, customerName }: Pr
   const record = useRecordVisit();
   const realStores = stores.filter((s) => !s.isAggregate);
 
-  const addScanned = (result: ScannedItem) => {
-    setEnquiries((prev) => [
-      ...prev,
-      result.found && result.item
-        ? {
-            productId: result.item.id,
-            label: result.item.name,
-            converted: false,
-          }
-        : {
-            sku: result.code,
-            label: `${result.code} (not in catalogue)`,
-            converted: false,
-          },
-    ]);
-  };
+  const addScanned = (result: ScannedItem) =>
+    setEnquiries((prev) => [...prev, enquiryFromScan(result)]);
 
   const update = (i: number, patch: Partial<EnquiryRow>) =>
     setEnquiries((prev) => prev.map((e, n) => (n === i ? { ...e, ...patch } : e)));

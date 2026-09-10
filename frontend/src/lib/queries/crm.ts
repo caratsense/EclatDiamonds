@@ -287,6 +287,8 @@ export function useConversations(params: {
   /** Inbound traffic not yet linked to a customer. */
   unidentified?: boolean;
   storeId?: string;
+  /** Every thread belonging to one customer, newest first. */
+  partyId?: string;
 }) {
   const storeKey = useStoreKey();
   return useQuery({
@@ -302,6 +304,7 @@ export function useConversations(params: {
             routingReview: params.routingReview ? "true" : undefined,
             unidentified: params.unidentified ? "true" : undefined,
             storeId: params.storeId,
+            partyId: params.partyId,
           },
         })
       ).data,

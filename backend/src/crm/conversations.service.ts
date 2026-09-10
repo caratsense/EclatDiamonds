@@ -1278,6 +1278,13 @@ export class ConversationsService {
       unidentified?: boolean;
       /** Queue: one store's conversations (still intersected with the caller's scope). */
       storeId?: string;
+      /**
+       * One customer's threads. Narrowing, like every other filter here: the
+       * caller's own visibility clause still applies, so asking for a party
+       * whose threads belong to a branch they cannot read returns nothing
+       * rather than that branch's inbox.
+       */
+      partyId?: string;
     } = {},
   ) {
     const take = Math.min(Math.max(opts.limit ?? 50, 1), 200);
@@ -1294,6 +1301,7 @@ export class ConversationsService {
         ...(opts.assignedToMe ? { assignedUserId: user.id } : {}),
         ...(opts.routingReview ? { routingReviewRequired: true } : {}),
         ...(opts.unidentified ? { partyId: null } : {}),
+        ...(opts.partyId ? { partyId: opts.partyId } : {}),
         // AND, not a sibling OR: a top-level `storeId` alongside an `OR` that
         // admits `storeId: null` is contradictory, and Prisma would AND them
         // into something nobody intended.

@@ -3,7 +3,7 @@
 import { Suspense, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Bot, Inbox, Megaphone, Send, User as UserIcon } from "lucide-react";
+import { Bot, Inbox, Megaphone, Send, TrendingUp, User as UserIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { SectionHeader } from "@/components/section/section-header";
@@ -23,6 +23,7 @@ import {
 import { ChannelStatus } from "@/components/crm/channel-status";
 import { AssignConversationDialog } from "@/components/crm/assign-conversation-dialog";
 import { QualificationPanel } from "@/components/crm/qualification-panel";
+import { IntentAnalysisPanel } from "@/components/crm/intent-analysis-panel";
 import { AiDraftPanel } from "@/components/crm/ai-draft-panel";
 import { RoutingAuditTrail, RoutingConflictPanel } from "@/components/crm/routing-conflict-panel";
 import { ROLE_RANK } from "@/lib/types";
@@ -101,11 +102,34 @@ function ConversationsInbox() {
 
   const raw = searchParams.get("queue");
   const queue: QueueKey = isQueueKey(raw) ? raw : "open";
-  const selected = searchParams.get("thread");
+  /*
+   * One customer's threads, arrived at from somewhere else in the product.
+   *
+   * "Chat" on a lead card, a floor task or a calling row is one tap: it lands
+   * on that person's newest conversation with no queue to hunt through and no
+   * dialog in between. Before this, the link carried the party id and this
+   * screen ignored it — every one of those buttons opened the general inbox and
+   * left the salesperson to find the thread by name.
+   */
+  const partyId = searchParams.get("partyId");
 
-  const navigate = (next: { queue?: QueueKey; thread?: string | null }) => {
+  const navigate = (next: {
+    queue?: QueueKey;
+    thread?: string | null;
+    partyId?: string | null;
+  }) => {
     const params = new URLSearchParams(searchParams.toString());
-    if (next.queue !== undefined) params.set("queue", next.queue);
+    if (next.queue !== undefined) {
+      params.set("queue", next.queue);
+      // Choosing a queue means leaving the single-customer view. Keeping both
+      // would show a queue label above a list that ignores it.
+      params.delete("partyId");
+      params.delete("thread");
+    }
+    if (next.partyId !== undefined) {
+      if (next.partyId) params.set("partyId", next.partyId);
+      else params.delete("partyId");
+    }
     if (next.thread !== undefined) {
       if (next.thread) params.set("thread", next.thread);
       else params.delete("thread");
@@ -116,8 +140,23 @@ function ConversationsInbox() {
   };
 
   const active = QUEUES.find((q) => q.key === queue)!;
-  const list = useConversations(active.params);
+  // The party filter is applied by the SERVER, under the same visibility rules
+  // as every queue — asking for a customer whose threads sit in a branch this
+  // caller cannot read returns nothing, not that branch's inbox.
+  const list = useConversations(partyId ? { partyId } : active.params);
   const counts = useQueueCounts();
+
+  /*
+   * Opening a customer opens their newest thread, without writing to the URL.
+   *
+   * Derived rather than pushed into the address bar by an effect: an effect
+   * would render the empty right-hand pane first and correct it a frame later,
+   * and would fight the back button. An explicit `?thread=` still wins, so a
+   * shared link keeps pointing at the thread it named.
+   */
+  const selected =
+    searchParams.get("thread") ?? (partyId ? (list.data?.[0]?.id ?? null) : null);
+  const partyName = partyId ? (list.data?.[0]?.party?.name ?? null) : null;
 
   return (
     <div className="space-y-6">
@@ -127,6 +166,30 @@ function ConversationsInbox() {
       />
 
       <ChannelStatus />
+
+      {partyId ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/80 bg-card px-3 py-2 text-sm shadow-sm">
+          <Badge variant="secondary">Customer</Badge>
+          <span className="font-medium">
+            {partyName ?? (list.isLoading ? "Loading…" : "This customer")}
+          </span>
+          <span className="text-muted-foreground">
+            {list.isLoading
+              ? ""
+              : list.data?.length
+                ? `· ${list.data.length} thread${list.data.length === 1 ? "" : "s"}`
+                : "· no conversations yet"}
+          </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="ml-auto"
+            onClick={() => navigate({ partyId: null, thread: null })}
+          >
+            Show all threads
+          </Button>
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap gap-2">
         {QUEUES.map((q) => {
@@ -167,8 +230,9 @@ function ConversationsInbox() {
               <QueueError error={list.error} onRetry={() => list.refetch()} />
             ) : !list.data?.length ? (
               <p className="text-sm text-muted-foreground">
-                Nothing in this queue. Inbound customer messages appear once a messaging
-                channel is connected in Settings → Integrations.
+                {partyId
+                  ? "No conversation with this customer yet. One opens as soon as they message you, or when you send them the first message from a connected channel."
+                  : "Nothing in this queue. Inbound customer messages appear once a messaging channel is connected in Settings → Integrations."}
               </p>
             ) : (
               list.data.map((c) => (
@@ -301,6 +365,7 @@ function Thread({ id }: { id: string }) {
   const send = useSendReply(id);
   const update = useUpdateConversation(id);
   const [draft, setDraft] = useState("");
+  const [showIntent, setShowIntent] = useState(false);
   const role = useSession((s) => s.role);
   // The server requires store_manager+ to reroute. This only decides whether to
   // render a control that would 403 — it is a courtesy, not the control itself.
@@ -372,7 +437,17 @@ function Thread({ id }: { id: string }) {
             {conversation.assignedUser?.name ?? "Nobody assigned"}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant={showIntent ? "default" : "outline"}
+            className="gap-1 border-emerald-500/40 text-xs text-emerald-600 hover:text-emerald-700 dark:text-emerald-400"
+            onClick={() => setShowIntent((v) => !v)}
+          >
+            <TrendingUp className="h-3.5 w-3.5" />
+            Intent score &gt;
+            <Badge variant="secondary" className="ml-0.5 text-[9px] px-1 py-0 uppercase">Beta</Badge>
+          </Button>
           {canReassign && (
             <AssignConversationDialog
               conversationId={id}
@@ -403,6 +478,14 @@ function Thread({ id }: { id: string }) {
       </CardHeader>
 
       <CardContent className="space-y-4">
+        {showIntent && (
+          <IntentAnalysisPanel
+            conversationId={id}
+            partyId={conversation.party?.id}
+            onClose={() => setShowIntent(false)}
+            onApplyAction={(text) => setDraft((prev) => (prev ? prev + "\n" + text : text))}
+          />
+        )}
         <div className="max-h-[26rem] space-y-3 overflow-y-auto pr-1">
           {messages.length === 0 ? (
             <p className="text-sm text-muted-foreground">No messages in this thread.</p>

@@ -188,6 +188,7 @@ export class CrmConversationsController {
     @Query('routingReview') routingReview?: string,
     @Query('unidentified') unidentified?: string,
     @Query('storeId') storeId?: string,
+    @Query('partyId') partyId?: string,
   ) {
     // Every one of these narrows the caller's own scope; none widens it. The
     // store filter is asserted against their allowed stores in the service.
@@ -199,6 +200,7 @@ export class CrmConversationsController {
       routingReview: routingReview === 'true',
       unidentified: unidentified === 'true',
       storeId: storeId || undefined,
+      partyId: partyId || undefined,
       limit: limit ? Number(limit) : undefined,
     });
   }
