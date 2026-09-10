@@ -471,6 +471,11 @@ function AdministrationLinks() {
       blurb: "Who has agreed to be contacted, on which channel, and when.",
     },
     {
+      href: "/crm/qr",
+      title: "Lead QR codes",
+      blurb: "Print a code for a counter so a walk-in becomes a lead.",
+    },
+    {
       href: "/settings/integrations/outbox",
       title: "Outbound messages",
       blurb: "What has left the building, what is waiting, and what failed.",

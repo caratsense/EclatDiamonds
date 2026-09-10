@@ -445,13 +445,70 @@ body {
  * Hides the whole app and lays out only the `.print-wallet` section so the
  * browser print dialog (or "Save as PDF") captures just the formatted wallet.
  */
+/*
+ * The lead-capture QR poster (see /crm/qr).
+ *
+ * It exists in the page only so `window.print()` has something to put on
+ * paper, and is never part of the screen layout — hence display:none here
+ * rather than the visibility trick below, which would still reserve its space.
+ */
+.qr-poster {
+  display: none;
+}
+
 @media print {
   body * {
     visibility: hidden !important;
   }
   .print-wallet,
-  .print-wallet * {
+  .print-wallet *,
+  .qr-poster,
+  .qr-poster * {
     visibility: visible !important;
+  }
+  .qr-poster {
+    display: flex !important;
+    position: fixed !important;
+    inset: 0 !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 0 !important;
+    margin: 0 !important;
+    padding: 32px !important;
+    text-align: center !important;
+    background: #fff !important;
+    color: #000 !important;
+  }
+  .qr-poster-eyebrow {
+    font-size: 13pt !important;
+    letter-spacing: 0.18em !important;
+    text-transform: uppercase !important;
+    color: #444 !important;
+  }
+  .qr-poster-title {
+    margin: 10px 0 0 !important;
+    font-family: var(--font-display-face), Georgia, serif !important;
+    font-size: 40pt !important;
+    line-height: 1.05 !important;
+  }
+  .qr-poster-sub {
+    margin: 12px 0 0 !important;
+    max-width: 62ch !important;
+    font-size: 13pt !important;
+    line-height: 1.5 !important;
+    color: #333 !important;
+  }
+  .qr-poster-code {
+    margin-top: 34px !important;
+    padding: 18px !important;
+    border: 1pt solid #ddd !important;
+    background: #fff !important;
+  }
+  .qr-poster-foot {
+    margin: 26px 0 0 !important;
+    font-size: 10pt !important;
+    color: #777 !important;
   }
   .print-wallet {
     position: fixed !important;

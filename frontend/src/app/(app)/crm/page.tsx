@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { KanbanSquare, Table as TableIcon, Users } from "lucide-react";
+import Link from "next/link";
+import { KanbanSquare, QrCode, Table as TableIcon, Users } from "lucide-react";
 import { toast } from "sonner";
 
 import { LeadCard } from "@/components/crm/lead-card";
@@ -251,16 +252,27 @@ export default function CrmPage() {
             </Button>
           ) : null}
         </div>
-        <Tabs value={view} onValueChange={(v) => setView(v as "board" | "list")}>
-          <TabsList>
-            <TabsTrigger value="board">
-              <KanbanSquare className="mr-1.5 h-4 w-4" /> Board
-            </TabsTrigger>
-            <TabsTrigger value="list">
-              <TableIcon className="mr-1.5 h-4 w-4" /> List
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <div className="flex items-center gap-2">
+          {/* Leads that walk in rather than arrive from an ad. */}
+          <Button asChild variant="outline" size="sm" className="h-9">
+            <Link href="/crm/qr">
+              <QrCode className="mr-1.5 h-4 w-4" /> QR code
+            </Link>
+          </Button>
+          <Tabs
+            value={view}
+            onValueChange={(v) => setView(v as "board" | "list")}
+          >
+            <TabsList>
+              <TabsTrigger value="board">
+                <KanbanSquare className="mr-1.5 h-4 w-4" /> Board
+              </TabsTrigger>
+              <TabsTrigger value="list">
+                <TableIcon className="mr-1.5 h-4 w-4" /> List
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
       </div>
 
       {isLoading ? (
