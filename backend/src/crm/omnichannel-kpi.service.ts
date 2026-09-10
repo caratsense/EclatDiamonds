@@ -45,6 +45,7 @@ export interface OmnichannelSummary {
     leads: number;
     visits: number;
     enquiries: number;
+    /** Customers first recorded inside the window, not the whole book. */
     customers: number;
     newLeadsWithVisits: number;
   };
@@ -112,8 +113,21 @@ export class OmnichannelKpiService {
       this.prisma.productInteraction.count({
         where: { organisationId: org, storeId: inStores, occurredAt: { gte: since } },
       }),
+      /*
+       * Customers ACQUIRED in the window, not customers on the books.
+       *
+       * This had no `createdAt` bound while every figure beside it did, so
+       * moving the selector from 12 months to 30 days dropped leads, visits and
+       * enquiries and left this one identical — a tile under a heading reading
+       * "30 days" claiming the whole book was won in a month.
+       */
       this.prisma.party.count({
-        where: { organisationId: org, storeId: inStores, types: { has: 'customer' } },
+        where: {
+          organisationId: org,
+          storeId: inStores,
+          types: { has: 'customer' },
+          createdAt: { gte: since },
+        },
       }),
       this.prisma.lead.groupBy({
         by: ['source'],

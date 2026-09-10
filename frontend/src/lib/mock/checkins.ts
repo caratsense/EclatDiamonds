@@ -42,8 +42,14 @@ export interface CheckIn {
   repId: string;
   repName: string;
   repInitials: string;
-  /** HH:mm. */
+  /** HH:mm, at the BRANCH's own clock — not the browser's and not UTC. */
   timeIn: string;
+  /**
+   * The arrival as a real instant. `timeIn` above has no date in it, so this is
+   * the only field that can answer "was this today"; the tiles that read as
+   * today's footfall were counting the whole log before it existed.
+   */
+  timeInAt?: string | null;
   /** HH:mm, null while customer is still in store. */
   timeOut: string | null;
   /** Minutes spent in store; null while in-store. */

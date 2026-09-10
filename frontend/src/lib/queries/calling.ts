@@ -21,6 +21,8 @@ export interface CallingSummary {
   completedWithinDays: number;
   dayStart: string;
   dayEnd: string;
+  /** The branch's zone the day boundaries were drawn in. */
+  timezone: string;
 }
 
 export interface QueueTask {
@@ -39,6 +41,12 @@ export interface QueueTask {
     name: string;
     customerId: string | null;
     contact: string | null;
+    /**
+     * Whether `contact` is a real number rather than `••••1122`. A masked
+     * number must never become a `tel:` link — it looks identical to a working
+     * one and dials nothing.
+     */
+    canDial: boolean;
   } | null;
   lead: {
     id: string;
@@ -47,7 +55,8 @@ export interface QueueTask {
     source: string;
     interest: string | null;
   } | null;
-  overdueMinutes: number | null;
+  /** Whole days past due at the branch: >0 late, 0 due today, <0 still ahead. */
+  overdueDays: number | null;
 }
 
 export interface CallRow {
@@ -86,6 +95,8 @@ export interface CallingWorkspace {
     name: string;
     customerId: string | null;
     contact: string | null;
+    /** See QueueTask.customer.canDial. */
+    canDial: boolean;
     city: string | null;
     customerSince: string;
     blocked: boolean;

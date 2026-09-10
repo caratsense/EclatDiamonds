@@ -44,13 +44,18 @@ const BUCKETS: { value: CallingBucket; label: string; icon: typeof Clock }[] = [
   { value: "completed", label: "Completed", icon: CheckCircle2 },
 ];
 
-function overdueLabel(minutes: number | null): string | null {
-  if (minutes === null || minutes <= 0) return null;
-  if (minutes < 60) return `${minutes} min late`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} hr late`;
-  const days = Math.floor(hours / 24);
-  return `${days} day${days === 1 ? "" : "s"} late`;
+/**
+ * How late a follow-up is, in days.
+ *
+ * Days, because `dueDate` is a calendar date at the branch and there is no hour
+ * in it. This used to render minutes from a server field that compared that
+ * date against the current instant, so from half past five every morning every
+ * task in the "Due today" bucket wore a red "3 hr late" badge while the KPI
+ * card above counted it, correctly, as not overdue.
+ */
+function overdueLabel(days: number | null): string | null {
+  if (days === null || days <= 0) return null;
+  return days === 1 ? "1 day late" : `${days} days late`;
 }
 
 const PRIORITY_TONE: Record<string, "destructive" | "warning" | "secondary" | "outline"> = {
@@ -61,7 +66,7 @@ const PRIORITY_TONE: Record<string, "destructive" | "warning" | "secondary" | "o
 };
 
 function TaskRow({ task, onAct }: { task: QueueTask; onAct: () => void }) {
-  const late = overdueLabel(task.overdueMinutes);
+  const late = overdueLabel(task.overdueDays);
   return (
     <Card>
       <CardContent className="flex flex-wrap items-start justify-between gap-4 p-4">

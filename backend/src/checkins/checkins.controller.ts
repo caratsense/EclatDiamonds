@@ -23,7 +23,8 @@ export class CheckinsController {
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() dto: CheckoutDto,
+    @StoreHeader() store?: string,
   ) {
-    return this.checkins.checkout(user, id, dto);
+    return this.checkins.checkout(user, id, store, dto);
   }
 }

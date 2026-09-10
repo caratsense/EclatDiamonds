@@ -31,6 +31,13 @@ export class CallingQueueDto {
   @IsOptional() @IsString() @Length(1, 120) search?: string;
   @IsOptional() @IsString() @Length(1, 40) cursor?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
+
+  /**
+   * How far back the "completed" bucket reaches. Same default and same bound as
+   * the KPI's, so the card and the list it opens count the same tasks — they
+   * used to disagree, the card over 30 days and the list over all time.
+   */
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(365) completedWithinDays?: number;
 }
 
 export class LogCallDto {

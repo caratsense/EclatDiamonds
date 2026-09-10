@@ -62,6 +62,18 @@ const TABS = [
   { value: "activity", label: "Activity", icon: Activity },
 ] as const;
 
+/**
+ * Today's date as the browser sees it, for the callback picker's floor.
+ *
+ * Local, not `toISOString().slice(0,10)`: that renders the UTC date, so before
+ * 05:30 IST it offers yesterday as the earliest callback.
+ */
+function todayAtDesk(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 function duration(seconds: number | null): string {
   if (seconds === null) return "—";
   const m = Math.floor(seconds / 60);
@@ -149,8 +161,10 @@ export function TakeActionDialog({ taskId, open, onOpenChange }: Props) {
         disposition,
         ...(notes.trim() ? { notes: notes.trim() } : {}),
         then,
+        // Midday, so no zone offset between the browser and the branch can
+        // shift the chosen calendar date onto the day either side of it.
         ...(then === "reschedule"
-          ? { rescheduleTo: new Date(rescheduleTo).toISOString() }
+          ? { rescheduleTo: `${rescheduleTo}T12:00:00.000Z` }
           : {}),
       },
       {
@@ -214,14 +228,32 @@ export function TakeActionDialog({ taskId, open, onOpenChange }: Props) {
 
             {d.customer ? (
               <div className="flex flex-wrap items-center gap-3 text-sm">
+                {/*
+                  A phone link only when there is a number to dial.
+                  `contact` arrives masked as ••••1122 for anyone who is neither
+                  a manager nor this task's assignee, and this used to wrap that
+                  in `tel:` regardless — a link that looked exactly like a
+                  working one and dialled nothing. Withheld now reads as
+                  withheld.
+                */}
                 {d.customer.contact ? (
-                  <a
-                    href={`tel:${d.customer.contact}`}
-                    className="flex items-center gap-1.5 font-[family-name:var(--font-mono-face)] underline-offset-4 hover:underline"
-                  >
-                    <Phone className="h-3.5 w-3.5" />
-                    {d.customer.contact}
-                  </a>
+                  d.customer.canDial ? (
+                    <a
+                      href={`tel:${d.customer.contact}`}
+                      className="flex items-center gap-1.5 font-[family-name:var(--font-mono-face)] underline-offset-4 hover:underline"
+                    >
+                      <Phone className="h-3.5 w-3.5" />
+                      {d.customer.contact}
+                    </a>
+                  ) : (
+                    <span
+                      className="flex items-center gap-1.5 font-[family-name:var(--font-mono-face)] text-muted-foreground"
+                      title="Only this task's owner and a manager see the full number."
+                    >
+                      <Phone className="h-3.5 w-3.5" />
+                      {d.customer.contact}
+                    </span>
+                  )
                 ) : null}
                 {d.customer.lastAttendedBy ? (
                   <span className="text-xs text-muted-foreground">
@@ -354,8 +386,17 @@ export function TakeActionDialog({ taskId, open, onOpenChange }: Props) {
                     <CalendarClock className="h-3.5 w-3.5" />
                     Call back on
                   </Label>
+                  {/*
+                    A date, not a datetime. `Task.dueDate` is a calendar date
+                    with no time of day, so a time typed here was discarded on
+                    the way in — and worse, a callback booked between midnight
+                    and half past five landed on the previous day and the task
+                    was born overdue. Asking for what can actually be stored is
+                    the honest control.
+                  */}
                   <Input
-                    type="datetime-local"
+                    type="date"
+                    min={todayAtDesk()}
                     value={rescheduleTo}
                     onChange={(e) => setRescheduleTo(e.target.value)}
                   />

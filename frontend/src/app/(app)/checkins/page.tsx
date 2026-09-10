@@ -95,6 +95,27 @@ function sortHour(label: string): number {
 
 const CLOSED_OUTCOMES = new Set(["sale_closed"]);
 
+/**
+ * Was this walk-in today?
+ *
+ * The log is the most recent 200 rows with no date bound, so "today" has to be
+ * decided here. It used to not be decided at all: every tile below counted the
+ * whole log and called it today's, which on a branch with a week of history
+ * reported a week of footfall as one day's and a lifetime conversion rate as
+ * today's. `timeInAt` is the real instant; `timeIn` is only a wall clock.
+ */
+function isToday(iso: string | null | undefined): boolean {
+  if (!iso) return false;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return false;
+  const now = new Date();
+  return (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  );
+}
+
 export default function CheckinsPage() {
   const { currentStore, stores } = useSession();
   const nav = getNavItem("checkins");
@@ -105,21 +126,27 @@ export default function CheckinsPage() {
   // The visit currently being closed (drives the "Close visit" dialog).
   const [closing, setClosing] = useState<CheckIn | null>(null);
 
-  // Headline numbers derived from the live log. "Week" has no endpoint so we
-  // surface today's count for the single-store view.
-  const today = checkins.length;
-  const live = checkins.filter((c) => !c.timeOut).length;
-  const converted = checkins.filter((c) => CLOSED_OUTCOMES.has(c.outcome)).length;
+  // Headline numbers derived from the live log, narrowed to today. "Week" has no
+  // endpoint, so the single-store view surfaces today's count and says so.
+  const todaysVisits = useMemo(
+    () => checkins.filter((c) => isToday(c.timeInAt)),
+    [checkins],
+  );
+  const today = todaysVisits.length;
+  // "In store now" is today's un-closed visits. Across the whole log it was
+  // every visit ever left open, a number that only ever grew.
+  const live = todaysVisits.filter((c) => !c.timeOut).length;
+  const converted = todaysVisits.filter((c) => CLOSED_OUTCOMES.has(c.outcome)).length;
   const convRate = today ? (converted / today) * 100 : 0;
 
-  const byHour = useMemo(() => deriveByHour(checkins), [checkins]);
+  const byHour = useMemo(() => deriveByHour(todaysVisits), [todaysVisits]);
 
   // Per-store breakdown only makes sense in the aggregate view; derive it from
   // the live rows grouped by store.
   const byStore = useMemo<StoreFootfall[]>(() => {
     if (!isAggregate) return [];
     const map = new Map<string, StoreFootfall>();
-    for (const c of checkins) {
+    for (const c of todaysVisits) {
       const store = stores.find((s) => s.id === c.storeId);
       const row =
         map.get(c.storeId) ??
@@ -135,7 +162,7 @@ export default function CheckinsPage() {
       map.set(c.storeId, row);
     }
     return [...map.values()];
-  }, [checkins, isAggregate, stores]);
+  }, [todaysVisits, isAggregate, stores]);
 
   function handleCheckout(id: string) {
     const target = checkins.find((c) => c.id === id);

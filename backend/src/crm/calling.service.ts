@@ -6,6 +6,7 @@ import { AuditService } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
 import { ActivityService } from './activity.service';
+import { businessDate } from '../common/tz.util';
 
 /**
  * The central calling / follow-up workspace.
@@ -45,8 +46,11 @@ function maskNumber(value: string | null | undefined, full: boolean): string | n
   return value.length <= 4 ? value : `••••${value.slice(-4)}`;
 }
 
+/** One day, in milliseconds. */
+const DAY_MS = 24 * 60 * 60_000;
+
 /**
- * The caller's own calendar day, as the two dates that bound it.
+ * The branch's own calendar day, as the two dates that bound it.
  *
  * `Task.dueDate` is `@db.Date` — a calendar day with no time of day. Comparing
  * it against an instant is what makes a bucket wrong: an instant carries a time,
@@ -57,14 +61,33 @@ function maskNumber(value: string | null | undefined, full: boolean): string | n
  *
  * Both returned values are midnight UTC, which is exactly how Postgres hands
  * back a DATE, so the comparison is date-to-date with nothing to truncate.
+ *
+ * The zone comes from the STORE. It used to be the literal -330, with a comment
+ * claiming "IST unless the tenant says otherwise" that nothing implemented: a
+ * branch outside Asia/Kolkata had its whole queue bucketed at Indian midnight,
+ * and a fixed numeric offset would have been wrong across any DST boundary that
+ * `tz.util` already handles.
  */
-function businessDay(reference: Date, offsetMinutes: number) {
-  const local = new Date(reference.getTime() - offsetMinutes * 60_000);
-  const today = new Date(
-    Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()),
-  );
-  const tomorrow = new Date(today.getTime() + 24 * 60 * 60_000);
+function businessDay(reference: Date, tz: string) {
+  const today = businessDate(reference, tz);
+  const tomorrow = new Date(today.getTime() + DAY_MS);
   return { today, tomorrow };
+}
+
+/**
+ * Whole days between a task's due DATE and today's, at the branch.
+ *
+ * Days, not minutes, because the column holds a date and nothing finer exists to
+ * report. The previous `Math.round((Date.now() - dueDate) / 60000)` compared a
+ * UTC-midnight DATE against a real instant, so from 05:30 IST every task due
+ * TODAY reported as positively overdue and the screen drew a red "3 hr late"
+ * badge on rows the KPI card above it was counting, correctly, as not overdue.
+ *
+ * Positive = overdue by that many days. 0 = due today. Negative = still ahead.
+ */
+function dueInDays(dueDate: Date | null, today: Date): number | null {
+  if (!dueDate) return null;
+  return Math.round((today.getTime() - dueDate.getTime()) / DAY_MS);
 }
 
 @Injectable()
@@ -91,9 +114,8 @@ export class CallingService {
   ) {
     const base = this.taskScope(user, opts);
     const now = new Date();
-    // IST unless the tenant says otherwise; the offset is a parameter so the
-    // boundary is explicit rather than accidentally UTC.
-    const { today, tomorrow } = businessDay(now, -330);
+    const tz = await this.scope.resolveTimezone(user, opts.storeId);
+    const { today, tomorrow } = businessDay(now, tz);
     const completedWithin = Math.min(Math.max(opts.completedWithinDays ?? 30, 1), 365);
     const completedSince = new Date(now.getTime() - completedWithin * 24 * 60 * 60_000);
 
@@ -121,9 +143,10 @@ export class CallingService {
       upcoming,
       completed,
       completedWithinDays: completedWithin,
-      /** So the screen can say which day "today" meant. */
+      /** So the screen can say which day "today" meant, and where. */
       dayStart: today,
       dayEnd: tomorrow,
+      timezone: tz,
     };
   }
 
@@ -140,11 +163,19 @@ export class CallingService {
       search?: string;
       limit?: number;
       cursor?: string;
+      completedWithinDays?: number;
     } = {},
   ) {
     const limit = Math.min(Math.max(opts.limit ?? 25, 1), MAX_PAGE);
     const base = this.taskScope(user, opts);
-    const { today, tomorrow } = businessDay(new Date(), -330);
+    const now = new Date();
+    const tz = await this.scope.resolveTimezone(user, opts.storeId);
+    const { today, tomorrow } = businessDay(now, tz);
+    // The same window the "Completed" KPI counts. They used to disagree: the
+    // card counted the last 30 days and this listed every task ever finished,
+    // so clicking a card reading 12 produced a list of 900.
+    const completedWithin = Math.min(Math.max(opts.completedWithinDays ?? 30, 1), 365);
+    const completedSince = new Date(now.getTime() - completedWithin * DAY_MS);
 
     const bucketWhere: Prisma.TaskWhereInput =
       opts.bucket === 'overdue'
@@ -154,7 +185,7 @@ export class CallingService {
           : opts.bucket === 'upcoming'
             ? { status: { in: ['open', 'in_progress'] }, dueDate: { gte: tomorrow } }
             : opts.bucket === 'completed'
-              ? { status: 'done' }
+              ? { status: 'done', completedAt: { gte: completedSince } }
               : {};
 
     const search = (opts.search ?? '').trim();
@@ -194,7 +225,11 @@ export class CallingService {
 
     const rows = await this.prisma.task.findMany({
       where,
-      orderBy: [{ dueDate: 'asc' }, { createdAt: 'asc' }],
+      // `id` last, so the order is TOTAL. Without it, rows tying on both
+      // dueDate and createdAt — which bulk-created and imported follow-ups
+      // routinely do — have no defined order, and a cursor into that set can
+      // skip a task or hand back one already worked.
+      orderBy: [{ dueDate: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
       take: limit + 1,
       ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
       select: {
@@ -240,19 +275,32 @@ export class CallingService {
                 t.party.whatsapp ?? t.party.phone,
                 canSeeFullNumber(user, t.assigneeId),
               ),
+              /*
+               * Whether `contact` is a number that can actually be dialled.
+               *
+               * Without this the client had no way to tell `+919820011122`
+               * from `••••1122`, and the take-action panel built a
+               * `tel:••••1122` link that looked identical to a working one and
+               * dialled nothing. A withheld number should read as withheld.
+               */
+              canDial:
+                canSeeFullNumber(user, t.assigneeId) &&
+                Boolean(t.party.whatsapp ?? t.party.phone),
             }
           : null,
         lead: t.lead,
         /**
-         * Minutes past due, negative when it is still ahead. Computed here so
-         * every client agrees on what "overdue" means rather than each doing
-         * its own date arithmetic against its own clock.
+         * Whole days past due at the BRANCH: positive when late, 0 when due
+         * today, negative when still ahead. Computed here so every client agrees
+         * on what "overdue" means rather than each doing its own date
+         * arithmetic against its own clock — and in days, because `dueDate` is
+         * a calendar date and there is no hour in it to report.
          */
-        overdueMinutes: t.dueDate
-          ? Math.round((Date.now() - t.dueDate.getTime()) / 60000)
-          : null,
+        overdueDays: dueInDays(t.dueDate, today),
       })),
-      nextCursor: rows.length > limit ? page[page.length - 1]?.id : null,
+      /** Which day, and where, the buckets above were drawn against. */
+      day: { start: today, end: tomorrow, timezone: tz },
+      nextCursor: rows.length > limit ? (page[page.length - 1]?.id ?? null) : null,
     };
   }
 
@@ -363,6 +411,8 @@ export class CallingService {
       name: party.name,
       customerId: party.code,
       contact: maskNumber(party.whatsapp ?? party.phone, showFull),
+      /** See QueueTask.customer.canDial — a masked number is not a phone link. */
+      canDial: showFull && Boolean(party.whatsapp ?? party.phone),
       city: party.city,
       customerSince: party.createdAt,
       blocked: party.isBlacklisted,
@@ -426,23 +476,42 @@ export class CallingService {
     });
 
     let rescheduledTo: Date | null = null;
+    // What the row actually says afterwards. This used to be asserted from the
+    // request — `then === 'complete' ? 'done' : 'open'` — so logging a call with
+    // `then: 'leave'` on an in-progress task reported "open" while the database
+    // still said "in_progress" and nothing had been written.
+    let taskStatus: string = task.status;
     if (input.then === 'complete') {
-      await this.prisma.task.update({
+      const done = await this.prisma.task.update({
         where: { id: task.id },
         data: { status: 'done', completedAt: task.completedAt ?? new Date() },
+        select: { status: true },
       });
+      taskStatus = done.status;
     } else if (input.then === 'reschedule') {
       if (!input.rescheduleTo) {
         throw new BadRequestException('Choose the date to call back on.');
       }
-      rescheduledTo = new Date(input.rescheduleTo);
-      if (Number.isNaN(rescheduledTo.getTime())) {
+      const chosen = new Date(input.rescheduleTo);
+      if (Number.isNaN(chosen.getTime())) {
         throw new BadRequestException('That is not a usable date.');
       }
-      await this.prisma.task.update({
+      /*
+       * Reduced to the calendar date AT THE BRANCH before it is written.
+       *
+       * `dueDate` is `@db.Date`, so Postgres truncates whatever instant it is
+       * given by UTC — and the client sends a full ISO timestamp. A callback
+       * booked for any IST time between 00:00 and 05:29 therefore landed on the
+       * PREVIOUS day and the task was overdue the moment it was rescheduled.
+       */
+      const tz = await this.scope.resolveTimezone(user, task.storeId ?? undefined);
+      rescheduledTo = businessDate(chosen, tz);
+      const reopened = await this.prisma.task.update({
         where: { id: task.id },
         data: { dueDate: rescheduledTo, status: 'open', completedAt: null },
+        select: { status: true },
       });
+      taskStatus = reopened.status;
     }
 
     if (task.partyId) {
@@ -470,7 +539,7 @@ export class CallingService {
 
     return {
       callId: call.id,
-      taskStatus: input.then === 'complete' ? 'done' : 'open',
+      taskStatus,
       rescheduledTo,
     };
   }
@@ -550,8 +619,18 @@ export class CallingService {
     if (opts.storeId) this.scope.assertStoreAllowed(user, opts.storeId);
     return {
       organisationId: user.organisationId,
-      ...this.scope.storeFilter(user),
-      ...(opts.storeId ? { storeId: opts.storeId } : {}),
+      /*
+       * The same fix DashboardService.listTasks already carries.
+       *
+       * `storeFilter` is `{ storeId: { in: [...] } }`, and a task with a NULL
+       * storeId matches no `in` list. Organisation-wide tasks are a supported,
+       * manager-only creation path — so every one of them was written
+       * successfully and then appeared in neither the queue nor any of the four
+       * counts. A head-office follow-up was invisible to the people meant to
+       * make it. Bounded by organisation, so widening the store test cannot
+       * cross a tenant.
+       */
+      OR: [this.scope.storeFilter(user, opts.storeId), { storeId: null }],
       ...(opts.mine ? { assigneeId: user.id } : {}),
     };
   }

@@ -317,6 +317,36 @@ describe('Calling workspace (e2e)', () => {
         .get('/calling/queue').set(dayAuth).query({ bucket: 'today', limit: 50 }).expect(200);
       expect(todays.body.items.map((i: { title: string }) => i.title)).toEqual(['Due today']);
 
+      /*
+       * The row badge must agree with the card above it about the SAME task.
+       *
+       * They used to contradict each other every morning: lateness was
+       * `Date.now() - dueDate` where `dueDate` is a `@db.Date` at UTC midnight,
+       * so from 05:30 IST onward a task due TODAY reported a positive lateness
+       * and the screen drew a red "3 hr late" badge on a row this very bucket
+       * was counting, correctly, as not overdue. Days, because a calendar date
+       * has no hour in it to report.
+       */
+      expect(todays.body.items[0].overdueDays).toBe(0);
+      expect(
+        overdue.body.items.map((i: { title: string; overdueDays: number }) => [
+          i.title,
+          i.overdueDays,
+        ]).sort(),
+      ).toEqual([
+        ['Due four days ago', 4],
+        ['Due yesterday', 1],
+      ]);
+
+      const ahead = await request(server())
+        .get('/calling/queue').set(dayAuth).query({ bucket: 'upcoming', limit: 50 }).expect(200);
+      // Negative: still ahead, not "zero days late".
+      expect(ahead.body.items[0].overdueDays).toBe(-1);
+
+      // And the day the buckets were drawn against is reported, so a client
+      // never has to guess which midnight the server meant.
+      expect(todays.body.day.timezone).toBe('Asia/Kolkata');
+
       await prisma.task.deleteMany({ where: { organisationId: org } });
       await prisma.userStore.deleteMany({ where: { store: { organisationId: org } } });
       await prisma.user.deleteMany({ where: { organisationId: org } });
@@ -342,8 +372,10 @@ describe('Calling workspace (e2e)', () => {
     it('says how overdue each row is, so every client agrees', async () => {
       const res = await request(server())
         .get('/calling/queue').set(auth()).query({ bucket: 'overdue', limit: 5 }).expect(200);
-      expect(res.body.items[0].overdueMinutes).toBeGreaterThan(0);
+      expect(res.body.items[0].overdueDays).toBeGreaterThan(0);
     });
+
+
 
     it('finds a task by a fragment of the customer’s number', async () => {
       const res = await request(server())

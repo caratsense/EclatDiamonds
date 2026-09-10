@@ -133,7 +133,10 @@ function Totals({
     { key: "enquiries", label: "Enquiries", value: data?.totals.enquiries, icon: MessageCircle },
     {
       key: "customers",
-      label: t("customer_plural", "Customers"),
+      // "New", because the figure is customers acquired inside the selected
+      // window — the same window every other tile here is measured over.
+      label: `New ${t("customer_plural", "Customers").toLowerCase()}`,
+      title: "Customers first recorded during this period",
       value: data?.totals.customers,
       icon: Users,
     },
