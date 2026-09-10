@@ -821,6 +821,10 @@ export default function CheckInPage() {
         busy={checkIn.isPending}
         title="Attendance photo"
         confirmLabel="Check in"
+        // Who and where come from the session and the resolved geofence, never
+        // from the picture — so the screen shows what the record WILL say, and
+        // someone on the wrong branch notices before they file it.
+        context={{ staffName: user.name, storeName, action: "Check in" }}
       />
     </div>
   );

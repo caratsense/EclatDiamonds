@@ -44,6 +44,33 @@ async function bootstrap() {
   const uploadDir = configuredUploadDir
     ? (isAbsolute(configuredUploadDir) ? configuredUploadDir : join(process.cwd(), configuredUploadDir))
     : join(process.cwd(), 'uploads');
+  /*
+   * People, not products.
+   *
+   * The static handler below is express middleware and runs BEFORE Nest's
+   * router, which means before JwtAuthGuard, RolesGuard and EntitlementGuard —
+   * so anything it serves is served to anyone who has the path, signed in or
+   * not. That is an acceptable trade for catalogue images, which the shop wants
+   * on a CDN and which reveal nothing about a person.
+   *
+   * It is not acceptable for the two folders below. `attendance` holds
+   * photographs of named employees' faces at a known time and place, and
+   * `visits` holds photographs of customers at a counter. Those are read
+   * through authenticated routes that check the caller against the record
+   * (see HrmsController.attendancePhoto), so nothing legitimate needs this
+   * path — and a refusal here means a leaked URL is no longer a permanent
+   * unauthenticated grant.
+   *
+   * 404, not 403: whether a particular photo exists is itself information.
+   */
+  const PRIVATE_MEDIA = /^\/uploads\/org\/[^/]+\/(attendance|visits)\//i;
+  app.use((req: { path?: string; url: string }, res: any, next: () => void) => {
+    if (PRIVATE_MEDIA.test(req.path ?? req.url)) {
+      res.status(404).json({ statusCode: 404, message: 'Not found' });
+      return;
+    }
+    next();
+  });
   app.useStaticAssets(uploadDir, { prefix: '/uploads' });
 
   // Fail fast if the JWT signing secret is missing/weak. Without this a misconfigured

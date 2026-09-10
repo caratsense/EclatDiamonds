@@ -1,5 +1,17 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Header,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Res,
+} from '@nestjs/common';
+import type { Response } from 'express';
 import { HrmsService } from './hrms.service';
+import { AttendancePhotoService } from './attendance-photo.service';
 import {
   ApplyLeaveDto,
   AttendanceReportQueryDto,
@@ -23,7 +35,10 @@ import { Roles } from '../auth/roles.decorator';
 
 @Controller('hrms')
 export class HrmsController {
-  constructor(private readonly hrms: HrmsService) {}
+  constructor(
+    private readonly hrms: HrmsService,
+    private readonly photos: AttendancePhotoService,
+  ) {}
 
   // --- Attendance -----------------------------------------------------------
   // Static sub-routes are declared BEFORE any `:id` route so they aren't shadowed.
@@ -40,6 +55,31 @@ export class HrmsController {
   @Get('geofence')
   geofence(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.hrms.geofence(user, store);
+  }
+
+  /**
+   * The photo taken at one punch.
+   *
+   * Bytes, not a redirect to object storage: the point of this route is that the
+   * object's own URL never leaves the server. Declared before any `:id` route
+   * that could shadow it, and gated per-record inside the service — the staffer
+   * themselves, or a manager at that branch. See `AttendancePhotoService`.
+   */
+  @Get('attendance/:id/photo/:which')
+  @Header('Cache-Control', 'private, max-age=300')
+  async attendancePhoto(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Param('which') which: string,
+    @Res() res: Response,
+  ) {
+    const side = which === 'out' ? 'out' : 'in';
+    const { buffer, contentType } = await this.photos.read(user, id, side);
+    res.setHeader('Content-Type', contentType);
+    // A face photograph is never a document to open in a tab of its own.
+    res.setHeader('Content-Disposition', 'inline');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.send(buffer);
   }
 
   /** Self-service geo check-in — the puncher is the current user. */

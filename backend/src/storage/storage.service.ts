@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'crypto';
-import { mkdir, writeFile } from 'fs/promises';
-import { isAbsolute, join } from 'path';
+import { mkdir, readFile, writeFile } from 'fs/promises';
+import { isAbsolute, join, normalize, sep } from 'path';
 import { encodeKey, signRequest } from './sigv4';
 
 /**
@@ -338,6 +338,63 @@ export class StorageService {
     if (!storedPath) return null;
     if (/^https?:\/\//.test(storedPath)) return storedPath;
     return storedPath.startsWith('/') ? storedPath : `/${storedPath}`;
+  }
+
+  /**
+   * Read one stored object back as bytes.
+   *
+   * The other half of the seam `mediaUrl` describes. Callers that must not hand
+   * out a public URL — the attendance and counter photos — go through this and
+   * serve the bytes themselves after checking who is asking.
+   *
+   * `storedPath` is whatever `save` returned: a `/uploads/...` path on the local
+   * provider, an absolute URL on R2 or Cloudinary. Null is returned rather than
+   * thrown for anything unreadable, because the caller is answering a request
+   * and a missing photo is a 404, not a server fault.
+   */
+  async readObject(
+    storedPath: string | null | undefined,
+  ): Promise<{ buffer: Buffer; contentType: string } | null> {
+    if (!storedPath) return null;
+
+    if (/^https?:\/\//.test(storedPath)) {
+      try {
+        const res = await fetch(storedPath);
+        if (!res.ok) {
+          this.logger.warn(`Object fetch returned ${res.status} for a stored media URL.`);
+          return null;
+        }
+        return {
+          buffer: Buffer.from(await res.arrayBuffer()),
+          contentType: res.headers.get('content-type') ?? this.contentTypeOf(storedPath),
+        };
+      } catch (err) {
+        this.logger.error(
+          `Object fetch failed (${err instanceof Error ? err.message : String(err)}).`,
+        );
+        return null;
+      }
+    }
+
+    // Local disk. The path is server-generated, but it is read back from a
+    // database column, so it is treated as untrusted: resolve it and refuse
+    // anything that lands outside the upload root. Without this a row carrying
+    // `../../etc/passwd` would be a file-read primitive.
+    const relative = storedPath.startsWith(`${this.publicPrefix}/`)
+      ? storedPath.slice(this.publicPrefix.length + 1)
+      : storedPath.replace(/^\/+/, '');
+    const root = normalize(this.baseDir);
+    const target = normalize(join(root, relative));
+    if (target !== root && !target.startsWith(root + sep)) {
+      this.logger.error('Refusing to read a stored path that escapes the upload root.');
+      return null;
+    }
+
+    try {
+      return { buffer: await readFile(target), contentType: this.contentTypeOf(target) };
+    } catch {
+      return null;
+    }
   }
 
   /**

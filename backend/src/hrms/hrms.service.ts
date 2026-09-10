@@ -175,6 +175,22 @@ interface StoreCtx {
   weekOffDay: number | null;
 }
 
+/**
+ * Where a client should ASK for a punch photo.
+ *
+ * Deliberately not the object's own URL. That URL is served either by express
+ * static — which runs ahead of every guard in this application — or by a
+ * public-read bucket, so handing it out makes a photograph of an employee's
+ * face readable by anyone who ever sees the link. This route checks the caller
+ * against the record first. See `AttendancePhotoService`.
+ *
+ * Null when there is no photo, so "no photo was taken" stays distinguishable
+ * from "there is one, go and fetch it".
+ */
+function photoRoute(recordId: string, which: 'in' | 'out', stored: string | null): string | null {
+  return stored ? `/hrms/attendance/${recordId}/photo/${which}` : null;
+}
+
 @Injectable()
 export class HrmsService {
   constructor(
@@ -387,6 +403,17 @@ export class HrmsService {
       earlyOutMinutes: r.earlyOutMinutes ?? null,
       dayFraction: r.dayFraction != null ? num(r.dayFraction) : null,
       isMockLocation: r.isMockLocation ?? false,
+      /*
+       * The photo belongs with the other review signals, not one endpoint away.
+       *
+       * `distanceM`, `withinFence` and `isMockLocation` were all returned here
+       * and rendered; the photo was returned on three OTHER endpoints and
+       * rendered on none, so the one shape the manager's HRMS screen actually
+       * reads could not show it at all. The evidence was collected and never
+       * looked at.
+       */
+      checkInPhotoUrl: photoRoute(r.id, 'in', r.checkInPhotoUrl ?? null),
+      checkOutPhotoUrl: photoRoute(r.id, 'out', r.checkOutPhotoUrl ?? null),
       checkInNote: r.checkInNote ?? null,
       checkOutNote: r.checkOutNote ?? null,
       source: r.source ?? 'self',
@@ -739,8 +766,8 @@ export class HrmsService {
       checkOutLocal: formatHHMMInTz(r.checkOutAt, tz),
       timezone: tz,
       checkInDistanceM: r.checkInDistanceM ?? null,
-      checkInPhotoUrl: r.checkInPhotoUrl ?? null,
-      checkOutPhotoUrl: r.checkOutPhotoUrl ?? null,
+      checkInPhotoUrl: photoRoute(r.id, 'in', r.checkInPhotoUrl ?? null),
+      checkOutPhotoUrl: photoRoute(r.id, 'out', r.checkOutPhotoUrl ?? null),
       checkOutDistanceM: r.checkOutDistanceM ?? null,
       withinFence: r.geoVerified,
       checkOutWithinFence: r.checkOutVerified ?? false,
@@ -1156,8 +1183,8 @@ export class HrmsService {
       checkInLat: r.checkInLat != null ? num(r.checkInLat) : null,
       checkInLng: r.checkInLng != null ? num(r.checkInLng) : null,
       checkInDistanceM: r.checkInDistanceM ?? null,
-      checkInPhotoUrl: r.checkInPhotoUrl ?? null,
-      checkOutPhotoUrl: r.checkOutPhotoUrl ?? null,
+      checkInPhotoUrl: photoRoute(r.id, 'in', r.checkInPhotoUrl ?? null),
+      checkOutPhotoUrl: photoRoute(r.id, 'out', r.checkOutPhotoUrl ?? null),
       withinFence: r.geoVerified,
       checkInNote: r.checkInNote ?? null,
       isMockLocation: r.isMockLocation ?? false,
@@ -1270,8 +1297,8 @@ export class HrmsService {
         checkInLat: r.checkInLat != null ? num(r.checkInLat) : null,
         checkInLng: r.checkInLng != null ? num(r.checkInLng) : null,
         checkInDistanceM: r.checkInDistanceM ?? null,
-        checkInPhotoUrl: r.checkInPhotoUrl ?? null,
-        checkOutPhotoUrl: r.checkOutPhotoUrl ?? null,
+        checkInPhotoUrl: photoRoute(r.id, 'in', r.checkInPhotoUrl ?? null),
+        checkOutPhotoUrl: photoRoute(r.id, 'out', r.checkOutPhotoUrl ?? null),
         withinFence: r.geoVerified,
         checkInNote: r.checkInNote ?? null,
         isMockLocation: r.isMockLocation ?? false,

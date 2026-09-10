@@ -35,8 +35,17 @@ const A = {
   org: 'org_punch_a',
   slug: 'punch-a',
   store: 'store_punch_a',
+  storeTwo: 'store_punch_a2',
   rep: 'rep.punch@punch-a.local',
   ho: 'ho.punch@punch-a.local',
+  mate: 'mate.punch@punch-a.local',
+  farManager: 'far.punch@punch-a.local',
+};
+const B = {
+  org: 'org_punch_b',
+  slug: 'punch-b',
+  store: 'store_punch_b',
+  ho: 'ho.punch@punch-b.local',
 };
 const PASSWORD = 'password123';
 
@@ -49,6 +58,12 @@ describe('Attendance punch photo (e2e)', () => {
   let prisma: import('../src/prisma/prisma.service').PrismaService;
   let repToken: string;
   let hoToken: string;
+  /** A colleague at the same counter — same tenant, same branch, not a manager. */
+  let mateToken: string;
+  /** A manager, but of a branch this staffer does not work at. */
+  let farManagerToken: string;
+  /** Another tenant entirely. */
+  let otherOrgToken: string;
   let uploadDir: string;
 
   const server = () => app.getHttpServer();
@@ -102,11 +117,50 @@ describe('Attendance punch photo (e2e)', () => {
       },
     });
 
+    // A second branch in the same tenant, and a manager who covers only it.
+    await prisma.store.create({
+      data: { id: A.storeTwo, name: 'Far Branch', city: 'Surat', organisationId: A.org },
+    });
+    await prisma.user.create({
+      data: {
+        email: A.farManager, name: 'Far Manager', role: 'store_manager', passwordHash: hash,
+        isActive: true, approvalStatus: 'approved', organisationId: A.org,
+        userStores: { create: { storeId: A.storeTwo, isPrimary: true } },
+      },
+    });
+    // A colleague at the SAME counter. Same tenant, same branch, not a manager:
+    // no reason at all to hold a photograph of someone else's face.
+    await prisma.user.create({
+      data: {
+        email: A.mate, name: 'Colleague', role: 'salesperson', passwordHash: hash,
+        isActive: true, approvalStatus: 'approved', organisationId: A.org,
+        userStores: { create: { storeId: A.store, isPrimary: true } },
+      },
+    });
+
+    // And another tenant.
+    await prisma.organisation.create({
+      data: { id: B.org, name: 'Punch B', slug: B.slug, industryPackCode: 'retail' },
+    });
+    await prisma.store.create({
+      data: { id: B.store, name: 'Their Branch', city: 'Pune', organisationId: B.org },
+    });
+    await prisma.user.create({
+      data: {
+        email: B.ho, name: 'Their HO', role: 'head_office', passwordHash: hash, isActive: true,
+        approvalStatus: 'approved', organisationId: B.org,
+        userStores: { create: { storeId: B.store, isPrimary: true } },
+      },
+    });
+
     const login = async (email: string) =>
       (await request(server()).post('/auth/login').send({ email, password: PASSWORD }).expect(201))
         .body.token;
     repToken = await login(A.rep);
     hoToken = await login(A.ho);
+    mateToken = await login(A.mate);
+    farManagerToken = await login(A.farManager);
+    otherOrgToken = await login(B.ho);
   }, 180_000);
 
   afterAll(async () => {
@@ -234,6 +288,133 @@ describe('Attendance punch photo (e2e)', () => {
     expect(mine.body.today.checkOutPhotoUrl).toBeNull();
   });
 
+  /**
+   * The photo also has to reach the screen where a manager actually reviews a
+   * punch.
+   *
+   * It did not. `GET /hrms/attendance` is the only attendance endpoint the
+   * manager HRMS page calls, and its shaper was the one of four that omitted
+   * the field — so the evidence was captured, validated, stored and returned on
+   * three OTHER endpoints, and rendered on none. It sat beside `distanceM`,
+   * `withinFence` and `isMockLocation`, which are all shown.
+   */
+  it('puts the photo beside the other review signals a manager reads', async () => {
+    await punch({ photo: `data:image/png;base64,${PNG_1PX}` }, 201);
+    const list = await request(server())
+      .get('/hrms/attendance')
+      .set({ Authorization: `Bearer ${hoToken}` })
+      .set({ 'X-Store-Id': A.store })
+      .expect(200);
+    const row = list.body.find((r: { checkInPhotoUrl: string | null }) => r.checkInPhotoUrl);
+    expect(row).toBeDefined();
+    expect(row.checkInPhotoUrl).toBe(`/hrms/attendance/${row.id}/photo/in`);
+    // The signals it belongs next to are all present on the same shape.
+    expect(row).toHaveProperty('distanceM');
+    expect(row).toHaveProperty('isMockLocation');
+  });
+
+  /* -------------------------------------------------- who may look at it */
+
+  describe('who may look at it', () => {
+    /**
+     * A face photograph of a named employee at a known time and place is the one
+     * class of object here where "the path is unguessable" is not a check.
+     *
+     * The URL used to be the object's own, served either by express static —
+     * which runs ahead of every guard in this application — or by a public-read
+     * bucket. Anyone who ever saw the link could fetch it forever, from any
+     * organisation, signed in or not.
+     */
+    async function punchAndFindRecord() {
+      await punch({ photo: `data:image/png;base64,${PNG_1PX}` }, 201);
+      return stored();
+    }
+
+    it('never returns the object’s own storage URL', async () => {
+      await punchAndFindRecord();
+      const mine = await request(server())
+        .get('/hrms/attendance/me').set(rep()).set({ 'X-Store-Id': A.store }).expect(200);
+      expect(mine.body.today.checkInPhotoUrl).not.toContain('/uploads/');
+      expect(mine.body.today.checkInPhotoUrl).toMatch(/^\/hrms\/attendance\/.+\/photo\/in$/);
+    });
+
+    it('gives the staffer their own photo', async () => {
+      const row = await punchAndFindRecord();
+      const res = await request(server())
+        .get(`/hrms/attendance/${row.id}/photo/in`).set(rep()).expect(200);
+      expect(res.headers['content-type']).toContain('image/png');
+      expect(res.body.length).toBeGreaterThan(0);
+    });
+
+    it('gives a manager who covers that branch the photo', async () => {
+      const row = await punchAndFindRecord();
+      await request(server())
+        .get(`/hrms/attendance/${row.id}/photo/in`)
+        .set({ Authorization: `Bearer ${hoToken}` })
+        .expect(200);
+    });
+
+    it('refuses a colleague at the same counter', async () => {
+      const row = await punchAndFindRecord();
+      await request(server())
+        .get(`/hrms/attendance/${row.id}/photo/in`)
+        .set({ Authorization: `Bearer ${mateToken}` })
+        .expect(403);
+    });
+
+    it('refuses a manager of a branch this staffer does not work at', async () => {
+      const row = await punchAndFindRecord();
+      await request(server())
+        .get(`/hrms/attendance/${row.id}/photo/in`)
+        .set({ Authorization: `Bearer ${farManagerToken}` })
+        .expect(403);
+    });
+
+    it('refuses another tenant outright', async () => {
+      const row = await punchAndFindRecord();
+      await request(server())
+        .get(`/hrms/attendance/${row.id}/photo/in`)
+        .set({ Authorization: `Bearer ${otherOrgToken}` })
+        .expect(404);
+    });
+
+    it('refuses a stranger with no session', async () => {
+      const row = await punchAndFindRecord();
+      await request(server()).get(`/hrms/attendance/${row.id}/photo/in`).expect(401);
+    });
+
+    it('is not reachable on the unguarded static path', async () => {
+      const row = await punchAndFindRecord();
+      // The object is real and still where it was written.
+      expect(row.checkInPhotoUrl).toContain(`org/${A.org}/attendance`);
+      // 404, not 403: whether a particular punch photo exists is itself
+      // information, and this path is meant to look like it holds nothing.
+      await request(server()).get(row.checkInPhotoUrl!).expect(404);
+    });
+
+    it('still serves an ordinary catalogue image on that same static path', async () => {
+      // The refusal above is narrow on purpose. Product images want to be on a
+      // CDN and reveal nothing about a person; only `attendance` and `visits`
+      // are withheld.
+      await request(server()).get(`/uploads/org/${A.org}/products/nothing.jpg`).expect(404);
+      const res = await request(server()).get('/uploads/does-not-exist.jpg');
+      // A miss, but from the static handler rather than the refusal above —
+      // which is to say the handler is still mounted.
+      expect(res.status).toBe(404);
+    });
+
+    it('says there is no photo rather than 500ing when none was taken', async () => {
+      const row = await punchAndFindRecord();
+      await request(server())
+        .get(`/hrms/attendance/${row.id}/photo/out`).set(rep()).expect(404);
+    });
+
+    it('refuses an attendance id that does not exist', async () => {
+      await request(server())
+        .get('/hrms/attendance/not_a_real_record/photo/in').set(rep()).expect(404);
+    });
+  });
+
   it('keeps head office view-only — it cannot punch, with or without a photo', async () => {
     await request(server())
       .post('/hrms/attendance/check-in')
@@ -252,11 +433,15 @@ describe('Attendance punch photo (e2e)', () => {
 });
 
 async function teardown(prisma: import('../src/prisma/prisma.service').PrismaService) {
-  await prisma.attendanceRecord.deleteMany({ where: { organisationId: A.org } }).catch(() => undefined);
-  await prisma.auditLog.deleteMany({ where: { organisationId: A.org } }).catch(() => undefined);
-  await prisma.userStore.deleteMany({ where: { store: { organisationId: A.org } } }).catch(() => undefined);
-  await prisma.user.deleteMany({ where: { organisationId: A.org } }).catch(() => undefined);
-  await prisma.shift.deleteMany({ where: { organisationId: A.org } }).catch(() => undefined);
-  await prisma.store.deleteMany({ where: { organisationId: A.org } }).catch(() => undefined);
-  await prisma.organisation.deleteMany({ where: { id: A.org } }).catch(() => undefined);
+  const orgs = [A.org, B.org];
+  const drop = async (fn: () => Promise<unknown>) => {
+    await fn().catch(() => undefined);
+  };
+  await drop(() => prisma.attendanceRecord.deleteMany({ where: { organisationId: { in: orgs } } }));
+  await drop(() => prisma.auditLog.deleteMany({ where: { organisationId: { in: orgs } } }));
+  await drop(() => prisma.userStore.deleteMany({ where: { store: { organisationId: { in: orgs } } } }));
+  await drop(() => prisma.user.deleteMany({ where: { organisationId: { in: orgs } } }));
+  await drop(() => prisma.shift.deleteMany({ where: { organisationId: { in: orgs } } }));
+  await drop(() => prisma.store.deleteMany({ where: { organisationId: { in: orgs } } }));
+  await drop(() => prisma.organisation.deleteMany({ where: { id: { in: orgs } } }));
 }
