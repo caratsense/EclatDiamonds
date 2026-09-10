@@ -635,7 +635,13 @@ function AddLeadDialog({
             </Label>
             <Input
               id="interest"
-              placeholder="e.g. Bridal necklace set"
+              /*
+               * Neutral on purpose. This field is on the universal lead form,
+               * which a clinic and a mill both see; the previous example read
+               * "Bridal necklace set". A placeholder is user-visible copy, so a
+               * jewellery example here is the same leak as a jewellery label.
+               */
+              placeholder="What are they asking about?"
               value={interest}
               aria-invalid={!!errors.interest}
               onChange={(e) => {
