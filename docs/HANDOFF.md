@@ -7,12 +7,82 @@
 >
 > **New machine / new Claude session? Read this file first, then `CLAUDE.md`.**
 > This captures the full project state so work can continue exactly where it stopped.
-> **Last updated: 2026-09-09.**
+> **Last updated: 2026-09-10.**
+
+## 2026-09-10 — CURRENT STATE (read this first)
+
+Everything described below is now **committed and pushed**, on branch
+`phase-6-meta-integrations`, and there is a **staging environment** to test it against.
+
+### Where the code is
+
+| | |
+|---|---|
+| Branch | `phase-6-meta-integrations` (pushed) |
+| Pull request | https://github.com/caratsense/EclatDiamonds/pull/3 — open, **not merged** |
+| `main` | still `9589ac5` (2026-08-19), untouched |
+| Commits | `783e8f5` platform + integrations · `102e5ad` docs/screenshots · `ba52892` legacy-send + template identity · `ba843c4` QR secret, job alerts, allowlist · `86f6223` frontend lint · `4a4502f` staging |
+
+The older "still uncommitted, HEAD is 9589ac5" note in the 2026-09-09 section below is
+**no longer true** — it described the state before these commits.
+
+### Staging
+
+| | |
+|---|---|
+| Railway project | Eclat Diamonds (`2dd7e4a9-3ef7-48fd-8f69-d94caaa6448d`) |
+| Environment | `staging` (`72bdfa56-71e1-4ee3-8a4a-10d0f5e00ea0`), own Postgres |
+| Backend | https://backend-staging-e5cd.up.railway.app |
+| Vercel preview | `eclat-diamonds-citvytt6r-carat-sense-s-projects.vercel.app` — **behind Vercel Authentication**, needs a team login or a share link |
+| Login | `staging.admin@caratsense.in`, created by `backend/scripts/staging-bootstrap.mjs` |
+
+Staging has its own database with **0 customers, 0 leads, 0 messages**. The staging
+account returns 401 against production, which is the check that proves the two are
+separate; re-run it before trusting any staging result.
+
+`MESSAGING_RECIPIENT_ALLOWLIST` currently holds a placeholder that matches nobody, so
+**staging can message no one** until a real test number is added. That is deliberate:
+the allowlist reads an empty or unmatched value as "nobody", never "everybody".
+
+Production was not deployed to and no production variable was changed. Rollback
+reference for production is deployment `c76be0e2-2910-4ecd-a7bc-fd659ba4c9fe`.
+
+### Four defects closed today
+
+- **P1** — `POST /integrations/whatsapp/send` bypassed consent, opt-out, the 24-hour
+  window, template approval, the outbox and the audit trail. It now queues through the
+  omnichannel policy. **Contract change:** it reports `queued`, not a provider result.
+- **P2** — a template asset was keyed by name alone, so an approved `en_US` verdict
+  could authorise an unreviewed `hi_IN` send. Identity is now `name:language`
+  (migration `20260910090000`, additive, never guesses a missing language).
+- **P2** — `CRM_QR_SECRET` no longer falls back to `JWT_SECRET`; production fails closed.
+- **P2** — dead jobs now page somebody (30-minute sweep, deduplicated per tenant,
+  counts only — no customer data in the alert).
+
+Plus all 26 React 19 lint errors, with no `eslint-disable` added.
+
+### Read next
+
+- `docs/META-STAGING-TEST-CHECKLIST.md` — the operator sheet for the first live test:
+  both callback URLs, what to allowlist, what each screen should show, what to capture
+  when something fails, and how to prove nothing replies after STOP.
+- `docs/INTEGRATION-OPERATIONS-RUNBOOK.md` — running the connected accounts.
+- `docs/screenshots/staging/` — the nine screens against the real staging backend,
+  desktop and phone.
+
+### Still true, and the thing to remember
+
+**No live provider has ever answered.** Everything is proven against fixtures and a real
+PostgreSQL. The Meta app secret, WhatsApp access token, Phone Number ID, WABA ID, Page
+ID, Lead Form ID and Ad Account ID are all still outstanding, and until the app secrets
+exist the signed webhooks refuse every payload — which is correct, and is what the 403s
+in the verification log show.
 
 ## 2026-09-09 — CURRENT STATE (read this first)
 
 Phase 6 closed the remaining integration honesty gaps (INT-01 to INT-11) and built the
-nine connection-administration screens. Still uncommitted; HEAD is still `9589ac5`.
+nine connection-administration screens. (This was written while the work was still
+uncommitted — see the 2026-09-10 section above for where it actually lives now.)
 
 Start here:
 
