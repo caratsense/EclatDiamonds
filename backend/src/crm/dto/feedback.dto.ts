@@ -10,6 +10,8 @@ import {
   Min,
 } from 'class-validator';
 
+import { QueryBoolean } from '../../common/query-boolean.decorator';
+
 export class FeedbackSettingsDto {
   @IsOptional() @IsBoolean() enabled?: boolean;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(5) positiveThreshold?: number;
@@ -38,7 +40,7 @@ export class FeedbackSummaryDto {
 
 export class ListFeedbackDto {
   @IsOptional() @IsString() @Length(1, 40) storeId?: string;
-  @IsOptional() @Type(() => Boolean) @IsBoolean() escalatedOnly?: boolean;
+  @IsOptional() @QueryBoolean() @IsBoolean() escalatedOnly?: boolean;
   @IsOptional() @IsString() @Length(1, 40) cursor?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(200) limit?: number;
 }

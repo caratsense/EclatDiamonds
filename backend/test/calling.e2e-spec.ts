@@ -216,6 +216,36 @@ describe('Calling workspace (e2e)', () => {
       expect(res.body.overdue).toBe(1);
     });
 
+    it('“mine=false” means every task, because a string is not a boolean', async () => {
+      // A query parameter is a string. `Boolean('false')` is `true`, so a filter
+      // that arrives as ?mine=false used to read as "mine only" and the screen
+      // showed the opposite of the toggle. Only an over-the-wire test catches
+      // this: calling the service with a real `false` always worked.
+      const all = await request(server())
+        .get('/calling/summary')
+        .set({ Authorization: `Bearer ${otherToken}` })
+        .query({ mine: 'false' })
+        .expect(200);
+      const mine = await request(server())
+        .get('/calling/summary')
+        .set({ Authorization: `Bearer ${otherToken}` })
+        .query({ mine: 'true' })
+        .expect(200);
+      const unfiltered = await request(server())
+        .get('/calling/summary')
+        .set({ Authorization: `Bearer ${otherToken}` })
+        .expect(200);
+
+      expect(mine.body.overdue).toBe(1);
+      expect(all.body.overdue).toBe(unfiltered.body.overdue);
+      expect(all.body.overdue).toBeGreaterThan(mine.body.overdue);
+    });
+
+    it('refuses a “mine” that is neither true nor false', async () => {
+      await request(server())
+        .get('/calling/summary').set(auth()).query({ mine: 'banana' }).expect(400);
+    });
+
     it('keeps a branch-scoped agent inside their own branch', async () => {
       const res = await request(server())
         .get('/calling/queue')

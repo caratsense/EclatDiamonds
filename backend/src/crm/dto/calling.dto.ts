@@ -12,8 +12,10 @@ import {
   Min,
 } from 'class-validator';
 
+import { QueryBoolean } from '../../common/query-boolean.decorator';
+
 export class CallingSummaryDto {
-  @IsOptional() @Type(() => Boolean) @IsBoolean() mine?: boolean;
+  @IsOptional() @QueryBoolean() @IsBoolean() mine?: boolean;
   @IsOptional() @IsString() @Length(1, 40) storeId?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(365) completedWithinDays?: number;
 }
@@ -22,7 +24,7 @@ export class CallingQueueDto {
   @IsOptional() @IsIn(['overdue', 'today', 'upcoming', 'completed'])
   bucket?: 'overdue' | 'today' | 'upcoming' | 'completed';
 
-  @IsOptional() @Type(() => Boolean) @IsBoolean() mine?: boolean;
+  @IsOptional() @QueryBoolean() @IsBoolean() mine?: boolean;
   @IsOptional() @IsString() @Length(1, 40) storeId?: string;
   @IsOptional() @IsString() @Length(1, 40) assigneeId?: string;
   @IsOptional() @IsString() @Length(1, 20) priority?: string;

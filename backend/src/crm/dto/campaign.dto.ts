@@ -14,6 +14,8 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
+import { QueryBoolean } from '../../common/query-boolean.decorator';
+
 /**
  * The rule tree itself is validated by `parseSegmentDefinition`, not here.
  * class-validator can say "this is an object"; only the DSL can say whether
@@ -222,7 +224,7 @@ export class ListCampaignsDto {
   limit?: number;
 
   @IsOptional()
-  @Type(() => Boolean)
+  @QueryBoolean()
   @IsBoolean()
   includeCancelled?: boolean;
 }

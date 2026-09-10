@@ -351,6 +351,18 @@ describe('Feedback and reviews (e2e)', () => {
       expect(res.body.items[0].reviewLinkOffered).toBe(false);
     });
 
+    it('“escalatedOnly=false” still lists the happy answers', async () => {
+      // Same string-boolean trap as the calling filter: Boolean('false') is true,
+      // so an explicit false used to hide every answer that was not escalated.
+      const off = await request(server())
+        .get('/feedback/responses').set(auth()).query({ escalatedOnly: 'false' }).expect(200);
+      const on = await request(server())
+        .get('/feedback/responses').set(auth()).query({ escalatedOnly: 'true' }).expect(200);
+
+      expect(off.body.items.length).toBeGreaterThan(on.body.items.length);
+      expect(off.body.items.some((i: { escalated: boolean }) => !i.escalated)).toBe(true);
+    });
+
     it('never reports another tenant’s feedback', async () => {
       await prisma.feedbackRequest.create({
         data: {
