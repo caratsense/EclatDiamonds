@@ -244,7 +244,7 @@ export default function InStorePage() {
   const searching = query.trim().length >= 3;
 
   return (
-    <div className="pb-24">
+    <div className="pb-40 md:pb-24">
       {/* Scope, always visible. A salesperson has to know which branch they are
           filing against before they file anything. */}
       <div className="mb-4 flex items-center justify-between gap-2">
@@ -425,9 +425,17 @@ export default function InStorePage() {
         </>
       )}
 
-      {/* Bottom navigation. Fixed, thumb-height, and inside the safe area so it
-          is not covered by the phone's home indicator. */}
-      <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-background pb-[env(safe-area-inset-bottom)]">
+      {/*
+        Bottom navigation, sitting ON TOP of the app's own mobile bar rather than
+        underneath it.
+
+        The global nav is `fixed bottom-0 z-40 h-16 md:hidden`. The first version
+        of this was `bottom-0 z-20`, which put it behind that bar and made it
+        invisible on exactly the device this screen exists for — caught by
+        driving it at 390px, not by anything the compiler could see. On desktop
+        the global bar is hidden, so this drops back to the bottom edge.
+      */}
+      <nav className="fixed inset-x-0 bottom-16 z-30 border-t border-border bg-background md:bottom-0 md:pb-[env(safe-area-inset-bottom)]">
         <div className="mx-auto flex max-w-lg">
           {TABS.map((x) => {
             const Icon = x.icon;

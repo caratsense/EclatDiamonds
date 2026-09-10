@@ -10,6 +10,9 @@ synceclatcaratsense/
 HANDOVER/
 data_sync/
 docs/
+# Scratch analysis output (video frames, transcripts). 75MB and growing, and
+# nothing in the backend build reads it — it was timing out the upload.
+.tmp-analysis/
 node_modules/
 backend/node_modules/
 backend/dist/

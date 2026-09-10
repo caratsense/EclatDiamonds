@@ -149,6 +149,36 @@ export const NAV_GROUPS: NavGroup[] = [
       },
       {
         module: 1,
+        slug: "feedback",
+        title: "Feedback",
+        purpose:
+          "Ask a customer how it went; an unhappy answer reaches a person, not a public review page.",
+        primaryAction: "",
+        icon: MessageSquareHeart,
+        roles: ["salesperson", "store_manager", "area_manager", "head_office"],
+      },
+      {
+        module: 1,
+        slug: "calling",
+        title: "Calling",
+        purpose:
+          "Every follow-up owed to a customer, oldest first, with the history on one screen before you dial.",
+        primaryAction: "",
+        icon: PhoneCall,
+        roles: ["salesperson", "store_manager", "area_manager", "head_office"],
+      },
+      {
+        module: 7,
+        slug: "instore",
+        title: "In-Store App",
+        purpose:
+          "Find a walk-in, see what they came for, and record the visit from a phone.",
+        primaryAction: "",
+        icon: Smartphone,
+        roles: ["salesperson", "store_manager", "area_manager", "head_office"],
+      },
+      {
+        module: 1,
         slug: "reminders",
         title: "Reminders",
         purpose:
@@ -288,36 +318,6 @@ export const NAV_GROUPS: NavGroup[] = [
         primaryAction: "New Project",
         icon: Building2,
         roles: ["head_office"],
-      },
-      {
-        module: 1,
-        slug: "feedback",
-        title: "Feedback",
-        purpose:
-          "Ask a customer how it went; an unhappy answer reaches a person, not a public review page.",
-        primaryAction: "",
-        icon: MessageSquareHeart,
-        roles: ["salesperson", "store_manager", "area_manager", "head_office"],
-      },
-      {
-        module: 1,
-        slug: "calling",
-        title: "Calling",
-        purpose:
-          "Every follow-up owed to a customer, oldest first, with the history on one screen before you dial.",
-        primaryAction: "",
-        icon: PhoneCall,
-        roles: ["salesperson", "store_manager", "area_manager", "head_office"],
-      },
-      {
-        module: 7,
-        slug: "instore",
-        title: "In-Store App",
-        purpose:
-          "Find a walk-in, see what they came for, and record the visit from a phone.",
-        primaryAction: "",
-        icon: Smartphone,
-        roles: ["salesperson", "store_manager", "area_manager", "head_office"],
       },
       {
         /*

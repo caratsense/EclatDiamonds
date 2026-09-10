@@ -262,7 +262,7 @@ export default function CrmPage() {
           </Button>
           {/* Enquiries that arrive from the tenant's own website. */}
           <Button asChild variant="outline" size="sm" className="h-9">
-            <Link href="/crm/lead-forms">
+            <Link href="/lead-forms">
               <Globe className="mr-1.5 h-4 w-4" /> Web form
             </Link>
           </Button>
