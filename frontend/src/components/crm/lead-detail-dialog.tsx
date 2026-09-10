@@ -1,5 +1,6 @@
 "use client";
 
+import { MetaFormAnswers } from "@/components/crm/meta-form-answers";
 import { useState } from "react";
 import {
   Bell,
@@ -306,6 +307,10 @@ function LeadDetailBody({
           <p className="text-xs text-muted-foreground">Interested in</p>
           <p className="font-medium">{lead.interest}</p>
         </div>
+
+        {/* Renders itself only for a Meta Lead Ads lead; every other source has
+            no questionnaire to show. */}
+        <MetaFormAnswers lead={lead} />
 
         {lead.address ? (
           <Field icon={<MapPin className="h-3.5 w-3.5" />} label="Address">

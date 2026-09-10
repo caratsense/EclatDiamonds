@@ -106,6 +106,12 @@ export interface Lead {
   closedAt: string | null;
   /** Server-computed buying-intent temperature. */
   temperature: LeadTemperature;
+  /**
+   * Answers to the questionnaire on a Meta Lead Ads form, when the lead came
+   * from one. Empty for every other source — the questions belong to the form,
+   * so a walk-in has none rather than blank ones.
+   */
+  formAnswers?: { name: string; values: string[] }[];
   createdAt: string;
   lastActivity: string;
   notes: LeadNote[];

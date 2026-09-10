@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { LeadsService } from '../src/leads/leads.service';
 import { MetaLeadAdapter } from '../src/integrations/meta-lead.adapter';
 import { MetaLeadAdsService } from '../src/integrations/meta-lead-ads.service';
 import type { MetaLeadRecord } from '../src/integrations/meta-contracts';
@@ -163,6 +164,61 @@ describe('INT-02 Meta Lead Ads CRM sink (e2e)', () => {
     expect(attrs?.metaLeadForm).toEqual([{ name: 'what_is_your_budget', values: ['under 50k'] }]);
     // Recognised questions are promoted to real columns and not stored twice.
     expect(attrs?.metaLeadForm?.some((f) => f.name === 'phone_number')).toBe(false);
+  }, 60_000);
+
+  it('hands the questionnaire to the CRM screen, dropping anything malformed', async () => {
+    /*
+     * The answers were already being STORED (above). They were not being
+     * RETURNED: `toView` never mapped `attributes`, so the screen that is
+     * supposed to show what the customer typed received nothing at all.
+     *
+     * The malformed entries here are not hypothetical — the payload comes from
+     * an external system, and a viewer that renders whatever it finds renders
+     * whatever anyone ever puts there.
+     */
+    const leads = app.get(LeadsService);
+    const lead = await prisma.lead.findFirstOrThrow({
+      where: { organisationId: A.org, originKey: 'meta_lead:lg_1001' },
+    });
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: {
+        attributes: {
+          metaLeadForm: [
+            { name: 'what_is_your_budget', values: ['under 50k'] },
+            { name: 'preferred_date', values: ['2026-10-02', '2026-10-03'] },
+            { name: 'no_answer_given', values: [] },
+            { name: '', values: ['nameless'] },
+            { name: 'not_a_list', values: 'oops' },
+            { values: ['no name at all'] },
+            'a bare string',
+            null,
+          ],
+          // A different tenant-custom key must not leak through this field.
+          gsm: '120',
+        } as never,
+      },
+    });
+
+    const user = {
+      id: 'test-ho', email: 'x@x.local', name: 'HO', role: 'head_office',
+      organisationId: A.org, storeIds: [A.store],
+    } as never;
+    const view = (await leads.get(user, lead.id)) as {
+      formAnswers: { name: string; values: string[] }[];
+    };
+
+    expect(view.formAnswers).toEqual([
+      { name: 'what_is_your_budget', values: ['under 50k'] },
+      { name: 'preferred_date', values: ['2026-10-02', '2026-10-03'] },
+      // An unanswered question is kept with no values — the question was asked.
+      { name: 'no_answer_given', values: [] },
+      // `not_a_list` survives with its unusable value discarded, not guessed at.
+      { name: 'not_a_list', values: [] },
+    ]);
+    // The rest of the attribute bag is not exposed by this field.
+    expect(JSON.stringify(view.formAnswers)).not.toContain('gsm');
+    expect(JSON.stringify(view.formAnswers)).not.toContain('120');
   }, 60_000);
 
   it('cannot be made to mass-assign a column from a provider key', async () => {

@@ -54,6 +54,7 @@ import {
   useCreateLead,
   type LeadOutcomeFilter,
 } from "@/lib/queries/leads";
+import { OmnichannelKpis } from "@/components/crm/omnichannel-kpis";
 import { useLeadStages } from "@/lib/queries/crm";
 import { useSession } from "@/store/use-session";
 import {
@@ -173,6 +174,14 @@ export default function CrmPage() {
         primaryAction={nav.primaryAction}
         onPrimaryAction={openCreateDialog}
       />
+
+      {/*
+        Measured server-side and collapsible. It sits above the pipeline rather
+        than inside it because these are totals for the whole period, and the
+        board below is one page of open work — two different questions, so two
+        different sources.
+      */}
+      <OmnichannelKpis storeId={currentStore.isAggregate ? undefined : currentStore.id} />
 
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div className="flex flex-wrap items-end gap-3">

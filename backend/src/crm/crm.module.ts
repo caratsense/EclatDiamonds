@@ -24,9 +24,11 @@ import { LeadFormsService } from './lead-forms.service';
 import { CampaignsService } from './campaigns.service';
 import { InStoreService } from './instore.service';
 import { CallingService } from './calling.service';
+import { OmnichannelKpiService } from './omnichannel-kpi.service';
 import { FeedbackService } from './feedback.service';
 import { FeedbackController, PublicFeedbackController } from './feedback.controller';
 import { CallingController } from './calling.controller';
+import { OmnichannelKpiController } from './omnichannel-kpi.controller';
 import { InStoreController } from './instore.controller';
 import { AudiencesController, CampaignsController } from './campaigns.controller';
 import { CrmImportLeadsController, CrmLeadFormsController, PublicLeadFormsController } from './lead-forms.controller';
@@ -95,6 +97,7 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
     CampaignsController,
     InStoreController,
     CallingController,
+    OmnichannelKpiController,
     FeedbackController,
     PublicFeedbackController,
   ],
@@ -117,6 +120,7 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
     LeadFormsService,
     CampaignsService,
     InStoreService,
+    OmnichannelKpiService,
     CallingService,
     FeedbackService,
     // The default binding: honestly reports "no provider configured" rather than
@@ -145,6 +149,7 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
     LeadFormsService,
     CampaignsService,
     InStoreService,
+    OmnichannelKpiService,
     CallingService,
     FeedbackService,
   ],

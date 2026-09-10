@@ -246,6 +246,84 @@ describe('Calling workspace (e2e)', () => {
         .get('/calling/summary').set(auth()).query({ mine: 'banana' }).expect(400);
     });
 
+    it('puts yesterday in overdue, today in today, and tomorrow in upcoming', async () => {
+      /*
+       * `Task.dueDate` is `@db.Date` — a calendar day, no time of day. The
+       * buckets used to be bounded by IST midnight expressed as an INSTANT
+       * (18:30 UTC the previous day), and Postgres reconciles an instant with a
+       * DATE by truncating: every boundary landed one day early, so a task due
+       * yesterday reported as "due today" and one due today as "upcoming".
+       *
+       * The dates here are built from the calendar day rather than from
+       * `now - 36h`, because an offset in hours lands on a different date
+       * depending on the hour the suite happens to run, and the old code passed
+       * or failed accordingly.
+       */
+      const org = 'org_call_day';
+      const store = 'store_call_day';
+      await prisma.organisation.create({
+        data: { id: org, name: 'Day Clinic', slug: 'call-day', industryPackCode: 'healthcare' },
+      });
+      await prisma.store.create({
+        data: { id: store, name: 'Day One', city: 'Kochi', organisationId: org },
+      });
+      const hash = await bcrypt.hash(PASSWORD, 10);
+      await prisma.user.create({
+        data: {
+          email: 'ho.day@call-day.local', name: 'Day HO', role: 'head_office',
+          passwordHash: hash, isActive: true, approvalStatus: 'approved',
+          organisationId: org,
+          userStores: { create: { storeId: store, isPrimary: true } },
+        },
+      });
+
+      // The business day in IST, as the midnight-UTC dates a DATE column holds.
+      const ist = new Date(Date.now() + 330 * 60 * 1000);
+      const day = (offset: number) =>
+        new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() + offset));
+
+      await prisma.task.createMany({
+        data: [
+          { organisationId: org, storeId: store, title: 'Due yesterday', assignee: 'A', status: 'open', dueDate: day(-1) },
+          { organisationId: org, storeId: store, title: 'Due four days ago', assignee: 'A', status: 'open', dueDate: day(-4) },
+          { organisationId: org, storeId: store, title: 'Due today', assignee: 'A', status: 'open', dueDate: day(0) },
+          { organisationId: org, storeId: store, title: 'Due tomorrow', assignee: 'A', status: 'open', dueDate: day(1) },
+        ],
+      });
+
+      const dayToken = (
+        await request(server())
+          .post('/auth/login')
+          .send({ email: 'ho.day@call-day.local', password: PASSWORD })
+          .expect(201)
+      ).body.token;
+      const dayAuth = { Authorization: `Bearer ${dayToken}` };
+
+      const res = await request(server()).get('/calling/summary').set(dayAuth).expect(200);
+      expect(res.body.overdue).toBe(2);
+      expect(res.body.dueToday).toBe(1);
+      expect(res.body.upcoming).toBe(1);
+
+      // The buckets partition the open tasks: nothing counted twice, none lost.
+      expect(res.body.overdue + res.body.dueToday + res.body.upcoming).toBe(4);
+
+      // And the queue agrees with the counts, rather than each deciding its own day.
+      const overdue = await request(server())
+        .get('/calling/queue').set(dayAuth).query({ bucket: 'overdue', limit: 50 }).expect(200);
+      expect(overdue.body.items.map((i: { title: string }) => i.title).sort())
+        .toEqual(['Due four days ago', 'Due yesterday']);
+
+      const todays = await request(server())
+        .get('/calling/queue').set(dayAuth).query({ bucket: 'today', limit: 50 }).expect(200);
+      expect(todays.body.items.map((i: { title: string }) => i.title)).toEqual(['Due today']);
+
+      await prisma.task.deleteMany({ where: { organisationId: org } });
+      await prisma.userStore.deleteMany({ where: { store: { organisationId: org } } });
+      await prisma.user.deleteMany({ where: { organisationId: org } });
+      await prisma.store.deleteMany({ where: { organisationId: org } });
+      await prisma.organisation.deleteMany({ where: { id: org } });
+    });
+
     it('keeps a branch-scoped agent inside their own branch', async () => {
       const res = await request(server())
         .get('/calling/queue')

@@ -100,6 +100,33 @@ function computeTemperature(l: any): 'hot' | 'warm' | 'cold' {
   return 'cold';
 }
 
+/**
+ * The answers a Meta Lead Ads questionnaire carried, if this lead came from one.
+ *
+ * Read out of `attributes.metaLeadForm`, which is where `meta-lead.adapter.ts`
+ * puts every field it did not recognise as a standard one (name, phone, email).
+ * Exposed as its own narrow list rather than by returning `attributes` whole:
+ * that bag is the tenant's custom vocabulary for every industry, and a screen
+ * that renders all of it renders whatever anyone ever puts there.
+ *
+ * Anything not shaped like `{ name, values[] }` is dropped rather than guessed
+ * at — the answers come from an external system and are not ours to repair.
+ */
+function metaFormAnswers(attributes: unknown): { name: string; values: string[] }[] {
+  if (!attributes || typeof attributes !== 'object') return [];
+  const raw = (attributes as Record<string, unknown>).metaLeadForm;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const { name, values } = entry as { name?: unknown; values?: unknown };
+    if (typeof name !== 'string' || !name.trim()) return [];
+    const clean = Array.isArray(values)
+      ? values.filter((v): v is string => typeof v === 'string')
+      : [];
+    return [{ name, values: clean }];
+  });
+}
+
 /** Shape a Lead row into the frontend `Lead` interface (mock/crm.ts). */
 function toView(l: any) {
   return {
@@ -123,6 +150,7 @@ function toView(l: any) {
     lostReason: l.lostReason ?? null,
     closedAt: l.closedAt ? l.closedAt.toISOString() : null,
     temperature: computeTemperature(l),
+    formAnswers: metaFormAnswers(l.attributes),
     notes: (l.notes ?? []).map((n: any) => ({
       id: n.id,
       kind: n.kind ?? 'note',

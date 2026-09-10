@@ -45,15 +45,26 @@ function maskNumber(value: string | null | undefined, full: boolean): string | n
   return value.length <= 4 ? value : `••••${value.slice(-4)}`;
 }
 
-/** Local midnight, so "due today" means the user's day and not UTC's. */
-function dayBounds(reference: Date, offsetMinutes: number) {
+/**
+ * The caller's own calendar day, as the two dates that bound it.
+ *
+ * `Task.dueDate` is `@db.Date` — a calendar day with no time of day. Comparing
+ * it against an instant is what makes a bucket wrong: an instant carries a time,
+ * a DATE does not, and the two are reconciled by truncation. Before this was
+ * fixed the boundary was IST midnight expressed in UTC (18:30 the previous day),
+ * so for part of every evening a task due yesterday compared equal-not-less and
+ * fell out of "overdue" into "upcoming" — the one bucket nobody is chasing.
+ *
+ * Both returned values are midnight UTC, which is exactly how Postgres hands
+ * back a DATE, so the comparison is date-to-date with nothing to truncate.
+ */
+function businessDay(reference: Date, offsetMinutes: number) {
   const local = new Date(reference.getTime() - offsetMinutes * 60_000);
-  const start = new Date(
+  const today = new Date(
     Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()),
   );
-  const startUtc = new Date(start.getTime() + offsetMinutes * 60_000);
-  const endUtc = new Date(startUtc.getTime() + 24 * 60 * 60_000);
-  return { startUtc, endUtc };
+  const tomorrow = new Date(today.getTime() + 24 * 60 * 60_000);
+  return { today, tomorrow };
 }
 
 @Injectable()
@@ -82,7 +93,7 @@ export class CallingService {
     const now = new Date();
     // IST unless the tenant says otherwise; the offset is a parameter so the
     // boundary is explicit rather than accidentally UTC.
-    const { startUtc, endUtc } = dayBounds(now, -330);
+    const { today, tomorrow } = businessDay(now, -330);
     const completedWithin = Math.min(Math.max(opts.completedWithinDays ?? 30, 1), 365);
     const completedSince = new Date(now.getTime() - completedWithin * 24 * 60 * 60_000);
 
@@ -91,13 +102,13 @@ export class CallingService {
 
     const [overdue, dueToday, upcoming, completed] = await Promise.all([
       this.prisma.task.count({
-        where: { ...base, ...open, dueDate: { lt: startUtc } },
+        where: { ...base, ...open, dueDate: { lt: today } },
       }),
       this.prisma.task.count({
-        where: { ...base, ...open, dueDate: { gte: startUtc, lt: endUtc } },
+        where: { ...base, ...open, dueDate: { gte: today, lt: tomorrow } },
       }),
       this.prisma.task.count({
-        where: { ...base, ...open, dueDate: { gte: endUtc } },
+        where: { ...base, ...open, dueDate: { gte: tomorrow } },
       }),
       this.prisma.task.count({
         where: { ...base, status: 'done', completedAt: { gte: completedSince } },
@@ -111,8 +122,8 @@ export class CallingService {
       completed,
       completedWithinDays: completedWithin,
       /** So the screen can say which day "today" meant. */
-      dayStart: startUtc,
-      dayEnd: endUtc,
+      dayStart: today,
+      dayEnd: tomorrow,
     };
   }
 
@@ -133,15 +144,15 @@ export class CallingService {
   ) {
     const limit = Math.min(Math.max(opts.limit ?? 25, 1), MAX_PAGE);
     const base = this.taskScope(user, opts);
-    const { startUtc, endUtc } = dayBounds(new Date(), -330);
+    const { today, tomorrow } = businessDay(new Date(), -330);
 
     const bucketWhere: Prisma.TaskWhereInput =
       opts.bucket === 'overdue'
-        ? { status: { in: ['open', 'in_progress'] }, dueDate: { lt: startUtc } }
+        ? { status: { in: ['open', 'in_progress'] }, dueDate: { lt: today } }
         : opts.bucket === 'today'
-          ? { status: { in: ['open', 'in_progress'] }, dueDate: { gte: startUtc, lt: endUtc } }
+          ? { status: { in: ['open', 'in_progress'] }, dueDate: { gte: today, lt: tomorrow } }
           : opts.bucket === 'upcoming'
-            ? { status: { in: ['open', 'in_progress'] }, dueDate: { gte: endUtc } }
+            ? { status: { in: ['open', 'in_progress'] }, dueDate: { gte: tomorrow } }
             : opts.bucket === 'completed'
               ? { status: 'done' }
               : {};
