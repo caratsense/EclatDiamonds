@@ -43,6 +43,7 @@ import {
   StoreScopeField,
   useStoreScope,
 } from "@/components/common/store-scope-field";
+import { useResetOn } from "@/lib/use-reset-on";
 
 /** Local yyyy-mm-dd (en-CA yields that format without UTC drift). */
 function todayIso(): string {
@@ -110,10 +111,8 @@ export function OrderBookingDialog({
   const [metalColorOther, setMetalColorOther] = useState("");
   const [deliveryDate, setDeliveryDate] = useState("");
   const [file, setFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
-  const [receiptUrl, setReceiptUrl] = useState<string | null>(null);
   const receiptRef = useRef<HTMLInputElement>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -122,32 +121,30 @@ export function OrderBookingDialog({
 
   // Stock orders carry a fixed 21-day back-office SLA. Auto-fill the ETA from
   // the order-placed date unless the manager has overridden it (still editable).
-  useEffect(() => {
+  // Re-seeded during render, so the date field is never painted with the ETA
+  // for the previously chosen order kind.
+  useResetOn(etaTouched ? null : `${kind}|${bookedOn}`, () => {
     if (kind === "stock" && !etaTouched) {
       setEta(addDaysIso(bookedOn, STOCK_ORDER_SLA_DAYS));
     }
-  }, [kind, bookedOn, etaTouched]);
+  });
 
-  // Keep an object-URL preview for the picked file; revoke to avoid leaks.
+  // Previews are DERIVED from the picked files; the effects exist only to
+  // release the URLs once nothing is pointing at them.
+  const previewUrl = useMemo(() => (file ? URL.createObjectURL(file) : null), [file]);
   useEffect(() => {
-    if (!file) {
-      setPreviewUrl(null);
-      return;
-    }
-    const url = URL.createObjectURL(file);
-    setPreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [file]);
+    if (!previewUrl) return;
+    return () => URL.revokeObjectURL(previewUrl);
+  }, [previewUrl]);
 
+  const receiptUrl = useMemo(
+    () => (receiptFile ? URL.createObjectURL(receiptFile) : null),
+    [receiptFile],
+  );
   useEffect(() => {
-    if (!receiptFile) {
-      setReceiptUrl(null);
-      return;
-    }
-    const url = URL.createObjectURL(receiptFile);
-    setReceiptUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [receiptFile]);
+    if (!receiptUrl) return;
+    return () => URL.revokeObjectURL(receiptUrl);
+  }, [receiptUrl]);
 
   function reset() {
     setKind("custom");

@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { NAV_ITEMS, visibleNavGroups } from "@/lib/navigation";
+import { useEnabledNavigation } from "@/lib/queries/tenant-config";
 import { useSession } from "@/store/use-session";
 import { useT } from "@/lib/i18n";
 
@@ -77,7 +78,7 @@ export function MobileNav() {
   const [moreOpen, setMoreOpen] = React.useState(false);
   // Role-aware "More" sheet: HO-only sections stay hidden for other roles.
   const role = useSession((s) => s.role);
-  const groups = visibleNavGroups(role);
+  const groups = visibleNavGroups(role, useEnabledNavigation());
 
   const isActive = (slug: string) => {
     const href = `/${slug}`;

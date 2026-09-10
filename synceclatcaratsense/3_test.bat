@@ -2,8 +2,9 @@
 REM ===========================================================================
 REM  STEP 3 of 5  —  CHECK THE CONNECTIONS
 REM
-REM  Confirms we can reach the jewellery database and the Eclat dashboard.
-REM  Sends nothing, changes nothing.
+REM  Confirms we can reach the jewellery database and the approved CaratOS
+REM  backend. Sends no business rows; it does perform the restricted agent
+REM  handshake/heartbeat against the explicitly approved target.
 REM ===========================================================================
 setlocal EnableExtensions
 cd /d "%~dp0"
@@ -21,7 +22,18 @@ if not exist "eclat_config.bat" (
 )
 call eclat_config.bat
 
-if exist "_pyexe.bat" (call "_pyexe.bat") else (set "PYEXE=python")
+call "%~dp0require_runtime.bat"
+if errorlevel 1 (
+  pause
+  exit /b 21
+)
+
+"%PYEXE%" gati_target_safety.py backend
+if errorlevel 1 (
+  echo Run 2_configure.bat and explicitly review the backend target.
+  pause
+  exit /b 20
+)
 
 "%PYEXE%" sync_sjep.py --test
 if errorlevel 1 (

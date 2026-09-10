@@ -1,0 +1,82 @@
+CLAUDE FOLLOW-UP — MULTI-MARKET PRODUCT-LAYER FIXES ONLY
+Date: 2026-09-08
+
+CONTEXT
+The first multi-market pass type-checks and its focused backend tests pass, but
+an independent read-only review found product-behaviour gaps. Continue only in
+your original ownership surface from CLAUDE-MULTI-MARKET-PROMPT.txt. Codex is
+simultaneously hardening connectors/** and backend/src/integration/**; do not
+touch those paths, Prisma/package files, credentials, or sync/**.
+
+REQUIRED FIXES
+
+1. Enforce module access, not just menu visibility.
+   enabledNavigation currently hides links, but a user can type /finance,
+   /returns, /loyalty and other vertical-only routes directly. Add one central
+   app-layout/route entitlement guard driven by the bootstrapped tenant pack.
+   Preserve every jewellery/Eclat route. Avoid per-page duplicated guards.
+
+2. Finish generic vocabulary at the actual forms/tables.
+   Customer, CRM and catalogue screens still render hard-coded Customer,
+   Jewellery, Metal, Karat and Gross Weight language/defaults. Apply the pack
+   lexicon/policies to visible labels, placeholders and empty states. Do not
+   change catalogue inference, image-search algorithms or attendance business
+   logic. Jewellery must render exactly its historical labels/defaults.
+
+3. Fix field-policy coverage.
+   Current policies do not address the persisted Product fields metal, karat and
+   weightGrams, and useFieldVisible has no real consumer. Wire a central field
+   policy into the relevant presentation components. Non-jewellery packs must
+   not show metal/karat/making-charge controls merely because database fields
+   exist. Do not edit the Prisma schema; Codex owns the neutral import contract.
+
+4. Make industry switching converge safely.
+   Every pack currently uses pipeline code "default", while additive provisioning
+   skips an existing default. Switching industry therefore preserves the prior
+   industry's stages. Qualification policy in Organisation.settings is also not
+   refreshed. Implement explicit, idempotent pack-managed ownership/versioning:
+   update only untouched/pack-managed defaults; preserve anything tenant-edited;
+   never overwrite custom pipelines/questions. Add pharmacy -> healthcare and
+   healthcare -> manufacturing switch tests.
+
+5. Remove stale login navigation.
+   Authentication currently reads settings.featureProfile.enabledNavigation,
+   while bootstrap derives the current pack. Make login destination use the same
+   current effective navigation source as bootstrap. Do not copy navigation into
+   two independently mutable locations.
+
+6. Restore jewellery regressions.
+   - Restore find-similar to historical Eclat/jewellery navigation.
+   - Restore the Eclat `other` catalogue category label to its historical value.
+   - Add explicit golden assertions rather than comparing one modified structure
+     against another modified structure.
+
+7. Respect the hold boundary.
+   Revert any behavioural edits made to attendance implementation and catalogue
+   inference/implementation. Presentation-only label consumption is permitted;
+   calculations, validation, inference, matching and data behaviour are not.
+   crm/page.tsx changes must be limited to vocabulary/presentation for this task.
+
+8. Align file-source presentation with the backend contract without editing it.
+   Frontend file-import/provider types currently omit gati and odbc although the
+   backend supports gati | tally | busy | odbc. Add the missing display/type paths
+   in frontend only; do not modify backend/src/integration/**.
+
+ACCEPTANCE TESTS
+- A non-jewellery tenant cannot open a disabled vertical route by direct URL.
+- Jewellery can still open every historical route, including find-similar.
+- Healthcare/manufacturing/textile/retail/Other do not render jewellery-only
+  product fields or defaults; jewellery still does.
+- Patient/account/buyer/article vocabulary reaches forms, tables, headings,
+  placeholders and empty states, not only the sidebar.
+- Switching packs updates untouched managed defaults and preserves tenant edits.
+- Login destination and bootstrap navigation cannot disagree.
+- gati and odbc appear as supported frontend import/connector source values.
+- No attendance calculation or catalogue inference behaviour changed.
+- Backend tsc/build and focused tests pass from a zero-migrated disposable DB.
+- Frontend tsc/build pass. Run targeted lint and report existing/global failures
+  truthfully; do not fix unrelated held modules.
+
+DELIVERY
+List exact files and test counts. Clearly identify any remaining Codex request.
+Do not commit, push, deploy, change credentials or edit Codex-owned paths.

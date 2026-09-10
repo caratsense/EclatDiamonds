@@ -2,6 +2,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request = require('supertest');
 import { AppModule } from '../src/app.module';
+import { GoldRateService } from '../src/integrations/gold-rate.service';
 
 /**
  * Integrations (Phase 4) regression suite — WhatsApp / Razorpay / gold-rate.
@@ -13,7 +14,24 @@ import { AppModule } from '../src/app.module';
  *
  * This proves the module is "code-complete behind env keys": it never crashes or
  * leaks when unconfigured, and the security gates hold regardless.
+ *
+ * Gold-rate note: unlike the other integrations, GoldRateService is deliberately
+ * KEYLESS — its `enabled` flag is unconditionally true (a built-in CoinGecko feed
+ * URL is always resolvable), so there is no real "unconfigured" state and no env
+ * that disables it. To test the unconfigured CONTRACT deterministically (and not
+ * depend on the live feed / network / local .env), we override the provider with
+ * a stub that reports the disabled state. RBAC is unaffected — the @Roles guard
+ * lives on the controller, not the service, so the manager-only check is still
+ * exercised for real.
  */
+const goldRateStub = {
+  enabled: false,
+  currentRates: async () => [],
+  refresh: async () => ({ updated: false, dryRun: true }),
+  refreshIfStale: async () => ({ updated: false, dryRun: true }),
+  getLatestRate: async () => null,
+  setManual: async () => ({ rates: {} }),
+};
 
 const PASSWORD = 'password123';
 const REP = 'priya.rep@caratsense.in'; // salesperson, Surat — Main
@@ -33,7 +51,13 @@ describe('Eclat backend — integrations (e2e)', () => {
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      // Simulate the "no gold-rate feed configured" state deterministically —
+      // see the gold-rate note above. Keeps the suite independent of the live
+      // keyless feed, the network, and local .env.
+      .overrideProvider(GoldRateService)
+      .useValue(goldRateStub)
+      .compile();
 
     // rawBody mirrors main.ts so webhook signature verification sees real bytes.
     app = moduleRef.createNestApplication({ rawBody: true });
@@ -81,15 +105,28 @@ describe('Eclat backend — integrations (e2e)', () => {
 
   // ---------------------------------------------------------------- WhatsApp
   describe('WhatsApp', () => {
-    it('send is a dry-run no-op (and normalises the Indian number)', async () => {
+    /*
+     * CONTRACT CHANGE. This used to assert that a manager could free-text any
+     * number and get a dry-run acceptance back. That WAS the defect: the
+     * endpoint called the provider directly, so consent, opt-out, the 24-hour
+     * customer-care window, template approval, the outbox and the audit trail
+     * were all skipped. It now refuses, for the reason a person can act on.
+     */
+    it('refuses free text to a number with no open customer-care window', async () => {
       const res = await request(app.getHttpServer())
         .post('/integrations/whatsapp/send')
         .set(auth(tokens.manager))
         .send({ to: '9876543210', body: 'Your CaratSense quote is ready.' });
-      expect(res.status).toBe(201);
-      expect(res.body.dryRun).toBe(true);
-      expect(res.body.delivered).toBe(false);
-      expect(res.body.to).toBe('919876543210');
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/template is required/i);
+    });
+
+    it('never claims delivery on the request thread', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/integrations/whatsapp/send')
+        .set(auth(tokens.manager))
+        .send({ to: '9876543210', body: 'hello' });
+      expect(res.body.delivered).not.toBe(true);
     });
 
     it('rejects unknown body fields (mass-assignment guard)', async () => {

@@ -1,4 +1,5 @@
 import { AppShell } from "@/components/layout/app-shell";
+import { ModuleGate } from "@/components/layout/module-gate";
 import { SessionGate } from "@/components/auth/session-gate";
 import { WelcomeTour } from "@/components/onboarding/welcome-tour";
 import { AttendanceGate } from "@/components/attendance/attendance-gate";
@@ -14,7 +15,12 @@ export default function AppGroupLayout({
   return (
     <SessionGate>
       <AppShell>
-        {children}
+        {/* One industry gate for every screen. Sits here rather than in each
+            page so a module a tenant's industry does not include can never be
+            rendered by a page that forgot to ask. The server refuses the data
+            either way — this is what stops a clinic seeing a Finance shell
+            whose every panel then 403s. */}
+        <ModuleGate>{children}</ModuleGate>
         {/* First-run, role-aware orientation. Renders via a portal; only
             mounts once the session is authenticated (inside SessionGate). */}
         <WelcomeTour />

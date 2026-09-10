@@ -22,7 +22,11 @@ echo ============================================================
 echo.
 
 if exist "eclat_config.bat" call eclat_config.bat
-if exist "_pyexe.bat" (call "_pyexe.bat") else (set "PYEXE=python")
+call "%~dp0require_runtime.bat"
+if errorlevel 1 (
+  pause
+  exit /b 21
+)
 
 set "TARGET=%~1"
 if "%TARGET%"=="" set "TARGET=D:\GATISOFTTECH"

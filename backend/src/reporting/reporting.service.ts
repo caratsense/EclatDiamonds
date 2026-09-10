@@ -10,12 +10,14 @@ import {
   businessDate,
   dateOnly,
   instantFromLocalTime,
+  resolveTz,
   startOfDayAgoInTz,
   startOfDayInTz,
 } from '../common/tz.util';
 import { WhatsAppService } from '../integrations/whatsapp.service';
 import { EmailService } from '../integrations/email.service';
 import {
+  ComplianceQueryDto,
   CreateDailyReportDto,
   DailyReportQueryDto,
   ReportChannel,
@@ -242,8 +244,12 @@ export class ReportingService {
     const priorSales = num(salesYest._sum.totalAmount);
     const atv = billsToday > 0 ? Math.round(sales / billsToday) : 0;
     const priorAtv = billsYest > 0 ? priorSales / billsYest : 0;
-    const pct = (cur: number, prior: number) =>
-      prior > 0 ? Math.round(((cur - prior) / prior) * 1000) / 10 : 0;
+    // With nothing yesterday there is no base to compare against — emit `null`
+    // (the tile then shows no pill) rather than a fabricated "+0.0% vs yesterday"
+    // that reads as "flat" when the true change is undefined. Mirrors the
+    // dashboard KPI rule so both surfaces treat a missing base the same way.
+    const pct = (cur: number, prior: number): number | null =>
+      prior > 0 ? Math.round(((cur - prior) / prior) * 1000) / 10 : null;
 
     const headline = [
       { id: 'walkins', label: 'Walk-ins', value: walkInsToday, format: 'number', delta: pct(walkInsToday, walkInsYest) },
@@ -485,8 +491,11 @@ export class ReportingService {
     let sent = false;
     let disabled = false;
     if (dto.channel === 'whatsapp') {
-      if (this.whatsapp.enabled) sent = (await this.whatsapp.sendText(to, preview)).delivered;
-      else disabled = true;
+      // Per-organisation now: whether WhatsApp works is a property of the
+      // tenant's own connection, not of the process.
+      const result = await this.whatsapp.sendText(user.organisationId, to, preview);
+      sent = result.delivered;
+      disabled = result.dryRun;
     } else if (this.email.enabled) {
       const subject = `CaratSense ${PERIOD_LABEL[dto.period]} Report — ${summary.from} to ${summary.to}`;
       sent = (await this.email.send(to, subject, preview)).sent;
@@ -563,6 +572,94 @@ export class ReportingService {
   // /reporting/dsr + /reporting/summary aggregates above.
   // ==========================================================================
 
+  /**
+   * GET /reporting/compliance — who has and has NOT filed a daily report.
+   *
+   * The point of this view is the gaps. A list of submitted reports tells head
+   * office what came in; it does not tell them the branch that has been silent
+   * for three days, which is the thing worth acting on.
+   *
+   * ORGANISATION-SCOPED via `effectiveStoreIds`, which returns only stores in the
+   * caller's own tenant (head_office included). No store from another organisation
+   * can enter the grid, so the whole view is confined to the caller's org.
+   *
+   * Each store is evaluated against its OWN calendar: "today" in Surat is not
+   * "today" on a server running UTC, and marking a branch delinquent because of
+   * a timezone offset would make the whole view untrustworthy.
+   */
+  async compliance(user: AuthUser, query: ComplianceQueryDto = {}, headerStore?: string) {
+    const days = Math.min(Math.max(Number(query.days) || 7, 1), 31);
+    const storeIds = this.scope.effectiveStoreIds(user, query.storeId ?? headerStore);
+
+    const stores = await this.prisma.store.findMany({
+      where: { id: { in: storeIds }, isAggregate: false, isActive: true },
+      select: { id: true, name: true, timezone: true },
+      orderBy: { name: 'asc' },
+    });
+    if (!stores.length) {
+      return { days, from: null, to: null, stores: [], missingToday: 0 };
+    }
+
+    // One query for the whole grid; widen the range by a day at each end so a
+    // store in any timezone still finds its own dates inside the result.
+    const now = new Date();
+    const allDates = new Map<string, Date[]>();
+    for (const s of stores) {
+      const today = businessDate(now, resolveTz(s.timezone));
+      const list: Date[] = [];
+      for (let i = days - 1; i >= 0; i--) {
+        const d = new Date(today);
+        d.setUTCDate(d.getUTCDate() - i);
+        list.push(d);
+      }
+      allDates.set(s.id, list);
+    }
+    const flat = [...allDates.values()].flat();
+    const lower = new Date(Math.min(...flat.map((d) => d.getTime())));
+    const upper = new Date(Math.max(...flat.map((d) => d.getTime())));
+
+    const reports = await this.prisma.dailyReport.findMany({
+      where: { storeId: { in: stores.map((s) => s.id) }, reportDate: { gte: lower, lte: upper } },
+      select: { id: true, storeId: true, reportDate: true, source: true, submittedBy: true },
+    });
+    const byKey = new Map(reports.map((r) => [`${r.storeId}|${fmtISODateUTC(r.reportDate)}`, r]));
+
+    let missingToday = 0;
+    const rows = stores.map((s) => {
+      const dates = allDates.get(s.id)!;
+      const entries = dates.map((d) => {
+        const key = fmtISODateUTC(d);
+        const hit = byKey.get(`${s.id}|${key}`);
+        return {
+          date: key,
+          submitted: !!hit,
+          source: hit?.source ?? null,
+          submittedBy: hit?.submittedBy ?? null,
+          reportId: hit?.id ?? null,
+        };
+      });
+      const submitted = entries.filter((e) => e.submitted).length;
+      const todayEntry = entries[entries.length - 1];
+      if (!todayEntry.submitted) missingToday++;
+      return {
+        storeId: s.id,
+        storeName: s.name,
+        submitted,
+        missing: entries.length - submitted,
+        reportedToday: todayEntry.submitted,
+        entries,
+      };
+    });
+
+    return {
+      days,
+      from: fmtISODateUTC(lower),
+      to: fmtISODateUTC(upper),
+      missingToday,
+      stores: rows,
+    };
+  }
+
   /** POST /reporting/daily — capture a store-close DSR. Store-scoped write. */
   async createDaily(user: AuthUser, dto: CreateDailyReportDto) {
     // A DSR belongs to ONE concrete store. An "All Stores" caller (head_office
@@ -592,23 +689,31 @@ export class ReportingService {
       throw new BadRequestException('Report date cannot be in the future');
     }
 
-    const created = await this.prisma.dailyReport.create({
-      data: {
-        storeId,
-        reportDate: new Date(`${dto.reportDate}T00:00:00.000Z`),
-        reportTime: dto.reportTime,
-        walkIns: dto.walkIns ?? 0,
-        seriousEnquiries: dto.seriousEnquiries ?? 0,
-        deliveredBilled: new Prisma.Decimal(dto.deliveredBilled ?? 0),
-        bookingsNew: new Prisma.Decimal(dto.bookingsNew ?? 0),
-        advanceReceived: new Prisma.Decimal(dto.advanceReceived ?? 0),
-        cash: new Prisma.Decimal(dto.cash ?? 0),
-        card: new Prisma.Decimal(dto.card ?? 0),
-        upi: new Prisma.Decimal(dto.upi ?? 0),
-        oldGoldWtG: dto.oldGoldWtG == null ? null : new Prisma.Decimal(dto.oldGoldWtG),
-        oldGoldValue: dto.oldGoldValue == null ? null : new Prisma.Decimal(dto.oldGoldValue),
-        submittedBy: dto.submittedBy,
-      },
+    const reportDate = new Date(`${dto.reportDate}T00:00:00.000Z`);
+    const fields = {
+      reportTime: dto.reportTime,
+      walkIns: dto.walkIns ?? 0,
+      seriousEnquiries: dto.seriousEnquiries ?? 0,
+      deliveredBilled: new Prisma.Decimal(dto.deliveredBilled ?? 0),
+      bookingsNew: new Prisma.Decimal(dto.bookingsNew ?? 0),
+      advanceReceived: new Prisma.Decimal(dto.advanceReceived ?? 0),
+      cash: new Prisma.Decimal(dto.cash ?? 0),
+      card: new Prisma.Decimal(dto.card ?? 0),
+      upi: new Prisma.Decimal(dto.upi ?? 0),
+      oldGoldWtG: dto.oldGoldWtG == null ? null : new Prisma.Decimal(dto.oldGoldWtG),
+      oldGoldValue: dto.oldGoldValue == null ? null : new Prisma.Decimal(dto.oldGoldValue),
+      submittedBy: dto.submittedBy,
+      source: 'web',
+    };
+
+    // One report per store per day (the [storeId, reportDate] unique). A manager
+    // who re-files the same day — a correction, or a second save — UPDATES the
+    // row rather than creating a duplicate that would double every roll-up
+    // reading it. Same idempotent shape as the WhatsApp bot's submit.
+    const created = await this.prisma.dailyReport.upsert({
+      where: { storeId_reportDate: { storeId, reportDate } },
+      create: { organisationId: user.organisationId, storeId, reportDate, ...fields },
+      update: fields,
       include: { store: true },
     });
     return this.toDailyView(created);
@@ -656,8 +761,11 @@ export class ReportingService {
     let sent = false;
     let disabled = false;
     if (dto.channel === 'whatsapp') {
-      if (this.whatsapp.enabled) sent = (await this.whatsapp.sendText(to, preview)).delivered;
-      else disabled = true;
+      // Per-organisation now: whether WhatsApp works is a property of the
+      // tenant's own connection, not of the process.
+      const result = await this.whatsapp.sendText(user.organisationId, to, preview);
+      sent = result.delivered;
+      disabled = result.dryRun;
     } else if (this.email.enabled) {
       const subject = `Daily Sales Report — ${report.store?.name ?? 'Store'} — ${fmtDMY(report.reportDate)}`;
       sent = (await this.email.send(to, subject, preview)).sent;

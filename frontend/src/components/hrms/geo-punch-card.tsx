@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import {
   AlertTriangle,
+  Camera,
   CheckCircle2,
   Clock,
   LogIn,
@@ -35,6 +36,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { apiErrorMessage, cn } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
+import { FaceScannerDialog } from "@/components/biometrics/face-scanner-dialog";
 import type { SelfAttendance } from "@/lib/mock/hrms";
 import {
   useCheckIn,
@@ -173,6 +175,16 @@ export function GeoPunchCard() {
   const [reasonFor, setReasonFor] = useState<"in" | "out" | null>(null);
   const [reason, setReason] = useState("");
   const [pendingDistance, setPendingDistance] = useState<number | null>(null);
+  /**
+   * The camera sheet, and which punch it is for.
+   *
+   * This card and the standalone /check-in screen are two ways to make the same
+   * punch, and only the other one could take a photo — so whether a punch
+   * carried evidence depended on which button the staffer happened to press,
+   * and a manager reviewing a suspicious one would find half of them blank for
+   * no reason. Optional on both, and neither punch is gated behind it.
+   */
+  const [cameraFor, setCameraFor] = useState<"in" | "out" | null>(null);
 
   const today = lastPunch ?? data?.today ?? null;
   const records = data?.records ?? [];
@@ -197,6 +209,7 @@ export function GeoPunchCard() {
   function submitCheckIn(
     pos: { lat: number; lng: number } | null,
     note?: string,
+    photo?: string,
   ) {
     const captured = pos != null;
     checkIn.mutate(
@@ -205,12 +218,14 @@ export function GeoPunchCard() {
         lng: pos?.lng ?? 0,
         shiftId: shiftId || undefined,
         ...(note ? { note } : {}),
+        ...(photo ? { photo } : {}),
       },
       {
         onSuccess: (row) => {
           setLastPunch(row);
           setReasonFor(null);
           setReason("");
+          setCameraFor(null);
           toast.success("Checked in", {
             description: !captured
               ? "Location not verified."
@@ -232,14 +247,21 @@ export function GeoPunchCard() {
   function submitCheckOut(
     pos: { lat: number; lng: number } | null,
     note?: string,
+    photo?: string,
   ) {
     checkOut.mutate(
-      { lat: pos?.lat ?? 0, lng: pos?.lng ?? 0, ...(note ? { note } : {}) },
+      {
+        lat: pos?.lat ?? 0,
+        lng: pos?.lng ?? 0,
+        ...(note ? { note } : {}),
+        ...(photo ? { photo } : {}),
+      },
       {
         onSuccess: (row) => {
           setLastPunch(row);
           setReasonFor(null);
           setReason("");
+          setCameraFor(null);
           toast.success("Checked out", {
             description: `Worked ${formatWorked(row.workedMins)}${
               row.overtimeMins ? ` · ${formatWorked(row.overtimeMins)} overtime` : ""
@@ -299,6 +321,48 @@ export function GeoPunchCard() {
     submitCheckOut(pos);
   }
 
+  /**
+   * A photo was taken. From here it is the ordinary punch: get a fix, apply the
+   * same geofence rules, and send the still along with it.
+   *
+   * The photo never changes whether the punch is ALLOWED. An off-site check-in
+   * is still refused with a photo, and a punch with no photo is a completely
+   * normal punch.
+   */
+  async function punchWithPhoto(photo: string) {
+    const which = cameraFor;
+    if (!which) return;
+    const pos = await getPosition();
+
+    if (which === "in") {
+      setGeoMissed(pos == null);
+      const away = offsiteDistance(pos);
+      if (away != null) {
+        setCameraFor(null);
+        toast.error("Outside the store range", {
+          description: `You are ${away} m away (allowed: ${fence?.geofenceRadiusM ?? 0} m). You must be at the store to check in.`,
+        });
+        return;
+      }
+      submitCheckIn(pos, undefined, photo);
+      return;
+    }
+
+    const away = offsiteDistance(pos);
+    if (away != null) {
+      // Same lenient path as an ordinary check-out: ask why, then send. The
+      // photo is dropped here rather than held across the prompt — a reason box
+      // is a detour, and a stale frame filed minutes later is worse evidence
+      // than none.
+      setCameraFor(null);
+      setPendingPos(pos);
+      setPendingDistance(away);
+      setReasonFor("out");
+      return;
+    }
+    submitCheckOut(pos, undefined, photo);
+  }
+
   function submitReason() {
     const note = reason.trim();
     if (!note) return;
@@ -306,7 +370,11 @@ export function GeoPunchCard() {
     else submitCheckOut(pendingPos, note);
   }
 
+  const staffName = user.name;
+  const storeName = fence?.storeName ?? null;
+
   return (
+    <>
     <Card className="facet-top overflow-hidden">
       <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
         <div className="space-y-1.5">
@@ -433,16 +501,29 @@ export function GeoPunchCard() {
                     </Select>
                   </div>
                 ) : null}
-                <Button
-                  variant="gold"
-                  size="lg"
-                  className="w-full sm:w-auto"
-                  disabled={punching}
-                  onClick={handleCheckIn}
-                >
-                  <LogIn className="h-4 w-4" />
-                  {checkIn.isPending ? "Checking in…" : "Check in"}
-                </Button>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button
+                    variant="gold"
+                    size="lg"
+                    className="w-full sm:w-auto"
+                    disabled={punching}
+                    onClick={handleCheckIn}
+                  >
+                    <LogIn className="h-4 w-4" />
+                    {checkIn.isPending ? "Checking in…" : "Check in"}
+                  </Button>
+                  {/* An addition to the punch, never a gate in front of it. */}
+                  <Button
+                    variant="outline"
+                    size="lg"
+                    className="w-full sm:w-auto"
+                    disabled={punching}
+                    onClick={() => setCameraFor("in")}
+                  >
+                    <Camera className="h-4 w-4" />
+                    With a photo
+                  </Button>
+                </div>
               </div>
             ) : null}
 
@@ -486,16 +567,28 @@ export function GeoPunchCard() {
                     </p>
                   ) : null}
                 </div>
-                <Button
-                  size="lg"
-                  variant="outline"
-                  className="w-full sm:w-auto"
-                  disabled={punching}
-                  onClick={handleCheckOut}
-                >
-                  <LogOut className="h-4 w-4" />
-                  {checkOut.isPending ? "Checking out…" : "Check out"}
-                </Button>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    className="w-full sm:w-auto"
+                    disabled={punching}
+                    onClick={handleCheckOut}
+                  >
+                    <LogOut className="h-4 w-4" />
+                    {checkOut.isPending ? "Checking out…" : "Check out"}
+                  </Button>
+                  <Button
+                    size="lg"
+                    variant="ghost"
+                    className="w-full sm:w-auto"
+                    disabled={punching}
+                    onClick={() => setCameraFor("out")}
+                  >
+                    <Camera className="h-4 w-4" />
+                    With a photo
+                  </Button>
+                </div>
               </div>
             ) : null}
 
@@ -627,5 +720,27 @@ export function GeoPunchCard() {
         ) : null}
       </CardContent>
     </Card>
+
+      {/*
+        Optional evidence, on the same terms as the standalone check-in screen:
+        started by a tap, never a gate, and it makes no claim about WHO the
+        photo shows. See FaceScannerDialog.
+      */}
+      <FaceScannerDialog
+        open={cameraFor !== null}
+        onOpenChange={(next) => {
+          if (!next) setCameraFor(null);
+        }}
+        onCapture={(photo) => void punchWithPhoto(photo)}
+        busy={punching}
+        title={cameraFor === "out" ? "Check-out photo" : "Attendance photo"}
+        confirmLabel={cameraFor === "out" ? "Check out" : "Check in"}
+        context={{
+          staffName,
+          storeName,
+          action: cameraFor === "out" ? "Check out" : "Check in",
+        }}
+      />
+    </>
   );
 }

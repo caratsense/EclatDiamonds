@@ -25,25 +25,10 @@ if not exist "eclat_config.bat" (
   call eclat_config.bat
 )
 
-if exist "_pyexe.bat" (call "_pyexe.bat") else (set "PYEXE=python")
-
-REM The parts Python needs to talk to SQL Server. Installed here because this is
-REM the FIRST script anyone runs — the old installer did it, and moving the
-REM scheduler to the end left nothing installing them at all.
-REM Quick no-op once they are present, so re-running costs nothing.
-"%PYEXE%" -c "import pyodbc, requests" >nul 2>&1
+call "%~dp0require_runtime.bat"
 if errorlevel 1 (
-  echo First run - installing the parts Python needs. This takes a minute...
-  echo.
-  "%PYEXE%" -m pip install -r requirements.txt
-  if errorlevel 1 (
-    echo.
-    echo [PROBLEM] Could not install. Usually no internet, or a company proxy.
-    echo           Python itself is fine - it is the download that failed.
-    pause
-    exit /b 1
-  )
-  echo.
+  pause
+  exit /b 21
 )
 
 "%PYEXE%" discover.py

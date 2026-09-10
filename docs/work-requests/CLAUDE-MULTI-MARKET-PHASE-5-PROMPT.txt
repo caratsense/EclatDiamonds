@@ -1,0 +1,205 @@
+CARATOS MULTI-MARKET PHASE 5 — CLOSE MM4 FRONTEND LEAKS
+
+Read the settled Phase 4 tree and the MM4-01 through MM4-06 findings appended
+to CLAUDE-MULTI-MARKET-PHASE-4-PROMPT.txt before editing. Codex is separately
+fixing MM4-03 inside synceclatcaratsense. Do not enter that lane.
+
+OBJECTIVE
+
+Close MM4-01, MM4-02 and MM4-04 without changing Eclat behaviour for the Eclat
+tenant and without weakening the Phase 4 loopback verification tripwire.
+
+STRICT OWNERSHIP FENCE
+
+You may edit only:
+  frontend/src/lib/queries/auth.ts
+  frontend/src/components/inventory/create-transfer-dialog.tsx
+  frontend/Dockerfile
+  frontend/src/components/reporting/daily-report-send-dialog.tsx
+  frontend/src/components/reporting/send-report-dialog.tsx
+  focused frontend tests for these files
+  this work-request file for newly discovered findings
+
+Do not edit:
+  backend/**
+  connectors/**
+  synceclatcaratsense/**
+  frontend login, landing, ModuleGate or Phase 4 safety scripts
+  CRM, Meta, ROAS, attendance or catalogue inference
+  any real environment file, credential, deployment or production data
+
+WORK ITEMS
+
+1. MM4-01 — REMOVE THE STOCK-TRANSFER ECLAT TENANT FALLBACK
+
+  - Delete the `organisationCode = "eclat"` default from useSignupStores.
+  - Make a tenant identity explicit at every call site. Absence must disable the
+    public-directory query; it must never select a fallback tenant.
+  - In create-transfer-dialog, obtain the signed-in organisation from the
+    existing authenticated/bootstrap source of truth, not hostname inference,
+    local storage, or a second tenant state.
+  - Clear/ignore stale destination rows while the signed-in tenant is unresolved
+    or changes.
+  - Preserve server-side destination validation. Do not expand permissions.
+  - Search all useSignupStores call sites and update each safely.
+  - Test: missing tenant makes no request; Eclat requests Eclat; a second
+    jewellery tenant requests only itself; stale Eclat results cannot populate
+    the second tenant's picker.
+
+2. MM4-02 — MAKE THE DOCKER BACKEND TARGET AN EXPLICIT BUILD INPUT
+
+  - Add Docker build ARG BACKEND_ORIGIN and expose it as ENV before `next build`,
+    matching Next's build-time rewrite behaviour.
+  - A local image build must be able to bake a loopback/test backend explicitly.
+  - A production image may still intentionally receive its production origin.
+  - Do not add a production URL as an ARG/ENV default.
+  - Do not copy .env files into the image or print secrets/build environment.
+  - Add a narrow static/fixture test proving the ARG and pre-build ENV ordering,
+    and proving no Railway URL is hardcoded in the Dockerfile.
+
+3. MM4-04 — REMOVE JEWELLERY-SPECIFIC EMAIL PLACEHOLDERS
+
+  - Replace owner@eclatdiamonds.in in both report dialogs with one neutral,
+    non-deliverable example such as reports@example.com.
+  - Change placeholder only. Do not alter validation, delivery or user-visible
+    Eclat branding elsewhere.
+  - Add or update the narrowest useful regression assertion.
+
+VERIFICATION AND SAFETY
+
+Run focused tests, frontend TypeScript, targeted lint and a Next production
+build. Before any browser action, run Phase 4's effective-target preflight and
+continue only when every built API target is loopback. Do not contact Railway or
+any public API, even for a harmless GET. Do not run Docker if it would pull an
+image or contact a registry; static Dockerfile verification is sufficient here.
+
+Do not commit, push, deploy or change credentials.
+
+FINAL REPORT
+
+List exact files and checks. State how tenant identity reaches the transfer
+dialog, prove Docker has no baked production default, and state that MM4-03 was
+left entirely to Codex. Report any new findings separately.
+
+
+================================================================================
+PHASE 5 RESULT — appended by Claude, 2026-09-09
+================================================================================
+
+CLOSED
+
+MM4-01  Stock-transfer tenant fallback. REMOVED.
+        frontend/src/lib/queries/auth.ts — the `organisationCode = "eclat"`
+        default is gone; the parameter is required. A new pure helper
+        `signupStoresRequest(code)` returns { org, enabled, queryKey }: an
+        absent, blank or one-character code disables the query entirely rather
+        than substituting a tenant.
+        frontend/src/components/inventory/create-transfer-dialog.tsx — the
+        signed-in organisation now comes from
+        `useConfigBootstrap().data?.organisation.slug`, the authenticated
+        GET /config/bootstrap the app shell already loads (sidebar.tsx). Not the
+        hostname, not localStorage, not a second tenant state. A new pure helper
+        `transferDestinations(directory, slug, sourceStoreId)` returns [] while
+        the slug is empty, and the react-query key is per-slug so a tenant
+        switch yields `undefined`, never the previous tenant's rows. The
+        selected destination is derived (`toStore`) and only counts while it is
+        still on offer, so a carried-over pick cannot be submitted. Server-side
+        destination validation is untouched; no permission widened.
+        Both call sites checked: the login page already passed a slug.
+
+MM4-02  Docker backend target. NOW AN EXPLICIT BUILD INPUT.
+        frontend/Dockerfile — `ARG BACKEND_ORIGIN` + `ENV BACKEND_ORIGIN=
+        $BACKEND_ORIGIN` before `RUN npm run build`, no default, plus a guard
+        that FAILS THE BUILD when the arg is absent.
+        The guard is not belt-and-braces, it is the fix. An unset ARG expands to
+        the EMPTY STRING and ENV sets it anyway, so next.config.ts's
+        `process.env.BACKEND_ORIGIN ?? "<production>"` never falls back: an
+        image built without the arg would rewrite /_api to itself and 404 every
+        API call at runtime. The first version of this change shipped a comment
+        claiming the production origin would be inherited — wrong, and caught by
+        the review's completeness critic. Comment and tests now describe the
+        real mechanism.
+
+MM4-04  Jewellery email placeholders. REPLACED.
+        owner@eclatdiamonds.in -> reports@example.com in
+        frontend/src/components/reporting/daily-report-send-dialog.tsx and
+        send-report-dialog.tsx. Placeholder only; validation, delivery and
+        branding untouched.
+
+MM4-03  NOT TOUCHED. Left entirely to Codex, as instructed. Nothing under
+        synceclatcaratsense/ was read for edit or modified by this phase.
+
+TESTS ADDED
+  frontend/src/components/inventory/transfer-destinations.test.ts   (19)
+  frontend/src/components/reporting/report-recipient-placeholder.test.ts (6)
+  frontend/scripts/docker-build-args.test.mjs                       (13)
+  Totals after: `npm run test:scripts` 69 pass / 0 fail;
+                `npx vitest run` 4 files, 53 pass / 0 fail; tsc 0 errors.
+
+BROWSER EVIDENCE (loopback only)
+  Preflight `assert-local-api.mjs --built` green before every browser action;
+  it also REFUSED to start the server once, when BACKEND_ORIGIN was unset —
+  the tripwire works. Chrome was additionally launched with
+  --host-resolver-rules="MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost",
+  so no non-loopback host was resolvable at all. The backend was a purpose-built
+  loopback stub on 127.0.0.1:4100 holding two jewellery tenants; no database,
+  no Railway, no public API.
+
+    signed in as Eclat     -> GET /_api/stores/directory?org=eclat
+                           -> picker: Mumbai Borivali, Mumbai Bandra
+    signed in as Meridian  -> GET /_api/stores/directory?org=meridian-jewels
+                           -> picker: Meridian — Udaipur
+
+  NEGATIVE CONTROL. The old behaviour was reinstated, rebuilt and re-run: the
+  Meridian store manager's picker listed all three ECLAT branches and the wire
+  carried ?org=eclat. The fix was then restored, rebuilt and re-verified green.
+  The harness bites.
+
+NEW FINDINGS — OUTSIDE THIS FENCE, FOR A FUTURE PHASE
+
+MM5-01 (MEDIUM) The incident lane is still unguarded.
+  frontend/next.config.ts:8 still resolves the hardcoded
+  https://backend-production-89dd.up.railway.app whenever BACKEND_ORIGIN is
+  unset, and frontend/.env.production defines only NEXT_PUBLIC_API_URL. Phase 5
+  removed the implicit default for the Docker lane only. A developer running the
+  DEFAULT scripts — `npm run build && npm run start`, or `npm run dev` — in this
+  tree still proxies to the live backend with no preflight in the path. That is
+  the exact chain of the 8 September incident. MM4-02 should not be recorded as
+  fully closed on this basis. Requested: make the preflight part of the default
+  scripts, or make next.config.ts refuse an unset origin outside production.
+  Both files are outside Phase 5's fence.
+
+MM5-02 (LOW) `.next/dev` poisons the next production build.
+  After a single `next dev` run, `npm run build` failed type-checking on a stale
+  generated `.next/dev/types/validator.ts` ("Cannot find name 'age'"). `rm -rf
+  .next/dev` cleared it. Anyone alternating dev and build will hit this.
+
+MM5-03 (LOW) The loopback allowlist and Docker disagree about "local".
+  scripts/assert-local-api.mjs accepts only localhost / 127.0.0.1 / ::1. A
+  container reaching its host normally uses host.docker.internal, which the
+  preflight classifies as a remote host. The Dockerfile now says so in a
+  comment, but the two phases still disagree. Requested: decide whether
+  host.docker.internal belongs on the allowlist (Phase 4 file, not this fence).
+
+MM5-04 (LOW) The new frontend tests are not wired into CI.
+  `npm test` and `npm run test:scripts` exist and pass but nothing runs them
+  automatically. No CI config is inside this fence.
+
+MM5-05 (INFO) The in-app picker still uses the PUBLIC directory endpoint.
+  GET /stores/directory is unauthenticated and trusts a client-supplied `org`.
+  It is now always the signed-in tenant's own slug, and the server re-validates
+  every destination on submit, so this is not a leak. But an authenticated,
+  JWT-scoped branch list would remove the client's say in the matter entirely.
+  Backend change; outside this fence.
+
+REVIEW METHOD
+  A 78-agent adversarial review ran over this diff: five independent lenses
+  (tenant isolation, Eclat parity, Docker/build-time safety, do-the-tests-bite,
+  fence discipline), each finding refuted from three angles by separate agents,
+  then a completeness critic. 24 findings raised, 0 survived the 2-of-3
+  refutation bar; the critic then recovered the empty-string defect that all
+  five lenses had raised and all fifteen refuters had dismissed as "not a leak"
+  — correct on the leak, wrong to drop it. That defect is fixed above.
+
+NOT COMMITTED, NOT PUSHED, NOT DEPLOYED. HEAD is still 9589ac5, 0 files staged.
+No credential, real .env file or production system was read or changed.

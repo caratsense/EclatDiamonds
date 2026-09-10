@@ -27,7 +27,16 @@ export type Metal =
   | "platinum"
   | "silver"
   // Gold whose karat is unknown from the legacy source (never guessed as 22K).
-  | "gold_unspecified";
+  | "gold_unspecified"
+  /**
+   * "This product is not made of a metal."
+   *
+   * Distinct from `gold_unspecified`, which means "gold, karat unknown". This
+   * one is what a pharmacy or a factory stores, because `metal` is a required
+   * non-null column and there was previously no honest value for a box of
+   * tablets — so every such product was recorded as 22K gold.
+   */
+  | "unspecified";
 
 export interface Product {
   id: string;
@@ -51,6 +60,19 @@ export interface Product {
   description: string;
   /** Photo URL/path from the API (object storage). Card falls back to a gem glyph. */
   imageUrl?: string;
+  /**
+   * What a non-jewellery tenant actually sells, in their own words. The typed
+   * `category` / `metal` columns hold the neutral enum members for these rows,
+   * so these are where the meaning lives. Absent for every jewellery product.
+   */
+  categoryLabel?: string;
+  materialLabel?: string;
+  unitOfMeasure?: string;
+  /**
+   * Tenant-defined fields, keyed by AttributeDefinition.key. Null for an
+   * organisation that has configured none — which is every existing store.
+   */
+  attributes?: Record<string, unknown> | null;
 }
 
 export const CATEGORY_LABELS: Record<ProductCategory, string> = {
@@ -61,7 +83,12 @@ export const CATEGORY_LABELS: Record<ProductCategory, string> = {
   bracelet: "Bracelet",
   pendant: "Pendant",
   chain: "Chain",
-  other: "Jewellery",
+  // NOT "Jewellery". Every non-jewellery industry pack maps its categories onto
+  // the `other` enum member — it is the only industry-neutral one — so this
+  // label was printing "Jewellery" under every product a pharmacy, clinic or
+  // factory created. "Other" is also what the jewellery pack itself calls this
+  // term, so the two finally agree.
+  other: "Other",
 };
 
 export const METAL_LABELS: Record<Metal, string> = {
@@ -75,6 +102,10 @@ export const METAL_LABELS: Record<Metal, string> = {
   platinum: "Platinum",
   silver: "Silver",
   gold_unspecified: "Gold (karat unknown)",
+  // Present so the label always resolves; deliberately NOT offered in the
+  // jewellery metal picker, which filters it out — a jeweller has no reason to
+  // record a piece as having no metal.
+  unspecified: "Not applicable",
 };
 
 export const MOCK_PRODUCTS: Product[] = [

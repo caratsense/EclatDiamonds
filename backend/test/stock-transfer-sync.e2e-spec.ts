@@ -26,6 +26,8 @@ const HO = 'head.office@caratsense.in';
 const DEST = 'mumbai-bandra'; // where Eclat puts a received piece
 const SRC_STORE_ID = 'txsync-src-store';
 const SRC_LEGACY = 'LEG-TXSYNC-SRC'; // sync records resolve here via EclatBranchId
+const PROFILE_HASH = 'c'.repeat(64);
+const SOURCE_INSTANCE_HASH = 'd'.repeat(64);
 
 let seq = 0;
 const lid = () => `TXSYNC-${Date.now()}-${seq++}`;
@@ -34,11 +36,22 @@ describe('Stock transfer × legacy sync source-of-truth (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaClient;
   let hoToken: string;
+  let agentToken: string;
+  let agentId: string;
+  let configRevision: string;
+
+  const agentHeaders = () => ({
+    Authorization: `Bearer ${agentToken}`,
+    'x-caratos-profile-id': 'gati-stock-transfer-e2e',
+    'x-caratos-profile-hash': PROFILE_HASH,
+    'x-caratos-source-instance-hash': SOURCE_INSTANCE_HASH,
+    'x-caratos-config-revision': configRevision,
+  });
 
   const syncStock = (records: Record<string, unknown>[]) =>
     request(app.getHttpServer())
       .post('/sync/stock')
-      .set({ Authorization: `Bearer ${hoToken}` })
+      .set(agentHeaders())
       .send({ records });
 
   const stock = (id: string) =>
@@ -48,7 +61,7 @@ describe('Stock transfer × legacy sync source-of-truth (e2e)', () => {
   const piece = async (storeId: string, status: any) => {
     const legacyId = lid();
     const p = await prisma.stockItem.create({
-      data: { legacyId, storeId, status, sku: legacyId, name: 'orig', tagPrice: '100' },
+      data: { organisationId: 'org_eclat', legacyId, storeId, status, sku: legacyId, name: 'orig', tagPrice: '100' },
       select: { id: true, legacyId: true },
     });
     return p;
@@ -58,6 +71,7 @@ describe('Stock transfer × legacy sync source-of-truth (e2e)', () => {
   const transferItem = async (stockItemId: string, status: any) => {
     await prisma.stockTransfer.create({
       data: {
+        organisationId: 'org_eclat',
         ref: `STX-${Date.now()}-${seq++}`,
         status,
         fromStoreId: SRC_STORE_ID,
@@ -86,15 +100,38 @@ describe('Stock transfer × legacy sync source-of-truth (e2e)', () => {
     expect(r.status).toBe(201);
     hoToken = r.body.token;
 
+    const enrolled = await request(app.getHttpServer())
+      .post('/integration/connect/agents')
+      .set({ Authorization: `Bearer ${hoToken}` })
+      .send({ name: `TXSYNC Gati ${Date.now()}`, sourceSystem: 'gati' });
+    expect(enrolled.status).toBe(201);
+    agentToken = enrolled.body.token;
+    agentId = enrolled.body.agent.id;
+    await request(app.getHttpServer())
+      .post(`/integration/connect/agents/${agentId}/config`)
+      .set({ Authorization: `Bearer ${hoToken}` })
+      .send({
+        config: {
+          enabled: true,
+          expectedProfileHash: PROFILE_HASH,
+          expectedSourceInstanceHash: SOURCE_INSTANCE_HASH,
+        },
+      })
+      .expect(201)
+      .then((configured) => {
+        configRevision = configured.body.config.configRevision;
+      });
+
     // Throwaway source store with a known legacyId so `EclatBranchId` resolves.
     await prisma.store.upsert({
       where: { id: SRC_STORE_ID },
-      create: { id: SRC_STORE_ID, name: 'TX Sync Source', city: 'Testville', legacyId: SRC_LEGACY },
+      create: { id: SRC_STORE_ID, name: 'TX Sync Source', city: 'Testville', legacyId: SRC_LEGACY, organisationId: 'org_eclat' },
       update: { legacyId: SRC_LEGACY },
     });
   });
 
   afterAll(async () => {
+    if (agentId) await prisma?.connectAgent.deleteMany({ where: { id: agentId } });
     await prisma?.$disconnect();
     await app?.close();
   });

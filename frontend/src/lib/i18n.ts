@@ -2,6 +2,8 @@
 
 import { useCallback } from "react";
 
+import { useConfigBootstrap } from "@/lib/queries/tenant-config";
+
 /**
  * In-repo label dictionary for the app chrome (sidebar, mobile nav, user menu).
  *
@@ -23,13 +25,21 @@ import { useCallback } from "react";
  */
 export const DICT: Record<string, string> = {
   // Sidebar / mobile section headers
-  "group.Overview": "Overview",
-  "group.Sales": "Sales",
-  "group.Operations": "Operations",
-  "group.People": "People",
-  "group.Management": "Management",
-  "group.Back-office": "Back-office",
+  "group.Overview & Analytics": "Overview & Analytics",
+  "group.Omnichannel & CRM": "Omnichannel & CRM",
+  "group.Showroom Floor": "Showroom Floor",
+  "group.Commerce & Orders": "Commerce & Orders",
+  "group.Inventory & Supply": "Inventory & Supply",
+  "group.Marketing & Inbound": "Marketing & Inbound",
+  "group.Team & Workforce": "Team & Workforce",
+  "group.Back-office & Approvals": "Back-office & Approvals",
   "group.Administration": "Administration",
+
+  // Words a screen has to say inline, not just as a heading. Kept as keys so a
+  // pack's lexicon can substitute them the same way it substitutes nav labels.
+  "label.store": "Branch",
+  "label.customer": "Customer",
+  "label.item": "Item",
 
   // Nav items (keyed by slug)
   "nav.dashboards": "Dashboards",
@@ -69,10 +79,30 @@ export const DICT: Record<string, string> = {
  * useT — resolves a chrome label. `t(key, fallback?)` returns the dictionary
  * entry, then the caller's inline English, then the raw key, so a missing key
  * still renders something readable rather than a blank.
+ *
+ * ## The tenant's own vocabulary wins
+ *
+ * The resolved English is then looked up in this tenant's industry lexicon,
+ * which is keyed by the neutral string itself: a clinic's bootstrap carries
+ * `{"Customers": "Patients", "CRM & Leads": "CRM & Enquiries"}`, so the sidebar
+ * and every section header say Patients without a single screen knowing that
+ * healthcare exists.
+ *
+ * Substitution is an exact, whole-string match — never a word replacement — so
+ * the only labels that can change are the short list the backend chose to emit.
+ * "Customer support" is not a key and stays as it is.
+ *
+ * Jewellery declares no lexicon, so the map is empty and every lookup misses:
+ * Eclat renders exactly the dictionary above, unchanged.
  */
 export function useT() {
+  const { data } = useConfigBootstrap();
+  const labels = data?.labels;
   return useCallback(
-    (key: string, fallback?: string): string => DICT[key] ?? fallback ?? key,
-    [],
+    (key: string, fallback?: string): string => {
+      const neutral = DICT[key] ?? fallback ?? key;
+      return labels?.[neutral] ?? neutral;
+    },
+    [labels],
   );
 }

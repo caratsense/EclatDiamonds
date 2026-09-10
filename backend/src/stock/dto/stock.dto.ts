@@ -1,11 +1,13 @@
 import {
   ArrayMaxSize,
   ArrayMinSize,
+  ArrayNotEmpty,
   ArrayUnique,
   IsArray,
   IsEnum,
   IsIn,
   IsInt,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
@@ -15,16 +17,21 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { MetalKind, ProductCategory, StockStatus } from '@prisma/client';
+import { IsRealName } from '../../common/contact.util';
 
 export class CreateStockDto {
   @IsString()
+  @IsNotEmpty()
   storeId!: string;
 
   @IsString()
+  @IsNotEmpty()
   sku!: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(120)
+  @IsRealName()
   name?: string;
 
   @IsEnum(MetalKind)
@@ -153,6 +160,7 @@ export class UpdateStockDto {
 /** Bulk "Adjust status" over several pieces at once (Module 9). */
 export class BulkAdjustStockDto {
   @IsString({ each: true })
+  @ArrayNotEmpty()
   @ArrayMinSize(1)
   @ArrayMaxSize(500)
   @ArrayUnique()
@@ -170,10 +178,13 @@ export class BulkAdjustStockDto {
 /** One row of a bulk stock import (the piece fields; store is set per-batch). */
 export class ImportStockRow {
   @IsString()
+  @IsNotEmpty()
   sku!: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(120)
+  @IsRealName()
   name?: string;
 
   @IsEnum(MetalKind)
@@ -233,6 +244,7 @@ export class ImportStockRow {
  */
 export class BulkImportStockDto {
   @IsString()
+  @IsNotEmpty()
   storeId!: string;
 
   @IsArray()

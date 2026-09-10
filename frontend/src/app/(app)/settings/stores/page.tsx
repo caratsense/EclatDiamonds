@@ -54,7 +54,13 @@ import {
 } from "@/lib/queries/stores";
 import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
-import { apiErrorMessage } from "@/lib/utils";
+import {
+  apiErrorMessage,
+  capIndianPhone,
+  isRealName,
+  isValidEmail,
+  normalizeIndianMobile,
+} from "@/lib/utils";
 
 const nav = getNavItem("settings/stores")!;
 
@@ -454,6 +460,12 @@ function AddStoreDialog({
   const [regionId, setRegionId] = useState("");
   const [latitude, setLatitude] = useState("");
   const [longitude, setLongitude] = useState("");
+  // Inline validation errors, keyed by field. Cleared per-field on change.
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  function clearError(field: string) {
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
+  }
 
   function reset() {
     setName("");
@@ -462,15 +474,18 @@ function AddStoreDialog({
     setRegionId("");
     setLatitude("");
     setLongitude("");
+    setErrors({});
   }
 
   function save() {
-    if (!name.trim()) {
-      toast.error("Store name is required.");
-      return;
-    }
-    if (!city.trim()) {
-      toast.error("City is required.");
+    const next: Record<string, string> = {};
+    if (!name.trim()) next.name = "Store name is required.";
+    else if (!isRealName(name))
+      next.name = "Enter a real store name (letters, not just a number).";
+    if (!city.trim()) next.city = "City is required.";
+    if (Object.keys(next).length > 0) {
+      setErrors(next);
+      toast.error("Please fill in the required fields.");
       return;
     }
     const lat = parseCoord(latitude, "Latitude");
@@ -528,8 +543,15 @@ function AddStoreDialog({
               id="store-name"
               placeholder="e.g. Surat — Main"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              aria-invalid={!!errors.name}
+              onChange={(e) => {
+                setName(e.target.value);
+                clearError("name");
+              }}
             />
+            {errors.name ? (
+              <p className="mt-1 text-xs text-destructive">{errors.name}</p>
+            ) : null}
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="grid gap-1.5">
@@ -540,8 +562,15 @@ function AddStoreDialog({
                 id="store-city"
                 placeholder="e.g. Surat"
                 value={city}
-                onChange={(e) => setCity(e.target.value)}
+                aria-invalid={!!errors.city}
+                onChange={(e) => {
+                  setCity(e.target.value);
+                  clearError("city");
+                }}
               />
+              {errors.city ? (
+                <p className="mt-1 text-xs text-destructive">{errors.city}</p>
+              ) : null}
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="store-code">Code</Label>
@@ -619,6 +648,8 @@ function EditStoreDialog({
   const [latitude, setLatitude] = useState("");
   const [longitude, setLongitude] = useState("");
   const [isActive, setIsActive] = useState(true);
+  // Inline validation errors, keyed by field. Cleared per-field on change.
+  const [errors, setErrors] = useState<Record<string, string>>({});
   // Re-seed the form whenever a different store is opened.
   const [seededId, setSeededId] = useState<string | null>(null);
   if (store && store.id !== seededId) {
@@ -629,16 +660,23 @@ function EditStoreDialog({
     setLatitude(store.latitude != null ? String(store.latitude) : "");
     setLongitude(store.longitude != null ? String(store.longitude) : "");
     setIsActive(store.isActive);
+    setErrors({});
+  }
+
+  function clearError(field: string) {
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
   }
 
   function save() {
     if (!store) return;
-    if (!name.trim()) {
-      toast.error("Store name is required.");
-      return;
-    }
-    if (!city.trim()) {
-      toast.error("City is required.");
+    const next: Record<string, string> = {};
+    if (!name.trim()) next.name = "Store name is required.";
+    else if (!isRealName(name))
+      next.name = "Enter a real store name (letters, not just a number).";
+    if (!city.trim()) next.city = "City is required.";
+    if (Object.keys(next).length > 0) {
+      setErrors(next);
+      toast.error("Please fill in the required fields.");
       return;
     }
     const lat = parseCoord(latitude, "Latitude");
@@ -682,20 +720,38 @@ function EditStoreDialog({
         </DialogHeader>
         <div className="grid gap-3">
           <div className="grid gap-1.5">
-            <Label htmlFor="edit-name">Store name</Label>
+            <Label htmlFor="edit-name">
+              Store name <span className="text-destructive">*</span>
+            </Label>
             <Input
               id="edit-name"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              aria-invalid={!!errors.name}
+              onChange={(e) => {
+                setName(e.target.value);
+                clearError("name");
+              }}
             />
+            {errors.name ? (
+              <p className="mt-1 text-xs text-destructive">{errors.name}</p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="edit-city">City</Label>
+            <Label htmlFor="edit-city">
+              City <span className="text-destructive">*</span>
+            </Label>
             <Input
               id="edit-city"
               value={city}
-              onChange={(e) => setCity(e.target.value)}
+              aria-invalid={!!errors.city}
+              onChange={(e) => {
+                setCity(e.target.value);
+                clearError("city");
+              }}
             />
+            {errors.city ? (
+              <p className="mt-1 text-xs text-destructive">{errors.city}</p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="edit-region">Region</Label>
@@ -843,6 +899,12 @@ function AddManagerDialog({
   const [createdEmail, setCreatedEmail] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [seededId, setSeededId] = useState<string | null>(null);
+  // Inline validation errors, keyed by field. Cleared per-field on change.
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  function clearError(field: string) {
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
+  }
 
   // Reset form state when a different store's dialog opens.
   if (store && store.id !== seededId) {
@@ -853,20 +915,26 @@ function AddManagerDialog({
     setPassword("");
     setCreatedEmail(null);
     setCopied(false);
+    setErrors({});
   }
 
   function save() {
     if (!store) return;
-    if (!name.trim()) {
-      toast.error("Manager name is required.");
-      return;
-    }
-    if (!email.trim()) {
-      toast.error("Email is required.");
-      return;
-    }
-    if (password.length < 8) {
-      toast.error("Password must be at least 8 characters.");
+    const next: Record<string, string> = {};
+    if (!name.trim()) next.name = "Manager name is required.";
+    else if (!isRealName(name))
+      next.name = "Enter a real name (letters, not just a number).";
+    if (!email.trim()) next.email = "Email is required.";
+    else if (!isValidEmail(email)) next.email = "Enter a valid email address.";
+    // Phone is optional; only validate/normalise when one is entered.
+    const normalizedPhone = phone.trim() ? normalizeIndianMobile(phone) : null;
+    if (phone.trim() && !normalizedPhone)
+      next.phone = "Enter a valid 10-digit mobile number.";
+    if (password.length < 8)
+      next.password = "Password must be at least 8 characters.";
+    if (Object.keys(next).length > 0) {
+      setErrors(next);
+      toast.error("Please fill in the required fields.");
       return;
     }
     addManager.mutate(
@@ -874,7 +942,7 @@ function AddManagerDialog({
         storeId: store.id,
         name: name.trim(),
         email: email.trim(),
-        phone: phone.trim() || undefined,
+        phone: normalizedPhone ?? undefined,
         password,
       },
       {
@@ -954,8 +1022,15 @@ function AddManagerDialog({
                   id="mgr-name"
                   placeholder="e.g. Rhea Kapoor"
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  aria-invalid={!!errors.name}
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    clearError("name");
+                  }}
                 />
+                {errors.name ? (
+                  <p className="mt-1 text-xs text-destructive">{errors.name}</p>
+                ) : null}
               </div>
               <div className="grid gap-1.5">
                 <Label htmlFor="mgr-email">
@@ -967,17 +1042,32 @@ function AddManagerDialog({
                   autoComplete="off"
                   placeholder="manager@caratsense.in"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  aria-invalid={!!errors.email}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    clearError("email");
+                  }}
                 />
+                {errors.email ? (
+                  <p className="mt-1 text-xs text-destructive">{errors.email}</p>
+                ) : null}
               </div>
               <div className="grid gap-1.5">
                 <Label htmlFor="mgr-phone">Phone</Label>
                 <Input
                   id="mgr-phone"
                   placeholder="+91 ..."
+                  inputMode="tel"
                   value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
+                  aria-invalid={!!errors.phone}
+                  onChange={(e) => {
+                    setPhone(capIndianPhone(e.target.value));
+                    clearError("phone");
+                  }}
                 />
+                {errors.phone ? (
+                  <p className="mt-1 text-xs text-destructive">{errors.phone}</p>
+                ) : null}
               </div>
               <div className="grid gap-1.5">
                 <Label htmlFor="mgr-password">
@@ -990,11 +1080,21 @@ function AddManagerDialog({
                   autoComplete="new-password"
                   placeholder="At least 8 characters"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  aria-invalid={!!errors.password}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    clearError("password");
+                  }}
                 />
-                <p className="text-xs text-muted-foreground">
-                  Share this with the manager; they can change it in Settings.
-                </p>
+                {errors.password ? (
+                  <p className="mt-1 text-xs text-destructive">
+                    {errors.password}
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Share this with the manager; they can change it in Settings.
+                  </p>
+                )}
               </div>
             </div>
             <DialogFooter>

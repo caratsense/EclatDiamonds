@@ -23,9 +23,27 @@ if not exist "eclat_config.bat" (
 )
 call eclat_config.bat
 
-if exist "_pyexe.bat" (call "_pyexe.bat") else (set "PYEXE=python")
+call "%~dp0require_runtime.bat"
+if errorlevel 1 (
+  pause
+  exit /b 21
+)
+
+"%PYEXE%" gati_target_safety.py backend
+if errorlevel 1 (
+  echo Run 2_configure.bat and explicitly review the backend target.
+  pause
+  exit /b 20
+)
 
 "%PYEXE%" sync_sjep.py --dry-run
+set "PREVIEW_EXIT=%ERRORLEVEL%"
+if not "%PREVIEW_EXIT%"=="0" (
+  echo.
+  echo [PROBLEM] Preview failed. Nothing was sent; fix the error before step 5.
+  pause
+  endlocal & exit /b %PREVIEW_EXIT%
+)
 
 echo.
 echo ============================================================
@@ -39,4 +57,4 @@ echo   If the numbers look right:  5_first_sync.bat
 echo ============================================================
 echo.
 pause
-endlocal
+endlocal & exit /b 0

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   HttpException,
   HttpStatus,
@@ -8,10 +9,11 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
-import { randomInt } from 'crypto';
+import { randomInt, randomUUID } from 'crypto';
 import { OAuth2Client, type TokenPayload } from 'google-auth-library';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
@@ -20,8 +22,13 @@ import { AuditService } from '../common/audit.service';
 import { ROLE_RANK } from '../common/role.util';
 import { WhatsAppService } from '../integrations/whatsapp.service';
 import { SignupDto } from './dto/signup.dto';
+import { CreateOrganisationDto } from './dto/create-organisation.dto';
 import { uniqueEmailHandle } from '../users/users.util';
 import { LoginLockout } from './login-lockout';
+import { DEFAULT_PACK_CODE, getPack, listPacks } from '../config/industry-packs/packs';
+import { provisionIndustryPack } from '../config/industry-packs/provision';
+import { packQuestions } from '../config/industry-packs/pack-managed';
+import { DEFAULT_QUALIFICATION_POLICY } from '../crm/qualification-policy';
 
 /** OTP policy — one place to tune. */
 const OTP_TTL_MS = 5 * 60 * 1000; // code valid 5 minutes
@@ -36,6 +43,32 @@ const GOOGLE_ISSUERS = ['accounts.google.com', 'https://accounts.google.com'];
 function storeView(s: { id: string; name: string; city: string; isAggregate: boolean }) {
   return { id: s.id, name: s.name, city: s.city, isAggregate: s.isAggregate || undefined };
 }
+
+function organisationSlug(name: string): string {
+  const base =
+    name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 42) || 'organisation';
+  // Always suffix: public signup must stay race-safe without a read-then-create
+  // uniqueness window, and the slug is an identifier rather than a brand label.
+  return `${base}-${randomUUID().slice(0, 8)}`;
+}
+
+function initialsOf(name: string): string {
+  return (
+    name
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase() ?? '')
+      .join('') || name.trim().slice(0, 2).toUpperCase()
+  );
+}
+
+
 
 @Injectable()
 export class AuthService {
@@ -175,6 +208,7 @@ export class AuthService {
       name: user.name,
       email: user.email,
       role: user.role,
+      organisationId: user.organisationId ?? '',
       storeIds: session.stores.filter((s) => !s.isAggregate).map((s) => s.id),
       allStores: user.role === 'head_office',
     };
@@ -209,15 +243,30 @@ export class AuthService {
     const contactEmail = dto.email?.trim().toLowerCase() || null;
     const phone = dto.phone?.trim() || null;
 
-    const store = await this.prisma.store.findUnique({ where: { id: dto.requestedStoreId } });
+    const store = await this.prisma.store.findUnique({
+      where: { id: dto.requestedStoreId },
+      // The organisation's slug scopes the generated login handle to this tenant.
+      include: { organisation: { select: { slug: true } } },
+    });
     if (!store || store.isAggregate) {
       throw new BadRequestException('Choose a valid store');
     }
+    // Organisation is resolved from the EXPLICITLY chosen store — a trusted signal,
+    // never a first-store/alphabetical/Surat fallback. A store with no organisation
+    // cannot attribute a signup, so refuse rather than guess.
+    if (!store.organisationId) {
+      throw new BadRequestException('That store is not available for signup');
+    }
 
     // The LOGIN identity is a generated, unique handle — never the personal email
-    // (which is optional and may be shared). "shreyansh.mumbaibandra@eclatdiamonds.in".
-    const email = await uniqueEmailHandle(dto.name, store.name, async (candidate) =>
-      !!(await this.prisma.user.findUnique({ where: { email: candidate }, select: { id: true } })),
+    // (which is optional and may be shared) — and it is scoped to the tenant that
+    // owns the chosen store: "priya.andheri@sunrise-clinic.accounts.caratos.invalid".
+    const email = await uniqueEmailHandle(
+      dto.name,
+      store.name,
+      store.organisation?.slug,
+      async (candidate) =>
+        !!(await this.prisma.user.findUnique({ where: { email: candidate }, select: { id: true } })),
     );
 
     const passwordHash = await bcrypt.hash(dto.password, 10);
@@ -233,6 +282,9 @@ export class AuthService {
         passwordHash,
         isActive: false,
         approvalStatus: 'pending',
+        // Organisation of the explicitly chosen store — the pending user belongs to
+        // that tenant from the moment they sign up (approval never crosses orgs).
+        organisationId: store.organisationId,
         requestedRole: dto.requestedRole,
         requestedStoreId: dto.requestedStoreId,
       },
@@ -245,6 +297,233 @@ export class AuthService {
         dto.requestedRole === 'salesperson'
           ? 'Request sent. Your store manager will approve your account.'
           : 'Request sent. Head office will approve your account.',
+    };
+  }
+
+  /** Public, non-secret catalogue used by the create-organisation screen. */
+  availableIndustries() {
+    return { packs: listPacks(), defaultPackCode: DEFAULT_PACK_CODE };
+  }
+
+  /**
+   * Create a brand-new tenant and its first owner/location as one transaction.
+   * This is deliberately separate from employee self-signup: an employee may
+   * request access to an existing tenant, while this route may grant head_office
+   * only inside the tenant it creates itself.
+   */
+  async createOrganisation(dto: CreateOrganisationDto) {
+    const pack = getPack(dto.industryCode);
+    if (!pack) {
+      throw new BadRequestException(
+        `Choose a supported industry: ${listPacks().map((item) => item.code).join(', ')}.`,
+      );
+    }
+
+    const email = dto.email.trim().toLowerCase();
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email },
+      select: { id: true },
+    });
+    if (existingUser) {
+      /*
+       * Deliberately generic, and deliberately the same sentence whatever the
+       * cause.
+       *
+       * This endpoint is PUBLIC and matches on email across every tenant, so a
+       * precise "that account exists" answered, for anyone who cared to ask,
+       * whether a given person banks with a competitor of ours. /auth/login
+       * already refuses to leak that (it returns one message for a bad email and
+       * a bad password alike); this route was the hole in the same wall.
+       *
+       * The cost is a worse message for the honest case, so the text points at
+       * the two things a real signer-up can actually do about it.
+       */
+      throw new ConflictException(
+        'We could not create an organisation with those details. If you already have a ' +
+          'CaratOS account, sign in instead — or ask your administrator to invite you.',
+      );
+    }
+
+    const organisationName = dto.organisationName.trim();
+    const ownerName = dto.ownerName.trim();
+    const primaryLocationName = dto.primaryLocationName.trim();
+    const city = dto.city.trim();
+    const slug = organisationSlug(organisationName);
+    const passwordHash = await bcrypt.hash(dto.password, 10);
+
+    // AI qualification and drafting are non-sending assistance. Auto-send is
+    // always false until the owner explicitly enables it after connecting a
+    // provider/channel. No existing tenant credential is copied or referenced.
+    const settings = {
+      branding: { displayName: organisationName },
+      featureProfile: {
+        industryCode: pack.code,
+        /*
+         * `enabledNavigation` is NOT stored here any more.
+         *
+         * It used to be frozen into this object at signup and never rewritten,
+         * so a tenant who changed industry afterwards kept the original
+         * industry's menu for ever. Both the sidebar and the entitlement guard
+         * now derive it from the applied pack on every read — one answer, always
+         * current — and a second copy here could only go stale and disagree.
+         */
+        mandatoryCapabilities: [
+          'omnichannel_crm',
+          'ai_catalogue',
+          'attendance',
+          'imports',
+          'integrations',
+        ],
+      },
+      crmAiQualificationEnabled: true,
+      crmAiDraftEnabled: true,
+      crmAiAutoSendEnabled: false,
+      /*
+       * `crmAiIndustryContext` and `crmQualificationFields` are no longer
+       * written. Both were dead: a repo-wide search found this line as their
+       * only mention, with no reader anywhere. The industry's AI context now
+       * comes from the pack on every read (GET /config/bootstrap →
+       * industry.aiContext), and the qualification fields live where they are
+       * actually used — as the structured questions below.
+       */
+      crmQualification: {
+        ...DEFAULT_QUALIFICATION_POLICY,
+        /*
+         * Left at the platform default, which is OFF.
+         *
+         * Signup used to force this true, contradicting
+         * DEFAULT_QUALIFICATION_POLICY and the comment beside it: "turning on an
+         * assessment that starts scoring people the moment the code ships is not
+         * a decision the platform gets to make". A brand-new tenant is exactly
+         * the case that comment is about — nobody has read the policy, and no
+         * knowledge has been loaded for it to score against. Head office turns
+         * it on from the configuration screen when they mean to.
+         */
+        questions: packQuestions(pack),
+      },
+      attendanceSetupRequired: true,
+      catalogueMode: 'ai_assisted',
+    };
+
+    let created: {
+      organisation: { id: string; name: string; slug: string };
+      owner: { id: string; name: string; email: string; role: AuthUser['role'] };
+      store: { id: string };
+      packCounts: Awaited<ReturnType<typeof provisionIndustryPack>>;
+    };
+    try {
+      created = await this.prisma.$transaction(async (tx) => {
+        const organisation = await tx.organisation.create({
+          data: {
+            name: organisationName,
+            slug,
+            status: 'onboarding',
+            country: 'IN',
+            currency: 'INR',
+            timezone: 'Asia/Kolkata',
+            settings: settings as unknown as Prisma.InputJsonValue,
+          },
+          select: { id: true, name: true, slug: true },
+        });
+
+        const region = await tx.region.create({
+          data: {
+            organisationId: organisation.id,
+            name: 'Primary region',
+            code: 'PRIMARY',
+          },
+          select: { id: true },
+        });
+        const store = await tx.store.create({
+          data: {
+            organisationId: organisation.id,
+            regionId: region.id,
+            name: primaryLocationName,
+            city,
+            code: 'main',
+            status: 'active',
+            isActive: true,
+            country: 'IN',
+            email,
+            timezone: 'Asia/Kolkata',
+          },
+          select: { id: true },
+        });
+        const owner = await tx.user.create({
+          data: {
+            organisationId: organisation.id,
+            name: ownerName,
+            email,
+            contactEmail: email,
+            phone: dto.phone?.trim() || null,
+            initials: initialsOf(ownerName),
+            role: 'head_office',
+            passwordHash,
+            isActive: true,
+            approvalStatus: 'approved',
+          },
+          select: { id: true, name: true, email: true, role: true },
+        });
+        await tx.userStore.create({
+          data: {
+            userId: owner.id,
+            storeId: store.id,
+            role: 'head_office',
+            isPrimary: true,
+          },
+        });
+
+        const packCounts = await provisionIndustryPack(tx, organisation.id, pack);
+        return { organisation, owner, store, packCounts };
+      }, { maxWait: 5_000, timeout: 20_000 });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new ConflictException(
+          'That login or organisation identifier is already in use. Try signing in instead.',
+        );
+      }
+      throw err;
+    }
+
+    const actor: AuthUser = {
+      id: created.owner.id,
+      name: created.owner.name,
+      email: created.owner.email,
+      role: created.owner.role,
+      organisationId: created.organisation.id,
+      storeIds: [created.store.id],
+      allStores: true,
+    };
+    await this.audit.record(actor, {
+      action: 'organisation.self_service_created',
+      entityType: 'Organisation',
+      entityId: created.organisation.id,
+      storeId: created.store.id,
+      summary: `Created organisation ${created.organisation.name} with ${pack.name}`,
+      metadata: {
+        industryCode: pack.code,
+        industryVersion: pack.version,
+        ...created.packCounts,
+      },
+    });
+
+    const token = await this.jwt.signAsync({
+      sub: created.owner.id,
+      email: created.owner.email,
+      name: created.owner.name,
+      role: created.owner.role,
+    });
+    const session = await this.buildSession(created.owner.id, created.owner.role);
+    return {
+      token,
+      ...session,
+      organisation: {
+        id: created.organisation.id,
+        name: created.organisation.name,
+        slug: created.organisation.slug,
+        industryCode: pack.code,
+        industryName: pack.name,
+      },
     };
   }
 
@@ -315,19 +594,28 @@ export class AuthService {
     return digits.slice(-10);
   }
 
-  /** Find the ACTIVE user whose stored phone matches on the last 10 digits. */
+  /**
+   * Find the ACTIVE user whose stored phone matches on the last 10 digits.
+   *
+   * Phone is NOT unique in the DB and there is NO tenant-aware login context yet
+   * (no subdomain/slug resolving the org at OTP time), so a last-10 match can span
+   * organisations. Rather than silently pick one — which could authenticate into
+   * the WRONG org — we FAIL CLOSED: if the match resolves to more than one active
+   * user, or to more than one organisation, return null (OTP simply won't send /
+   * verify). This only prevents wrong-org resolution; it does NOT enable the same
+   * phone to log in to two orgs. The real fix is a tenant-aware login flow that
+   * resolves the org up front (see report).
+   */
   private async findUserByPhone(last10: string) {
-    // User.phone is NOT unique in the DB (legacy data risk) — match in code.
     const candidates = await this.prisma.user.findMany({
       where: { isActive: true, phone: { not: null } },
-      orderBy: { createdAt: 'desc' }, // deterministic pick if legacy duplicates exist
     });
-    return (
-      candidates.find((u) => {
-        const digits = (u.phone ?? '').replace(/\D/g, '');
-        return digits.length >= 10 && digits.slice(-10) === last10;
-      }) ?? null
-    );
+    const matches = candidates.filter((u) => {
+      const digits = (u.phone ?? '').replace(/\D/g, '');
+      return digits.length >= 10 && digits.slice(-10) === last10;
+    });
+    if (matches.length !== 1) return null; // 0 = unknown, >1 = ambiguous → fail closed
+    return matches[0];
   }
 
   /**
@@ -337,7 +625,6 @@ export class AuthService {
    */
   async requestOtp(phone: string) {
     const last10 = this.normalizePhone(phone);
-    const dryRun = !this.whatsapp.enabled;
 
     // Rate limits (rows only ever exist for real accounts).
     const now = Date.now();
@@ -365,7 +652,11 @@ export class AuthService {
     }
 
     const user = await this.findUserByPhone(last10);
-    if (!user) return { sent: true, dryRun }; // do NOT leak which phones exist
+    // Whether sending is possible is now a property of the USER'S organisation,
+    // which we only know once the user is found. For an unknown phone we report
+    // the platform-neutral `dryRun: false` — the response must look identical
+    // either way, or it becomes an oracle for which numbers have accounts.
+    if (!user) return { sent: true, dryRun: false };
 
     // crypto.randomInt — never Math.random for auth codes.
     const code = String(randomInt(100000, 999999));
@@ -374,11 +665,17 @@ export class AuthService {
       data: { phone: last10, codeHash, expiresAt: new Date(now + OTP_TTL_MS) },
     });
 
+    // The OTP goes out on the number belonging to the USER'S OWN organisation.
+    // Resolved from the looked-up user record, never from the request — the
+    // caller supplies only a phone number and must not be able to influence
+    // which tenant's sender is used.
     const result = await this.whatsapp.sendText(
+      user.organisationId!,
       user.phone!,
       `Your Eclat sign-in code is ${code}. It expires in 5 minutes. Do not share it.`,
     );
-    if (result.dryRun) {
+    const dryRun = result.dryRun;
+    if (dryRun) {
       // WhatsApp unconfigured: surface the code in server logs ONLY, so cloud
       // testing works via deploy logs. Never logged when sending is live.
       this.logger.log(`[OTP dry-run] phone=${last10} code=${code}`);
@@ -456,15 +753,32 @@ export class AuthService {
 
   private async buildSession(userId: string, role: AuthUser['role']) {
     const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
-    const { storeIds, allStores } = await this.scope.resolveScope(userId, role);
+    const organisation = user.organisationId
+      ? await this.prisma.organisation.findUnique({
+          where: { id: user.organisationId },
+          select: { industryPackCode: true, settings: true },
+        })
+      : null;
+    const { storeIds, allStores } = await this.scope.resolveScope(
+      userId,
+      role,
+      user.organisationId ?? '',
+    );
 
+    // `storeIds` is already organisation-bounded (head_office => every store of the
+    // user's org, never global), so filtering by it is inherently org-safe.
     const stores = await this.prisma.store.findMany({
-      where: allStores ? { isAggregate: false } : { id: { in: storeIds } },
+      where: { id: { in: storeIds } },
       orderBy: { name: 'asc' },
     });
 
-    // Broad roles get the synthetic "All Stores" aggregate appended (frontend ALL_STORES).
-    const aggregate = await this.prisma.store.findFirst({ where: { isAggregate: true } });
+    // Broad roles get the synthetic "All Stores" aggregate appended — scoped to the
+    // user's own organisation so it can never surface another tenant's aggregate.
+    const aggregate = user.organisationId
+      ? await this.prisma.store.findFirst({
+          where: { isAggregate: true, organisationId: user.organisationId },
+        })
+      : null;
     const storeViews = stores.map(storeView);
     if ((allStores || role === 'area_manager') && aggregate) {
       storeViews.push(storeView(aggregate));
@@ -499,6 +813,21 @@ export class AuthService {
       role,
       stores: storeViews,
       currentStore,
+      productProfile: {
+        industryPackCode: organisation?.industryPackCode ?? null,
+        /*
+         * From the pack, not from stored settings.
+         *
+         * This value picks the post-login landing route, and reading it from the
+         * frozen copy in settings meant a tenant who changed industry could be
+         * sent, once per sign-in, to a screen their product no longer includes.
+         * Deriving it here uses the same source GET /config/bootstrap uses, so
+         * the destination is always inside the navigation the sidebar will draw.
+         */
+        enabledNavigation: getPack(organisation?.industryPackCode)?.onboarding?.enabledNavigation ?? null,
+      },
     };
   }
 }
+
+

@@ -29,6 +29,12 @@ export interface CheckIn {
   customer: string;
   /** New walk-in vs returning CRM customer. */
   returning: boolean;
+  /**
+   * The linked customer record, when the phone resolved to one. Null is a real
+   * answer — no phone was given, or it matched nobody — and the UI must not
+   * offer customer actions that would have nothing to act on.
+   */
+  partyId?: string | null;
   phone: string;
   partySize: number;
   purpose: VisitPurpose;
@@ -36,8 +42,14 @@ export interface CheckIn {
   repId: string;
   repName: string;
   repInitials: string;
-  /** HH:mm. */
+  /** HH:mm, at the BRANCH's own clock — not the browser's and not UTC. */
   timeIn: string;
+  /**
+   * The arrival as a real instant. `timeIn` above has no date in it, so this is
+   * the only field that can answer "was this today"; the tiles that read as
+   * today's footfall were counting the whole log before it existed.
+   */
+  timeInAt?: string | null;
   /** HH:mm, null while customer is still in store. */
   timeOut: string | null;
   /** Minutes spent in store; null while in-store. */

@@ -35,6 +35,7 @@ import {
   useAddLedgerEntry,
   useFinanceBudget,
   useFinanceCashflow,
+  useFinanceExpenses,
   useFinanceLedger,
   useFinanceSummary,
   type LedgerKind,
@@ -49,6 +50,8 @@ import { apiErrorMessage } from "@/lib/utils";
 export default function FinancePage() {
   const item = getNavItem("finance");
   const [addOpen, setAddOpen] = useState(false);
+  const [opexOpen, setOpexOpen] = useState(false);
+  const expensesQuery = useFinanceExpenses(opexOpen);
 
   // All four cards/charts/tables come live from the API, store-scoped.
   const summaryQuery = useFinanceSummary();
@@ -87,16 +90,34 @@ export default function FinancePage() {
           ? Array.from({ length: 4 }).map((_, i) => (
               <Skeleton key={i} className="h-28 rounded-xl" />
             ))
-          : summary.map((c) => (
-              <KpiCard
-                key={c.id}
-                label={c.label}
-                value={c.value}
-                format="inr"
-                delta={c.delta}
-                invertDelta={c.invertDelta}
-              />
-            ))}
+          : summary.map((c) =>
+              c.id === "opex" ? (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => setOpexOpen(true)}
+                  className="w-full text-left transition hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-xl"
+                  aria-label="View operating expense breakdown"
+                >
+                  <KpiCard
+                    label={c.label}
+                    value={c.value}
+                    format="inr"
+                    delta={c.delta}
+                    invertDelta={c.invertDelta}
+                  />
+                </button>
+              ) : (
+                <KpiCard
+                  key={c.id}
+                  label={c.label}
+                  value={c.value}
+                  format="inr"
+                  delta={c.delta}
+                  invertDelta={c.invertDelta}
+                />
+              ),
+            )}
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -125,6 +146,46 @@ export default function FinancePage() {
       </div>
 
       <AddEntryDialog open={addOpen} onOpenChange={setAddOpen} />
+
+      <Dialog open={opexOpen} onOpenChange={setOpexOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Operating expenses — this month</DialogTitle>
+            <DialogDescription>
+              Breakdown by account, store-scoped. Reconciles with the Operating
+              Expense KPI.
+            </DialogDescription>
+          </DialogHeader>
+          {expensesQuery.isLoading ? (
+            <Skeleton className="h-40 rounded-lg" />
+          ) : expensesQuery.data?.items.length ? (
+            <div className="divide-y">
+              {expensesQuery.data.items.map((x) => (
+                <div
+                  key={x.account}
+                  className="flex items-center justify-between py-2 text-sm"
+                >
+                  <span className="text-muted-foreground">{x.account}</span>
+                  <span className="num font-medium">
+                    ₹{Math.round(x.amount).toLocaleString("en-IN")}
+                  </span>
+                </div>
+              ))}
+              <div className="flex items-center justify-between pt-3 text-sm font-semibold">
+                <span>Total</span>
+                <span className="num">
+                  ₹
+                  {Math.round(expensesQuery.data.total).toLocaleString("en-IN")}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              No operating expenses recorded this month.
+            </p>
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

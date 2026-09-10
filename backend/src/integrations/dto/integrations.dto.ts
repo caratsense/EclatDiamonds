@@ -1,15 +1,22 @@
 import {
   IsArray,
   IsEmail,
+  IsIn,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsPositive,
   IsString,
   MaxLength,
+  Matches,
 } from 'class-validator';
+import { IsIndianMobile, IsRealName } from '../../common/contact.util';
 
 export class SendWhatsAppDto {
+  // `to` may be a phone number OR a WhatsApp group id, so we only require
+  // non-empty here and skip @IsIndianMobile (a group id is not a mobile).
   @IsString()
+  @IsNotEmpty()
   @MaxLength(20)
   to!: string;
 
@@ -34,6 +41,41 @@ export class SendWhatsAppDto {
   @IsOptional()
   @IsArray()
   components?: unknown[];
+
+  /**
+   * Why this message is being sent. Defaults to `service`, which is what every
+   * historic caller of this endpoint meant — a quote, a reminder, a DSR reply.
+   * `marketing` additionally requires recorded consent and is refused without it.
+   */
+  @IsOptional()
+  @IsIn(['service', 'marketing'])
+  purpose?: 'service' | 'marketing';
+
+  /** Repeat submissions with the same key resolve to the same outbound message. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  idempotencyKey?: string;
+}
+
+export class RegisterMetaAssetDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(128)
+  integrationId!: string;
+
+  @IsString()
+  @IsIn(['page', 'ad_account', 'form'])
+  kind!: 'page' | 'ad_account' | 'form';
+
+  @IsString()
+  @Matches(/^\d{3,64}$/)
+  externalId!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  name?: string;
 }
 
 export class CreatePaymentLinkDto {
@@ -43,15 +85,19 @@ export class CreatePaymentLinkDto {
   amount!: number;
 
   @IsString()
+  @IsNotEmpty()
   @MaxLength(120)
+  @IsRealName()
   customerName!: string;
 
   /** Store the resulting payment is attributed to (must be in caller's scope). */
   @IsString()
+  @IsNotEmpty()
   storeId!: string;
 
   @IsOptional()
   @IsString()
+  @IsIndianMobile()
   @MaxLength(20)
   phone?: string;
 

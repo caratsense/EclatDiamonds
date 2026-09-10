@@ -30,12 +30,12 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn, apiErrorMessage } from "@/lib/utils";
+import { useStoresAdmin } from "@/lib/queries/stores";
 import {
   StoreScopeField,
   useStoreScope,
 } from "@/components/common/store-scope-field";
 import {
-  MOCK_WEEK_OFF,
   WEEK_DAYS,
   WEEK_DAYS_SHORT,
   type Holiday,
@@ -203,10 +203,17 @@ function WeekOffCard({
   canEdit: boolean;
 }) {
   const setWeekOff = useSetWeekOff();
-  // No GET for week-off — seed from the known default, then track locally.
-  const seeded = MOCK_WEEK_OFF[storeId] ?? 0;
-  const [day, setDay] = useState<number>(seeded);
-  const [saved, setSaved] = useState<number>(seeded);
+  // The store's own saved value, not a hardcoded default: the control used to
+  // seed from a constant, so it could confidently display a day that was not
+  // the one actually configured.
+  const { data: stores } = useStoresAdmin();
+  const saved0 = stores?.find((s) => s.id === storeId)?.weekOffDay ?? null;
+  const [day, setDay] = useState<number | null>(null);
+  const [saved, setSaved] = useState<number | null>(null);
+  // `?? saved0` keeps the card correct on first render and after the query
+  // resolves, while still honouring a change the user just made.
+  const shownDay = day ?? saved0 ?? 0;
+  const shownSaved = saved ?? saved0;
 
   function save() {
     if (!storeId) {
@@ -214,11 +221,11 @@ function WeekOffCard({
       return;
     }
     setWeekOff.mutate(
-      { storeId, weekOffDay: day },
+      { storeId, weekOffDay: shownDay },
       {
         onSuccess: () => {
-          setSaved(day);
-          toast.success(`Weekly off set to ${WEEK_DAYS[day]}`, {
+          setSaved(shownDay);
+          toast.success(`Weekly off set to ${WEEK_DAYS[shownDay]}`, {
             description: `Applies to ${storeName}.`,
           });
         },
@@ -241,7 +248,7 @@ function WeekOffCard({
       <CardContent className="space-y-3">
         <div className="grid grid-cols-7 gap-1.5">
           {WEEK_DAYS_SHORT.map((label, idx) => {
-            const active = day === idx;
+            const active = shownDay === idx;
             return (
               <button
                 key={label}
@@ -264,14 +271,19 @@ function WeekOffCard({
         </div>
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs text-muted-foreground">
-            Current: <span className="font-medium text-foreground">{WEEK_DAYS[saved]}</span>
+            Current:{" "}
+            <span className="font-medium text-foreground">
+              {/* No weekly off configured is a real state, and saying "Sunday"
+                  when nothing is set is how a wrong roster gets published. */}
+              {shownSaved == null ? "not set" : WEEK_DAYS[shownSaved]}
+            </span>
           </p>
           {canEdit ? (
             <Button
               size="sm"
               variant="outline"
               onClick={save}
-              disabled={setWeekOff.isPending || day === saved}
+              disabled={setWeekOff.isPending || shownDay === shownSaved}
             >
               {setWeekOff.isPending ? "Saving…" : "Save"}
             </Button>

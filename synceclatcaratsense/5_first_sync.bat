@@ -21,7 +21,18 @@ if not exist "eclat_config.bat" (
 )
 call eclat_config.bat
 
-if exist "_pyexe.bat" (call "_pyexe.bat") else (set "PYEXE=python")
+call "%~dp0require_runtime.bat"
+if errorlevel 1 (
+  pause
+  exit /b 21
+)
+
+"%PYEXE%" gati_target_safety.py backend
+if errorlevel 1 (
+  echo Run 2_configure.bat and explicitly review the backend target.
+  pause
+  exit /b 20
+)
 
 set "BATCH=%~1"
 if "%BATCH%"=="" set "BATCH=25"
@@ -41,6 +52,19 @@ if /I "%BATCH%"=="all" (
 ) else (
   "%PYEXE%" sync_sjep.py --limit %BATCH%
 )
+set "SYNC_EXIT=%ERRORLEVEL%"
+if not "%SYNC_EXIT%"=="0" (
+  echo.
+  echo [PROBLEM] The send failed. No completion receipt was written.
+  pause
+  endlocal & exit /b %SYNC_EXIT%
+)
+
+if /I "%BATCH%"=="all" (
+  if not exist "reports" mkdir "reports"
+  > "reports\full_sync_completed.txt" echo Full manual sync completed successfully at %DATE% %TIME%.
+  >> "reports\full_sync_completed.txt" echo Review the dashboard before approving automatic scheduling.
+)
 
 echo.
 echo ============================================================
@@ -57,8 +81,13 @@ if /I not "%BATCH%"=="all" (
   echo     5_first_sync.bat all
   echo.
 )
+if /I "%BATCH%"=="all" (
+  echo   Full-run receipt written: reports\full_sync_completed.txt
+  echo   Review the dashboard before approving automation.
+  echo.
+)
 echo   Once EVERYTHING is correct, and only then:
-echo     install_scheduler.bat   ^(right-click, Run as administrator^)
+echo     install_scheduler.bat   ^(run normally; never Run as administrator^)
 echo ============================================================
 echo.
 pause

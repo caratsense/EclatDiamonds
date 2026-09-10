@@ -1,7 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { KanbanSquare, Table as TableIcon, Users } from "lucide-react";
+import Link from "next/link";
+import {
+  ArrowDown,
+  ArrowUp,
+  Globe,
+  KanbanSquare,
+  MessageSquare,
+  Phone,
+  QrCode,
+  Rows3,
+  Users,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { LeadCard } from "@/components/crm/lead-card";
@@ -28,6 +39,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { StatusPill, TEMPERATURE_TONE } from "@/components/ui/status-pill";
 import {
   Table,
   TableBody,
@@ -40,9 +52,9 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { getNavItem } from "@/lib/navigation";
 import {
+  LEAD_SOURCE_FILTER_OPTIONS,
   LEAD_SOURCE_LABELS,
   LEAD_SOURCE_OPTIONS,
-  LEAD_STAGES,
   type Lead,
   type LeadSource,
   type LeadStage,
@@ -53,7 +65,10 @@ import {
   useCreateLead,
   type LeadOutcomeFilter,
 } from "@/lib/queries/leads";
+import { OmnichannelKpis } from "@/components/crm/omnichannel-kpis";
+import { useLeadStages } from "@/lib/queries/crm";
 import { useSession } from "@/store/use-session";
+import { useQuickAction } from "@/store/use-quick-action";
 import {
   StoreScopeField,
   useStoreScope,
@@ -61,6 +76,43 @@ import {
 import { apiErrorMessage, normalizeIndianMobile } from "@/lib/utils";
 
 const nav = getNavItem("crm")!;
+
+/** Which column the dense table is ordered by. */
+type SortKey = "customer" | "source" | "temperature" | "rep" | "due" | "created";
+
+/**
+ * The next follow-up somebody still owes this customer, as yyyy-mm-dd.
+ *
+ * Null when every follow-up is done — which is a different thing from "no date"
+ * and is rendered as such. The two SOP follow-ups arrive in no guaranteed
+ * order, so the earliest open one is taken rather than the first in the array.
+ */
+function nextDue(lead: Lead): string | null {
+  const open = (lead.followUps ?? []).filter((f) => !f.done).map((f) => f.dueDate);
+  return open.length ? open.sort()[0] : null;
+}
+
+/** The value a row sorts on for a given column. Strings compare lexically. */
+function sortValue(lead: Lead, key: SortKey): string {
+  switch (key) {
+    case "customer":
+      return lead.customer.toLocaleLowerCase();
+    case "source":
+      return LEAD_SOURCE_LABELS[lead.source] ?? lead.source;
+    case "temperature":
+      // Ranked, not alphabetical: "cold" before "hot" before "warm" is nobody's
+      // idea of a priority order.
+      return { hot: "1", warm: "2", cold: "3" }[lead.temperature] ?? "9";
+    case "rep":
+      // Unassigned sorts last in ascending order rather than first, because an
+      // empty string beats every name and would fill the top of the table.
+      return lead.assignedRep?.toLocaleLowerCase() || "￿";
+    case "due":
+      return nextDue(lead) ?? "￿";
+    case "created":
+      return lead.createdAt;
+  }
+}
 
 /** Outcome facet tabs applied to the list view. */
 const OUTCOME_TABS: { value: LeadOutcomeFilter; label: string }[] = [
@@ -90,11 +142,36 @@ export default function CrmPage() {
     refetch,
   } = useLeads({ from: from || undefined, to: to || undefined, outcome: "all" });
   const moveStage = useMoveLeadStage();
+  // The board's columns come from the tenant's configured pipeline, not from a
+  // constant compiled into this file — a business whose funnel is not
+  // inquiry/quotation/order sees its own stages here. Falls back to the built-in
+  // three when nothing is configured, so existing stores are unaffected.
+  const { stages: leadStages, unmapped: unmappedStages, pipelineName } = useLeadStages();
   const [view, setView] = useState<"board" | "list">("board");
   const [active, setActive] = useState<Lead | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
+  // Sort key for the dense table. The board has its own order (the pipeline).
+  const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({
+    key: "created",
+    desc: true,
+  });
+
+  /*
+   * "New lead" from the sidebar's Quick Action lands here.
+   *
+   * Derived, not copied into state by an effect: the dialog is open when either
+   * this screen opened it or somebody asked for it on the way in, and closing
+   * clears both. Nothing renders once and then corrects itself.
+   */
+  const quickLead = useQuickAction((s) => s.pending === "lead");
+  const clearQuick = useQuickAction((s) => s.clear);
+  const addDialogOpen = addOpen || quickLead;
+  const setAddDialogOpen = (open: boolean) => {
+    setAddOpen(open);
+    if (!open) clearQuick();
+  };
 
   // Source facet applies to both views.
   const sourceScoped =
@@ -111,6 +188,17 @@ export default function CrmPage() {
       : sourceScoped.filter((l) => l.outcome === outcome);
   // Which dataset drives the empty-state / count for the active view.
   const visible = view === "board" ? sourceScoped : listLeads;
+  /*
+   * The dense table is sorted here, over the page that was fetched.
+   *
+   * The board is not: its order IS the pipeline, and a stage column sorted by
+   * anything else stops being a queue. `toSorted` leaves `listLeads` alone, so
+   * the outcome facet above still reads from an unmutated array.
+   */
+  const sortedLeads = [...listLeads].sort((a, b) => {
+    const cmp = sortValue(a, sort.key).localeCompare(sortValue(b, sort.key));
+    return sort.desc ? -cmp : cmp;
+  });
 
   // Keep the open dialog's lead in sync with refetched data; fall back to
   // the last snapshot when the lead drops out of the current facet
@@ -128,7 +216,7 @@ export default function CrmPage() {
     if (!dragId) return;
     const lead = leads.find((l) => l.id === dragId);
     if (lead && lead.stage !== stage) {
-      const label = LEAD_STAGES.find((s) => s.id === stage)?.label;
+      const label = leadStages.find((s) => s.id === stage)?.label;
       moveStage.mutate(
         { id: lead.id, stage },
         {
@@ -156,7 +244,7 @@ export default function CrmPage() {
         ? "Showing leads across all stores"
         : `Showing the ${currentStore.name} pipeline`;
 
-  const openCreateDialog = () => setAddOpen(true);
+  const openCreateDialog = () => setAddDialogOpen(true);
 
   return (
     <>
@@ -167,9 +255,32 @@ export default function CrmPage() {
         onPrimaryAction={openCreateDialog}
       />
 
+      {/*
+        Measured server-side and collapsible. It sits above the pipeline rather
+        than inside it because these are totals for the whole period, and the
+        board below is one page of open work — two different questions, so two
+        different sources.
+      */}
+      <OmnichannelKpis storeId={currentStore.isAggregate ? undefined : currentStore.id} />
+
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div className="flex flex-wrap items-end gap-3">
           <p className="mb-1.5 text-sm text-muted-foreground">{scopeNote}</p>
+          {/* Beside the scope, because "which branch" and "how do I want to
+              look at it" are the two things changed together. */}
+          <Tabs
+            value={view}
+            onValueChange={(v) => setView(v as "board" | "list")}
+          >
+            <TabsList className="h-9">
+              <TabsTrigger value="board">
+                <KanbanSquare className="mr-1.5 h-4 w-4" /> Pipeline Kanban
+              </TabsTrigger>
+              <TabsTrigger value="list">
+                <Rows3 className="mr-1.5 h-4 w-4" /> Dense Table
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
           <Tabs
             value={outcome}
             onValueChange={(v) => setOutcome(v as LeadOutcomeFilter)}
@@ -198,7 +309,7 @@ export default function CrmPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All sources</SelectItem>
-                {LEAD_SOURCE_OPTIONS.map((opt) => (
+                {LEAD_SOURCE_FILTER_OPTIONS.map((opt) => (
                   <SelectItem key={opt.value} value={opt.value}>
                     {opt.label}
                   </SelectItem>
@@ -246,21 +357,25 @@ export default function CrmPage() {
             </Button>
           ) : null}
         </div>
-        <Tabs value={view} onValueChange={(v) => setView(v as "board" | "list")}>
-          <TabsList>
-            <TabsTrigger value="board">
-              <KanbanSquare className="mr-1.5 h-4 w-4" /> Board
-            </TabsTrigger>
-            <TabsTrigger value="list">
-              <TableIcon className="mr-1.5 h-4 w-4" /> List
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <div className="flex items-center gap-2">
+          {/* Leads that walk in rather than arrive from an ad. */}
+          <Button asChild variant="outline" size="sm" className="h-9">
+            <Link href="/crm/qr">
+              <QrCode className="mr-1.5 h-4 w-4" /> QR code
+            </Link>
+          </Button>
+          {/* Enquiries that arrive from the tenant's own website. */}
+          <Button asChild variant="outline" size="sm" className="h-9">
+            <Link href="/lead-forms">
+              <Globe className="mr-1.5 h-4 w-4" /> Web form
+            </Link>
+          </Button>
+        </div>
       </div>
 
       {isLoading ? (
         <div className="grid gap-4 md:grid-cols-3">
-          {LEAD_STAGES.map((s) => (
+          {leadStages.map((s) => (
             <Skeleton key={s.id} className="h-64 rounded-xl" />
           ))}
         </div>
@@ -299,8 +414,26 @@ export default function CrmPage() {
           />
         )
       ) : view === "board" ? (
-        <div className="grid gap-4 md:grid-cols-3">
-          {LEAD_STAGES.map((stage) => {
+        <>
+        {unmappedStages.length > 0 ? (
+          <p className="mb-3 rounded-lg border border-dashed bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            {pipelineName ? `${pipelineName}: ` : ""}
+            {unmappedStages.map((s) => s.label).join(", ")}{" "}
+            {unmappedStages.length === 1 ? "is" : "are"} configured but not yet tied to a
+            lead status, so no lead can sit there. Set that in Settings → Business
+            Configuration.
+          </p>
+        ) : null}
+        <div
+          className={`grid gap-4 ${
+            leadStages.length <= 2
+              ? "md:grid-cols-2"
+              : leadStages.length === 3
+                ? "md:grid-cols-3"
+                : "md:grid-cols-2 xl:grid-cols-4"
+          }`}
+        >
+          {leadStages.map((stage) => {
             const items = byStage(stage.id);
             return (
               <div
@@ -337,68 +470,141 @@ export default function CrmPage() {
             );
           })}
         </div>
+        </>
       ) : (
-        <div className="rounded-xl border">
+        <div className="overflow-x-auto rounded-xl border border-border/80 bg-card shadow-sm">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Lead</TableHead>
-                <TableHead>Customer</TableHead>
-                <TableHead>Location / Area</TableHead>
-                <TableHead>Source</TableHead>
-                <TableHead>Stage</TableHead>
-                <TableHead>Salesperson</TableHead>
+                <SortHead label="Customer" column="customer" sort={sort} onSort={setSort} />
+                <TableHead>Phone</TableHead>
+                <SortHead label="Source" column="source" sort={sort} onSort={setSort} />
+                <SortHead label="Priority" column="temperature" sort={sort} onSort={setSort} />
+                <SortHead label="Attended by" column="rep" sort={sort} onSort={setSort} />
+                <SortHead label="Next follow-up" column="due" sort={sort} onSort={setSort} />
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {listLeads.map((lead) => (
-                <TableRow
-                  key={lead.id}
-                  className="cursor-pointer"
-                  onClick={() => openLead(lead)}
-                >
-                  <TableCell className="font-medium">{lead.ref}</TableCell>
-                  <TableCell>
-                    <div>{lead.customer}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {lead.interest}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <span className="text-xs font-medium">
-                      {lead.location || lead.address || "—"}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline">
-                      {LEAD_SOURCE_LABELS[lead.source]}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    {LEAD_STAGES.find((s) => s.id === lead.stage)?.label}
-                  </TableCell>
-                  <TableCell>{lead.assignedRep}</TableCell>
-                  <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      title="WhatsApp Re-engagement"
-                      onClick={() => {
-                        const cleanPhone = lead.phone.replace(/[^0-9]/g, "");
-                        const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(
-                          `Hello ${lead.customer}, following up regarding your enquiry for ${lead.interest || "jewellery"}.`
-                        )}`;
-                        window.open(waUrl, "_blank");
-                      }}
+              {sortedLeads.map((lead) => {
+                const due = nextDue(lead);
+                const stageLabel =
+                  leadStages.find((st) => st.id === lead.stage)?.label ??
+                  lead.stage.replace(/_/g, " ");
+                // Digits only. `tel:` and wa.me both reject the spacing and the
+                // "+" a person types into the form.
+                const dialable = lead.phone.replace(/[^0-9]/g, "");
+                return (
+                  <TableRow
+                    key={lead.id}
+                    className="cursor-pointer"
+                    onClick={() => openLead(lead)}
+                  >
+                    <TableCell>
+                      <div className="font-medium">{lead.customer}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {lead.ref}
+                        {lead.interest ? ` \u00b7 ${lead.interest}` : ""}
+                      </div>
+                    </TableCell>
+                    <TableCell className="font-[family-name:var(--font-mono-face)] text-xs">
+                      {lead.phone || "\u2014"}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="whitespace-nowrap">
+                        {LEAD_SOURCE_LABELS[lead.source]}
+                      </Badge>
+                      <div className="mt-1 text-[11px] text-muted-foreground">
+                        {stageLabel}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      {/*
+                        The word is "Priority", not "Intent". This pill is
+                        computed from how recently the lead moved, whether a
+                        follow-up falls due within three days and whether a
+                        birthday is near \u2014 a recency signal, and a good one.
+                        It is NOT the conversational intent score, which lives on
+                        the qualification record and is very often absent.
+                        Labelling recency as intent would put a confident reading
+                        on a screen where none was ever taken.
+                      */}
+                      <StatusPill
+                        tone={TEMPERATURE_TONE[lead.temperature] ?? "mute"}
+                        title="Priority from recent activity, an imminent follow-up or a nearby occasion"
+                      >
+                        {lead.temperature}
+                      </StatusPill>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-sm">
+                      {lead.assignedRep || (
+                        <span className="text-muted-foreground">Unassigned</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-sm tabular-nums">
+                      {due ? (
+                        new Date(due).toLocaleDateString()
+                      ) : (
+                        <span
+                          className="text-muted-foreground"
+                          title="Both SOP follow-ups are done"
+                        >
+                          \u2014
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell
+                      className="text-right"
+                      onClick={(e) => e.stopPropagation()}
                     >
-                      WhatsApp
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0"
+                          disabled={!dialable}
+                          title={dialable ? `Call ${lead.customer}` : "No number on file"}
+                          asChild={!!dialable}
+                        >
+                          {dialable ? (
+                            <a href={`tel:${dialable}`} aria-label={`Call ${lead.customer}`}>
+                              <Phone className="h-4 w-4" />
+                            </a>
+                          ) : (
+                            <Phone className="h-4 w-4" />
+                          )}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0"
+                          disabled={!dialable}
+                          title="Open WhatsApp"
+                          aria-label={`WhatsApp ${lead.customer}`}
+                          onClick={() => {
+                            // No industry noun in the fallback. This text is sent
+                            // to a real customer, and "your enquiry for jewellery"
+                            // is wrong for every tenant that is not a jeweller \u2014
+                            // and wrong for a jeweller too, whenever the interest
+                            // was simply never recorded. Naming nothing is always
+                            // true.
+                            const about = lead.interest ? ` for ${lead.interest}` : "";
+                            window.open(
+                              `https://wa.me/${dialable}?text=${encodeURIComponent(
+                                `Hello ${lead.customer}, following up regarding your enquiry${about}.`,
+                              )}`,
+                              "_blank",
+                            );
+                          }}
+                        >
+                          <MessageSquare className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
-
           </Table>
         </div>
       )}
@@ -410,8 +616,46 @@ export default function CrmPage() {
         onLeadChange={setActive}
       />
 
-      <AddLeadDialog open={addOpen} onOpenChange={setAddOpen} />
+      <AddLeadDialog open={addDialogOpen} onOpenChange={setAddDialogOpen} />
     </>
+  );
+}
+
+/** A column header that sorts, and says which way it is sorting. */
+function SortHead({
+  label,
+  column,
+  sort,
+  onSort,
+}: {
+  label: string;
+  column: SortKey;
+  sort: { key: SortKey; desc: boolean };
+  onSort: (next: { key: SortKey; desc: boolean }) => void;
+}) {
+  const on = sort.key === column;
+  return (
+    <TableHead className="whitespace-nowrap">
+      <button
+        type="button"
+        // Announced, not just drawn: a header that only shows an arrow tells a
+        // screen reader nothing about the order it has just applied.
+        aria-sort={on ? (sort.desc ? "descending" : "ascending") : "none"}
+        onClick={() => onSort({ key: column, desc: on ? !sort.desc : false })}
+        className="-ml-1 inline-flex items-center gap-1 rounded px-1 py-0.5 font-semibold hover:text-foreground"
+      >
+        {label}
+        {on ? (
+          sort.desc ? (
+            <ArrowDown className="h-3 w-3" aria-hidden />
+          ) : (
+            <ArrowUp className="h-3 w-3" aria-hidden />
+          )
+        ) : (
+          <ArrowUp className="h-3 w-3 opacity-25" aria-hidden />
+        )}
+      </button>
+    </TableHead>
   );
 }
 
@@ -461,12 +705,15 @@ function AddLeadDialog({
     // its own inline message; the toast is just a summary.
     const next: Record<string, string> = {};
     if (!customer.trim()) next.customer = "Customer name is required.";
+    // A name must actually be a name — reject a phone number / id typed here.
+    else if (!/\p{L}/u.test(customer)) next.customer = "Enter a real name (letters, not just a number).";
     // Phone is mandatory (Round-2) and must be a valid Indian mobile — the
     // backend now enforces @IsIndianMobile, so block/normalise client-side.
     const normalizedPhone = normalizeIndianMobile(phone);
     if (!phone.trim()) next.phone = "Phone number is required to save a lead.";
     else if (!normalizedPhone) next.phone = "Enter a valid 10-digit mobile number.";
     if (!source) next.source = "Lead source is required.";
+    if (!interest.trim()) next.interest = "Add what the lead is interested in.";
     if (Object.keys(next).length > 0) {
       setErrors(next);
       toast.error("Please fill in the required fields.");
@@ -480,7 +727,7 @@ function AddLeadDialog({
         phone: normalizedPhone as string,
         // Validated non-empty just above; narrow away the "" union member.
         source: source as LeadSource,
-        interest: interest.trim() || undefined,
+        interest: interest.trim(),
         remark: remark.trim() || undefined,
         address: address.trim() || undefined,
         birthday: birthday || undefined,
@@ -533,10 +780,16 @@ function AddLeadDialog({
             <Input
               id="phone"
               placeholder="+91 ..."
+              inputMode="tel"
+              maxLength={13}
               value={phone}
               aria-invalid={!!errors.phone}
               onChange={(e) => {
-                setPhone(e.target.value);
+                // Cap digits: 10 for a bare number, 12 when prefixed with "+91".
+                const raw = e.target.value;
+                const hasPlus = raw.trimStart().startsWith("+");
+                const digits = raw.replace(/\D/g, "").slice(0, hasPlus ? 12 : 10);
+                setPhone((hasPlus ? "+" : "") + digits);
                 clearError("phone");
               }}
             />
@@ -571,13 +824,28 @@ function AddLeadDialog({
             ) : null}
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="interest">Interest / what they want</Label>
+            <Label htmlFor="interest">
+              Interest / what they want <span className="text-destructive">*</span>
+            </Label>
             <Input
               id="interest"
-              placeholder="e.g. Bridal necklace set"
+              /*
+               * Neutral on purpose. This field is on the universal lead form,
+               * which a clinic and a mill both see; the previous example read
+               * "Bridal necklace set". A placeholder is user-visible copy, so a
+               * jewellery example here is the same leak as a jewellery label.
+               */
+              placeholder="What are they asking about?"
               value={interest}
-              onChange={(e) => setInterest(e.target.value)}
+              aria-invalid={!!errors.interest}
+              onChange={(e) => {
+                setInterest(e.target.value);
+                clearError("interest");
+              }}
             />
+            {errors.interest ? (
+              <p className="mt-1 text-xs text-destructive">{errors.interest}</p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="address">Address</Label>

@@ -22,8 +22,12 @@ const store = (over: Partial<any> = {}) => ({
   ...over,
 });
 
-// evaluateFence uses none of the constructor deps.
-const svc = new HrmsService(null as any, null as any, null as any, null as any);
+// evaluateFence uses none of the constructor deps. Spread rather than a fixed
+// list of nulls, so adding a dependency to the service does not break a test
+// that never touches one.
+const svc = new (HrmsService as unknown as new (...args: unknown[]) => HrmsService)(
+  ...(Array(8).fill(null) as unknown[]),
+);
 const evaluateFence = (...args: any[]) =>
   (svc as any).evaluateFence(...args);
 

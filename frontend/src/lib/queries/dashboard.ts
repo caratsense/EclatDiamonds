@@ -18,22 +18,47 @@ export interface DashboardCharts {
 export type TaskStatus = "open" | "in_progress" | "done";
 
 /** A collaboration task surfaced on the departmental dashboard. */
+export type TaskPriority = "low" | "normal" | "high" | "urgent";
+
 export interface DashboardTask {
   id: string;
   title: string;
   detail?: string;
+  /** Display name. The only record of who was meant on pre-A11 tasks. */
   assignee?: string;
+  /** The stable identity. Null on historical rows — fall back to `assignee`. */
+  assigneeId?: string | null;
+  assignedTo?: { id: string; name: string } | null;
+  priority?: TaskPriority;
   dueDate?: string;
-  storeId?: string;
+  completedAt?: string | null;
+  storeId?: string | null;
   status?: TaskStatus;
+  /** What the task is about, when it concerns a customer or a lead. */
+  party?: { id: string; name: string } | null;
+  lead?: { id: string; ref: string } | null;
 }
 
 export interface CreateTaskInput {
   title: string;
   detail?: string;
+  /** Kept for compatibility; `assigneeId` is what the task is really assigned to. */
   assignee?: string;
+  assigneeId?: string;
+  priority?: TaskPriority;
+  partyId?: string;
+  leadId?: string;
   dueDate?: string;
   storeId?: string;
+}
+
+/** Server-side task filters. `mine` resolves to the caller — there is no id to pass. */
+export interface TaskFilter {
+  mine?: boolean;
+  status?: TaskStatus;
+  priority?: TaskPriority;
+  partyId?: string;
+  leadId?: string;
 }
 
 /** An item on today's consolidated agenda (GET /dashboard/agenda). */
@@ -120,12 +145,22 @@ export function useCharts() {
 }
 
 /** GET /dashboard/tasks — collaboration tasks, store-scoped. */
-export function useTasks() {
+export function useTasks(filter: TaskFilter = {}) {
   const storeId = useStoreKey();
   return useQuery({
-    queryKey: ["dashboard", "tasks", storeId],
+    queryKey: ["dashboard", "tasks", storeId, filter],
     queryFn: async () => {
-      const { data } = await api.get<DashboardTask[]>("/dashboard/tasks");
+      const { data } = await api.get<DashboardTask[]>("/dashboard/tasks", {
+        params: {
+          // Sent as a flag, never as a user id: the server resolves "mine" to
+          // the authenticated caller, so one user cannot request another's list.
+          mine: filter.mine ? "true" : undefined,
+          status: filter.status,
+          priority: filter.priority,
+          partyId: filter.partyId,
+          leadId: filter.leadId,
+        },
+      });
       return data;
     },
   });
@@ -167,6 +202,14 @@ export function useUpdateTaskStatus() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["dashboard", "tasks"] });
+      /*
+       * The calling queue reads the SAME Task rows through a different endpoint,
+       * so closing one here has to refresh there too. It did not: marking a
+       * follow-up done from the floor app left the four KPI cards showing the
+       * old counts, and the row still sitting in the list, until something else
+       * happened to refetch.
+       */
+      qc.invalidateQueries({ queryKey: ["calling"] });
     },
   });
 }

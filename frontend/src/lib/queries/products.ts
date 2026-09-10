@@ -24,6 +24,16 @@ export interface CreateProductInput {
   leadTimeDays?: number;
   description?: string;
   storeId?: string;
+  /**
+   * What the thing actually is, for an industry whose products have no honest
+   * member of the jewellery `ProductCategory` / `Metal` enums. Those columns
+   * take `other` / `unspecified` and the real words are carried here.
+   */
+  categoryLabel?: string;
+  materialLabel?: string;
+  unitOfMeasure?: string;
+  /** Tenant-defined fields, keyed by AttributeDefinition.key. */
+  attributes?: Record<string, unknown>;
 }
 
 /** Paginated envelope returned by list endpoints when page params are sent. */
@@ -112,31 +122,6 @@ export function useProductPieces(productId: string | null) {
     enabled: !!productId,
     queryFn: async () => {
       const { data } = await api.get<StockPiece[]>(`/products/${productId}/pieces`);
-      return data;
-    },
-  });
-}
-
-export interface ImageSearchResult {
-  aiUsed: boolean;
-  detected: { category: string; metal: string; keywords: string[] } | null;
-  results: (Product & { similarity?: number })[];
-}
-
-/**
- * POST /products/image-search — upload a design photo, get ranked catalogue
- * matches (Claude vision tagging + rule-based match, server-side).
- */
-export function useImageSearch() {
-  return useMutation({
-    mutationFn: async (file: File) => {
-      const form = new FormData();
-      form.append("file", file);
-      const { data } = await api.post<ImageSearchResult>(
-        "/products/image-search",
-        form,
-        { headers: { "Content-Type": "multipart/form-data" } },
-      );
       return data;
     },
   });

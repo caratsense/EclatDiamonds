@@ -1,14 +1,11 @@
-import {
-  BadRequestException,
-  ConflictException,
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PaymentMode, Prisma, SaleDocType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
+import { AttributionService } from '../crm/attribution.service';
 import { AuditService } from '../common/audit.service';
+import { ActivityService } from '../crm/activity.service';
+import { IdentityService } from '../crm/identity.service';
 import { ROLE_RANK } from '../common/role.util';
 import { StoreScopeService } from '../common/store-scope.service';
 import { StorageService } from '../storage/storage.service';
@@ -35,12 +32,17 @@ type UploadedPhoto = {
  */
 @Injectable()
 export class SalesService {
+  private readonly logger = new Logger(SalesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
     private readonly storage: StorageService,
     private readonly discounts: DiscountsService,
     private readonly audit: AuditService,
+    private readonly identity: IdentityService,
+    private readonly activity: ActivityService,
+    private readonly attribution: AttributionService,
   ) {}
 
   /**
@@ -151,11 +153,24 @@ export class SalesService {
       throw new BadRequestException('Advance cannot exceed the total value');
     }
 
+    // Phase A6 — link the sale to a customer when a number was given. Never
+    // blocks the sale: money changing hands is the fact that must be recorded,
+    // and a bad phone number is not a reason to refuse an invoice.
+    const identity = await this.identity.resolveForRecord(user, {
+      phone: dto.phone,
+      name: dto.customerName,
+      storeId: dto.storeId,
+      source: 'sale',
+    });
+    const partyId = identity.partyId;
+
     let saleId: string;
     try {
       const created = await this.prisma.sale.create({
         data: {
+          organisationId: user.organisationId,
           storeId: dto.storeId,
+          partyId,
           docNo: dto.invoiceNo,
           docType: SaleDocType.sale,
           docDate: new Date(),
@@ -192,7 +207,9 @@ export class SalesService {
     if (advance && advance.greaterThan(0) && dto.paymentMode) {
       await this.prisma.payment.create({
         data: {
+          organisationId: user.organisationId,
           storeId: dto.storeId,
+          partyId,
           saleId,
           mode: dto.paymentMode,
           amount: advance,
@@ -215,6 +232,67 @@ export class SalesService {
         diamondPercent: dPct,
         makingPercent: mPct,
         discountRequestId: linkedRequestId,
+      },
+    });
+
+    // Phase A4 — a purchase is the strongest product-interest signal there is.
+    // A manual sale carries a free-text description rather than catalogue lines,
+    // so that description is the identifier; `sku` is deliberately free text on
+    // ProductInteraction precisely for this case.
+    try {
+      await this.prisma.productInteraction.create({
+        data: {
+          organisationId: user.organisationId,
+          storeId: dto.storeId,
+          partyId,
+          productId: null,
+          sku: dto.description ?? null,
+          kind: 'purchased',
+          userId: user.id,
+          channel: 'store',
+          metadata: { saleId, invoiceNo: dto.invoiceNo, total: Number(total) },
+        },
+      });
+    } catch (e) {
+      // Never unwind a recorded sale for a secondary CRM signal.
+      this.logger.warn(
+        `Sale ${dto.invoiceNo}: product interest not recorded — ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+
+    // Phase A10 — credit this sale to the touches that preceded it, under BOTH
+    // attribution models. Best-effort: a sale is money that has changed hands and
+    // must never be unwound because a marketing join failed.
+    try {
+      await this.attribution.creditSale(user.organisationId, {
+        id: saleId,
+        partyId,
+        // The sale was just written with `docDate: new Date()`; using now here
+        // matches it. Passing a later time would let a touch recorded seconds
+        // after the sale be credited for it.
+        docDate: new Date(),
+      });
+    } catch (e) {
+      this.logger.warn(
+        `Sale ${dto.invoiceNo}: attribution not credited — ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+
+    await this.activity.recordFor(user, {
+      type: 'sale.completed',
+      summary: `Sale ${dto.invoiceNo} to ${dto.customerName} — ₹${Number(total)}`,
+      partyId,
+      storeId: dto.storeId,
+      entityType: 'Sale',
+      entityId: saleId,
+      channel: 'store',
+      metadata: {
+        total: Number(total),
+        discount: Number(discount),
+        // Why this sale has no customer, when it has none. Quotes and returns
+        // already carried this; sales did not, which made an unattributed sale
+        // indistinguishable from one nobody had tried to attribute.
+        ...(identity.unresolvedReason ? { customerUnresolved: identity.unresolvedReason } : {}),
       },
     });
 
@@ -316,7 +394,7 @@ export class SalesService {
   /** POST /sales/:id/quotation — attach/replace the quotation photo. Managers+. */
   async setQuotation(user: AuthUser, id: string, file?: UploadedPhoto) {
     const sale = await this.loadScoped(user, id);
-    const url = await this.savePhoto('quotations', id, file);
+    const url = await this.savePhoto(user, 'quotations', id, file);
     await this.prisma.sale.update({ where: { id }, data: { quotationUrl: url } });
     return this.get(user, sale.id);
   }
@@ -324,7 +402,7 @@ export class SalesService {
   /** POST /sales/:id/invoice — attach/replace the invoice photo. Managers+. */
   async setInvoice(user: AuthUser, id: string, file?: UploadedPhoto) {
     const sale = await this.loadScoped(user, id);
-    const url = await this.savePhoto('invoices', id, file);
+    const url = await this.savePhoto(user, 'invoices', id, file);
     await this.prisma.sale.update({ where: { id }, data: { invoiceUrl: url } });
     return this.get(user, sale.id);
   }
@@ -335,7 +413,7 @@ export class SalesService {
    */
   async setReceipt(user: AuthUser, id: string, file?: UploadedPhoto) {
     const sale = await this.loadScoped(user, id);
-    const url = await this.savePhoto('receipts', id, file);
+    const url = await this.savePhoto(user, 'receipts', id, file);
 
     const latest = await this.prisma.payment.findFirst({
       where: { saleId: id },
@@ -350,6 +428,7 @@ export class SalesService {
     } else {
       await this.prisma.payment.create({
         data: {
+          organisationId: user.organisationId,
           storeId: sale.storeId,
           partyId: sale.partyId,
           saleId: id,
@@ -372,7 +451,7 @@ export class SalesService {
   }
 
   /** Persist an uploaded photo under sales/<folder> and return its public URL. */
-  private async savePhoto(folder: string, id: string, file?: UploadedPhoto) {
+  private async savePhoto(user: AuthUser, folder: string, id: string, file?: UploadedPhoto) {
     if (!file?.buffer?.length) throw new BadRequestException('No file uploaded');
     if (file.mimetype && !file.mimetype.startsWith('image/')) {
       throw new BadRequestException('Uploaded file is not an image');
@@ -380,7 +459,12 @@ export class SalesService {
     const ext = (file.originalname?.split('.').pop() || 'jpg')
       .toLowerCase()
       .replace(/[^a-z0-9]/g, '');
-    return this.storage.save(`sales/${folder}`, `${id}-${Date.now()}.${ext}`, file.buffer);
+    return this.storage.save(
+      user.organisationId,
+      `sales/${folder}`,
+      `${id}-${Date.now()}.${ext}`,
+      file.buffer,
+    );
   }
 
   /** Shape a Sale (with party + payments included) into the list row. */

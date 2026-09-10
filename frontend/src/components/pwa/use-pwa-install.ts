@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { useHydrated } from "@/lib/use-reset-on";
 
 /**
  * The `beforeinstallprompt` event is not part of the standard DOM lib types,
@@ -35,21 +36,29 @@ export function usePwaInstall() {
   const [deferred, setDeferred] =
     React.useState<BeforeInstallPromptEvent | null>(null);
   const [installed, setInstalled] = React.useState(false);
-  const [isStandalone, setIsStandalone] = React.useState(false);
-  const [isIOS, setIsIOS] = React.useState(false);
+
+  /*
+   * Display mode and platform are facts about the browser, not state this hook
+   * owns, so they are READ rather than stored. Copying them into state from an
+   * effect meant the first client render always said "not standalone, not iOS"
+   * and corrected itself a frame later — which is exactly long enough for an
+   * install button to appear inside an already-installed app.
+   *
+   * `useHydrated` keeps the server render and the hydration pass agreeing on
+   * "hidden"; everything after reads the real browser.
+   */
+  const hydrated = useHydrated();
+  const isStandalone =
+    hydrated &&
+    Boolean(
+      window.matchMedia?.("(display-mode: standalone)").matches ||
+        (window.navigator as Navigator & { standalone?: boolean }).standalone === true,
+    );
+  const isIOS =
+    hydrated && /iphone|ipad|ipod/i.test(window.navigator.userAgent || "") && !isStandalone;
 
   React.useEffect(() => {
     if (typeof window === "undefined") return;
-
-    const standalone =
-      window.matchMedia?.("(display-mode: standalone)").matches ||
-      (window.navigator as Navigator & { standalone?: boolean }).standalone ===
-        true;
-    setIsStandalone(Boolean(standalone));
-
-    const ua = window.navigator.userAgent || "";
-    const iOS = /iphone|ipad|ipod/i.test(ua);
-    setIsIOS(iOS && !standalone);
 
     const onBeforeInstallPrompt = (e: Event) => {
       // Stop Chrome's mini-infobar; we surface our own button instead.

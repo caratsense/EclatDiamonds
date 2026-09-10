@@ -1,0 +1,438 @@
+CARATOS PHASE 6 — UNIVERSAL AI CRM COMPLETION
+Areas: Meta/CTWA/Lead Ads · Meta spend + ROAS · Advanced CRM · Omnichannel
+Agent: Claude. Started 2026-09-09. HEAD at start: 9589ac5 (nothing committed).
+
+================================================================================
+BASELINE RECORDED BEFORE ANY EDIT
+================================================================================
+  HEAD 9589ac5, branch main, 196 modified / 39 deleted / 159 untracked, 0 staged.
+  npx tsc --noEmit ............ 0 errors
+  npx nest build .............. exit 0
+  npx prisma validate ......... valid, 73 migrations
+  eslint (new areas) .......... 1 error, 3 warnings
+  focused e2e (4 suites) ...... 48 passed / 0 failed, DB-backed, migrated from zero
+  test/industry-onboarding .... 1 FAILED / 67 passed   <-- red BEFORE this phase
+
+THE HANDOFF WAS STALE IN BOTH DIRECTIONS. It described a compile error at
+advanced-crm.service.ts:953 and an ESLint error at omnichannel.service.ts:977.
+The first was already fixed, and fixed correctly — the literal type survives via
+normaliseSegments rather than being cast away. Line 977 is inside a five-line
+pure helper with nothing lint-worthy in it. What the handoff did NOT say matters
+more: four cross-area seams were never connected, and an existing suite was
+already red. The tree was audited instead of trusted.
+
+================================================================================
+SHARED-FILE RECORD — files owned or contended by other agents
+================================================================================
+Per the REQ protocol in CLAUDE-SHARED-FILE-REQUEST.txt. All APPLIED; each is
+additive and none rewrites another agent's work.
+
+SF-01  src/app.module.ts — APPLIED
+       Added AttributionModule to imports (and its import line). It was defined
+       and imported NOWHERE, so every route in it was unreachable AND
+       MetaAdsInsightsService.onModuleInit never ran, leaving the
+       meta_ads.insights.pull job handler unregistered. One line each.
+
+SF-02  src/config/entitlements.ts — APPLIED
+       Added { prefix: '/attribution', capability: 'marketing' } to
+       ROUTE_FAMILIES. /attribution/meta-ads was the ONLY @Controller() in the
+       tree with no entry, which made test/industry-onboarding.e2e-spec.ts
+       "classifies every controller in the application" RED. Gated on marketing
+       rather than universal: it reports on the campaigns /marketing runs, and
+       only one pack enables that capability, so classifying it universal would
+       hand a tenant without the module a spend screen it can never populate.
+
+SF-03  src/integrations/meta-contracts.ts — APPLIED
+       MetaDeliveryReceiptSink.acceptMetaDeliveryReceipt now takes a second
+       argument, MetaReceiptOwner. Deliberately a separate argument rather than a
+       field on the receipt: the receipt is parsed from Meta's payload and the
+       tenant must never come from there. The type now makes the wrong thing
+       unimplementable.
+
+SF-04  src/integrations/integrations.module.ts — APPLIED
+       Registered the new MetaDeliveryReceiptAdapter as a provider.
+
+SF-05  backend/.env.example — APPLIED (documentation only, never a real env file)
+       Added META_GRAPH_API_VERSION, META_APP_SECRET, META_WEBHOOK_VERIFY_TOKEN,
+       CRM_QR_SECRET. All four are read by the new code; none was documented.
+
+NOT DONE, DELIBERATELY:
+       prisma format was NOT run on the shared schema. Verified on a COPY: it
+       would rewrite 154 alignment lines PLUS convert the whole ~4,000-line file
+       from CRLF to LF. That is the same collision the earlier agent avoided
+       (see REQ-001). prisma validate passes. Worth doing as an isolated commit
+       once the tree is quiet; not worth a 4,000-line diff across three agents'
+       work in progress.
+
+================================================================================
+WAVE 0 — PRODUCTION SAFETY AND THE RED SUITE
+================================================================================
+P6-01 (CRITICAL) THE SCHEDULER WOULD HAVE SENT THE ENTIRE QUEUED BACKLOG.
+      scheduler.service.ts:88 calls sweepQueued(undefined, 200) every minute. The
+      query had no tenant filter, no age floor and no marker: it adopted EVERY
+      outbound Message at status 'queued' in EVERY organisation, oldest first,
+      and gave each one a real delivery job.
+
+      Two other producers already use that status to mean the opposite.
+      ConversationsService.queueOutbound documents it in the code — "Status is
+      'queued', NOT 'sent' ... reporting a message as sent when no provider was
+      contacted would be a lie the UI then shows to a salesperson who believes
+      the customer got it" — and returns to the caller "It will not reach the
+      customer until a messaging integration is connected for this channel."
+      AiDraftsService writes approved drafts the same way. The CRM screen toasts
+      "Reply saved"; the AI draft panel documents that it never presents a draft
+      as a sent message.
+
+      On the first tick after deploy that whole historical backlog goes to real
+      customers, while the UI still says it has not been sent.
+
+      FIX: the sweep now adopts only messages carrying payload.omnichannel — the
+      delivery instruction this module writes itself. Migrating the CRM and AI
+      producers becomes a deliberate change to those producers (their contract,
+      their copy, their consent story), not a side effect of a cron.
+
+P6-02 (HIGH) A LATE RECEIPT COULD WALK A FAILED MESSAGE BACK TO SENT.
+      applyDeliveryReceipt's monotonic rank map omitted 'failed', so
+      rank['failed'] ?? 0 evaluated to 0 and a late 'sent' receipt overwrote a
+      message the provider had already rejected. Now ranked alongside 'sent'.
+
+P6-03 (HIGH) /attribution unclassified — see SF-02. Suite now green.
+
+P6-04 (MEDIUM) Four required env vars undocumented — see SF-05. Without
+      META_GRAPH_API_VERSION every Graph call throws before the request is made,
+      so Lead Ads jobs dead-letter having contacted nothing at all. CRM_QR_SECRET
+      falls back to JWT_SECRET, so rotating the JWT silently invalidates every QR
+      poster already printed and hanging in a store.
+
+P6-05 (LOW) lint: no-useless-escape in the Bearer-token redaction regex; an
+      unused BadRequestException import; two `any`s in jsonObject(). Narrowing
+      the last one surfaced that ActivityEvent.metadata.purpose is genuinely
+      untyped JSON, so consentPurpose() now validates it — an unreadable purpose
+      is skipped rather than able to match a consent lookup.
+
+================================================================================
+WAVE 1 — THE DEAD SEAMS
+================================================================================
+The audit's central finding: the Meta half is built and NOT CONNECTED. Verified
+by grep over the whole tree, not inferred —
+
+  OmnichannelService.applyDeliveryReceipt ........ 0 callers
+  OmnichannelService.recordProviderOptOut ........ 0 callers
+  MetaWebhookService.registerDeliveryReceiptSink . 0 callers
+  AttributionModule .............................. 0 imports
+
+P6-06 (HIGH) DELIVERY RECEIPTS NOW REACH THE OUTBOX. — DONE
+      New: src/integrations/meta-delivery-receipt.adapter.ts. It registers itself
+      with MetaWebhookService on init and forwards verified WhatsApp status
+      events to applyDeliveryReceipt. Thin by design: no tenant lookup, no
+      policy, no writes of its own.
+      meta-webhook.service.ts now resolves the owner BEFORE dispatching receipts
+      and drops any receipt with no single certain owner rather than applying it
+      to a guess — applying it to the wrong tenant would mark another
+      organisation's message delivered.
+      Before this, no outbound message could ever leave 'sent'.
+      Tests: test/omnichannel-receipt-seam.e2e-spec.ts, 8 assertions.
+      PROVED THEY BITE: removing the registration fails the registration test
+      (1 failed / 7 passed); removing the 'unknown' guard does not even COMPILE,
+      because 'unknown' is not in applyDeliveryReceipt's status union. Restored,
+      8/8 green.
+
+P6-07 (HIGH) AttributionModule imported — see SF-01. — DONE
+
+STILL OPEN (next wave), highest severity first:
+  * STOP/unsubscribe must call recordProviderOptOut BEFORE any AI drafting. The
+    AI already screens opt-outs out (ai-responder 'screened_out', and the
+    qualification-policy phrase list), but nothing writes consent.revoked, so a
+    later marketing send still passes the consent check.
+  * MetaLeadSink has no implementation, so every Lead Ads job throws "Meta Lead
+    Ads CRM sink is not registered" and dead-letters after five attempts.
+    Blocked on the next item.
+  * LeadSource has no honest value for a Meta lead ad ('instagram' is wrong for a
+    Facebook form; 'website' is a lie). Needs an additive enum migration. The
+    enum is systemBacked and mirrored into every pack's lead_source taxonomy, so
+    it is a shared-file change and will be requested here before it is made.
+  * MERGE LAUNDERS A BLACKLIST — Party.isBlacklisted and creditLimit are not
+    carried onto the survivor, and party.delete then destroys the evidence.
+  * SLA summary computes its totals from a page capped at take: 1000, so a tenant
+    with 5,000 open leads is told total: 1000 with no truncation flag.
+  * ROAS divides INR Sale.totalAmount by spend in the ad account's own currency
+    with no conversion and no equality check, and labels both under one field.
+  * Automatic round-robin and QR assignments never reach the audit log
+    (audit.record sits behind `if (actor)` and both automatic paths pass null).
+  * Measured spend lives in LegacyRow, the ERP mirror table, and sync.syncRaw
+    accepts an arbitrary sourceTable, so the on-site agent can overwrite it
+    within its own tenant.
+
+================================================================================
+EXTERNAL BLOCKERS — cannot be closed in this tree, at all
+================================================================================
+  * No real Meta credentials, no app review, no approved permissions, no real
+    signed payload. Everything Meta-facing is FIXTURE-TESTED ONLY and must not be
+    described as live-verified.
+  * Template approval state is operator-typed, not synced from Meta. A template
+    Meta pauses stays "approved" here until a human re-enters it.
+  * The 24-hour customer-care window is measured against our own recorded
+    lastInboundAt, never against Meta's session state. The policy tests prove our
+    arithmetic, not that Meta agrees with it.
+
+NOT COMMITTED, NOT PUSHED, NOT DEPLOYED. No production system, real credential or
+real .env file was read or changed. No process group was killed.
+
+
+--------------------------------------------------------------------
+SF-06  schema.prisma + industry-packs/packs.ts — LeadSource.meta_ads
+Status: REQUESTED -> APPLIED (INT-03), 2026-09-09
+Owner:  shared (schema is edited by three agents; packs.ts by the
+        multi-market lane)
+--------------------------------------------------------------------
+
+WHY
+A lead harvested from a Facebook or Instagram Lead Ad form has no honest member
+of the closed `LeadSource` enum. `instagram` is wrong for a Facebook form and
+right for neither in general; `website` is a lie; `whatsapp` is the channel the
+reply happens on, not where the lead came from. Storing Meta leads under any of
+them poisons every source-mix report and every saved segment that filters on
+sources, and it is not reversible once written.
+
+WHAT
+1. schema.prisma — ONE value appended to the LeadSource enum:
+
+     enum LeadSource { walk_in phone whatsapp website instagram referral
+                       meta_ads }        <- appended, nothing reordered
+
+   No existing value is renamed, reordered or removed. Appending is the only
+   safe operation on a Postgres enum with data in it.
+
+2. industry-packs/packs.ts — one term appended to the shared LEAD_SOURCE
+   taxonomy constant. All five pack definitions reference that one constant, so
+   every industry pack mirrors the new source without five separate edits.
+
+     { code: 'meta_ads', label: 'Meta Ads', systemValue: 'meta_ads',
+       sortOrder: 7 }
+
+MIGRATION
+  20260909150000_lead_source_meta_ads — a single ALTER TYPE ... ADD VALUE.
+  Additive and forward-only. No DROP, no DELETE, no type narrowing, no
+  backfill: nothing is relabelled, because no existing row carries deterministic
+  evidence that it came from a Meta lead ad. An `instagram` lead stays
+  `instagram`. Inventing provenance to populate a new value would be worse than
+  leaving history as it is.
+
+IDEMPOTENCY / TENANT SAFETY
+  Pack provisioning already looks up each term by (organisationId, kind, code)
+  and SKIPS any that exists (provision.ts:71-84), so:
+    - re-running provisioning creates the term at most once per tenant;
+    - a tenant who relabelled or hid a lead-source term keeps their version;
+    - existing tenants pick the term up on their next pack application.
+
+  The migration is guarded so re-running it is safe on a database that already
+  has the value.
+
+RISK
+  Low. The one thing to know: Postgres cannot use a newly added enum value in
+  the same transaction that adds it. This migration only ADDS the value; the
+  first row written with it comes from a later request, so that restriction is
+  never hit.
+
+
+--------------------------------------------------------------------
+SF-07  schema.prisma — IntegrationAsset ownership-verification columns
+Status: REQUESTED -> APPLIED (INT-07), 2026-09-09
+--------------------------------------------------------------------
+
+WHY
+An IntegrationAsset row today means "somebody typed this id into a form". There
+is nowhere to record that the tenant's credential can actually READ that Page,
+form, ad account or phone number — so a manually entered id is indistinguishable
+from a verified one, and the admin UI would have to present both as "connected".
+That is the specific dishonesty INT-07 exists to remove.
+
+WHAT — three additive columns on IntegrationAsset, all nullable/defaulted:
+
+  providerOwnershipVerified Boolean   @default(false)
+  lastVerifiedAt            DateTime?
+  lastError                 String?
+
+No existing column is altered. `Integration` already carries status,
+lastHealthAt and lastError, so the integration-level half needs no schema change.
+
+MIGRATION
+  20260909160000_integration_asset_ownership_verification
+  Three ADD COLUMN IF NOT EXISTS statements. Additive, forward-only, no backfill:
+  every existing asset starts unverified, which is the truthful default — none of
+  them has ever been checked against the provider.
+
+
+--------------------------------------------------------------------
+SF-08  provider-registry.ts -- meta_ads becomes connectable
+Status: REQUESTED -> APPLIED (INT-04), 2026-09-09
+--------------------------------------------------------------------
+
+WHY
+available:false is not a label. integrations-registry.service.ts:115 refuses to
+create an Integration row for an unavailable provider, and resolveState() reports
+one as blocked. So the entire Meta lane that now ships in this repository --
+signature-verified Lead Ads webhooks, the CRM lead sink, ad-account spend
+ingestion, ownership-verified assets and connection health -- was unreachable
+through the product. A meta_ads row could only exist if something wrote it
+directly to the database.
+
+WHAT
+  available: false -> true
+  blockedReason removed (an available provider must not also carry an excuse)
+  entities: ['leads', 'ad_insights']   (only what ships)
+  webhooks: true                       (Lead Ads inbound, HMAC verified)
+  description now states what the TENANT must bring: their own reviewed Meta app
+  and a long-lived token with leads_retrieval and ads_read.
+
+WHAT DID NOT CHANGE
+  instagram stays available:false. Nothing in this repository calls Instagram,
+  so offering it would be the exact dishonesty this registry exists to prevent.
+  razorpay stays credentialScope:'platform_env' -- still a real multi-tenancy
+  blocker, still listed as one.
+
+HONESTY BOUNDARY
+  available:true means "an adapter ships here", NOT "Meta has approved this app".
+  App review, permissions and a live token remain external provisioning. That
+  distinction is now carried by the description a customer reads and by
+  MetaHealthService, which refuses to report `connected` until a live Graph call
+  has read back each registered asset by id.
+
+TEST
+  test/provider-registry.e2e-spec.ts -- three cases: the honest meta_ads
+  capability set, instagram still refused, and a whole-catalogue invariant that
+  every unavailable provider states a reason and no available one carries a
+  leftover blockedReason.
+
+
+--------------------------------------------------------------------
+SF-09  schema.prisma -- Lead ageing summary index
+Status: REQUESTED -> APPLIED (INT-10), 2026-09-09
+--------------------------------------------------------------------
+
+WHY
+The lead-ageing SLA summary now counts every open lead of a tenant in four
+lastActivity ranges instead of counting a capped 1,000-row page. Without a
+supporting index those four counts are four sequential scans of the whole Lead
+table on every load of the board.
+
+WHAT
+  @@index([organisationId, outcome, lastActivity])  on Lead
+
+MIGRATION
+  20260909170000_lead_ageing_summary_index
+  One CREATE INDEX IF NOT EXISTS. Additive, idempotent, changes no row.
+
+RISK
+  Low. The only cost is index maintenance on Lead writes, which is one extra
+  b-tree per insert on a table that already carries four.
+
+
+--------------------------------------------------------------------
+SF-10  schema.prisma -- AuditLog gains a third actor identity
+Status: REQUESTED -> APPLIED (INT-11), 2026-09-09
+--------------------------------------------------------------------
+
+WHY
+Some decisions have no person and no Connect agent behind them: an inbound
+webhook placing a lead in the round-robin queue, a public QR form creating one.
+Ownership genuinely changes hands. With only two actor columns and a database
+CHECK requiring exactly one of them, the code's only options were to fake a
+human actor or write nothing -- and it wrote nothing (advanced-crm.service.ts
+had `if (actor)` around the audit call).
+
+WHAT
+  systemActorId String?   on AuditLog, plus @@index([systemActorId])
+  The CHECK is REPLACED, not weakened:
+      num_nonnulls("actorId","machineActorId")               = 1
+   -> num_nonnulls("actorId","machineActorId","systemActorId") = 1
+  So a row with no actor at all remains impossible.
+
+  common/audit.service.ts gains SYSTEM_ACTORS (a closed list of automations)
+  and recordSystem(). audit-read.service.ts reports a third actorType,
+  'system', instead of rendering such a row as a user with a null id.
+
+MIGRATION
+  20260909180000_audit_system_actor
+  ADD COLUMN IF NOT EXISTS, DROP CONSTRAINT IF EXISTS, ADD CONSTRAINT,
+  CREATE INDEX IF NOT EXISTS. Every existing row already names exactly one of
+  the first two identities, so the new constraint validates without touching
+  data.
+
+RISK
+  Low, with one thing to know: replacing a CHECK takes a brief ACCESS EXCLUSIVE
+  lock on AuditLog while Postgres validates it. On a large trail, run it in a
+  maintenance window or split it into ADD CONSTRAINT NOT VALID + VALIDATE.
+
+
+--------------------------------------------------------------------
+SF-11  schema.prisma -- AdSpendDaily and AdSpendCoverage
+Status: REQUESTED -> APPLIED (INT-05/06), 2026-09-09
+--------------------------------------------------------------------
+
+WHY
+Provider-measured advertising spend was stored as JSON in LegacyRow, the untyped
+table the import pipeline stages raw source rows in. As a home for money that
+fails three ways: a JSON string cannot be a Decimal, nothing constrains the
+currency, and the only key is a composed rowKey string, so the database cannot
+tell a replay from a second genuine row. Reporting re-validated every blob on
+read and SILENTLY DROPPED the ones that failed -- which is how a ROAS
+denominator shrinks without anyone noticing.
+
+WHAT -- two new tables. No existing table is altered.
+  AdSpendDaily     one campaign, one ad account, one account-local day
+                   spend Decimal(18,4), currency with a CHECK ~ '^[A-Z]{3}$',
+                   @@unique([organisationId, adAccountAssetId, date,
+                             externalCampaignId])  <- the replay guard
+  AdSpendCoverage  proof that a day was fully ingested, kept apart from the
+                   spend rows because "no spend on Tuesday" and "Tuesday was
+                   never fetched" are different facts
+
+  Back-relations added to Organisation and Integration.
+
+MIGRATION
+  20260909190000_ad_spend_measured_models
+  CREATE TABLE IF NOT EXISTS x2, unique + reporting indexes, currency and
+  non-negative CHECKs, foreign keys. Purely additive.
+
+BACKFILL
+  backend/scripts/backfill-ad-spend.mjs -- dry run by default, --apply writes.
+  Idempotent (every write is an upsert on the natural key), non-destructive
+  (the LegacyRow blobs stay), and it REPORTS the rows it could not read with
+  their source table and row key rather than coercing them to zero.
+
+RISK
+  Low. Old LegacyRow blobs are left in place, so the backfill can be re-run and
+  the previous data is still there if the new path has to be re-derived.
+
+
+--------------------------------------------------------------------
+SF-12  Shared service surfaces touched by INT-08
+Status: REQUESTED -> APPLIED, 2026-09-09
+--------------------------------------------------------------------
+
+meta-graph.client.ts
+  getForIntegration() gains a trailing `providerCode` parameter defaulting to
+  meta_ads. It is a parameter rather than a widened filter so a caller cannot
+  reach a provider it did not name. WhatsApp template sync passes
+  'whatsapp_cloud' and therefore uses the messaging connection's own token.
+
+integrations-registry.service.ts / .controller.ts
+  New PATCH :id/config -> updateConfig(). Connections were creatable with
+  settings and then frozen, so an account id learned after connecting (a
+  WhatsApp Business Account id) could only be recorded by deleting and
+  rebuilding the connection -- which would take its encrypted credential with
+  it. The same assertNonSecretIntegrationConfig guard as create() runs here.
+
+scheduler.service.ts
+  New hourly cron 'omnichannel.template-sync'. It ENQUEUES one durable job per
+  syncable connection rather than syncing inline, so a slow provider cannot hold
+  the tick, and the idempotency key collapses duplicates across replicas.
+
+omnichannel/dto/omnichannel.dto.ts
+  UpsertMessageTemplateDto.status no longer accepts 'approved'. Approval is a
+  fact about Meta that Meta has to supply; accepting the word and then ignoring
+  it would leave the caller believing they had approved something.
+
+app.module wiring: none required -- OmnichannelModule is @Global and now
+provides/exports TemplateSyncService.

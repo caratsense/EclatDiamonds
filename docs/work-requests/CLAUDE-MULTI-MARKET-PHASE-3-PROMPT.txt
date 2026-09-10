@@ -1,0 +1,269 @@
+CARATOS MULTI-MARKET PHASE 3 — UNIVERSALIZATION CLOSURE
+
+Read the settled tree and the Phase 2 delivery report before editing. Do not
+reuse an earlier failing shared-DB result: Phase 2 finished at 638 passed,
+6 skipped, 0 failed, and import-engine separately passed 16/16 on a fresh DB.
+
+OBJECTIVE
+
+Close the remaining cross-industry identity, pipeline-ownership, entitlement
+and public-brand leaks without touching the connector lane or the held
+attendance / AI-catalogue inference work. Eclat must remain behaviourally and
+visually unchanged inside its tenant.
+
+STRICT OWNERSHIP FENCE
+
+You may edit only:
+  backend/src/users/**
+  backend/src/crm/pipelines.service.ts and its focused tests
+  backend/src/config/**
+  backend/src/common/entitlement.guard.ts
+  backend/src/auth DTO/comments only when required by the handle contract
+  backend/prisma/schema.prisma plus ONE additive migration for pipeline ownership
+  backend/package.json and a backend ESLint config for MM2-06
+  frontend/src/app/page.tsx
+  focused backend/frontend tests for these changes
+  this work-request file for findings
+
+Do not edit:
+  connectors/**
+  backend/src/integration/**
+  backend/src/sync/**
+  synceclatcaratsense/**
+  backend/src/knowledge/**
+  attendance, payroll, presence or geofence behaviour
+  catalogue inference, similarity, embeddings, image search or product routes
+  Meta/CTWA, ROAS or omnichannel delivery
+  credentials or environment files containing real values
+
+Before the schema edit, append a short shared-file request here describing the
+exact columns, migration and backfill. Re-read the current schema immediately
+before applying it. Never overwrite another agent's changes.
+
+WORK ITEMS
+
+1. MM2-01 — TENANT-NEUTRAL STAFF LOGIN HANDLES (HIGH)
+
+Remove the universal dependency on HANDLE_DOMAIN='eclatdiamonds.in'.
+
+Requirements:
+  - Existing Eclat login handles remain byte-for-byte unchanged.
+  - New Eclat handles keep @eclatdiamonds.in.
+  - A non-Eclat tenant's generated handle is tenant-scoped and never contains
+    eclatdiamonds.in.
+  - Use Organisation.slug plus a configurable neutral root domain. Use a clearly
+    non-deliverable safe default such as accounts.caratos.invalid when the real
+    platform login domain is not configured; do not pretend it is contact email.
+  - The personal/contact email remains separate.
+  - Do not rewrite existing non-Eclat identities silently. If a migration is
+    required, provide an explicit collision-safe plan and test it.
+  - Signup, manager-add and store-reassignment paths must call one shared handle
+    generator and preserve global uniqueness/collision suffix behaviour.
+  - Login DTO validation must continue to accept the generated handle.
+
+Acceptance tests: Eclat preservation, clinic neutral handle, two tenant slugs,
+same-name collisions, reassignment, no cross-tenant handle collision, and no
+personal email substitution.
+
+2. MM2-03 — PUT PACK OWNERSHIP BESIDE PIPELINES (MEDIUM)
+
+Add nullable pack ownership to Pipeline and PipelineStage with one additive
+migration. Backfill ONLY rows that the existing explicit
+Organisation.settings.packManaged record proves are pack-owned and that still
+match its recorded values. Never infer ownership from names or the code
+"default" alone. Tenant-edited rows remain tenant-owned.
+
+After a safe backfill, make provisioning/convergence read the relational owner.
+Remove the obsolete JSON ownership entry transactionally only after the column
+holds equivalent evidence. Applying the same pack twice must be idempotent;
+switching packs must update only pack-owned rows.
+
+3. MM2-04 — MAKE ensureDefault PACK-AWARE (MEDIUM)
+
+PipelinesService.ensureDefault must not pre-empt the industry funnel. If an
+organisation has an applied pack, delegate to or create the pack's declared
+pipeline/stages with ownership set. If it has no pack, a generic default may be
+created but must be explicitly distinguishable from tenant-created data so a
+later pack application can safely converge it. Never overwrite a tenant-edited
+pipeline.
+
+Acceptance test the ordering both ways:
+  ensure-default -> apply healthcare pack
+  apply healthcare pack -> ensure-default
+Both must converge to the same pack-owned funnel without duplicates.
+
+4. MM2-02 — NEUTRAL PUBLIC LANDING (MEDIUM)
+
+Make `/` a factual CaratOS multi-industry AI CRM landing page. Describe only
+features already present: omnichannel CRM, tenant knowledge, catalogue,
+attendance and controlled data connectors. Remove Eclat Diamonds philosophy,
+velvet-vault and jewellery-retailer claims from the public page. Do not add fake
+customer logos, performance numbers or provider claims. Authenticated Eclat
+branding remains unchanged.
+
+5. ENTITLEMENT COMPLETENESS HARDENING
+
+Keep universal routes available, but make every known vertical API family an
+explicit entitlement. A new vertical controller must not silently become
+universal because somebody forgot one map entry. Prefer explicit controller
+metadata or an equally auditable registry with a test that enumerates the known
+vertical surface. Unknown/missing packs may remain permissive for genuinely
+universal routes, but must fail closed for a known vertical capability.
+
+Machine principals remain governed only by @AllowMachine and must not be broken.
+Direct clinic requests to every gated family must be 403; Eclat remains 200.
+
+6. MM2-06 — BACKEND LINT GATE (LOW)
+
+Add a minimal, compatible backend ESLint configuration and scripts for full and
+changed-file linting. Do not mass-format or "fix" unrelated files. Report the
+existing baseline separately from errors introduced by this phase.
+
+HELD / NOT IN THIS PHASE
+
+  - MM2-05 caratWeight form work
+  - remaining MM-04 image-search jewellery wording/path
+  - all AI catalogue/inference changes
+  - attendance refinements
+These are deliberately last-phase work and must remain untouched.
+
+VERIFICATION
+
+Use uniquely named disposable databases ending in _test. Apply every migration
+from zero and seed. At minimum run:
+  - focused handle/pipeline/industry/entitlement suites;
+  - backend tsc, Nest build, Prisma validate and backend lint;
+  - frontend tsc, targeted lint and Next production build;
+  - the full backend e2e suite once the shared tree is settled;
+  - real-browser clinic and Eclat flows.
+
+Browser/API proof must show:
+  - clinic-created staff handle is neutral and can sign in;
+  - Eclat-created handle and login are unchanged;
+  - both ensureDefault/apply-pack orderings show the healthcare funnel;
+  - clinic cannot reach gated vertical pages/APIs by direct URL;
+  - public `/` is neutral while authenticated Eclat still shows Eclat branding.
+
+Do not commit, push, deploy, register tasks, contact production or change real
+credentials. Final report must list files, migration/backfill behaviour, exact
+test counts, browser evidence, remaining blockers and current dirty-tree state.
+
+
+================================================================================
+SHARED-FILE REQUEST — Claude, phase 3, 2026-09-08
+Pipeline pack ownership (MM2-03). Raised BEFORE the edit, per the fence.
+================================================================================
+
+WHAT I AM ABOUT TO CHANGE
+  backend/prisma/schema.prisma          two nullable columns, no other edit
+  backend/prisma/migrations/20260908190000_pipeline_pack_ownership/migration.sql
+
+COLUMNS (both nullable, both mirroring the existing TaxonomyTerm /
+AttributeDefinition / FieldPolicy convention exactly)
+
+  model Pipeline      { packCode String?   @@index([organisationId, packCode]) }
+  model PipelineStage { packCode String?   @@index([organisationId, packCode]) }
+
+NULL means tenant-owned. A non-null value is the pack code that last wrote the
+row, and is the ONLY licence provisioning has to re-word it.
+
+MIGRATION (additive; no drop, no type change, no NOT NULL, no default)
+
+  ALTER TABLE "Pipeline"      ADD COLUMN "packCode" TEXT;
+  ALTER TABLE "PipelineStage" ADD COLUMN "packCode" TEXT;
+  CREATE INDEX "Pipeline_organisationId_packCode_idx"      ON "Pipeline"("organisationId","packCode");
+  CREATE INDEX "PipelineStage_organisationId_packCode_idx" ON "PipelineStage"("organisationId","packCode");
+
+BACKFILL — evidence only, never a name guess
+
+Phase 2 recorded what the pack actually wrote in
+Organisation.settings.packManaged.pipeline = { code, name, stages: {code:label} }.
+A row is stamped ONLY when it still equals that record:
+
+  Pipeline      <- packManaged.packCode  where code = record.code
+                                           AND name = record.name
+  PipelineStage <- packManaged.packCode  where label = record.stages[stage.code]
+
+Everything else keeps packCode NULL and stays tenant-owned, including every
+organisation with no packManaged record at all (Eclat among them — its funnel is
+never touched by this).
+
+Then, in the SAME transaction and only for rows the stamp succeeded on, the now
+redundant `pipeline` key is removed from packManaged. `qualificationPrompts`
+STAYS: question ownership still has no column, and dropping it would hand every
+tenant's reworded questions back to the pack.
+
+WHY IT CANNOT WAIT FOR A COLUMN-FREE FIX
+Ownership in JSON cannot survive a tenant renaming the pipeline and cannot be
+indexed or joined; MM2-04 additionally needs to stamp rows created by
+ensureDefault, which has no settings record of its own to write into.
+
+If this collides with a concurrent schema edit, this migration is standalone:
+re-generating it against the settled schema needs no other file changed.
+
+
+================================================================================
+FINDINGS FROM CLAUDE — phase 3, 2026-09-08
+Things this phase's fence does not let Claude touch. Nothing below was changed.
+================================================================================
+
+--------------------------------------------------------------------------------
+MM3-01  The sign-up form still defaults every tenant to Eclat's org code.  HIGH
+        Owner: frontend/src/app/login/page.tsx
+--------------------------------------------------------------------------------
+    const [organisationCode, setOrganisationCode] = React.useState(
+      process.env.NEXT_PUBLIC_DEFAULT_ORG_SLUG ?? "eclat",
+    );
+
+A person self-registering at any other tenant opens the form pre-filled with
+"eclat" and is shown Eclat's store list until they change it. With handles now
+tenant-scoped (MM2-01) this is the last identity-shaped default pointing at one
+customer, and it is on the screen everybody's staff meet first.
+
+Requested: no default at all, or one resolved from the host/subdomain. Claude may
+edit only `app/page.tsx` on the frontend this phase.
+
+--------------------------------------------------------------------------------
+MM3-02  New env var to document: PLATFORM_HANDLE_DOMAIN.               MEDIUM
+        Owner: backend/.env.example (an environment file; outside the fence)
+--------------------------------------------------------------------------------
+`users.util.ts` now reads PLATFORM_HANDLE_DOMAIN and defaults to
+`accounts.caratos.invalid` — deliberately non-deliverable, because a login handle
+is an identifier and the person's real address is `User.contactEmail`. Nothing
+breaks unset; it is undocumented, which is the only issue.
+
+Suggested line:
+    # Root domain for GENERATED staff login handles (never receives mail).
+    # Handles are minted as <first>.<branch>@<tenant-slug>.<this>.
+    PLATFORM_HANDLE_DOMAIN=accounts.caratos.invalid
+
+--------------------------------------------------------------------------------
+MM3-03  The client no longer mirrors the server's fail-closed rule.     MEDIUM
+        Owner: frontend/src/components/layout/module-gate.tsx
+--------------------------------------------------------------------------------
+The API now refuses a VERTICAL module to an organisation whose pack cannot be
+resolved (item 5). `ModuleGate` still renders any route when `enabledNavigation`
+is absent, so a tenant mid-onboarding can open /finance, see the page frame and
+then a failed request, instead of the "not part of your setup" screen.
+
+Requested: treat an absent `enabledNavigation` as "vertical modules hidden" to
+match the server. Backend-only in this phase, so the server is the one that is
+actually enforcing; this is a presentation mismatch, not a hole.
+
+--------------------------------------------------------------------------------
+MM3-04  Landing preview components are now unreferenced.                  LOW
+        Owner: frontend/src/components/landing/
+--------------------------------------------------------------------------------
+`dashboard-preview.tsx`, `crm-preview.tsx`, `inventory-preview.tsx` and
+`finance-preview.tsx` rendered mock jewellery data on the public page. MM2-02
+stopped importing them; they are dead code now, and they are outside this
+phase's fence to delete. Nothing imports them (grep confirms).
+
+--------------------------------------------------------------------------------
+MM3-05  Stale comment in the Add-staff dialog.                            LOW
+        Owner: frontend/src/app/(app)/settings/team/page.tsx (~line 1093)
+--------------------------------------------------------------------------------
+A JSX comment there says the server "genuinely still mints handles" at
+eclatdiamonds.in and files it as MM2-04 (it was MM2-01). Both halves are now
+wrong: MM2-01 is fixed, and MM2-04 was the pipeline item. The USER-VISIBLE copy
+is unaffected and remains accurate.

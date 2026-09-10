@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
+  Camera,
   CheckCircle2,
   Clock,
   Loader2,
@@ -26,11 +27,14 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { homeForRole } from "@/lib/navigation";
+import { useEnabledNavigation } from "@/lib/queries/tenant-config";
 import { markAttendanceHandled } from "@/lib/attendance-gate";
 import { useSession } from "@/store/use-session";
 import type { SelfAttendance } from "@/lib/mock/hrms";
 import { useCheckIn, useGeofence, useMyAttendance } from "@/lib/queries/hrms";
+import { FaceScannerDialog } from "@/components/biometrics/face-scanner-dialog";
 import { apiErrorMessage } from "@/lib/utils";
+import { useHydrated } from "@/lib/use-reset-on";
 
 /** HH:mm from an ISO instant, or an em-dash. */
 function formatTime(iso: string | null): string {
@@ -155,7 +159,11 @@ export default function CheckInPage() {
     null,
   );
   // True once the browser denies permission / geolocation is unsupported.
-  const [geoDenied, setGeoDenied] = useState(false);
+  // Permission refusals arrive from the browser and are state; "this device has
+  // no geolocation API at all" is a fact about the device, read below rather
+  // than copied into state by an effect.
+  const [permissionDenied, setGeoDenied] = useState(false);
+  const hydrated = useHydrated();
   // An off-site punch needs a written reason before the API will record it, so
   // "Check in anyway" opens this instead of firing a request that must fail.
   const [reasonOpen, setReasonOpen] = useState(false);
@@ -165,6 +173,11 @@ export default function CheckInPage() {
     lat: number;
     lng: number;
   } | null>(null);
+  // The camera sheet, and the still it produced. The photo survives a detour
+  // through the off-site reason box, so someone who took a photo and then had
+  // to explain their location does not have to take it again.
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [pendingPhoto, setPendingPhoto] = useState<string | null>(null);
 
   // watchPosition handle, so we can clearWatch on unmount / after a punch.
   const watchIdRef = useRef<number | null>(null);
@@ -176,8 +189,11 @@ export default function CheckInPage() {
   // Pending redirect after a successful punch (cleared on unmount).
   const redirectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const enabledNavigation = useEnabledNavigation();
   const firstName = user.name.split(" ")[0] || user.name;
-  const home = homeForRole(role);
+  // With the tenant's navigation, so a manager whose industry has no Dashboards
+  // is not bounced from the attendance gate onto a screen their product omits.
+  const home = homeForRole(role, enabledNavigation);
   const storeName = geofence?.storeName ?? currentStore.name;
   const radius = geofence?.geofenceRadiusM ?? 0;
 
@@ -252,19 +268,26 @@ export default function CheckInPage() {
   function runCheckIn(
     pos: { lat: number; lng: number } | null,
     note?: string,
+    photo?: string | null,
   ) {
     const captured = pos != null;
     setGeoMissed(!captured);
     checkIn.mutate(
       // Omit the coordinates entirely when there is no fix. Sending 0/0 put the
       // punch at Null Island, 8,200 km away, and the server rightly refused it.
-      { ...(pos ? { lat: pos.lat, lng: pos.lng } : {}), ...(note ? { note } : {}) },
+      {
+        ...(pos ? { lat: pos.lat, lng: pos.lng } : {}),
+        ...(note ? { note } : {}),
+        ...(photo ? { photo } : {}),
+      },
       {
         onSuccess: (row) => {
           clearWatcher(); // clear the watch immediately after a successful punch
           setLastPunch(row);
           setReasonOpen(false);
           setReason("");
+          setScannerOpen(false);
+          setPendingPhoto(null);
           markAttendanceHandled();
           toast.success("Attendance marked", {
             description: describePunch(row, captured),
@@ -290,10 +313,7 @@ export default function CheckInPage() {
   useEffect(() => {
     if (alreadyIn || lastPunch) return;
     if (!geofence?.hasCoords) return;
-    if (typeof navigator === "undefined" || !navigator.geolocation) {
-      setGeoDenied(true);
-      return;
-    }
+    if (typeof navigator === "undefined" || !navigator.geolocation) return;
     const id = navigator.geolocation.watchPosition(
       (pos) => {
         const next = { lat: pos.coords.latitude, lng: pos.coords.longitude };
@@ -321,6 +341,10 @@ export default function CheckInPage() {
     };
   }, [alreadyIn, lastPunch, geofence?.hasCoords]);
 
+  // Either reason puts the screen on the manual-check-in fallback.
+  const geoUnsupported = hydrated && !navigator.geolocation;
+  const geoDenied = permissionDenied || geoUnsupported;
+
   // --- Auto-fire the check-in once, the moment we land inside the fence. ---
   useEffect(() => {
     if (punchedRef.current || checkIn.isPending) return;
@@ -338,7 +362,6 @@ export default function CheckInPage() {
       clearWatcher();
       if (redirectRef.current) clearTimeout(redirectRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Already checked in when the page loaded (not a fresh punch): mark handled
@@ -386,7 +409,27 @@ export default function CheckInPage() {
   function submitWithReason() {
     const note = reason.trim();
     if (!note) return;
-    runCheckIn(pendingPos, note);
+    runCheckIn(pendingPos, note, pendingPhoto);
+  }
+
+  /**
+   * A photo was taken. From here it is the ordinary punch: get a fix, and if it
+   * is outside the fence ask for the reason the server already requires.
+   *
+   * The photo never changes whether the punch is allowed. It is recorded beside
+   * it, and a punch with no photo remains a completely normal punch.
+   */
+  async function punchWithPhoto(photo: string) {
+    setPendingPhoto(photo);
+    punchedRef.current = true; // stop the watcher from also firing
+    const pos = await getPosition();
+    setPendingPos(pos);
+    if (pos && inRangeOf(pos)) {
+      runCheckIn(pos, undefined, photo);
+      return;
+    }
+    setScannerOpen(false);
+    setReasonOpen(true);
   }
 
   return (
@@ -606,6 +649,16 @@ export default function CheckInPage() {
                   </>
                 )}
               </Button>
+              <Button
+                variant="outline"
+                size="lg"
+                className="mt-2 h-12 w-full text-base"
+                disabled={checkIn.isPending}
+                onClick={() => setScannerOpen(true)}
+              >
+                <Camera className="h-5 w-5" />
+                Add a photo
+              </Button>
               <p className="text-center text-xs text-muted-foreground">
                 Automatic detection unavailable for this store.
               </p>
@@ -650,6 +703,16 @@ export default function CheckInPage() {
                     Check in anyway
                   </>
                 )}
+              </Button>
+              <Button
+                variant="outline"
+                size="lg"
+                className="mt-2 h-12 w-full text-base"
+                disabled={checkIn.isPending}
+                onClick={() => setScannerOpen(true)}
+              >
+                <Camera className="h-5 w-5" />
+                Add a photo
               </Button>
               <div className="text-center">
                 <button
@@ -725,6 +788,16 @@ export default function CheckInPage() {
                   </>
                 )}
               </Button>
+              <Button
+                variant="outline"
+                size="lg"
+                className="mt-2 h-12 w-full text-base"
+                disabled={checkIn.isPending}
+                onClick={() => setScannerOpen(true)}
+              >
+                <Camera className="h-5 w-5" />
+                Add a photo
+              </Button>
               <div className="text-center">
                 <button
                   type="button"
@@ -738,6 +811,21 @@ export default function CheckInPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* An addition to the punch, never a gate in front of it: every button
+          above still checks in without ever opening this. */}
+      <FaceScannerDialog
+        open={scannerOpen}
+        onOpenChange={setScannerOpen}
+        onCapture={(photo) => void punchWithPhoto(photo)}
+        busy={checkIn.isPending}
+        title="Attendance photo"
+        confirmLabel="Check in"
+        // Who and where come from the session and the resolved geofence, never
+        // from the picture — so the screen shows what the record WILL say, and
+        // someone on the wrong branch notices before they file it.
+        context={{ staffName: user.name, storeName, action: "Check in" }}
+      />
     </div>
   );
 }

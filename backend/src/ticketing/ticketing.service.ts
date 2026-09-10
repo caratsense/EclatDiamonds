@@ -57,9 +57,14 @@ export class TicketingService {
    * scoped stores plus null-store tickets (visible to everyone in scope).
    */
   private scopedWhere(user: AuthUser, headerStore?: string) {
-    const f = this.scope.storeFilter(user, headerStore);
-    if (Object.keys(f).length === 0) return {}; // head_office, no narrowing
-    return { OR: [f, { storeId: null }] };
+    // Org-bind the WHOLE fragment: storeFilter never returns {} (head_office is
+    // already org-bounded via user.storeIds), so a bare `{ storeId: null }` OR
+    // branch would expose EVERY tenant's HO-level tickets. The organisationId
+    // predicate fences the null-store branch to the caller's organisation.
+    return {
+      organisationId: user.organisationId,
+      OR: [this.scope.storeFilter(user, headerStore), { storeId: null }],
+    };
   }
 
   /** GET /tickets — issue list with auto-routing + recurring-pattern clusters. */
@@ -104,6 +109,7 @@ export class TicketingService {
 
     const ticket = await this.prisma.ticket.create({
       data: {
+        organisationId: user.organisationId,
         ref: `TKT-${2061 + seq}`,
         storeId: dto.storeId ?? null,
         subject: dto.subject,

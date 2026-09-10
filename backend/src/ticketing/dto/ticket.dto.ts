@@ -1,5 +1,6 @@
-import { IsEnum, IsOptional, IsString } from 'class-validator';
+import { IsEnum, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 import { TicketCategory, TicketPriority, TicketStatus } from '@prisma/client';
+import { IsRealName } from '../../common/contact.util';
 
 export class CreateTicketDto {
   @IsOptional()
@@ -7,6 +8,9 @@ export class CreateTicketDto {
   storeId?: string;
 
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  @IsRealName()
   subject!: string;
 
   /** Optional (Round 2): omitted tickets route to the general Back Office bucket. */
@@ -20,6 +24,8 @@ export class CreateTicketDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(120)
+  @IsRealName()
   reporterName?: string;
 
   @IsOptional()
@@ -42,10 +48,13 @@ export class UpdateTicketDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(120)
+  @IsRealName()
   assigneeName?: string;
 }
 
 export class CreateTicketMessageDto {
   @IsString()
+  @IsNotEmpty()
   body!: string;
 }

@@ -9,6 +9,7 @@ import {
 import type { Request, Response } from 'express';
 
 import { AuthUser } from './auth-user';
+import { current } from './tenant-context';
 
 /**
  * AllExceptionsFilter — the single place every unhandled error passes through.
@@ -42,9 +43,16 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const req = ctx.getRequest<Request>();
 
     const isHttp = exception instanceof HttpException;
+    // Not everything client-caused is a Nest HttpException. The body parser
+    // throws `http-errors` objects — a request over the size limit arrives as
+    // PayloadTooLargeError with `status: 413` and `expose: true` — and treating
+    // those as unknown faults answered 500 and paged someone for a client
+    // sending too much data. Only a 4xx from a self-describing, exposable error
+    // is trusted; nothing else gets to choose its own status code.
+    const clientStatus = isHttp ? null : exposableClientStatus(exception);
     const status = isHttp
       ? exception.getStatus()
-      : HttpStatus.INTERNAL_SERVER_ERROR;
+      : (clientStatus ?? HttpStatus.INTERNAL_SERVER_ERROR);
 
     // Expected, client-caused responses: pass straight through, logged thin.
     if (status < 500) {
@@ -54,7 +62,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
         );
         return this.send(res, status, exception.getResponse());
       }
-      return this.send(res, status, { statusCode: status, message: 'Request failed' });
+      // An exposable message from `http-errors` says what the client did wrong
+      // ("request entity too large"); anything else stays generic.
+      const message =
+        clientStatus !== null && typeof (exception as { message?: unknown })?.message === 'string'
+          ? (exception as { message: string }).message
+          : 'Request failed';
+      return this.send(res, status, { statusCode: status, message });
     }
 
     // ---- server fault: log richly, answer thinly ----------------------------
@@ -64,9 +78,17 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const where = `${req?.method ?? '-'} ${req?.originalUrl ?? '-'}`;
 
     try {
+      // ORGANISATION and REQUEST ID added in Phase B5. Without the tenant, a
+      // multi-tenant incident cannot be scoped to whose data was involved; without
+      // the correlation id, this line cannot be tied to the request log entry that
+      // recorded its timing.
+      const scope = current();
+      const org =
+        user?.organisationId ?? (scope?.kind === 'tenant' ? scope.organisationId : '-');
       this.logger.error(
-        `${where} -> ${status} | user=${user?.id ?? 'anon'} (${user?.role ?? '-'}) ` +
-          `store=${(req?.headers?.['x-store-id'] as string) ?? '-'} | ${detail}`,
+        `${where} -> ${status} | org=${org} user=${user?.id ?? 'anon'} (${user?.role ?? '-'}) ` +
+          `store=${(req?.headers?.['x-store-id'] as string) ?? '-'} ` +
+          `rid=${(req as any)?.requestId ?? '-'} | ${detail}`,
         err?.stack,
       );
     } catch {
@@ -136,4 +158,22 @@ export class AllExceptionsFilter implements ExceptionFilter {
       /* never let alerting affect the request */
     }
   }
+}
+
+/**
+ * The status an `http-errors`-style exception is asking for, when it is a client
+ * error that is safe to surface.
+ *
+ * `expose` is the library's own signal that the message was written for the
+ * caller rather than for a log. Anything outside 4xx, or without it, is not
+ * trusted to pick its own status: a server fault must not be able to disguise
+ * itself as a client mistake and disappear from the error logs.
+ */
+function exposableClientStatus(exception: unknown): number | null {
+  if (!exception || typeof exception !== 'object') return null;
+  const err = exception as { status?: unknown; statusCode?: unknown; expose?: unknown };
+  if (err.expose !== true) return null;
+  const raw = typeof err.status === 'number' ? err.status : err.statusCode;
+  if (typeof raw !== 'number' || !Number.isInteger(raw)) return null;
+  return raw >= 400 && raw <= 499 ? raw : null;
 }

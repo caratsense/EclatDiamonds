@@ -69,7 +69,12 @@ export class DashboardService {
     // Party/product counts scoped exactly like the pages the tiles link to, so
     // the dashboard number matches what /customers and /catalogue show.
     const partyScope = this.scope.storeFilter(user, headerStore);
-    const productScope = { OR: [{ storeId: { in: storeIds } }, { storeId: null }] };
+    // Org-bound: a null-store product must still belong to the caller's org, or a
+    // company-wide design from another tenant would inflate this Designs count.
+    const productScope = {
+      organisationId: user.organisationId,
+      OR: [{ storeId: { in: storeIds } }, { storeId: null }],
+    };
 
     const [
       salesToday,
@@ -265,11 +270,34 @@ export class DashboardService {
   }
 
   /** GET /dashboard/tasks — store-scoped task list, newest first. */
-  async listTasks(user: AuthUser, headerStore?: string) {
+  async listTasks(
+    user: AuthUser,
+    headerStore?: string,
+    filter: { mine?: boolean; status?: string; priority?: string; partyId?: string; leadId?: string } = {},
+  ) {
+    // BUG FIXED HERE: this used `storeFilter` alone, which is
+    // `{ storeId: { in: [...] } }` — and a global (null-store) task matches no
+    // `in` list. Manager-created organisation-wide tasks were therefore written
+    // successfully and then never appeared in the list, which read as the save
+    // having failed. Global tasks are now included explicitly, bounded by
+    // organisation so the widened query cannot cross a tenant.
     const rows = await this.prisma.task.findMany({
-      where: this.scope.storeFilter(user, headerStore),
-      orderBy: { createdAt: 'desc' },
-      take: 100,
+      where: {
+        organisationId: user.organisationId,
+        OR: [this.scope.storeFilter(user, headerStore), { storeId: null }],
+        ...(filter.mine ? { assigneeId: user.id } : {}),
+        ...(filter.status ? { status: filter.status } : {}),
+        ...(filter.priority ? { priority: filter.priority } : {}),
+        ...(filter.partyId ? { partyId: filter.partyId } : {}),
+        ...(filter.leadId ? { leadId: filter.leadId } : {}),
+      },
+      orderBy: [{ status: 'asc' }, { dueDate: 'asc' }, { createdAt: 'desc' }],
+      take: 200,
+      include: {
+        assignedTo: { select: { id: true, name: true } },
+        party: { select: { id: true, name: true } },
+        lead: { select: { id: true, ref: true } },
+      },
     });
     return rows.map((t) => this.toTaskView(t));
   }
@@ -287,15 +315,48 @@ export class DashboardService {
     const assignee = dto.assignee.trim();
     if (!assignee) throw new BadRequestException('An assignee is required');
 
+    // Prefer a real user id. `assigneeId` is what "my tasks" and reassignment
+    // match on; the NAME is still stored alongside it so the row stays readable
+    // if that user is later deactivated or renamed.
+    let assigneeId: string | null = null;
+    let assigneeName = assignee;
+    if (dto.assigneeId) {
+      const target = await this.prisma.user.findFirst({
+        where: { id: dto.assigneeId, organisationId: user.organisationId, isActive: true },
+        select: { id: true, name: true },
+      });
+      // Scoped to the caller's organisation: an id from a request is not proof
+      // of anything, and assigning work into another tenant would be a leak of
+      // both the task and the fact that the user exists.
+      if (!target) throw new BadRequestException('That person is not in your organisation.');
+      assigneeId = target.id;
+      assigneeName = target.name;
+    }
+
+    // Subjects are verified before they are stored — a task pointing at another
+    // tenant's customer would expose that customer's name on this screen.
+    if (dto.partyId) await this.assertOwnedRecord('party', dto.partyId, user.organisationId);
+    if (dto.leadId) await this.assertOwnedRecord('lead', dto.leadId, user.organisationId);
+
     const task = await this.prisma.task.create({
       data: {
+        organisationId: user.organisationId,
         storeId: dto.storeId ?? null,
         title: dto.title,
         detail: dto.detail ?? null,
-        assignee,
+        assignee: assigneeName,
+        assigneeId,
+        priority: dto.priority ?? 'normal',
+        partyId: dto.partyId ?? null,
+        leadId: dto.leadId ?? null,
         status: 'open',
         dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
         createdById: user.id,
+      },
+      include: {
+        assignedTo: { select: { id: true, name: true } },
+        party: { select: { id: true, name: true } },
+        lead: { select: { id: true, ref: true } },
       },
     });
     return this.toTaskView(task);
@@ -305,6 +366,9 @@ export class DashboardService {
   async updateTaskStatus(user: AuthUser, id: string, dto: UpdateTaskStatusDto) {
     const task = await this.prisma.task.findUnique({ where: { id } });
     if (!task) throw new NotFoundException('Task not found');
+    // Org gate first: a null-store (global) task carries no storeId to scope on, so
+    // without this any store_manager of any tenant could mutate another org's task.
+    if (task.organisationId !== user.organisationId) throw new NotFoundException('Task not found');
     // Same gate as createTask: a pinned store must be in scope; global (null-store)
     // tasks are manager+ only.
     if (task.storeId) {
@@ -315,7 +379,17 @@ export class DashboardService {
 
     const updated = await this.prisma.task.update({
       where: { id },
-      data: { status: dto.status },
+      // `completedAt` is set once and cleared if the task is reopened, so
+      // "when was this finished" survives independently of the status column.
+      data: {
+        status: dto.status,
+        completedAt: dto.status === 'done' ? (task.completedAt ?? new Date()) : null,
+      },
+      include: {
+        assignedTo: { select: { id: true, name: true } },
+        party: { select: { id: true, name: true } },
+        lead: { select: { id: true, ref: true } },
+      },
     });
     await this.audit.record(user, {
       action: 'task.status_change',
@@ -333,12 +407,41 @@ export class DashboardService {
       id: t.id,
       title: t.title,
       detail: t.detail ?? '',
+      /// Display name. Kept for tasks created before assignee ids existed, where
+      /// it is the only record of who was meant.
       assignee: t.assignee ?? '',
+      /// The stable identity. Null on those historical rows — which is why the
+      /// UI must fall back to the name rather than showing them as unassigned.
+      assigneeId: t.assigneeId ?? null,
+      assignedTo: t.assignedTo ?? null,
+      priority: t.priority ?? 'normal',
       status: t.status,
       dueDate: t.dueDate ? t.dueDate.toISOString().slice(0, 10) : '',
+      completedAt: t.completedAt ? t.completedAt.toISOString() : null,
       storeId: t.storeId ?? null,
+      party: t.party ?? null,
+      lead: t.lead ?? null,
       createdAt: t.createdAt.toISOString(),
     };
+  }
+
+  /**
+   * A task's subject must belong to the caller's organisation.
+   *
+   * Checked with a scoped read rather than trusting the id: an id that arrived
+   * in a request body proves nothing, and a task pointing at another tenant's
+   * customer would print that customer's name on this screen.
+   */
+  private async assertOwnedRecord(
+    model: 'party' | 'lead',
+    id: string,
+    organisationId: string,
+  ): Promise<void> {
+    const found =
+      model === 'party'
+        ? await this.prisma.party.findFirst({ where: { id, organisationId }, select: { id: true } })
+        : await this.prisma.lead.findFirst({ where: { id, organisationId }, select: { id: true } });
+    if (!found) throw new BadRequestException(`That ${model} is not in your organisation.`);
   }
 
   /**
@@ -475,6 +578,7 @@ export class DashboardService {
 
     const row = await this.prisma.handoff.create({
       data: {
+        organisationId: user.organisationId,
         storeId,
         fromDept: dto.fromDept,
         toDept: dto.toDept,

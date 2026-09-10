@@ -22,6 +22,7 @@ import {
   Avatar,
   AvatarFallback,
 } from "@/components/ui/avatar";
+import { PunchEvidenceButton } from "@/components/hrms/punch-evidence";
 import type { AttendanceRecord } from "@/lib/mock/hrms";
 import type { Geofence } from "@/lib/queries/hrms";
 import { StatTiles } from "@/components/hrms/stat-tiles";
@@ -180,6 +181,8 @@ export function AttendanceTab({ records, fence }: AttendanceTabProps) {
                 <TableHead>Out</TableHead>
                 <TableHead className="text-right">Distance</TableHead>
                 <TableHead>Geo verify</TableHead>
+                {/* The third review signal, beside distance and the fence. */}
+                <TableHead className="w-10">Photo</TableHead>
                 <TableHead>Status</TableHead>
               </TableRow>
             </TableHeader>
@@ -187,7 +190,7 @@ export function AttendanceTab({ records, fence }: AttendanceTabProps) {
               {records.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={showStore ? 8 : 7}
+                    colSpan={showStore ? 9 : 8}
                     className="py-10 text-center text-sm text-muted-foreground"
                   >
                     No attendance marked yet — mark the first staff member in.
@@ -218,12 +221,21 @@ export function AttendanceTab({ records, fence }: AttendanceTabProps) {
                   <TableCell className="num">{r.checkIn ?? "—"}</TableCell>
                   <TableCell className="num">{r.checkOut ?? "—"}</TableCell>
                   <TableCell className="num text-right">
-                    {r.checkIn ? `${r.distanceM} m` : "—"}
+                    {/*
+                      A dash when there is no distance, not the word "null".
+                      `distanceM` is null whenever the store has no coordinates
+                      or the punch captured no fix, and the template string
+                      rendered that as "null m" on the manager's own table.
+                    */}
+                    {r.checkIn && r.distanceM != null ? `${r.distanceM} m` : "—"}
                   </TableCell>
                   <TableCell>
                     {r.checkIn ? <FenceBadge within={r.withinFence} /> : (
                       <span className="text-xs text-muted-foreground">no ping</span>
                     )}
+                  </TableCell>
+                  <TableCell>
+                    <PunchEvidenceButton record={r} />
                   </TableCell>
                   <TableCell>
                     <StatusBadge record={r} />

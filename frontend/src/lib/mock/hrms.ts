@@ -117,6 +117,19 @@ export interface AttendanceRecord {
   autoClosed?: boolean;
   /** Server-flagged: off-site punch, spoofed GPS, or an auto-closed day. */
   needsReview?: boolean;
+  /**
+   * Where to ASK for the photo taken at the punch — an API route, not the
+   * object's own URL, and only served to this staffer or a manager who covers
+   * their branch. Null when no photo was taken.
+   *
+   * It is EVIDENCE, not identification: nothing compares it to an enrolled
+   * face, and the identity on the record comes from the session that punched.
+   * The fields sat unread on the server for the whole of the feature's life
+   * because these four interfaces did not declare them, so a component that
+   * tried to render one got a compile error.
+   */
+  checkInPhotoUrl?: string | null;
+  checkOutPhotoUrl?: string | null;
 }
 
 export interface ShiftAssignment {
@@ -271,6 +284,9 @@ export interface SelfAttendance {
   /** Closed by the end-of-day job because no check-out was recorded. */
   autoClosed?: boolean;
   source?: AttendanceSource;
+  /** See AttendanceRecord.checkInPhotoUrl — an API route, not a storage URL. */
+  checkInPhotoUrl?: string | null;
+  checkOutPhotoUrl?: string | null;
 }
 
 /** A per-staff, per-type, per-year leave balance (GET /hrms/leave/balances). */
@@ -334,6 +350,9 @@ export interface AttendanceReportRow {
   autoClosed?: boolean;
   source?: AttendanceSource;
   shiftId: string | null;
+  /** See AttendanceRecord.checkInPhotoUrl — an API route, not a storage URL. */
+  checkInPhotoUrl?: string | null;
+  checkOutPhotoUrl?: string | null;
 }
 
 /** Roll-up totals for a date-range attendance report. */
@@ -397,6 +416,9 @@ export interface TeamPunch {
   autoClosed?: boolean;
   /** Server-flagged: worth a manager's eyes (off-site, spoofed, or auto-closed). */
   needsReview?: boolean;
+  /** See AttendanceRecord.checkInPhotoUrl — an API route, not a storage URL. */
+  checkInPhotoUrl?: string | null;
+  checkOutPhotoUrl?: string | null;
 }
 
 /**
@@ -1095,11 +1117,8 @@ export const SHIFTS: Shift[] = [
 /* ------------------------------------------------------------------ */
 
 /** Current weekly-off day per store, indexed 0 (Sun) – 6 (Sat). */
-export const MOCK_WEEK_OFF: Record<string, number> = {
-  "surat-main": 2, // Tuesday
-  "mumbai-bandra": 1, // Monday
-  "ahmedabad-cg": 3, // Wednesday
-};
+// MOCK_WEEK_OFF removed: the weekly-off card now reads each store's own saved
+// weekOffDay from the stores API rather than seeding from these constants.
 
 export const HOLIDAYS: Holiday[] = [
   { id: "hol-01", storeId: "surat-main", date: "2026-08-15", label: "Independence Day" },

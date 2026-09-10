@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "gati-sjep-discovery",
+  "displayName": "Gati / APRS-SJEP discovery",
+  "sourceSystem": "gati",
+  "discoveryOnly": true,
+  "notes": "Discovery-only profile for a new Gati installation. Eclat's proven full adapter remains in synceclatcaratsense and is not replaced by this generic profile.",
+  "transport": {
+    "kind": "odbc",
+    "connectionEnv": "CONNECT_SOURCE_DSN"
+  },
+  "entities": {}
+}
+

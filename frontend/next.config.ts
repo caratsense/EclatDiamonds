@@ -8,10 +8,20 @@ const BACKEND_ORIGIN =
   process.env.BACKEND_ORIGIN ?? "https://backend-production-89dd.up.railway.app";
 
 const nextConfig: NextConfig = {
-  // 'standalone' emits a self-contained server in .next/standalone, enabling a small
-  // Docker image if the frontend is hosted on Railway instead of Vercel. Vercel ignores
-  // this (uses its own adapter) and local `next dev` / `next start` are unaffected.
-  output: "standalone",
+  /*
+   * 'standalone' emits a self-contained server in .next/standalone, enabling a
+   * small Docker image if the frontend is hosted on Railway instead of Vercel,
+   * and it is what scripts/assert-local-api.mjs inspects before a browser
+   * verification run.
+   *
+   * It used to be set unconditionally, on the belief that "Vercel ignores this".
+   * That stopped being true: on Next 16 a Vercel build now fails outright with
+   *   ENOENT .next/next-server.js.nft.json
+   * because Vercel's own adapter and standalone tracing both want to own the
+   * same output. Vercel sets VERCEL=1 in its build container, so the local and
+   * Docker paths keep standalone and Vercel gets the output its adapter expects.
+   */
+  output: process.env.VERCEL ? undefined : "standalone",
 
   /**
    * Serve the API from our own origin.

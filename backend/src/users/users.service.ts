@@ -12,6 +12,7 @@ import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { ROLE_RANK } from '../common/role.util';
+import { WhatsAppIdentityService } from '../whatsapp-bot/whatsapp-identity.service';
 import { canApproveSignup, uniqueEmailHandle } from './users.util';
 import {
   ApproveUserDto,
@@ -53,6 +54,7 @@ export class UsersService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly scope: StoreScopeService,
+    private readonly whatsappIdentity: WhatsAppIdentityService,
   ) {}
 
   // ── Delegation / privilege-escalation guards ───────────────────────────────
@@ -133,11 +135,12 @@ export class UsersService {
    * is validated against scope (throws if out of scope).
    */
   async list(actor: AuthUser, requestedStoreId?: string) {
-    let where: any = {};
+    // Org guard: even an allStores head_office only ever sees THIS org's users.
+    let where: any = { organisationId: actor.organisationId };
     let visibleStoreIds: string[] | undefined;
     if (!actor.allStores || (requestedStoreId && requestedStoreId !== 'all')) {
       const ids = this.scope.effectiveStoreIds(actor, requestedStoreId);
-      where = { userStores: { some: { storeId: { in: ids } } } };
+      where = { organisationId: actor.organisationId, userStores: { some: { storeId: { in: ids } } } };
       // Scoped actor: only reveal store links inside their scope.
       if (!actor.allStores) visibleStoreIds = ids;
     }
@@ -155,9 +158,9 @@ export class UsersService {
    * scope by, so this is visible to any manager+ (they can only assign into their
    * own scope via PATCH /users/:id/store).
    */
-  async listUnassigned(_actor: AuthUser) {
+  async listUnassigned(actor: AuthUser) {
     const users = await this.prisma.user.findMany({
-      where: { isActive: true, userStores: { none: {} } },
+      where: { organisationId: actor.organisationId, isActive: true, userStores: { none: {} } },
       orderBy: { name: 'asc' },
       include: USER_INCLUDE,
     });
@@ -181,22 +184,34 @@ export class UsersService {
     // shape as self-signup. The login identity is a generated handle below.
     const contactEmail = dto.email?.trim().toLowerCase() || null;
 
-    if (phone && !last10(phone)) {
+    // Team add requires BOTH a phone and an email (confirmed rule) — enforced
+    // behind the DTO too, since a frontend-only guard is bypassable via the API.
+    if (!phone || !contactEmail) {
+      throw new BadRequestException('Both a phone number and an email are required');
+    }
+    if (!last10(phone)) {
       throw new BadRequestException('Enter a valid 10-digit mobile number');
     }
 
-    const store = await this.prisma.store.findUnique({ where: { id: dto.storeId } });
+    const store = await this.prisma.store.findUnique({
+      where: { id: dto.storeId },
+      include: { organisation: { select: { slug: true } } },
+    });
     if (!store) throw new NotFoundException('Store not found');
     if (store.isAggregate) {
       throw new BadRequestException('Cannot assign a user to the aggregate "All Stores" view');
     }
 
-    // Login identity: a generated, unique handle — matches self-signup so every
-    // account, however created, is `firstname.storeslug@eclatdiamonds.in`. The
-    // person signs in with a phone OTP or, after a manager sets one, this + a
-    // password.
-    const email = await uniqueEmailHandle(dto.name, store.name, async (candidate) =>
-      !!(await this.prisma.user.findUnique({ where: { email: candidate }, select: { id: true } })),
+    // Login identity: a generated, unique handle — the same generator self-signup
+    // uses, so every account, however created, is `firstname.storeslug@<this
+    // tenant's domain>`. The person signs in with a phone OTP or, after a manager
+    // sets one, this + a password.
+    const email = await uniqueEmailHandle(
+      dto.name,
+      store.name,
+      store.organisation?.slug,
+      async (candidate) =>
+        !!(await this.prisma.user.findUnique({ where: { email: candidate }, select: { id: true } })),
     );
 
     // Random password — the user logs in via OTP, or a manager resets it to share one.
@@ -212,6 +227,9 @@ export class UsersService {
         role,
         passwordHash,
         isActive: true,
+        // The new staff member belongs to the actor's organisation. dto.storeId is
+        // already scope-checked above, so it is a store within this same org.
+        organisationId: actor.organisationId,
         userStores: {
           create: { storeId: dto.storeId, isPrimary: true },
         },
@@ -233,7 +251,7 @@ export class UsersService {
 
   /** PATCH /users/:id/role — change a user's role (delegated, strictly below actor). */
   async updateRole(actor: AuthUser, id: string, dto: UpdateUserRoleDto) {
-    const existing = await this.getOrThrow(id);
+    const existing = await this.getOrThrow(actor, id);
     const storeId = await this.primaryStoreId(id);
     // Cannot touch a peer/superior or someone out of scope; new role must be below actor.
     this.assertCanManage(actor, existing.role, storeId);
@@ -266,7 +284,7 @@ export class UsersService {
    * (you cannot poach a user assigned to a store you don't own).
    */
   async updateStore(actor: AuthUser, id: string, dto: UpdateUserStoreDto) {
-    const existing = await this.getOrThrow(id);
+    const existing = await this.getOrThrow(actor, id);
     // Rank gate: never reassign a peer/superior.
     this.assertCanManage(actor, existing.role);
 
@@ -336,7 +354,7 @@ export class UsersService {
    * and ownership is moved.
    */
   async deactivate(actor: AuthUser, id: string, dto: DeactivateUserDto) {
-    const target = await this.getOrThrow(id);
+    const target = await this.getOrThrow(actor, id);
     const storeId = await this.primaryStoreId(id);
     this.assertCanManage(actor, target.role, storeId);
 
@@ -347,7 +365,7 @@ export class UsersService {
       if (reassignToId === id) {
         throw new BadRequestException('Cannot hand off work to the user being deactivated');
       }
-      const recipient = await this.getOrThrow(reassignToId);
+      const recipient = await this.getOrThrow(actor, reassignToId);
       if (!recipient.isActive) {
         throw new BadRequestException('Cannot hand off work to an inactive user');
       }
@@ -385,6 +403,10 @@ export class UsersService {
       include: USER_INCLUDE,
     });
 
+    // Revoke WhatsApp bindings too — a deactivated user's number must not keep
+    // reaching the reporting bot.
+    await this.whatsappIdentity.revokeForUser(id);
+
     await this.audit.record(actor, {
       action: 'user.deactivate',
       entityType: 'User',
@@ -410,7 +432,7 @@ export class UsersService {
 
   /** PATCH /users/:id/activate — reactivate a previously-offboarded user. */
   async activate(actor: AuthUser, id: string) {
-    const target = await this.getOrThrow(id);
+    const target = await this.getOrThrow(actor, id);
     const storeId = await this.primaryStoreId(id);
     this.assertCanManage(actor, target.role, storeId);
 
@@ -460,7 +482,7 @@ export class UsersService {
    */
   async listPending(actor: AuthUser) {
     const pending = await this.prisma.user.findMany({
-      where: { approvalStatus: 'pending' },
+      where: { organisationId: actor.organisationId, approvalStatus: 'pending' },
       orderBy: { createdAt: 'asc' },
     });
     const visible = pending.filter((u) =>
@@ -476,7 +498,7 @@ export class UsersService {
    * in a store the approver does not own.
    */
   async approve(actor: AuthUser, id: string, dto: ApproveUserDto) {
-    const target = await this.getOrThrow(id);
+    const target = await this.getOrThrow(actor, id);
     if (target.approvalStatus !== 'pending') {
       throw new BadRequestException('This account is not awaiting approval');
     }
@@ -487,7 +509,10 @@ export class UsersService {
 
     // Escalation + scope gate (same guards as manual provisioning).
     this.assertAssignableRole(actor, role);
-    const store = await this.prisma.store.findUnique({ where: { id: storeId } });
+    const store = await this.prisma.store.findUnique({
+      where: { id: storeId },
+      include: { organisation: { select: { slug: true } } },
+    });
     if (!store) throw new NotFoundException('Store not found');
     if (store.isAggregate) {
       throw new BadRequestException('Cannot assign a user to the aggregate "All Stores" view');
@@ -499,11 +524,15 @@ export class UsersService {
     // "…mumbaibandra" handle must not survive a reassignment to Udaipur).
     let email: string | undefined;
     if (target.requestedStoreId && storeId !== target.requestedStoreId) {
-      email = await uniqueEmailHandle(target.name, store.name, async (candidate) =>
-        !!(await this.prisma.user.findFirst({
-          where: { email: candidate, id: { not: id } },
-          select: { id: true },
-        })),
+      email = await uniqueEmailHandle(
+        target.name,
+        store.name,
+        store.organisation?.slug,
+        async (candidate) =>
+          !!(await this.prisma.user.findFirst({
+            where: { email: candidate, id: { not: id } },
+            select: { id: true },
+          })),
       );
     }
 
@@ -544,7 +573,7 @@ export class UsersService {
    * cannot reject a manager-level request — only head office can.
    */
   async reject(actor: AuthUser, id: string, reason?: string) {
-    const target = await this.getOrThrow(id);
+    const target = await this.getOrThrow(actor, id);
     if (target.approvalStatus !== 'pending') {
       throw new BadRequestException('This account is not awaiting approval');
     }
@@ -576,7 +605,7 @@ export class UsersService {
    * below the actor's rank and in scope. `used` is preserved.
    */
   async setLeaveAllocation(actor: AuthUser, id: string, dto: SetLeaveAllocationDto) {
-    const target = await this.getOrThrow(id);
+    const target = await this.getOrThrow(actor, id);
     const storeId = await this.primaryStoreId(id);
     this.assertCanManage(actor, target.role, storeId);
 
@@ -603,8 +632,16 @@ export class UsersService {
     };
   }
 
-  private async getOrThrow(id: string) {
-    const user = await this.prisma.user.findUnique({ where: { id } });
+  /**
+   * Load a user BY ID, organisation-bounded to the actor. A user in another
+   * organisation is indistinguishable from a non-existent one (NotFound), so this
+   * is the single org guard every by-id mutation routes through — head_office is
+   * "head office of THIS org", never a cross-tenant admin.
+   */
+  private async getOrThrow(actor: AuthUser, id: string) {
+    const user = await this.prisma.user.findFirst({
+      where: { id, organisationId: actor.organisationId },
+    });
     if (!user) throw new NotFoundException('User not found');
     return user;
   }

@@ -190,10 +190,10 @@ export function DailyReportForm() {
     ],
   );
 
-  const preview = useMemo(
-    () => composeDailyReportText(draft, storeLabel),
-    [draft, storeLabel],
-  );
+  // Composed inline: it is a pure function of `draft` (already memoised) and a
+  // label, so a second manual memo only gave the compiler a dependency list to
+  // disagree with.
+  const preview = composeDailyReportText(draft, storeLabel);
 
   const collected = draft.cash + draft.card + draft.upi;
 

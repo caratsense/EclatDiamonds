@@ -1,0 +1,8 @@
+# Verified Windows connector runtime set (2026-09-08).
+# Keep direct intent in requirements.txt; setup_agent.ps1 installs this exact set.
+certifi==2026.7.22
+charset-normalizer==3.5.1
+idna==3.19
+pyodbc==5.3.0
+requests==2.34.2
+urllib3==2.7.0

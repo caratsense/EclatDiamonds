@@ -23,6 +23,7 @@ import {
   type ReferralCode,
 } from "@/lib/mock/loyalty";
 import { usePayout } from "@/lib/queries/loyalty";
+import { useResetOn } from "@/lib/use-reset-on";
 
 /** Parse a numeric input into a number, or undefined when blank/invalid. */
 function toNumber(v: string): number | undefined {
@@ -59,7 +60,7 @@ export function PayoutDialog({ open, onOpenChange, code }: PayoutDialogProps) {
   const exceeds = amt != null && amt > balance;
 
   // Reset local state each time a new code opens the dialog.
-  React.useEffect(() => {
+  useResetOn(open ? (code?.id ?? "open") : null, () => {
     if (open) {
       setAmount("");
       setType("redeem");
@@ -68,7 +69,7 @@ export function PayoutDialog({ open, onOpenChange, code }: PayoutDialogProps) {
       setFieldErrors({});
       setBalanceAfter(null);
     }
-  }, [open, code?.id]);
+  });
 
   function submit() {
     setError(null);

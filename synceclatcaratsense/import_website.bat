@@ -24,14 +24,34 @@ if exist "eclat_config.bat" (call eclat_config.bat) else (
   pause
   exit /b 1
 )
-if exist "_pyexe.bat" (call "_pyexe.bat") else (set "PYEXE=python")
+call "%~dp0require_runtime.bat"
+if errorlevel 1 (
+  pause
+  exit /b 21
+)
+
+"%PYEXE%" gati_target_safety.py website
+if errorlevel 1 (
+  echo Run 2_configure.bat and explicitly review the website feed.
+  pause
+  exit /b 20
+)
+if /I "%~1"=="--send" (
+  "%PYEXE%" gati_target_safety.py backend
+  if errorlevel 1 (
+    echo Run 2_configure.bat and explicitly review the backend target.
+    pause
+    exit /b 20
+  )
+)
 
 "%PYEXE%" import_website.py %*
-if errorlevel 1 (
+set "IMPORT_EXIT=%ERRORLEVEL%"
+if not "%IMPORT_EXIT%"=="0" (
   echo.
   echo [PROBLEM] See the message above.
 )
 
 echo.
 pause
-endlocal
+endlocal & exit /b %IMPORT_EXIT%

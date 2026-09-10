@@ -316,6 +316,7 @@ describe('Eclat backend — critical paths (e2e)', () => {
         .send({
           storeId: SURAT,
           customerName: 'QA Test — pricing',
+          phone: '9876500000',
           lines: [
             {
               description: '22K gold chain',
@@ -347,6 +348,7 @@ describe('Eclat backend — critical paths (e2e)', () => {
         .send({
           storeId: SURAT,
           customerName: 'QA Test — multiline',
+          phone: '9876500000',
           lines: [
             { description: 'A', karat: 22, weightGrams: 10, goldRatePerGram: 6000, makingCharges: 5000, stoneCharges: 0 },
             { description: 'B', karat: 18, weightGrams: 5, goldRatePerGram: 5000, makingCharges: 2000, stoneCharges: 3000 },

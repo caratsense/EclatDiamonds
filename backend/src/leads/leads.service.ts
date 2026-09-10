@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -9,6 +10,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { SequenceService } from '../common/sequence.service';
 import { AuthUser } from '../common/auth-user';
+import { AttributionService } from '../crm/attribution.service';
+import { ActivityService } from '../crm/activity.service';
+import { IdentityService } from '../crm/identity.service';
 import {
   CreateActivityDto,
   CreateFollowUpDto,
@@ -96,6 +100,33 @@ function computeTemperature(l: any): 'hot' | 'warm' | 'cold' {
   return 'cold';
 }
 
+/**
+ * The answers a Meta Lead Ads questionnaire carried, if this lead came from one.
+ *
+ * Read out of `attributes.metaLeadForm`, which is where `meta-lead.adapter.ts`
+ * puts every field it did not recognise as a standard one (name, phone, email).
+ * Exposed as its own narrow list rather than by returning `attributes` whole:
+ * that bag is the tenant's custom vocabulary for every industry, and a screen
+ * that renders all of it renders whatever anyone ever puts there.
+ *
+ * Anything not shaped like `{ name, values[] }` is dropped rather than guessed
+ * at — the answers come from an external system and are not ours to repair.
+ */
+function metaFormAnswers(attributes: unknown): { name: string; values: string[] }[] {
+  if (!attributes || typeof attributes !== 'object') return [];
+  const raw = (attributes as Record<string, unknown>).metaLeadForm;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const { name, values } = entry as { name?: unknown; values?: unknown };
+    if (typeof name !== 'string' || !name.trim()) return [];
+    const clean = Array.isArray(values)
+      ? values.filter((v): v is string => typeof v === 'string')
+      : [];
+    return [{ name, values: clean }];
+  });
+}
+
 /** Shape a Lead row into the frontend `Lead` interface (mock/crm.ts). */
 function toView(l: any) {
   return {
@@ -119,6 +150,7 @@ function toView(l: any) {
     lostReason: l.lostReason ?? null,
     closedAt: l.closedAt ? l.closedAt.toISOString() : null,
     temperature: computeTemperature(l),
+    formAnswers: metaFormAnswers(l.attributes),
     notes: (l.notes ?? []).map((n: any) => ({
       id: n.id,
       kind: n.kind ?? 'note',
@@ -163,10 +195,15 @@ function toReminderView(f: any) {
 
 @Injectable()
 export class LeadsService {
+  private readonly log = new Logger(LeadsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
     private readonly sequence: SequenceService,
+    private readonly identity: IdentityService,
+    private readonly activity: ActivityService,
+    private readonly attribution: AttributionService,
   ) {}
 
   async list(user: AuthUser, q: ListLeadsQuery, headerStore?: string) {
@@ -225,6 +262,7 @@ export class LeadsService {
     const seq = await this.sequence.next('LD:global');
     const lead = await this.prisma.lead.create({
       data: {
+        organisationId: user.organisationId,
         ref: `LD-${5000 + seq}`,
         storeId: dto.storeId,
         customerName: dto.customerName,
@@ -249,6 +287,53 @@ export class LeadsService {
         { leadId: lead.id, storeId: lead.storeId, seq: 1, dueDate: addDaysUtc(base, FU1_DAYS) },
         { leadId: lead.id, storeId: lead.storeId, seq: 2, dueDate: addDaysUtc(base, FU2_DAYS) },
       ],
+    });
+
+    // CaratOS Phase A6 — give the lead a real customer identity.
+    //
+    // Until now `Lead.partyId` was written by nothing except the legacy sync, so
+    // a lead captured at the counter and a sale to the same person six weeks
+    // later were two unrelated records and Customer 360 had nothing to join on.
+    //
+    // Best-effort by design: a lead is a commercial record and must be created
+    // even when the phone number is unusable. A failure here downgrades the lead
+    // to identity-less — exactly what it was before — and never loses it.
+    const identity = await this.identity.resolveForRecord(user, {
+      phone: dto.phone,
+      name: dto.customerName,
+      storeId: dto.storeId,
+      source: 'lead',
+    });
+    const partyId = identity.partyId;
+    if (partyId) {
+      await this.prisma.lead.update({ where: { id: lead.id }, data: { partyId } });
+    } else if (dto.phone) {
+      // The lead stands; it simply is not joined to a customer record yet. Logged
+      // rather than swallowed so a systematically failing normaliser is visible.
+      this.log.warn(`Lead ${lead.ref} has no linked customer: ${identity.unresolvedReason}`);
+    }
+
+    // Phase A10 — the DECLARED source becomes an attribution touch. Declared, not
+    // measured: someone chose it from a dropdown, and the evidence column says so
+    // for the rest of this record's life. Best-effort, like the identity link
+    // above — marketing provenance is never worth losing a lead over.
+    await this.attribution.recordLeadSource(user.organisationId, {
+      id: lead.id,
+      partyId,
+      source: dto.source,
+      createdAt: lead.createdAt,
+    });
+
+    await this.activity.recordFor(user, {
+      type: 'lead.created',
+      summary: `${user.name} created lead ${lead.ref} for ${dto.customerName}`,
+      partyId,
+      leadId: lead.id,
+      storeId: lead.storeId,
+      entityType: 'Lead',
+      entityId: lead.id,
+      channel: 'store',
+      metadata: { source: dto.source, stage: lead.stage },
     });
 
     // Optional opening remark becomes the lead's first note.

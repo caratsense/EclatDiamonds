@@ -1,0 +1,52 @@
+CARATOS CONNECT — CLIENT PROFILE CHECKLIST
+
+Do not put passwords, API tokens or connection strings in this document/profile.
+
+Client / tenant:
+Source product + exact version:
+Database/API method:
+Agent machine and Windows architecture (32/64 bit):
+Read-only source login confirmed:
+Branch/company/fiscal-year files or databases:
+
+For every requested entity:
+  CaratOS entity:
+  Source table/object/report:
+  Stable source primary key:
+  Confirmed immutable (no name/mutable-sequence fallback):
+  Last-modified/watermark field:
+  Branch/store key and lookup:
+  Reviewed SELECT/XML request:
+  Source -> canonical field map:
+  Effective target store / organisation-wide decision:
+  Source-of-truth owner for every writable field:
+  Null/blank meaning:
+  Unit and currency:
+  Cancellation/deletion rule:
+  Expected source count:
+  Preview ready/rejected count:
+  Client-approved reconciliation count:
+
+Transactions only:
+  Header/detail join:
+  Debit/credit or quantity sign convention:
+  Return/cancelled voucher status:
+  Tax-inclusive/exclusive amount rule:
+  Duplicate/idempotency key:
+
+Release gates:
+  [ ] discover completed without upload
+  [ ] masked preview reviewed
+  [ ] no invented defaults
+  [ ] missing store records held, not guessed
+  [ ] dry-run count reconciled
+  [ ] printed profileHash approved in head-office agent configuration
+  [ ] printed sourceInstanceHash approved in head-office agent configuration
+  [ ] repeat run proved idempotent
+  [ ] failed upload proved state does not advance
+  [ ] agent token is source-bound and tenant-bound
+  [ ] first accepted live sync pinned the pre-approved source descriptor
+  [ ] replacement/repointing uses a new enrolment and fresh review
+  [ ] import history is visible only at the intended branch scope
+  [ ] no second integration writes these fields without a conflict policy
+  [ ] scheduled task installed only after manual sync acceptance

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   CheckCircle2,
   Copy,
@@ -30,6 +30,7 @@ import {
   type ReportChannel,
 } from "@/lib/mock/reporting";
 import { useSendDailyReport } from "@/lib/queries/reporting";
+import { useResetOn } from "@/lib/use-reset-on";
 
 function ChannelButton({
   active,
@@ -82,13 +83,13 @@ export function DailyReportSendDialog({
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const sendReport = useSendDailyReport();
 
-  useEffect(() => {
+  useResetOn(open ? (report?.id ?? "open") : null, () => {
     if (open) {
       setChannel("whatsapp");
       setTo("");
       setOutcome(null);
     }
-  }, [open, report?.id]);
+  });
 
   // Prefer the server-composed text; fall back to composing client-side.
   const text = useMemo(() => {
@@ -216,7 +217,7 @@ export function DailyReportSendDialog({
               id="dsr-send-to"
               type={isEmail ? "email" : "tel"}
               inputMode={isEmail ? "email" : "tel"}
-              placeholder={isEmail ? "owner@eclatdiamonds.in" : "9876500000"}
+              placeholder={isEmail ? "reports@example.com" : "9876500000"}
               value={to}
               aria-invalid={recipientError}
               onChange={(e) => {

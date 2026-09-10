@@ -17,8 +17,10 @@ through the Eclat backend. That matters: a jewellery catalogue is tens of GB of
 camera JPEGs, and routing it through the API would be slow, would be billed as
 egress twice, and would hit request-size limits. Eclat only receives the link.
 
-Safe to re-run. An `uploaded_media.json` ledger records what has already gone up,
-so a second run only does what is new. Delete that file to force a full re-upload.
+Safe to re-run. An `uploaded_media.json` ledger records two separate facts: the
+storage URL and which CaratOS backend has confirmed that exact URL. A storage
+upload is never mistaken for a completed catalogue link; an interrupted or
+failed link is retried on the next run without uploading the bytes again.
 
 Run:  sync_media.bat --folders   see which folders hold photos, and choose
       sync_media.bat 25          upload a small batch first
@@ -45,10 +47,14 @@ try:
 except Exception:
     _PILImage = None
 
+from gati_machine_auth import approved_connection
+from gati_runtime import GatiRunAlreadyActive, atomic_write_json, install_run_lock
+from gati_target_safety import TargetSafetyError, require_approved_backend
+
 # ── Config (from eclat_config.bat) ────────────────────────────────────────────
 BACKENDS   = [u.strip().rstrip("/") for u in os.getenv("ECLAT_BASE_URL", "").split(",") if u.strip()]
-EMAIL      = os.getenv("ECLAT_EMAIL", "")
-PASSWORD   = os.getenv("ECLAT_PASSWORD", "")
+AGENT_TOKEN = os.getenv("CARATOS_AGENT_TOKEN", "").strip()
+APPROVED_BACKEND = os.getenv("CARATOS_APPROVED_BACKEND_ORIGIN", "").strip()
 
 SQL_SERVER = os.getenv("SJEP_SQL_SERVER", r"localhost\SQLEXPRESS")
 SQL_DB     = os.getenv("SJEP_SQL_DB", "APRSSJEP")
@@ -88,6 +94,8 @@ logging.basicConfig(
     handlers=[logging.FileHandler(LOG_FILE, encoding="utf-8"), logging.StreamHandler(sys.stdout)],
 )
 log = logging.getLogger("eclat-media")
+APPROVAL_HEADERS = {}
+HEARTBEATS = {}
 
 # The Windows console is cp1252 and turns any non-ASCII into "?", which reads
 # as corruption in a log someone is watching on a call.
@@ -107,7 +115,7 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
 
 def fail(msg):
     log.error(msg)
-    sys.exit(1)
+    raise RuntimeError(msg)
 
 
 def storage_backend():
@@ -121,8 +129,8 @@ def storage_backend():
 
 
 def check_config():
-    if not BACKENDS or not EMAIL or not PASSWORD:
-        fail("Eclat settings missing. Run this through sync_media.bat so eclat_config.bat loads.")
+    if not BACKENDS or not AGENT_TOKEN:
+        fail("CaratOS Gati agent settings missing. Set ECLAT_BASE_URL and CARATOS_AGENT_TOKEN.")
 
     provider, client = storage_backend()
     if provider is None:
@@ -166,20 +174,108 @@ def check_config():
     return provider, client
 
 
+def check_backend_target():
+    """Fence the destination before authentication or storage upload."""
+    if not BACKENDS or not AGENT_TOKEN:
+        fail("CaratOS Gati agent settings missing. Set ECLAT_BASE_URL and CARATOS_AGENT_TOKEN.")
+    if len(BACKENDS) != 1:
+        fail("A Gati Connect token can target exactly one backend installation.")
+    try:
+        BACKENDS[:] = [require_approved_backend(BACKENDS[0], APPROVED_BACKEND)]
+    except TargetSafetyError as exc:
+        fail(f"[SAFETY STOP] {exc}")
+
+
 # ── Ledger: what has already been uploaded ────────────────────────────────────
 def load_ledger():
+    if not os.path.exists(LEDGER):
+        return {}
     try:
         with open(LEDGER, encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+            value = json.load(f)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            "uploaded_media.json is unreadable; keep it for recovery and contact support"
+        ) from exc
+    if not isinstance(value, dict):
+        raise RuntimeError("uploaded_media.json must contain a JSON object")
+    return value
 
 
 def save_ledger(d):
-    tmp = LEDGER + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(d, f, indent=1)
-    os.replace(tmp, LEDGER)
+    atomic_write_json(LEDGER, d)
+
+
+def _backend_key(base_url):
+    """Stable, credential-free key for a backend's link receipt."""
+    return base_url.strip().rstrip("/").casefold()
+
+
+def _uploaded_url(entry):
+    """Read both the current ledger shape and the original url/file/at shape."""
+    if not isinstance(entry, dict):
+        return None
+    upload = entry.get("upload")
+    if isinstance(upload, dict) and isinstance(upload.get("url"), str):
+        return upload["url"]
+    # Legacy ledgers recorded the storage upload as if it were completion. Treat
+    # that URL as uploaded-but-unlinked so upgrading cannot lose or re-upload it.
+    return entry.get("url") if isinstance(entry.get("url"), str) else None
+
+
+def _is_linked(entry, base_url):
+    """True only when this backend confirmed the currently stored URL."""
+    url = _uploaded_url(entry)
+    if not url or not isinstance(entry, dict):
+        return False
+    links = entry.get("links")
+    if not isinstance(links, dict):
+        return False
+    receipt = links.get(_backend_key(base_url))
+    return isinstance(receipt, dict) and receipt.get("url") == url
+
+
+def _is_complete(entry, backends):
+    return bool(backends) and all(_is_linked(entry, base) for base in backends)
+
+
+def _record_storage_upload(ledger, key, target, url):
+    """Persist a storage result without claiming that the catalogue is linked."""
+    old = ledger.get(key)
+    links = old.get("links", {}) if isinstance(old, dict) else {}
+    if not isinstance(links, dict):
+        links = {}
+    # A changed URL invalidates old receipts; a backend has only acknowledged
+    # the URL it was sent, not whichever URL happens to be current later.
+    links = {
+        backend: receipt
+        for backend, receipt in links.items()
+        if isinstance(receipt, dict) and receipt.get("url") == url
+    }
+    ledger[key] = {
+        "file": target["filename"],
+        "upload": {
+            "url": url,
+            "uploadedAt": datetime.now().isoformat(timespec="seconds"),
+        },
+        "links": links,
+    }
+
+
+def _record_link_receipt(ledger, base_url, records):
+    """Mark only records covered by a validated, exact backend acknowledgment."""
+    linked_at = datetime.now().isoformat(timespec="seconds")
+    backend = _backend_key(base_url)
+    for record in records:
+        key = f"{record['kind']}:{record['legacyId']}"
+        entry = ledger.get(key)
+        if not isinstance(entry, dict) or _uploaded_url(entry) != record["imageUrl"]:
+            raise RuntimeError(f"ledger URL changed before link receipt for {key}")
+        links = entry.setdefault("links", {})
+        links[backend] = {
+            "url": record["imageUrl"],
+            "linkedAt": linked_at,
+        }
 
 
 # ── Sources ───────────────────────────────────────────────────────────────────
@@ -410,29 +506,91 @@ def cloudinary_upload(path, public_id):
 
 # ── Eclat ─────────────────────────────────────────────────────────────────────
 def login(base_url):
-    r = requests.post(
-        f"{base_url}/auth/login",
-        json={"email": EMAIL, "password": PASSWORD},
-        timeout=60,
+    headers, reporter = approved_connection(
+        base_url, AGENT_TOKEN, SQL_SERVER, SQL_DB
     )
-    r.raise_for_status()
-    return r.json()["token"]
+    APPROVAL_HEADERS[base_url] = headers
+    HEARTBEATS[base_url] = reporter
+    return APPROVAL_HEADERS[base_url]
 
 
-def push_images(token, base_url, records):
+def heartbeat(phase, **stats):
+    for reporter in HEARTBEATS.values():
+        reporter.periodic({"phase": phase, **stats})
+
+
+def terminal_heartbeats(ok, error=None, **stats):
+    reported = True
+    for base_url, reporter in HEARTBEATS.items():
+        try:
+            payload = {"phase": "complete" if ok else "failed", **stats}
+            if ok:
+                reporter.success(payload)
+            else:
+                reporter.error(error or "Gati photo sync failed", payload)
+        except Exception:
+            log.error(f"Could not report terminal agent status for {base_url}")
+            reported = False
+    return reported
+
+
+def _validate_link_acknowledgment(response, expected):
+    """Reject ambiguous/partial 2xx responses instead of losing retry state."""
+    try:
+        body = response.json()
+    except Exception as exc:
+        raise RuntimeError("link endpoint returned invalid JSON") from exc
+    if not isinstance(body, dict):
+        raise RuntimeError("link endpoint returned a non-object acknowledgment")
+
+    fields = (body.get("received"), body.get("upserted"), body.get("skipped"))
+    if any(type(value) is not int or value < 0 for value in fields):
+        raise RuntimeError("link endpoint returned invalid acknowledgment counts")
+    if (
+        body.get("entity") != "product-images"
+        or body["received"] != expected
+        or body["upserted"] != expected
+        or body["skipped"] != 0
+    ):
+        raise RuntimeError(
+            "link endpoint did not confirm the exact batch "
+            f"(entity={body.get('entity')!r}, received={body.get('received')!r}, "
+            f"upserted={body.get('upserted')!r}, skipped={body.get('skipped')!r})"
+        )
+    if "watermark" not in body:
+        raise RuntimeError("link endpoint acknowledgment omitted watermark")
+    watermark = body["watermark"]
+    if watermark is not None and (
+        not isinstance(watermark, str) or not watermark.strip()
+    ):
+        raise RuntimeError("link endpoint returned an invalid watermark")
+    return body
+
+
+def push_images(base_url, records, on_acknowledged=None):
+    """Link uploaded URLs and checkpoint only fully acknowledged chunks."""
     if not records:
         return True
     ok = True
-    hdrs = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     for i in range(0, len(records), 500):
         chunk = records[i:i + 500]
         try:
+            heartbeat(
+                "uploading",
+                entity="product-images",
+                rowsRead=i,
+                rowsReady=len(records),
+            )
+            hdrs = dict(APPROVAL_HEADERS[base_url])
             r = requests.post(
                 f"{base_url}/sync/product-images",
                 headers=hdrs, data=json.dumps({"records": chunk}), timeout=180,
+                allow_redirects=False,
             )
             if 200 <= r.status_code < 300:
-                res = r.json()
+                res = _validate_link_acknowledgment(r, len(chunk))
+                if on_acknowledged is not None:
+                    on_acknowledged(chunk)
                 log.info(f"  linked {res.get('upserted')} images (skipped {res.get('skipped')})")
             else:
                 log.error(f"  link FAILED {r.status_code}: {r.text[:200]}")
@@ -443,7 +601,7 @@ def push_images(token, base_url, records):
     return ok
 
 
-def main():
+def _main():
     log.info("=" * 66)
     log.info("ECLAT CATALOGUE PHOTO SYNC")
     log.info("=" * 66)
@@ -454,13 +612,26 @@ def main():
         list_image_folders(IMAGE_ROOT)
         return 0
 
+    if not DRY_RUN:
+        check_backend_target()
+        APPROVAL_HEADERS.clear()
+        HEARTBEATS.clear()
+        for base in BACKENDS:
+            try:
+                login(base)
+            except Exception as e:
+                log.error(f"Restricted Gati agent approval failed for {base}: {e}")
+                return 1
+
     provider, client = check_config()
 
     conn = connect_sql()
-    cur = conn.cursor()
-    log.info("Reading image references from SQL Server...")
-    targets = collect_targets(cur)
-    conn.close()
+    try:
+        cur = conn.cursor()
+        log.info("Reading image references from SQL Server...")
+        targets = collect_targets(cur)
+    finally:
+        conn.close()
     if not targets:
         log.info("No image references found. Nothing to do.")
         return 0
@@ -468,53 +639,75 @@ def main():
     index = build_file_index(IMAGE_ROOT)
     ledger = load_ledger()
 
-    todo = [t for t in targets if f"{t['kind']}:{t['legacyId']}" not in ledger]
-    log.info(f"{len(targets)} referenced, {len(targets) - len(todo)} already uploaded, {len(todo)} to do")
+    todo = [
+        t for t in targets
+        if not _is_complete(ledger.get(f"{t['kind']}:{t['legacyId']}"), BACKENDS)
+    ]
+    log.info(
+        f"{len(targets)} referenced, {len(targets) - len(todo)} fully linked, "
+        f"{len(todo)} pending"
+    )
     if LIMIT:
         todo = todo[:LIMIT]
         log.info(f"  --limit {LIMIT}: doing {len(todo)} this run")
 
-    uploaded, missing, failed = [], 0, 0
+    # Approval is a precondition, not cleanup after uploading. If any configured
+    # backend refuses this exact agent/profile/source/revision, no bytes leave
+    # the machine for storage and the command exits nonzero.
+    ready, uploaded_count, missing, failed = [], 0, 0, 0
     for n, t in enumerate(todo, 1):
+        heartbeat(
+            "uploading",
+            entity="product-images",
+            rowsRead=n - 1,
+            rowsReady=len(todo),
+        )
         key = f"{t['kind']}:{t['legacyId']}"
-        path = resolve(index, t["filename"])
-        if not path:
-            missing += 1
-            if missing <= 10:
-                log.warning(f"  not on disk: {t['filename']} ({key})")
-            continue
-        if DRY_RUN:
-            log.info(f"  [dry-run] would upload {path}")
-            continue
-        upload_path, tmp = resized_copy(path)
-        try:
-            public_id = f"{t['kind']}_{t['legacyId']}"
-            if provider == "r2":
-                # A resized copy is always JPEG; otherwise keep the real extension
-                # so R2 serves the right Content-Type.
-                ext = ".jpg" if tmp else (os.path.splitext(path)[1].lower() or ".jpg")
-                url = client.upload_file(upload_path, f"catalogue/{public_id}{ext}")
-            else:
-                url = cloudinary_upload(upload_path, public_id)
-            ledger[key] = {"url": url, "file": t["filename"], "at": datetime.now().isoformat(timespec="seconds")}
-            uploaded.append({"kind": t["kind"], "legacyId": t["legacyId"], "imageUrl": url})
-            if n % 25 == 0:
-                log.info(f"  {n}/{len(todo)} uploaded...")
-                save_ledger(ledger)   # checkpoint, so a crash doesn't redo everything
-        except Exception as e:
-            failed += 1
-            log.error(f"  upload failed for {t['filename']}: {e}")
-        finally:
-            if tmp:
-                try:
-                    os.remove(tmp)
-                except OSError:
-                    pass
+        url = _uploaded_url(ledger.get(key))
+        if url:
+            log.info(f"  reusing uploaded URL; backend link still pending ({key})")
+        else:
+            path = resolve(index, t["filename"])
+            if not path:
+                missing += 1
+                if missing <= 10:
+                    log.warning(f"  not on disk: {t['filename']} ({key})")
+                continue
+            if DRY_RUN:
+                log.info(f"  [dry-run] would upload and link {path}")
+                continue
+            upload_path, tmp = resized_copy(path)
+            try:
+                public_id = f"{t['kind']}_{t['legacyId']}"
+                if provider == "r2":
+                    # A resized copy is always JPEG; otherwise keep the real extension
+                    # so R2 serves the right Content-Type.
+                    ext = ".jpg" if tmp else (os.path.splitext(path)[1].lower() or ".jpg")
+                    url = client.upload_file(upload_path, f"catalogue/{public_id}{ext}")
+                else:
+                    url = cloudinary_upload(upload_path, public_id)
+                _record_storage_upload(ledger, key, t, url)
+                save_ledger(ledger)  # durable uploaded-but-unlinked checkpoint
+                uploaded_count += 1
+                if n % 25 == 0:
+                    log.info(f"  {n}/{len(todo)} prepared...")
+            except Exception as e:
+                failed += 1
+                log.error(f"  upload failed for {t['filename']}: {e}")
+            finally:
+                if tmp:
+                    try:
+                        os.remove(tmp)
+                    except OSError:
+                        pass
 
-    if not DRY_RUN:
-        save_ledger(ledger)
+        if url:
+            ready.append({"kind": t["kind"], "legacyId": t["legacyId"], "imageUrl": url})
 
-    log.info(f"\nUploaded {len(uploaded)}, missing on disk {missing}, failed {failed}")
+    log.info(
+        f"\nUploaded to storage {uploaded_count}, ready to link {len(ready)}, "
+        f"missing on disk {missing}, failed {failed}"
+    )
     if missing:
         log.warning(
             f"{missing} photos are named in the database but not in {IMAGE_ROOT}. "
@@ -522,23 +715,61 @@ def main():
             "worth asking the shop."
         )
 
-    if uploaded and not DRY_RUN:
+    link_failed = False
+    if ready and not DRY_RUN:
         for base in BACKENDS:
-            log.info(f"Linking to {base} ...")
-            try:
-                token = login(base)
-            except Exception as e:
-                log.error(f"  login failed: {e}")
+            pending = [
+                record for record in ready
+                if not _is_linked(
+                    ledger.get(f"{record['kind']}:{record['legacyId']}"), base
+                )
+            ]
+            if not pending:
                 continue
-            push_images(token, base, uploaded)
+            log.info(f"Linking to {base} ...")
 
+            def checkpoint(chunk, backend=base):
+                _record_link_receipt(ledger, backend, chunk)
+                save_ledger(ledger)
+
+            if not push_images(base, pending, checkpoint):
+                link_failed = True
+
+    if failed or link_failed:
+        log.error("Photo sync incomplete; run it again after fixing the error.")
+        return 1
     log.info("Photo sync complete.")
     return 0
 
 
+def main():
+    APPROVAL_HEADERS.clear()
+    HEARTBEATS.clear()
+    try:
+        result = _main()
+    except Exception as exc:
+        log.error(f"Photo sync failed: {exc}")
+        terminal_heartbeats(False, exc)
+        return 1
+    if not DRY_RUN:
+        reported = terminal_heartbeats(
+            result == 0,
+            None if result == 0 else "Photo sync incomplete",
+            entity="product-images",
+        )
+        if result == 0 and not reported:
+            return 1
+    return result
+
+
 if __name__ == "__main__":
     try:
-        sys.exit(main())
-    except KeyboardInterrupt:
+        with install_run_lock("photo sync"):
+            sys.exit(main())
+    except GatiRunAlreadyActive as exc:
+        log.error(str(exc))
+        sys.exit(2)
+    except KeyboardInterrupt as exc:
         log.warning("Interrupted — progress is saved; just run it again.")
-        sys.exit(1)
+        terminal_heartbeats(False, exc, phase="interrupted", entity="product-images")
+        sys.exit(130)

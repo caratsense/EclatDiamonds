@@ -1,17 +1,22 @@
 import {
   IsBoolean,
   IsEmail,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { IsIndianMobile, IsRealName } from '../../common/contact.util';
 
 /** POST /stores — head office provisions a new branch. */
 export class CreateStoreDto {
   @IsString()
+  @IsNotEmpty()
   @MinLength(2)
+  @MaxLength(120)
+  @IsRealName()
   name!: string;
 
   @IsString()
@@ -41,6 +46,8 @@ export class UpdateStoreDto {
   @IsOptional()
   @IsString()
   @MinLength(2)
+  @MaxLength(120)
+  @IsRealName()
   name?: string;
 
   @IsOptional()
@@ -93,10 +100,12 @@ export class UpdateStoreDto {
 
   @IsOptional()
   @IsString()
+  @IsIndianMobile()
   phone?: string;
 
   @IsOptional()
   @IsString()
+  @IsEmail()
   email?: string;
 
   @IsOptional()
@@ -107,7 +116,10 @@ export class UpdateStoreDto {
 /** POST /stores/:id/manager — create (or link) the store-manager login for a branch. */
 export class CreateManagerDto {
   @IsString()
+  @IsNotEmpty()
   @MinLength(2)
+  @MaxLength(120)
+  @IsRealName()
   name!: string;
 
   @IsEmail()
@@ -115,6 +127,7 @@ export class CreateManagerDto {
 
   @IsOptional()
   @IsString()
+  @IsIndianMobile()
   phone?: string;
 
   @IsString()
@@ -126,7 +139,10 @@ export class CreateManagerDto {
 /** POST /regions — optional grouping for stores (area rollups). */
 export class CreateRegionDto {
   @IsString()
+  @IsNotEmpty()
   @MinLength(2)
+  @MaxLength(120)
+  @IsRealName()
   name!: string;
 
   @IsOptional()

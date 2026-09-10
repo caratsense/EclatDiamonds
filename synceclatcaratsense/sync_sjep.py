@@ -41,17 +41,28 @@ import sys
 import json
 import hashlib
 import logging
+import re
 import requests
 from datetime import datetime, date
 from decimal import Decimal
+from gati_machine_auth import (
+    GatiAuthError,
+    approved_connection,
+    approval_summary,
+)
+from gati_runtime import (
+    GatiRunAlreadyActive,
+    atomic_write_json,
+    install_run_lock,
+)
+from gati_target_safety import TargetSafetyError, require_approved_backend
 
 # ── Configuration (from environment or eclat_config.bat) ──
-# Multiple targets supported: comma-separate ECLAT_BASE_URL to push the SAME real
-# data to several backends in one run — e.g. local dev + production together:
-#   set ECLAT_BASE_URL=http://localhost:4000,https://backend-production-89dd.up.railway.app
+# One enrolled agent belongs to one backend/tenant. Use a separate installation
+# and token for another environment; never reuse a production credential in dev.
 BACKENDS    = [u.strip().rstrip("/") for u in os.getenv("ECLAT_BASE_URL", "").split(",") if u.strip()]
-EMAIL       = os.getenv("ECLAT_EMAIL", "")
-PASSWORD    = os.getenv("ECLAT_PASSWORD", "")
+AGENT_TOKEN = os.getenv("CARATOS_AGENT_TOKEN", "").strip()
+APPROVED_BACKEND = os.getenv("CARATOS_APPROVED_BACKEND_ORIGIN", "").strip()
 # SQL Server connection — live, READ-ONLY. Use a least-privilege read-only login.
 SQL_SERVER  = os.getenv("SJEP_SQL_SERVER", r"localhost\SQLEXPRESS")
 SQL_DB      = os.getenv("SJEP_SQL_DB", "APRSSJEP")
@@ -64,10 +75,22 @@ SQL_PASS    = os.getenv("SJEP_SQL_PASS", "")
 # --help must also bypass the guard, or the user cannot discover the flags that
 # would let them run without credentials.
 _DRY = any(a in sys.argv for a in ("--dry-run", "--help", "-h"))
-if not _DRY and (not BACKENDS or not EMAIL or not PASSWORD):
-    print("ERROR: Eclat settings not set. Run this through a .bat so eclat_config.bat loads.")
+if not _DRY and (not BACKENDS or not AGENT_TOKEN):
+    print("ERROR: CaratOS Connect settings not set. Run this through a .bat so eclat_config.bat loads.")
+    print("       Enrol an organisation-wide Gati agent and set CARATOS_AGENT_TOKEN.")
     print("       (A dry run works without them:  python sync_sjep.py --dry-run)")
     sys.exit(1)
+if not _DRY and len(BACKENDS) != 1:
+    print("ERROR: a Gati Connect token can target exactly one backend installation.")
+    print("       Use a separate installation and enrolled token for another environment.")
+    sys.exit(1)
+if not _DRY:
+    try:
+        BACKENDS = [require_approved_backend(BACKENDS[0], APPROVED_BACKEND)]
+    except TargetSafetyError as exc:
+        print(f"[SAFETY STOP] {exc}")
+        print("       Rerun 2_configure.bat and review the exact backend before any networked command.")
+        sys.exit(20)
 if _DRY and not BACKENDS:
     # One placeholder pass so the inspection loop runs with nothing configured.
     BACKENDS = ["(dry-run: no backend configured)"]
@@ -85,6 +108,9 @@ logging.basicConfig(
     handlers=[logging.FileHandler(LOG_FILE, encoding="utf-8"), logging.StreamHandler(sys.stdout)],
 )
 log = logging.getLogger("eclat-sync")
+APPROVAL_HEADERS = {}
+HEARTBEATS = {}
+CHECKPOINT_CONTEXTS = {}
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -94,35 +120,181 @@ except Exception:
 
 # ── Watermark: per-target last-synced marker so we only push NEW data ──
 def load_state():
-    """Read { base_url: last_synced_iso }. Empty = everything is a full backfill."""
+    """Read durable checkpoints, failing closed on corruption.
+
+    Treating malformed JSON as an empty state silently starts a full 1,000-table
+    replay and can overwrite a concurrently written checkpoint.  The operator
+    must see and recover a damaged file explicitly instead.
+    """
+    if not os.path.exists(STATE_FILE):
+        return {}
     try:
-        if os.path.exists(STATE_FILE):
-            with open(STATE_FILE, "r") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {}
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            value = json.load(f)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            "sync_state.json is unreadable; keep it for recovery and contact support"
+        ) from exc
+    if not isinstance(value, dict):
+        raise RuntimeError("sync_state.json must contain a JSON object")
+    return value
 
 
 def save_state(state):
     try:
-        with open(STATE_FILE, "w") as f:
-            json.dump(state, f, indent=2)
+        atomic_write_json(STATE_FILE, state)
+        return True
     except Exception as e:
         log.error(f"Could not save state: {e}")
+        return False
+
+
+MAPPED_SOURCES = (
+    "parties",
+    "products",
+    "stock",
+    "sales",
+    "sale-lines",
+    "orders",
+    "order-items",
+    "bags",
+    "ledger",
+    "stock-movements",
+)
+MAPPED_DEPENDENCIES = {
+    "sales": ("sales", "sale-lines"),
+    "sale-lines": ("sales", "sale-lines"),
+    "orders": ("orders", "order-items"),
+    "order-items": ("orders", "order-items"),
+}
+
+
+def _checkpoint_context(base_url):
+    """Freeze the exact approved backend/profile/source/config generation."""
+    context = CHECKPOINT_CONTEXTS.get(base_url)
+    if context:
+        return dict(context)
+    headers = APPROVAL_HEADERS.get(base_url) or {}
+    required = {
+        "backend": base_url.strip().rstrip("/").casefold(),
+        "profileHash": headers.get("x-caratos-profile-hash"),
+        "sourceInstanceHash": headers.get("x-caratos-source-instance-hash"),
+        "configRevision": headers.get("x-caratos-config-revision"),
+    }
+    if not all(isinstance(value, str) and value for value in required.values()):
+        raise RuntimeError("no approved checkpoint generation is available")
+    return required
+
+
+def checkpoint_namespace(base_url):
+    context = _checkpoint_context(base_url)
+    encoded = json.dumps(
+        context, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("ascii")
+    return "gati-v2::" + hashlib.sha256(encoded).hexdigest()
+
+
+def mapped_state_key(base_url, source):
+    return f"{checkpoint_namespace(base_url)}::mapped::{source}"
+
+
+def raw_state_key(base_url, table):
+    return f"{checkpoint_namespace(base_url)}::raw::{table}"
+
+
+def _remember_checkpoint_context(state, base_url):
+    namespace = checkpoint_namespace(base_url)
+    state[f"{namespace}::context"] = _checkpoint_context(base_url)
+
+
+def mapped_watermarks(state, base_url):
+    """Per-source boundaries; never fan an old global maximum into all sources."""
+    return {
+        source: str(state.get(mapped_state_key(base_url, source), "") or "")
+        for source in MAPPED_SOURCES
+    }
+
+
+def advance_mapped_watermarks(state, base_url, batch_ok, batch_watermarks):
+    """Advance only sources whose complete dependency group was acknowledged.
+
+    Sale lines are selected using the changed sale-header IDs, so their durable
+    boundary is the sale header's watermark. Order items follow the same rule.
+    If either child upload fails, the parent boundary stays put and both retry.
+    """
+    changed = False
+    for source in MAPPED_SOURCES:
+        dependencies = MAPPED_DEPENDENCIES.get(source, (source,))
+        if not all(batch_ok.get(entity) is True for entity in dependencies):
+            continue
+        watermark = batch_watermarks.get(source)
+        if not isinstance(watermark, str) or not watermark:
+            continue
+        key = mapped_state_key(base_url, source)
+        previous = str(state.get(key, "") or "")
+        if not previous or watermark > previous:
+            state[key] = watermark
+            changed = True
+    if changed:
+        _remember_checkpoint_context(state, base_url)
+    return changed
 
 
 # ── Connections ──
 def login(base_url):
     try:
-        r = requests.post(f"{base_url}/auth/login", json={"email": EMAIL, "password": PASSWORD}, timeout=30)
-        if 200 <= r.status_code < 300:  # NestJS returns 201 on POST /auth/login
-            log.info(f"Login OK: {base_url}")
-            return r.json().get("token")
-        log.error(f"Login failed ({base_url}): {r.status_code}")
-    except Exception as e:
-        log.error(f"Login error ({base_url}): {e}")
+        headers, reporter = approved_connection(
+            base_url, AGENT_TOKEN, SQL_SERVER, SQL_DB
+        )
+        APPROVAL_HEADERS[base_url] = headers
+        HEARTBEATS[base_url] = reporter
+        CHECKPOINT_CONTEXTS[base_url] = _checkpoint_context(base_url)
+        log.info(f"Restricted Gati agent approved: {base_url}")
+        return AGENT_TOKEN
+    except GatiAuthError as e:
+        log.error(f"Gati agent approval failed ({base_url}): {e}")
+    except Exception:
+        log.error(f"Gati agent approval failed ({base_url}): unexpected handshake error")
     return None
+
+
+def heartbeat(base_url, phase, **stats):
+    """Cheap call-site hook; the shared reporter throttles actual requests."""
+    reporter = HEARTBEATS.get(base_url)
+    if reporter is not None:
+        reporter.periodic({"phase": phase, **stats})
+
+
+def terminal_heartbeat(base_url, ok, error=None, **stats):
+    """Best-effort terminal status that never masks the actual run result."""
+    reporter = HEARTBEATS.get(base_url)
+    if reporter is None:
+        return False
+    try:
+        payload = {"phase": "complete" if ok else "failed", **stats}
+        if ok:
+            reporter.success(payload)
+        else:
+            reporter.error(error or "Gati sync failed", payload)
+        return True
+    except Exception:
+        log.error(f"  [{base_url}] could not report terminal agent status")
+        return False
+
+
+def sync_headers(base_url):
+    headers = APPROVAL_HEADERS.get(base_url)
+    if not headers:
+        raise RuntimeError("restricted Gati agent handshake has not completed")
+    frozen = CHECKPOINT_CONTEXTS.get(base_url)
+    if frozen and headers.get("x-caratos-config-revision") != frozen.get(
+        "configRevision"
+    ):
+        raise RuntimeError(
+            "head office changed the connector configuration during this run; "
+            "nothing further was uploaded and the next run will restart safely"
+        )
+    return dict(headers)
 
 
 def connect_sql():
@@ -146,14 +318,20 @@ def table_columns(cursor, table):
     try:
         cursor.execute(f"SELECT TOP 0 * FROM {table}")
         return {str(d[0]).lower(): str(d[0]) for d in cursor.description}
-    except Exception:
-        return {}
+    except Exception as exc:
+        # Optional modules genuinely may not exist across APRS versions. Only
+        # that SQL Server condition is an empty schema; a timeout, permission or
+        # broken connection is an extraction failure and must reach exit status.
+        message = str(exc)
+        if "42S02" in message or re.search(r"\bInvalid object name\b", message, re.I):
+            return {}
+        raise
 
 
 # ── Extractors — REAL SQL against the APRS-SJEP schema ──
 # Every transaction table has an identity-bigint PK (monotonic, best for NEW rows)
 # plus EntryDate/UpdateDate (for CHANGED rows). The incremental filter is:
-#     UpdateDate > @since  OR  (UpdateDate IS NULL AND EntryDate > @since)
+#     UpdateDate >= @since  OR  (UpdateDate IS NULL AND EntryDate >= @since)
 # `since` is the last-synced UpdateDate/EntryDate watermark (ISO string), '' = full
 # backfill. Master tables (PartyMst, StyleMst) and current stock (Inward) are pulled
 # in full each cycle when `since` is given as a date too, since they are small.
@@ -168,40 +346,237 @@ def rows(cursor):
     return [dict(zip(cols, r)) for r in cursor.fetchall()]
 
 
-def _wm(cursor, table):
-    """Incremental-watermark WHERE clause using whichever of UpdateDate/EntryDate
-    actually exist on `table`. Returns (clause, n_params). Schema-adaptive: a table
-    with neither date column just does a full pull each time."""
+def _wm(cursor, table, since="", until=None):
+    """Return a bounded, overlap-safe watermark predicate and its parameters.
+
+    ``>=`` deliberately replays rows tied at the saved timestamp; every sink is
+    an idempotent legacy-key upsert. ``until`` is captured from SQL Server once
+    per run, so a malformed future source date can never become the checkpoint.
+    """
     c = table_columns(cursor, table)
     upd = "updatedate" in c
     ent = "entrydate" in c
     if upd and ent:
-        return ("(? = '' OR (t.UpdateDate IS NULL AND t.EntryDate > CONVERT(datetime, ?)) "
-                "OR (t.UpdateDate IS NOT NULL AND t.UpdateDate > CONVERT(datetime, ?)))", 3)
+        value = "COALESCE(t.UpdateDate, t.EntryDate)"
+        return (
+            f"(? = '' OR {value} >= CONVERT(datetime, ?)) "
+            f"AND (? IS NULL OR {value} IS NULL OR {value} <= CONVERT(datetime, ?))",
+            [since, since, until, until],
+        )
     if ent:
-        return ("(? = '' OR t.EntryDate > CONVERT(datetime, ?))", 2)
+        return (
+            "(? = '' OR t.EntryDate >= CONVERT(datetime, ?)) "
+            "AND (? IS NULL OR t.EntryDate IS NULL OR t.EntryDate <= CONVERT(datetime, ?))",
+            [since, since, until, until],
+        )
     if upd:
-        return ("(? = '' OR t.UpdateDate > CONVERT(datetime, ?))", 2)
-    return ("1=1", 0)
+        return (
+            "(? = '' OR t.UpdateDate >= CONVERT(datetime, ?)) "
+            "AND (? IS NULL OR t.UpdateDate IS NULL OR t.UpdateDate <= CONVERT(datetime, ?))",
+            [since, since, until, until],
+        )
+    return ("1=1", [])
 
 
-def _base(cursor, table, since):
+def _base(cursor, table, since, until=None):
     """SELECT * from a base table with the adaptive watermark. SELECT * never
     fails on a missing column and pulls EVERY available field."""
     if not table_columns(cursor, table):
         return []
-    wm, n = _wm(cursor, table)
-    cursor.execute(f"SELECT * FROM {table} t WHERE {wm}", *([since] * n))
+    wm, params = _wm(cursor, table, since, until)
+    cursor.execute(f"SELECT * FROM {table} t WHERE {wm}", *params)
     return rows(cursor)
 
 
-def _merge_1to1(cursor, base_rows, table, key):
+def _ident(value):
+    """Quote a SQL Server identifier obtained from trusted schema metadata."""
+    return "[" + str(value).replace("]", "]]" ) + "]"
+
+
+def _dedupe_rows(records):
+    """Remove overlap between timestamp- and parent-triggered source reads."""
+    output, seen = [], set()
+    for record in records:
+        marker = json.dumps(
+            record, default=_json_default, sort_keys=True, separators=(",", ":")
+        )
+        if marker in seen:
+            continue
+        seen.add(marker)
+        output.append(record)
+    return output
+
+
+def _has_watermark_columns(columns):
+    return "updatedate" in columns or "entrydate" in columns
+
+
+def _select_by_values(cursor, table, column, values, until=None):
+    """Select rows in bounded IN chunks (SQL Server allows only 2,100 params)."""
+    unique = list(dict.fromkeys(value for value in values if value is not None))
+    if not unique:
+        return []
+    selected = []
+    for offset in range(0, len(unique), 1000):
+        chunk = unique[offset:offset + 1000]
+        placeholders = ",".join("?" for _ in chunk)
+        wm, wm_params = _wm(cursor, table, "", until)
+        cursor.execute(
+            f"SELECT * FROM {_ident(table)} t WHERE "
+            f"t.{_ident(column)} IN ({placeholders}) AND ({wm})",
+            *chunk,
+            *wm_params,
+        )
+        selected.extend(rows(cursor))
+    return selected
+
+
+def _changed_dependency_values(cursor, table, key, since, until):
+    """Return dependency key -> latest change, or ``None`` for a full fallback."""
+    columns = table_columns(cursor, table)
+    if not columns:
+        return set()
+    actual_key = columns.get(str(key).lower())
+    if not actual_key:
+        log.warning(f"  {table}: dependency key {key} is absent; cannot trigger parents")
+        return set()
+    if not since:
+        return set()
+    if not _has_watermark_columns(columns):
+        return None
+    wm, params = _wm(cursor, table, since, until)
+    update_column = columns.get("updatedate")
+    entry_column = columns.get("entrydate")
+    if update_column and entry_column:
+        changed_at = (
+            f"COALESCE(t.{_ident(update_column)}, t.{_ident(entry_column)})"
+        )
+    else:
+        changed_at = f"t.{_ident(update_column or entry_column)}"
+    cursor.execute(
+        f"SELECT t.{_ident(actual_key)} AS DependencyKey, "
+        f"MAX({changed_at}) AS DependencyChangedAt "
+        f"FROM {_ident(table)} t WHERE {wm} "
+        f"GROUP BY t.{_ident(actual_key)}",
+        *params,
+    )
+    return {
+        row.get("DependencyKey"): row.get("DependencyChangedAt")
+        for row in rows(cursor)
+        if row.get("DependencyKey") is not None
+    }
+
+
+def _dependency_aware_base(
+    cursor, parent_table, parent_key, since="", until=None, dependencies=()
+):
+    """Read changed parents plus parents affected by child/lookup changes.
+
+    Each dependency is ``(table, dependency_key, parent_reference_column)``.
+    A dependency without its own timestamp forces a safe full parent read rather
+    than silently missing a summary or lookup-only edit.
+    """
+    parent_columns = table_columns(cursor, parent_table)
+    if not parent_columns:
+        return []
+    base = _base(cursor, parent_table, since, until)
+    if not since:
+        return base
+
+    extra = []
+    for dependency_table, dependency_key, parent_reference in dependencies:
+        actual_parent_reference = parent_columns.get(parent_reference.lower())
+        if not actual_parent_reference:
+            continue
+        changed = _changed_dependency_values(
+            cursor, dependency_table, dependency_key, since, until
+        )
+        if changed is None:
+            log.info(
+                f"  {dependency_table}: no change timestamp; rereading all "
+                f"{parent_table} rows to preserve dependency updates"
+            )
+            return _base(cursor, parent_table, "", until)
+        affected = _select_by_values(
+            cursor,
+            parent_table,
+            actual_parent_reference,
+            changed.keys(),
+            until,
+        )
+        # A lookup-only edit (for example BookMaster changing a sale's branch)
+        # must move the mapped source boundary too.  Otherwise the corrected
+        # parent is captured but replayed forever because its own date is old.
+        for parent in affected:
+            changed_at = changed.get(parent.get(actual_parent_reference))
+            if changed_at is not None:
+                _carry_dependency_change(parent, {"UpdateDate": changed_at})
+        extra.extend(affected)
+    return _dedupe_rows(base + extra)
+
+
+def _extract_child_rows(
+    cursor, table, parent_column, changed_parent_ids, since="", until=None
+):
+    """Capture both child-only edits and all children of changed parents."""
+    columns = table_columns(cursor, table)
+    if not columns:
+        return []
+    actual_parent = columns.get(parent_column.lower())
+    if not actual_parent:
+        raise RuntimeError(f"{table} has no required {parent_column} column")
+
+    if not since:
+        return _base(cursor, table, "", until)
+    if not _has_watermark_columns(columns):
+        log.info(
+            f"  {table}: no child change timestamp; rereading all rows safely"
+        )
+        return _base(cursor, table, "", until)
+
+    changed_children = _base(cursor, table, since, until)
+    parent_children = _select_by_values(
+        cursor, table, actual_parent, changed_parent_ids, until
+    )
+    return _dedupe_rows(changed_children + parent_children)
+
+
+def _change_value(record):
+    """Return the same source-change value the backend uses for a watermark."""
+    by_name = {str(name).lower(): value for name, value in record.items()}
+    return by_name.get("updatedate") or by_name.get("entrydate")
+
+
+def _change_sort_key(value):
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    return str(value).strip()
+
+
+def _carry_dependency_change(target, dependency):
+    """Make a summary/lookup-only edit visible to the backend watermark.
+
+    The API calculates its receipt from ``UpdateDate`` else ``EntryDate`` on the
+    outgoing row.  If a joined summary changed after its unchanged parent, keep
+    the later timestamp on the mapped record; otherwise the summary would be
+    resent forever and its source checkpoint could never advance.
+    """
+    candidate = _change_value(dependency)
+    current = _change_value(target)
+    if candidate is not None and (
+        current is None or _change_sort_key(candidate) > _change_sort_key(current)
+    ):
+        target["UpdateDate"] = candidate
+
+
+def _merge_1to1(cursor, base_rows, table, key, until=None):
     """Merge a 1:1 summary table (e.g. InwardSummary) into base_rows on `key`.
     Adds summary columns not already present (base wins on a name clash)."""
     cols = table_columns(cursor, table)
     if not base_rows or not cols or key.lower() not in cols:
         return
-    cursor.execute(f"SELECT * FROM {table}")
+    wm, params = _wm(cursor, table, "", until)
+    cursor.execute(f"SELECT * FROM {_ident(table)} t WHERE {wm}", *params)
     by = {}
     for r in rows(cursor):
         k = r.get(key)
@@ -213,15 +588,17 @@ def _merge_1to1(cursor, base_rows, table, key):
             for col, val in s.items():
                 if col not in b:
                     b[col] = val
+            _carry_dependency_change(b, s)
 
 
-def _merge_lookup(cursor, base_rows, table, base_key, lookup_key, want):
+def _merge_lookup(cursor, base_rows, table, base_key, lookup_key, want, until=None):
     """Merge selected columns from a lookup table (e.g. ToneMst) into base_rows,
     matching base_rows[base_key] == lookup[lookup_key]."""
     cols = table_columns(cursor, table)
     if not base_rows or not cols or lookup_key.lower() not in cols:
         return
-    cursor.execute(f"SELECT * FROM {table}")
+    wm, params = _wm(cursor, table, "", until)
+    cursor.execute(f"SELECT * FROM {_ident(table)} t WHERE {wm}", *params)
     by = {}
     for r in rows(cursor):
         k = r.get(lookup_key)
@@ -233,32 +610,69 @@ def _merge_lookup(cursor, base_rows, table, base_key, lookup_key, want):
             for w in want:
                 if w in l and w not in b:
                     b[w] = l[w]
+            _carry_dependency_change(b, l)
 
 
-def extract_parties(cursor, since=""):
+def extract_parties(cursor, since="", until=None):
     """Customers / suppliers / salespersons / branches — PartyMst master (SELECT *,
     every field). Branch/location rows become Eclat Stores; role flags -> Party.types."""
-    return _base(cursor, "PartyMst", since)
+    return _base(cursor, "PartyMst", since, until)
 
 
-def extract_items(cursor, since=""):
+def extract_items(cursor, since="", until=None):
     """Designs = StyleMst (+ StyleMstSummary 1:1 weights/amounts, + ToneMst metal)."""
-    items = _base(cursor, "StyleMst", since)
-    _merge_1to1(cursor, items, "StyleMstSummary", "StyleId")
-    _merge_lookup(cursor, items, "ToneMst", "MetalToneNo", "ToneNo", ["ToneCode", "ToneFor"])
+    items = _dependency_aware_base(
+        cursor,
+        "StyleMst",
+        "StyleId",
+        since,
+        until,
+        (
+            ("StyleMstSummary", "StyleId", "StyleId"),
+            ("ToneMst", "ToneNo", "MetalToneNo"),
+        ),
+    )
+    _merge_1to1(cursor, items, "StyleMstSummary", "StyleId", until)
+    _merge_lookup(
+        cursor,
+        items,
+        "ToneMst",
+        "MetalToneNo",
+        "ToneNo",
+        ["ToneCode", "ToneFor"],
+        until,
+    )
     return items
 
 
-def extract_stock(cursor, since=""):
+def extract_stock(cursor, since="", until=None):
     """Per-piece stock = Inward (+ InwardSummary 1:1 weights/amounts, + ToneMst metal).
     SELECT * so a missing column (e.g. MRP on some versions) never crashes the pull."""
-    stock = _base(cursor, "Inward", since)
-    _merge_1to1(cursor, stock, "InwardSummary", "JewelId")
-    _merge_lookup(cursor, stock, "ToneMst", "MetalToneNo", "ToneNo", ["ToneCode", "ToneFor"])
+    stock = _dependency_aware_base(
+        cursor,
+        "Inward",
+        "JewelId",
+        since,
+        until,
+        (
+            ("InwardSummary", "JewelId", "JewelId"),
+            ("ToneMst", "ToneNo", "MetalToneNo"),
+        ),
+    )
+    _merge_1to1(cursor, stock, "InwardSummary", "JewelId", until)
+    _merge_lookup(
+        cursor,
+        stock,
+        "ToneMst",
+        "MetalToneNo",
+        "ToneNo",
+        ["ToneCode", "ToneFor"],
+        until,
+    )
     return stock
 
 
-def extract_stock_movements(cursor, since=""):
+def extract_stock_movements(cursor, since="", until=None):
     """Per-piece movement log = InwardHistory (→ Eclat StockMovement).
 
     Says which piece moved, what it became (`Jstatus`, the same letters the stock
@@ -269,31 +683,83 @@ def extract_stock_movements(cursor, since=""):
 
     `LocationId` is NULL throughout on this install, so from/to branch cannot be
     filled and is deliberately left null rather than guessed."""
-    return _base(cursor, "InwardHistory", since)
+    return _base(cursor, "InwardHistory", since, until)
 
 
-def extract_sales(cursor, since=""):
+def extract_sales(cursor, since="", until=None):
     """Invoice headers = JewelTrans (SELECT *). Lines via extract_sale_lines().
     TranType selects the doc kind (sale/purchase/branch transfer/proforma/return)."""
-    return _base(cursor, "JewelTrans", since)
+    return _dependency_aware_base(
+        cursor,
+        "JewelTrans",
+        "JewelTransId",
+        since,
+        until,
+        (("BookMaster", "BookNo", "BookNo"),),
+    )
 
 
-def extract_sale_lines(cursor, trans_ids):
+def extract_sale_lines(cursor, trans_ids, since="", until=None):
     """Per-line component-priced snapshot for a set of JewelTransIds.
     JewelTransInward = the line (a JewelId on a bill); JewelTransInwardSummary = its
     weight/amount rollup. (JewelTransInward has no own identity — keyed by parent.)
     Pass the JewelTransIds returned by extract_sales()."""
-    if not trans_ids or not table_columns(cursor, "JewelTransInward"):
+    line_columns = table_columns(cursor, "JewelTransInward")
+    if not line_columns:
         return []
-    ph = ",".join("?" for _ in trans_ids)
-    cursor.execute(f"SELECT * FROM JewelTransInward WHERE JewelTransId IN ({ph})", *trans_ids)
-    lines = rows(cursor)
+    lines = _extract_child_rows(
+        cursor,
+        "JewelTransInward",
+        "JewelTransId",
+        trans_ids,
+        since,
+        until,
+    )
     sc = table_columns(cursor, "JewelTransInwardSummary")
     if lines and sc and "jeweltransid" in sc and "jewelid" in sc:
-        cursor.execute(
-            f"SELECT * FROM JewelTransInwardSummary WHERE JewelTransId IN ({ph})", *trans_ids)
+        if since and not _has_watermark_columns(sc):
+            # A summary-only edit cannot be discovered from the line timestamp.
+            # Full fallback is the only safe contract on this schema variant.
+            lines = _base(cursor, "JewelTransInward", "", until)
+        elif since:
+            changed_summaries = _base(
+                cursor, "JewelTransInwardSummary", since, until
+            )
+            changed_pairs = {
+                (row.get("JewelTransId"), row.get("JewelId"))
+                for row in changed_summaries
+            }
+            changed_trans = {pair[0] for pair in changed_pairs if pair[0] is not None}
+            affected = _select_by_values(
+                cursor,
+                "JewelTransInward",
+                line_columns["jeweltransid"],
+                changed_trans,
+                until,
+            )
+            lines = _dedupe_rows(
+                lines
+                + [
+                    row
+                    for row in affected
+                    if (row.get("JewelTransId"), row.get("JewelId"))
+                    in changed_pairs
+                ]
+            )
+        summary_trans_ids = {
+            line.get("JewelTransId")
+            for line in lines
+            if line.get("JewelTransId") is not None
+        }
+        summaries = _select_by_values(
+            cursor,
+            "JewelTransInwardSummary",
+            sc["jeweltransid"],
+            summary_trans_ids,
+            until,
+        )
         by = {}
-        for r in rows(cursor):
+        for r in summaries:
             by[(r.get("JewelTransId"), r.get("JewelId"))] = r
         for b in lines:
             s = by.get((b.get("JewelTransId"), b.get("JewelId")))
@@ -301,16 +767,24 @@ def extract_sale_lines(cursor, trans_ids):
                 for col, val in s.items():
                     if col not in b:
                         b[col] = val
+                _carry_dependency_change(b, s)
     return lines
 
 
-def extract_orders(cursor, since=""):
+def extract_orders(cursor, since="", until=None):
     """Manufacturing/custom-production orders = Spm_MfgOrder (→ Eclat
     ManufacturingOrder). Lines = SPM_MfgOrderItem (extract_order_items). OrderStatus is
     an int production stage (decode against legacy status master before trusting in
     Module 8 timelines — # LIVE-DB: confirm OrderStatus codes on the client install).
     ~121 orders."""
-    return _base(cursor, "Spm_MfgOrder", since)
+    return _dependency_aware_base(
+        cursor,
+        "Spm_MfgOrder",
+        "OrderId",
+        since,
+        until,
+        (("BookMaster", "BookNo", "BookNo"),),
+    )
 
 
 def build_book_branch_map(cursor):
@@ -392,14 +866,17 @@ def stamp_branch(records, book_branch, label=""):
     return records
 
 
-def extract_order_items(cursor, order_ids):
+def extract_order_items(cursor, order_ids, since="", until=None):
     """Line items for a set of OrderIds: SPM_MfgOrderItem (→ ManufacturingOrderItem).
     Inward_JewelId = the produced piece once made."""
-    if not order_ids or not table_columns(cursor, "SPM_MfgOrderItem"):
-        return []
-    ph = ",".join("?" for _ in order_ids)
-    cursor.execute(f"SELECT * FROM SPM_MfgOrderItem WHERE OrderId IN ({ph})", *order_ids)
-    return rows(cursor)
+    return _extract_child_rows(
+        cursor,
+        "SPM_MfgOrderItem",
+        "OrderId",
+        order_ids,
+        since,
+        until,
+    )
 
 
 # ── Manufacturing timeline ────────────────────────────────────────────────────
@@ -454,7 +931,7 @@ def decorate_orders_with_stage(orders):
     return orders
 
 
-def extract_bags(cursor, since=""):
+def extract_bags(cursor, since="", until=None):
     """Shop-floor bags = SPM_BagMaster (→ Eclat ProductionBag).
 
     Joined to SPM_DepartmentMst so Eclat stores a department NAME ("Polishing")
@@ -464,7 +941,23 @@ def extract_bags(cursor, since=""):
     if not table_columns(cursor, "SPM_BagMaster"):
         log.info("  SPM_BagMaster not present — no manufacturing timeline on this install")
         return []
-    bags = _base(cursor, "SPM_BagMaster", since)
+    department_columns = table_columns(cursor, "SPM_DepartmentMst")
+    department_key = (
+        department_columns.get("departmentid") or department_columns.get("id")
+    )
+    dependencies = (
+        (("SPM_DepartmentMst", department_key, "DepartmentId"),)
+        if department_key
+        else ()
+    )
+    bags = _dependency_aware_base(
+        cursor,
+        "SPM_BagMaster",
+        "BagId",
+        since,
+        until,
+        dependencies,
+    )
 
     # Department id -> name, so the timeline reads in words.
     names = {}
@@ -479,6 +972,7 @@ def extract_bags(cursor, since=""):
                     names[str(did)] = str(nm).strip()
         except Exception as e:
             log.warning(f"  department names unavailable: {e}")
+            raise
 
     for b in bags:
         did = b.get("DepartmentId")
@@ -490,7 +984,7 @@ def extract_bags(cursor, since=""):
     return bags
 
 
-def extract_payments(cursor, since=""):
+def extract_payments(cursor, since="", until=None):
     """Day-book ledger movements = Journal (→ Eclat Payment / LedgerEntry). Double
     entry: DrAccountNo / CrAccountNo are PartyMst ledger accounts. Append-heavy, no
     UpdateDate — watermark on EntryDate / identity Id. ~475 rows.
@@ -498,7 +992,14 @@ def extract_payments(cursor, since=""):
     the restored copy). Journal is the authoritative day-book here, so we sync it as the
     payment/ledger source; add a VoucherEntry extractor if the live DB uses receipts.
     # LIVE-DB: confirm whether the client books receipts in VoucherEntry vs Journal."""
-    return _base(cursor, "Journal", since)
+    return _dependency_aware_base(
+        cursor,
+        "Journal",
+        "Id",
+        since,
+        until,
+        (("BookMaster", "BookNo", "BookNo"),),
+    )
 
 
 # ── Production sink: per-entity bulk-upsert to the Eclat REST API ──────────────
@@ -626,43 +1127,106 @@ def validate_batches(batches):
     return problems
 
 
+def _parse_zero_skip_ack(response, expected_rows, expected_entity):
+    """Return the server watermark only for a complete, consistent batch ack.
+
+    A HTTP 2xx is transport success, not proof that the whole batch was accepted.
+    Advancing a source watermark after a partial or malformed response would make
+    rejected source rows disappear from later runs, so this contract is strict.
+    """
+    try:
+        body = response.json()
+    except Exception as exc:
+        raise ValueError("HTTP 2xx body is not valid JSON") from exc
+    if not isinstance(body, dict):
+        raise ValueError("HTTP 2xx body must be a JSON object")
+
+    if body.get("entity") != expected_entity:
+        raise ValueError(
+            f"entity mismatch (expected {expected_entity!r}, got {body.get('entity')!r})"
+        )
+
+    counts = {}
+    for name in ("received", "upserted", "skipped"):
+        value = body.get(name)
+        # bool is an int subclass in Python, but is never a valid row count.
+        if type(value) is not int or value < 0:
+            raise ValueError(f"{name} must be a non-negative integer")
+        counts[name] = value
+
+    if counts["received"] != expected_rows:
+        raise ValueError(
+            f"received={counts['received']} does not match sent={expected_rows}"
+        )
+    if counts["upserted"] + counts["skipped"] != counts["received"]:
+        raise ValueError("upserted + skipped does not equal received")
+    if counts["skipped"] != 0:
+        raise ValueError(f"server skipped {counts['skipped']} row(s)")
+    if counts["upserted"] != expected_rows:
+        raise ValueError(
+            f"upserted={counts['upserted']} does not match sent={expected_rows}"
+        )
+
+    if "watermark" not in body:
+        raise ValueError("watermark field is missing")
+    watermark = body["watermark"]
+    if watermark is not None and (
+        not isinstance(watermark, str) or not watermark.strip()
+    ):
+        raise ValueError("watermark must be null or a non-empty string")
+    return body, watermark
+
+
 def push_chunked(token, base_url, entity, records, label="sync"):
     """POST records to POST /sync/<entity> in 3000-row chunks (the backend upserts
     on legacyId). Returns (ok, watermark): `ok` is True only if EVERY chunk got a
-    2xx — so a failure leaves the watermark un-advanced and the rows retry next
-    run. `watermark` is the max legacy UpdateDate/EntryDate the backend saw."""
+    complete zero-skip acknowledgement whose counts cover every sent row. A
+    malformed, inconsistent or partial HTTP 2xx is a failure too, so the source
+    watermark stays put and every row retries next run. `watermark` is the max
+    legacy UpdateDate/EntryDate the backend acknowledged."""
     if not records:
         log.info(f"  {label}: no {entity} data")
         return True, None
     chunk_size, total = 3000, len(records)
     chunks = (total + chunk_size - 1) // chunk_size
     url = f"{base_url}/sync/{entity}"
-    hdrs = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     all_ok, watermark = True, None
     for i in range(0, total, chunk_size):
         chunk = records[i:i + chunk_size]
         part = (i // chunk_size) + 1
         tag = f"{entity} ({part}/{chunks})" if chunks > 1 else entity
         try:
+            heartbeat(
+                base_url,
+                "uploading",
+                entity=entity,
+                rowsRead=i,
+                rowsReady=total,
+            )
+            hdrs = sync_headers(base_url)
             payload = json.dumps({"records": chunk}, default=_json_default)
             log.info(f"  Pushing {tag}: {len(chunk)} rows...")
-            r = requests.post(url, headers=hdrs, data=payload, timeout=180)
+            r = requests.post(
+                url, headers=hdrs, data=payload, timeout=180, allow_redirects=False
+            )
             if 200 <= r.status_code < 300:
                 try:
-                    resp = r.json()
-                    wm = resp.get("watermark") if isinstance(resp, dict) else None
+                    resp, wm = _parse_zero_skip_ack(r, len(chunk), entity)
                     if wm and (watermark is None or wm > watermark):
                         watermark = wm
                     log.info(f"  {tag}: upserted={resp.get('upserted')} skipped={resp.get('skipped')}")
-                except Exception:
-                    pass
+                except ValueError as e:
+                    log.error(f"  {tag}: REJECTED acknowledgement: {e}")
+                    all_ok = False
             else:
                 log.error(f"  {tag}: FAILED {r.status_code}: {r.text[:200]}")
                 all_ok = False
         except Exception as e:
             log.error(f"  {tag}: error: {e}")
             all_ok = False
-    return all_ok, watermark
+    # Never leak an earlier chunk's watermark after a later chunk failed. This
+    # prevents a caller regression from persisting a partially accepted batch.
+    return all_ok, watermark if all_ok else None
 
 
 def push_stores(cursor, token, base_url):
@@ -676,12 +1240,12 @@ def push_stores(cursor, token, base_url):
     location/factory (docs/legacy-schema.md role bits: IsLocation / IsFactory).
     Unlike the transaction extractors this runs its OWN full pull every cycle (no
     watermark): the store catalog is tiny and must be COMPLETE each run so a branch
-    is never missed. Non-fatal by contract — callers wrap in try/except and continue.
+    is never missed. Failures are accumulated while later entities still run.
     """
     cols = table_columns(cursor, "PartyMst")
     if not cols:
         log.warning(f"  [{base_url}] stores: PartyMst not found — skipping")
-        return
+        return True
 
     # LIVE-DB: BRANCH-DETECTION PREDICATE — CONFIRM BEFORE FIRST RUN.
     # The schema notes model a store/branch as a PartyMst row with a location flag
@@ -715,6 +1279,7 @@ def push_stores(cursor, token, base_url):
     # where the flag is wrong, the union is wrong, and the referenced ids are
     # already the complete and correct answer.
     referenced = set()
+    all_ok = True
     for table, col in (("Inward", "BranchNo"), ("PartyMst", "BranchNo"),
                        ("BookMaster", "BranchNo"), ("Inward", "LocationId"),
                        ("JewelTrans", "BranchNo")):
@@ -731,6 +1296,7 @@ def push_stores(cursor, token, base_url):
                     referenced.add(v)
         except Exception as e:
             log.warning(f"  branch ids from {table}.{col}: {e}")
+            all_ok = False
 
     flag_preds = []
     if "islocation" in cols:
@@ -741,7 +1307,7 @@ def push_stores(cursor, token, base_url):
     if not referenced and not flag_preds:
         log.warning(f"  [{base_url}] stores: nothing identifies a branch on this "
                     f"install — skipping (# LIVE-DB: confirm branch column)")
-        return
+        return all_ok
     log.info(f"  {len(referenced)} party id(s) are referenced as a branch by the data")
 
     # LIVE-DB: SOURCE COLUMN NAMES — CONFIRM BEFORE FIRST RUN.
@@ -755,7 +1321,7 @@ def push_stores(cursor, token, base_url):
     code_col = cols.get("partycode")
     if not pk_col or not name_col:
         log.warning(f"  [{base_url}] stores: PartyMst missing PartyNo/FirmName — skipping")
-        return
+        return all_ok
 
     sel = [f"t.{pk_col} AS legacyId", f"t.{name_col} AS name"]
     if city_col:
@@ -835,26 +1401,42 @@ def push_stores(cursor, token, base_url):
 
     if not records:
         log.info(f"  [{base_url}] stores: no branch/location rows matched")
-        return
+        return all_ok
 
     url  = f"{base_url}/sync/stores"
-    hdrs = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     try:
+        heartbeat(base_url, "uploading", entity="stores", rowsReady=len(records))
+        hdrs = sync_headers(base_url)
         payload = json.dumps({"records": records}, default=_json_default)
         log.info(f"  [{base_url}] pushing stores: {len(records)} branch/location rows...")
-        r = requests.post(url, headers=hdrs, data=payload, timeout=120)
+        r = requests.post(
+            url, headers=hdrs, data=payload, timeout=120, allow_redirects=False
+        )
         if 200 <= r.status_code < 300:
             try:
-                resp = r.json() if isinstance(r.json(), dict) else {}
-            except Exception:
-                resp = {}
-            created = resp.get("created", resp.get("createdCount", "?"))
-            updated = resp.get("updated", resp.get("updatedCount", "?"))
-            log.info(f"  [{base_url}] stores: created={created} updated={updated} (sent {len(records)})")
+                resp = r.json()
+                if not isinstance(resp, dict):
+                    raise ValueError("non-object acknowledgement")
+                created = resp.get("created")
+                updated = resp.get("updated")
+                if not isinstance(created, list) or not isinstance(updated, list):
+                    raise ValueError("missing created/updated receipt arrays")
+                if len(created) + len(updated) != len(records):
+                    raise ValueError("receipt counts do not cover every sent store")
+                log.info(
+                    f"  [{base_url}] stores: created={len(created)} "
+                    f"updated={len(updated)} (sent {len(records)})"
+                )
+            except Exception as exc:
+                log.error(f"  [{base_url}] stores: REJECTED acknowledgement: {exc}")
+                all_ok = False
         else:
             log.error(f"  [{base_url}] stores: FAILED {r.status_code}: {r.text[:200]}")
+            all_ok = False
     except Exception as e:
         log.error(f"  [{base_url}] stores: error: {e}")
+        all_ok = False
+    return all_ok
 
 
 def push_staff(cursor, token, base_url):
@@ -869,22 +1451,22 @@ def push_staff(cursor, token, base_url):
     office activates them. That is a backend guarantee, not a convention here.
 
     Like the store catalog this runs a full pull every cycle (the roster is tiny
-    and must be complete) and is non-fatal by contract.
+    and must be complete); failures are included in the run-level exit status.
     """
     cols = table_columns(cursor, "PartyMst")
     if not cols:
         log.warning(f"  [{base_url}] staff: PartyMst not found — skipping")
-        return
+        return True
     if "issalesman" not in cols:
         log.warning(f"  [{base_url}] staff: no IsSalesMan flag on PartyMst — skipping "
                     f"(# LIVE-DB: confirm how staff are marked on this install)")
-        return
+        return True
 
     pk_col   = cols.get("partyno")
     name_col = cols.get("firmname") or cols.get("legalname")
     if not pk_col or not name_col:
         log.warning(f"  [{base_url}] staff: PartyMst missing PartyNo/FirmName — skipping")
-        return
+        return True
 
     sel = [f"t.{pk_col} AS legacyId", f"t.{name_col} AS name"]
     for src, dest in [("firmemail", "email"), ("ownermobile", "phone"),
@@ -922,19 +1504,34 @@ def push_staff(cursor, token, base_url):
 
     if not records:
         log.info(f"  [{base_url}] staff: no salesperson rows matched")
-        return
+        return True
 
     url  = f"{base_url}/sync/staff"
-    hdrs = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    ok = True
     try:
+        heartbeat(base_url, "uploading", entity="staff", rowsReady=len(records))
+        hdrs = sync_headers(base_url)
         payload = json.dumps({"records": records}, default=_json_default)
         log.info(f"  [{base_url}] pushing staff: {len(records)} people...")
-        r = requests.post(url, headers=hdrs, data=payload, timeout=120)
+        r = requests.post(
+            url, headers=hdrs, data=payload, timeout=120, allow_redirects=False
+        )
         if 200 <= r.status_code < 300:
             try:
-                resp = r.json() if isinstance(r.json(), dict) else {}
-            except Exception:
-                resp = {}
+                resp = r.json()
+                if not isinstance(resp, dict):
+                    raise ValueError("non-object acknowledgement")
+                counts = tuple(
+                    resp.get(name)
+                    for name in ("received", "created", "updated", "skipped")
+                )
+                if any(type(value) is not int or value < 0 for value in counts):
+                    raise ValueError("invalid acknowledgement counts")
+                if counts[0] != len(records) or sum(counts[1:]) != counts[0]:
+                    raise ValueError("receipt counts do not cover every sent staff row")
+            except Exception as exc:
+                log.error(f"  [{base_url}] staff: REJECTED acknowledgement: {exc}")
+                return False
             log.info(f"  [{base_url}] staff: created={resp.get('created','?')} "
                      f"updated={resp.get('updated','?')} skipped={resp.get('skipped','?')}")
             pending = resp.get("pendingActivation")
@@ -945,22 +1542,28 @@ def push_staff(cursor, token, base_url):
                 log.warning(f"  [{base_url}] staff conflict: {c}")
         else:
             log.error(f"  [{base_url}] staff: FAILED {r.status_code}: {r.text[:200]}")
+            ok = False
     except Exception as e:
         log.error(f"  [{base_url}] staff: error: {e}")
+        ok = False
+    return ok
 
 
 def run_test():
-    """Verify backend login + SQL Server connect BEFORE scheduling."""
+    """Verify restricted agent approval + SQL Server connect BEFORE scheduling."""
     log.info("=" * 50); log.info("CONNECTION TEST"); ok = True
     log.info(f"Targets: {', '.join(BACKENDS)}")
     for base_url in BACKENDS:
-        if login(base_url): log.info(f"[OK]  Eclat login: {base_url}")
-        else: log.error(f"[FAIL] Eclat login: {base_url} — check URL / email / password"); ok = False
+        if login(base_url): log.info(f"[OK]  Gati agent approval: {base_url}")
+        else: log.error(f"[FAIL] Gati agent approval: {base_url} — check token and approved hashes"); ok = False
     conn = connect_sql()
     if conn:
         log.info("[OK]  SQL Server connected"); conn.close()
     else:
         log.error("[FAIL] SQL Server — check driver / server / credentials / read-only login"); ok = False
+    if not ok:
+        for base_url in BACKENDS:
+            terminal_heartbeat(base_url, False, "Gati connection test failed")
     log.info("RESULT: " + ("TEST PASSED" if ok else "TEST FAILED")); log.info("=" * 50)
     return ok
 
@@ -968,7 +1571,7 @@ def run_test():
 # ── Generic FULL MIRROR: dump EVERY table to /sync/raw (extract-everything-once) ──
 # So that ANY field/table the client ever needs is already in Eclat, with no code
 # change. Each table is incremental (UpdateDate/EntryDate) and self-healing: a table
-# that errors is skipped, never fatal.
+# that errors is skipped so later tables still run, but makes the process exit 1.
 def list_tables(cursor):
     """Every base table in the DB (skips views + system tables)."""
     cursor.execute(
@@ -980,19 +1583,16 @@ def list_tables(cursor):
 
 def pk_columns(cursor, table):
     """Primary-key column names for `table`, in order — used for a stable row key."""
-    try:
-        cursor.execute(
-            "SELECT c.COLUMN_NAME "
-            "FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS t "
-            "JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE c "
-            "  ON t.CONSTRAINT_NAME=c.CONSTRAINT_NAME AND t.TABLE_SCHEMA=c.TABLE_SCHEMA "
-            "WHERE t.CONSTRAINT_TYPE='PRIMARY KEY' AND t.TABLE_NAME=? "
-            "ORDER BY c.ORDINAL_POSITION",
-            table,
-        )
-        return [r[0] for r in cursor.fetchall()]
-    except Exception:
-        return []
+    cursor.execute(
+        "SELECT c.COLUMN_NAME "
+        "FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS t "
+        "JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE c "
+        "  ON t.CONSTRAINT_NAME=c.CONSTRAINT_NAME AND t.TABLE_SCHEMA=c.TABLE_SCHEMA "
+        "WHERE t.CONSTRAINT_TYPE='PRIMARY KEY' AND t.TABLE_NAME=? "
+        "ORDER BY c.ORDINAL_POSITION",
+        table,
+    )
+    return [r[0] for r in cursor.fetchall()]
 
 
 def _row_key(row, pks):
@@ -1005,54 +1605,79 @@ def _row_key(row, pks):
 
 def push_raw(token, base_url, table, records, chunk_size=1500):
     """POST raw rows to POST /sync/raw in chunks (SELECT * rows are wide, so a
-    smaller chunk keeps payloads under the body limit). Returns (ok, watermark)."""
+    smaller chunk keeps payloads under the body limit). Like mapped ingestion, a
+    table advances only after complete, consistent, zero-skip acknowledgements."""
     if not records:
         return True, None
     url = f"{base_url}/sync/raw"
-    hdrs = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     all_ok, watermark = True, None
     for i in range(0, len(records), chunk_size):
         chunk = records[i:i + chunk_size]
         try:
+            heartbeat(
+                base_url,
+                "uploading",
+                entity="raw",
+                rowsRead=i,
+                rowsReady=len(records),
+            )
+            hdrs = sync_headers(base_url)
             payload = json.dumps({"table": table, "records": chunk}, default=_json_default)
-            r = requests.post(url, headers=hdrs, data=payload, timeout=300)
+            r = requests.post(
+                url, headers=hdrs, data=payload, timeout=300, allow_redirects=False
+            )
             if 200 <= r.status_code < 300:
                 try:
-                    wm = r.json().get("watermark")
+                    _, wm = _parse_zero_skip_ack(r, len(chunk), f"raw:{table}")
                     if wm and (watermark is None or wm > watermark):
                         watermark = wm
-                except Exception:
-                    pass
+                except ValueError as e:
+                    log.error(f"    raw {table}: REJECTED acknowledgement: {e}")
+                    all_ok = False
             else:
                 log.error(f"    raw {table}: FAILED {r.status_code}: {r.text[:150]}")
                 all_ok = False
         except Exception as e:
             log.error(f"    raw {table}: error: {e}")
             all_ok = False
-    return all_ok, watermark
+    return all_ok, watermark if all_ok else None
 
 
-def dump_all(cursor, token, base_url, state):
+def dump_all(cursor, token, base_url, state, extraction_until=None):
     """Mirror EVERY table to LegacyRow via /sync/raw — the extract-everything-once
     sink. Incremental per-table (state key 'raw::<base>::<table>'). Errors per table
-    are logged and skipped so one bad table never blocks the rest."""
+    are logged and skipped so one bad table never blocks the rest, while the final
+    run result remains failed and its table checkpoint remains unchanged."""
     tables = list_tables(cursor)
     log.info(f"  [{base_url}] full mirror: scanning {len(tables)} tables")
     scanned = pushed = 0
+    all_ok = True
     for tbl in tables:
-        skey = f"raw::{base_url}::{tbl}"
+        heartbeat(
+            base_url,
+            "extracting",
+            entity="raw",
+            entitiesChecked=scanned,
+        )
+        skey = raw_state_key(base_url, tbl)
         since = state.get(skey, "")
         try:
-            wm_clause, n = _wm(cursor, tbl)
-            cursor.execute(f"SELECT * FROM [{tbl}] t WHERE {wm_clause}", *([since] * n))
+            wm_clause, params = _wm(cursor, tbl, since, extraction_until)
+            cursor.execute(f"SELECT * FROM [{tbl}] t WHERE {wm_clause}", *params)
             recs = rows(cursor)
         except Exception as e:
             log.warning(f"    raw {tbl}: skip ({str(e)[:90]})")
+            all_ok = False
             continue
         scanned += 1
         if not recs:
             continue
-        pks = pk_columns(cursor, tbl)
+        try:
+            pks = pk_columns(cursor, tbl)
+        except Exception as e:
+            log.warning(f"    raw {tbl}: primary-key read failed ({str(e)[:90]})")
+            all_ok = False
+            continue
         for r in recs:
             r["_rowKey"] = _row_key(r, pks)
             r["_updatedAt"] = r.get("UpdateDate") or r.get("EntryDate")
@@ -1060,28 +1685,72 @@ def dump_all(cursor, token, base_url, state):
         if ok:
             pushed += 1
             if wm and (not since or wm > since):
+                prior_present = skey in state
+                prior_value = state.get(skey)
                 state[skey] = wm
-                save_state(state)
+                _remember_checkpoint_context(state, base_url)
+                if not save_state(state):
+                    all_ok = False
+                    if prior_present:
+                        state[skey] = prior_value
+                    else:
+                        state.pop(skey, None)
+        else:
+            all_ok = False
     log.info(f"  [{base_url}] full mirror done: scanned={scanned}, {pushed} tables had new rows")
+    return all_ok
 
 
 def sync_once():
     log.info("=" * 50)
     log.info(f"Sync started at {datetime.now():%Y-%m-%d %H:%M:%S}")
     log.info(f"Targets: {', '.join(BACKENDS)}")
+    APPROVAL_HEADERS.clear()
+    HEARTBEATS.clear()
+    CHECKPOINT_CONTEXTS.clear()
+    run_ok = True
+
+    # Authenticate before opening SQL so a database/extraction failure can be
+    # reported to head office instead of leaving the agent looking healthy.
+    if not DRY_RUN:
+        for base_url in BACKENDS:
+            if not login(base_url):
+                run_ok = False
+        if not run_ok:
+            return False
+
+    try:
+        state = load_state()
+    except Exception as exc:
+        run_ok = False
+        log.error(f"Cannot load sync checkpoints: {exc}")
+        for base_url in BACKENDS:
+            terminal_heartbeat(base_url, False, exc)
+        return False
+
     conn = connect_sql()
     if not conn:
-        return
-    state = load_state()
+        for base_url in BACKENDS:
+            terminal_heartbeat(base_url, False, "SQL Server connection failed")
+        return False
+    if DRY_RUN:
+        approval = approval_summary(SQL_SERVER, SQL_DB)
+        log.info(f"Gati approval profileId: {approval['profileId']}")
+        log.info(f"Gati approval profileHash: {approval['profileHash']}")
+        log.info(f"Gati approval sourceInstanceHash: {approval['sourceInstanceHash']}")
     try:
         cursor = conn.cursor()
+        cursor.execute("SELECT GETDATE()")
+        extraction_until = cursor.fetchone()[0]
+        log.info(f"SQL extraction upper bound: {extraction_until}")
         # Push the SAME read-only data to EVERY configured backend (local + prod).
         # Each target keeps its OWN watermark, so one being down never blocks another.
         for base_url in BACKENDS:
+            base_ok = True
             # A dry run inspects the CLIENT's data and uploads nothing, so it must
             # work before the Eclat credentials are settled — that is precisely
             # when you want to run it. Log in if we can, carry on if we cannot.
-            token = login(base_url)
+            token = None if DRY_RUN else AGENT_TOKEN
             if not token:
                 if DRY_RUN:
                     log.warning(f"  [{base_url}] could not log in — continuing anyway "
@@ -1089,8 +1758,26 @@ def sync_once():
                 else:
                     log.error(f"  [{base_url}] login failed — skipping (retries next run)")
                     continue
-            since = state.get(base_url, "")
-            log.info(f"  [{base_url}] since: {since or '(full backfill)'}")
+            # Preview mode intentionally works before a machine credential or
+            # approval exists.  It uploads and checkpoints nothing, so a full
+            # bounded read is both safe and the only meaningful preview.
+            watermarks = (
+                {source: "" for source in MAPPED_SOURCES}
+                if DRY_RUN
+                else mapped_watermarks(state, base_url)
+            )
+            if state.get(base_url):
+                log.warning(
+                    f"  [{base_url}] ignoring legacy shared watermark; each source "
+                    "will be reread once and checkpointed independently"
+                )
+            log.info(
+                f"  [{base_url}] mapped checkpoints: "
+                + ", ".join(
+                    f"{name}={value or '(full backfill)'}"
+                    for name, value in watermarks.items()
+                )
+            )
 
             # Controlled mode (--sample/--store/--entity) targets ONE extractor's
             # rows; the store-catalog and staff pushes are a separate, full-catalog
@@ -1100,8 +1787,8 @@ def sync_once():
 
             # STORE CATALOG FIRST — a new branch created in the client's Gati must
             # exist in Eclat BEFORE the parties/stock/sales that reference it sync.
-            # Non-fatal: a store-push failure logs and continues (same reliability
-            # posture as the full mirror below). No watermark — full idempotent
+            # A store-push failure logs and later entities still run, but the final
+            # process status is nonzero. No watermark — full idempotent
             # upsert every run.
             # NEXT STEP (not this change): per-row location -> store stamping. Today
             # transaction rows still ride the single backend defaultStoreId; once the
@@ -1109,11 +1796,12 @@ def sync_once():
             # stamp each party/stock/sale row with its LocationId -> Eclat storeId.
             try:
                 if not DRY_RUN and not controlled:
-                    push_stores(cursor, token, base_url)
+                    base_ok = push_stores(cursor, token, base_url) and base_ok
                 elif controlled:
                     log.info(f"  [{base_url}] stores push skipped (controlled run)")
             except Exception as e:
                 log.error(f"  [{base_url}] stores push error: {e}")
+                base_ok = False
 
             # Staff AFTER stores: a person carries their branch legacyId, and the
             # backend can only pre-assign them to a store that already exists.
@@ -1136,26 +1824,109 @@ def sync_once():
                     log.info(f"  [{base_url}] staff import skipped (--no-staff): staff "
                              f"self-register and are approved in-app.")
                 elif not DRY_RUN:
-                    push_staff(cursor, token, base_url)
+                    base_ok = push_staff(cursor, token, base_url) and base_ok
             except Exception as e:
                 log.error(f"  [{base_url}] staff push error: {e}")
+                base_ok = False
 
-            parties = extract_parties(cursor, since)
-            items   = extract_items(cursor, since)
-            stock   = extract_stock(cursor, since)
-            sales   = extract_sales(cursor, since)
-            lines   = extract_sale_lines(cursor, [s["JewelTransId"] for s in sales])
-            orders  = decorate_orders_with_stage(extract_orders(cursor, since))
-            oitems  = extract_order_items(cursor, [o["OrderId"] for o in orders])
-            bags    = extract_bags(cursor, since)
-            payments = extract_payments(cursor, since)
-            moves   = extract_stock_movements(cursor, since)
+            extraction_ok = {}
+
+            def extract_or_empty(label, operation, fallback=None):
+                nonlocal run_ok
+                try:
+                    heartbeat(base_url, "extracting", entity=label)
+                    result = operation()
+                    extraction_ok[label] = True
+                    return result
+                except Exception as exc:
+                    log.error(f"  [{base_url}] {label} extraction failed: {exc}")
+                    run_ok = False
+                    extraction_ok[label] = False
+                    return [] if fallback is None else fallback
+
+            parties = extract_or_empty(
+                "parties",
+                lambda: extract_parties(
+                    cursor, watermarks["parties"], extraction_until
+                ),
+            )
+            items = extract_or_empty(
+                "products",
+                lambda: extract_items(
+                    cursor, watermarks["products"], extraction_until
+                ),
+            )
+            stock = extract_or_empty(
+                "stock",
+                lambda: extract_stock(cursor, watermarks["stock"], extraction_until),
+            )
+            sales = extract_or_empty(
+                "sales",
+                lambda: extract_sales(cursor, watermarks["sales"], extraction_until),
+            )
+            lines = extract_or_empty(
+                "sale-lines",
+                lambda: extract_sale_lines(
+                    cursor,
+                    [s["JewelTransId"] for s in sales],
+                    watermarks["sale-lines"],
+                    extraction_until,
+                ),
+            )
+            orders = extract_or_empty(
+                "orders",
+                lambda: decorate_orders_with_stage(
+                    extract_orders(
+                        cursor, watermarks["orders"], extraction_until
+                    )
+                ),
+            )
+            oitems = extract_or_empty(
+                "order-items",
+                lambda: extract_order_items(
+                    cursor,
+                    [o["OrderId"] for o in orders],
+                    watermarks["order-items"],
+                    extraction_until,
+                ),
+            )
+            bags = extract_or_empty(
+                "bags",
+                lambda: extract_bags(cursor, watermarks["bags"], extraction_until),
+            )
+            payments = extract_or_empty(
+                "ledger",
+                lambda: extract_payments(
+                    cursor, watermarks["ledger"], extraction_until
+                ),
+            )
+            moves = extract_or_empty(
+                "stock-movements",
+                lambda: extract_stock_movements(
+                    cursor, watermarks["stock-movements"], extraction_until
+                ),
+            )
+            base_ok = base_ok and run_ok
 
             # Branch attribution. Stock and parties already carry a location
             # column (the extractors SELECT *), so the backend reads those
             # directly; sales and orders carry none and are tagged here via their
             # document book. Cheap — BookMaster is a few hundred rows.
-            book_branch = build_book_branch_map(cursor)
+            book_branch = extract_or_empty(
+                "branch-map", lambda: build_book_branch_map(cursor), {}
+            )
+            if extraction_ok.get("branch-map") is False:
+                # These sources rely on BookMaster for store attribution. Do not
+                # upload or checkpoint them against an empty fallback map after
+                # a SQL failure; the complete source groups retry next cycle.
+                for dependent in (
+                    "sales",
+                    "sale-lines",
+                    "orders",
+                    "order-items",
+                    "ledger",
+                ):
+                    extraction_ok[dependent] = False
             stamp_branch(sales, book_branch, "sales")
             stamp_branch(orders, book_branch, "orders")
             # Journal has no location column either — same document-book route.
@@ -1254,7 +2025,9 @@ def sync_once():
                 log.info("  Re-run without --dry-run to upload.")
                 continue
 
-            all_ok, new_wm = True, since
+            all_ok = True
+            batch_ok = {}
+            batch_watermarks = {}
             for entity, recs in batches:
                 # --sample prints the per-batch attribution breakdown BEFORE the
                 # upload; push_chunked already logs upserted/skipped and any errors
@@ -1263,10 +2036,17 @@ def sync_once():
                     d, b, n = _attr_counts(recs)
                     log.info(f"  [sample] {entity}: {len(recs)} row(s) -> "
                              f"attributed(direct)={d} fell-back(book)={b} unknown/none={n}")
-                ok, wm = push_chunked(token, base_url, entity, recs)
+                if extraction_ok.get(entity) is False:
+                    log.error(
+                        f"  [{base_url}] {entity}: upload skipped because extraction failed"
+                    )
+                    ok, wm = False, None
+                else:
+                    ok, wm = push_chunked(token, base_url, entity, recs)
+                batch_ok[entity] = ok
+                batch_watermarks[entity] = wm
                 all_ok = all_ok and ok
-                if wm and (not new_wm or wm > new_wm):
-                    new_wm = wm
+            base_ok = base_ok and all_ok and run_ok
 
             # A capped, filtered, sampled or single-store run has NOT seen all the
             # data, so advancing the watermark would permanently skip whatever was
@@ -1279,15 +2059,29 @@ def sync_once():
 
             if partial:
                 pass   # nothing to say; the line above already explained it
-            elif all_ok:
-                if new_wm and new_wm != since:
-                    state[base_url] = new_wm
-                    save_state(state)
-                    log.info(f"  [{base_url}] watermark advanced to {new_wm}")
-                else:
-                    log.info(f"  [{base_url}] no new rows — watermark unchanged")
             else:
-                log.error(f"  [{base_url}] some uploads failed — watermark NOT advanced; retries next cycle")
+                state_before_mapped = dict(state)
+                changed = advance_mapped_watermarks(
+                    state, base_url, batch_ok, batch_watermarks
+                )
+                if changed:
+                    if not save_state(state):
+                        state.clear()
+                        state.update(state_before_mapped)
+                        base_ok = False
+                    else:
+                        log.info(
+                            f"  [{base_url}] acknowledged mapped checkpoints saved"
+                        )
+                else:
+                    log.info(
+                        f"  [{base_url}] no acknowledged mapped checkpoint changed"
+                    )
+                if not all_ok:
+                    log.error(
+                        f"  [{base_url}] failed entity checkpoints were NOT advanced; "
+                        "those source rows retry next cycle"
+                    )
 
             # FULL RAW MIRROR — dump every table so ANY field is available later,
             # with no code change. Independent of the mapped sync above; its own
@@ -1311,12 +2105,30 @@ def sync_once():
                              f"shop data above is complete; the mirror is the "
                              f"keep-everything backup and can run any time.")
                 elif not DRY_RUN and not ONLY and not LIMIT and not STORE and not SAMPLE:
-                    dump_all(cursor, token, base_url, state)
+                    base_ok = dump_all(
+                        cursor, token, base_url, state, extraction_until
+                    ) and base_ok
             except Exception as e:
                 log.error(f"  [{base_url}] full mirror error: {e}")
+                base_ok = False
+            if not DRY_RUN:
+                base_ok = terminal_heartbeat(
+                    base_url,
+                    base_ok,
+                    None if base_ok else "One or more Gati sync stages failed",
+                ) and base_ok
+            run_ok = run_ok and base_ok
+    except Exception as exc:
+        run_ok = False
+        log.error(f"Gati sync failed: {exc}")
+        if not DRY_RUN:
+            for base_url in BACKENDS:
+                terminal_heartbeat(base_url, False, exc)
     finally:
         conn.close()
-    log.info("Sync complete"); log.info("=" * 50)
+    log.info("Sync complete" if run_ok else "Sync incomplete")
+    log.info("=" * 50)
+    return run_ok
 
 
 if __name__ == "__main__":
@@ -1379,19 +2191,27 @@ if __name__ == "__main__":
     # prints forty lines of stack trace ending in KeyboardInterrupt, which to
     # anyone standing at the machine reads as "I have broken something".
     try:
-        if args.test:
-            sys.exit(0 if run_test() else 1)
-        if args.loop > 0:
-            log.info(f"Auto Sync — every {args.loop} min. Ctrl+C to stop.")
-            while True:
-                try: sync_once()
-                except Exception as e: log.error(f"Error: {e}")
-                log.info(f"Next sync in {args.loop} min...")
-                time.sleep(args.loop * 60)
-        else:
-            sync_once()
-    except KeyboardInterrupt:
+        with install_run_lock("data sync"):
+            if args.test:
+                sys.exit(0 if run_test() else 1)
+            if args.loop > 0:
+                log.info(f"Auto Sync — every {args.loop} min. Ctrl+C to stop.")
+                while True:
+                    if not sync_once():
+                        log.error("Sync cycle failed; exiting nonzero for the scheduler.")
+                        sys.exit(1)
+                    log.info(f"Next sync in {args.loop} min...")
+                    time.sleep(args.loop * 60)
+            else:
+                sys.exit(0 if sync_once() else 1)
+    except GatiRunAlreadyActive as exc:
+        log.error(str(exc))
+        sys.exit(2)
+    except KeyboardInterrupt as exc:
         print()
-        log.info("Stopped by you (Ctrl+C). Nothing is broken.")
+        log.warning("Stopped before the Gati cycle completed.")
         log.info("Anything already sent is saved; the rest is picked up next run.")
-        sys.exit(0)
+        if not DRY_RUN:
+            for base_url in BACKENDS:
+                terminal_heartbeat(base_url, False, exc, phase="interrupted")
+        sys.exit(130)

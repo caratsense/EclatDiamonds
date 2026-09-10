@@ -57,3 +57,26 @@ export function IsIndianMobile(options?: ValidationOptions) {
     });
   };
 }
+
+/**
+ * A real, human-meaningful name/title — must contain at least one letter (any
+ * script, incl. Devanagari/Gujarati) so a phone number, amount or reference id
+ * can never masquerade as a name (e.g. the "46466" lead). Pure digits, symbols
+ * or whitespace are rejected; mixed values like "18K Ring" or "2026 Diwali Sale"
+ * are fine. Trims before checking. Pair with `@IsNotEmpty()` for required fields.
+ */
+export function IsRealName(options?: ValidationOptions) {
+  return function (object: object, propertyName: string) {
+    registerDecorator({
+      name: 'isRealName',
+      target: object.constructor,
+      propertyName,
+      options: { message: 'must contain letters, not just a number', ...options },
+      validator: {
+        validate(value: unknown) {
+          return typeof value === 'string' && /\p{L}/u.test(value.trim());
+        },
+      },
+    });
+  };
+}

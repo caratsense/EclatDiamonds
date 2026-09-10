@@ -1,62 +1,118 @@
 import { Body, Controller, Post } from '@nestjs/common';
 import { Roles } from '../auth/roles.decorator';
+import { HumansOnly, OrganisationWideMachineOnly } from '../auth/machine.decorator';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { SyncService } from './sync.service';
-import {
-  PurgeDemoDto,
-  RawSyncDto,
-  SyncBatchDto,
-  SyncStaffDto,
-  SyncStoresDto,
-} from './dto/sync.dto';
+import { RateLimit } from '../common/rate-limit';
+import { PurgeDemoDto, RawSyncDto, SyncBatchDto, SyncStaffDto, SyncStoresDto } from './dto/sync.dto';
+import { CurrentGatiIngestion, GatiIngestion, GatiIngestionContext } from './gati-ingestion.guard';
 
 /**
  * Legacy-sync ingestion (the on-site sync_sjep.py agent's production sink).
  *
- * Per-entity bulk-upsert routes keyed on `legacyId`. The agent authenticates as a
- * dedicated head_office service account (POST /auth/login) and pushes entities in
- * dependency order: parties -> products -> stock -> sales -> sale-lines ->
- * orders -> order-items, then advances its watermark to the max returned here.
- * Gated to head_office so only the sync account (not store staff) can bulk-write.
+ * Per-entity bulk-upsert routes keyed on `legacyId`, pushed in dependency order:
+ * parties -> products -> stock -> sales -> sale-lines -> orders -> order-items,
+ * with the agent advancing its watermark to the max returned here.
+ *
+ * AUTHENTICATION. Ingestion is machine-token-only. Every request must also
+ * present the exact profile hash, source descriptor hash and server config
+ * revision approved for that agent. The source descriptor is atomically pinned
+ * before the first domain write.
+ *
+ * The four destructive routes at the bottom are `@HumansOnly()`. They were
+ * reachable by the sync account, which means a credential in a config file on a
+ * shop-floor PC could purge the tenant. A person has to make that call.
  */
 @Roles('head_office')
+@OrganisationWideMachineOnly()
+// Bulk ingestion from the on-site agent: machine-paced by definition.
+@RateLimit('integration')
 @Controller('sync')
 export class SyncController {
   constructor(private readonly sync: SyncService) {}
 
+  @GatiIngestion()
   @Post('parties')
-  parties(@Body() body: SyncBatchDto) {
-    return this.sync.syncParties(body.records);
+  parties(
+    @CurrentUser() user: AuthUser,
+    @CurrentGatiIngestion() generation: GatiIngestionContext,
+    @Body() body: SyncBatchDto,
+  ) {
+    return this.sync.runGatiIngestion(user, generation, 'parties', body.records.length, () =>
+      this.sync.syncParties(user.organisationId, body.records),
+    );
   }
 
+  @GatiIngestion()
   @Post('products')
-  products(@Body() body: SyncBatchDto) {
-    return this.sync.syncProducts(body.records);
+  products(
+    @CurrentUser() user: AuthUser,
+    @CurrentGatiIngestion() generation: GatiIngestionContext,
+    @Body() body: SyncBatchDto,
+  ) {
+    return this.sync.runGatiIngestion(user, generation, 'products', body.records.length, () =>
+      this.sync.syncProducts(user.organisationId, body.records),
+    );
   }
 
+  @GatiIngestion()
   @Post('stock')
-  stock(@Body() body: SyncBatchDto) {
-    return this.sync.syncStock(body.records);
+  stock(
+    @CurrentUser() user: AuthUser,
+    @CurrentGatiIngestion() generation: GatiIngestionContext,
+    @Body() body: SyncBatchDto,
+  ) {
+    return this.sync.runGatiIngestion(user, generation, 'stock', body.records.length, () =>
+      this.sync.syncStock(user.organisationId, body.records),
+    );
   }
 
+  @GatiIngestion()
   @Post('sales')
-  sales(@Body() body: SyncBatchDto) {
-    return this.sync.syncSales(body.records);
+  sales(
+    @CurrentUser() user: AuthUser,
+    @CurrentGatiIngestion() generation: GatiIngestionContext,
+    @Body() body: SyncBatchDto,
+  ) {
+    return this.sync.runGatiIngestion(user, generation, 'sales', body.records.length, () =>
+      this.sync.syncSales(user.organisationId, body.records),
+    );
   }
 
+  @GatiIngestion()
   @Post('sale-lines')
-  saleLines(@Body() body: SyncBatchDto) {
-    return this.sync.syncSaleLines(body.records);
+  saleLines(
+    @CurrentUser() user: AuthUser,
+    @CurrentGatiIngestion() generation: GatiIngestionContext,
+    @Body() body: SyncBatchDto,
+  ) {
+    return this.sync.runGatiIngestion(user, generation, 'sale-lines', body.records.length, () =>
+      this.sync.syncSaleLines(user.organisationId, body.records),
+    );
   }
 
+  @GatiIngestion()
   @Post('orders')
-  orders(@Body() body: SyncBatchDto) {
-    return this.sync.syncOrders(body.records);
+  orders(
+    @CurrentUser() user: AuthUser,
+    @CurrentGatiIngestion() generation: GatiIngestionContext,
+    @Body() body: SyncBatchDto,
+  ) {
+    return this.sync.runGatiIngestion(user, generation, 'orders', body.records.length, () =>
+      this.sync.syncOrders(user.organisationId, body.records),
+    );
   }
 
+  @GatiIngestion()
   @Post('order-items')
-  orderItems(@Body() body: SyncBatchDto) {
-    return this.sync.syncOrderItems(body.records);
+  orderItems(
+    @CurrentUser() user: AuthUser,
+    @CurrentGatiIngestion() generation: GatiIngestionContext,
+    @Body() body: SyncBatchDto,
+  ) {
+    return this.sync.runGatiIngestion(user, generation, 'order-items', body.records.length, () =>
+      this.sync.syncOrderItems(user.organisationId, body.records),
+    );
   }
 
   /**
@@ -64,18 +120,32 @@ export class SyncController {
    * manufacturing timeline; this also advances each order header to the furthest
    * stage its bags have reached.
    */
+  @GatiIngestion()
   @Post('bags')
-  bags(@Body() body: SyncBatchDto) {
-    return this.sync.syncBags(body.records);
+  bags(
+    @CurrentUser() user: AuthUser,
+    @CurrentGatiIngestion() generation: GatiIngestionContext,
+    @Body() body: SyncBatchDto,
+  ) {
+    return this.sync.runGatiIngestion(user, generation, 'bags', body.records.length, () =>
+      this.sync.syncBags(user.organisationId, body.records),
+    );
   }
 
   /**
    * Attach catalogue/piece photo URLs. Takes URLs, not bytes — the agent uploads
    * straight from the shop PC to Cloudinary and sends only the link.
    */
+  @GatiIngestion()
   @Post('product-images')
-  productImages(@Body() body: SyncBatchDto) {
-    return this.sync.syncProductImages(body.records);
+  productImages(
+    @CurrentUser() user: AuthUser,
+    @CurrentGatiIngestion() generation: GatiIngestionContext,
+    @Body() body: SyncBatchDto,
+  ) {
+    return this.sync.runGatiIngestion(user, generation, 'product-images', body.records.length, () =>
+      this.sync.syncProductImages(user.organisationId, body.records),
+    );
   }
 
   /**
@@ -84,15 +154,29 @@ export class SyncController {
    * is why Finance has been empty. Deliberately NOT Payment: Journal is
    * double-entry accounting including GST postings, not customer collections.
    */
+  @GatiIngestion()
   @Post('ledger')
-  ledger(@Body() body: SyncBatchDto) {
-    return this.sync.syncLedger(body.records);
+  ledger(
+    @CurrentUser() user: AuthUser,
+    @CurrentGatiIngestion() generation: GatiIngestionContext,
+    @Body() body: SyncBatchDto,
+  ) {
+    return this.sync.runGatiIngestion(user, generation, 'ledger', body.records.length, () =>
+      this.sync.syncLedger(user.organisationId, body.records),
+    );
   }
 
   /** Per-piece movement history (InwardHistory) -> StockMovement. */
+  @GatiIngestion()
   @Post('stock-movements')
-  stockMovements(@Body() body: SyncBatchDto) {
-    return this.sync.syncStockMovements(body.records);
+  stockMovements(
+    @CurrentUser() user: AuthUser,
+    @CurrentGatiIngestion() generation: GatiIngestionContext,
+    @Body() body: SyncBatchDto,
+  ) {
+    return this.sync.runGatiIngestion(user, generation, 'stock-movements', body.records.length, () =>
+      this.sync.syncStockMovements(user.organisationId, body.records),
+    );
   }
 
   /**
@@ -101,27 +185,49 @@ export class SyncController {
    * printed across the pictures) and a price for designs no branch stocks.
    * Matched designs are only enriched; unmatched ones are created made-to-order.
    */
+  @GatiIngestion()
   @Post('website-products')
-  websiteProducts(@Body() body: SyncBatchDto) {
-    return this.sync.syncWebsiteProducts(body.records);
+  websiteProducts(
+    @CurrentUser() user: AuthUser,
+    @CurrentGatiIngestion() generation: GatiIngestionContext,
+    @Body() body: SyncBatchDto,
+  ) {
+    return this.sync.runGatiIngestion(user, generation, 'website-products', body.records.length, () =>
+      this.sync.syncWebsiteProducts(user.organisationId, body.records),
+    );
   }
 
   /** Auto-ingest Gati branches: new legacyIds become `pending` stores for HO/AM to set up. */
+  @GatiIngestion()
   @Post('stores')
-  stores(@CurrentUser() user: AuthUser, @Body() body: SyncStoresDto) {
-    return this.sync.syncStores(user, body.records);
+  stores(
+    @CurrentUser() user: AuthUser,
+    @CurrentGatiIngestion() generation: GatiIngestionContext,
+    @Body() body: SyncStoresDto,
+  ) {
+    return this.sync.runGatiIngestion(user, generation, 'stores', body.records.length, () =>
+      this.sync.syncStores(user, body.records),
+    );
   }
 
   /** Import the client's people as inactive, no-login users pending activation. */
+  @GatiIngestion()
   @Post('staff')
-  staff(@CurrentUser() user: AuthUser, @Body() body: SyncStaffDto) {
-    return this.sync.syncStaff(user, body.records);
+  staff(
+    @CurrentUser() user: AuthUser,
+    @CurrentGatiIngestion() generation: GatiIngestionContext,
+    @Body() body: SyncStaffDto,
+  ) {
+    return this.sync.runGatiIngestion(user, generation, 'staff', body.records.length, () =>
+      this.sync.syncStaff(user, body.records),
+    );
   }
 
   /**
    * Remove seeded demo data once real data has arrived. Dry-run unless the body
    * carries `{"confirm":"DELETE DEMO DATA"}` — see SyncService.purgeDemo.
    */
+  @HumansOnly()
   @Post('purge-demo')
   purgeDemo(@CurrentUser() user: AuthUser, @Body() body: PurgeDemoDto) {
     return this.sync.purgeDemo(user, body.confirm);
@@ -135,6 +241,7 @@ export class SyncController {
    * imported under a wrong rule are never re-sent and stay wrong. Demo data and
    * stores are left alone — see SyncService.resetSyncedData.
    */
+  @HumansOnly()
   @Post('reset')
   reset(@CurrentUser() user: AuthUser, @Body() body: PurgeDemoDto) {
     return this.sync.resetSyncedData(user, body.confirm);
@@ -145,6 +252,7 @@ export class SyncController {
    * suppliers and holding companies a location flag wrongly identified as shops.
    * Dry-run unless the body carries `{"confirm":"DELETE EMPTY BRANCHES"}`.
    */
+  @HumansOnly()
   @Post('prune-stores')
   pruneStores(@CurrentUser() user: AuthUser, @Body() body: PurgeDemoDto) {
     return this.sync.pruneEmptyStores(user, body.confirm);
@@ -156,14 +264,27 @@ export class SyncController {
    * `{"confirm":"DELETE ALL USERS EXCEPT HEAD OFFICE"}`. Atomic — see
    * SyncService.resetToHeadOffice.
    */
+  @HumansOnly()
   @Post('reset-users')
   resetUsers(@CurrentUser() user: AuthUser, @Body() body: PurgeDemoDto) {
     return this.sync.resetToHeadOffice(user, body.confirm);
   }
 
   /** Generic full-mirror: ANY legacy table -> LegacyRow (extract-everything-once). */
+  @GatiIngestion()
   @Post('raw')
-  raw(@Body() body: RawSyncDto) {
-    return this.sync.syncRaw(body.table, body.records);
+  raw(
+    @CurrentUser() user: AuthUser,
+    @CurrentGatiIngestion() generation: GatiIngestionContext,
+    @Body() body: RawSyncDto,
+  ) {
+    return this.sync.runGatiIngestion(
+      user,
+      generation,
+      'raw',
+      body.records.length,
+      () => this.sync.syncRaw(user.organisationId, body.table, body.records),
+      body.table,
+    );
   }
 }

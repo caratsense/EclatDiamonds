@@ -1,6 +1,8 @@
 "use client";
 
-import { DoorOpen, LogOut, UserCheck } from "lucide-react";
+import { useState } from "react";
+import Link from "next/link";
+import { DoorOpen, LogOut, ScanLine, UserCheck } from "lucide-react";
 
 import {
   Card,
@@ -11,6 +13,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { RecordInterestDialog } from "@/components/crm/record-interest-dialog";
 import {
   Avatar,
   AvatarFallback,
@@ -73,6 +76,8 @@ export function LiveInStore({
   checkingOutId?: string | null;
 }) {
   const live = checkins.filter((c) => !c.timeOut);
+  // The walk-in whose product interest is being recorded, or null.
+  const [interestFor, setInterestFor] = useState<CheckIn | null>(null);
   return (
     <Card>
       <CardHeader>
@@ -117,23 +122,55 @@ export function LiveInStore({
                     {c.repName || "Unassigned"}
                   </div>
                 </div>
-                {onCheckout ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="mt-3 w-full"
-                    disabled={checkingOutId === c.id}
-                    onClick={() => onCheckout(c.id)}
-                  >
-                    <LogOut className="h-3.5 w-3.5" />
-                    Close visit
-                  </Button>
-                ) : null}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {/* Only offered when the walk-in actually resolved to a
+                      customer record — with no partyId there is nothing to
+                      attach the interest to, and a button that fails is worse
+                      than one that is absent. */}
+                  {c.partyId ? (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="flex-1"
+                        onClick={() => setInterestFor(c)}
+                      >
+                        <ScanLine className="h-3.5 w-3.5" />
+                        Shown an item
+                      </Button>
+                      <Button asChild size="sm" variant="ghost">
+                        <Link href={`/customers/${c.partyId}`}>History</Link>
+                      </Button>
+                    </>
+                  ) : null}
+                  {onCheckout ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex-1"
+                      disabled={checkingOutId === c.id}
+                      onClick={() => onCheckout(c.id)}
+                    >
+                      <LogOut className="h-3.5 w-3.5" />
+                      Close visit
+                    </Button>
+                  ) : null}
+                </div>
               </div>
             ))}
           </div>
         )}
       </CardContent>
+
+      {interestFor?.partyId ? (
+        <RecordInterestDialog
+          open
+          onOpenChange={(o) => !o && setInterestFor(null)}
+          partyId={interestFor.partyId}
+          customerName={interestFor.customer}
+          storeId={interestFor.storeId}
+        />
+      ) : null}
     </Card>
   );
 }

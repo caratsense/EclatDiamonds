@@ -14,15 +14,10 @@ REM ===========================================================================
 setlocal EnableExtensions
 cd /d "%~dp0"
 
-if exist "_pyexe.bat" (call "_pyexe.bat") else (set "PYEXE=python")
-
-"%PYEXE%" -c "import sys" >nul 2>&1
+call "%~dp0require_runtime.bat"
 if errorlevel 1 (
-  echo.
-  echo [PROBLEM] Python was not found.
-  echo           Install Python 3.10+ and tick "Add Python to PATH".
   pause
-  exit /b 1
+  exit /b 21
 )
 
 "%PYEXE%" configure.py
@@ -36,4 +31,5 @@ echo.
 echo Now checking that everything connects...
 echo.
 call "3_test.bat"
-endlocal
+set "TEST_EXIT=%ERRORLEVEL%"
+endlocal & exit /b %TEST_EXIT%

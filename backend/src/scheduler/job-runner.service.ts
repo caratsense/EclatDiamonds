@@ -29,6 +29,10 @@ export class JobRunnerService {
    * already claimed this exact run (which is a normal, quiet outcome).
    */
   async runOnce<T>(
+    // Nullable for genuinely cross-tenant maintenance jobs (e.g. the WhatsApp
+    // inbound sweep, whose events span organisations and may have none yet). The
+    // organisationId column is itself nullable for exactly this "global" case.
+    organisationId: string | null,
     job: string,
     scope: string,
     runKey: string,
@@ -37,7 +41,7 @@ export class JobRunnerService {
     let claim: { id: string };
     try {
       claim = await this.prisma.scheduledJobRun.create({
-        data: { job, scope, runKey, status: 'running' },
+        data: { organisationId, job, scope, runKey, status: 'running' },
         select: { id: true },
       });
     } catch (err) {

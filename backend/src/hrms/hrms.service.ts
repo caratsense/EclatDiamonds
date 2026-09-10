@@ -10,6 +10,8 @@ import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuditService } from '../common/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { StorageService } from '../storage/storage.service';
+import { saveCapturedPhoto } from '../storage/capture-photo';
 import { ROLE_LABELS, ROLE_RANK } from '../common/role.util';
 import {
   assertNotSelfApproval,
@@ -173,6 +175,22 @@ interface StoreCtx {
   weekOffDay: number | null;
 }
 
+/**
+ * Where a client should ASK for a punch photo.
+ *
+ * Deliberately not the object's own URL. That URL is served either by express
+ * static — which runs ahead of every guard in this application — or by a
+ * public-read bucket, so handing it out makes a photograph of an employee's
+ * face readable by anyone who ever sees the link. This route checks the caller
+ * against the record first. See `AttendancePhotoService`.
+ *
+ * Null when there is no photo, so "no photo was taken" stays distinguishable
+ * from "there is one, go and fetch it".
+ */
+function photoRoute(recordId: string, which: 'in' | 'out', stored: string | null): string | null {
+  return stored ? `/hrms/attendance/${recordId}/photo/${which}` : null;
+}
+
 @Injectable()
 export class HrmsService {
   constructor(
@@ -180,11 +198,39 @@ export class HrmsService {
     private readonly scope: StoreScopeService,
     private readonly audit: AuditService,
     private readonly notifications: NotificationsService,
+    private readonly storage: StorageService,
   ) {}
 
-  // ==========================================================================
-  // Store context — the anchor for all time maths
-  // ==========================================================================
+  /**
+   * Store a punch photo and return its URL, or null when there is nothing
+   * storable.
+   *
+   * Never throws. A punch must not fail because a camera frame was malformed or
+   * object storage was having a bad minute — the attendance record is the thing
+   * that matters, and the photo is corroboration. A failure is logged and the
+   * punch proceeds without it, which is honest: the row then simply has no
+   * photo, rather than a broken link that looks like evidence.
+   *
+   * Only real raster images are accepted, decoded from the declared MIME type
+   * rather than trusted: `data:` is a URL scheme, and anyone can put anything
+   * after the comma.
+   */
+  /**
+   * Store a punch photo, or return null when there is nothing storable.
+   *
+   * The rules live in `saveCapturedPhoto` because the counter-visit screen needs
+   * exactly the same ones. Never throws: the attendance record matters more than
+   * the picture beside it.
+   */
+  private savePunchPhoto(user: AuthUser, kind: 'in' | 'out', photo: string | undefined) {
+    return saveCapturedPhoto(
+      this.storage,
+      user.organisationId,
+      'attendance',
+      `${user.id}-${kind}-${Date.now()}`,
+      photo,
+    );
+  }
 
   /**
    * Load the store facts attendance depends on, with its IANA timezone resolved
@@ -357,6 +403,17 @@ export class HrmsService {
       earlyOutMinutes: r.earlyOutMinutes ?? null,
       dayFraction: r.dayFraction != null ? num(r.dayFraction) : null,
       isMockLocation: r.isMockLocation ?? false,
+      /*
+       * The photo belongs with the other review signals, not one endpoint away.
+       *
+       * `distanceM`, `withinFence` and `isMockLocation` were all returned here
+       * and rendered; the photo was returned on three OTHER endpoints and
+       * rendered on none, so the one shape the manager's HRMS screen actually
+       * reads could not show it at all. The evidence was collected and never
+       * looked at.
+       */
+      checkInPhotoUrl: photoRoute(r.id, 'in', r.checkInPhotoUrl ?? null),
+      checkOutPhotoUrl: photoRoute(r.id, 'out', r.checkOutPhotoUrl ?? null),
       checkInNote: r.checkInNote ?? null,
       checkOutNote: r.checkOutNote ?? null,
       source: r.source ?? 'self',
@@ -442,7 +499,13 @@ export class HrmsService {
     const row = await this.prisma.attendanceRecord.upsert({
       where: { storeId_staffId_date: { storeId: dto.storeId, staffId: target.id, date } },
       update: data,
-      create: { storeId: dto.storeId, staffId: target.id, date, ...data },
+      create: {
+        organisationId: user.organisationId,
+        storeId: dto.storeId,
+        staffId: target.id,
+        date,
+        ...data,
+      },
       include: { store: true },
     });
 
@@ -524,10 +587,13 @@ export class HrmsService {
       shiftId = shift.id;
     }
 
+    const photoUrl = await this.savePunchPhoto(user, 'in', dto.photo);
+
     const payload = {
       checkInAt: now,
       checkInLat: dto.lat,
       checkInLng: dto.lng,
+      checkInPhotoUrl: photoUrl,
       geoVerified: withinFence,
       checkInDistanceM: distanceM,
       checkInNote: dto.note?.trim() || null,
@@ -543,7 +609,14 @@ export class HrmsService {
     const row = await this.prisma.attendanceRecord.upsert({
       where: { storeId_staffId_date: { storeId, staffId: user.id, date } },
       update: payload,
-      create: { storeId, staffId: user.id, staffName: user.name, date, ...payload },
+      create: {
+        organisationId: user.organisationId,
+        storeId,
+        staffId: user.id,
+        staffName: user.name,
+        date,
+        ...payload,
+      },
     });
 
     // A punch away from the store, or one from a device reporting a mock GPS
@@ -625,12 +698,15 @@ export class HrmsService {
     const workedMins = Math.round((now.getTime() - record.checkInAt.getTime()) / 60000);
     const dayFraction = computeDayFraction(workedMins, shift);
 
+    const outPhotoUrl = await this.savePunchPhoto(user, 'out', dto.photo);
+
     const row = await this.prisma.attendanceRecord.update({
       where: { id: record.id },
       data: {
         checkOutAt: now,
         checkOutLat: dto.lat,
         checkOutLng: dto.lng,
+        checkOutPhotoUrl: outPhotoUrl,
         checkOutDistanceM: distanceM,
         checkOutVerified: withinFence,
         checkOutNote: dto.note?.trim() || null,
@@ -690,6 +766,8 @@ export class HrmsService {
       checkOutLocal: formatHHMMInTz(r.checkOutAt, tz),
       timezone: tz,
       checkInDistanceM: r.checkInDistanceM ?? null,
+      checkInPhotoUrl: photoRoute(r.id, 'in', r.checkInPhotoUrl ?? null),
+      checkOutPhotoUrl: photoRoute(r.id, 'out', r.checkOutPhotoUrl ?? null),
       checkOutDistanceM: r.checkOutDistanceM ?? null,
       withinFence: r.geoVerified,
       checkOutWithinFence: r.checkOutVerified ?? false,
@@ -875,6 +953,7 @@ export class HrmsService {
 
       await this.prisma.attendanceRecord.create({
         data: {
+          organisationId: user.organisationId,
           storeId,
           staffId: a.userId,
           staffName: a.user.name,
@@ -937,6 +1016,7 @@ export class HrmsService {
     }
     const row = await this.prisma.shift.create({
       data: {
+        organisationId: user.organisationId,
         storeId: dto.storeId,
         name: dto.name,
         startTime: dto.startTime,
@@ -967,7 +1047,7 @@ export class HrmsService {
     const row = await this.prisma.storeHoliday.upsert({
       where: { storeId_date: { storeId: dto.storeId, date } },
       update: { label: dto.label ?? null },
-      create: { storeId: dto.storeId, date, label: dto.label ?? null },
+      create: { organisationId: user.organisationId, storeId: dto.storeId, date, label: dto.label ?? null },
     });
     return toHolidayView(row);
   }
@@ -1103,6 +1183,8 @@ export class HrmsService {
       checkInLat: r.checkInLat != null ? num(r.checkInLat) : null,
       checkInLng: r.checkInLng != null ? num(r.checkInLng) : null,
       checkInDistanceM: r.checkInDistanceM ?? null,
+      checkInPhotoUrl: photoRoute(r.id, 'in', r.checkInPhotoUrl ?? null),
+      checkOutPhotoUrl: photoRoute(r.id, 'out', r.checkOutPhotoUrl ?? null),
       withinFence: r.geoVerified,
       checkInNote: r.checkInNote ?? null,
       isMockLocation: r.isMockLocation ?? false,
@@ -1215,6 +1297,8 @@ export class HrmsService {
         checkInLat: r.checkInLat != null ? num(r.checkInLat) : null,
         checkInLng: r.checkInLng != null ? num(r.checkInLng) : null,
         checkInDistanceM: r.checkInDistanceM ?? null,
+        checkInPhotoUrl: photoRoute(r.id, 'in', r.checkInPhotoUrl ?? null),
+        checkOutPhotoUrl: photoRoute(r.id, 'out', r.checkOutPhotoUrl ?? null),
         withinFence: r.geoVerified,
         checkInNote: r.checkInNote ?? null,
         isMockLocation: r.isMockLocation ?? false,
@@ -1557,6 +1641,7 @@ export class HrmsService {
 
     const row = await this.prisma.leaveRequest.create({
       data: {
+        organisationId: user.organisationId,
         storeId: actor.storeId,
         staffId: actor.staffId,
         staffName: actor.staffName,
@@ -1663,6 +1748,7 @@ export class HrmsService {
 
     const row = await this.prisma.attendanceRegularization.create({
       data: {
+        organisationId: user.organisationId,
         storeId,
         staffId: user.id,
         staffName: user.name,
@@ -1784,6 +1870,7 @@ export class HrmsService {
           autoClosed: false,
         },
         create: {
+          organisationId: user.organisationId,
           storeId,
           staffId,
           staffName,

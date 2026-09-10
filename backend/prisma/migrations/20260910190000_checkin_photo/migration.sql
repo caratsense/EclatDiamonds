@@ -1,0 +1,13 @@
+-- A photo taken when a visitor is recorded at the counter.
+--
+-- Additive and nullable; rolling back is
+--   ALTER TABLE "CheckIn" DROP COLUMN "photoUrl";
+--
+-- A storage URL, never image bytes — the object lives in the tenant's namespaced
+-- prefix and the row keeps a pointer.
+--
+-- As with the attendance punch, this is a picture and nothing more. No face is
+-- compared to anything, so the column cannot and does not say who the visitor
+-- is; the person's identity comes from the record the salesperson attached the
+-- visit to.
+ALTER TABLE "CheckIn" ADD COLUMN "photoUrl" TEXT;

@@ -22,6 +22,7 @@ const HO: AuthUser = {
   name: 'HO',
   email: 'ho@x.com',
   role: 'head_office',
+  organisationId: 'org_eclat',
   storeIds: [],
   allStores: true,
 };

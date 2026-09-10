@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { clearAttendanceHandled } from "@/lib/attendance-gate";
 import { useCheckOut } from "@/lib/queries/hrms";
 import { useSession } from "@/store/use-session";
+import { useResetOn } from "@/lib/use-reset-on";
 
 /**
  * Inactivity threshold before we warn about signing the salesperson out for the
@@ -98,10 +99,18 @@ export function AutoSignOut() {
   // Fires the check-out exactly once, guarding the "0s" + "Sign out now" paths.
   const signedOutRef = useRef(false);
   // Freshest values for callbacks fired from timers (avoids stale closures).
+  //
+  // Written after commit rather than during render. A render that React throws
+  // away — a Strict-Mode double pass, an interrupted concurrent render — would
+  // otherwise have already published its values into the refs, and the timer
+  // that fires next would act on a render the user never saw. No dependency
+  // array on purpose: every committed render republishes.
   const checkOutRef = useRef(checkOut);
   const warnOpenRef = useRef(false);
-  checkOutRef.current = checkOut;
-  warnOpenRef.current = warnOpen;
+  useEffect(() => {
+    checkOutRef.current = checkOut;
+    warnOpenRef.current = warnOpen;
+  });
 
   function clearIdleTimer() {
     if (idleTimerRef.current) {
@@ -194,10 +203,15 @@ export function AutoSignOut() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSalesperson]);
 
+  // The countdown restarts from the top each time the dialog opens. Set during
+  // render, so the dialog never flashes the previous countdown's last value.
+  useResetOn(warnOpen, () => {
+    if (warnOpen) setSecondsLeft(WARN_SECONDS);
+  });
+
   // --- Warning countdown: runs while the dialog is open; 0 → sign out. ---
   useEffect(() => {
     if (!warnOpen) return;
-    setSecondsLeft(WARN_SECONDS);
     countdownRef.current = setInterval(() => {
       setSecondsLeft((s) => {
         if (s <= 1) {

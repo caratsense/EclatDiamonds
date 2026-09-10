@@ -11,6 +11,7 @@ import { PaymentMode } from '@prisma/client';
 
 export class CreatePaymentDto {
   @IsString()
+  @IsNotEmpty()
   storeId!: string;
 
   /**

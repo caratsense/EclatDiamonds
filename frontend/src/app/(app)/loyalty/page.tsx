@@ -50,7 +50,13 @@ import {
   useStoreScope,
 } from "@/components/common/store-scope-field";
 import { SchemePlansManager } from "@/components/loyalty/scheme-plans-manager";
-import { apiErrorMessage } from "@/lib/utils";
+import {
+  apiErrorMessage,
+  capIndianPhone,
+  isRealName,
+  normalizeIndianMobile,
+} from "@/lib/utils";
+import { useResetOn } from "@/lib/use-reset-on";
 
 const STATUS_VARIANT: Record<
   SchemeStatus,
@@ -90,20 +96,27 @@ export default function LoyaltyPage() {
   // Enrollment form state.
   const [customer, setCustomer] = React.useState("");
   const [phone, setPhone] = React.useState("");
-  const [planId, setPlanId] = React.useState("");
+  const [chosenPlanId, setPlanId] = React.useState("");
   const [installment, setInstallment] = React.useState(10000);
+  // Inline validation errors, keyed by field. Cleared per-field on change.
+  const [errors, setErrors] = React.useState<Record<string, string>>({});
 
-  // Default the plan select to the first plan once plans load.
-  React.useEffect(() => {
-    if (!planId && plans.length > 0) setPlanId(plans[0].id);
-  }, [plans, planId]);
+  function clearError(field: string) {
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
+  }
+
+  // Derived, not stored: an unmade choice MEANS the first plan, so there is no
+  // frame in which the select renders empty and then corrects itself.
+  const planId = chosenPlanId || plans[0]?.id || "";
 
   // Pre-fill the monthly amount from the selected plan's suggested installment
-  // (e.g. a "₹5,000 × 11 months" scheme) so staff are not retyping it.
-  React.useEffect(() => {
+  // (e.g. a "₹5,000 × 11 months" scheme) so staff are not retyping it. This one
+  // IS state — the staff member may overwrite it — so it is re-seeded when the
+  // plan changes, during render rather than a frame later.
+  useResetOn(planId, () => {
     const suggested = plans.find((p) => p.id === planId)?.defaultInstallment;
     if (suggested != null) setInstallment(suggested);
-  }, [planId, plans]);
+  });
 
   const atRisk = rows.filter(
     (m) => m.missedMonths > 0 && m.status !== "matured",
@@ -118,19 +131,26 @@ export default function LoyaltyPage() {
       toast.error("Select a store to enroll this customer at.");
       return;
     }
-    if (!customer.trim()) {
-      toast.error("Customer name is required.");
-      return;
-    }
-    if (!planId) {
-      toast.error("Select a plan.");
+    const next: Record<string, string> = {};
+    if (!customer.trim()) next.customer = "Customer name is required.";
+    else if (!isRealName(customer))
+      next.customer = "Enter a real name (letters, not just a number).";
+    // Phone is optional here; only validate/normalise when one is entered.
+    const normalizedPhone = phone.trim() ? normalizeIndianMobile(phone) : null;
+    if (phone.trim() && !normalizedPhone)
+      next.phone = "Enter a valid 10-digit mobile number.";
+    if (!planId) next.plan = "Select a plan.";
+    if (installment < 0) next.installment = "Amount can't be negative.";
+    if (Object.keys(next).length > 0) {
+      setErrors(next);
+      toast.error("Please fill in the required fields.");
       return;
     }
     enroll.mutate(
       {
         storeId: targetStoreId,
         customerName: customer.trim(),
-        phone: phone.trim() || undefined,
+        phone: normalizedPhone ?? undefined,
         planId,
         installment,
       },
@@ -178,29 +198,53 @@ export default function LoyaltyPage() {
             <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label htmlFor="cust">Customer</Label>
+                <Label htmlFor="cust">
+                  Customer <span className="text-destructive">*</span>
+                </Label>
                 <Input
                   ref={customerRef}
                   id="cust"
                   placeholder="Name"
                   value={customer}
-                  onChange={(e) => setCustomer(e.target.value)}
+                  aria-invalid={!!errors.customer}
+                  onChange={(e) => {
+                    setCustomer(e.target.value);
+                    clearError("customer");
+                  }}
                 />
+                {errors.customer ? (
+                  <p className="mt-1 text-xs text-destructive">
+                    {errors.customer}
+                  </p>
+                ) : null}
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="phone">Phone</Label>
                 <Input
                   id="phone"
                   placeholder="+91 …"
+                  inputMode="tel"
                   value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
+                  aria-invalid={!!errors.phone}
+                  onChange={(e) => {
+                    setPhone(capIndianPhone(e.target.value));
+                    clearError("phone");
+                  }}
                 />
+                {errors.phone ? (
+                  <p className="mt-1 text-xs text-destructive">{errors.phone}</p>
+                ) : null}
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="plan">Plan</Label>
+                <Label htmlFor="plan">
+                  Plan <span className="text-destructive">*</span>
+                </Label>
                 <Select
                   value={planId}
-                  onValueChange={setPlanId}
+                  onValueChange={(v) => {
+                    setPlanId(v);
+                    clearError("plan");
+                  }}
                   disabled={plans.length === 0}
                 >
                   <SelectTrigger id="plan">
@@ -214,6 +258,9 @@ export default function LoyaltyPage() {
                     ))}
                   </SelectContent>
                 </Select>
+                {errors.plan ? (
+                  <p className="mt-1 text-xs text-destructive">{errors.plan}</p>
+                ) : null}
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="inst">Monthly installment (₹)</Label>
@@ -222,8 +269,17 @@ export default function LoyaltyPage() {
                   type="number"
                   min={0}
                   value={installment}
-                  onChange={(e) => setInstallment(Number(e.target.value) || 0)}
+                  aria-invalid={!!errors.installment}
+                  onChange={(e) => {
+                    setInstallment(Number(e.target.value) || 0);
+                    clearError("installment");
+                  }}
                 />
+                {errors.installment ? (
+                  <p className="mt-1 text-xs text-destructive">
+                    {errors.installment}
+                  </p>
+                ) : null}
               </div>
             </div>
             <Button

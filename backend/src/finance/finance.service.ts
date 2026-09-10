@@ -58,6 +58,7 @@ export class FinanceService {
     this.scope.assertStoreAllowed(user, dto.storeId);
     const created = await this.prisma.ledgerEntry.create({
       data: {
+        organisationId: user.organisationId,
         storeId: dto.storeId,
         partyId: dto.partyId,
         kind: dto.kind,
@@ -165,6 +166,32 @@ export class FinanceService {
       },
       { id: 'ebitda', label: 'EBITDA', value: cur.ebitda, delta: pct(cur.ebitda, prev.ebitda) },
     ];
+  }
+
+  /**
+   * GET /finance/expenses — this month's operating-expense breakdown by narration,
+   * the drill-down behind the Operating Expense KPI. Same store scope + month
+   * window as `summary`, so the totals reconcile.
+   */
+  async expenses(user: AuthUser, headerStore?: string) {
+    const storeIds = this.scope.effectiveStoreIds(user, headerStore);
+    if (storeIds.length === 0) return { total: 0, items: [] };
+    const tz = await this.scope.resolveTimezone(user, headerStore);
+    const monthStart = startOfMonthInTz(new Date(), tz);
+    const rows = await this.prisma.ledgerEntry.groupBy({
+      by: ['narration'],
+      where: {
+        storeId: { in: storeIds },
+        kind: 'expense',
+        entryDate: { gte: monthStart, lt: new Date(Date.now() + 1) },
+      },
+      _sum: { amount: true },
+    });
+    const items = rows
+      .map((r) => ({ account: r.narration ?? 'Uncategorised', amount: num(r._sum.amount) }))
+      .filter((x) => x.amount !== 0)
+      .sort((a, b) => b.amount - a.amount);
+    return { total: items.reduce((s, x) => s + x.amount, 0), items };
   }
 
   /** GET /finance/budget — budget-vs-actual per store (budget from planning ledger rows). */

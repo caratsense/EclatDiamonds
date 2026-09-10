@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { DoorOpen, Users, UserCheck, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 
@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSession } from "@/store/use-session";
+import { useQuickAction } from "@/store/use-quick-action";
 import {
   StoreScopeField,
   useStoreScope,
@@ -43,14 +44,23 @@ import {
   FootfallByStoreChart,
 } from "@/components/checkins/footfall-charts";
 import { CheckInLog, LiveInStore } from "@/components/checkins/checkin-tables";
+import { CustomerRecognition } from "@/components/crm/customer-recognition";
 import {
   PURPOSE_TO_ENUM,
   useCheckins,
   useCheckoutCheckin,
   useCreateCheckin,
   type CheckinOutcomeInput,
+  type CheckinPurposeInput,
 } from "@/lib/queries/checkins";
-import { apiErrorMessage, normalizeIndianMobile } from "@/lib/utils";
+import { useConfigBootstrap } from "@/lib/queries/tenant-config";
+import {
+  apiErrorMessage,
+  capIndianPhone,
+  isRealName,
+  normalizeIndianMobile,
+} from "@/lib/utils";
+import { useResetOn } from "@/lib/use-reset-on";
 
 /** Bucket "HH:mm" into an hour label like "10a" / "1p" for the hourly chart. */
 function hourLabel(timeIn: string | null): string | null {
@@ -86,6 +96,27 @@ function sortHour(label: string): number {
 
 const CLOSED_OUTCOMES = new Set(["sale_closed"]);
 
+/**
+ * Was this walk-in today?
+ *
+ * The log is the most recent 200 rows with no date bound, so "today" has to be
+ * decided here. It used to not be decided at all: every tile below counted the
+ * whole log and called it today's, which on a branch with a week of history
+ * reported a week of footfall as one day's and a lifetime conversion rate as
+ * today's. `timeInAt` is the real instant; `timeIn` is only a wall clock.
+ */
+function isToday(iso: string | null | undefined): boolean {
+  if (!iso) return false;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return false;
+  const now = new Date();
+  return (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  );
+}
+
 export default function CheckinsPage() {
   const { currentStore, stores } = useSession();
   const nav = getNavItem("checkins");
@@ -96,21 +127,41 @@ export default function CheckinsPage() {
   // The visit currently being closed (drives the "Close visit" dialog).
   const [closing, setClosing] = useState<CheckIn | null>(null);
 
-  // Headline numbers derived from the live log. "Week" has no endpoint so we
-  // surface today's count for the single-store view.
-  const today = checkins.length;
-  const live = checkins.filter((c) => !c.timeOut).length;
-  const converted = checkins.filter((c) => CLOSED_OUTCOMES.has(c.outcome)).length;
+  /*
+   * "Log walk-in" from the sidebar's Quick Action lands here.
+   *
+   * Derived rather than copied in by an effect, so the dialog is open on the
+   * first paint after the route change instead of on the one after that.
+   */
+  const quickCheckin = useQuickAction((s) => s.pending === "checkin");
+  const clearQuick = useQuickAction((s) => s.clear);
+  const addDialogOpen = addOpen || quickCheckin;
+  const setAddDialogOpen = (open: boolean) => {
+    setAddOpen(open);
+    if (!open) clearQuick();
+  };
+
+  // Headline numbers derived from the live log, narrowed to today. "Week" has no
+  // endpoint, so the single-store view surfaces today's count and says so.
+  const todaysVisits = useMemo(
+    () => checkins.filter((c) => isToday(c.timeInAt)),
+    [checkins],
+  );
+  const today = todaysVisits.length;
+  // "In store now" is today's un-closed visits. Across the whole log it was
+  // every visit ever left open, a number that only ever grew.
+  const live = todaysVisits.filter((c) => !c.timeOut).length;
+  const converted = todaysVisits.filter((c) => CLOSED_OUTCOMES.has(c.outcome)).length;
   const convRate = today ? (converted / today) * 100 : 0;
 
-  const byHour = useMemo(() => deriveByHour(checkins), [checkins]);
+  const byHour = useMemo(() => deriveByHour(todaysVisits), [todaysVisits]);
 
   // Per-store breakdown only makes sense in the aggregate view; derive it from
   // the live rows grouped by store.
   const byStore = useMemo<StoreFootfall[]>(() => {
     if (!isAggregate) return [];
     const map = new Map<string, StoreFootfall>();
-    for (const c of checkins) {
+    for (const c of todaysVisits) {
       const store = stores.find((s) => s.id === c.storeId);
       const row =
         map.get(c.storeId) ??
@@ -126,7 +177,7 @@ export default function CheckinsPage() {
       map.set(c.storeId, row);
     }
     return [...map.values()];
-  }, [checkins, isAggregate, stores]);
+  }, [todaysVisits, isAggregate, stores]);
 
   function handleCheckout(id: string) {
     const target = checkins.find((c) => c.id === id);
@@ -139,7 +190,7 @@ export default function CheckinsPage() {
         title={nav?.title ?? "Check-ins & Footfall"}
         purpose={nav?.purpose ?? ""}
         primaryAction={nav?.primaryAction}
-        onPrimaryAction={() => setAddOpen(true)}
+        onPrimaryAction={() => setAddDialogOpen(true)}
       />
 
       <div className="space-y-4">
@@ -211,7 +262,7 @@ export default function CheckinsPage() {
         )}
       </div>
 
-      <AddCheckinDialog open={addOpen} onOpenChange={setAddOpen} />
+      <AddCheckinDialog open={addDialogOpen} onOpenChange={setAddDialogOpen} />
       <CloseVisitDialog
         checkin={closing}
         open={closing != null}
@@ -243,16 +294,25 @@ function CloseVisitDialog({
 }) {
   const checkout = useCheckoutCheckin();
   const [outcome, setOutcome] = useState<CheckinOutcomeInput | "">("");
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Reset the selection whenever a new visit is opened for closing.
-  useEffect(() => {
-    if (open) setOutcome("");
-  }, [open, checkin?.id]);
+  function clearError(field: string) {
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
+  }
+
+  // Reset the selection whenever a new visit is opened for closing. Done during
+  // render, so the dialog is never painted holding the previous visit's outcome.
+  useResetOn(open ? checkin?.id ?? "open" : null, () => {
+    if (!open) return;
+    setOutcome("");
+    setErrors({});
+  });
 
   function submit() {
     if (!checkin) return;
     if (!outcome) {
-      toast.error("Select the visit outcome.");
+      setErrors({ outcome: "Select the visit outcome." });
+      toast.error("Please fix the highlighted fields.");
       return;
     }
     checkout.mutate(
@@ -279,12 +339,17 @@ function CloseVisitDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-1.5">
-          <Label htmlFor="close-outcome">Outcome</Label>
+          <Label htmlFor="close-outcome">
+            Outcome <span className="text-destructive">*</span>
+          </Label>
           <Select
             value={outcome}
-            onValueChange={(v) => setOutcome(v as CheckinOutcomeInput)}
+            onValueChange={(v) => {
+              setOutcome(v as CheckinOutcomeInput);
+              clearError("outcome");
+            }}
           >
-            <SelectTrigger id="close-outcome">
+            <SelectTrigger id="close-outcome" aria-invalid={!!errors.outcome}>
               <SelectValue placeholder="Select the visit outcome" />
             </SelectTrigger>
             <SelectContent>
@@ -295,6 +360,9 @@ function CloseVisitDialog({
               ))}
             </SelectContent>
           </Select>
+          {errors.outcome ? (
+            <p className="mt-1 text-xs text-destructive">{errors.outcome}</p>
+          ) : null}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
@@ -330,26 +398,55 @@ function AddCheckinDialog({
   const create = useCreateCheckin();
   const [customer, setCustomer] = useState("");
   const [phone, setPhone] = useState("");
-  const [purpose, setPurpose] = useState<VisitPurpose>("Browsing");
+  /*
+   * The CANONICAL value, not the display label.
+   *
+   * This used to hold a jeweller's English ("Gold Coin / Investment") and map it
+   * to the enum on submit, so the list a clinic saw was Bridal / Gold Scheme /
+   * Repair whatever their pack had configured. Holding the enum value means the
+   * options can come from the tenant's own vocabulary while what gets STORED is
+   * unchanged — the same `CheckinPurpose` member either way.
+   */
+  const [purpose, setPurpose] = useState<CheckinPurposeInput>("browsing");
+  const { data: checkinConfig } = useConfigBootstrap();
+  /*
+   * The tenant's configured visit purposes, falling back to the built-in list.
+   *
+   * A term only qualifies if it declares a `systemValue`, because that is the
+   * enum member the column accepts; a label-only term the tenant invented has
+   * nowhere to be stored and would fail on save.
+   */
+  const purposeOptions: { value: CheckinPurposeInput; label: string }[] = (() => {
+    const terms = checkinConfig?.taxonomies?.checkin_purpose?.terms ?? [];
+    const configured = terms
+      .filter((t) => !!t.systemValue)
+      .map((t) => ({ value: t.systemValue as CheckinPurposeInput, label: t.label }));
+    if (configured.length) return configured;
+    return PURPOSE_OPTIONS.map((label) => ({ value: PURPOSE_TO_ENUM[label], label }));
+  })();
+  // Inline validation errors, keyed by field. Cleared per-field on change.
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Phone is optional — but if typed it must be a valid Indian mobile (backend
-  // now enforces @IsIndianMobile). Blank passes through; present-and-invalid
-  // blocks submit and shows an inline error.
-  const trimmedPhone = phone.trim();
-  const normalizedPhone = trimmedPhone ? normalizeIndianMobile(trimmedPhone) : null;
-  const phoneInvalid = trimmedPhone.length > 0 && normalizedPhone == null;
+  function clearError(field: string) {
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
+  }
 
   function save() {
     if (!targetStoreId) {
       toast.error("Select a store to log this walk-in against.");
       return;
     }
-    if (!customer.trim()) {
-      toast.error("Customer name is required.");
-      return;
-    }
-    if (phoneInvalid) {
-      toast.error("Enter a valid 10-digit mobile number.");
+    const next: Record<string, string> = {};
+    if (!customer.trim()) next.customer = "Customer name is required.";
+    else if (!isRealName(customer))
+      next.customer = "Enter a real name — letters, not just a number.";
+    // Phone is optional; only validate a non-empty value (backend @IsIndianMobile).
+    const normalizedPhone = phone.trim() ? normalizeIndianMobile(phone) : null;
+    if (phone.trim() && !normalizedPhone)
+      next.phone = "Enter a valid 10-digit mobile number.";
+    if (Object.keys(next).length > 0) {
+      setErrors(next);
+      toast.error("Please fix the highlighted fields.");
       return;
     }
     create.mutate(
@@ -357,14 +454,15 @@ function AddCheckinDialog({
         storeId: targetStoreId,
         customerName: customer.trim(),
         phone: normalizedPhone ?? undefined,
-        purpose: PURPOSE_TO_ENUM[purpose],
+        purpose,
       },
       {
         onSuccess: () => {
           toast.success("Check-in logged");
           setCustomer("");
           setPhone("");
-          setPurpose("Browsing");
+          setPurpose("browsing");
+          setErrors({});
           onOpenChange(false);
         },
         onError: (err) => toast.error(apiErrorMessage(err, "Could not log the walk-in.")),
@@ -385,42 +483,66 @@ function AddCheckinDialog({
           <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
 
           <div className="grid gap-1.5">
-            <Label htmlFor="ci-cust">Customer name</Label>
+            <Label htmlFor="ci-cust">
+              Customer name <span className="text-destructive">*</span>
+            </Label>
             <Input
               id="ci-cust"
               placeholder="e.g. Rajesh Agarwal"
               value={customer}
-              onChange={(e) => setCustomer(e.target.value)}
+              aria-invalid={!!errors.customer}
+              onChange={(e) => {
+                setCustomer(e.target.value);
+                clearError("customer");
+              }}
             />
+            {errors.customer ? (
+              <p className="mt-1 text-xs text-destructive">{errors.customer}</p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="ci-phone">Phone</Label>
             <Input
               id="ci-phone"
               placeholder="+91 ..."
+              inputMode="tel"
               value={phone}
-              aria-invalid={phoneInvalid}
-              onChange={(e) => setPhone(e.target.value)}
+              aria-invalid={!!errors.phone}
+              onChange={(e) => {
+                setPhone(capIndianPhone(e.target.value));
+                clearError("phone");
+              }}
             />
-            {phoneInvalid ? (
-              <p className="mt-1 text-xs text-destructive">
-                Enter a valid 10-digit mobile number.
-              </p>
+            {errors.phone ? (
+              <p className="mt-1 text-xs text-destructive">{errors.phone}</p>
             ) : null}
+            {/* Recognition before creation: the counter finds out who this is
+                while they are still typing, and a returning customer's name is
+                filled in rather than re-typed (and possibly re-spelled, which
+                is how one person becomes two records). */}
+            <CustomerRecognition
+              phone={phone}
+              onRecognised={(c) => {
+                if (!customer.trim()) {
+                  setCustomer(c.name);
+                  clearError("customer");
+                }
+              }}
+            />
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="ci-purpose">Purpose</Label>
             <Select
               value={purpose}
-              onValueChange={(v) => setPurpose(v as VisitPurpose)}
+              onValueChange={(v) => setPurpose(v as CheckinPurposeInput)}
             >
               <SelectTrigger id="ci-purpose">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {PURPOSE_OPTIONS.map((p) => (
-                  <SelectItem key={p} value={p}>
-                    {p}
+                {purposeOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
                   </SelectItem>
                 ))}
               </SelectContent>

@@ -31,12 +31,32 @@ import {
 } from "@/components/common/store-scope-field";
 import { useStock } from "@/lib/queries/stock";
 import { useCreateTransfer } from "@/lib/queries/stock-transfers";
-import { useSignupStores } from "@/lib/queries/auth";
+import { useSignupStores, type SignupStore } from "@/lib/queries/auth";
+import { useConfigBootstrap } from "@/lib/queries/tenant-config";
 import { formatGrams } from "@/lib/format";
 import { apiErrorMessage, cn } from "@/lib/utils";
 
 /** Humanized stock statuses that are transferable (available, in-ledger). */
 const AVAILABLE_STATUSES = new Set(["In stock", "Aging", "Dead stock"]);
+
+/**
+ * The branches this transfer may be sent to.
+ *
+ * Two gates. Without a resolved tenant there are no destinations at all — the
+ * directory used to fall back to a fixed organisation, which listed one
+ * jeweller's branches to every other tenant. And the source store cannot also be
+ * the destination. `directory` is undefined while the list for the current
+ * tenant loads (the query is keyed by slug), which is what keeps a previous
+ * tenant's branches out of the picker rather than merely re-sorting them.
+ */
+export function transferDestinations(
+  directory: SignupStore[] | undefined,
+  organisationSlug: string,
+  sourceStoreId: string,
+): SignupStore[] {
+  if (!organisationSlug) return [];
+  return (directory ?? []).filter((s) => s.id !== sourceStoreId);
+}
 
 interface CreateTransferDialogProps {
   open: boolean;
@@ -67,7 +87,12 @@ export function CreateTransferDialog({
   const { targetStoreId: sourceStoreId, storeLabel, pickedStoreId, setPickedStoreId } =
     useStoreScope(initialSourceStoreId);
   const create = useCreateTransfer();
-  const { data: stores = [] } = useSignupStores();
+  // Which tenant's branches to offer, taken from the authenticated bootstrap the
+  // app shell has already loaded — not the hostname, not local storage, and not
+  // a second copy of the tenant kept here. Empty until it resolves.
+  const organisationSlug =
+    useConfigBootstrap().data?.organisation.slug ?? "";
+  const { data: directory } = useSignupStores(organisationSlug);
 
   const [toStoreId, setToStoreId] = React.useState("");
   const [q, setQ] = React.useState("");
@@ -86,6 +111,16 @@ export function CreateTransferDialog({
   const pieces = (data?.items ?? []).filter((p) =>
     AVAILABLE_STATUSES.has(p.status),
   );
+
+  // Destination cannot be the source store, and belongs to the signed-in tenant.
+  const destinations = transferDestinations(
+    directory,
+    organisationSlug,
+    sourceStoreId,
+  );
+  // A branch picked before the tenant resolved — or under a previous one — is no
+  // longer on offer, so it must not stay selected or be submitted.
+  const toStore = destinations.some((s) => s.id === toStoreId) ? toStoreId : "";
 
   function reset() {
     setToStoreId("");
@@ -108,7 +143,7 @@ export function CreateTransferDialog({
       toast.error("Select the source store to transfer from.");
       return;
     }
-    if (!toStoreId) {
+    if (!toStore) {
       toast.error("Select a destination store.");
       return;
     }
@@ -119,7 +154,7 @@ export function CreateTransferDialog({
     create.mutate(
       {
         fromStoreId: sourceStoreId,
-        toStoreId,
+        toStoreId: toStore,
         stockItemIds: [...selected],
         note: note.trim() || undefined,
       },
@@ -136,9 +171,6 @@ export function CreateTransferDialog({
       },
     );
   }
-
-  // Destination cannot be the source store.
-  const destinations = stores.filter((s) => s.id !== sourceStoreId);
 
   return (
     <Dialog
@@ -170,8 +202,8 @@ export function CreateTransferDialog({
             <Label htmlFor="tr-dest">
               Destination store <span className="text-destructive">*</span>
             </Label>
-            <Select value={toStoreId} onValueChange={setToStoreId}>
-              <SelectTrigger id="tr-dest" aria-invalid={!toStoreId}>
+            <Select value={toStore} onValueChange={setToStoreId}>
+              <SelectTrigger id="tr-dest" aria-invalid={!toStore}>
                 <SelectValue placeholder="Select a branch…" />
               </SelectTrigger>
               <SelectContent>

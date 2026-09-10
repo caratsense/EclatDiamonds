@@ -71,20 +71,22 @@ export class LoyaltyService {
    * Enrollment only ever offers ACTIVE plans; `includeInactive` is for the Head
    * Office management screen, which must also see retired ones.
    */
-  async plans(includeInactive = false) {
+  async plans(user: AuthUser, includeInactive = false) {
+    const organisationId = user.organisationId;
+    const filter = includeInactive ? { organisationId } : { organisationId, isActive: true };
     let plans = await this.prisma.schemePlan.findMany({
-      where: includeInactive ? {} : { isActive: true },
+      where: filter,
       orderBy: { createdAt: 'asc' },
     });
     if (plans.length === 0) {
       await this.prisma.schemePlan.createMany({
         data: [
-          { name: '10+1 Gold Savings Scheme', tenureMonths: 10, bonusMonths: 1, bonusLabel: '1 Month Company Bonus', defaultInstallment: new Prisma.Decimal(5000), isActive: true },
-          { name: '10+2 Premium Gold Scheme', tenureMonths: 10, bonusMonths: 2, bonusLabel: '2 Months Company Bonus', defaultInstallment: new Prisma.Decimal(10000), isActive: true },
+          { name: '10+1 Gold Savings Scheme', tenureMonths: 10, bonusMonths: 1, bonusLabel: '1 Month Company Bonus', defaultInstallment: new Prisma.Decimal(5000), isActive: true, organisationId },
+          { name: '10+2 Premium Gold Scheme', tenureMonths: 10, bonusMonths: 2, bonusLabel: '2 Months Company Bonus', defaultInstallment: new Prisma.Decimal(10000), isActive: true, organisationId },
         ],
       });
       plans = await this.prisma.schemePlan.findMany({
-        where: includeInactive ? {} : { isActive: true },
+        where: filter,
         orderBy: { createdAt: 'asc' },
       });
     }
@@ -105,6 +107,7 @@ export class LoyaltyService {
         bonusLabel: dto.bonusLabel?.trim() || null,
         defaultInstallment: dto.defaultInstallment ?? null,
         isActive: dto.isActive ?? true,
+        organisationId: user.organisationId,
       },
     });
     await this.audit.record(user, {
@@ -120,7 +123,9 @@ export class LoyaltyService {
 
   /** PATCH /loyalty/plans/:id — rename / retune / activate / deactivate a plan. */
   async updatePlan(user: AuthUser, id: string, dto: UpdateSchemePlanDto) {
-    const existing = await this.prisma.schemePlan.findUnique({ where: { id } });
+    const existing = await this.prisma.schemePlan.findFirst({
+      where: { id, ...this.scope.orgFilter(user) },
+    });
     if (!existing) throw new NotFoundException('Scheme plan not found');
 
     const plan = await this.prisma.schemePlan.update({
@@ -155,7 +160,9 @@ export class LoyaltyService {
    * which hides it from new enrollments without rewriting the past.
    */
   async deletePlan(user: AuthUser, id: string) {
-    const existing = await this.prisma.schemePlan.findUnique({ where: { id } });
+    const existing = await this.prisma.schemePlan.findFirst({
+      where: { id, ...this.scope.orgFilter(user) },
+    });
     if (!existing) throw new NotFoundException('Scheme plan not found');
 
     const enrolled = await this.prisma.schemeMember.count({ where: { planId: id } });
@@ -218,7 +225,9 @@ export class LoyaltyService {
   /** POST /loyalty/members — enroll a member and generate the installment schedule. */
   async enroll(user: AuthUser, dto: EnrollMemberDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
-    const plan = await this.prisma.schemePlan.findUnique({ where: { id: dto.planId } });
+    const plan = await this.prisma.schemePlan.findFirst({
+      where: { id: dto.planId, ...this.scope.orgFilter(user) },
+    });
     if (!plan) throw new NotFoundException('Scheme plan not found');
 
     const year = new Date().getFullYear();
@@ -229,6 +238,7 @@ export class LoyaltyService {
 
     const member = await this.prisma.schemeMember.create({
       data: {
+        organisationId: user.organisationId,
         ref: `GSS-${year}-${3000 + seq}`,
         storeId: dto.storeId,
         customerName: dto.customerName,
@@ -281,9 +291,14 @@ export class LoyaltyService {
    * Mirrors the ticketing pattern for nullable-store entities.
    */
   private scopedWhere(user: AuthUser, headerStore?: string) {
-    const f = this.scope.storeFilter(user, headerStore);
-    if (Object.keys(f).length === 0) return {}; // head_office
-    return { OR: [f, { storeId: null }] };
+    // Org-bind the WHOLE fragment: storeFilter never returns {} (head_office is
+    // already org-bounded via user.storeIds), so a bare `{ storeId: null }` OR
+    // branch would match EVERY tenant's company-wide rows. The organisationId
+    // predicate fences the null-store branch to the caller's organisation.
+    return {
+      organisationId: user.organisationId,
+      OR: [this.scope.storeFilter(user, headerStore), { storeId: null }],
+    };
   }
 
   /** A store-bound code is gated by scope; a company-wide (null-store) code is open. */
@@ -301,12 +316,13 @@ export class LoyaltyService {
    * Generate a unique, human-readable code: name-slug + a short crypto suffix.
    * Retries on the (extremely unlikely) @unique collision. No Math.random/Date.now.
    */
-  private async generateCode(name: string): Promise<string> {
+  private async generateCode(name: string, organisationId: string): Promise<string> {
     const slug = this.codeSlug(name);
     for (let attempt = 0; attempt < 8; attempt++) {
       const suffix = randomBytes(3).toString('hex').toUpperCase(); // 6 hex chars
       const code = `${slug}-${suffix}`;
-      const clash = await this.prisma.referralCode.findUnique({ where: { code } });
+      // A code only needs to be unique within its organisation.
+      const clash = await this.prisma.referralCode.findFirst({ where: { code, organisationId } });
       if (!clash) return code;
     }
     throw new BadRequestException('Could not generate a unique referral code, please retry');
@@ -347,9 +363,10 @@ export class LoyaltyService {
         'Only head office may create company-wide referral codes',
       );
     }
-    const code = await this.generateCode(dto.referrerName);
+    const code = await this.generateCode(dto.referrerName, user.organisationId);
     const row = await this.prisma.referralCode.create({
       data: {
+        organisationId: user.organisationId,
         code,
         referrerName: dto.referrerName,
         referrerPhone: dto.referrerPhone,
@@ -392,7 +409,10 @@ export class LoyaltyService {
     const commissionAmount = pctOf(bill, commissionPct);
 
     return this.prisma.$transaction(async (tx) => {
-      const code = await tx.referralCode.findUnique({ where: { code: dto.code } });
+      // Referral codes are unique PER ORGANISATION — resolve within the caller's org.
+      const code = await tx.referralCode.findFirst({
+        where: { code: dto.code, organisationId: user.organisationId },
+      });
       if (!code) throw new NotFoundException('referral code not found');
       this.assertCodeAccess(user, code.storeId);
 
@@ -453,8 +473,16 @@ export class LoyaltyService {
       });
       if (!code) throw new NotFoundException('referral code not found');
     }
+    // Referral has no organisationId column of its own, so it cannot take the
+    // org-bound scopedWhere directly — org-bind it through its parent code
+    // relation while preserving the exact store-scope semantics (referral.storeId).
     const rows = await this.prisma.referral.findMany({
-      where: codeId ? { codeId } : this.scopedWhere(user, headerStore),
+      where: codeId
+        ? { codeId }
+        : {
+            code: { organisationId: user.organisationId },
+            OR: [this.scope.storeFilter(user, headerStore), { storeId: null }],
+          },
       orderBy: { createdAt: 'desc' },
     });
     return rows.map((r) => ({
@@ -483,6 +511,10 @@ export class LoyaltyService {
     return this.prisma.$transaction(async (tx) => {
       const code = await tx.referralCode.findUnique({ where: { id } });
       if (!code) throw new NotFoundException('referral code not found');
+      // findUnique bypasses scopedWhere, so a company-wide (null-store) code from
+      // another org would pass the store gate below. Fence to the caller's org
+      // first: HO of org A must not draw down org B's company-wide code.
+      this.scope.assertOrgAllowed(user, code.organisationId);
       this.assertCodeAccess(user, code.storeId);
       // A null-store code is company-wide — only head office may pay it out.
       if (code.storeId == null && user.role !== 'head_office') {

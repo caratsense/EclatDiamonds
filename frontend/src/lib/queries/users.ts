@@ -149,10 +149,16 @@ export function useSetLeaveAllocation() {
 }
 
 /** GET /users — the staff roster, store-scoped server-side. Pass a storeId to
- *  narrow to a single branch; omit it for the caller's full scope. */
-export function useStaff(storeId?: string) {
+ *  narrow to a single branch; omit it for the caller's full scope.
+ *
+ *  `enabled` lets a caller that only ever wants a SINGLE branch's roster hold the
+ *  request until it knows which branch — without it, "no branch chosen yet"
+ *  fetches the caller's entire scope, which is the one list such a caller must
+ *  not show. Defaults to true, so existing callers are unchanged. */
+export function useStaff(storeId?: string, options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ["users", storeId ?? "all"],
+    enabled: options.enabled ?? true,
     queryFn: async () => {
       const { data } = await api.get<StaffUser[]>("/users", {
         params: storeId ? { storeId } : undefined,

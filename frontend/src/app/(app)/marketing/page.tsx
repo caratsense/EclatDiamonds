@@ -74,7 +74,7 @@ import {
   type CampaignType,
   type SharedAsset,
 } from "@/lib/mock/marketing";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, isRealName } from "@/lib/utils";
 
 /** Marketing delivery channels offered when targeting a campaign. */
 const CHANNEL_OPTIONS = [
@@ -576,6 +576,12 @@ function NewCampaignDialog({
   const [endDate, setEndDate] = useState("");
   const [storeIds, setStoreIds] = useState<string[]>([]);
   const [channels, setChannels] = useState<string[]>([]);
+  // Inline validation errors, keyed by field. Cleared per-field on change.
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  function clearError(field: string) {
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
+  }
 
   function toggle(
     setter: Dispatch<SetStateAction<string[]>>,
@@ -596,16 +602,20 @@ function NewCampaignDialog({
     setEndDate("");
     setStoreIds([]);
     setChannels([]);
+    setErrors({});
   }
 
   function save() {
-    if (!name.trim()) {
-      toast.error("Campaign name is required.");
-      return;
-    }
     const budgetNum = budget.trim() ? Number(budget) : undefined;
-    if (budgetNum != null && (Number.isNaN(budgetNum) || budgetNum < 0)) {
-      toast.error("Enter a valid budget.");
+    const next: Record<string, string> = {};
+    if (!name.trim()) next.name = "Campaign name is required.";
+    else if (!isRealName(name))
+      next.name = "Enter a real name (letters, not just a number).";
+    if (budgetNum != null && (Number.isNaN(budgetNum) || budgetNum < 0))
+      next.budget = "Enter a valid budget (0 or more).";
+    if (Object.keys(next).length > 0) {
+      setErrors(next);
+      toast.error("Please fill in the required fields.");
       return;
     }
     createCampaign.mutate(
@@ -640,13 +650,22 @@ function NewCampaignDialog({
         </DialogHeader>
         <div className="grid gap-3">
           <div className="grid gap-1.5">
-            <Label htmlFor="campaign-name">Name</Label>
+            <Label htmlFor="campaign-name">
+              Name <span className="text-destructive">*</span>
+            </Label>
             <Input
               id="campaign-name"
               placeholder="e.g. Diwali Festive Drop"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              aria-invalid={!!errors.name}
+              onChange={(e) => {
+                setName(e.target.value);
+                clearError("name");
+              }}
             />
+            {errors.name ? (
+              <p className="mt-1 text-xs text-destructive">{errors.name}</p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="campaign-type">Type</Label>
@@ -674,8 +693,15 @@ function NewCampaignDialog({
               min={0}
               placeholder="e.g. 500000"
               value={budget}
-              onChange={(e) => setBudget(e.target.value)}
+              aria-invalid={!!errors.budget}
+              onChange={(e) => {
+                setBudget(e.target.value);
+                clearError("budget");
+              }}
             />
+            {errors.budget ? (
+              <p className="mt-1 text-xs text-destructive">{errors.budget}</p>
+            ) : null}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">
@@ -751,21 +777,30 @@ function NewDeliverableDialog({
   const [title, setTitle] = useState("");
   const [type, setType] = useState("image");
   const [url, setUrl] = useState("");
+  // Inline validation errors, keyed by field. Cleared per-field on change.
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  function clearError(field: string) {
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
+  }
 
   function reset() {
     setCampaignId("");
     setTitle("");
     setType("image");
     setUrl("");
+    setErrors({});
   }
 
   function save() {
-    if (!campaignId) {
-      toast.error("Pick a campaign.");
-      return;
-    }
-    if (!title.trim()) {
-      toast.error("An asset title is required.");
+    const next: Record<string, string> = {};
+    if (!campaignId) next.campaignId = "Pick a campaign.";
+    if (!title.trim()) next.title = "An asset title is required.";
+    else if (!isRealName(title))
+      next.title = "Enter a real title (letters, not just a number).";
+    if (Object.keys(next).length > 0) {
+      setErrors(next);
+      toast.error("Please fill in the required fields.");
       return;
     }
     createAsset.mutate(
@@ -797,9 +832,17 @@ function NewDeliverableDialog({
         </DialogHeader>
         <div className="grid gap-3">
           <div className="grid gap-1.5">
-            <Label htmlFor="asset-campaign">Campaign</Label>
-            <Select value={campaignId} onValueChange={setCampaignId}>
-              <SelectTrigger id="asset-campaign">
+            <Label htmlFor="asset-campaign">
+              Campaign <span className="text-destructive">*</span>
+            </Label>
+            <Select
+              value={campaignId}
+              onValueChange={(v) => {
+                setCampaignId(v);
+                clearError("campaignId");
+              }}
+            >
+              <SelectTrigger id="asset-campaign" aria-invalid={!!errors.campaignId}>
                 <SelectValue placeholder="Select a campaign" />
               </SelectTrigger>
               <SelectContent>
@@ -810,15 +853,27 @@ function NewDeliverableDialog({
                 ))}
               </SelectContent>
             </Select>
+            {errors.campaignId ? (
+              <p className="mt-1 text-xs text-destructive">{errors.campaignId}</p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="asset-title">Title</Label>
+            <Label htmlFor="asset-title">
+              Title <span className="text-destructive">*</span>
+            </Label>
             <Input
               id="asset-title"
               placeholder="e.g. bridal_hero_v1.mp4"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              aria-invalid={!!errors.title}
+              onChange={(e) => {
+                setTitle(e.target.value);
+                clearError("title");
+              }}
             />
+            {errors.title ? (
+              <p className="mt-1 text-xs text-destructive">{errors.title}</p>
+            ) : null}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">
@@ -874,21 +929,30 @@ function NewAgencyTaskDialog({
   const [title, setTitle] = useState("");
   const [assignee, setAssignee] = useState("");
   const [dueDate, setDueDate] = useState("");
+  // Inline validation errors, keyed by field. Cleared per-field on change.
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  function clearError(field: string) {
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
+  }
 
   function reset() {
     setCampaignId("");
     setTitle("");
     setAssignee("");
     setDueDate("");
+    setErrors({});
   }
 
   function save() {
-    if (!campaignId) {
-      toast.error("Pick a campaign.");
-      return;
-    }
-    if (!title.trim()) {
-      toast.error("A task title is required.");
+    const next: Record<string, string> = {};
+    if (!campaignId) next.campaignId = "Pick a campaign.";
+    if (!title.trim()) next.title = "A task title is required.";
+    else if (!isRealName(title))
+      next.title = "Enter a real title (letters, not just a number).";
+    if (Object.keys(next).length > 0) {
+      setErrors(next);
+      toast.error("Please fill in the required fields.");
       return;
     }
     createTask.mutate(
@@ -920,9 +984,17 @@ function NewAgencyTaskDialog({
         </DialogHeader>
         <div className="grid gap-3">
           <div className="grid gap-1.5">
-            <Label htmlFor="task-campaign">Campaign</Label>
-            <Select value={campaignId} onValueChange={setCampaignId}>
-              <SelectTrigger id="task-campaign">
+            <Label htmlFor="task-campaign">
+              Campaign <span className="text-destructive">*</span>
+            </Label>
+            <Select
+              value={campaignId}
+              onValueChange={(v) => {
+                setCampaignId(v);
+                clearError("campaignId");
+              }}
+            >
+              <SelectTrigger id="task-campaign" aria-invalid={!!errors.campaignId}>
                 <SelectValue placeholder="Select a campaign" />
               </SelectTrigger>
               <SelectContent>
@@ -933,15 +1005,27 @@ function NewAgencyTaskDialog({
                 ))}
               </SelectContent>
             </Select>
+            {errors.campaignId ? (
+              <p className="mt-1 text-xs text-destructive">{errors.campaignId}</p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="task-title">Title</Label>
+            <Label htmlFor="task-title">
+              Title <span className="text-destructive">*</span>
+            </Label>
             <Input
               id="task-title"
               placeholder="e.g. Instagram carousel — necklace edit"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              aria-invalid={!!errors.title}
+              onChange={(e) => {
+                setTitle(e.target.value);
+                clearError("title");
+              }}
             />
+            {errors.title ? (
+              <p className="mt-1 text-xs text-destructive">{errors.title}</p>
+            ) : null}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">

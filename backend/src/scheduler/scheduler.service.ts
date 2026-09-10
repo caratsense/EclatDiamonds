@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { JobsService } from '../jobs/jobs.service';
+import { JobAlertsService } from '../jobs/job-alerts.service';
 import { Role } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
@@ -9,6 +11,9 @@ import { businessDate, dateOnly, resolveTz, zonedParts } from '../common/tz.util
 import { HrmsService } from '../hrms/hrms.service';
 import { GoldRateService } from '../integrations/gold-rate.service';
 import { JobRunnerService } from './job-runner.service';
+import { packMaintainsMetalRates } from '../config/entitlements';
+import { OmnichannelService } from '../omnichannel/omnichannel.service';
+import { TEMPLATE_SYNC_JOB, TemplateSyncService } from '../omnichannel/template-sync.service';
 
 /**
  * The principal scheduled work runs as.
@@ -19,14 +24,23 @@ import { JobRunnerService } from './job-runner.service';
  * not a new one. It is a real id (not a random string) so anything the close
  * writes with attribution points somewhere meaningful in the audit trail.
  */
-const SYSTEM_ACTOR: AuthUser = {
-  id: 'system-scheduler',
-  name: 'CaratSense (automatic)',
-  email: 'system@caratsense.local',
-  role: Role.head_office,
-  storeIds: [],
-  allStores: true,
-};
+/**
+ * Build the scheduler's principal for ONE store. Multi-tenant-safe: the actor is
+ * scoped to that store's own organisation and only that store, so store-scope and
+ * organisation checks pass for exactly the store being processed and nothing in
+ * another tenant. Not `allStores` — background work never gets global authority.
+ */
+function systemActorForStore(store: { id: string; organisationId: string }): AuthUser {
+  return {
+    id: 'system-scheduler',
+    name: 'CaratSense (automatic)',
+    email: 'system@caratsense.local',
+    role: Role.head_office,
+    organisationId: store.organisationId,
+    storeIds: [store.id],
+    allStores: false,
+  };
+}
 
 /**
  * Scheduled background work.
@@ -53,7 +67,50 @@ export class SchedulerService {
     private readonly runner: JobRunnerService,
     private readonly hrms: HrmsService,
     private readonly goldRate: GoldRateService,
+    private readonly jobs: JobsService,
+    private readonly omnichannel: OmnichannelService,
+    private readonly templateSync: TemplateSyncService,
+    private readonly jobAlerts: JobAlertsService,
   ) {}
+
+  /**
+   * Drain the durable job queue (CaratOS Phase A8).
+   *
+   * Every minute rather than on a longer cron: an import a user just started
+   * should begin within a minute, not on the hour. `drain` is self-guarded
+   * against overlap and claims rows with FOR UPDATE SKIP LOCKED, so several
+   * replicas ticking together take different jobs instead of colliding — which
+   * is why this needs none of the run-claim machinery the hourly jobs use.
+   */
+  @Cron(CronExpression.EVERY_MINUTE, { name: 'jobs.drain' })
+  async drainJobs(): Promise<void> {
+    if (!this.enabled) return;
+    // Message producers only have to commit a truthful `queued` row. The sweep
+    // attaches durable work here, including messages composed by older CRM and
+    // AI-draft paths which pre-date the omnichannel module.
+    try {
+      const swept = await this.omnichannel.sweepQueued(undefined, 200);
+      if (swept.created) {
+        this.logger.log(`Omnichannel: queued ${swept.created} delivery job(s)`);
+      }
+    } catch (e) {
+      // A broken messaging provider must not stop imports, attribution pulls or
+      // any other durable job already waiting in the queue.
+      this.logger.error(`Omnichannel sweep failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    try {
+      const outcome = await this.jobs.drain(25);
+      if (outcome.processed) {
+        this.logger.log(
+          `Jobs: ${outcome.processed} processed (${outcome.succeeded} ok, ${outcome.failed} failed)`,
+        );
+      }
+    } catch (e) {
+      // The queue draining must never take the scheduler down with it — the
+      // hourly attendance and rate jobs are unrelated and still have to run.
+      this.logger.error(`Job drain failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
 
   /** Store-local hour at which yesterday is closed. Late enough to clear night shifts. */
   private get dayCloseHour(): number {
@@ -82,7 +139,7 @@ export class SchedulerService {
       // The "All Stores" aggregate is a UI convenience with no staff and no
       // attendance of its own; closing a day against it would be meaningless.
       where: { isActive: true, isAggregate: false },
-      select: { id: true, name: true, timezone: true },
+      select: { id: true, name: true, timezone: true, organisationId: true },
     });
   }
 
@@ -101,6 +158,9 @@ export class SchedulerService {
     const now = new Date();
 
     for (const store of await this.rosteredStores()) {
+      // A store must belong to an organisation to be processed — never run a job
+      // with an unattributable/global principal.
+      if (!store.organisationId) continue;
       const tz = resolveTz(store.timezone);
       if (zonedParts(now, tz).hour !== this.dayCloseHour) continue;
 
@@ -111,10 +171,15 @@ export class SchedulerService {
       const runKey = dateOnly(yesterday);
 
       const result = await this.runner.runOnce(
+        store.organisationId!,
         'attendance.day-close',
         store.id,
         runKey,
-        () => this.hrms.dayClose(SYSTEM_ACTOR, { storeId: store.id, date: runKey }),
+        () =>
+          this.hrms.dayClose(
+            systemActorForStore({ id: store.id, organisationId: store.organisationId! }),
+            { storeId: store.id, date: runKey },
+          ),
       );
       if (result) {
         this.logger.log(`Day close ${runKey} for ${store.name}: ${JSON.stringify(result)}`);
@@ -135,6 +200,12 @@ export class SchedulerService {
    * but a FAILED pull is retried the next hour instead of leaving the price stale
    * for the whole interval. A manager can still pull an intraday rate on demand
    * (POST /gold-rate/refresh) or override it by hand.
+   *
+   * Stored rates are per-organisation config, so the refresh runs ONCE PER ORG
+   * (each writes/reads only its own MetalRate rows). The dedup scope is the org id,
+   * so orgs don't block each other and each is retried independently. The spot
+   * feed itself is global, so N orgs = N feed hits per stale window — fine at
+   * today's tenant count; if that grows, fetch spot once and fan the write out.
    */
   @Cron(CronExpression.EVERY_HOUR, { name: 'pricing.gold-rate-refresh' })
   async refreshGoldRate(): Promise<void> {
@@ -145,10 +216,110 @@ export class SchedulerService {
     const hours = this.goldRateRefreshHours;
     const hourBucket = Math.floor(Date.now() / 3_600_000);
     const runKey = `hourly-${hourBucket}`;
-    await this.runner.runOnce('pricing.gold-rate-refresh', 'global', runKey, async () => {
-      const res = await this.goldRate.refreshIfStale(hours);
-      if (res.updated) this.logger.log(`Gold rates refreshed: ${JSON.stringify(res.rates)}`);
-      return res;
+
+    // Distinct organisations that actually operate a store — the only ones whose
+    // rates matter. Never a global refresh with no tenant attribution.
+    const orgRows = await this.prisma.store.findMany({
+      where: { isActive: true, isAggregate: false },
+      distinct: ['organisationId'],
+      // The pack rides along on a relation that is already being traversed, so
+      // the industry filter below costs no extra query.
+      select: { organisationId: true, organisation: { select: { industryPackCode: true } } },
     });
+
+    for (const { organisationId, organisation } of orgRows) {
+      if (!organisationId) continue;
+      /*
+       * Only industries that actually have a metal rate.
+       *
+       * This loop selected every organisation owning a store, so a pharmacy or a
+       * clinic accrued four gold prices an hour, for ever, from the moment it
+       * added its first branch. Hiding the chip in the top bar did not stop that
+       * — the rows were real, and a tenant that never sells gold was quietly
+       * accumulating a price history of it.
+       */
+      if (!packMaintainsMetalRates(organisation?.industryPackCode)) continue;
+      await this.runner.runOnce(organisationId, 'pricing.gold-rate-refresh', organisationId, runKey, async () => {
+        const res = await this.goldRate.refreshIfStale(hours, organisationId);
+        if (res.updated)
+          this.logger.log(`Gold rates refreshed (${organisationId}): ${JSON.stringify(res.rates)}`);
+        return res;
+      });
+    }
+  }
+
+  /**
+   * Refresh WhatsApp template approval from the provider, once an hour.
+   *
+   * Meta pauses or disables a template for quality without telling anyone, and
+   * a stored approval older than a day stops authorising sends. Without this
+   * sweep the only way to regain a usable template would be for somebody to open
+   * a screen and press a button, so an unattended weekend would silently stop
+   * every out-of-window message. One job per connection, enqueued rather than
+   * run inline, so a slow provider cannot hold the scheduler tick.
+   */
+  @Cron(CronExpression.EVERY_HOUR, { name: 'omnichannel.template-sync' })
+  async refreshMessageTemplates(): Promise<void> {
+    if (!this.enabled) return;
+    const hourBucket = Math.floor(Date.now() / 3_600_000);
+    let connections: Array<{ id: string; organisationId: string }>;
+    try {
+      connections = await this.templateSync.syncableIntegrations();
+    } catch (e) {
+      this.logger.error(
+        `Template sync sweep failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
+    }
+    for (const connection of connections) {
+      try {
+        await this.jobs.enqueue({
+          kind: TEMPLATE_SYNC_JOB,
+          organisationId: connection.organisationId,
+          payload: { integrationId: connection.id },
+          // One attempt per connection per hour across every replica.
+          idempotencyKey: [
+            TEMPLATE_SYNC_JOB,
+            connection.organisationId,
+            connection.id,
+            `hourly-${hourBucket}`,
+          ].join(':'),
+          maxAttempts: 3,
+        });
+      } catch (e) {
+        // One tenant's broken connection must not stop the others being queued.
+        this.logger.warn(
+          `Template sync could not be queued for ${connection.id}: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Look for work that died, and tell somebody.
+   *
+   * `GET /jobs/summary` has always counted dead jobs; nothing read it unless a
+   * person opened the screen. A dead Meta lead fetch is a customer who filled in
+   * a form and reached nobody, so it is worth a page rather than a discovery.
+   *
+   * Every fifteen minutes: often enough that a broken token is noticed within a
+   * lunch break, rare enough that the alert channel is not itself the noise.
+   * Deduplication lives in JobAlertsService — this only decides when to look.
+   */
+  @Cron(CronExpression.EVERY_30_MINUTES, { name: 'jobs.dead-alerts' })
+  async alertOnDeadJobs(): Promise<void> {
+    if (!this.enabled) return;
+    try {
+      const alerts = await this.jobAlerts.sweep();
+      if (alerts.length) {
+        this.logger.warn(`Job alert sweep raised ${alerts.length} alert(s).`);
+      }
+    } catch (e) {
+      this.logger.error(
+        `Job alert sweep failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
   }
 }

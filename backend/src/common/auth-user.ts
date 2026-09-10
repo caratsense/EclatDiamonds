@@ -13,10 +13,53 @@ export interface AuthUser {
   name: string;
   email: string;
   role: Role;
-  /** Stores the user is explicitly assigned to (always populated, even for HO). */
+  /**
+   * The organisation (tenant) this user belongs to. Resolved from the DB user,
+   * NEVER from the token payload or any request-supplied value. Every store in
+   * `storeIds` belongs to this organisation, so organisation isolation rides on
+   * store scope for store-scoped queries; use `StoreScopeService.orgFilter` for
+   * organisation-level / nullable-store models.
+   */
+  organisationId: string;
+  /**
+   * Stores the user may read/write — for head_office this is EVERY store OF THIS
+   * ORGANISATION (never all stores globally), for lower roles their assignments.
+   */
   storeIds: string[];
-  /** true for head_office: bypass the storeId filter (sees every store). */
+  /**
+   * true for head_office: sees every store of their organisation. It no longer
+   * means "no filter" — `storeIds` is authoritative and organisation-bounded.
+   */
   allStores: boolean;
+  /**
+   * Set when this principal is a MACHINE (a CaratOS Connect agent), not a person.
+   *
+   * The agent needs head-office-equivalent reach to bulk-write its organisation's
+   * records, so it carries that role — but role alone cannot distinguish "the
+   * owner signed in" from "a PC in a back office is pushing rows". Routes that
+   * destroy data check this flag and refuse, because a token sitting on a shop
+   * machine must never be able to wipe the tenant.
+   *
+   * Absent (undefined) for every human. Machines set it explicitly.
+   */
+  isMachine?: boolean;
+  /** Which agent, when `isMachine` — for audit lines and log correlation. */
+  agentId?: string;
+  /** Hash of the exact agent token accepted at the request authentication edge. */
+  agentTokenHash?: string;
+  /** Server configuration generation observed at that same authentication edge. */
+  agentConfigRevision?: string;
+  /** Connector identity resolved from the enrolled agent, never request input. */
+  connectorSourceSystem?: string;
+  /**
+   * The industry pack applied to this user's organisation, read in the same
+   * query that already fetches the organisation's status — so the entitlement
+   * gate costs no extra round trip.
+   *
+   * Null for a tenant that has never had a pack applied, which
+   * `config/entitlements.ts` treats as "impose nothing".
+   */
+  industryPackCode?: string | null;
 }
 
 /** @CurrentUser() — inject the resolved AuthUser into a controller method. */

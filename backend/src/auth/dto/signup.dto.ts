@@ -1,5 +1,14 @@
-import { IsEmail, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import {
+  IsEmail,
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 import { Role } from '@prisma/client';
+import { IsIndianMobile, IsRealName } from '../../common/contact.util';
 
 /**
  * Roles a self-signup may REQUEST. Never `head_office` — that is not grantable by
@@ -17,7 +26,10 @@ export const REQUESTABLE_ROLES: Role[] = ['salesperson', 'store_manager'];
  */
 export class SignupDto {
   @IsString()
+  @IsNotEmpty()
   @MinLength(2)
+  @MaxLength(120)
+  @IsRealName()
   name!: string;
 
   /**
@@ -35,6 +47,7 @@ export class SignupDto {
 
   @IsOptional()
   @IsString()
+  @IsIndianMobile()
   phone?: string;
 
   /** The role the applicant is asking for (default salesperson). Never head_office. */
@@ -43,5 +56,6 @@ export class SignupDto {
 
   /** The store the applicant wants to join. Validated + scope-checked at approval. */
   @IsString()
+  @IsNotEmpty()
   requestedStoreId!: string;
 }

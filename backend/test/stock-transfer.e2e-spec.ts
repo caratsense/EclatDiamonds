@@ -43,7 +43,7 @@ describe('Stock transfer workflow (e2e)', () => {
   /** Insert an available piece at a store; returns its id. */
   const piece = async (storeId: string, status: any = 'in_stock') => {
     const p = await prisma.stockItem.create({
-      data: { storeId, status, sku: `TX-${Date.now()}-${seq++}`, name: 'Test piece' },
+      data: { organisationId: 'org_eclat', storeId, status, sku: `TX-${Date.now()}-${seq++}`, name: 'Test piece' },
       select: { id: true },
     });
     return p.id;

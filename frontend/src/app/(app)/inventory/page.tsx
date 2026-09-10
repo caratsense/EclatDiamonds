@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from "react";
 import {
+  ArrowLeftRight,
   ArrowRight,
   Download,
   FileSpreadsheet,
   Flame,
+  PackageSearch,
   Search,
   Upload,
   X,
@@ -54,14 +56,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatGrams, formatINR, formatPurity } from "@/lib/format";
 import { CATEGORY_LABELS, METAL_LABELS, type Metal } from "@/lib/mock/catalogue";
 import {
   DEAD_STOCK_THRESHOLD_DAYS,
-  MOCK_MELT_JOBS,
-  MOCK_REORDER_ALERTS,
-  type MeltStage,
   type StockStatus,
   type StockItem,
 } from "@/lib/mock/inventory";
@@ -83,7 +83,7 @@ import {
   StoreScopeField,
   useStoreScope,
 } from "@/components/common/store-scope-field";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, isRealName } from "@/lib/utils";
 
 const STATUS_VARIANT: Record<
   StockStatus,
@@ -93,13 +93,6 @@ const STATUS_VARIANT: Record<
   Aging: "secondary",
   "Dead stock": "destructive",
   Reserved: "outline",
-};
-
-const MELT_VARIANT: Record<MeltStage, "outline" | "secondary" | "default" | "success"> = {
-  Flagged: "outline",
-  Approved: "secondary",
-  "At refinery": "default",
-  Recovered: "success",
 };
 
 /** Age buckets — keys match the backend (inwardDate ranges) + the aging chart. */
@@ -541,7 +534,7 @@ export default function InventoryPage() {
                     size="sm"
                     onClick={() => setBulkAdjustOpen(true)}
                   >
-                    Bulk adjust status
+                    Bulk update status
                   </Button>
                   <Button variant="outline" size="sm" onClick={openBulkTransfer}>
                     Bulk transfer
@@ -682,7 +675,7 @@ export default function InventoryPage() {
                               size="sm"
                               onClick={() => setAdjustItem(s)}
                             >
-                              Adjust status
+                              Update Status
                             </Button>
                           ) : (
                             <span className="text-xs text-muted-foreground">
@@ -720,59 +713,7 @@ export default function InventoryPage() {
         <RotationTab />
 
         <TabsContent value="melt">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Flame className="h-4 w-4" />
-                Melting &amp; scrap workflow
-                <Badge variant="outline" className="text-[10px] font-normal">
-                  Preview
-                </Badge>
-              </CardTitle>
-              <CardDescription>
-                Items melted / refined into recoverable raw metal.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Item</TableHead>
-                    <TableHead>Store</TableHead>
-                    <TableHead className="text-right">Gross</TableHead>
-                    <TableHead className="text-right">Expected fine</TableHead>
-                    <TableHead className="text-right">Stage</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {MOCK_MELT_JOBS.map((m) => (
-                    <TableRow key={m.id}>
-                      <TableCell>
-                        <div className="font-medium">{m.name}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {m.sku}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {m.storeName}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <span className="num">{formatGrams(m.grossGrams, 1)}</span>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <span className="num">
-                          {formatGrams(m.expectedFineGrams, 1)}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Badge variant={MELT_VARIANT[m.stage]}>{m.stage}</Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
+          <MeltingTab />
         </TabsContent>
 
         <TabsContent value="reorder">
@@ -780,66 +721,22 @@ export default function InventoryPage() {
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-base">
                 Auto-reorder alerts
-                <Badge variant="outline" className="text-[10px] font-normal">
-                  Preview
-                </Badge>
               </CardTitle>
               <CardDescription>
-                On-hand below threshold — recommended purchase-order quantities.
+                On-hand below a reorder point, with a suggested purchase quantity.
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Item</TableHead>
-                    <TableHead>Store</TableHead>
-                    <TableHead className="text-right">On hand</TableHead>
-                    <TableHead className="text-right">Threshold</TableHead>
-                    <TableHead className="text-right">Recommended PO</TableHead>
-                    <TableHead className="text-right">Action</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {MOCK_REORDER_ALERTS.map((a) => (
-                    <TableRow key={a.id} className="bg-warning/5">
-                      <TableCell>
-                        <div className="font-medium">{a.name}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {a.sku}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {a.storeName}
-                      </TableCell>
-                      <TableCell className="text-right font-medium text-destructive">
-                        <span className="num">{a.onHand}</span>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <span className="num">{a.threshold}</span>
-                      </TableCell>
-                      <TableCell className="text-right font-semibold">
-                        <span className="num">{a.recommendedQty}</span>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex flex-col items-end gap-1">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            disabled
-                            title="Not yet available"
-                          >
-                            Create PO
-                          </Button>
-                          <span className="text-[10px] text-muted-foreground">
-                            Coming soon
-                          </span>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              {/* No reorder points are recorded anywhere in the system, so there
+                  is nothing to compare on-hand against. This used to show
+                  invented items and quantities, which is worse than showing
+                  nothing: a manager acting on them would order stock against
+                  numbers no one set. */}
+              <EmptyState
+                icon={PackageSearch}
+                title="Reorder points are not set up yet"
+                description="Once a minimum quantity is recorded against your items, anything that falls below it will be listed here with a suggested order. Until then no recommendation can be made."
+              />
             </CardContent>
           </Card>
         </TabsContent>
@@ -854,19 +751,34 @@ export default function InventoryPage() {
  * piece's ageDays and its value, so the section reflects actual inventory.
  */
 function RotationTab() {
+  const { role } = useSession();
+  const canManage = ROLE_RANK[role] >= ROLE_RANK.store_manager;
   const { data, isLoading, isError } = useStock({ page: 1, pageSize: 10 });
   const idle = (data?.items ?? []).filter(
     (p) => p.ageDays > 90 && p.status !== "Reserved",
   );
+  // Reuse the Stock Transfer workflow — a "Raise Transfer" prefills this dialog
+  // with the idle piece + its holding store; no separate transfer API.
+  const [transferItem, setTransferItem] = useState<StockItem | null>(null);
 
   return (
     <TabsContent value="rotation">
+      <CreateTransferDialog
+        key={transferItem?.id ?? "rotation-transfer-closed"}
+        open={!!transferItem}
+        onOpenChange={(open) => {
+          if (!open) setTransferItem(null);
+        }}
+        initialStockItemIds={transferItem ? [transferItem.id] : undefined}
+        initialSourceStoreId={transferItem?.storeId || undefined}
+      />
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Slow-moving stock</CardTitle>
           <CardDescription>
             The oldest pieces in stock by idle age — candidates to rotate to a
-            higher-demand branch. Raise a transfer from the Bulk transfer action.
+            higher-demand branch. Use Raise Transfer to move a piece to another
+            store.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -909,6 +821,17 @@ function RotationTab() {
                     <span className="num">{formatINR(r.tagPrice)}</span>
                   </div>
                 </div>
+                {canManage ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    onClick={() => setTransferItem(r)}
+                  >
+                    <ArrowLeftRight className="h-4 w-4" />
+                    Raise Transfer
+                  </Button>
+                ) : null}
               </div>
             ))
           )}
@@ -943,6 +866,12 @@ function StockEntryDialog({
   const [huid, setHuid] = useState("");
   const [hallmarkNo, setHallmarkNo] = useState("");
   const [certificateNo, setCertificateNo] = useState("");
+  // Inline validation errors, keyed by field. Cleared per-field on change.
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  function clearError(field: string) {
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
+  }
 
   // On "All Stores" the user MUST pick a concrete store first (backend rejects
   // 'all'); show it inline rather than only as a toast on submit.
@@ -955,8 +884,31 @@ function StockEntryDialog({
       toast.error("Select a store to add this stock to.");
       return;
     }
-    if (!sku.trim()) {
-      toast.error("SKU / tag number is required.");
+    const next: Record<string, string> = {};
+    // SKU is required but is NOT a name — only require it be non-empty.
+    if (!sku.trim()) next.sku = "SKU / tag number is required.";
+    // Name is optional; when supplied it must read like a real name (backend
+    // @IsRealName only fires when a value is present).
+    if (name.trim() && !isRealName(name))
+      next.name = "Enter a real name (letters, not just a number).";
+    // Weights / prices / counts can't be negative (backend @Min(0)).
+    const numericFields: [string, string][] = [
+      [karat, "karat"],
+      [grossWeight, "grossWeight"],
+      [netWeight, "netWeight"],
+      [pureWeight, "pureWeight"],
+      [diamondPieces, "diamondPieces"],
+      [diamondWeightCt, "diamondWeightCt"],
+      [stoneWeightCt, "stoneWeightCt"],
+      [tagPrice, "tagPrice"],
+      [mrp, "mrp"],
+    ];
+    for (const [val, key] of numericFields) {
+      if (val.trim() && Number(val) < 0) next[key] = "Cannot be negative.";
+    }
+    if (Object.keys(next).length > 0) {
+      setErrors(next);
+      toast.error("Please fix the highlighted fields.");
       return;
     }
     createStock.mutate(
@@ -996,6 +948,7 @@ function StockEntryDialog({
           setHuid("");
           setHallmarkNo("");
           setCertificateNo("");
+          setErrors({});
           onOpenChange(false);
         },
         onError: (err) =>
@@ -1023,13 +976,22 @@ function StockEntryDialog({
           ) : null}
 
           <div className="grid gap-1.5">
-            <Label htmlFor="sku">SKU / tag number</Label>
+            <Label htmlFor="sku">
+              SKU / tag number <span className="text-destructive">*</span>
+            </Label>
             <Input
               id="sku"
               placeholder="e.g. NK-22K-0142"
               value={sku}
-              onChange={(e) => setSku(e.target.value)}
+              aria-invalid={!!errors.sku}
+              onChange={(e) => {
+                setSku(e.target.value);
+                clearError("sku");
+              }}
             />
+            {errors.sku ? (
+              <p className="mt-1 text-xs text-destructive">{errors.sku}</p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="name">Name</Label>
@@ -1037,8 +999,15 @@ function StockEntryDialog({
               id="name"
               placeholder="e.g. Antique bridal necklace"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              aria-invalid={!!errors.name}
+              onChange={(e) => {
+                setName(e.target.value);
+                clearError("name");
+              }}
             />
+            {errors.name ? (
+              <p className="mt-1 text-xs text-destructive">{errors.name}</p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="metal">Metal / purity</Label>
@@ -1064,8 +1033,15 @@ function StockEntryDialog({
                 min={0}
                 placeholder="e.g. 22"
                 value={karat}
-                onChange={(e) => setKarat(e.target.value)}
+                aria-invalid={!!errors.karat}
+                onChange={(e) => {
+                  setKarat(e.target.value);
+                  clearError("karat");
+                }}
               />
+              {errors.karat ? (
+                <p className="mt-1 text-xs text-destructive">{errors.karat}</p>
+              ) : null}
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="gross">Gross weight (g)</Label>
@@ -1076,8 +1052,17 @@ function StockEntryDialog({
                 step="0.001"
                 placeholder="e.g. 18.420"
                 value={grossWeight}
-                onChange={(e) => setGrossWeight(e.target.value)}
+                aria-invalid={!!errors.grossWeight}
+                onChange={(e) => {
+                  setGrossWeight(e.target.value);
+                  clearError("grossWeight");
+                }}
               />
+              {errors.grossWeight ? (
+                <p className="mt-1 text-xs text-destructive">
+                  {errors.grossWeight}
+                </p>
+              ) : null}
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -1090,8 +1075,17 @@ function StockEntryDialog({
                 step="0.001"
                 placeholder="e.g. 17.900"
                 value={netWeight}
-                onChange={(e) => setNetWeight(e.target.value)}
+                aria-invalid={!!errors.netWeight}
+                onChange={(e) => {
+                  setNetWeight(e.target.value);
+                  clearError("netWeight");
+                }}
               />
+              {errors.netWeight ? (
+                <p className="mt-1 text-xs text-destructive">
+                  {errors.netWeight}
+                </p>
+              ) : null}
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="pure">Pure weight (g)</Label>
@@ -1102,8 +1096,17 @@ function StockEntryDialog({
                 step="0.001"
                 placeholder="e.g. 16.400"
                 value={pureWeight}
-                onChange={(e) => setPureWeight(e.target.value)}
+                aria-invalid={!!errors.pureWeight}
+                onChange={(e) => {
+                  setPureWeight(e.target.value);
+                  clearError("pureWeight");
+                }}
               />
+              {errors.pureWeight ? (
+                <p className="mt-1 text-xs text-destructive">
+                  {errors.pureWeight}
+                </p>
+              ) : null}
             </div>
           </div>
 
@@ -1117,8 +1120,17 @@ function StockEntryDialog({
                 min={0}
                 placeholder="e.g. 12"
                 value={diamondPieces}
-                onChange={(e) => setDiamondPieces(e.target.value)}
+                aria-invalid={!!errors.diamondPieces}
+                onChange={(e) => {
+                  setDiamondPieces(e.target.value);
+                  clearError("diamondPieces");
+                }}
               />
+              {errors.diamondPieces ? (
+                <p className="mt-1 text-xs text-destructive">
+                  {errors.diamondPieces}
+                </p>
+              ) : null}
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="dia-wt">Diamond wt (ct)</Label>
@@ -1129,8 +1141,17 @@ function StockEntryDialog({
                 step="0.01"
                 placeholder="e.g. 1.05"
                 value={diamondWeightCt}
-                onChange={(e) => setDiamondWeightCt(e.target.value)}
+                aria-invalid={!!errors.diamondWeightCt}
+                onChange={(e) => {
+                  setDiamondWeightCt(e.target.value);
+                  clearError("diamondWeightCt");
+                }}
               />
+              {errors.diamondWeightCt ? (
+                <p className="mt-1 text-xs text-destructive">
+                  {errors.diamondWeightCt}
+                </p>
+              ) : null}
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="stone-wt">Stone wt (ct)</Label>
@@ -1141,8 +1162,17 @@ function StockEntryDialog({
                 step="0.01"
                 placeholder="e.g. 0.50"
                 value={stoneWeightCt}
-                onChange={(e) => setStoneWeightCt(e.target.value)}
+                aria-invalid={!!errors.stoneWeightCt}
+                onChange={(e) => {
+                  setStoneWeightCt(e.target.value);
+                  clearError("stoneWeightCt");
+                }}
               />
+              {errors.stoneWeightCt ? (
+                <p className="mt-1 text-xs text-destructive">
+                  {errors.stoneWeightCt}
+                </p>
+              ) : null}
             </div>
           </div>
 
@@ -1155,8 +1185,17 @@ function StockEntryDialog({
                 min={0}
                 placeholder="e.g. 185000"
                 value={tagPrice}
-                onChange={(e) => setTagPrice(e.target.value)}
+                aria-invalid={!!errors.tagPrice}
+                onChange={(e) => {
+                  setTagPrice(e.target.value);
+                  clearError("tagPrice");
+                }}
               />
+              {errors.tagPrice ? (
+                <p className="mt-1 text-xs text-destructive">
+                  {errors.tagPrice}
+                </p>
+              ) : null}
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="mrp">MRP (₹)</Label>
@@ -1166,8 +1205,15 @@ function StockEntryDialog({
                 min={0}
                 placeholder="e.g. 199000"
                 value={mrp}
-                onChange={(e) => setMrp(e.target.value)}
+                aria-invalid={!!errors.mrp}
+                onChange={(e) => {
+                  setMrp(e.target.value);
+                  clearError("mrp");
+                }}
               />
+              {errors.mrp ? (
+                <p className="mt-1 text-xs text-destructive">{errors.mrp}</p>
+              ) : null}
             </div>
           </div>
 
@@ -1261,7 +1307,7 @@ function StockAdjustDialog({
     <Dialog open={!!item} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Adjust status</DialogTitle>
+          <DialogTitle>Update Status</DialogTitle>
           <DialogDescription>
             {item ? (
               <>
@@ -1359,7 +1405,7 @@ function BulkAdjustDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Bulk adjust status</DialogTitle>
+          <DialogTitle>Bulk update status</DialogTitle>
           <DialogDescription>
             Applies to {ids.length} selected piece(s). A piece reserved by an
             active transfer will refuse the whole batch.
@@ -1611,5 +1657,83 @@ function ImportStockDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * Pieces sent for melting — the real ones, from the stock ledger.
+ *
+ * This replaced a hardcoded table of invented melt jobs with expected fine
+ * weights and refinery stages, none of which exist anywhere in the system. The
+ * refining workflow (approval, refinery hand-off, recovered weight) is genuinely
+ * not modelled, so it is not shown; what IS recorded is which pieces were
+ * adjusted to "melted" and what they weighed, and that is what appears.
+ */
+function MeltingTab() {
+  const { data, isLoading, isError } = useStock({
+    page: 1,
+    pageSize: 50,
+    status: "melted",
+  });
+  const rows = data?.items ?? [];
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Flame className="h-4 w-4" />
+          Sent for melting
+        </CardTitle>
+        <CardDescription>
+          Pieces taken out of the ledger for melting or refining.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="space-y-2">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        ) : isError ? (
+          <EmptyState icon={Flame} title="Could not load melted stock" />
+        ) : rows.length === 0 ? (
+          <EmptyState
+            icon={Flame}
+            title="Nothing has been sent for melting"
+            description="Adjust a piece's status to “Sent for melting” in the stock ledger and it will appear here."
+          />
+        ) : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Item</TableHead>
+                  <TableHead>Store</TableHead>
+                  <TableHead className="text-right">Gross</TableHead>
+                  <TableHead className="text-right">Purity</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map((m) => (
+                  <TableRow key={m.id}>
+                    <TableCell>
+                      <div className="font-medium">{m.name}</div>
+                      <div className="text-xs text-muted-foreground">{m.sku}</div>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{m.storeName}</TableCell>
+                    <TableCell className="text-right">
+                      <span className="num">{formatGrams(m.grossGrams, 1)}</span>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <span className="num">{formatPurity(m.karat)}</span>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

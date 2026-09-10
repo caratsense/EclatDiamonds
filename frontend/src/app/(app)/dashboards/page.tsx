@@ -5,6 +5,7 @@ import { format, parseISO } from "date-fns";
 import { toast } from "sonner";
 
 import { SectionHeader } from "@/components/section/section-header";
+import { OmnichannelKpis } from "@/components/crm/omnichannel-kpis";
 import { KpiCard } from "@/components/dashboards/kpi-card";
 import { AgendaPanel } from "@/components/dashboards/agenda-panel";
 import { HandoffsPanel } from "@/components/dashboards/handoffs-panel";
@@ -38,6 +39,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import { getNavItem } from "@/lib/navigation";
 import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
@@ -47,11 +49,12 @@ import {
   useTasks,
   useCreateTask,
   useUpdateTaskStatus,
+  type TaskPriority,
   useAssignableUsers,
   type DashboardTask,
   type TaskStatus,
 } from "@/lib/queries/dashboard";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, isRealName } from "@/lib/utils";
 
 /** Where each KPI tile drills to when clicked. */
 function kpiHref(id: string): string | undefined {
@@ -78,7 +81,7 @@ function kpiHref(id: string): string | undefined {
 
 export default function DashboardsPage() {
   const item = getNavItem("dashboards");
-  const { role } = useSession();
+  const { role, currentStore } = useSession();
   const [taskOpen, setTaskOpen] = useState(false);
 
   // KPIs + charts come live from the API, store-scoped via X-Store-Id.
@@ -148,6 +151,18 @@ export default function DashboardsPage() {
         </>
       )}
 
+      {/*
+        Where the business came from, measured server-side over its own window.
+        Below the day's KPIs because those answer "what is happening now" and
+        these answer "where has it been coming from" — different questions, and
+        a reader who conflates them reads a quiet Tuesday as a failing channel.
+      */}
+      <div className="mt-6">
+        <OmnichannelKpis
+          storeId={currentStore.isAggregate ? undefined : currentStore.id}
+        />
+      </div>
+
       <div className="mt-4">
         <MyTasksCard tasks={tasks} isLoading={tasksQuery.isLoading} />
       </div>
@@ -157,6 +172,17 @@ export default function DashboardsPage() {
   );
 }
 
+/**
+ * Task views. "Mine" now matches on the assignee ID.
+ *
+ * The name fallback is kept for tasks created before ids existed: those rows
+ * carry only a name, and dropping the fallback would make every historical task
+ * disappear from its owner's list. New tasks always have an id, so the fallback
+ * shrinks to nothing over time rather than being load-bearing.
+ */
+const TASK_VIEWS = ["Open", "Mine", "Overdue", "All"] as const;
+type TaskView = (typeof TASK_VIEWS)[number];
+
 function MyTasksCard({
   tasks,
   isLoading,
@@ -164,13 +190,40 @@ function MyTasksCard({
   tasks: DashboardTask[];
   isLoading: boolean;
 }) {
+  const { user } = useSession();
+  const [view, setView] = useState<TaskView>("Open");
+  const today = new Date().toISOString().slice(0, 10);
+
+  const filtered = tasks.filter((t) => {
+    const status = t.status ?? "open";
+    if (view === "Open") return status !== "done";
+    if (view === "Mine")
+      return (t.assigneeId ? t.assigneeId === user.id : t.assignee === user.name) && status !== "done";
+    if (view === "Overdue")
+      return status !== "done" && !!t.dueDate && t.dueDate.slice(0, 10) < today;
+    return true;
+  });
+
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-base">My Tasks</CardTitle>
+        <CardTitle className="text-base">Tasks</CardTitle>
         <CardDescription>
           Tasks raised across departments for follow-up.
         </CardDescription>
+        <div className="flex flex-wrap gap-1.5 pt-2">
+          {TASK_VIEWS.map((v) => (
+            <Button
+              key={v}
+              size="sm"
+              variant={view === v ? "default" : "outline"}
+              className="h-7 px-2.5 text-xs"
+              onClick={() => setView(v)}
+            >
+              {v}
+            </Button>
+          ))}
+        </div>
       </CardHeader>
       <CardContent className="space-y-2">
         {isLoading ? (
@@ -178,12 +231,14 @@ function MyTasksCard({
             <Skeleton className="h-12 rounded-lg" />
             <Skeleton className="h-12 rounded-lg" />
           </>
-        ) : tasks.length === 0 ? (
+        ) : filtered.length === 0 ? (
           <p className="rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground">
-            No tasks yet
+            {tasks.length === 0
+              ? "No tasks yet"
+              : `Nothing under “${view}” — ${tasks.length} task${tasks.length === 1 ? "" : "s"} in total.`}
           </p>
         ) : (
-          tasks.map((t) => <TaskRow key={t.id} task={t} />)
+          filtered.map((t) => <TaskRow key={t.id} task={t} />)
         )}
       </CardContent>
     </Card>
@@ -214,10 +269,21 @@ function TaskRow({ task }: { task: DashboardTask }) {
   return (
     <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
       <div className="min-w-0">
-        <p className="truncate text-sm font-medium">{task.title}</p>
+        <p className="flex flex-wrap items-center gap-2 truncate text-sm font-medium">
+          {task.title}
+          {task.priority && task.priority !== "normal" ? (
+            <Badge
+              variant={task.priority === "urgent" ? "destructive" : "outline"}
+              className="text-[10px]"
+            >
+              {task.priority}
+            </Badge>
+          ) : null}
+        </p>
         <p className="text-xs text-muted-foreground">
-          {task.assignee ? `Assigned to ${task.assignee}` : "Unassigned"}
+          {task.assignedTo?.name ?? task.assignee ?? "Unassigned"}
           {task.dueDate ? ` · Due ${formatDue(task.dueDate)}` : ""}
+          {task.party ? ` · ${task.party.name}` : task.lead ? ` · ${task.lead.ref}` : ""}
         </p>
       </div>
       <Select
@@ -260,9 +326,15 @@ function AddTaskDialog({
   const assignableUsers = useAssignableUsers();
   const [title, setTitle] = useState("");
   const [detail, setDetail] = useState("");
-  const [assignee, setAssignee] = useState("");
-  const [assigneeError, setAssigneeError] = useState(false);
+  const [assigneeId, setAssigneeId] = useState("");
+  const [priority, setPriority] = useState<TaskPriority>("normal");
   const [dueDate, setDueDate] = useState("");
+  // Inline validation errors, keyed by field. Cleared per-field on change.
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  function clearError(field: string) {
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
+  }
 
   // A task is filed against ONE real store. On the "All Stores" aggregate there
   // is nothing concrete to write to, so the user must PICK a store — we never
@@ -275,24 +347,30 @@ function AddTaskDialog({
   const targetStore = realStores.find((s) => s.id === storeId);
 
   function save() {
-    if (!title.trim()) {
-      toast.error("Task title is required.");
+    const next: Record<string, string> = {};
+    if (!title.trim()) next.title = "Task title is required.";
+    else if (!isRealName(title))
+      next.title = "Enter a real title (letters, not just a number).";
+    if (!storeId) next.store = "Pick a store to file this task against.";
+    if (!assigneeId) next.assignee = "Pick an assignee for this task.";
+    if (Object.keys(next).length > 0) {
+      setErrors(next);
+      toast.error("Please fill in the required fields.");
       return;
     }
-    if (!storeId) {
-      toast.error("Pick a store to file this task against.");
-      return;
-    }
-    if (!assignee.trim()) {
-      setAssigneeError(true);
-      toast.error("Pick an assignee for this task.");
-      return;
-    }
+    const assigneeName =
+      (assignableUsers.data ?? []).find((u) => u.id === assigneeId)?.name ?? "";
+
     createTask.mutate(
       {
         title: title.trim(),
         detail: detail.trim() || undefined,
-        assignee: assignee.trim(),
+        // Both are sent: the id is what the task is assigned to, and the name
+        // keeps the older contract satisfied. The server takes the display name
+        // from the user record, so these cannot end up disagreeing.
+        assignee: assigneeName,
+        assigneeId: assigneeId || undefined,
+        priority,
         dueDate: dueDate || undefined,
         storeId,
       },
@@ -301,8 +379,10 @@ function AddTaskDialog({
           toast.success("Task created");
           setTitle("");
           setDetail("");
-          setAssignee("");
+          setAssigneeId("");
+          setPriority("normal");
           setDueDate("");
+          setErrors({});
           onOpenChange(false);
         },
         onError: (err) => toast.error(apiErrorMessage(err, "Could not create task.")),
@@ -323,9 +403,17 @@ function AddTaskDialog({
         <div className="grid gap-3">
           {realStores.length > 1 ? (
             <div className="grid gap-1.5">
-              <Label htmlFor="task-store">Store</Label>
-              <Select value={storeId} onValueChange={setPickedStoreId}>
-                <SelectTrigger id="task-store">
+              <Label htmlFor="task-store">
+                Store <span className="text-destructive">*</span>
+              </Label>
+              <Select
+                value={storeId}
+                onValueChange={(v) => {
+                  setPickedStoreId(v);
+                  clearError("store");
+                }}
+              >
+                <SelectTrigger id="task-store" aria-invalid={!!errors.store}>
                   <SelectValue placeholder="Choose a store" />
                 </SelectTrigger>
                 <SelectContent>
@@ -336,16 +424,28 @@ function AddTaskDialog({
                   ))}
                 </SelectContent>
               </Select>
+              {errors.store ? (
+                <p className="mt-1 text-xs text-destructive">{errors.store}</p>
+              ) : null}
             </div>
           ) : null}
           <div className="grid gap-1.5">
-            <Label htmlFor="task-title">Title</Label>
+            <Label htmlFor="task-title">
+              Title <span className="text-destructive">*</span>
+            </Label>
             <Input
               id="task-title"
               placeholder="e.g. Follow up on Diwali campaign stock"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              aria-invalid={!!errors.title}
+              onChange={(e) => {
+                setTitle(e.target.value);
+                clearError("title");
+              }}
             />
+            {errors.title ? (
+              <p className="mt-1 text-xs text-destructive">{errors.title}</p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="task-detail">Detail</Label>
@@ -361,31 +461,45 @@ function AddTaskDialog({
               Assignee <span className="text-destructive">*</span>
             </Label>
             <Select
-              value={assignee}
+              value={assigneeId}
               onValueChange={(v) => {
-                setAssignee(v);
-                setAssigneeError(false);
+                setAssigneeId(v);
+                clearError("assignee");
               }}
             >
-              <SelectTrigger id="task-assignee" aria-invalid={assigneeError}>
+              <SelectTrigger id="task-assignee" aria-invalid={!!errors.assignee}>
                 <SelectValue placeholder="Select an assignee" />
               </SelectTrigger>
               <SelectContent>
                 {(assignableUsers.data ?? []).map((u) => (
-                  <SelectItem key={u.id} value={u.name}>
+                  <SelectItem key={u.id} value={u.id}>
                     {u.name}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            {assigneeError ? (
-              <p className="text-xs text-destructive">An assignee is required.</p>
+            {errors.assignee ? (
+              <p className="text-xs text-destructive">{errors.assignee}</p>
             ) : !assignableUsers.isLoading &&
               (assignableUsers.data ?? []).length === 0 ? (
               <p className="text-xs text-muted-foreground">
                 No team members to assign here yet — add staff in Team first.
               </p>
             ) : null}
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="task-priority">Priority</Label>
+            <Select value={priority} onValueChange={(v) => setPriority(v as TaskPriority)}>
+              <SelectTrigger id="task-priority">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="low">Low</SelectItem>
+                <SelectItem value="normal">Normal</SelectItem>
+                <SelectItem value="high">High</SelectItem>
+                <SelectItem value="urgent">Urgent</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="task-due">Due date</Label>

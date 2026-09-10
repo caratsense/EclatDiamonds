@@ -76,7 +76,14 @@ import {
   type StaffUser,
 } from "@/lib/queries/users";
 import { ROLE_LABELS, ROLE_RANK, type Role } from "@/lib/types";
-import { apiErrorMessage, cn } from "@/lib/utils";
+import {
+  apiErrorMessage,
+  capIndianPhone,
+  cn,
+  isRealName,
+  isValidEmail,
+  normalizeIndianMobile,
+} from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
 const nav = getNavItem("settings/team")!;
@@ -970,8 +977,6 @@ function SignupRequestRow({ req }: { req: PendingSignup }) {
 /* Add staff                                                          */
 /* ------------------------------------------------------------------ */
 
-const PHONE_RE = /^\d{10}$/;
-
 function AddStaffDialog({
   open,
   onOpenChange,
@@ -1008,23 +1013,39 @@ function AddStaffDialog({
     setTouched(false);
   }
 
-  const nameError = !name.trim();
-  const phoneError = phone.trim() !== "" && !PHONE_RE.test(phone.trim());
-  const contactError = !phone.trim() && !email.trim();
+  // Team add requires BOTH a valid phone and a valid email (confirmed rule).
+  // Reuse the shared validators; the backend enforces the same on POST /users.
+  // A name must actually be a name — reject a phone number / id typed here.
+  const nameError = !name.trim() || !isRealName(name);
+  const normalizedPhone = normalizeIndianMobile(phone);
+  const phoneError = normalizedPhone == null;
+  const emailError = !isValidEmail(email);
   const storeError = !storeId;
 
   function save() {
     setTouched(true);
-    if (nameError) {
+    if (!name.trim()) {
       toast.error("Name is required.");
       return;
     }
-    if (contactError) {
-      toast.error("Enter a phone number or an email.");
+    if (!isRealName(name)) {
+      toast.error("Enter a real name (letters, not just a number).");
+      return;
+    }
+    if (!phone.trim()) {
+      toast.error("Phone number is required.");
       return;
     }
     if (phoneError) {
-      toast.error("Phone must be a 10-digit number.");
+      toast.error("Enter a valid 10-digit mobile number.");
+      return;
+    }
+    if (!email.trim()) {
+      toast.error("Email is required.");
+      return;
+    }
+    if (emailError) {
+      toast.error("Enter a valid email address.");
       return;
     }
     if (storeError) {
@@ -1036,8 +1057,8 @@ function AddStaffDialog({
       {
         name: name.trim(),
         storeId,
-        phone: phone.trim() || undefined,
-        email: email.trim() || undefined,
+        phone: normalizedPhone ?? undefined,
+        email: email.trim(),
         role,
       },
       {
@@ -1069,9 +1090,10 @@ function AddStaffDialog({
         <DialogHeader>
           <DialogTitle>Add staff</DialogTitle>
           <DialogDescription>
-            New staff default to Salesperson. We generate their unique login
-            (firstname.store@eclatdiamonds.in); a phone also lets them sign in
-            with a WhatsApp OTP. You can promote them later.
+            New staff default to Salesperson. We generate a unique login handle
+            for them from their first name and branch, and show it to you once
+            they are added; a phone also lets them sign in with a WhatsApp OTP.
+            You can promote them later.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
@@ -1086,21 +1108,32 @@ function AddStaffDialog({
               onChange={(e) => setName(e.target.value)}
               aria-invalid={touched && nameError}
             />
+            {touched && !name.trim() ? (
+              <p className="text-xs text-destructive">Name is required.</p>
+            ) : touched && !isRealName(name) ? (
+              <p className="text-xs text-destructive">
+                Enter a real name (letters, not just a number).
+              </p>
+            ) : null}
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="grid gap-1.5">
-              <Label htmlFor="staff-phone">Phone</Label>
+              <Label htmlFor="staff-phone">
+                Phone <span className="text-destructive">*</span>
+              </Label>
               <Input
                 id="staff-phone"
                 inputMode="numeric"
                 placeholder="10-digit number"
                 value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                aria-invalid={touched && (phoneError || contactError)}
+                onChange={(e) => setPhone(capIndianPhone(e.target.value))}
+                aria-invalid={touched && phoneError}
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="staff-email">Personal email</Label>
+              <Label htmlFor="staff-email">
+                Personal email <span className="text-destructive">*</span>
+              </Label>
               <Input
                 id="staff-email"
                 type="email"
@@ -1108,21 +1141,22 @@ function AddStaffDialog({
                 placeholder="name@caratsense.in"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                aria-invalid={touched && contactError}
+                aria-invalid={touched && emailError}
               />
             </div>
           </div>
-          {touched && contactError ? (
+          {touched && phoneError ? (
             <p className="text-xs text-destructive">
-              Enter a phone number or an email so they can sign in.
+              Enter a valid 10-digit mobile number.
             </p>
-          ) : touched && phoneError ? (
+          ) : touched && emailError ? (
             <p className="text-xs text-destructive">
-              Phone must be a 10-digit number.
+              Enter a valid email address.
             </p>
           ) : (
             <p className="text-xs text-muted-foreground">
-              A phone number enables WhatsApp OTP sign-in.
+              Phone and email are both required. The phone also enables WhatsApp
+              OTP sign-in.
             </p>
           )}
           <div className="grid gap-3 sm:grid-cols-2">

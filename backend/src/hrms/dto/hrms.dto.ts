@@ -3,6 +3,7 @@ import {
   IsDateString,
   IsEnum,
   IsInt,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
@@ -12,6 +13,7 @@ import {
   Min,
 } from 'class-validator';
 import { AttendanceStatus, LeaveStatus, LeaveType } from '@prisma/client';
+import { IsRealName } from '../../common/contact.util';
 
 export class DecideLeaveDto {
   @IsEnum(LeaveStatus)
@@ -39,17 +41,21 @@ export class MarkAttendanceDto {
    * staff row that no report could ever attribute or reconcile.
    */
   @IsString()
+  @IsNotEmpty()
   staffId!: string;
 
   /** Display name; ignored in favour of the resolved user's real name. */
   @IsOptional()
   @IsString()
+  @MaxLength(120)
+  @IsRealName()
   staffName?: string;
 
   @IsEnum(AttendanceStatus)
   status!: AttendanceStatus;
 
   @IsString()
+  @IsNotEmpty()
   storeId!: string;
 
   @IsOptional()
@@ -76,6 +82,7 @@ export class MarkAttendanceDto {
  */
 export class DayCloseDto {
   @IsString()
+  @IsNotEmpty()
   storeId!: string;
 
   /** Day to close (YYYY-MM-DD, store-local). Defaults to the previous local day. */
@@ -87,9 +94,13 @@ export class DayCloseDto {
 /** POST /hrms/shifts — create a store shift/batch (Module 6). */
 export class CreateShiftDto {
   @IsString()
+  @IsNotEmpty()
   storeId!: string;
 
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  @IsRealName()
   name!: string;
 
   /** "HH:MM" 24h store-local shift start. */
@@ -131,6 +142,7 @@ export class CreateShiftDto {
 /** POST /hrms/holidays — configure a per-store holiday (Module 6). */
 export class CreateHolidayDto {
   @IsString()
+  @IsNotEmpty()
   storeId!: string;
 
   /** Calendar date (YYYY-MM-DD). */
@@ -139,12 +151,15 @@ export class CreateHolidayDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(120)
+  @IsRealName()
   label?: string;
 }
 
 /** PATCH /hrms/week-off — set a store's weekly off day (Module 6, HO/area only). */
 export class SetWeekOffDto {
   @IsString()
+  @IsNotEmpty()
   storeId!: string;
 
   /** 0=Sunday … 6=Saturday. */
@@ -202,6 +217,24 @@ export class CheckInDto {
   @IsOptional()
   @IsBoolean()
   isMockLocation?: boolean;
+
+  /**
+   * A `data:image/...;base64,` frame from the device camera, captured at the
+   * moment of the punch.
+   *
+   * EVIDENCE, not identification. Nothing compares it to an enrolled face, so
+   * accepting it never means "this is who they say they are" — it means a camera
+   * on this device produced this image now. The distinction matters: a record
+   * that claims a verified identity it never checked is worse than no record.
+   *
+   * Optional in every case. A punch is never refused for the want of a camera:
+   * an old handset, a denied permission or a dark stockroom must not stop
+   * someone clocking in for their shift.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(3_000_000)
+  photo?: string;
 }
 
 /** POST /hrms/attendance/check-out — self-service geo check-out (Module 6). */
@@ -224,6 +257,12 @@ export class CheckOutDto {
   @IsString()
   @MaxLength(300)
   note?: string;
+
+  /** Same contract as {@link CheckInDto.photo} — evidence, never identification. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(3_000_000)
+  photo?: string;
 }
 
 /**

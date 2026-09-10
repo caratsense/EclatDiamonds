@@ -1,0 +1,287 @@
+CARATOS MULTI-MARKET CONNECTOR ARCHITECTURE
+Version: MVP 0.7 — 2026-09-09
+
+1. PRODUCT BOUNDARY
+
+CaratOS Core is industry-neutral:
+  AI CRM + conversations + customer/account directory
+  AI-ready catalogue
+  attendance
+  data/import/reconciliation
+  integrations and audit
+
+Industry packs change vocabulary, custom fields, qualification prompts,
+pipelines and navigation. They do not fork the application or create a separate
+database schema per industry. Eclat remains the jewellery pack with its current
+features and credentials unchanged.
+
+2. CONNECTOR TRUST BOUNDARY
+
+Customer network                     CaratOS cloud
+
+BUSY / Tally / Gati / ERP
+        |
+        v
+CaratOS Connect Agent  -- HTTPS -->  existing /imports pipeline
+  - read-only source login             - agent token resolves tenant
+  - explicit profile                   - field validation
+  - local discovery/preview             - organisation/store scoping
+  - canonical CSV                       - idempotent persistence
+  - retry-safe local state              - ImportBatch reconciliation
+  - source descriptor fingerprint       - descriptor pin + target-store receipt
+
+The cloud never connects into a customer's LAN. The agent is a machine
+principal, not a head-office user. Its token is revocable per installation and
+cannot name another organisation in the request.
+
+Machine authentication is read-only. Liveness changes only through an awaited
+explicit heartbeat. Heartbeats carry their request-entry time and update only
+when that observation is newer, so a delayed failure cannot overwrite a later
+healthy beat and a preview cannot make an offline agent appear connected.
+
+Every machine-started import is represented by a leased receipt. Each business
+row is written behind the same token/config/lease fence; final receipt state and
+the machine audit identity commit together. A replay returns the settled receipt
+without duplicating the audit event. A worker stopped by a token/config change
+closes its still-owned receipt as failed with truthful partial counters; a worker
+that has lost the lease cannot close a receipt reclaimed by another worker.
+
+An enrolment is pinned immediately before its first accepted live import to a
+SHA-256 hash of the reviewed source connection descriptor (BUSY path, sanitized
+ODBC DSN, or Tally URL + company label). Preview/dry-run remains state-free.
+Canonical IDs carry a 128-bit prefix from that hash, so a re-enrolment for the
+same descriptor remains stable and a repointed token is refused before business
+rows are written. This is not a content fingerprint: replacing a database at
+the same descriptor requires a new enrolment and review.
+
+Live sync also requires the exact local profile and source-descriptor SHA-256
+values to be approved in the agent's head-office configuration. A local preview prints both review hashes but
+masks every customer, identifier, date and commercial value unless the on-site
+operator explicitly passes --show-values. Server warnings, invalid rows,
+ambiguous matches, incomplete upload acknowledgements and skipped rows all stop
+the run without advancing the checkpoint.
+
+configRevision is a server-generated recovery sync generation, not merely a
+display version. A caller cannot choose it. Replacing approved configuration
+creates a fresh revision, checkpoint and run receipt for every entity, allowing
+an unchanged on-premise snapshot to be replayed after a database restore/PITR
+while refusing an in-flight worker that started under an older configuration.
+Accepted legacy-sync watermarks are persisted with one monotonic database
+upsert, so an older transaction that commits late cannot regress either the
+watermark or the accepted run receipt.
+
+3. REPOSITORY LAYOUT
+
+connectors/connect-agent/
+  caratos_connect/
+    cli.py          discover / preview / dry-run / sync commands
+    profile.py      profile validation + SELECT-only SQL guard
+    sources.py      ODBC, password-protected Access/BUSY and Tally XML readers
+    mapping.py      candidate-column mapping, filters and source ID namespace
+    client.py       narrow authenticated CaratOS upload/heartbeat client
+    runner.py       extraction, reconciliation counters and retry orchestration
+    state.py        accepted checkpoints plus a crash-safe pending upload UUID
+  profiles/
+    busy-bds-starter.json
+    tally-prime-starter.json
+    gati-sjep-discovery.json
+    generic-odbc-template.json
+  tests/
+  setup_agent.ps1
+  install_task.ps1
+  run_scheduled_sync.ps1
+  requirements-lock.txt
+  profile.schema.json
+  README.md
+
+The old specialised agents have explicit boundaries:
+  synceclatcaratsense/ = Eclat's proven full Gati/APRS-SJEP adapter
+  connectors/busy-agent/ = retired reference; its entry point and installer
+                           fail closed and must not be used
+
+The unified Connect agent is the only BUSY setup path. Specialised adapters
+continue only where their deeper mappings have already been reconciled, such as
+Eclat's Gati/APRS-SJEP sync.
+
+4. STARTER CAPABILITY
+
+BUSY
+  Reads a private temporary copy of one password-protected .bds file.
+  Starter profile: Master1 debtor/customer names and item masters.
+  Ashish Textile's working implementation informed the Master1/Tran1/Tran2
+  approach, but its dyed/grey, rack, purchase and voucher rules were NOT copied
+  into the universal product; those are client-specific.
+
+TallyPrime
+  Uses the local Tally XML-over-HTTP export service.
+  Starter profile: Sundry Debtor ledgers and Stock Item masters.
+  GUID is the only starter identity; mutable ALTERID/name fallbacks are refused.
+  Tally must be running with the company loaded and the HTTP server enabled.
+  Live payload preview remains mandatory.
+
+Gati / APRS-SJEP
+  Eclat uses the existing deep adapter. A new installation begins with ODBC
+  discovery; mappings are promoted into a reviewed client profile only after
+  source counts and samples are reconciled.
+  The legacy profile hash includes the actual mapper-script content. Any code
+  change therefore needs a new masked dry-run and head-office approval even if
+  a developer forgot to update a manual generation label.
+  Mapped and raw checkpoints are namespaced by profile, source, server config
+  and backend generation. Header, child, summary and lookup-only timestamps are
+  carried into the result so dependent changes advance the correct checkpoint.
+  State writes are atomic, all sync/media/website entry points share one OS lock,
+  and a mid-cycle config change is latched so every upload path stops.
+  The package ships no production backend or website-feed default. Networked
+  commands require the configured target to equal a separately named target
+  approved during interactive configuration. Backend and feed redirects are
+  refused. Older installations fail closed until step 2 is rerun; an update
+  never modifies the real local credential file.
+
+Other market software
+  Any source with an ODBC driver can be discovered. Clone the generic profile,
+  add one read-only SELECT per supported canonical entity, and declare every
+  field mapping explicitly. CSV/XLSX remains the fallback where no database/API
+  access exists. PDF/DOC files go to the private knowledge library, not row import.
+
+File-import safety boundary
+  CSV must be valid UTF-8 and XLSX archives are inspected before parsing. The
+  request, mapping and string sizes are bounded; XLSX source material is capped
+  at 200,000 cells and rejects formulas, spreadsheet errors, non-finite numbers,
+  control characters, unsafe ZIP paths and expansion bombs. Imports are still
+  foreground MVP requests; large background/chunked ingestion is not claimed.
+
+5. SAFE GENERIC DATA SET
+
+Starter automated entities:
+  customers/accounts
+  products/items
+  stores/branches (reviewed ODBC profiles)
+
+Not automatically generic:
+  stock balances
+  invoices/sales/returns
+  payments and accounting ledgers
+  suppliers
+  manufacturing/work orders
+
+Those need per-client mapping because voucher signs, cancellation status,
+units, fiscal periods, branch allocation and source-of-truth rules vary. The
+framework can carry them later, but the MVP must not infer them.
+
+The legacy /sync surface is reserved for an enabled, organisation-wide Gati
+machine agent. A human JWT is refused for ingestion, and every request must
+echo the approved profile id, profile hash, source-instance hash and current
+server configRevision. The backend checks all four and atomically pins the
+first source before a domain write. Destructive purge/reset routes remain
+human-only. Store-bound Gati and every BUSY/Tally/ODBC token are refused there;
+those sources use the canonical master-data import endpoints only.
+
+The MVP is upsert-only and treats one source as owner of the master fields it
+supplies. Multi-writer fields and source-side deletion detection require
+SourceLink, snapshot manifests and per-field conflict policy before enablement.
+The generic snapshot cap is 5,000 rows/7 MiB; larger installations require
+deterministic, reviewed pagination.
+
+Party, Product and Store importBatchId records creation provenance only. A
+later accepted update intentionally does not rewrite that field, so the current
+schema cannot answer "which connector run last changed this row". Do not infer
+update history from importBatchId; add a SourceLink/import-mutation ledger before
+that claim or before enabling multi-writer ownership.
+
+6. CLIENT DELIVERY WORKFLOW
+
+Day 1 — discover
+  Create the package-local Python runtime with setup_agent.ps1 and the exact
+  dependency lock (or a reviewed offline wheelhouse), then run doctor using the
+  same Python architecture that will execute the task.
+  Install a read-only source login.
+  Enrol a source-specific CaratOS agent.
+  Run discovery locally; no customer values are uploaded.
+
+Day 2 — map and reconcile
+  Copy the closest starter profile.
+  Add candidate columns and SELECT-only queries.
+  Run masked preview and compare source counts with the client.
+  If an entity is genuinely allowed to contain no records, set allowEmpty=true
+  only after this has been reviewed; empty and fully filtered entities otherwise
+  fail scheduled-task preflight.
+  Copy the printed profileHash and sourceInstanceHash into the agent's approved
+  configuration. Live sync remains locked until both exact values are approved.
+
+Day 3 — controlled first sync
+  Run dry-run, then one manual sync.
+  Check ImportBatch totals and rejected rows.
+  Confirm source IDs are namespaced and repeat sync produces updates/skips,
+  not duplicate records.
+  Confirm the target-store receipt, descriptor pin and worker-lease recovery.
+
+After approval
+  Store connector secrets with Windows DPAPI as the same least-privilege user
+  that will own the task. install_task.ps1 performs another zero-write dry-run,
+  registers no token/DSN/password in Task Scheduler, writes rotating redacted
+  logs, and leaves the task disabled unless explicitly enabled.
+  An interactive-logon task is the intentional MVP trade-off for user-bound
+  DPAPI; an unattended service account needs a separately provisioned vault.
+  Add deeper entities one at a time with fixture and live reconciliation tests.
+
+Pre-deploy database gate
+  Before applying migration 20260908133000_connect_agent_safety to any existing
+  environment, run this read-only query. The migration must stop for manual
+  investigation if it returns any row; never auto-merge historical customers.
+
+  SELECT "organisationId", "code", COUNT(*)
+  FROM "Party"
+  WHERE "code" ~ '^(busy|tally|odbc|gati):[a-f0-9]{32}:.+$'
+  GROUP BY "organisationId", "code"
+  HAVING COUNT(*) > 1;
+
+  Zero-to-current migration proves schema construction only. The same preflight
+  must be run separately on staging and production data before deployment.
+
+7. AGENT DIVISION
+
+CODEX OWNS
+  connectors/**
+  backend/src/integration/**
+  backend/src/sync/** and the specialised Gati runtime hardening
+  connector/import/sync tests and this architecture
+
+CLAUDE OWNS
+  backend/src/config/industry-packs/** and tenant-config product behaviour
+  signup/onboarding/navigation and industry-specific presentation labels
+  its dedicated product-layer tests
+
+Neither agent edits the other's folders. Shared schema/package changes require
+a written request first. Attendance/catalogue inference internals and Eclat
+credentials are held unchanged.
+
+8. CURRENT VERIFICATION CLAIM
+
+The generic runtime, mapping, SQL guard, Tally XML parser and retry state are
+fixture-tested. Backend registry/import integration is tested against a migrated
+disposable database. A connector becomes LIVE VERIFIED only after discovery and
+preview against that client's actual software installation. Code availability
+must never be presented as client-data verification.
+
+Settled local verification on 2026-09-08:
+  Connect Agent Python tests: 65 passed; package-local dependencies are consistent.
+  Legacy Gati adapter and target-safety tests: 45 passed; SigV4 vectors: 15 passed.
+  Connector/import/sync backend tests: 145 passed across 16 suites.
+  Full backend e2e: 62 suites passed, 1 skipped; 809 tests passed, 6 skipped,
+  0 failed. The skipped suite is the held live jewellery-inference service.
+  Disposable database: 72 migrations applied from zero, seeded, then dropped.
+  Backend TypeScript/build/Prisma validation: clean.
+  Frontend TypeScript and Next production build: clean. Repository-wide frontend
+  lint still has 26 pre-existing React-compiler errors outside this connector lane.
+  Targeted connector/sync lint: 0 errors; warnings are primarily
+  pre-existing explicit-any debt in the legacy sync service and its tests.
+  Windows setup rehearsal: isolated Python 3.11 (64-bit), pyodbc and requests
+  installed; Access and SQL Server ODBC drivers visible to that exact runtime.
+
+Still intentionally not claimed as live:
+  BUSY needs a read-only preview and reconciliation against the client's actual
+  .bds backup/copy workflow and installed Access driver.
+  Tally needs a preview against the exact loaded company and enabled XML port.
+  Gati/other ODBC profiles need client schema discovery and reviewed mappings.
+  Transactions, stock, vouchers and payments remain disabled until client rules
+  are reconciled; only neutral master data is generic today.

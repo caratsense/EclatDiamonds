@@ -241,7 +241,8 @@ export class AiImageSearchService {
 
   /** Store-scoped candidate WHERE, mirroring ProductsService.list scoping. */
   private scopeWhere(user: AuthUser, headerStore?: string): Prisma.ProductWhereInput {
-    const where: Prisma.ProductWhereInput = {};
+    // ORGANISATION boundary always — reindex/search never cross tenants.
+    const where: Prisma.ProductWhereInput = { organisationId: user.organisationId };
     if (headerStore && headerStore !== 'all') {
       this.scope.assertStoreAllowed(user, headerStore);
       where.OR = [{ storeId: headerStore }, { storeId: null }];

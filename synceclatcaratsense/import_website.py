@@ -32,17 +32,35 @@ import os
 import sys
 import urllib.request
 
+from gati_machine_auth import approved_connection
+from gati_runtime import GatiRunAlreadyActive, install_run_lock
+from gati_target_safety import (
+    require_approved_backend,
+    require_approved_website,
+)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-WEBSITE_API = os.getenv(
-    "ECLAT_WEBSITE_API",
-    "https://apis.eclatdiamonds.in/v1/api/products/customer?page=1&limit=2000",
-)
+WEBSITE_API = (os.getenv("ECLAT_WEBSITE_API") or "").strip()
+APPROVED_WEBSITE_API = (os.getenv("ECLAT_APPROVED_WEBSITE_API") or "").strip()
+WEBSITE_ORIGIN = (os.getenv("ECLAT_WEBSITE_ORIGIN") or "").strip()
 BASE_URL = (os.getenv("ECLAT_BASE_URL") or "").strip().rstrip("/")
-EMAIL = (os.getenv("ECLAT_EMAIL") or "").strip()
-PASSWORD = (os.getenv("ECLAT_PASSWORD") or "").strip()
+APPROVED_BACKEND = (os.getenv("CARATOS_APPROVED_BACKEND_ORIGIN") or "").strip()
+AGENT_TOKEN = (os.getenv("CARATOS_AGENT_TOKEN") or "").strip()
+SQL_SERVER = (os.getenv("SJEP_SQL_SERVER") or r"localhost\SQLEXPRESS").strip()
+SQL_DB = (os.getenv("SJEP_SQL_DB") or "APRSSJEP").strip()
+APPROVAL_HEADERS = {}
+HEARTBEAT = None
 CHUNK = 200
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+NO_REDIRECT_OPENER = urllib.request.build_opener(_NoRedirect)
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -51,15 +69,20 @@ except Exception:
 
 
 def fetch_products():
+    endpoint, public_origin = require_approved_website(
+        WEBSITE_API, APPROVED_WEBSITE_API, WEBSITE_ORIGIN
+    )
     req = urllib.request.Request(
-        WEBSITE_API,
+        endpoint,
         headers={
             "User-Agent": "Mozilla/5.0",
-            "Origin": "https://eclatdiamonds.in",
-            "Referer": "https://eclatdiamonds.in/",
+            "Origin": public_origin,
+            "Referer": f"{public_origin}/",
         },
     )
-    with urllib.request.urlopen(req, timeout=90) as r:
+    # A configured feed cannot redirect this one-click command to an unreviewed
+    # host. Review and pin the final endpoint instead.
+    with NO_REDIRECT_OPENER.open(req, timeout=90) as r:
         d = json.loads(r.read().decode())
     for key in ("data", "products", "items", "result"):
         if isinstance(d, dict) and key in d:
@@ -129,25 +152,73 @@ def to_record(p):
 
 
 def login():
-    body = json.dumps({"email": EMAIL, "password": PASSWORD}).encode()
-    req = urllib.request.Request(
-        f"{BASE_URL}/auth/login", data=body,
-        headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return json.loads(r.read().decode())["token"]
+    global BASE_URL, HEARTBEAT
+    BASE_URL = require_approved_backend(BASE_URL, APPROVED_BACKEND)
+    headers, HEARTBEAT = approved_connection(
+        BASE_URL, AGENT_TOKEN, SQL_SERVER, SQL_DB
+    )
+    APPROVAL_HEADERS.clear()
+    APPROVAL_HEADERS.update(headers)
+    return AGENT_TOKEN
+
+
+def heartbeat(phase, **stats):
+    if HEARTBEAT is not None:
+        HEARTBEAT.periodic({"phase": phase, **stats})
+
+
+def terminal_heartbeat(ok, error=None, **stats):
+    if HEARTBEAT is None:
+        return False
+    try:
+        payload = {"phase": "complete" if ok else "failed", **stats}
+        if ok:
+            HEARTBEAT.success(payload)
+        else:
+            HEARTBEAT.error(error or "Website catalogue import failed", payload)
+        return True
+    except Exception:
+        print("[WARN] Could not report terminal agent status.")
+        return False
+
+
+def _validated_acknowledgement(value, expected):
+    if not isinstance(value, dict) or value.get("entity") != "website-products":
+        raise RuntimeError("website import returned an invalid acknowledgement")
+    counts = {
+        name: value.get(name)
+        for name in ("received", "upserted", "skipped", "created", "enriched")
+    }
+    if any(type(number) is not int or number < 0 for number in counts.values()):
+        raise RuntimeError("website import returned invalid acknowledgement counts")
+    if (
+        counts["received"] != expected
+        or counts["upserted"] + counts["skipped"] != expected
+        or counts["created"] + counts["enriched"] != counts["upserted"]
+    ):
+        raise RuntimeError("website import acknowledgement did not cover the sent batch")
+    return value
 
 
 def push(token, records):
     created = enriched = skipped = 0
     for i in range(0, len(records), CHUNK):
         batch = records[i:i + CHUNK]
+        heartbeat(
+            "uploading",
+            entity="website-products",
+            rowsRead=i,
+            rowsReady=len(records),
+        )
         body = json.dumps({"records": batch}).encode()
         req = urllib.request.Request(
             f"{BASE_URL}/sync/website-products", data=body,
-            headers={"Content-Type": "application/json",
-                     "Authorization": f"Bearer {token}"})
-        with urllib.request.urlopen(req, timeout=300) as r:
-            res = json.loads(r.read().decode())
+            headers=dict(APPROVAL_HEADERS))
+        # Never forward the restricted machine bearer through an HTTP redirect.
+        with NO_REDIRECT_OPENER.open(req, timeout=300) as r:
+            res = _validated_acknowledgement(
+                json.loads(r.read().decode()), len(batch)
+            )
         created += res.get("created", 0)
         enriched += res.get("enriched", 0)
         skipped += res.get("skipped", 0)
@@ -156,12 +227,23 @@ def push(token, records):
     return created, enriched, skipped
 
 
-def main():
+def _main():
     send = "--send" in sys.argv
     print("=" * 72)
     print("  WEBSITE DESIGNS -> ECLAT CATALOGUE")
     print("  " + ("SENDING" if send else "PREVIEW — nothing will be sent"))
     print("=" * 72)
+
+    if send:
+        if not BASE_URL or not AGENT_TOKEN:
+            print("\n[STOP] Restricted Gati agent token missing — run 2_configure.bat first.")
+            return 1
+        print("\n  validating restricted Gati agent approval...")
+        try:
+            login()
+        except Exception as e:
+            print(f"[STOP] Gati agent approval failed: {str(e)[:200]}")
+            return 1
 
     try:
         products = fetch_products()
@@ -195,18 +277,7 @@ def main():
         print("=" * 72)
         return 0
 
-    if not BASE_URL or not EMAIL or not PASSWORD:
-        print("\n[STOP] Eclat login missing — run 2_configure.bat first.")
-        return 1
-
-    print("\n  signing in...")
-    try:
-        token = login()
-    except Exception as e:
-        print(f"[STOP] Could not sign in to Eclat: {str(e)[:200]}")
-        return 1
-
-    created, enriched, skipped = push(token, records)
+    created, enriched, skipped = push(AGENT_TOKEN, records)
     print("\n" + "=" * 72)
     print(f"  DONE. {created} new design(s) added, {enriched} existing one(s) "
           f"given a photo/price, {skipped} unchanged.")
@@ -216,9 +287,38 @@ def main():
     return 0
 
 
+def main():
+    global HEARTBEAT
+    HEARTBEAT = None
+    APPROVAL_HEADERS.clear()
+    try:
+        result = _main()
+    except Exception as exc:
+        print(f"[STOP] Website catalogue import failed: {str(exc)[:200]}")
+        terminal_heartbeat(False, exc, entity="website-products")
+        return 1
+    if "--send" in sys.argv:
+        reported = terminal_heartbeat(
+            result == 0,
+            None if result == 0 else "Website catalogue import failed",
+            entity="website-products",
+        )
+        if result == 0 and not reported:
+            return 1
+    return result
+
+
 if __name__ == "__main__":
     try:
-        sys.exit(main())
-    except KeyboardInterrupt:
-        print("\n  Stopped by you (Ctrl+C). Nothing is broken.")
-        sys.exit(0)
+        with install_run_lock("website catalogue import"):
+            sys.exit(main())
+    except GatiRunAlreadyActive as exc:
+        print(f"[STOP] {exc}")
+        sys.exit(2)
+    except KeyboardInterrupt as exc:
+        print("\n  Stopped before the website catalogue import completed.")
+        if "--send" in sys.argv:
+            terminal_heartbeat(
+                False, exc, phase="interrupted", entity="website-products"
+            )
+        sys.exit(130)

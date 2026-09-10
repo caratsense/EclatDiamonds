@@ -1,0 +1,293 @@
+CLAUDE TASK — MULTI-MARKET PHASE 2: ENFORCEMENT AND PRODUCT COMPLETION
+Date: 2026-09-08
+
+STARTING POINT
+Your latest report is accepted as the baseline: industry selection, pack
+provisioning, derived navigation, lexicon, signup flow and browser checks are
+implemented. This task closes the gaps MM-01 through MM-11 that still prevent
+the application from being a genuinely universal product.
+
+Codex is working concurrently on Connect Agent, BUSY/Tally/Gati/ODBC ingestion,
+machine-import safety and the shared Prisma migration. Do not touch that scope.
+
+IMPORTANT CURRENT-TREE FACT
+Codex has already added the neutral master-data primitives in the current dirty
+tree:
+  - MetalKind.unspecified
+  - Product.categoryLabel
+  - Product.materialLabel
+  - Product.unitOfMeasure
+  - migration 20260908133000_connect_agent_safety
+
+Consume these fields where needed. Do NOT add another enum member, edit the
+schema/migration, make Product.metal nullable, or reformat schema.prisma.
+
+SHARED AUTH CONTRACT - PRESERVE EXACTLY
+Codex has added a narrow machine-principal branch in jwt-auth.guard.ts plus
+machine.decorator.ts for the outbound Connect agent. Your entitlement guard may
+wrap human tenant routes, but it must not turn an agent into a human, bypass the
+machine endpoint allowlist, or deny the explicitly @AllowMachine import preview
+and run endpoints. Re-read the current guard before editing it and run the
+connector machine-auth regression after your entitlement changes.
+
+STRICT OWNERSHIP
+
+You MAY edit for this task:
+  backend/src/auth/**
+  backend/src/common/** only for one central industry/module entitlement guard
+  backend/src/app.module.ts only to register that guard if required
+  backend/src/config/**
+  backend/src/products/dto/** and products presentation-safe API serialization
+  backend/src/scheduler/** and backend/src/integrations/gold-rate.service.ts only
+    for industry-aware gold-rate gating
+  backend/src/crm/** only for atomic settings updates and existing vocabulary
+  backend/src/discounts/** and backend/prisma/seed.mjs only for MM-11
+  frontend/src/app/(app)/layout.tsx
+  frontend signup/login/onboarding/configuration/navigation/branding UI
+  frontend customer/CRM/check-in/catalogue presentation and form UI
+  focused tests for the above
+  docs describing your product-layer work
+
+You MUST NOT edit:
+  connectors/**
+  backend/src/integration/**
+  backend/src/knowledge/**
+  backend/src/sync/**
+  backend/prisma/schema.prisma
+  backend/prisma/migrations/**
+  backend/package*.json or frontend/package*.json
+  docs/work-requests/CLAUDE-SHARED-FILE-REQUEST.txt
+  connector/import tests
+  catalogue inference, similarity, embedding or matching algorithms
+  attendance/check-in calculations, geofence, payroll or presence logic
+  credentials, environment files, production data, commit/push/deploy
+
+If a required change falls outside your allowed paths, append a numbered,
+specific request to THIS file and continue with everything else. Never make the
+out-of-scope edit yourself.
+
+P0 — COMPLETE THESE FIRST
+
+1. ENFORCE MODULE ENTITLEMENTS (MM-01)
+   Navigation visibility is not authorization. Build one central pack-aware
+   backend guard/capability mapping alongside role checks and one central client
+   route guard in the authenticated app layout. A non-jewellery tenant typing a
+   disabled route must not receive/render the module, and direct API calls to
+   vertical-only controllers must return 403. Do not scatter duplicated checks
+   through pages. Keep these universal for every industry: AI CRM/conversations,
+   customer/account directory, catalogue, attendance/check-ins, stores/team,
+   data import/connectors, integrations, configuration and audit. Jewellery must
+   retain every historical route including find-similar. Add a role check to the
+   currently unguarded gold-rate endpoint while in this area.
+
+2. MAKE THE CATALOGUE WRITE PATH INDUSTRY-NEUTRAL (MM-02/MM-03/MM-04)
+   For non-jewellery tenants, new products must default to category `other` and
+   metal `unspecified`; they must never silently become a gold_22k necklace.
+   Use the current neutral label/UOM fields. Wire the existing FieldPolicy into
+   Add/Edit Product and product details so metal, karat, gross/net weight,
+   making-charge, HUID, stones and purity controls are absent when the pack says
+   they are hidden. Hidden fields must not fail client validation or be submitted
+   with fabricated jewellery defaults. Use industry nouns/units in count labels,
+   placeholders and empty states. Jewellery must keep its exact historical
+   defaults, fields, purity/carats formatting and image-search experience.
+   Presentation/form edits are allowed; do not change inference or matching.
+
+3. MAKE INDUSTRY SWITCHING CONVERGE SAFELY
+   Fix pack-managed pipeline and qualification ownership. Switching pharmacy →
+   healthcare → manufacturing must update untouched pack-managed stages and
+   questions. Tenant-edited stages/questions and custom pipelines must survive.
+   Reapplying the same pack must be idempotent. Implement explicit ownership or
+   version tracking rather than name/code guesses. Do not wipe operational CRM
+   records.
+
+4. REMOVE STALE AUTH/NAVIGATION STATE AND PUBLIC ACCOUNT ENUMERATION (MM-08)
+   Login destination and bootstrap must derive effective navigation from the
+   same current pack. Stop depending on the frozen
+   settings.featureProfile.enabledNavigation copy. Public organisation signup
+   must return a generic conflict response that does not reveal whether an email
+   exists in another tenant. Remove/deprecate dead duplicated CRM settings only
+   when proven unused. Align qualification enabled defaults with the documented
+   safe default.
+
+P1 — FINISH IN THE SAME RUN
+
+5. Complete industry vocabulary in actual forms, tables, placeholders, buttons,
+   customer-facing messages and empty states—not only chrome. Use configured
+   checkin_purpose and lead_source taxonomy in inputs. Preserve canonical values
+   internally and exact Eclat wording for the jewellery pack.
+
+6. Stop the gold-rate scheduler/provider from creating MetalRate rows for packs
+   that do not enable the jewellery metal-rates capability. UI hiding alone is
+   insufficient. Do not change unrelated integrations.
+
+7. Make branding tenant-aware using the already exposed
+   settings.branding.displayName. Non-Eclat tenants must not see “Éclat
+   Diamonds”, diamond hero copy, or eclatdiamonds.in login guidance. Keep the
+   Eclat organisation’s current logo/copy unchanged. Use a neutral CaratOS
+   fallback; do not build logo upload/storage in this phase.
+
+8. Fix the three Organisation.settings lost-update paths (CRM AI responder,
+   qualification and adset rules) with an atomic/transaction-safe approach.
+   Add a concurrency regression proving two distinct keys cannot overwrite one
+   another.
+
+9. Align frontend import/provider source unions and labels with the existing
+   backend: busy, tally, gati and odbc. Do not edit backend/src/integration/**.
+
+10. Fix MM-11 so the first API-created discount after a fresh seed cannot collide
+    with DR-1001/DR-1002. Prefer a deterministic seed/sequence alignment. Add a
+    focused regression and keep existing seeded references stable if tests rely
+    on them.
+
+11. Revert or isolate any earlier behaviour edit in held catalogue/attendance
+    code. Only labels, field visibility and neutral form defaults are authorized
+    here; calculations and algorithms must remain byte-for-byte/behaviourally
+    equivalent.
+
+ACCEPTANCE TESTS — REQUIRED
+
+- Healthcare/manufacturing direct URL AND direct API access to finance, gold
+  rates, jewellery returns/loyalty or other disabled vertical modules => 403 or
+  safe redirect; hidden content never flashes.
+- Jewellery/Eclat can still access all historical routes, including
+  find-similar, with unchanged labels/defaults.
+- Creating a healthcare/pharmacy/manufacturing/textile product stores
+  metal=unspecified and category=other with its real category/material/UOM
+  labels; never gold_22k/necklace.
+- Non-jewellery product forms/details render no hidden jewellery fields;
+  jewellery renders them all.
+- Pharmacy → healthcare → manufacturing switching updates untouched managed
+  defaults, preserves tenant edits, and is idempotent.
+- Login destination always belongs to current effective navigation.
+- Signup conflict does not disclose cross-tenant account existence.
+- Non-jewellery tenants create no new metal-rate rows; Eclat still does.
+- Generic tenant branding contains no Eclat/diamonds copy; Eclat remains exact.
+- Concurrent settings updates retain both keys.
+- Fresh seed followed by the discount API passes.
+- Focused backend tests run from a disposable database migrated from zero.
+- Backend tsc, nest build, Prisma validate, frontend tsc and next build pass.
+- Run targeted lint on your files and report global baseline honestly. Do not
+  repair unrelated lint errors.
+
+DELIVERY REPORT
+
+Report:
+  1. each MM item and whether it is complete;
+  2. every changed file;
+  3. exact test commands/counts;
+  4. browser flows verified for one healthcare tenant and Eclat;
+  5. every remaining blocker, distinguishing code-complete from live/provider
+     verification.
+
+Do not commit, push, deploy, touch credentials, edit Codex-owned files, or claim
+full completion if any acceptance item remains unverified.
+
+
+================================================================================
+NUMBERED REQUESTS FROM CLAUDE — phase 2, raised 2026-09-08
+================================================================================
+
+Found while closing MM-01..MM-11. Each is outside the paths this task allows
+Claude to edit. Nothing below was changed.
+
+
+--------------------------------------------------------------------------------
+MM2-01  Every tenant's staff logins are minted on a jeweller's domain. HIGH
+        Owner: backend/src/users/**
+--------------------------------------------------------------------------------
+backend/src/users/users.util.ts declares:
+
+    export const HANDLE_DOMAIN = 'eclatdiamonds.in';
+
+and `firstname.storeslug@eclatdiamonds.in` is the handle generated for EVERY
+organisation's staff, not just Eclat's. A clinic that adds a receptionist gets
+them an account at a jewellery retailer's domain, and that handle is what the
+person types to sign in every morning.
+
+This is the deepest remaining branding leak, and unlike a label it is written
+into user records, so it does not go away when the copy changes.
+
+Requested: derive the domain per organisation — the tenant slug is already
+unique (Organisation.slug) — with `eclatdiamonds.in` retained for the Eclat
+organisation so no existing handle changes.
+
+Claude changed the Add-staff dialog copy so it no longer states that domain to
+every tenant as fact (settings/team/page.tsx). The copy is now honest about what
+happens; the handle it describes is still wrong for everyone but Eclat.
+
+
+--------------------------------------------------------------------------------
+MM2-02  The public landing page is Eclat marketing.            SEVERITY: MEDIUM
+        Owner: a content/positioning decision, then frontend/src/app/page.tsx
+--------------------------------------------------------------------------------
+`/` renders "Éclat Diamonds Philosophy", "Delivered in signature Éclat velvet
+vaults", "The unified front-of-house platform for Éclat Diamonds", and a
+copyright line naming them.
+
+Claude neutralised the SIGN-IN screen, because every tenant's staff pass through
+it daily and it is part of the product. The landing page is marketing, and
+rewriting it means inventing positioning for the platform — a decision, not an
+implementation. Left alone deliberately.
+
+
+--------------------------------------------------------------------------------
+MM2-03  Pipelines have no pack-ownership column.               SEVERITY: MEDIUM
+        Owner: backend/prisma/schema.prisma (this phase may not edit it)
+--------------------------------------------------------------------------------
+TaxonomyTerm, AttributeDefinition and FieldPolicy each carry `packCode`, so
+provisioning can tell its own rows from the tenant's. Pipeline and PipelineStage
+do not — and they are the rows that MUST converge when a tenant changes
+industry, because every pack ships the same pipeline code and the same three
+stage codes and differs only in wording.
+
+Claude's workaround records what the pack last wrote in
+`Organisation.settings.packManaged` (backend/src/config/industry-packs/
+pack-managed.ts) and treats a row that still matches that record as pack-owned.
+It works, it is explicit rather than a name/code guess, and it is tested — but it
+keeps ownership in a JSON bag instead of beside the row it describes.
+
+Requested, when the schema is next open: `packCode String?` on Pipeline and
+PipelineStage, after which the settings record can be deleted and the comparison
+becomes a column read.
+
+
+--------------------------------------------------------------------------------
+MM2-04  ensureDefault can permanently pre-empt the pack funnel. SEVERITY: MEDIUM
+        Owner: backend/src/crm/pipelines.service.ts
+--------------------------------------------------------------------------------
+`PipelinesService.ensureDefault` creates a pipeline with `code: 'default'` named
+"Sales pipeline", with stage codes inquiry/quotation/order_placed — the same key
+the industry pack uses.
+
+If `POST /crm/pipelines/ensure-default` runs before a pack is applied, the pack's
+pipeline is skipped for ever (provisioning finds `default` already present), and
+Claude's convergence cannot help either: there is no ownership record, so those
+stages are correctly treated as the tenant's and left alone. The tenant is left
+on generic English whatever industry they pick.
+
+Requested: have `ensureDefault` defer to the organisation's pack when one is
+applied, or stamp the rows it creates so provisioning can recognise and replace
+them. Claude may not edit that file in this phase (crm/** is allowed only for
+atomic settings updates and existing vocabulary).
+
+
+--------------------------------------------------------------------------------
+MM2-05  The product form never collects caratWeight.           SEVERITY: LOW
+        Owner: catalogue implementation
+--------------------------------------------------------------------------------
+Pre-existing, and unrelated to multi-market. `CreateProductInput` and the DTO
+both accept `caratWeight`, and the Add Product dialog never sends it, so every
+manually created product stores 0 and the detail dialog's "Stones" row — which
+is gated on `caratWeight > 0` — can never appear for it. Only imported products
+ever have a stone weight.
+
+
+--------------------------------------------------------------------------------
+MM2-06  Backend has no linter.                                  SEVERITY: LOW
+        Owner: backend tooling (package.json is off limits this phase)
+--------------------------------------------------------------------------------
+`backend/package.json` has no `lint` script and the repository has no ESLint
+configuration resolvable from `backend/src`, so "run targeted lint on your files"
+has no backend half. Backend verification in this task was therefore
+`tsc --noEmit`, `nest build`, `prisma validate` and the e2e suites. The frontend
+does have ESLint and was linted per-file.

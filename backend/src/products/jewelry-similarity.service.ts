@@ -12,12 +12,15 @@ import { JewelryRankingService, RankCandidate, RANKING_VERSION } from './jewelry
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 const BATCH_SIZE = 16;
 const CANDIDATE_CAP = 5000;
+/** One result set is the TOP 10 closest genuine matches (fewer if fewer qualify). */
+const DEFAULT_TOP_N = 10;
 
 type Metric =
   | 'search_count'
   | 'search_success'
   | 'search_failure'
   | 'search_no_match'
+  | 'search_not_indexed'
   | 'embedding_failure';
 
 /**
@@ -39,6 +42,7 @@ export class JewelrySimilarityService {
     search_success: 0,
     search_failure: 0,
     search_no_match: 0,
+    search_not_indexed: 0,
     embedding_failure: 0,
   };
 
@@ -55,13 +59,16 @@ export class JewelrySimilarityService {
   }
 
   /** Store-scoped WHERE for a table carrying a nullable storeId (null = company-wide). */
-  private scopeWhere(user: AuthUser, headerStore?: string): { OR?: any[] } {
+  private scopeWhere(user: AuthUser, headerStore?: string): { organisationId: string; OR?: any[] } {
+    // ORGANISATION boundary always — visual search/reindex never cross tenants.
+    // Applies to both Product and ProductEmbedding (both carry organisationId).
+    const org = { organisationId: user.organisationId };
     if (headerStore && headerStore !== 'all') {
       this.scope.assertStoreAllowed(user, headerStore);
-      return { OR: [{ storeId: headerStore }, { storeId: null }] };
+      return { ...org, OR: [{ storeId: headerStore }, { storeId: null }] };
     }
-    if (!user.allStores) return { OR: [{ storeId: { in: user.storeIds } }, { storeId: null }] };
-    return {};
+    if (!user.allStores) return { ...org, OR: [{ storeId: { in: user.storeIds } }, { storeId: null }] };
+    return org;
   }
 
   private validateUpload(file?: { buffer?: Buffer; mimetype?: string }): { buffer: Buffer; mime: string } {
@@ -84,7 +91,7 @@ export class JewelrySimilarityService {
   ) {
     const queryId = randomUUID();
     const { buffer, mime } = this.validateUpload(file);
-    const limit = Math.min(Math.max(opts.limit ?? 24, 1), 50);
+    const limit = Math.min(Math.max(opts.limit ?? DEFAULT_TOP_N, 1), 50);
     this.bump('search_count');
 
     if (!this.inference.available) {
@@ -124,9 +131,48 @@ export class JewelrySimilarityService {
         siglipEmbedding: { isEmpty: false },
       },
       take: CANDIDATE_CAP,
-      include: { product: { select: { id: true, name: true, imageUrl: true, category: true, storeId: true } } },
+      include: {
+        product: {
+          select: {
+            id: true,
+            name: true,
+            sku: true,
+            imageUrl: true,
+            category: true,
+            storeId: true,
+            store: { select: { name: true } },
+          },
+        },
+      },
     });
     const retrievalMs = Date.now() - t1;
+
+    // Nothing indexed in scope is NOT the same as "no design matched" — the
+    // catalogue simply hasn't been embedded yet. Report it distinctly and
+    // actionably (how many photographed designs are waiting) instead of a bare
+    // no-match, so the UI can tell the operator to run indexing.
+    if (rows.length === 0) {
+      const indexable = await this.prisma.product.count({
+        where: {
+          ...(this.scopeWhere(user, headerStore) as Prisma.ProductWhereInput),
+          imageUrl: { not: null },
+        },
+      });
+      this.bump('search_not_indexed');
+      this.logger.log(`similarity queryId=${queryId} status=NOT_INDEXED indexable=${indexable}`);
+      return {
+        queryId,
+        available: true,
+        status: 'NOT_INDEXED' as const,
+        matchLevel: 'NO_CLOSE_MATCH' as const,
+        closenessScore: 0,
+        reason:
+          indexable > 0
+            ? `Visual search isn't built yet — ${indexable} design${indexable === 1 ? '' : 's'} with photos are waiting to be indexed. Ask an administrator to run visual indexing.`
+            : 'No product photos to search yet — add catalogue images, then run visual indexing.',
+        results: [],
+      };
+    }
 
     const candidates: RankCandidate[] = rows.map((r) => ({
       productId: r.productId,
@@ -173,7 +219,12 @@ export class JewelrySimilarityService {
         return {
           productId: h.productId,
           productName: p?.name ?? '',
+          sku: p?.sku ?? null,
           imageUrl: p?.imageUrl ?? undefined,
+          storeId: p?.storeId ?? null,
+          // Store name is included when the product is store-specific; the UI
+          // decides whether to show it (relevant only in a multi-store scope).
+          storeName: p?.store?.name ?? null,
           rank: h.rank,
           closenessScore: h.closenessScore,
           matchLevel: h.matchLevel,
@@ -204,6 +255,7 @@ export class JewelrySimilarityService {
 
     await this.prisma.similaritySearchFeedback.create({
       data: {
+        organisationId: user.organisationId,
         queryId: dto.queryId,
         productId: dto.productId,
         storeId: product.storeId,
@@ -245,6 +297,9 @@ export class JewelrySimilarityService {
     }
 
     const where: Prisma.ProductWhereInput = {
+      // Organisation boundary: reindex only the caller's own catalogue, never
+      // another tenant's products (scopeWhere alone is empty for head_office).
+      organisationId: user.organisationId,
       ...(this.scopeWhere(user, headerStore) as Prisma.ProductWhereInput),
       imageUrl: { not: null },
       ...(opts.productId ? { id: opts.productId } : {}),
@@ -252,7 +307,7 @@ export class JewelrySimilarityService {
     const products = await this.prisma.product.findMany({
       where,
       take: CANDIDATE_CAP,
-      select: { id: true, storeId: true, imageUrl: true },
+      select: { id: true, storeId: true, imageUrl: true, organisationId: true },
     });
 
     // Current served versions — lets a model/pipeline bump auto-invalidate rows.
@@ -323,6 +378,7 @@ export class JewelrySimilarityService {
         await this.prisma.productEmbedding.upsert({
           where: { productId_preprocessingVersion: { productId: c.product.id, preprocessingVersion: preproc } },
           create: {
+            organisationId: c.product.organisationId,
             productId: c.product.id,
             storeId: c.product.storeId,
             dinoEmbedding: r.dino,

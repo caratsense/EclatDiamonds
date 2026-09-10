@@ -10,7 +10,8 @@ export interface DsrHeadline {
   label: string;
   value: number;
   format: "inr" | "number";
-  delta: number;
+  /** % change vs yesterday; `null` = no prior-day base (tile shows no pill). */
+  delta: number | null;
 }
 
 export const DSR_HEADLINE: DsrHeadline[] = [

@@ -1,126 +1,135 @@
 @echo off
 REM ===========================================================================
-REM  LAST STEP  —  MAKE IT AUTOMATIC
+REM  LAST STEP - MAKE AN ALREADY-VERIFIED SYNC AUTOMATIC
 REM
-REM  Only run this AFTER you have seen real data arrive correctly in the
-REM  dashboard. From here the sync runs every 15 minutes forever, so anything
-REM  mapped wrongly would be re-sent every 15 minutes forever too.
-REM
-REM  Right-click -> "Run as administrator".
+REM  Run this only after discovery, preview, a controlled first send, and a
+REM  dashboard review. Run it normally as the intended Windows sync user.
+REM  DO NOT use "Run as administrator".
 REM ===========================================================================
-setlocal EnableExtensions EnableDelayedExpansion
+setlocal EnableExtensions
 cd /d "%~dp0"
 
 echo.
 echo ============================================================
-echo   MAKE THE SYNC AUTOMATIC
+echo   MAKE THE VERIFIED SYNC AUTOMATIC - LEAST PRIVILEGE
 echo ============================================================
 echo.
 
-net session >nul 2>&1
+if not exist "verify_install_security.ps1" (
+  echo [STOP] verify_install_security.ps1 is missing.
+  exit /b 1
+)
+if not exist "register_scheduler.ps1" (
+  echo [STOP] register_scheduler.ps1 is missing.
+  exit /b 1
+)
+
+powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0verify_install_security.ps1" -InstallPath "%CD%"
 if errorlevel 1 (
-  echo [PROBLEM] Right-click this file and choose "Run as administrator".
+  echo.
+  echo [STOP] The account or install folder is unsafe for scheduling.
+  echo        See ONSITE-RUNBOOK.md. Nothing was scheduled.
   pause
   exit /b 1
 )
 
 if not exist "eclat_config.bat" (
-  echo [PROBLEM] No settings. Run 2_configure.bat first.
+  echo [STOP] No settings. Run 2_configure.bat first.
   pause
   exit /b 1
 )
-
-REM --- Refuse to automate anything that has not been looked at first. ---
-REM These are not box-ticking: scheduling before a verified run is how bad data
-REM gets pushed every 15 minutes for a week before anyone notices.
 if not exist "reports\discovery_report.txt" (
-  echo [STOP] No discovery report found.
-  echo.
-  echo        Run 1_discover.bat and send the report to the Eclat team
-  echo        BEFORE automating anything.
+  echo [STOP] No discovery report. Run 1_discover.bat and review its report.
   pause
   exit /b 1
 )
 if not exist "logs\auto_sync.log" (
-  echo [STOP] No sync has ever run on this computer.
-  echo.
-  echo        Run 4_preview.bat, then 5_first_sync.bat, and check the
-  echo        dashboard. Only automate a sync you have already watched work.
+  echo [STOP] No reviewed sync log. Run steps 4 and 5 first.
   pause
   exit /b 1
 )
 findstr /C:"Sync complete" "logs\auto_sync.log" >nul 2>&1
 if errorlevel 1 (
-  echo [STOP] No completed sync in the log yet.
-  echo.
-  echo        Run 5_first_sync.bat and make sure it finishes, then come back.
+  echo [STOP] No completed sync is recorded. Run and review 5_first_sync.bat.
   pause
   exit /b 1
 )
-
-echo [OK] Discovery report exists
-echo [OK] At least one sync has completed
-echo.
-
-call eclat_config.bat
-if not defined SJEP_SQL_USER (
-  echo ************************************************************
-  echo   WARNING - NO DATABASE LOGIN SET
-  echo.
-  echo   The automatic sync runs as the COMPUTER, not as you. With a
-  echo   blank username it will try to open the database as the
-  echo   machine account, which usually has no permission - so the
-  echo   sync silently fails every 15 minutes even though your manual
-  echo   runs worked perfectly.
-  echo.
-  echo   Strongly recommended: ask IT to run create_readonly_login.sql,
-  echo   then run 2_configure.bat again and enter that login.
-  echo ************************************************************
-  echo.
-  set /p GOON="Continue anyway? (y/N): "
-  if /I not "!GOON!"=="y" (
-    echo Stopped. Nothing was scheduled.
-    pause
-    exit /b 1
-  )
-)
-
-set "PYEXE="
-for /f "delims=" %%P in ('where python 2^>nul') do if not defined PYEXE set "PYEXE=%%P"
-if not defined PYEXE (
-  echo [PROBLEM] Python not found. Install it with "Add Python to PATH" ticked.
+if not exist "reports\full_sync_completed.txt" (
+  echo [STOP] No successful full-run receipt exists.
+  echo        Run 5_first_sync.bat all, then review the dashboard.
   pause
   exit /b 1
 )
-> "_pyexe.bat" echo set "PYEXE=%PYEXE%"
-echo [OK] Python: %PYEXE%
-
-echo.
-echo Scheduling: every 15 minutes, and at every restart...
-schtasks /Create /TN "EclatSync" /TR "\"%~dp0run_sync.bat\"" /SC MINUTE /MO 15 /RU SYSTEM /RL HIGHEST /F
+powershell.exe -NoLogo -NoProfile -NonInteractive -Command "$receipt = (Get-Item -LiteralPath 'reports\full_sync_completed.txt').LastWriteTimeUtc; $reviewedInputs = @('eclat_config.bat','gati_machine_auth.py','sync_sjep.py','sync_media.py','import_website.py'); if (Test-Path -LiteralPath 'stage_map.json' -PathType Leaf) { $reviewedInputs += 'stage_map.json' }; if ($reviewedInputs | Where-Object { (Get-Item -LiteralPath $_).LastWriteTimeUtc -gt $receipt }) { exit 1 }"
 if errorlevel 1 (
-  echo [PROBLEM] Could not create the task. Did you run as administrator?
+  echo [STOP] Settings, mapping code, or stage mapping changed after the last full manual sync.
+  echo        Re-run 5_first_sync.bat all and review the result.
   pause
   exit /b 1
 )
-schtasks /Create /TN "EclatSync_Boot" /TR "\"%~dp0run_sync.bat\"" /SC ONSTART /RU SYSTEM /RL HIGHEST /F
+
+call "eclat_config.bat"
+if not defined CARATOS_AGENT_TOKEN (
+  echo [STOP] CARATOS_AGENT_TOKEN is missing. Run 2_configure.bat.
+  echo        Never replace it with a human email/password.
+  pause
+  exit /b 1
+)
+
+call "%~dp0require_runtime.bat"
+if errorlevel 1 (
+  pause
+  exit /b 21
+)
+
+echo.
+echo Rechecking the approved agent, database, and mapping contract...
+"%PYEXE%" sync_sjep.py --test
+if errorlevel 1 (
+  echo [STOP] Connection/agent approval check failed. Nothing was scheduled.
+  pause
+  exit /b 1
+)
+"%PYEXE%" sync_sjep.py --dry-run
+if errorlevel 1 (
+  echo [STOP] Fresh preview failed. Nothing was scheduled.
+  pause
+  exit /b 1
+)
+
+echo.
+echo This installer NEVER sends a full sync. It will only register the
+echo already-reviewed job for the CURRENT Windows user at LIMITED privilege.
+echo The job runs while that same user is signed in; it never runs as SYSTEM.
+echo.
+set "SCHEDULE_CONFIRM="
+set /p SCHEDULE_CONFIRM="Type SCHEDULE APPROVED to continue: "
+if not "%SCHEDULE_CONFIRM%"=="SCHEDULE APPROVED" (
+  echo Stopped. Nothing was scheduled.
+  pause
+  exit /b 1
+)
+
+powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0register_scheduler.ps1"
+if errorlevel 1 (
+  echo.
+  echo [STOP] The task was not registered. Read the error above.
+  echo        Do not rerun this installer as administrator.
+  pause
+  exit /b 1
+)
 
 echo.
 echo ============================================================
-echo   DONE - THE SYNC IS NOW AUTOMATIC
-echo     every 15 minutes, and after every restart
-echo     runs even with nobody logged in
-echo     log:  logs\auto_sync.log
-echo.
-echo   IMPORTANT: check logs\auto_sync.log in about 20 minutes and
-echo   confirm you see a fresh "Sync complete". If it stopped
-echo   working the moment it became automatic, it is almost always
-echo   the database login - see the warning above.
-echo.
-echo   To switch it off later (admin Command Prompt):
-echo     schtasks /Delete /TN "EclatSync" /F
-echo     schtasks /Delete /TN "EclatSync_Boot" /F
+echo   INSTALLED SAFELY
+echo   - Task: EclatSync
+echo   - Every 15 minutes while this Windows user is signed in
+echo   - Also runs once when this user signs in
+echo   - Interactive user + LIMITED privilege; never SYSTEM/HIGHEST
+echo   - No full sync was started by this installer
+echo   - Log: logs\auto_sync.log
 echo ============================================================
 echo.
 pause
 endlocal
+exit /b 0

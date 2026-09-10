@@ -1,10 +1,15 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
+
+import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
+import { ProvenanceService } from '../common/provenance.service';
 import { StaffSyncRowDto, StoreSyncRowDto } from './dto/sync.dto';
+import { GatiIngestionContext, GatiRoutingPolicy, parseGatiRoutingPolicy } from './gati-ingestion.guard';
 import {
   bool,
   dec,
@@ -64,6 +69,53 @@ export interface SyncResult {
 
 type Rec = Record<string, any>;
 
+type IngestionDatabase = PrismaService | Prisma.TransactionClient;
+
+interface ActiveGatiIngestion {
+  db: Prisma.TransactionClient;
+  routing: GatiRoutingPolicy;
+}
+
+interface LockedGatiAgent {
+  id: string;
+  organisationId: string;
+  sourceSystem: string;
+  sourceInstanceHash: string | null;
+  tokenHash: string;
+  revokedAt: Date | null;
+  config: Prisma.JsonValue;
+}
+
+/**
+ * `SyncState.storeId` is nullable, and PostgreSQL treats NULL values as
+ * distinct in a unique constraint. A null organisation-wide row could
+ * therefore duplicate forever. This non-null sentinel is deliberately not a
+ * Store id (SyncState has no Store FK); organisationId remains the tenant key.
+ */
+export const SYNC_STATE_ORGANISATION_SENTINEL = '__organisation__';
+
+const GATI_SOURCE_TABLE_BY_ROUTE: Record<string, string> = {
+  // Use the source's own table names, not CaratOS endpoint names. Several routes
+  // are views over PartyMst; they intentionally converge on one table state,
+  // with the latest fully accepted batch replacing its counters.
+  parties: 'PartyMst',
+  stores: 'PartyMst',
+  staff: 'PartyMst',
+  products: 'StyleMst',
+  stock: 'Inward',
+  sales: 'JewelTrans',
+  'sale-lines': 'JewelTransInward',
+  orders: 'Spm_MfgOrder',
+  'order-items': 'SPM_MfgOrderItem',
+  bags: 'SPM_BagMaster',
+  ledger: 'Journal',
+  'stock-movements': 'InwardHistory',
+  // These two are not SQL tables. Their source names are explicit so nobody
+  // mistakes them for a Gati database watermark.
+  'product-images': 'GatiMediaFiles',
+  'website-products': 'WebsiteProductFeed',
+};
+
 /**
  * Design category from whatever text a row carries. Gati's StyleMst has no clean
  * category column, so we scan every field (item type, group, name, code, web
@@ -102,10 +154,11 @@ const CODE_GROUP: Record<string, string> = {
 };
 
 function categoryFromCode(r: Rec): string | null {
-  const token = String(
-    r.StyleCode ?? r.StyleSKUNo ?? r.JewelCode ?? r.InwardSKUNo ?? '',
-  ).split('-')[0];
-  const two = token.replace(/[^A-Za-z]/g, '').slice(-2).toUpperCase();
+  const token = String(r.StyleCode ?? r.StyleSKUNo ?? r.JewelCode ?? r.InwardSKUNo ?? '').split('-')[0];
+  const two = token
+    .replace(/[^A-Za-z]/g, '')
+    .slice(-2)
+    .toUpperCase();
   return CODE_GROUP[two] ?? null;
 }
 
@@ -146,15 +199,251 @@ const STAGE_RANK: Record<string, number> = {
  * duplicates. Foreign keys (sale/order/stock) are resolved by looking up rows
  * already synced in an earlier entity (the agent pushes in dependency order).
  */
+/**
+ * Fields a CaratOS stock transfer takes ownership of. Once a piece has moved,
+ * the legacy source no longer knows where it is or what state it is in, and a
+ * sync that overwrote these would send stock back to the branch it left — with
+ * every total still adding up, so nobody would notice.
+ *
+ * Exported so FieldOwnershipService can assert its policy matches what this
+ * service actually enforces. Widening the protection in one place and not the
+ * other is the failure mode that constant exists to prevent.
+ */
+export const TRANSFER_PROTECTED_STOCK_FIELDS = ['storeId', 'status'] as const;
+
 @Injectable()
 export class SyncService {
   private readonly logger = new Logger(SyncService.name);
+  private readonly activeGatiIngestion = new AsyncLocalStorage<ActiveGatiIngestion>();
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly basePrisma: PrismaService,
     private readonly config: ConfigService,
     private readonly audit: AuditService,
+    private readonly provenance: ProvenanceService,
   ) {}
+
+  /**
+   * Every Gati domain query in a guarded request resolves through this getter,
+   * and therefore through the same row-locking transaction. Human-only repair
+   * operations have no active ingestion context and retain the ordinary client.
+   */
+  private get prisma(): PrismaService {
+    return (this.activeGatiIngestion.getStore()?.db ?? this.basePrisma) as IngestionDatabase as PrismaService;
+  }
+
+  /**
+   * Linearize one legacy batch against token rotation, revocation, disable and
+   * configuration replacement.
+   *
+   * The initial HTTP guard is necessary but insufficient: an admin can update
+   * ConnectAgent after it returns while a 3,000-row batch is still writing.
+   * `FOR SHARE` conflicts with those ConnectAgent UPDATE/DELETE operations and
+   * is held until every domain write plus the accepted SyncState receipt commits.
+   * Therefore either the whole request is before the head-office mutation, or
+   * it observes the new generation and writes nothing. There is no final-check
+   * window in which stale rows can land after the mutation completes.
+   */
+  async runGatiIngestion<T>(
+    user: AuthUser,
+    request: GatiIngestionContext,
+    routeEntity: string,
+    received: number,
+    work: () => Promise<T>,
+    rawSourceTable?: string,
+  ): Promise<T> {
+    if (
+      !user.isMachine ||
+      !user.agentId ||
+      user.agentId !== request.agentId ||
+      user.organisationId !== request.organisationId ||
+      user.agentTokenHash !== request.tokenHash ||
+      user.agentConfigRevision !== request.configRevision ||
+      user.connectorSourceSystem !== 'gati'
+    ) {
+      throw new ForbiddenException('Legacy Gati ingestion context does not match the authenticated principal.');
+    }
+
+    return this.basePrisma.withTenant(
+      user.organisationId,
+      async (tx) => {
+        const [agent] = await tx.$queryRaw<LockedGatiAgent[]>(Prisma.sql`
+          SELECT
+            "id",
+            "organisationId",
+            "sourceSystem",
+            "sourceInstanceHash",
+            "tokenHash",
+            "revokedAt",
+            "config"
+          FROM "ConnectAgent"
+          WHERE "id" = ${request.agentId}
+            AND "organisationId" = ${user.organisationId}
+          FOR SHARE
+        `);
+        const routing = await this.assertLockedGeneration(tx, user, request, agent);
+
+        return this.activeGatiIngestion.run({ db: tx, routing }, async () => {
+          const result = await work();
+          await this.recordAcceptedSyncState(tx, user.organisationId, routeEntity, rawSourceTable, received, result);
+          await this.audit.record(
+            user,
+            {
+              action: 'sync.ingested',
+              entityType: 'ConnectAgent',
+              entityId: request.agentId,
+              summary: `Accepted Gati ${routeEntity.slice(0, 64)} batch (${received} row${received === 1 ? '' : 's'})`,
+              metadata: {
+                routeEntity,
+                received,
+                sourceTable: syncSourceTable(routeEntity, rawSourceTable),
+                profileId: request.profileId,
+                profileHash: request.profileHash,
+                sourceInstanceHash: request.sourceInstanceHash,
+                configRevision: request.configRevision,
+                counts: aggregateSyncResultCounts(result),
+              },
+            },
+            tx,
+          );
+          return result;
+        });
+      },
+      // The on-site client times an upload out at 180 seconds. Leave enough
+      // headroom for the response while allowing the existing 3,000-row chunk.
+      { timeout: 170_000, maxWait: 10_000 },
+    );
+  }
+
+  private async assertLockedGeneration(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    request: GatiIngestionContext,
+    agent: LockedGatiAgent | undefined,
+  ): Promise<GatiRoutingPolicy> {
+    if (
+      !agent ||
+      agent.organisationId !== user.organisationId ||
+      agent.sourceSystem !== 'gati' ||
+      agent.revokedAt ||
+      agent.tokenHash !== request.tokenHash ||
+      agent.sourceInstanceHash !== request.sourceInstanceHash
+    ) {
+      throw new ForbiddenException('This Gati batch belongs to an obsolete or revoked agent generation.');
+    }
+
+    const config = jsonObject(agent.config);
+    const configRevision = config.configRevision ?? '1';
+    if (
+      config.enabled === false ||
+      configRevision !== request.configRevision ||
+      config.expectedProfileHash !== request.profileHash ||
+      config.expectedSourceInstanceHash !== request.sourceInstanceHash
+    ) {
+      throw new ForbiddenException('This Gati batch no longer matches the approved configuration.');
+    }
+
+    // Parse again under the row lock. The request copy is never the authority;
+    // it is only a guard-to-service carrier bound to this configRevision.
+    const routing = parseGatiRoutingPolicy(config);
+    if (routing.defaultStoreId) {
+      const store = await tx.store.findFirst({
+        where: {
+          id: routing.defaultStoreId,
+          organisationId: user.organisationId,
+          isAggregate: false,
+        },
+        select: { id: true },
+      });
+      if (!store) {
+        throw new ForbiddenException('The approved Gati default store is not available in this organisation.');
+      }
+    }
+    return routing;
+  }
+
+  /** Persist only a complete acknowledgement, in the same transaction as data. */
+  private async recordAcceptedSyncState<T>(
+    tx: Prisma.TransactionClient,
+    organisationId: string,
+    routeEntity: string,
+    rawSourceTable: string | undefined,
+    received: number,
+    result: T,
+  ): Promise<void> {
+    if (!Number.isInteger(received) || received <= 0) return;
+    if (!result || typeof result !== 'object') return;
+    const view = result as Record<string, unknown>;
+    const skipped = routeEntity === 'stores' ? 0 : numberField(view.skipped);
+    if (skipped === null) return;
+    if (routeEntity !== 'stores' && numberField(view.received) !== received) return;
+    const accepted =
+      routeEntity === 'stores'
+        ? arrayLength(view.created) + arrayLength(view.updated)
+        : routeEntity === 'staff'
+          ? (numberField(view.created) ?? 0) + (numberField(view.updated) ?? 0)
+          : numberField(view.upserted);
+    if (skipped !== 0 || accepted !== received) return;
+
+    const sourceTable = syncSourceTable(routeEntity, rawSourceTable);
+    if (!sourceTable) return;
+
+    const watermark = typeof view.watermark === 'string' ? dt(view.watermark) : null;
+    const stateId = randomUUID();
+
+    // This must be one database statement. Two accepted batches can finish in
+    // the opposite order from the one in which their source snapshots were
+    // taken. A read-then-upsert (or a plain Prisma upsert) lets the delayed,
+    // older batch lower lastUpdatedAt after the newer batch commits.
+    //
+    // PostgreSQL's transaction timestamp also makes lastRunAt monotonic when
+    // application hosts have slightly different clocks. rowsSynced follows the
+    // transaction with the greatest run timestamp, while the source watermark
+    // independently retains its greatest value.
+    await tx.$executeRaw(Prisma.sql`
+      INSERT INTO "SyncState" (
+        "id",
+        "organisationId",
+        "sourceTable",
+        "storeId",
+        "lastUpdatedAt",
+        "lastRunAt",
+        "rowsSynced",
+        "updatedAt"
+      )
+      VALUES (
+        ${stateId},
+        ${organisationId},
+        ${sourceTable},
+        ${SYNC_STATE_ORGANISATION_SENTINEL},
+        (${watermark}::timestamptz AT TIME ZONE 'UTC'),
+        (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
+        ${received},
+        (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
+      )
+      ON CONFLICT ("organisationId", "sourceTable", "storeId")
+      DO UPDATE SET
+        "lastUpdatedAt" = CASE
+          WHEN EXCLUDED."lastUpdatedAt" IS NULL THEN "SyncState"."lastUpdatedAt"
+          WHEN "SyncState"."lastUpdatedAt" IS NULL THEN EXCLUDED."lastUpdatedAt"
+          ELSE GREATEST("SyncState"."lastUpdatedAt", EXCLUDED."lastUpdatedAt")
+        END,
+        "rowsSynced" = CASE
+          WHEN "SyncState"."lastRunAt" IS NULL
+            OR "SyncState"."lastRunAt" <= EXCLUDED."lastRunAt"
+          THEN EXCLUDED."rowsSynced"
+          ELSE "SyncState"."rowsSynced"
+        END,
+        "lastRunAt" = CASE
+          WHEN "SyncState"."lastRunAt" IS NULL THEN EXCLUDED."lastRunAt"
+          ELSE GREATEST("SyncState"."lastRunAt", EXCLUDED."lastRunAt")
+        END,
+        "updatedAt" = CASE
+          WHEN "SyncState"."updatedAt" <= EXCLUDED."updatedAt" THEN EXCLUDED."updatedAt"
+          ELSE "SyncState"."updatedAt"
+        END
+    `);
+  }
 
   /**
    * The store a row lands in when it names no branch we recognise.
@@ -168,6 +457,13 @@ export class SyncService {
    * default it used to be.
    */
   private get defaultStoreId(): string {
+    const approved = this.activeGatiIngestion.getStore()?.routing;
+    if (approved && approved.defaultStoreId !== undefined) {
+      if (approved.defaultStoreId) return approved.defaultStoreId;
+      throw new BadRequestException(
+        'This Gati configuration has no defaultStoreId. Configure one before importing unattributed rows.',
+      );
+    }
     // The store that owns rows we cannot attribute to a branch. This MUST be set
     // explicitly per install — there is no "main store", so never fall back to a
     // hardcoded branch (Surat or any other). An unset value is a config error.
@@ -181,12 +477,19 @@ export class SyncService {
     return id;
   }
 
-  private async assertStore(): Promise<string> {
+  private async assertStore(organisationId: string): Promise<string> {
     const id = this.defaultStoreId;
-    const store = await this.prisma.store.findUnique({ where: { id } });
+    // Store.id is globally unique, but that is not an authorization boundary.
+    // A process-wide fallback can point at another tenant, so ownership must be
+    // checked before the id is attached to an organisation-owned row.
+    const store = await this.prisma.store.findFirst({
+      where: { id, organisationId },
+      select: { id: true },
+    });
     if (!store) {
       throw new BadRequestException(
-        `Sync target store '${id}' not found — seed it or set SYNC_DEFAULT_STORE_ID.`,
+        `Sync target store '${id}' is not available in this organisation — ` +
+          'configure a tenant-owned fallback before importing unattributed rows.',
       );
     }
     return id;
@@ -196,10 +499,15 @@ export class SyncService {
    * Map a Gati branch/location legacyId -> Eclat Store id (or null if unmapped).
    * For future per-row location stamping of transaction rows.
    */
-  async resolveStoreByLegacyId(legacyId: string | number | null | undefined): Promise<string | null> {
+  async resolveStoreByLegacyId(
+    legacyId: string | number | null | undefined,
+    organisationId: string,
+  ): Promise<string | null> {
     if (legacyId == null) return null;
-    const store = await this.prisma.store.findUnique({
-      where: { legacyId: String(legacyId) },
+    // findFirst (not findUnique): a legacyId is only unique WITHIN an org, so the
+    // branch is resolved against the sync account's own org, never another's.
+    const store = await this.prisma.store.findFirst({
+      where: { legacyId: String(legacyId), organisationId },
       select: { id: true },
     });
     return store?.id ?? null;
@@ -222,13 +530,20 @@ export class SyncService {
     const created: { id: string; legacyId: string; name: string }[] = [];
     const updated: { id: string; legacyId: string; name: string }[] = [];
 
-    const adoptions = await this.planAdoptions(records);
-    const adopted: { id: string; legacyId: string; name: string; was: string }[] = [];
+    const adoptions = await this.planAdoptions(user.organisationId, records);
+    const adopted: {
+      id: string;
+      legacyId: string;
+      name: string;
+      was: string;
+    }[] = [];
 
     for (const r of records) {
       const legacyId = String(r.legacyId);
-      let existing = await this.prisma.store.findUnique({
-        where: { legacyId },
+      // findFirst scoped to the acting org: a legacyId is unique only WITHIN an
+      // org now, so an org must never resolve another org's branch by it.
+      let existing = await this.prisma.store.findFirst({
+        where: { legacyId, organisationId: user.organisationId },
         select: { id: true },
       });
 
@@ -242,7 +557,12 @@ export class SyncService {
           select: { id: true },
         });
         existing = claimed;
-        adopted.push({ id: adopt.storeId, legacyId, name: r.name, was: adopt.wasNamed });
+        adopted.push({
+          id: adopt.storeId,
+          legacyId,
+          name: r.name,
+          was: adopt.wasNamed,
+        });
         await this.audit.record(user, {
           action: 'store.linked_to_gati',
           entityType: 'store',
@@ -250,7 +570,7 @@ export class SyncService {
           storeId: adopt.storeId,
           summary: `Linked existing branch "${adopt.wasNamed}" to Gati branch "${r.name}"`,
           metadata: { legacyId, matchedOn: adopt.why },
-        });
+        }, this.prisma);
       }
 
       // `?? undefined` (not `?? null`) throughout: a field the source omits must
@@ -269,7 +589,12 @@ export class SyncService {
 
       if (existing) {
         const store = await this.prisma.store.update({
-          where: { legacyId },
+          where: {
+            organisationId_legacyId: {
+              organisationId: user.organisationId,
+              legacyId,
+            },
+          },
           data: {
             name: r.name,
             city: r.city ?? undefined,
@@ -282,6 +607,7 @@ export class SyncService {
       } else {
         const store = await this.prisma.store.create({
           data: {
+            organisationId: user.organisationId,
             legacyId,
             name: r.name,
             city: r.city ?? '',
@@ -300,12 +626,16 @@ export class SyncService {
           storeId: store.id,
           summary: `Auto-detected branch ${store.name} from Gati`,
           metadata: { legacyId, city: r.city ?? null, code: r.code ?? null },
-        });
+        }, this.prisma);
       }
     }
 
     const pendingCount = await this.prisma.store.count({
-      where: { status: 'pending', isAggregate: false },
+      where: {
+        status: 'pending',
+        isAggregate: false,
+        organisationId: user.organisationId,
+      },
     });
 
     // Real branches still missing a geofence centre. Excludes the synthetic
@@ -313,9 +643,16 @@ export class SyncService {
     const missingGeo = await this.prisma.store.findMany({
       where: {
         isAggregate: false,
+        organisationId: user.organisationId,
         OR: [{ latitude: null }, { longitude: null }],
       },
-      select: { id: true, name: true, city: true, addressLine1: true, pincode: true },
+      select: {
+        id: true,
+        name: true,
+        city: true,
+        addressLine1: true,
+        pincode: true,
+      },
       orderBy: { name: 'asc' },
     });
 
@@ -366,6 +703,7 @@ export class SyncService {
    * human then looks at. Guessing wrong here is worse than an extra row.
    */
   private async planAdoptions(
+    organisationId: string,
     records: StoreSyncRowDto[],
   ): Promise<Map<string, { storeId: string; wasNamed: string; why: string }>> {
     const words = (s: string): string[] =>
@@ -376,22 +714,32 @@ export class SyncService {
 
     const candidates = (
       await this.prisma.store.findMany({
-        where: { legacyId: null, isAggregate: false },
+        where: { legacyId: null, isAggregate: false, organisationId },
         select: { id: true, name: true },
       })
-    ).map((s) => ({ ...s, words: words(s.name), joined: words(s.name).join('') }));
+    ).map((s) => ({
+      ...s,
+      words: words(s.name),
+      joined: words(s.name).join(''),
+    }));
     if (!candidates.length) return new Map();
 
     const knownLegacyIds = new Set(
       (
         await this.prisma.store.findMany({
-          where: { legacyId: { not: null } },
+          where: { legacyId: { not: null }, organisationId },
           select: { legacyId: true },
         })
       ).map((s) => s.legacyId as string),
     );
 
-    type Proposal = { legacyId: string; storeId: string; wasNamed: string; why: string; score: number };
+    type Proposal = {
+      legacyId: string;
+      storeId: string;
+      wasNamed: string;
+      why: string;
+      score: number;
+    };
     const proposals: Proposal[] = [];
 
     for (const r of records) {
@@ -407,8 +755,7 @@ export class SyncService {
         // is removed — "MUMBAI KALAGHODA" vs "Mumbai - Kala Ghoda".
         const exact =
           c.joined === incomingJoined ||
-          (c.words.length === incoming.length &&
-            [...c.words].sort().join('|') === [...incoming].sort().join('|'));
+          (c.words.length === incoming.length && [...c.words].sort().join('|') === [...incoming].sort().join('|'));
         // Otherwise: every word of the existing store appears in the Gati name.
         const subset = c.words.every((w) => incoming.includes(w));
         if (!exact && !subset) continue;
@@ -429,7 +776,11 @@ export class SyncService {
     const plan = new Map<string, { storeId: string; wasNamed: string; why: string }>();
     for (const p of proposals) {
       if (plan.has(p.legacyId) || takenStores.has(p.storeId)) continue;
-      plan.set(p.legacyId, { storeId: p.storeId, wasNamed: p.wasNamed, why: p.why });
+      plan.set(p.legacyId, {
+        storeId: p.storeId,
+        wasNamed: p.wasNamed,
+        why: p.why,
+      });
       takenStores.add(p.storeId);
     }
     return plan;
@@ -466,22 +817,30 @@ export class SyncService {
       }
 
       const storeId = r.storeLegacyId
-        ? (
-            await this.prisma.store.findUnique({
-              where: { legacyId: String(r.storeLegacyId) },
+        ? ((
+            await this.prisma.store.findFirst({
+              where: {
+                legacyId: String(r.storeLegacyId),
+                organisationId: user.organisationId,
+              },
               select: { id: true },
             })
-          )?.id ?? null
+          )?.id ?? null)
         : null;
 
-      const existing = await this.prisma.user.findUnique({
-        where: { legacyId },
+      const existing = await this.prisma.user.findFirst({
+        where: { legacyId, organisationId: user.organisationId },
         select: { id: true, isActive: true },
       });
 
       if (existing) {
         await this.prisma.user.update({
-          where: { legacyId },
+          where: {
+            organisationId_legacyId: {
+              organisationId: user.organisationId,
+              legacyId,
+            },
+          },
           data: {
             name,
             phone: r.phone ?? undefined,
@@ -521,6 +880,7 @@ export class SyncService {
 
       const createdUser = await this.prisma.user.create({
         data: {
+          organisationId: user.organisationId,
           legacyId,
           legacyUpdatedAt: r.updatedAt ? new Date(r.updatedAt) : null,
           name,
@@ -546,18 +906,29 @@ export class SyncService {
           designation: r.designation ?? null,
           emailSource: email ? 'legacy' : 'placeholder',
         },
-      });
+      }, this.prisma);
     }
 
     const pendingStaff = await this.prisma.user.count({
-      where: { legacyId: { not: null }, isActive: false },
+      where: {
+        legacyId: { not: null },
+        isActive: false,
+        organisationId: user.organisationId,
+      },
     });
 
     this.logger.log(
       `sync staff: received=${records.length} created=${created} updated=${updated} ` +
         `skipped=${skipped} pendingActivation=${pendingStaff}`,
     );
-    return { received: records.length, created, updated, skipped, conflicts, pendingStaff };
+    return {
+      received: records.length,
+      created,
+      updated,
+      skipped,
+      conflicts,
+      pendingStaff,
+    };
   }
 
   // ── Demo-data purge ─────────────────────────────────────────────────────────
@@ -642,7 +1013,12 @@ export class SyncService {
       const model = (this.prisma as any)[t];
       if (!model?.count) continue; // model renamed or not in this build
       try {
-        counts[t] = await model.count({ where: { legacyId: { not: null } } });
+        counts[t] = await model.count({
+          where: {
+            legacyId: { not: null },
+            organisationId: user.organisationId,
+          },
+        });
       } catch {
         // Not every table has a legacyId column; those simply do not apply.
       }
@@ -684,13 +1060,23 @@ export class SyncService {
           for (const t of tables) {
             const model = (tx as any)[t];
             if (!model?.deleteMany) continue;
-            d[t] = (await model.deleteMany({ where: { legacyId: { not: null } } })).count;
+            d[t] = (
+              await model.deleteMany({
+                where: {
+                  legacyId: { not: null },
+                  organisationId: user.organisationId,
+                },
+              })
+            ).count;
           }
           // Stores survive — they hold the branch links, geofences and staff
           // assignments set up by hand — but must look un-synced so the next run
           // refreshes them.
           const s = await tx.store.updateMany({
-            where: { legacyId: { not: null } },
+            where: {
+              legacyId: { not: null },
+              organisationId: user.organisationId,
+            },
             data: { legacyUpdatedAt: null },
           });
           return { d, s: s.count };
@@ -725,8 +1111,7 @@ export class SyncService {
       message: `Cleared ${totalDeleted} imported record(s). Stores kept and unstamped.`,
       deleted,
       storesReset,
-      next:
-        'On the sync agent: delete sync_state.json, then run 5_first_sync.bat all',
+      next: 'On the sync agent: delete sync_state.json, then run 5_first_sync.bat all',
     };
   }
 
@@ -772,7 +1157,12 @@ export class SyncService {
         AND ccu.table_name = 'Store'`;
 
     const candidates = await this.prisma.store.findMany({
-      where: { legacyId: { not: null }, isAggregate: false, status: 'pending' },
+      where: {
+        legacyId: { not: null },
+        isAggregate: false,
+        status: 'pending',
+        organisationId: user.organisationId,
+      },
       select: { id: true, name: true, legacyId: true },
       orderBy: { name: 'asc' },
     });
@@ -806,16 +1196,17 @@ export class SyncService {
     }
 
     const ids = empty.map((s) => s.id);
-    const deleted = ids.length
-      ? (await this.prisma.store.deleteMany({ where: { id: { in: ids } } })).count
-      : 0;
+    const deleted = ids.length ? (await this.prisma.store.deleteMany({ where: { id: { in: ids } } })).count : 0;
 
     await this.audit.record(user, {
       action: 'store.pruned_empty',
       entityType: 'system',
       entityId: 'store-prune',
       summary: `Removed ${deleted} imported branch(es) that held no data`,
-      metadata: { removed: empty.map((s) => `${s.name} (${s.legacyId})`), kept: inUse.length },
+      metadata: {
+        removed: empty.map((s) => `${s.name} (${s.legacyId})`),
+        kept: inUse.length,
+      },
     });
 
     return {
@@ -826,17 +1217,49 @@ export class SyncService {
     };
   }
 
+  /**
+   * "Delete this row" predicate for the mirrored tables during a demo purge.
+   *
+   * The rule used to be `legacyId: null` — "anything the connector did not bring
+   * in is seeded demo data". True until the file-import engine shipped: an
+   * imported customer has no legacyId either, so the documented go-live purge
+   * silently deleted every customer and product a client had uploaded from their
+   * own spreadsheet.
+   *
+   * The rule now lives in ProvenanceService, so this operation and every future
+   * destructive one read the SAME definition of "the customer gave us this".
+   * A local copy is exactly how the two definitions drifted apart the first time.
+   */
+  private notDemoWhere(model: string, org: string): Record<string, unknown> {
+    return this.provenance.locallyCreatedWhere(model, org) as Record<string, unknown>;
+  }
+
   async purgeDemo(user: AuthUser, confirm?: string) {
     const PURGE_CONFIRM_PHRASE = 'DELETE DEMO DATA';
     const armed = confirm === PURGE_CONFIRM_PHRASE;
 
-    // Guard 2 — is there any real data at all?
+    // Guard 2 — is there any real data at all? Scoped to the acting org: another
+    // tenant's synced rows must never satisfy THIS tenant's "real data exists" gate.
+    const org = user.organisationId;
+    const fromClient = {
+      OR: [{ legacyId: { not: null } }, { importBatchId: { not: null } }],
+    };
     const realCounts = {
-      parties: await this.prisma.party.count({ where: { legacyId: { not: null } } }),
-      products: await this.prisma.product.count({ where: { legacyId: { not: null } } }),
-      stockItems: await this.prisma.stockItem.count({ where: { legacyId: { not: null } } }),
-      sales: await this.prisma.sale.count({ where: { legacyId: { not: null } } }),
-      orders: await this.prisma.manufacturingOrder.count({ where: { legacyId: { not: null } } }),
+      parties: await this.prisma.party.count({
+        where: { ...fromClient, organisationId: org },
+      }),
+      products: await this.prisma.product.count({
+        where: { ...fromClient, organisationId: org },
+      }),
+      stockItems: await this.prisma.stockItem.count({
+        where: { legacyId: { not: null }, organisationId: org },
+      }),
+      sales: await this.prisma.sale.count({
+        where: { legacyId: { not: null }, organisationId: org },
+      }),
+      orders: await this.prisma.manufacturingOrder.count({
+        where: { legacyId: { not: null }, organisationId: org },
+      }),
     };
     const realTotal = Object.values(realCounts).reduce((a, b) => a + b, 0);
     if (realTotal === 0) {
@@ -916,14 +1339,25 @@ export class SyncService {
     // someone adds a model — turning this into a 500 mid-cutover.
     const storeScoped = this.storeScopedModels();
     const demoStores = await this.prisma.store.findMany({
-      where: { legacyId: null, isAggregate: false },
+      // `importBatchId: null` matters as much as `legacyId: null`: a store the
+      // client uploaded in their own spreadsheet is their real branch, not
+      // seeded demo data, and deleting it takes every row hanging off it.
+      where: {
+        legacyId: null,
+        importBatchId: null,
+        isAggregate: false,
+        organisationId: org,
+      },
       select: { id: true, name: true },
     });
     const storesToDelete: { id: string; name: string }[] = [];
     const storesKept: { id: string; name: string; reason: string }[] = [];
     for (const s of demoStores) {
       if (s.id === this.defaultStoreId) {
-        storesKept.push({ ...s, reason: 'it is the sync target for all imported data' });
+        storesKept.push({
+          ...s,
+          reason: 'it is the sync target for all imported data',
+        });
         continue;
       }
       // Any imported row anywhere under this store makes it untouchable.
@@ -933,22 +1367,38 @@ export class SyncService {
         const m = (this.prisma as any)[model];
         if (!m) continue;
         try {
-          holdsReal += await m.count({ where: { storeId: s.id, legacyId: { not: null } } });
+          // "Real" means came from the client — whether via the connector
+          // (legacyId) or an uploaded file (importBatchId). Counting only
+          // legacyId made a store full of imported stock look empty.
+          holdsReal += await m.count({
+            where: {
+              storeId: s.id,
+              ...(this.provenance.supportsImportBatch(model)
+                ? {
+                    OR: [{ legacyId: { not: null } }, { importBatchId: { not: null } }],
+                  }
+                : { legacyId: { not: null } }),
+            },
+          });
         } catch {
           /* model without the expected shape — ignore */
         }
         if (holdsReal > 0) break;
       }
       if (holdsReal > 0) {
-        storesKept.push({ ...s, reason: `holds ${holdsReal} imported record(s)` });
+        storesKept.push({
+          ...s,
+          reason: `holds ${holdsReal} imported record(s)`,
+        });
       } else {
         storesToDelete.push(s);
       }
     }
 
-    // Guard 4 — which seeded users are safe to remove?
+    // Guard 4 — which seeded users are safe to remove? Scoped to the acting org
+    // so this tenant's purge can never touch another tenant's accounts.
     const demoUsers = await this.prisma.user.findMany({
-      where: { legacyId: null },
+      where: { legacyId: null, organisationId: org },
       select: { id: true, name: true, email: true, role: true },
     });
     const usersToDelete: { id: string; name: string; email: string }[] = [];
@@ -957,19 +1407,27 @@ export class SyncService {
       if (u.id === user.id) {
         usersKept.push({ id: u.id, email: u.email, reason: 'this is you' });
       } else if (u.role === 'head_office') {
-        usersKept.push({ id: u.id, email: u.email, reason: 'head office account' });
+        usersKept.push({
+          id: u.id,
+          email: u.email,
+          reason: 'head office account',
+        });
       } else {
         usersToDelete.push({ id: u.id, name: u.name, email: u.email });
       }
     }
 
-    // Build the plan (counts only — no writes yet).
+    // Build the plan (counts only — no writes yet). Every count is org-scoped:
+    // a demo-only table with no org column of its own is scoped through its
+    // owning relation (orgScopedWhere), so the plan never counts another tenant.
     const plan: Record<string, number> = {};
     for (const m of demoOnlyTables) {
       const model = (this.prisma as any)[m];
       if (!model) continue;
+      const scope = this.orgScopedWhere(m, org);
+      if (!scope) continue; // cannot tie to an org — never touch it (fail-closed)
       try {
-        plan[m] = await model.count({});
+        plan[m] = await model.count({ where: scope });
       } catch {
         /* model absent in this schema version — skip silently */
       }
@@ -978,7 +1436,7 @@ export class SyncService {
       const model = (this.prisma as any)[m];
       if (!model) continue;
       try {
-        plan[m] = await model.count({ where: { legacyId: null } });
+        plan[m] = await model.count({ where: this.notDemoWhere(m, org) });
       } catch {
         /* ignore */
       }
@@ -1004,12 +1462,20 @@ export class SyncService {
     }
 
     // ── Armed: execute, children before parents. ──
+    // Every deleteMany is org-scoped — a demo-only table with no org column is
+    // scoped through its owning relation. A model that cannot be tied to an org
+    // is skipped rather than wiped globally (fail-closed cross-tenant guard).
     const deleted: Record<string, number> = {};
     for (const m of demoOnlyTables) {
       const model = (this.prisma as any)[m];
       if (!model) continue;
+      const scope = this.orgScopedWhere(m, org);
+      if (!scope) {
+        this.logger.warn(`purge: ${m} has no org scope — left untouched to avoid a cross-tenant wipe`);
+        continue;
+      }
       try {
-        deleted[m] = (await model.deleteMany({})).count;
+        deleted[m] = (await model.deleteMany({ where: scope })).count;
       } catch (err) {
         this.logger.warn(`purge: skipped ${m}: ${err instanceof Error ? err.message : err}`);
       }
@@ -1018,7 +1484,7 @@ export class SyncService {
       const model = (this.prisma as any)[m];
       if (!model) continue;
       try {
-        deleted[m] = (await model.deleteMany({ where: { legacyId: null } })).count;
+        deleted[m] = (await model.deleteMany({ where: this.notDemoWhere(m, org) })).count;
       } catch (err) {
         this.logger.warn(`purge: skipped ${m}: ${err instanceof Error ? err.message : err}`);
       }
@@ -1085,14 +1551,11 @@ export class SyncService {
       }
 
       try {
-        deleted['store'] = (
-          await this.prisma.store.deleteMany({ where: { id: { in: doomed } } })
-        ).count;
+        deleted['store'] = (await this.prisma.store.deleteMany({ where: { id: { in: doomed } } })).count;
       } catch (err) {
         // Better a demo store lingering than a partly-deleted one.
         this.logger.error(
-          `purge: store delete failed, leaving them in place: ` +
-            (err instanceof Error ? err.message : String(err)),
+          `purge: store delete failed, leaving them in place: ` + (err instanceof Error ? err.message : String(err)),
         );
         deleted['store'] = 0;
       }
@@ -1140,15 +1603,25 @@ export class SyncService {
    */
   async resetToHeadOffice(actor: AuthUser, confirm?: string) {
     const CONFIRM = 'DELETE ALL USERS EXCEPT HEAD OFFICE';
+    // Scoped to the ACTING org throughout: keep ALL of this org's head-office
+    // accounts and delete only this org's other users. Another tenant's accounts
+    // — head-office or not — are never read, kept, or deleted here.
+    const org = actor.organisationId;
     const keep = await this.prisma.user.findMany({
-      where: { role: 'head_office' },
+      where: { role: 'head_office', organisationId: org },
       select: { id: true, name: true, email: true },
     });
     const keepIds = keep.map((u) => u.id);
-    const doomed = await this.prisma.user.findMany({
-      where: { id: { notIn: keepIds } },
-      select: { name: true, email: true, role: true },
+    const doomedUsers = await this.prisma.user.findMany({
+      where: { organisationId: org, id: { notIn: keepIds } },
+      select: { id: true, name: true, email: true, role: true },
     });
+    const doomedIds = doomedUsers.map((u) => u.id);
+    const doomed = doomedUsers.map(({ name, email, role }) => ({
+      name,
+      email,
+      role,
+    }));
 
     if (confirm !== CONFIRM) {
       return {
@@ -1165,24 +1638,40 @@ export class SyncService {
       );
     }
     if (doomed.length === 0) {
-      return { dryRun: false, deletedUsers: 0, message: 'Only head office exists already.' };
+      return {
+        dryRun: false,
+        deletedUsers: 0,
+        message: 'Only head office exists already.',
+      };
     }
 
     // Eclat-only tables that FK to the users being removed. Cleared entirely
     // (all demo at go-live), CHILDREN BEFORE PARENTS so foreign keys stay valid.
     const clearEntirely = [
-      'leadNote', 'leadFollowUp', 'occasionReminder', 'lead',
-      'quoteLine', 'quote',
+      'leadNote',
+      'leadFollowUp',
+      'occasionReminder',
+      'lead',
+      'quoteLine',
+      'quote',
       'checkIn',
-      'attendanceRegularization', 'attendanceRecord',
-      'leaveBalance', 'leaveRequest',
-      'specialRequestMessage', 'specialRequest',
-      'handoff', 'dailyReport',
-      'salesTarget', 'commission',
-      'ticketMessage', 'ticket',
-      'returnPhoto', 'returnRecord',
+      'attendanceRegularization',
+      'attendanceRecord',
+      'leaveBalance',
+      'leaveRequest',
+      'specialRequestMessage',
+      'specialRequest',
+      'handoff',
+      'dailyReport',
+      'salesTarget',
+      'commission',
+      'ticketMessage',
+      'ticket',
+      'returnPhoto',
+      'returnRecord',
       'discountRequest',
-      'customOrderEvent', 'customOrder',
+      'customOrderEvent',
+      'customOrder',
       'task',
     ];
 
@@ -1192,21 +1681,34 @@ export class SyncService {
         for (const m of clearEntirely) {
           const model = (tx as any)[m];
           if (!model) continue;
-          deleted[m] = (await model.deleteMany({})).count;
+          // Org-scoped: a child table with no org column is scoped through its
+          // owning relation. A model that can't be tied to this org is skipped
+          // rather than wiped across every tenant (fail-closed).
+          const scope = this.orgScopedWhere(m, org);
+          if (!scope) {
+            this.logger.warn(`reset-users: ${m} has no org scope — left untouched`);
+            continue;
+          }
+          deleted[m] = (await model.deleteMany({ where: scope })).count;
         }
-        // Shared with head office — scope to the doomed users so HO keeps its own.
+        // Scope to THIS org's doomed users so every other tenant — and this org's
+        // own head office — keeps its notifications, audit trail and store links.
         deleted['notification'] = (
-          await tx.notification.deleteMany({ where: { userId: { notIn: keepIds } } })
+          await tx.notification.deleteMany({
+            where: { userId: { in: doomedIds } },
+          })
         ).count;
         deleted['auditLog'] = (
-          await tx.auditLog.deleteMany({ where: { actorId: { notIn: keepIds } } })
+          await tx.auditLog.deleteMany({
+            where: { organisationId: org, actorId: { notIn: keepIds } },
+          })
         ).count;
         deleted['userStore'] = (
-          await tx.userStore.deleteMany({ where: { userId: { notIn: keepIds } } })
+          await tx.userStore.deleteMany({
+            where: { userId: { in: doomedIds } },
+          })
         ).count;
-        deleted['user'] = (
-          await tx.user.deleteMany({ where: { id: { notIn: keepIds } } })
-        ).count;
+        deleted['user'] = (await tx.user.deleteMany({ where: { id: { in: doomedIds } } })).count;
       },
       { timeout: 120_000, maxWait: 20_000 },
     );
@@ -1245,6 +1747,46 @@ export class SyncService {
       }));
   }
 
+  /**
+   * A Prisma `where` fragment that restricts one model to a single organisation.
+   *
+   * The destructive go-live ops (purgeDemo / resetSyncedData / resetToHeadOffice)
+   * loop over heterogeneous model names. Most business models carry an
+   * `organisationId` column, but ~28 child tables (leadNote, quoteLine,
+   * returnPhoto, schemeInstallment, …) inherit tenancy transitively through a
+   * required FK and have no org column of their own. A blanket `deleteMany({})`
+   * on such a table would wipe EVERY tenant's rows — the exact cross-org leak
+   * this hardening closes.
+   *
+   * So: use the org column directly when present; otherwise walk the shortest
+   * to-one relation to the nearest org-bearing ancestor and scope through it.
+   * Returns null when a model cannot be tied to an org at all — the caller MUST
+   * then refuse to delete rather than fall back to a global wipe (fail-closed).
+   */
+  private orgScopedWhere(
+    model: string,
+    organisationId: string,
+    seen: Set<string> = new Set(),
+  ): Record<string, any> | null {
+    const models = (Prisma as any)?.dmmf?.datamodel?.models ?? [];
+    const lc = (n: string) => n.charAt(0).toLowerCase() + n.slice(1);
+    const meta = models.find((m: any) => lc(m.name) === model || m.name === model);
+    if (!meta || seen.has(meta.name)) return null;
+    seen.add(meta.name);
+    if (meta.fields.some((f: any) => f.name === 'organisationId')) {
+      return { organisationId };
+    }
+    // Prefer a required to-one relation (the owning parent) over an optional one.
+    const relations = meta.fields
+      .filter((f: any) => f.kind === 'object' && !f.isList)
+      .sort((a: any, b: any) => Number(b.isRequired) - Number(a.isRequired));
+    for (const f of relations) {
+      const child = this.orgScopedWhere(lc(f.type), organisationId, new Set(seen));
+      if (child) return { [f.name]: child };
+    }
+    return null;
+  }
+
   /** Idempotent user↔store link; the composite unique makes a re-run a no-op. */
   private async linkUserStore(userId: string, storeId: string): Promise<void> {
     try {
@@ -1255,8 +1797,7 @@ export class SyncService {
       });
     } catch (err) {
       this.logger.warn(
-        `could not link user ${userId} to store ${storeId}: ` +
-          (err instanceof Error ? err.message : String(err)),
+        `could not link user ${userId} to store ${storeId}: ` + (err instanceof Error ? err.message : String(err)),
       );
     }
   }
@@ -1316,6 +1857,13 @@ export class SyncService {
   };
 
   private branchColumnsFor(entity: string): string[] {
+    const approved = this.activeGatiIngestion.getStore()?.routing;
+    if (approved && approved.branchColumns !== undefined) {
+      return [
+        ...(approved.branchColumns[entity as keyof typeof approved.branchColumns] ??
+          SyncService.DEFAULT_BRANCH_COLUMNS[entity] ?? ['EclatBranchId']),
+      ];
+    }
     const raw = this.config.get<string>('SYNC_BRANCH_COLUMNS');
     if (raw) {
       try {
@@ -1329,7 +1877,12 @@ export class SyncService {
   }
 
   /** Stable id of the holding store for rows we cannot attribute to a branch. */
-  static readonly UNASSIGNED_STORE_ID = 'unassigned';
+  static readonly LEGACY_UNASSIGNED_STORE_ID = 'unassigned';
+
+  /** Store ids are global, so every tenant needs a distinct holding-store id. */
+  private static unassignedStoreIdFor(organisationId: string): string {
+    return `unassigned:${organisationId}`;
+  }
 
   /**
    * Where a row goes when it names no branch we recognise.
@@ -1351,30 +1904,61 @@ export class SyncService {
    * Created lazily — an install that attributes everything never grows the extra
    * store.
    */
-  private async unattributedStoreId(): Promise<string> {
-    const mode = (this.config.get<string>('SYNC_UNATTRIBUTED') ?? 'holding').toLowerCase();
-    if (mode === 'default') return this.assertStore();
+  private async unattributedStoreId(organisationId: string): Promise<string> {
+    const approved = this.activeGatiIngestion.getStore()?.routing;
+    const mode =
+      approved && approved.unattributedMode !== undefined
+        ? approved.unattributedMode
+        : (this.config.get<string>('SYNC_UNATTRIBUTED') ?? 'holding').toLowerCase();
+    if (mode === 'default') return this.assertStore(organisationId);
 
     const realBranches = await this.prisma.store.count({
-      where: { legacyId: { not: null }, isAggregate: false },
+      where: { legacyId: { not: null }, isAggregate: false, organisationId },
     });
-    if (realBranches <= 1) return this.assertStore();
+    if (realBranches <= 1) return this.assertStore(organisationId);
 
-    const id = SyncService.UNASSIGNED_STORE_ID;
-    const existing = await this.prisma.store.findUnique({ where: { id }, select: { id: true } });
-    if (existing) return id;
+    // Preserve an existing pre-multi-tenant holding store only for its owner.
+    // Every other tenant gets an injective id based on its authoritative org id;
+    // the old global `unassigned` id must never be reused across tenants.
+    const legacy = await this.prisma.store.findFirst({
+      where: {
+        id: SyncService.LEGACY_UNASSIGNED_STORE_ID,
+        organisationId,
+      },
+      select: { id: true },
+    });
+    if (legacy) return legacy.id;
+
+    const id = SyncService.unassignedStoreIdFor(organisationId);
+    const existing = await this.prisma.store.findFirst({
+      where: { id, organisationId },
+      select: { id: true },
+    });
+    if (existing) return existing.id;
 
     // Deliberately has no legacyId: it is ours, not a branch of theirs, so the
     // demo purge treats it as non-imported and the sync never tries to update it.
-    await this.prisma.store.create({
-      data: {
-        id,
-        name: 'Unassigned — needs a branch',
-        city: '',
-        status: 'pending',
-        isActive: false,
-      },
-    });
+    try {
+      await this.prisma.store.create({
+        data: {
+          id,
+          organisationId,
+          name: 'Unassigned — needs a branch',
+          city: '',
+          status: 'pending',
+          isActive: false,
+        },
+      });
+    } catch (error) {
+      // Two first unattributed batches for the same tenant may race. The
+      // deterministic id makes the winner safe to reuse; any other failure is
+      // still surfaced rather than swallowed.
+      const winner = await this.prisma.store.findFirst({
+        where: { id, organisationId },
+        select: { id: true },
+      });
+      if (!winner) throw error;
+    }
     this.logger.warn(
       'Created the "Unassigned" holding store: some imported rows name no branch ' +
         'we recognise. They are parked there rather than inflating a real branch.',
@@ -1404,7 +1988,7 @@ export class SyncService {
    */
   private static readonly GLOBAL_ENTITIES = new Set(['products']);
 
-  private async branchResolver(entity: string) {
+  private async branchResolver(entity: string, organisationId: string) {
     // A global entity resolves to NULL, not to a store.
     //
     // `Product.storeId` is nullable precisely to mean "the whole company sells
@@ -1417,7 +2001,15 @@ export class SyncService {
     // store from actual stock (see ProductsService.stockPresence). Ownership and
     // availability are different things and only availability varies by branch.
     const isGlobal = SyncService.GLOBAL_ENTITIES.has(entity);
-    const fallbackStoreId = isGlobal ? null : await this.unattributedStoreId();
+    // Resolve a fallback only when a row actually needs it. This lets a fully
+    // attributed batch proceed even if an obsolete process-wide fallback
+    // belongs to a different tenant; the first unattributed row still fails
+    // closed before any foreign store id can be persisted.
+    let fallbackStore: Promise<string> | undefined;
+    const fallbackStoreId = () => {
+      fallbackStore ??= this.unattributedStoreId(organisationId);
+      return fallbackStore;
+    };
     const columns = this.branchColumnsFor(entity);
     const cache = new Map<string, string | null>();
     let attributed = 0;
@@ -1430,7 +2022,7 @@ export class SyncService {
         if (raw == null || String(raw).trim() === '') continue;
         const key = String(raw).trim();
         if (!cache.has(key)) {
-          cache.set(key, await this.resolveStoreByLegacyId(key));
+          cache.set(key, await this.resolveStoreByLegacyId(key, organisationId));
         }
         const hit = cache.get(key);
         if (hit) {
@@ -1443,7 +2035,7 @@ export class SyncService {
         unknownBranchIds.add(key);
       }
       fellBack++;
-      return fallbackStoreId;
+      return isGlobal ? null : fallbackStoreId();
     };
 
     /**
@@ -1457,9 +2049,7 @@ export class SyncService {
         // Unreachable unless someone adds an entity to GLOBAL_ENTITIES without
         // making its Prisma storeId nullable — better a clear error than a
         // silent null landing in the database.
-        throw new BadRequestException(
-          `Internal: '${entity}' resolved to no store, but its rows require one.`,
-        );
+        throw new BadRequestException(`Internal: '${entity}' resolved to no store, but its rows require one.`);
       }
       return id;
     };
@@ -1475,14 +2065,15 @@ export class SyncService {
   }
 
   /** Log + shape the attribution summary consistently across entities. */
-  private logAttribution(entity: string, report: ReturnType<Awaited<ReturnType<SyncService['branchResolver']>>['report']>) {
+  private logAttribution(
+    entity: string,
+    report: ReturnType<Awaited<ReturnType<SyncService['branchResolver']>>['report']>,
+  ) {
     if (report.fellBackToDefault > 0 || report.unknownBranchIds.length > 0) {
       this.logger.warn(
         `sync ${entity}: ${report.fellBackToDefault} row(s) had no usable branch and ` +
           `went to the default store` +
-          (report.unknownBranchIds.length
-            ? `; unknown branch ids: ${report.unknownBranchIds.join(', ')}`
-            : '') +
+          (report.unknownBranchIds.length ? `; unknown branch ids: ${report.unknownBranchIds.join(', ')}` : '') +
           ` (columns tried: ${report.branchColumns.join(' -> ')})`,
       );
     }
@@ -1490,8 +2081,8 @@ export class SyncService {
   }
 
   // ── PartyMst -> Party ────────────────────────────────────────────────────────
-  async syncParties(records: Rec[]): Promise<SyncResult> {
-    const branch = await this.branchResolver('parties');
+  async syncParties(organisationId: string, records: Rec[]): Promise<SyncResult> {
+    const branch = await this.branchResolver('parties', organisationId);
     let upserted = 0;
     let skipped = 0;
     for (const r of records) {
@@ -1533,8 +2124,8 @@ export class SyncService {
       };
       const legacyId = String(r.PartyNo);
       await this.prisma.party.upsert({
-        where: { legacyId },
-        create: { legacyId, ...data },
+        where: { organisationId_legacyId: { organisationId, legacyId } },
+        create: { legacyId, organisationId, ...data },
         update: data,
       });
       upserted++;
@@ -1543,8 +2134,8 @@ export class SyncService {
   }
 
   // ── StyleMst (+Summary) -> Product ───────────────────────────────────────────
-  async syncProducts(records: Rec[]): Promise<SyncResult> {
-    const branch = await this.branchResolver('products');
+  async syncProducts(organisationId: string, records: Rec[]): Promise<SyncResult> {
+    const branch = await this.branchResolver('products', organisationId);
     let upserted = 0;
     let skipped = 0;
     for (const r of records) {
@@ -1573,8 +2164,8 @@ export class SyncService {
       };
       const legacyId = String(r.StyleId);
       await this.prisma.product.upsert({
-        where: { legacyId },
-        create: { legacyId, ...data },
+        where: { organisationId_legacyId: { organisationId, legacyId } },
+        create: { legacyId, organisationId, ...data },
         update: data,
       });
       upserted++;
@@ -1583,11 +2174,12 @@ export class SyncService {
   }
 
   // ── Inward (+Summary) -> StockItem ───────────────────────────────────────────
-  async syncStock(records: Rec[]): Promise<SyncResult> {
-    const branch = await this.branchResolver('stock');
+  async syncStock(organisationId: string, records: Rec[]): Promise<SyncResult> {
+    const branch = await this.branchResolver('stock', organisationId);
     const productByStyle = await this.idMap(
       'product',
       records.map((r) => r.StyleId),
+      organisationId,
     );
     let upserted = 0;
     let skipped = 0;
@@ -1608,12 +2200,10 @@ export class SyncService {
     // branch, reservation dissolves). Every OTHER field stays Gati-owned and
     // keeps syncing. Evidence is the existing StockTransferItem -> StockTransfer
     // relationship; no marker column is added.
-    const legacyIds = records
-      .filter((r) => r.JewelId != null)
-      .map((r) => String(r.JewelId));
+    const legacyIds = records.filter((r) => r.JewelId != null).map((r) => String(r.JewelId));
     const existingItems = legacyIds.length
       ? await this.prisma.stockItem.findMany({
-          where: { legacyId: { in: legacyIds } },
+          where: { legacyId: { in: legacyIds }, organisationId },
           select: { id: true, legacyId: true },
         })
       : [];
@@ -1623,7 +2213,9 @@ export class SyncService {
           where: {
             stockItemId: { in: existingItems.map((s) => s.id) },
             transfer: {
-              status: { in: ['ho_approved', 'dispatched', 'received', 'acknowledged'] },
+              status: {
+                in: ['ho_approved', 'dispatched', 'received', 'acknowledged'],
+              },
             },
           },
           select: { stockItemId: true },
@@ -1639,7 +2231,9 @@ export class SyncService {
       }
       const metal = metalFromRow(r);
       const storeId = await branch.resolveRequired(r);
-      const rawStatus = String(r.Status ?? '').trim().toUpperCase();
+      const rawStatus = String(r.Status ?? '')
+        .trim()
+        .toUpperCase();
       if (rawStatus && !KNOWN_INWARD_STATUSES.has(rawStatus)) {
         unknownStatuses[rawStatus] = (unknownStatuses[rawStatus] ?? 0) + 1;
       }
@@ -1684,13 +2278,18 @@ export class SyncService {
       let updateData: typeof data | Omit<typeof data, 'storeId' | 'status'> = data;
       const existingId = idByLegacy.get(legacyId);
       if (existingId && eclatControlled.has(existingId)) {
+        // The fields listed in TRANSFER_PROTECTED_STOCK_FIELDS. Destructured
+        // literally (rather than looped over the constant) because the omission
+        // has to be visible in the type, but the constant is exported so
+        // FieldOwnershipService can assert the two agree — see
+        // assertConsistentWithSync.
         const { storeId: _omitStore, status: _omitStatus, ...gatiOwned } = data;
         updateData = gatiOwned;
         eclatControlledPreserved++;
       }
       await this.prisma.stockItem.upsert({
-        where: { legacyId },
-        create: { legacyId, ...data },
+        where: { organisationId_legacyId: { organisationId, legacyId } },
+        create: { legacyId, organisationId, ...data },
         update: updateData,
       });
       upserted++;
@@ -1727,11 +2326,12 @@ export class SyncService {
   }
 
   // ── JewelTrans -> Sale ───────────────────────────────────────────────────────
-  async syncSales(records: Rec[]): Promise<SyncResult> {
-    const branch = await this.branchResolver('sales');
+  async syncSales(organisationId: string, records: Rec[]): Promise<SyncResult> {
+    const branch = await this.branchResolver('sales', organisationId);
     const partyByLegacy = await this.idMap(
       'party',
       records.map((r) => r.PartyNo),
+      organisationId,
     );
     let upserted = 0;
     let skipped = 0;
@@ -1758,8 +2358,8 @@ export class SyncService {
       };
       const legacyId = String(r.JewelTransId);
       await this.prisma.sale.upsert({
-        where: { legacyId },
-        create: { legacyId, ...data },
+        where: { organisationId_legacyId: { organisationId, legacyId } },
+        create: { legacyId, organisationId, ...data },
         update: data,
       });
       upserted++;
@@ -1768,14 +2368,16 @@ export class SyncService {
   }
 
   // ── JewelTransInward (+Summary) -> SaleLine ──────────────────────────────────
-  async syncSaleLines(records: Rec[]): Promise<SyncResult> {
+  async syncSaleLines(organisationId: string, records: Rec[]): Promise<SyncResult> {
     const saleByLegacy = await this.idMap(
       'sale',
       records.map((r) => r.JewelTransId),
+      organisationId,
     );
     const stockByLegacy = await this.idMap(
       'stockItem',
       records.map((r) => r.JewelId),
+      organisationId,
     );
     let upserted = 0;
     let skipped = 0;
@@ -1797,8 +2399,8 @@ export class SyncService {
         lineTotal: dec(r.MRP) ?? '0',
       };
       await this.prisma.saleLine.upsert({
-        where: { legacyId },
-        create: { legacyId, ...data },
+        where: { organisationId_legacyId: { organisationId, legacyId } },
+        create: { legacyId, organisationId, ...data },
         update: data,
       });
       upserted++;
@@ -1807,11 +2409,12 @@ export class SyncService {
   }
 
   // ── Spm_MfgOrder -> ManufacturingOrder ───────────────────────────────────────
-  async syncOrders(records: Rec[]): Promise<SyncResult> {
-    const branch = await this.branchResolver('orders');
+  async syncOrders(organisationId: string, records: Rec[]): Promise<SyncResult> {
+    const branch = await this.branchResolver('orders', organisationId);
     const partyByLegacy = await this.idMap(
       'party',
       records.flatMap((r) => [r.MadeFor_PartyNo, r.CustomerId]),
+      organisationId,
     );
     let upserted = 0;
     let skipped = 0;
@@ -1820,10 +2423,7 @@ export class SyncService {
         skipped++;
         continue;
       }
-      const partyId =
-        partyByLegacy.get(String(r.MadeFor_PartyNo)) ??
-        partyByLegacy.get(String(r.CustomerId)) ??
-        null;
+      const partyId = partyByLegacy.get(String(r.MadeFor_PartyNo)) ?? partyByLegacy.get(String(r.CustomerId)) ?? null;
       const storeId = await branch.resolveRequired(r);
       const data = {
         storeId,
@@ -1835,17 +2435,15 @@ export class SyncService {
         // here would silently mislabel every order. Absent or unrecognised, the
         // order stays "booked" and the bag sync below advances it from the actual
         // shop-floor movements, which are far more reliable than the header int.
-        status: (STAGE_RANK[str(r.EclatStage) ?? ''] != null
-          ? str(r.EclatStage)
-          : 'booked') as any,
+        status: (STAGE_RANK[str(r.EclatStage) ?? ''] != null ? str(r.EclatStage) : 'booked') as any,
         amount: dec(r.Amount ?? r.GrossAmount) ?? '0',
         poNo: str(r.PoNo),
         legacyUpdatedAt: dt(r.UpdateDate),
       };
       const legacyId = String(r.OrderId);
       await this.prisma.manufacturingOrder.upsert({
-        where: { legacyId },
-        create: { legacyId, ...data },
+        where: { organisationId_legacyId: { organisationId, legacyId } },
+        create: { legacyId, organisationId, ...data },
         update: data,
       });
       upserted++;
@@ -1854,14 +2452,16 @@ export class SyncService {
   }
 
   // ── SPM_MfgOrderItem -> ManufacturingOrderItem ───────────────────────────────
-  async syncOrderItems(records: Rec[]): Promise<SyncResult> {
+  async syncOrderItems(organisationId: string, records: Rec[]): Promise<SyncResult> {
     const orderByLegacy = await this.idMap(
       'manufacturingOrder',
       records.map((r) => r.OrderId),
+      organisationId,
     );
     const stockByLegacy = await this.idMap(
       'stockItem',
       records.map((r) => r.Inward_JewelId),
+      organisationId,
     );
     let upserted = 0;
     let skipped = 0;
@@ -1878,14 +2478,12 @@ export class SyncService {
         orderQty: int(r.OrderQty) ?? 1,
         status: (bool(r.Completed) ? 'ready' : 'booked') as any,
         expectedDelivery: dt(r.ExpDelDate),
-        producedStockItemId: r.Inward_JewelId
-          ? stockByLegacy.get(String(r.Inward_JewelId)) ?? null
-          : null,
+        producedStockItemId: r.Inward_JewelId ? (stockByLegacy.get(String(r.Inward_JewelId)) ?? null) : null,
       };
       const legacyId = String(r.OrderItemId);
       await this.prisma.manufacturingOrderItem.upsert({
-        where: { legacyId },
-        create: { legacyId, ...data },
+        where: { organisationId_legacyId: { organisationId, legacyId } },
+        create: { legacyId, organisationId, ...data },
         update: data,
       });
       upserted++;
@@ -1897,7 +2495,7 @@ export class SyncService {
   // Stores every row verbatim (JSON), keyed by (sourceTable, rowKey). The agent
   // sends `_rowKey` (the source PK) + optional `_updatedAt`. This is the
   // "extract-everything-once" sink: future needs read LegacyRow, no code change.
-  async syncRaw(table: string, records: Rec[]): Promise<SyncResult> {
+  async syncRaw(organisationId: string, table: string, records: Rec[]): Promise<SyncResult> {
     let upserted = 0;
     let skipped = 0;
     let watermark: string | null = null;
@@ -1915,17 +2513,36 @@ export class SyncService {
       const { _rowKey, _updatedAt, ...data } = r;
       void _rowKey;
       void _updatedAt;
+      // The DB unique is now [organisationId, sourceTable, rowKey], so the upsert
+      // is keyed on the acting org — two tenants mirroring the same source table
+      // with the same rowKey get two independent rows, never a cross-tenant clash.
       await this.prisma.legacyRow.upsert({
-        where: { sourceTable_rowKey: { sourceTable: table, rowKey } },
-        create: { sourceTable: table, rowKey, data: data as any, legacyUpdatedAt },
+        where: {
+          organisationId_sourceTable_rowKey: {
+            organisationId,
+            sourceTable: table,
+            rowKey,
+          },
+        },
+        create: {
+          organisationId,
+          sourceTable: table,
+          rowKey,
+          data: data as any,
+          legacyUpdatedAt,
+        },
         update: { data: data as any, legacyUpdatedAt, syncedAt: new Date() },
       });
       upserted++;
     }
-    this.logger.log(
-      `sync raw:${table}: received=${records.length} upserted=${upserted} skipped=${skipped}`,
-    );
-    return { entity: `raw:${table}`, received: records.length, upserted, skipped, watermark };
+    this.logger.log(`sync raw:${table}: received=${records.length} upserted=${upserted} skipped=${skipped}`);
+    return {
+      entity: `raw:${table}`,
+      received: records.length,
+      upserted,
+      skipped,
+      watermark,
+    };
   }
 
   /**
@@ -1945,10 +2562,11 @@ export class SyncService {
    * `stage` is optional: an unmapped department still records the movement, it
    * just doesn't advance the order.
    */
-  async syncBags(records: Rec[]): Promise<SyncResult> {
+  async syncBags(organisationId: string, records: Rec[]): Promise<SyncResult> {
     const orderByLegacy = await this.idMap(
       'manufacturingOrder',
       records.map((r) => r.OrderId),
+      organisationId,
     );
     let upserted = 0;
     let skipped = 0;
@@ -1976,8 +2594,8 @@ export class SyncService {
       };
       const legacyId = String(r.BagId);
       await this.prisma.productionBag.upsert({
-        where: { legacyId },
-        create: { legacyId, ...data },
+        where: { organisationId_legacyId: { organisationId, legacyId } },
+        create: { legacyId, organisationId, ...data },
         update: data,
       });
       upserted++;
@@ -2057,7 +2675,7 @@ export class SyncService {
    * `made_to_order`, which is the honest state: the shop sells it, no branch has
    * one on the shelf, and a salesperson can raise it to head office.
    */
-  async syncWebsiteProducts(records: Rec[]): Promise<SyncResult> {
+  async syncWebsiteProducts(organisationId: string, records: Rec[]): Promise<SyncResult> {
     // Website taxonomy -> our enum. Ordered: the first hit wins, so
     // "Pendants & Necklace" resolves before the looser "necklace" test.
     // Karat -> MetalKind. 9k and 14k have no member of their own; they are gold
@@ -2088,17 +2706,20 @@ export class SyncService {
 
       // By our own marker first, so a re-run finds what it created last time
       // rather than colliding on the unique SKU.
+      // Every match is org-scoped: an org's website import must never enrich (or
+      // adopt the provenance of) another org's product that happens to share a
+      // code, name or SKU prefix.
       const existing =
-        (await this.prisma.product.findUnique({
-          where: { legacyId: `WEB-${code}` },
+        (await this.prisma.product.findFirst({
+          where: { legacyId: `WEB-${code}`, organisationId },
           select: { id: true, imageUrl: true, price: true, legacyId: true },
         })) ??
         (await this.prisma.product.findFirst({
-          where: { name: code },
+          where: { name: code, organisationId },
           select: { id: true, imageUrl: true, price: true, legacyId: true },
         })) ??
         (await this.prisma.product.findFirst({
-          where: { sku: { startsWith: `${code}-` } },
+          where: { sku: { startsWith: `${code}-` }, organisationId },
           select: { id: true, imageUrl: true, price: true, legacyId: true },
         }));
 
@@ -2113,7 +2734,10 @@ export class SyncService {
         // it they read as demo data and the go-live purge deletes them.
         if (!existing.legacyId) data.legacyId = `WEB-${code}`;
         if (Object.keys(data).length) {
-          await this.prisma.product.update({ where: { id: existing.id }, data });
+          await this.prisma.product.update({
+            where: { id: existing.id },
+            data,
+          });
           enriched++;
           upserted++;
         } else {
@@ -2124,6 +2748,7 @@ export class SyncService {
 
       await this.prisma.product.create({
         data: {
+          organisationId,
           // Provenance, and it has to be set. `purgeDemo` decides what is seeded
           // demo data by `legacyId IS NULL`, so a website design created without
           // one is indistinguishable from a demo row and gets deleted at go-live
@@ -2150,9 +2775,7 @@ export class SyncService {
       upserted++;
     }
 
-    this.logger.log(
-      `sync website-products: created=${created} enriched=${enriched} skipped=${skipped}`,
-    );
+    this.logger.log(`sync website-products: created=${created} enriched=${enriched} skipped=${skipped}`);
     return {
       ...this.result('website-products', records, upserted, skipped),
       created,
@@ -2180,8 +2803,8 @@ export class SyncService {
    * counterparty (credit side for a sale, debit side for a purchase), so the
    * ledger can be read per customer or per supplier.
    */
-  async syncLedger(records: Rec[]): Promise<SyncResult> {
-    const branch = await this.branchResolver('ledger');
+  async syncLedger(organisationId: string, records: Rec[]): Promise<SyncResult> {
+    const branch = await this.branchResolver('ledger', organisationId);
     // JW = jewellery, M = metal, B = branch-to-branch, prefix SL/PH = sale/purchase.
     const KIND: Record<string, string> = {
       JWSL: 'income',
@@ -2195,6 +2818,7 @@ export class SyncService {
     const parties = await this.idMap(
       'party',
       records.flatMap((r) => [r.DrAccountNo, r.CrAccountNo]),
+      organisationId,
     );
 
     let upserted = 0;
@@ -2227,21 +2851,21 @@ export class SyncService {
         reference: str(r.DocNo) ?? str(r.TransNo),
         // The remark is often the only thing distinguishing a tax posting from
         // the sale it belongs to, so it is kept verbatim.
-        narration: [str(r.Remarks), tranType ? `(${tranType})` : null]
-          .filter(Boolean)
-          .join(' ') || null,
+        narration: [str(r.Remarks), tranType ? `(${tranType})` : null].filter(Boolean).join(' ') || null,
         legacyUpdatedAt: dt(r.EntryDate),
       };
       await this.prisma.ledgerEntry.upsert({
-        where: { legacyId },
-        create: { legacyId, ...data },
+        where: { organisationId_legacyId: { organisationId, legacyId } },
+        create: { legacyId, organisationId, ...data },
         update: data,
       });
       upserted++;
     }
 
     this.logger.log(
-      `sync ledger: ${Object.entries(byKind).map(([k, n]) => `${k}=${n}`).join(' ')}`,
+      `sync ledger: ${Object.entries(byKind)
+        .map(([k, n]) => `${k}=${n}`)
+        .join(' ')}`,
     );
     return this.result('ledger', records, upserted, skipped, branch.report());
   }
@@ -2264,10 +2888,11 @@ export class SyncService {
    * Const_InwardStatus table the stock import uses — and `Trans` is what
    * happened (a sale, a bag issue, a return).
    */
-  async syncStockMovements(records: Rec[]): Promise<SyncResult> {
+  async syncStockMovements(organisationId: string, records: Rec[]): Promise<SyncResult> {
     const stock = await this.idMap(
       'stockItem',
       records.map((r) => r.JewelId),
+      organisationId,
     );
     let upserted = 0;
     let skipped = 0;
@@ -2292,8 +2917,8 @@ export class SyncService {
         legacyUpdatedAt: dt(r.TransactionDate),
       };
       await this.prisma.stockMovement.upsert({
-        where: { legacyId },
-        create: { legacyId, ...data },
+        where: { organisationId_legacyId: { organisationId, legacyId } },
+        create: { legacyId, organisationId, ...data },
         update: data,
       });
       upserted++;
@@ -2301,7 +2926,11 @@ export class SyncService {
     return this.result('stock-movements', records, upserted, skipped);
   }
 
-  async syncProductImages(records: Rec[]): Promise<SyncResult> {
+  // Only updates already-synced rows (never creates), but must still scope by
+  // org: legacyId is unique only within an org, so the update target is the
+  // composite (organisationId, legacyId) — never another org's row with the
+  // same legacyId.
+  async syncProductImages(organisationId: string, records: Rec[]): Promise<SyncResult> {
     let upserted = 0;
     let skipped = 0;
     for (const r of records) {
@@ -2315,12 +2944,15 @@ export class SyncService {
       try {
         if (kind === 'product') {
           await this.prisma.product.update({
-            where: { legacyId },
-            data: { imageUrl: url, ...(str(r.stlUrl) ? { stlUrl: str(r.stlUrl) } : {}) },
+            where: { organisationId_legacyId: { organisationId, legacyId } },
+            data: {
+              imageUrl: url,
+              ...(str(r.stlUrl) ? { stlUrl: str(r.stlUrl) } : {}),
+            },
           });
         } else {
           await this.prisma.stockItem.update({
-            where: { legacyId },
+            where: { organisationId_legacyId: { organisationId, legacyId } },
             data: { imageUrl: url },
           });
         }
@@ -2337,17 +2969,16 @@ export class SyncService {
   private async idMap(
     model: 'party' | 'product' | 'stockItem' | 'sale' | 'manufacturingOrder',
     legacyValues: unknown[],
+    organisationId: string,
   ): Promise<Map<string, string>> {
-    const ids = [
-      ...new Set(
-        legacyValues.filter((v) => v !== null && v !== undefined).map((v) => String(v)),
-      ),
-    ];
+    const ids = [...new Set(legacyValues.filter((v) => v !== null && v !== undefined).map((v) => String(v)))];
     const map = new Map<string, string>();
     for (let i = 0; i < ids.length; i += 500) {
       const chunk = ids.slice(i, i + 500);
+      // legacyId is unique only within an org, so a foreign-key resolution must
+      // never match another org's row — scope every lookup to the acting org.
       const rows = await (this.prisma[model] as any).findMany({
-        where: { legacyId: { in: chunk } },
+        where: { legacyId: { in: chunk }, organisationId },
         select: { id: true, legacyId: true },
       });
       for (const row of rows) map.set(row.legacyId, row.id);
@@ -2365,9 +2996,7 @@ export class SyncService {
   ): SyncResult {
     this.logger.log(
       `sync ${entity}: received=${records.length} upserted=${upserted} skipped=${skipped}` +
-        (attribution
-          ? ` attributed=${attribution.attributed} default=${attribution.fellBackToDefault}`
-          : ''),
+        (attribution ? ` attributed=${attribution.attributed} default=${attribution.fellBackToDefault}` : ''),
     );
     if (attribution) this.logAttribution(entity, attribution);
     return {
@@ -2379,4 +3008,65 @@ export class SyncService {
       ...(attribution ? { attribution } : {}),
     };
   }
+}
+
+function jsonObject(value: Prisma.JsonValue): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function numberField(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function arrayLength(value: unknown): number {
+  return Array.isArray(value) ? value.length : 0;
+}
+
+function normaliseRawSourceTable(value: string | undefined): string | null {
+  const table = value;
+  // SQL identifiers in the source can contain spaces, but never control
+  // characters. Bound the operational state key even though LegacyRow's DTO is
+  // intentionally source-agnostic and accepts a wider label.
+  if (!table?.trim() || table.length > 190 || /[\u0000-\u001f\u007f]/.test(table)) {
+    return null;
+  }
+  return table;
+}
+
+function syncSourceTable(routeEntity: string, rawSourceTable?: string): string | null {
+  return routeEntity === 'raw'
+    ? normaliseRawSourceTable(rawSourceTable)
+    : (GATI_SOURCE_TABLE_BY_ROUTE[routeEntity] ?? null);
+}
+
+/** Allow only aggregate counters into the audit log; never source rows/text. */
+function aggregateSyncResultCounts(result: unknown): Record<string, number> {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return {};
+  const view = result as Record<string, unknown>;
+  const counts: Record<string, number> = {};
+  for (const key of [
+    'upserted',
+    'skipped',
+    'created',
+    'updated',
+    'enriched',
+    'eclatControlledPreserved',
+  ]) {
+    const value = view[key];
+    if (Array.isArray(value)) counts[key] = value.length;
+    else if (typeof value === 'number' && Number.isInteger(value) && value >= 0) {
+      counts[key] = value;
+    }
+  }
+  const attribution = view.attribution;
+  if (attribution && typeof attribution === 'object' && !Array.isArray(attribution)) {
+    const aggregate = attribution as Record<string, unknown>;
+    for (const key of ['attributed', 'fellBackToDefault']) {
+      const value = aggregate[key];
+      if (typeof value === 'number' && Number.isInteger(value) && value >= 0) {
+        counts[key] = value;
+      }
+    }
+  }
+  return counts;
 }

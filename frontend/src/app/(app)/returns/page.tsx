@@ -130,11 +130,16 @@ export default function ReturnsPage() {
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
           <span className="inline-flex items-center gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-[var(--gold)]" />
-            Today&apos;s gold:{" "}
+            Today&apos;s gold (22K):{" "}
             <span className="num font-medium text-foreground">
-              {rates?.gold?.[0]
-                ? `${formatINR(rates.gold[0].ratePerGram)}/g`
-                : "—"}
+              {(() => {
+                // Show the 22K rate to match the header + billing everywhere else.
+                // `rates.gold` is ordered [24, 22, 18], so index 0 was the 24K
+                // rate — a visibly higher, inconsistent number.
+                const g =
+                  rates?.gold?.find((x) => x.karat === 22) ?? rates?.gold?.[0];
+                return g ? `${formatINR(g.ratePerGram)}/g` : "—";
+              })()}
             </span>
           </span>
           <span className="inline-flex items-center gap-1.5">

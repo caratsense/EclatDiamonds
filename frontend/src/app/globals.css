@@ -4,18 +4,31 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
-  Eclat / CaratSense — "Assay" design system.
+  Eclat / CaratSense — "Obsidian" design system.
   Full spec + rationale: docs/DESIGN_SYSTEM.md.
 
-  Direction: warm metal on linen, not a cold dashboard.
-  - Canvas: porcelain (warm off-white) with a faint single-gold wash — never flat white.
-  - Surfaces: white cards that "catch the light" with soft, warm, layered shadows.
-  - Ink: a warm graphite (not blue-black). Primary actions are ink — quiet and legible.
-  - THE one accent: fine gold. Nothing else competes. It marks primary actions, the
-    single hero figure, selected/active states and focus — via the signature
-    "light-catch" hairline (.facet-top). Spend boldness ONLY here.
-  - Status uses real jewel tones: garnet (danger), emerald (success), amber (warn).
-  - Type: Fraunces (display) · Inter (UI) · Geist Mono (tabular "assay readout").
+  Direction: a high-precision instrument, not a bookshop.
+
+  What changed, and why. The product ran on a warm-linen canvas with a deep
+  forest-green rail and a Fraunces display serif — a jewellery-house identity,
+  chosen when this was one jeweller's system. It is now a universal operations
+  platform, and that palette read as heavy and dated on every screen a clinic,
+  a mill or a pharmacy opened. Green also collided with the one job green has
+  to keep doing here: `--success`. When the rail, the sign-in panel and "this
+  worked" are all the same hue, none of them mean anything.
+
+  - Canvas: obsidian in dark (#090b10), a cool porcelain in light. Never flat
+    black and never flat white — both carry one very faint indigo wash.
+  - Surfaces: elevated slate that separates by LUMINANCE, with hairlines at
+    8% white rather than a drawn box.
+  - Ink: slate-50 on dark, slate-950 on light. Cool, not warm graphite.
+  - THE accent: electric indigo. It marks primary actions, the active nav row,
+    focus and selection. Champagne gold survives as a MICRO-accent only —
+    a hairline, a chip, a wordmark — never as a surface.
+  - Status keeps real signal colours: rose (danger), emerald (success), amber
+    (warn). Emerald now belongs to success alone.
+  - Type: Plus Jakarta Sans (display) · Hanken Grotesk (UI) · IBM Plex Mono
+    (tabular "assay readout"). No serif anywhere.
 
   Single source of truth — restyles every page.
 */
@@ -23,127 +36,142 @@
 :root {
   --radius: 0.625rem; /* restrained: 10px */
 
-  /* warm neutrals */
-  --background: #f6f4f0; /* porcelain canvas */
-  --foreground: #1a1816; /* warm graphite ink */
+  /* cool neutrals — porcelain, not linen */
+  --background: #f7f8fa;
+  --foreground: #0b1120; /* slate ink */
 
   --card: #ffffff;
-  --card-foreground: #1a1816;
+  --card-foreground: #0b1120;
 
   --popover: #ffffff;
-  --popover-foreground: #1a1816;
+  --popover-foreground: #0b1120;
 
-  /* primary action = ink (the gold light-catch marks it, not a colour fill) */
-  --primary: #211e1a;
-  --primary-foreground: #f6f4f0;
+  /* primary action = the accent, at a weight that holds white text */
+  --primary: #4f46e5;
+  --primary-foreground: #ffffff;
 
-  /* THE accent — fine gold */
-  --gold: #b08d3b;
-  --gold-foreground: #1a1816; /* ink engraving on a gold bar */
-  --gold-soft: #ead9b0; /* light gold for hairlines / tints */
-  --gold-strong: #8a6d2a; /* AA-legible gold for text + links on white */
+  /* THE accent — electric indigo */
+  --accent-solid: #6366f1;
+  --accent-soft: #eef2ff;
 
-  /* Brand emerald — Éclat Diamonds' signature deep forest green (eclatdiamonds.in).
-     Used for the sidebar rail, the sign-in panel and the landing hero. */
-  --brand: #0f2a1e;
-  --brand-deep: #0a1f16;
-  --brand-foreground: #f4eede; /* warm ivory on emerald */
+  /* Champagne gold, demoted to a micro-accent: hairlines, chips, the wordmark.
+     `--gold-strong` is the only one legible as TEXT on white, and is what every
+     link or label reaching for gold must use. */
+  --gold: #d97706;
+  --gold-foreground: #ffffff;
+  --gold-soft: #fde68a;
+  --gold-strong: #b45309;
 
-  --secondary: #ece8e1; /* warm stone */
-  --secondary-foreground: #1a1816;
+  /* Brand surface — the sign-in panel and the landing hero. Obsidian, so the
+     product reads as an instrument rather than as one industry's colour. */
+  --brand: #0f172a;
+  --brand-deep: #090d16;
+  --brand-foreground: #f8fafc;
 
-  --muted: #efebe4;
-  --muted-foreground: #6b655c; /* warm stone grey */
+  --secondary: #eef1f6;
+  --secondary-foreground: #0b1120;
 
-  --accent: #f1ead9; /* gold-tinted hover wash */
-  --accent-foreground: #1a1816;
+  --muted: #f1f4f8;
+  --muted-foreground: #64748b;
 
-  --destructive: #b23b3b; /* garnet */
+  --accent: #eef2ff; /* indigo-tinted hover wash */
+  --accent-foreground: #312e81;
+
+  --destructive: #e11d48; /* rose */
   --destructive-foreground: #ffffff;
 
-  --success: #2f7d5b; /* emerald */
-  --warning: #c8872b; /* amber */
+  --success: #059669; /* emerald — and ONLY success */
+  --warning: #d97706; /* amber */
 
-  --border: #e6e1d8; /* linen line */
-  --input: #e0dacf;
-  --ring: #b08d3b; /* gold focus */
+  --border: #e2e8f0;
+  --input: #cbd5e1;
+  --ring: #6366f1; /* indigo focus */
 
-  /* jewel-derived chart sequence (reads on light + dark) */
-  --chart-1: #b08d3b; /* gold     */
-  --chart-2: #3f3a33; /* graphite */
-  --chart-3: #2f7d5b; /* emerald  */
-  --chart-4: #9c3d3d; /* garnet   */
-  --chart-5: #3e5c76; /* sapphire */
-  --chart-6: #c8872b; /* amber    */
+  /* Chart sequence: indigo-led, each hue distinct at a glance and legible on
+     both grounds. */
+  --chart-1: #6366f1; /* indigo  */
+  --chart-2: #06b6d4; /* cyan    */
+  --chart-3: #f59e0b; /* amber   */
+  --chart-4: #e11d48; /* rose    */
+  --chart-5: #10b981; /* emerald */
+  --chart-6: #a855f7; /* violet  */
 
-  /* deep emerald sidebar rail (brand) with gold active accent */
-  --sidebar: #0f2a1e;
-  --sidebar-foreground: #aebcb1;
-  --sidebar-primary: #cbab6b; /* gold active */
-  --sidebar-primary-foreground: #0f2a1e;
-  --sidebar-accent: #163a2a;
-  --sidebar-accent-foreground: #f4eede;
-  --sidebar-border: #1c4533;
-  --sidebar-ring: #cbab6b;
+  /* Obsidian sidebar rail with an indigo active accent. Dark in BOTH themes:
+     the rail is the app's fixed frame, and a rail that inverts with the theme
+     stops being a frame. */
+  --sidebar: #0b0f19;
+  --sidebar-foreground: #94a3b8;
+  --sidebar-primary: #6366f1;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #171e2e;
+  --sidebar-accent-foreground: #f8fafc;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-ring: #6366f1;
 }
 
 .dark {
-  --background: #14120e; /* warm near-black */
-  --foreground: #ece7dd;
+  --background: #090b10; /* obsidian */
+  --foreground: #f8fafc;
 
-  --card: #1c1914;
-  --card-foreground: #ece7dd;
+  --card: #0e131f;
+  --card-foreground: #f8fafc;
 
-  --popover: #211d17;
-  --popover-foreground: #ece7dd;
+  --popover: #111725;
+  --popover-foreground: #f8fafc;
 
-  /* in dark, the ink action inverts to warm bone (still quiet, still legible) */
-  --primary: #ebe6dc;
-  --primary-foreground: #1a1816;
+  /* The accent lifts a step in dark so it still reads as lit rather than as a
+     hole punched in the canvas. */
+  --primary: #6366f1;
+  --primary-foreground: #ffffff;
 
-  --gold: #c9a96a;
-  --gold-foreground: #17150f;
-  --gold-soft: #6e5a2e;
-  --gold-strong: #d8be86;
+  --accent-solid: #818cf8;
+  --accent-soft: #1e1b4b;
 
-  --secondary: #262119;
-  --secondary-foreground: #ece7dd;
+  --gold: #fbbf24;
+  --gold-foreground: #1c1305;
+  --gold-soft: #78350f;
+  --gold-strong: #fcd34d;
 
-  --muted: #262119;
-  --muted-foreground: #a39a88;
+  --secondary: #171e2e;
+  --secondary-foreground: #f8fafc;
 
-  --accent: #2c261c;
-  --accent-foreground: #ece7dd;
+  --muted: #151b28;
+  --muted-foreground: #94a3b8;
 
-  --destructive: #e06a6a;
-  --destructive-foreground: #1a1816;
+  --accent: #1c2338;
+  --accent-foreground: #e0e7ff;
 
-  --success: #5bbf8e;
-  --warning: #e0a857;
+  --destructive: #fb7185;
+  --destructive-foreground: #1c0710;
 
-  --border: #2c271e;
-  --input: #2c271e;
-  --ring: #c9a96a;
+  --success: #34d399;
+  --warning: #fbbf24;
 
-  --chart-1: #d8be86; /* gold     */
-  --chart-2: #c9c2b4; /* graphite */
-  --chart-3: #5bbf8e; /* emerald  */
-  --chart-4: #e08a8a; /* garnet   */
-  --chart-5: #7fa0be; /* sapphire */
-  --chart-6: #e0a857; /* amber    */
+  /* Hairlines, not drawn boxes: a translucent white edge picks up whatever
+     surface it sits on, so one token works on the canvas and on a raised card. */
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.12);
+  --ring: #818cf8;
 
-  --brand: #0c2419;
-  --brand-deep: #081a12;
-  --brand-foreground: #f4eede;
+  --chart-1: #818cf8; /* indigo  */
+  --chart-2: #22d3ee; /* cyan    */
+  --chart-3: #fbbf24; /* amber   */
+  --chart-4: #fb7185; /* rose    */
+  --chart-5: #34d399; /* emerald */
+  --chart-6: #c084fc; /* violet  */
 
-  --sidebar: #0a2017;
-  --sidebar-foreground: #9fb0a4;
-  --sidebar-primary: #cbab6b;
-  --sidebar-primary-foreground: #0a2017;
-  --sidebar-accent: #123026;
-  --sidebar-accent-foreground: #f4eede;
-  --sidebar-border: #173a2c;
-  --sidebar-ring: #cbab6b;
+  --brand: #0e131f;
+  --brand-deep: #06080d;
+  --brand-foreground: #f8fafc;
+
+  --sidebar: #07090e;
+  --sidebar-foreground: #94a3b8;
+  --sidebar-primary: #818cf8;
+  --sidebar-primary-foreground: #0b1120;
+  --sidebar-accent: #121826;
+  --sidebar-accent-foreground: #f8fafc;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-ring: #818cf8;
 }
 
 @theme {
@@ -200,18 +228,27 @@
      variables from app/layout.tsx and are intentionally distinct from these
      theme tokens: when both sides were called `--font-sans`, the declaration
      referenced itself, resolved to nothing, and the whole app quietly rendered
-     in the OS default face. */
+     in the OS default face.
+
+     `--font-serif` is kept as an ALIAS onto the display face rather than
+     deleted. Tailwind's `font-serif` utility exists whether or not this file
+     declares the token, so removing it would not remove the utility — it would
+     only let any stray `font-serif` fall through to Times New Roman. Pointing
+     it at the same modern face makes the mistake invisible instead of ugly. */
   --font-sans: var(--font-sans-face), ui-sans-serif, system-ui, sans-serif;
-  --font-display: var(--font-display-face), ui-serif, Georgia, "Times New Roman", serif;
-  --font-serif: var(--font-display-face), ui-serif, Georgia, serif;
+  --font-display: var(--font-display-face), var(--font-sans-face), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-display-face), var(--font-sans-face), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-mono-face), ui-monospace, "SFMono-Regular", monospace;
 
-  /* soft, warm, layered elevation — light on a polished surface, not heavy drops */
-  --shadow-xs: 0 1px 2px 0 rgba(26, 24, 22, 0.05);
-  --shadow-sm: 0 1px 2px -1px rgba(26, 24, 22, 0.06), 0 1px 3px 0 rgba(26, 24, 22, 0.05);
-  --shadow-md: 0 2px 6px -2px rgba(26, 24, 22, 0.08), 0 6px 16px -6px rgba(26, 24, 22, 0.10);
-  --shadow-lg: 0 10px 30px -10px rgba(26, 24, 22, 0.16);
-  --shadow-xl: 0 20px 50px -16px rgba(26, 24, 22, 0.22);
+  /* Elevation by luminance and depth, not by a heavy drop. On obsidian a black
+     shadow is invisible, so the dark theme's separation comes from the surface
+     token and the hairline; these carry the light theme and the lifted glass
+     surfaces in both. */
+  --shadow-xs: 0 1px 2px 0 rgba(2, 6, 23, 0.05);
+  --shadow-sm: 0 1px 2px -1px rgba(2, 6, 23, 0.07), 0 1px 3px 0 rgba(2, 6, 23, 0.06);
+  --shadow-md: 0 2px 6px -2px rgba(2, 6, 23, 0.09), 0 6px 16px -6px rgba(2, 6, 23, 0.12);
+  --shadow-lg: 0 10px 30px -10px rgba(2, 6, 23, 0.18);
+  --shadow-xl: 0 20px 50px -16px rgba(2, 6, 23, 0.26);
 }
 
 * {
@@ -219,22 +256,23 @@
 }
 
 body {
-  /* a single faint gold wash over the warm canvas — never flat white */
+  /* One very faint indigo wash — never flat white, never flat black. */
   background-color: var(--background);
   background-image:
-    radial-gradient(1100px 560px at 100% -8%, color-mix(in srgb, var(--gold) 9%, transparent), transparent 60%),
-    radial-gradient(900px 480px at -6% -4%, color-mix(in srgb, var(--gold) 5%, transparent), transparent 55%);
+    radial-gradient(1100px 560px at 100% -8%, color-mix(in srgb, var(--accent-solid) 10%, transparent), transparent 62%),
+    radial-gradient(900px 480px at -6% -4%, color-mix(in srgb, var(--accent-solid) 6%, transparent), transparent 58%);
   background-attachment: fixed;
   color: var(--foreground);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
 
-/* ── Signature element: the "light-catch" / facet edge ───────────────────────
-   A thin gold gradient hairline along the top edge — like light hitting the
-   bevel of a polished gold surface. It marks primary actions and selected /
-   active states, and brightens on hover or when active. This is the ONE place
-   we spend boldness; everything else stays quiet graphite + porcelain. */
+/* ── Signature element: the specular edge ────────────────────────────────────
+   A thin luminous hairline along the top edge — the highlight a light source
+   leaves on a machined edge. It marks primary actions and selected / active
+   states, and brightens on hover or when active. This used to be a gold
+   gradient on a warm surface; on obsidian the same idea is white light with an
+   indigo core, which is what actually reads as "lit" rather than "painted". */
 .facet-top {
   position: relative;
   isolation: isolate;
@@ -249,7 +287,7 @@ body {
   background: linear-gradient(
     90deg,
     transparent 6%,
-    color-mix(in srgb, var(--gold) 80%, white) 50%,
+    color-mix(in srgb, var(--accent-solid) 55%, white) 50%,
     transparent 94%
   );
   opacity: 0.55;
@@ -263,14 +301,20 @@ body {
   opacity: 1;
 }
 
-/* Brand emerald surface with a gold "sparkle" wash — sign-in panel + landing hero. */
-.emerald-panel {
-  background-color: var(--brand);
-  background-image:
-    radial-gradient(680px 380px at 78% -10%, color-mix(in srgb, var(--gold) 24%, transparent), transparent 60%),
-    radial-gradient(520px 420px at 6% 112%, color-mix(in srgb, var(--gold) 12%, transparent), transparent 55%),
-    linear-gradient(160deg, var(--brand) 0%, var(--brand-deep) 100%);
-  color: var(--brand-foreground);
+/*
+ * Frosted glass, for surfaces that sit ON a lit ground — the sign-in panel's
+ * cards and the landing preview. Deliberately NOT the app's default card:
+ * `backdrop-filter` costs a compositor layer per element, and a dense
+ * operational table full of them scrolls badly on the phones this runs on.
+ */
+.glass {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.06),
+    0 8px 32px rgba(0, 0, 0, 0.36);
 }
 
 /* Tabular "assay readout" — weights, carats, prices, every numeric column. */
@@ -280,16 +324,26 @@ body {
   letter-spacing: -0.01em;
 }
 
-/* Safety: a display serif can default to oldstyle (hanging) figures that bounce
-   off the baseline. Numeric heroes use .num instead, but if a digit ever lands
-   inside a display-face title, force lining, equal-width figures. */
+/* Display face: a geometric sans set tight. The old serif needed a
+   lining-figures guard because it defaulted to oldstyle digits that bounced off
+   the baseline; a grotesk does not, so the rule here is the tracking that makes
+   a large heading sit properly instead. */
 .font-display {
   font-variant-numeric: lining-nums tabular-nums;
+  letter-spacing: -0.02em;
 }
 
-/* Champagne brand text (wordmark / hero accents only). */
+/* Champagne micro-accent for the wordmark and hero accents only. */
 .text-gradient-gold {
-  background: linear-gradient(100deg, #d9bd86 0%, #b6894e 55%, #9a6f3a 100%);
+  background: linear-gradient(100deg, #fcd34d 0%, #f59e0b 55%, #d97706 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* The same treatment in the accent, for a heading that has to carry the eye. */
+.text-gradient-accent {
+  background: linear-gradient(100deg, #a5b4fc 0%, #818cf8 45%, #6366f1 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -327,21 +381,21 @@ body {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   LANDING PAGE — scoped premium theme (deep emerald + champagne gold).
+   LANDING PAGE — scoped premium theme (obsidian + electric indigo).
    Everything here lives under `.landing` so it NEVER touches the global
-   :root / .dark porcelain palette the operational app runs on. All tokens
-   are prefixed `--l-` and are only defined on the wrapper.
+   :root / .dark palette the operational app runs on. All tokens are prefixed
+   `--l-` and are only defined on the wrapper.
    ───────────────────────────────────────────────────────────────────────── */
 .landing {
   /* landing-only palette */
-  --l-bg: #071e16;
-  --l-surface: #0c261c;
-  --l-hairline: #1b3a2c;
-  --l-gold: #c8a24f;
-  --l-gold-dark: #b8903c;
-  --l-ivory: #f6f3ed;
-  --l-ivory-70: rgba(246, 243, 237, 0.72);
-  --l-ivory-55: rgba(246, 243, 237, 0.55);
+  --l-bg: #090b10;
+  --l-surface: #0e131f;
+  --l-hairline: rgba(255, 255, 255, 0.08);
+  --l-gold: #818cf8; /* the marking accent; named for the slot, not the hue */
+  --l-gold-dark: #6366f1;
+  --l-ivory: #f8fafc;
+  --l-ivory-70: rgba(248, 250, 252, 0.72);
+  --l-ivory-55: rgba(248, 250, 252, 0.55);
 
   background-color: var(--l-bg);
   color: var(--l-ivory);
@@ -354,23 +408,25 @@ body {
   }
 }
 
-/* Section eyebrow — small uppercase gold kicker above section headings. */
+/* Section eyebrow — small uppercase kicker above section headings. */
 .landing-eyebrow {
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--l-gold);
 }
 
-/* Deep-emerald gradient shared by hero + dark sections. */
+/* Obsidian mesh shared by hero + dark sections: two offset radial sources
+   rather than one vertical fade, so the ground has a direction to it. */
 .landing-gradient {
   background:
-    radial-gradient(900px 520px at 82% -6%, color-mix(in srgb, var(--l-gold) 16%, transparent), transparent 60%),
-    linear-gradient(180deg, #082c20 0%, #031a13 100%);
+    radial-gradient(40rem 30rem at 20% 15%, rgba(99, 102, 241, 0.18), transparent 70%),
+    radial-gradient(40rem 30rem at 82% 82%, rgba(56, 189, 248, 0.12), transparent 70%),
+    linear-gradient(180deg, #0b0f17 0%, #06080d 100%);
 }
 
-/* Soft radial gold glow that sits behind the dashboard preview. */
+/* Soft radial glow that sits behind the dashboard preview. */
 .landing-glow::before {
   content: "";
   position: absolute;
@@ -378,21 +434,21 @@ body {
   width: 62%;
   height: 78%;
   border-radius: 9999px;
-  background: radial-gradient(closest-side, color-mix(in srgb, var(--l-gold) 30%, transparent), transparent 72%);
+  background: radial-gradient(closest-side, rgba(99, 102, 241, 0.32), transparent 72%);
   filter: blur(26px);
-  opacity: 0.6;
+  opacity: 0.7;
   pointer-events: none;
   z-index: 0;
 }
 
-/* Gold hairline pill / champagne accents. */
+/* Hairline pill / accent chips. */
 .landing-pill {
   border: 1px solid color-mix(in srgb, var(--l-gold) 42%, transparent);
-  background: color-mix(in srgb, var(--l-gold) 8%, transparent);
+  background: color-mix(in srgb, var(--l-gold) 10%, transparent);
   color: var(--l-ivory);
 }
 
-/* Nav links — 14px / 500 / no uppercase / muted ivory → gold on hover. */
+/* Nav links — 14px / 500 / no uppercase / muted → accent on hover. */
 .landing-nav-link {
   font-size: 14px;
   font-weight: 500;
@@ -404,20 +460,22 @@ body {
   color: var(--l-gold);
 }
 
-/* Card surfaces on emerald. */
+/* Card surfaces on obsidian, with the inner specular that makes them read as
+   lifted rather than as a lighter rectangle. */
 .landing-card {
   background: var(--l-surface);
   border: 1px solid var(--l-hairline);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
 }
 
-/* The dashboard preview — perspective/tilt + deep shadow + gold hairline. */
+/* The dashboard preview — perspective/tilt + deep shadow + accent hairline. */
 .dash-3d {
   transform: perspective(1900px) rotateY(-11deg) rotateX(4deg) rotate(0.4deg);
   transform-origin: center left;
   box-shadow:
     0 2px 4px rgba(0, 0, 0, 0.3),
     0 40px 80px -28px rgba(0, 0, 0, 0.65),
-    0 0 0 1px color-mix(in srgb, var(--l-gold) 22%, transparent);
+    0 0 0 1px color-mix(in srgb, var(--l-gold) 26%, transparent);
   transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .dash-3d:hover {
@@ -430,7 +488,7 @@ body {
     transform: none;
     box-shadow:
       0 24px 60px -24px rgba(0, 0, 0, 0.6),
-      0 0 0 1px color-mix(in srgb, var(--l-gold) 20%, transparent);
+      0 0 0 1px color-mix(in srgb, var(--l-gold) 24%, transparent);
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -445,13 +503,74 @@ body {
  * Hides the whole app and lays out only the `.print-wallet` section so the
  * browser print dialog (or "Save as PDF") captures just the formatted wallet.
  */
+/*
+ * The lead-capture QR poster (see /crm/qr).
+ *
+ * It exists in the page only so `window.print()` has something to put on
+ * paper, and is never part of the screen layout — hence display:none here
+ * rather than the visibility trick below, which would still reserve its space.
+ */
+.qr-poster {
+  display: none;
+}
+
 @media print {
   body * {
     visibility: hidden !important;
   }
   .print-wallet,
-  .print-wallet * {
+  .print-wallet *,
+  .qr-poster,
+  .qr-poster * {
     visibility: visible !important;
+  }
+  .qr-poster {
+    display: flex !important;
+    position: fixed !important;
+    inset: 0 !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 0 !important;
+    margin: 0 !important;
+    padding: 32px !important;
+    text-align: center !important;
+    background: #fff !important;
+    color: #000 !important;
+  }
+  .qr-poster-eyebrow {
+    font-size: 13pt !important;
+    letter-spacing: 0.18em !important;
+    text-transform: uppercase !important;
+    color: #444 !important;
+  }
+  .qr-poster-title {
+    margin: 10px 0 0 !important;
+    /* The display face, whatever it currently is — this used to name Georgia
+       as the fallback, which put a serif on paper the moment the webfont did
+       not load in the print context. */
+    font-family: var(--font-display-face), ui-sans-serif, system-ui, sans-serif !important;
+    font-size: 40pt !important;
+    line-height: 1.05 !important;
+    letter-spacing: -0.02em !important;
+  }
+  .qr-poster-sub {
+    margin: 12px 0 0 !important;
+    max-width: 62ch !important;
+    font-size: 13pt !important;
+    line-height: 1.5 !important;
+    color: #333 !important;
+  }
+  .qr-poster-code {
+    margin-top: 34px !important;
+    padding: 18px !important;
+    border: 1pt solid #ddd !important;
+    background: #fff !important;
+  }
+  .qr-poster-foot {
+    margin: 26px 0 0 !important;
+    font-size: 10pt !important;
+    color: #777 !important;
   }
   .print-wallet {
     position: fixed !important;

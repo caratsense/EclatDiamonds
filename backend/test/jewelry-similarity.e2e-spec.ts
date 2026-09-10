@@ -217,6 +217,7 @@ describe('Jewelry similarity search (e2e)', () => {
         {
           productId: EMB_A,
           storeId: SURAT,
+          organisationId: 'org_eclat',
           dinoEmbedding: [1, 0, 0],
           siglipEmbedding: [1, 0, 0],
           imageHash: 'seed-a',
@@ -227,6 +228,7 @@ describe('Jewelry similarity search (e2e)', () => {
         {
           productId: EMB_B,
           storeId: SURAT,
+          organisationId: 'org_eclat',
           dinoEmbedding: [0, 1, 0],
           siglipEmbedding: [0, 1, 0],
           imageHash: 'seed-b',
@@ -273,9 +275,62 @@ describe('Jewelry similarity search (e2e)', () => {
     });
     expect(res.body.results[0].productName).toBe(dbNames[0].name);
     expect(res.body.results[0].matchLevel).toBe('VERY_CLOSE');
+    // Display fields the unified UI needs are present (sku + store, closeness).
+    expect(res.body.results[0]).toHaveProperty('sku');
+    expect(res.body.results[0]).toHaveProperty('storeName');
+    expect(typeof res.body.results[0].closenessScore).toBe('number');
+    // At most the TOP 10 closest, ordered closest-first by real similarity.
+    expect(res.body.results.length).toBeLessThanOrEqual(10);
     // No raw vectors leaked.
     expect(res.body.results[0].dino).toBeUndefined();
     expect(res.body.results[0].siglipEmbedding).toBeUndefined();
+  });
+
+  it('search is organisation-scoped — another org’s indexed product never leaks', async () => {
+    mockInference._available = true;
+    mockInference.embedResult = { dino: [1, 0, 0], siglip: [1, 0, 0] };
+    // A separate organisation with an embedding aligned to the query. It must
+    // NEVER surface for an Eclat user, even though it is a "perfect" visual match.
+    await prisma.organisation.upsert({
+      where: { id: 'org_jsim_b' },
+      update: {},
+      create: { id: 'org_jsim_b', name: 'JSim B', slug: 'jsim-b' },
+    });
+    await prisma.store.upsert({
+      where: { id: 'store_jsim_b' },
+      update: {},
+      create: { id: 'store_jsim_b', name: 'JSim B Store', city: 'Testville', organisationId: 'org_jsim_b' },
+    });
+    await prisma.product.upsert({
+      where: { id: 'p-jsim-b' },
+      update: {},
+      create: { id: 'p-jsim-b', sku: 'JSIM-B-1', name: 'JSim B Ring', metal: 'gold_22k', organisationId: 'org_jsim_b', storeId: 'store_jsim_b', embedding: [] },
+    });
+    await prisma.productEmbedding.create({
+      data: {
+        productId: 'p-jsim-b',
+        organisationId: 'org_jsim_b',
+        storeId: 'store_jsim_b',
+        dinoEmbedding: [1, 0, 0],
+        siglipEmbedding: [1, 0, 0],
+        dinoModelVersion: 'x',
+        siglipModelVersion: 'x',
+        preprocessingVersion: 'x',
+        imageHash: 'jsimb',
+      },
+    });
+
+    const res = await post('/products/jewelry/similarity-search', tokens.rep)
+      .attach('file', IMG, { filename: 'q.jpg', contentType: 'image/jpeg' });
+    expect(res.status).toBe(201);
+    const ids = res.body.results.map((r: any) => r.productId);
+    expect(ids).not.toContain('p-jsim-b'); // the other org's product is invisible
+    expect(ids).toContain(EMB_A); // own-org match still found
+
+    await prisma.productEmbedding.deleteMany({ where: { organisationId: 'org_jsim_b' } });
+    await prisma.product.deleteMany({ where: { organisationId: 'org_jsim_b' } });
+    await prisma.store.deleteMany({ where: { organisationId: 'org_jsim_b' } });
+    await prisma.organisation.deleteMany({ where: { id: 'org_jsim_b' } });
   });
 
   it('inference unavailable → available:false (never fabricates)', async () => {
@@ -299,6 +354,20 @@ describe('Jewelry similarity search (e2e)', () => {
     expect(res.body.results).toEqual([]);
   });
 
+  it('catalogue not embedded → NOT_INDEXED (distinct from NO_CLOSE_MATCH)', async () => {
+    mockInference._available = true;
+    mockInference.embedResult = { dino: [1, 0, 0], siglip: [1, 0, 0] };
+    // Clear the visual index; the catalogue products themselves still exist.
+    await prisma.productEmbedding.deleteMany({});
+    const res = await post('/products/jewelry/similarity-search', tokens.rep)
+      .attach('file', IMG, { filename: 'q.jpg', contentType: 'image/jpeg' });
+    expect(res.status).toBe(201);
+    expect(res.body.available).toBe(true);
+    expect(res.body.status).toBe('NOT_INDEXED'); // NOT the same as "nothing matched"
+    expect(res.body.results).toEqual([]);
+    expect(String(res.body.reason)).toMatch(/index/i);
+  });
+
   it('feedback persists', async () => {
     const dto = { queryId: 'q-test-1', productId: EMB_A, rank: 1, feedback: 'very_close' };
     const res = await post('/products/jewelry/similarity-feedback', tokens.rep).send(dto);
@@ -319,6 +388,7 @@ describe('Jewelry similarity search (e2e)', () => {
         name: 'Sim Reindex Test',
         metal: 'gold_22k',
         storeId: SURAT,
+        organisationId: 'org_eclat',
         imageUrl: '/uploads/catalogue/1.jpg',
       },
       update: { imageUrl: '/uploads/catalogue/1.jpg' },

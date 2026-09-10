@@ -10,6 +10,10 @@ export interface AuthMeResponse {
   role: Role;
   stores: Store[];
   currentStore: Store;
+  productProfile?: {
+    industryPackCode: string | null;
+    enabledNavigation: string[] | null;
+  };
 }
 
 /** POST /auth/login → { token } */
@@ -69,7 +73,7 @@ export interface SignupInput {
   email: string;
   password: string;
   phone?: string;
-  requestedRole: "salesperson" | "store_manager" | "area_manager";
+  requestedRole: "salesperson" | "store_manager";
   requestedStoreId: string;
 }
 
@@ -80,16 +84,36 @@ export interface SignupStore {
 }
 
 /**
+ * Resolve the tenant argument for the public store directory.
+ *
+ * There is deliberately no fallback organisation. The code used to default to
+ * `"eclat"`, so any caller that did not pass an argument asked the directory for
+ * one jeweller's branches — whichever tenant was actually signed in. An absent,
+ * blank or too-short code means "the tenant is not known yet", and the only
+ * correct request in that state is no request at all.
+ */
+export function signupStoresRequest(organisationCode: string | null | undefined) {
+  const org = (organisationCode ?? "").trim();
+  return { org, enabled: org.length >= 2, queryKey: ["signup-stores", org] };
+}
+
+/**
  * useSignupStores — the PUBLIC store directory (no auth) that populates the
  * store picker on the signup form. Names/cities only.
+ *
+ * `organisationCode` is required: every caller must state which tenant it means.
  */
-export function useSignupStores() {
+export function useSignupStores(organisationCode: string) {
+  const { org, enabled, queryKey } = signupStoresRequest(organisationCode);
   return useQuery({
-    queryKey: ["signup-stores"],
+    queryKey,
     queryFn: async () => {
-      const { data } = await api.get<SignupStore[]>("/stores/directory");
+      const { data } = await api.get<SignupStore[]>("/stores/directory", {
+        params: { org },
+      });
       return data;
     },
+    enabled,
   });
 }
 
@@ -107,6 +131,56 @@ export function useSignup() {
         message: string;
         loginEmail: string;
       }>("/auth/signup", input);
+      return data;
+    },
+  });
+}
+
+export interface IndustrySummary {
+  code: string;
+  name: string;
+  version: number;
+  description: string;
+}
+
+export function usePublicIndustries() {
+  return useQuery({
+    queryKey: ["auth", "industries"],
+    queryFn: async () =>
+      (
+        await api.get<{
+          packs: IndustrySummary[];
+          defaultPackCode: string;
+        }>("/auth/industries")
+      ).data,
+    staleTime: 60 * 60_000,
+  });
+}
+
+export interface CreateOrganisationInput {
+  organisationName: string;
+  industryCode: string;
+  ownerName: string;
+  email: string;
+  password: string;
+  phone?: string;
+  primaryLocationName: string;
+  city: string;
+}
+
+/**
+ * Creates a fully isolated tenant, persists only the returned session token and
+ * active store, and never reads or copies another tenant's integration secrets.
+ */
+export function useCreateOrganisation() {
+  return useMutation({
+    mutationFn: async (input: CreateOrganisationInput) => {
+      const { data } = await api.post<
+        { token: string; organisation: { id: string; name: string; slug: string } } &
+          AuthMeResponse
+      >("/auth/organisations", input);
+      setStoredToken(data.token);
+      setStoredStoreId(data.currentStore.id);
       return data;
     },
   });
@@ -150,6 +224,7 @@ export function useVerifyOtp() {
         role: data.role,
         stores: data.stores,
         currentStore: data.currentStore,
+        productProfile: data.productProfile,
       };
       return me;
     },

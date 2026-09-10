@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { format, parseISO } from "date-fns";
 import {
   CheckCircle2,
@@ -35,6 +35,7 @@ import {
   type ReportSummary,
 } from "@/lib/mock/reporting";
 import { useReportSummary, useSendReport } from "@/lib/queries/reporting";
+import { useResetOn } from "@/lib/use-reset-on";
 
 /** Compose the report text client-side (fallback for the live preview). */
 function composeReport(s: ReportSummary): string {
@@ -122,12 +123,12 @@ export function SendReportDialog({
   const sendReport = useSendReport();
 
   // Re-anchor to the rollup's current period each time the dialog opens.
-  useEffect(() => {
+  useResetOn(open ? initialPeriod : null, () => {
     if (open) {
       setPeriod(initialPeriod);
       setOutcome(null);
     }
-  }, [open, initialPeriod]);
+  });
 
   const preview = useMemo(
     () => (summaryQuery.data ? composeReport(summaryQuery.data) : ""),
@@ -249,7 +250,7 @@ export function SendReportDialog({
               id="report-recipient"
               type={isEmail ? "email" : "tel"}
               inputMode={isEmail ? "email" : "tel"}
-              placeholder={isEmail ? "owner@eclatdiamonds.in" : "9876500000"}
+              placeholder={isEmail ? "reports@example.com" : "9876500000"}
               value={to}
               aria-invalid={recipientError}
               onChange={(e) => {

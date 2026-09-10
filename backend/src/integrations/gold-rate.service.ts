@@ -92,11 +92,15 @@ export class GoldRateService {
     return refreshHours * 1.5;
   }
 
-  /** Latest stored row for a metal — store-specific override wins over global. */
-  private async latestRow(metal: MetalKind, storeId?: string) {
+  /**
+   * Latest stored row for a metal — store-specific override wins over global.
+   * Always organisation-scoped: rates are per-tenant config, so one org can never
+   * read another's stored rate. `organisationId` comes from the authenticated user.
+   */
+  private async latestRow(metal: MetalKind, organisationId: string, storeId?: string) {
     const scoped = storeId && storeId !== 'all' ? storeId : undefined;
     return this.prisma.metalRate.findFirst({
-      where: { metal, ...(scoped ? { OR: [{ storeId: scoped }, { storeId: null }] } : {}) },
+      where: { metal, organisationId, ...(scoped ? { OR: [{ storeId: scoped }, { storeId: null }] } : {}) },
       // store-specific first (nulls last), then most recent.
       orderBy: [{ storeId: 'desc' }, { effectiveFrom: 'desc' }, { createdAt: 'desc' }],
     });
@@ -106,8 +110,12 @@ export class GoldRateService {
    * Latest stored rate (INR/g) for a metal. A store-specific override wins over a
    * global (storeId null) rate; returns null if nothing is on record yet.
    */
-  async getLatestRate(metal: MetalKind, storeId?: string): Promise<number | null> {
-    const row = await this.latestRow(metal, storeId);
+  async getLatestRate(
+    metal: MetalKind,
+    organisationId: string,
+    storeId?: string,
+  ): Promise<number | null> {
+    const row = await this.latestRow(metal, organisationId, storeId);
     return row ? Number(row.ratePerGram) : null;
   }
 
@@ -119,7 +127,7 @@ export class GoldRateService {
    * week-old number and look exactly like a fresh one. `stale` gives the UI
    * something to warn on instead of the staff having to remember to check.
    */
-  async currentRates(storeId?: string): Promise<
+  async currentRates(organisationId: string, storeId?: string): Promise<
     Array<{
       metal: MetalKind;
       ratePerGram: number;
@@ -131,7 +139,7 @@ export class GoldRateService {
     const metals = Object.values(MetalKind);
     const now = Date.now();
     const rows = await Promise.all(
-      metals.map(async (metal) => ({ metal, row: await this.latestRow(metal, storeId) })),
+      metals.map(async (metal) => ({ metal, row: await this.latestRow(metal, organisationId, storeId) })),
     );
     return rows
       .filter((r) => r.row != null)
@@ -152,7 +160,9 @@ export class GoldRateService {
    * Pull the fine-gold (24k) price from the configured feed and write a fresh
    * MetalRate row for each gold purity. No-op when no feed is set.
    */
-  async refresh(): Promise<{ updated: boolean; dryRun: boolean; rates?: Record<string, number> }> {
+  async refresh(
+    organisationId: string,
+  ): Promise<{ updated: boolean; dryRun: boolean; rates?: Record<string, number> }> {
     if (!this.enabled) {
       this.logger.log('[dry-run] gold-rate feed not configured — keeping last stored rates.');
       return { updated: false, dryRun: true };
@@ -166,7 +176,7 @@ export class GoldRateService {
 
     // Lift raw spot to the local retail rate (import duty + GST + premium).
     const fineInrPerGram = round2(spotInrPerGram * (1 + this.premiumPct / 100));
-    const written = await this.writePurities(fineInrPerGram, new Date());
+    const written = await this.writePurities(fineInrPerGram, new Date(), organisationId);
     this.logger.log(
       `Gold rates refreshed: 24k = ₹${written.gold_24k}/g (spot ₹${spotInrPerGram} +${this.premiumPct}%)`,
     );
@@ -174,8 +184,8 @@ export class GoldRateService {
   }
 
   /** Age in hours of the freshest gold (24k) rate on record; Infinity if none. */
-  private async goldRateAgeHours(): Promise<number> {
-    const row = await this.latestRow(MetalKind.gold_24k);
+  private async goldRateAgeHours(organisationId: string): Promise<number> {
+    const row = await this.latestRow(MetalKind.gold_24k, organisationId);
     if (!row) return Infinity;
     const eff = row.effectiveFrom ?? row.createdAt;
     return (Date.now() - eff.getTime()) / 3_600_000;
@@ -191,11 +201,12 @@ export class GoldRateService {
    */
   async refreshIfStale(
     maxAgeHours: number,
+    organisationId: string,
   ): Promise<{ updated: boolean; dryRun: boolean; skipped?: boolean; rates?: Record<string, number> }> {
     if (!this.enabled) return { updated: false, dryRun: true };
-    const age = await this.goldRateAgeHours();
+    const age = await this.goldRateAgeHours(organisationId);
     if (age < maxAgeHours) return { updated: false, dryRun: false, skipped: true };
-    return this.refresh();
+    return this.refresh(organisationId);
   }
 
   /**
@@ -208,16 +219,19 @@ export class GoldRateService {
    * are derived from it, so 24k / 22k / 18k always stay consistent — and every
    * quote built today prefills off this number.
    */
-  async setManual(input: {
-    ratePerGram: number;
-    karat: 22 | 24;
-  }): Promise<{ rates: Record<string, number> }> {
+  async setManual(
+    input: {
+      ratePerGram: number;
+      karat: 22 | 24;
+    },
+    organisationId: string,
+  ): Promise<{ rates: Record<string, number> }> {
     const mult = input.karat === 24 ? 1 : 22 / 24;
     const fine = round2(input.ratePerGram / mult);
     if (!Number.isFinite(fine) || fine <= 0) {
       throw new BadRequestException('Enter a valid gold rate');
     }
-    const rates = await this.writePurities(fine, new Date());
+    const rates = await this.writePurities(fine, new Date(), organisationId);
     this.logger.log(
       `Gold rate set manually: ${input.karat}k = ₹${input.ratePerGram}/g (24k ₹${rates.gold_24k})`,
     );
@@ -228,11 +242,14 @@ export class GoldRateService {
   private async writePurities(
     fineInrPerGram: number,
     effectiveFrom: Date,
+    organisationId: string,
   ): Promise<Record<string, number>> {
     const written: Record<string, number> = {};
     for (const [metal, mult] of GOLD_PURITY) {
       const ratePerGram = round2(fineInrPerGram * mult);
-      await this.prisma.metalRate.create({ data: { metal, ratePerGram, effectiveFrom } });
+      await this.prisma.metalRate.create({
+        data: { metal, ratePerGram, effectiveFrom, organisationId },
+      });
       written[metal] = ratePerGram;
     }
     return written;

@@ -5,6 +5,7 @@ import {
   CalendarClock,
   Check,
   ClipboardCheck,
+  Fingerprint,
   type LucideIcon,
   Percent,
   RotateCcw,
@@ -52,7 +53,12 @@ import {
   useRejectReturn,
   useReturns,
 } from "@/lib/queries/returns";
-import { useDecideLeave, useLeaveRequests } from "@/lib/queries/hrms";
+import {
+  useDecideLeave,
+  useDecideRegularization,
+  useLeaveRequests,
+  useRegularizations,
+} from "@/lib/queries/hrms";
 import { apiErrorMessage } from "@/lib/utils";
 
 /** Prefer the server-computed value; fall back to the legacy creditValue. */
@@ -73,12 +79,14 @@ export default function ApprovalsPage() {
   const discountsQ = useDiscounts();
   const returnsQ = useReturns();
   const leaveQ = useLeaveRequests();
+  const regularQ = useRegularizations();
 
   const approveDiscount = useApproveDiscount();
   const rejectDiscount = useRejectDiscount();
   const approveReturn = useApproveReturn();
   const rejectReturn = useRejectReturn();
   const decideLeave = useDecideLeave();
+  const decideRegular = useDecideRegularization();
 
   // ---- Pending-only projections -------------------------------------------
   const pendingDiscounts = (discountsQ.data ?? []).filter(
@@ -88,13 +96,26 @@ export default function ApprovalsPage() {
     (r) => r.status === "pending_approval",
   );
   const pendingLeave = (leaveQ.data ?? []).filter((l) => l.status === "pending");
+  const pendingRegular = (regularQ.data ?? []).filter(
+    (r) => r.status === "pending",
+  );
 
   const total =
-    pendingDiscounts.length + pendingReturns.length + pendingLeave.length;
+    pendingDiscounts.length +
+    pendingReturns.length +
+    pendingLeave.length +
+    pendingRegular.length;
 
   const anyLoading =
-    discountsQ.isLoading || returnsQ.isLoading || leaveQ.isLoading;
-  const anyError = discountsQ.isError || returnsQ.isError || leaveQ.isError;
+    discountsQ.isLoading ||
+    returnsQ.isLoading ||
+    leaveQ.isLoading ||
+    regularQ.isLoading;
+  const anyError =
+    discountsQ.isError ||
+    returnsQ.isError ||
+    leaveQ.isError ||
+    regularQ.isError;
   const allClear = !anyLoading && !anyError && total === 0;
 
   // Reject-with-reason dialog target: which kind of request + its id.
@@ -164,6 +185,22 @@ export default function ApprovalsPage() {
     );
   }
 
+  function decideRegularReq(id: string, action: "approve" | "reject") {
+    decideRegular.mutate(
+      { id, status: action === "approve" ? "approved" : "rejected" },
+      {
+        onSuccess: () =>
+          toast.success(
+            action === "approve"
+              ? "Attendance fix approved"
+              : "Attendance fix rejected",
+          ),
+        onError: () =>
+          toast.error(`Could not ${action} this attendance fix.`),
+      },
+    );
+  }
+
   return (
     <>
       <SectionHeader
@@ -185,7 +222,7 @@ export default function ApprovalsPage() {
       ) : (
         <>
           {/* Summary: total + per-type counts */}
-          <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             <SummaryTile
               icon={ClipboardCheck}
               label="Total pending"
@@ -206,6 +243,11 @@ export default function ApprovalsPage() {
               icon={CalendarClock}
               label="Leave"
               value={pendingLeave.length}
+            />
+            <SummaryTile
+              icon={Fingerprint}
+              label="Attendance fixes"
+              value={pendingRegular.length}
             />
           </div>
 
@@ -395,6 +437,76 @@ export default function ApprovalsPage() {
                     {lr.reason ? (
                       <p className="text-xs text-muted-foreground">
                         &ldquo;{lr.reason}&rdquo;
+                      </p>
+                    ) : null}
+                  </ApprovalRow>
+                );
+              })}
+            </ApprovalSection>
+
+            {/* -------- Attendance fixes (regularizations) -------- */}
+            <ApprovalSection
+              icon={Fingerprint}
+              title="Attendance fixes"
+              description="Missed / wrong-punch corrections awaiting your decision."
+              count={pendingRegular.length}
+              isError={regularQ.isError}
+              onRetry={() => regularQ.refetch()}
+            >
+              {pendingRegular.map((rg) => {
+                const approving =
+                  decideRegular.isPending &&
+                  decideRegular.variables?.id === rg.id &&
+                  decideRegular.variables?.status === "approved";
+                const rejecting =
+                  decideRegular.isPending &&
+                  decideRegular.variables?.id === rg.id &&
+                  decideRegular.variables?.status === "rejected";
+                return (
+                  <ApprovalRow
+                    key={rg.id}
+                    actions={
+                      <DecisionButtons
+                        approving={approving}
+                        rejecting={rejecting}
+                        onApprove={() => decideRegularReq(rg.id, "approve")}
+                        onReject={() => decideRegularReq(rg.id, "reject")}
+                      />
+                    }
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium text-foreground">
+                        {rg.name}
+                      </span>
+                      <Badge variant="outline">{rg.date}</Badge>
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      {rg.requestedCheckIn ? (
+                        <>
+                          In{" "}
+                          <span className="num font-medium text-foreground">
+                            {new Date(rg.requestedCheckIn).toLocaleTimeString(
+                              "en-IN",
+                              { hour: "2-digit", minute: "2-digit" },
+                            )}
+                          </span>
+                        </>
+                      ) : null}
+                      {rg.requestedCheckOut ? (
+                        <>
+                          {rg.requestedCheckIn ? " · " : ""}Out{" "}
+                          <span className="num font-medium text-foreground">
+                            {new Date(rg.requestedCheckOut).toLocaleTimeString(
+                              "en-IN",
+                              { hour: "2-digit", minute: "2-digit" },
+                            )}
+                          </span>
+                        </>
+                      ) : null}
+                    </div>
+                    {rg.reason ? (
+                      <p className="text-xs text-muted-foreground">
+                        &ldquo;{rg.reason}&rdquo;
                       </p>
                     ) : null}
                   </ApprovalRow>

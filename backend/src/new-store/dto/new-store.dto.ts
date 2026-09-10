@@ -1,11 +1,27 @@
-import { IsDateString, IsEnum, IsNumber, IsOptional, IsString } from 'class-validator';
+import {
+  IsDateString,
+  IsEnum,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  MaxLength,
+  Min,
+} from 'class-validator';
 import { ChecklistStatus, NewStoreDept } from '@prisma/client';
+import { IsRealName } from '../../common/contact.util';
 
 export class CreateProjectDto {
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  @IsRealName()
   name!: string;
 
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  @IsRealName()
   city!: string;
 
   @IsOptional()
@@ -14,6 +30,8 @@ export class CreateProjectDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(120)
+  @IsRealName()
   leadName?: string;
 
   @IsOptional()
@@ -24,6 +42,9 @@ export class CreateProjectDto {
 /** POST /new-store/projects/:id/checklist — add a checklist task to a launch. */
 export class AddChecklistItemDto {
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  @IsRealName()
   title!: string;
 
   /** Owning department; defaults to `inventory` when omitted. */
@@ -44,12 +65,17 @@ export class UpdateChecklistItemDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(200)
+  @IsRealName()
   title?: string;
 }
 
 /** POST /new-store/projects/:id/milestones — add a launch milestone. */
 export class AddMilestoneDto {
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  @IsRealName()
   title!: string;
 
   /** Milestone date (yyyy-mm-dd), stored on NewStoreMilestone.date. */
@@ -81,10 +107,14 @@ export class UpdateMilestoneDto {
 /** POST /new-store/projects/:id/vendors — add a vendor engagement to a launch. */
 export class AddVendorDto {
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  @IsRealName()
   name!: string;
 
   /** What the vendor is doing (NewStoreVendor.task). */
   @IsString()
+  @IsNotEmpty()
   scope!: string;
 
   @IsOptional()
@@ -94,6 +124,7 @@ export class AddVendorDto {
   /** Quoted/contracted cost for this vendor (feeds project budget). */
   @IsOptional()
   @IsNumber()
+  @Min(0)
   amount?: number;
 }
 
@@ -105,5 +136,6 @@ export class UpdateVendorDto {
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
   amount?: number;
 }

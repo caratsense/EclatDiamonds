@@ -54,6 +54,24 @@ export function useFinanceSummary() {
   });
 }
 
+export interface ExpenseBreakdown {
+  total: number;
+  items: { account: string; amount: number }[];
+}
+
+/** GET /finance/expenses — operating-expense breakdown behind the OpEx KPI. */
+export function useFinanceExpenses(enabled: boolean) {
+  const storeId = useStoreKey();
+  return useQuery({
+    queryKey: ["finance", "expenses", storeId],
+    enabled,
+    queryFn: async () => {
+      const { data } = await api.get<ExpenseBreakdown>("/finance/expenses");
+      return data;
+    },
+  });
+}
+
 /** GET /finance/budget — budget-vs-actual per store/region (MTD). */
 export function useFinanceBudget() {
   const storeId = useStoreKey();

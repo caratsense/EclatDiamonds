@@ -30,8 +30,15 @@ export class MarketingService {
    */
   private async campaignFilter(user: AuthUser, headerStore?: string): Promise<Prisma.MarketingCampaignWhereInput> {
     const storeIds = this.scope.effectiveStoreIds(user, headerStore);
-    if (user.allStores && (!headerStore || headerStore === 'all')) return {};
-    return { stores: { some: { storeId: { in: storeIds } } } };
+    // ALWAYS organisation-bounded: allStores/head_office means "every campaign in
+    // THIS org", never DB-wide. Lower roles narrow further by targeted store.
+    if (user.allStores && (!headerStore || headerStore === 'all')) {
+      return { organisationId: user.organisationId };
+    }
+    return {
+      organisationId: user.organisationId,
+      stores: { some: { storeId: { in: storeIds } } },
+    };
   }
 
   /** Shape a MarketingCampaign row (with stores included) into the planner view. */
@@ -76,6 +83,7 @@ export class MarketingService {
 
     const campaign = await this.prisma.marketingCampaign.create({
       data: {
+        organisationId: user.organisationId,
         name: dto.name,
         type: dto.type,
         status: dto.status ?? 'planning',

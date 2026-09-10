@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { StoresService } from './stores.service';
 import { CreateManagerDto, CreateStoreDto, UpdateStoreDto } from './dto/stores.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
@@ -10,15 +10,16 @@ export class StoresController {
   constructor(private readonly stores: StoresService) {}
 
   /**
-   * GET /stores/directory — public list of branches (id/name/city only) for the
-   * self-signup store picker, before the applicant has any session. Store names
-   * and cities are already public (they are on the company website), so this
-   * exposes nothing sensitive; it deliberately omits everything operational.
+   * GET /stores/directory?org=<slug|id> — public list of branches (id/name/city
+   * only) for the self-signup store picker, before the applicant has any session.
+   * REQUIRES an explicit org param so this does not enumerate every tenant's
+   * branches (audit §I-4); without it the response is []. The signup UI passes
+   * the organisation it is signing into.
    */
   @Public()
   @Get('directory')
-  directory() {
-    return this.stores.directory();
+  directory(@Query('org') org?: string) {
+    return this.stores.directory(org);
   }
 
   /**
@@ -61,14 +62,14 @@ export class StoresController {
   /** PATCH /stores/:id — edit a branch (head office only; aggregate is immutable). */
   @Roles('head_office')
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateStoreDto) {
-    return this.stores.update(id, dto);
+  update(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateStoreDto) {
+    return this.stores.update(user, id, dto);
   }
 
   /** POST /stores/:id/manager — create/link the store-manager login (head office only). */
   @Roles('head_office')
   @Post(':id/manager')
-  addManager(@Param('id') id: string, @Body() dto: CreateManagerDto) {
-    return this.stores.addManager(id, dto);
+  addManager(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: CreateManagerDto) {
+    return this.stores.addManager(user, id, dto);
   }
 }

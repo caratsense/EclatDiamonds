@@ -25,7 +25,11 @@ export type LeadSource =
   | "whatsapp"
   | "website"
   | "instagram"
-  | "referral";
+  | "referral"
+  /** A lead form submitted on Facebook or Instagram. System-assigned. */
+  | "meta_ads"
+  /** Opened from a spreadsheet or connector import. System-assigned. */
+  | "imported";
 
 export interface LeadNote {
   id: string;
@@ -102,6 +106,12 @@ export interface Lead {
   closedAt: string | null;
   /** Server-computed buying-intent temperature. */
   temperature: LeadTemperature;
+  /**
+   * Answers to the questionnaire on a Meta Lead Ads form, when the lead came
+   * from one. Empty for every other source — the questions belong to the form,
+   * so a walk-in has none rather than blank ones.
+   */
+  formAnswers?: { name: string; values: string[] }[];
   createdAt: string;
   lastActivity: string;
   notes: LeadNote[];
@@ -117,6 +127,8 @@ export const LEAD_SOURCE_LABELS: Record<LeadSource, string> = {
   website: "Website",
   instagram: "Instagram",
   referral: "Referral",
+  meta_ads: "Meta Ads",
+  imported: "Imported",
 };
 
 /** Ordered options for the (required) lead-source select on the entry form. */
@@ -127,6 +139,21 @@ export const LEAD_SOURCE_OPTIONS: { value: LeadSource; label: string }[] = [
   { value: "website", label: "Website" },
   { value: "instagram", label: "Instagram" },
   { value: "referral", label: "Referral" },
+];
+
+/**
+ * Everything a lead's source can BE, for filtering and display.
+ *
+ * Deliberately longer than LEAD_SOURCE_OPTIONS above. `meta_ads` and `imported`
+ * are assigned by the system when a lead form arrives or a file is opened into
+ * leads, and a salesperson must not be able to claim either by hand — that is
+ * how measured attribution becomes a typed guess. They still have to be
+ * filterable and to render a label, which is what this list is for.
+ */
+export const LEAD_SOURCE_FILTER_OPTIONS: { value: LeadSource; label: string }[] = [
+  ...LEAD_SOURCE_OPTIONS,
+  { value: "meta_ads", label: "Meta Ads" },
+  { value: "imported", label: "Imported" },
 ];
 
 export const TEMPERATURE_LABELS: Record<LeadTemperature, string> = {

@@ -4,12 +4,20 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
 import { ROLE_RANK } from '../common/role.util';
+import { businessDate, resolveTz } from '../common/tz.util';
 import { NotificationBus, NotificationEvent } from './notification-bus';
 import { FeedQueryDto } from './dto/notifications.dto';
 
 /** A single actionable-count row surfaced alongside the feed. */
 interface NotificationItem {
-  type: 'discount' | 'return' | 'leave' | 'reminder' | 'store_pending' | 'special_request';
+  type:
+    | 'discount'
+    | 'return'
+    | 'leave'
+    | 'reminder'
+    | 'store_pending'
+    | 'special_request'
+    | 'dsr_missing';
   label: string;
   count: number;
   href: string;
@@ -142,24 +150,51 @@ export class NotificationsService {
    *
    * `excludeUserId` drops the requester — nobody is notified of their own
    * request, and they could not approve it anyway (see `approval.util.ts`).
+   *
+   * ORGANISATION BOUNDARY: recipients are always confined to a single tenant.
+   * head_office is reached regardless of a store link, so without an organisation
+   * filter this would fan a store's request out to EVERY tenant's head office.
+   * The organisation is taken from `organisationId` when given, otherwise derived
+   * from the store; if neither is available no recipients are returned, so a
+   * notification can never cross into another organisation.
    */
   async recipientsFor(
     storeId: string | null,
     requiredRole: Role,
     excludeUserId?: string,
+    organisationId?: string | null,
   ): Promise<string[]> {
     const minRank = ROLE_RANK[requiredRole];
     const eligibleRoles = (Object.keys(ROLE_RANK) as Role[]).filter(
       (r) => ROLE_RANK[r] >= minRank,
     );
 
+    // Resolve the tenant this notification belongs to. A store's organisation is
+    // the boundary for head_office recipients; fall back to it when the caller
+    // did not pass one explicitly.
+    const orgId =
+      organisationId ??
+      (storeId
+        ? (
+            await this.prisma.store.findUnique({
+              where: { id: storeId },
+              select: { organisationId: true },
+            })
+          )?.organisationId ?? null
+        : null);
+    // Fail closed: with no tenant context we cannot safely fan out to head_office
+    // (which spans stores), so nobody is notified rather than every tenant's HO.
+    if (!orgId) return [];
+
     const users = await this.prisma.user.findMany({
       where: {
         isActive: true,
+        organisationId: orgId,
         role: { in: eligibleRoles },
         ...(excludeUserId ? { id: { not: excludeUserId } } : {}),
-        // head_office sees every store, so it is reached regardless of the
-        // store link; everyone else must actually be attached to this branch.
+        // head_office sees every store OF ITS ORGANISATION, so it is reached
+        // regardless of the store link; everyone else must actually be attached
+        // to this branch.
         ...(storeId
           ? { OR: [{ role: Role.head_office }, { userStores: { some: { storeId } } }] }
           : {}),
@@ -175,8 +210,9 @@ export class NotificationsService {
     requiredRole: Role,
     input: EmitInput,
     excludeUserId?: string,
+    organisationId?: string | null,
   ): Promise<void> {
-    const recipients = await this.recipientsFor(storeId, requiredRole, excludeUserId);
+    const recipients = await this.recipientsFor(storeId, requiredRole, excludeUserId, organisationId);
     await this.emit(recipients, input);
   }
 
@@ -398,7 +434,10 @@ export class NotificationsService {
         where: {
           status: 'pending',
           isAggregate: false,
-          ...(user.allStores ? {} : { id: { in: user.storeIds } }),
+          // storeIds is organisation-bounded for every role (head_office
+          // included), so this is the tenant boundary — never an unfiltered {}
+          // that would count another organisation's pending branches.
+          id: { in: user.storeIds },
         },
       });
       if (pending > 0) {
@@ -408,6 +447,45 @@ export class NotificationsService {
           count: pending,
           href: '/settings/stores',
         });
+      }
+    }
+
+    // --- Branches that have not filed today's daily report (store_manager+) ---
+    // Counted per store's OWN date: a branch is not late because the server is
+    // in a different timezone. Bounded to the caller's store scope, which is
+    // organisation-bounded — never a cross-tenant count.
+    if (rank >= ROLE_RANK.store_manager) {
+      const stores = await this.prisma.store.findMany({
+        where: {
+          isAggregate: false,
+          isActive: true,
+          id: { in: user.storeIds },
+        },
+        select: { id: true, timezone: true },
+      });
+      if (stores.length) {
+        const now = new Date();
+        const wanted = stores.map((s) => ({
+          storeId: s.id,
+          date: businessDate(now, resolveTz(s.timezone)),
+        }));
+        const filed = await this.prisma.dailyReport.findMany({
+          where: { OR: wanted.map((w) => ({ storeId: w.storeId, reportDate: w.date })) },
+          select: { storeId: true },
+        });
+        const filedIds = new Set(filed.map((f) => f.storeId));
+        const missing = wanted.length - filedIds.size;
+        if (missing > 0) {
+          items.push({
+            type: 'dsr_missing',
+            label:
+              missing === 1
+                ? 'Branch has not reported today'
+                : 'Branches have not reported today',
+            count: missing,
+            href: '/reporting',
+          });
+        }
       }
     }
 
