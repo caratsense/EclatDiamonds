@@ -3,6 +3,7 @@ import { Prisma, Role } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthUser } from '../common/auth-user';
+import { AdvancedCrmService } from '../crm/advanced-crm.service';
 import { IdentityService } from '../crm/identity.service';
 import { AttributionService } from '../crm/attribution.service';
 import { AdSetRulesService } from '../crm/adset-rules.service';
@@ -64,6 +65,7 @@ export class MetaLeadAdapter implements MetaLeadSink, OnModuleInit {
     private readonly adSetRules: AdSetRulesService,
     private readonly activity: ActivityService,
     private readonly sequence: SequenceService,
+    private readonly advanced: AdvancedCrmService,
   ) {}
 
   onModuleInit(): void {
@@ -206,10 +208,31 @@ export class MetaLeadAdapter implements MetaLeadSink, OnModuleInit {
       } as Prisma.InputJsonValue,
     });
 
+    /*
+     * Put the lead in the branch's fair queue when the rule did not name an
+     * owner.
+     *
+     * A routing rule may legitimately choose a store and leave the assignee to
+     * the queue. Before this, that lead stayed unowned while a QR scan or an ad
+     * click into the same branch was assigned immediately — three doors, three
+     * different outcomes for the same enquiry. Nobody chased the Meta ones
+     * because nobody's name was on them.
+     *
+     * After the activity record and outside the create: a lead that exists and
+     * is unassigned is a far better outcome than a Meta webhook retried because
+     * the tenant has no eligible salesperson. `autoAssignLead` swallows its own
+     * failures and is idempotent on an already-owned lead, so a redelivery
+     * cannot reassign one.
+     */
+    const assigned = route?.assignedUserId
+      ? null
+      : await this.advanced.autoAssignLead(lead.organisationId, leadId);
+
     // Identifiers only — never the form answers, the name, the phone or the email.
     this.logger.log(
       `Meta lead ${lead.leadgenId} filed as ${leadId} (store ${storeId}` +
-        `${route ? `, rule ${route.ruleId}` : ', unrouted'})`,
+        `${route ? `, rule ${route.ruleId}` : ', unrouted'}` +
+        `${assigned ? `, queued to ${assigned.assignedUserId}` : ''})`,
     );
 
     return { accepted: true, duplicate: false, leadId };

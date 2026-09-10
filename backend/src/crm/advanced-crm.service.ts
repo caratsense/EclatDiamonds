@@ -797,6 +797,30 @@ export class AdvancedCrmService {
     }
   }
 
+  /**
+   * Round-robin a lead that arrived through a non-conversation door.
+   *
+   * The QR capture and click-to-WhatsApp paths already place a new lead in the
+   * tenant's fair queue. Meta Lead Ads did not: it set an owner only when a
+   * routing rule named one, so a lead form that matched a rule with a store but
+   * no assignee sat unowned, while the identical enquiry arriving through any
+   * other door had a salesperson against it within the second. Same door, same
+   * treatment — that consistency is the point.
+   *
+   * Advisory by contract, exactly like `autoAssignInbound`: the lead is already
+   * durable when this runs, and a tenant with no eligible salesperson or a
+   * disabled policy must not turn a delivered provider webhook into a retry.
+   * `assignRoundRobin` is idempotent on an already-owned lead, so a replay
+   * returns the existing owner rather than reassigning.
+   */
+  async autoAssignLead(organisationId: string, leadId: string) {
+    try {
+      return await this.assignRoundRobin(organisationId, 'lead', leadId, null);
+    } catch {
+      return null;
+    }
+  }
+
   private async assignRoundRobin(
     organisationId: string,
     entity: 'lead' | 'conversation',

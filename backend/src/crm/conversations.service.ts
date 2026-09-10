@@ -565,6 +565,156 @@ export class ConversationsService {
     }
   }
 
+  /**
+   * Open the lead an ad click could not open, once someone supplies the branch.
+   *
+   * `recordAdOrigin` refuses to guess a store, so an ad-originated thread that
+   * matched no routing rule stays a visible, unassigned conversation with its
+   * `sourceAdId`/`sourceClickId` intact. That was the right call. What was
+   * missing is the other half: when a human later routes that thread to a
+   * branch, nothing opened the lead, so the click stayed attached to a
+   * conversation forever and never reached the pipeline or ROAS. The enquiry was
+   * visible and the marketing spend behind it was not.
+   *
+   * Exactly-once across BOTH paths, because it reuses the same `originKey` that
+   * `recordAdOrigin` would have used — `click:<ctwa_clid>` when the provider gave
+   * a click id, else `convo:<conversationId>`. The unique index on
+   * (organisationId, originKey) is what enforces it; the lookups here are
+   * optimisations. A thread routed, un-routed and routed again therefore yields
+   * one lead, not three.
+   *
+   * The attribution touch is RELINKED, never re-recorded. `adTouchDedupeKey`
+   * embeds the subject, so recording it again against the lead would mint a
+   * different key, survive the unique index and count the same click twice in
+   * ROAS. Moving the row keeps one touch per click and hands it to the lead.
+   */
+  private async backfillAdLeadOnAssign(
+    organisationId: string,
+    conversationId: string,
+  ): Promise<string | null> {
+    try {
+      const convo = await this.prisma.conversation.findFirst({
+        where: { id: conversationId, organisationId },
+        select: {
+          id: true,
+          partyId: true,
+          storeId: true,
+          sourceAdId: true,
+          sourceClickId: true,
+        },
+      });
+      // Not routed yet, or never came from an ad: nothing to open.
+      if (!convo?.storeId) return null;
+      if (!convo.sourceAdId && !convo.sourceClickId) return null;
+
+      const originKey = convo.sourceClickId
+        ? `click:${convo.sourceClickId}`
+        : `convo:${convo.id}`;
+
+      const already = await this.prisma.lead.findFirst({
+        where: { organisationId, originKey },
+        select: { id: true },
+      });
+      if (already) return already.id;
+
+      // Same reuse rule as the inbound path: an open lead for this customer AT
+      // THIS BRANCH is the lead this click belongs to. Scoped to the store so a
+      // Hyderabad click never lands on an open Mumbai enquiry.
+      if (convo.partyId) {
+        const open = await this.prisma.lead.findFirst({
+          where: {
+            organisationId,
+            partyId: convo.partyId,
+            storeId: convo.storeId,
+            outcome: 'open',
+          },
+          select: { id: true },
+          orderBy: { createdAt: 'desc' },
+        });
+        if (open) {
+          await this.relinkAdTouch(organisationId, convo.partyId, open.id);
+          return open.id;
+        }
+      }
+
+      const party = convo.partyId
+        ? await this.prisma.party.findFirst({
+            where: { id: convo.partyId, organisationId },
+            select: { name: true, phone: true, whatsapp: true },
+          })
+        : null;
+
+      const seq = await this.sequence.next('LD:global');
+      let leadId: string;
+      try {
+        const created = await this.prisma.lead.create({
+          data: {
+            organisationId,
+            ref: `LD-${5000 + seq}`,
+            storeId: convo.storeId,
+            partyId: convo.partyId,
+            customerName: party?.name ?? 'WhatsApp customer',
+            phone: party?.phone ?? party?.whatsapp ?? null,
+            source: 'whatsapp',
+            originKey,
+          },
+          select: { id: true },
+        });
+        leadId = created.id;
+      } catch (err) {
+        // A concurrent assignment, or the inbound path finally routing, won the
+        // race. Returning theirs IS the correct outcome.
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+          const winner = await this.prisma.lead.findFirst({
+            where: { organisationId, originKey },
+            select: { id: true },
+          });
+          return winner?.id ?? null;
+        }
+        throw err;
+      }
+
+      if (convo.partyId) await this.relinkAdTouch(organisationId, convo.partyId, leadId);
+
+      await this.activity.record({
+        organisationId,
+        type: 'lead.created',
+        summary: 'An ad enquiry became a lead when its branch was set.',
+        partyId: convo.partyId,
+        leadId,
+        storeId: convo.storeId,
+        entityType: 'Lead',
+        entityId: leadId,
+        channel: 'whatsapp',
+        dedupeKey: `ad-lead-backfill:${originKey}`,
+      });
+
+      return leadId;
+    } catch (err) {
+      // Advisory, like every other automation on this path. The routing change
+      // the user asked for has already been committed and audited; failing to
+      // open the lead must not undo it.
+      this.logger.error(
+        `Ad lead not backfilled for conversation ${conversationId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return null;
+    }
+  }
+
+  /** Move this customer's measured ad touches onto the lead they opened. */
+  private async relinkAdTouch(organisationId: string, partyId: string, leadId: string) {
+    await this.prisma.attributionTouch.updateMany({
+      where: { organisationId, partyId, leadId: null, channel: 'ad' },
+      // `dedupeKey` deliberately keeps its original value. It is a uniqueness
+      // token for "this click, recorded once", not a description of where the
+      // row currently points, and rewriting it would let the inbound path mint
+      // the row a second time under the old key.
+      data: { partyId: null, leadId },
+    });
+  }
+
   private async normalizeSender(organisationId: string, msg: InboundMessage): Promise<string | null> {
     const org = await this.prisma.organisation.findUnique({
       where: { id: organisationId },
@@ -666,7 +816,18 @@ export class ConversationsService {
       entityId: conversationId,
     });
 
-    return updated;
+    /*
+     * A branch has just been supplied, which may be the first time this
+     * ad-originated thread has had one. Opening the lead here is what stops a
+     * click that arrived before any routing rule existed from staying invisible
+     * to the pipeline for good. Runs only when the conversation now HAS a store;
+     * a thread returned to the central queue opens nothing.
+     */
+    const backfilledLeadId = updated.storeId
+      ? await this.backfillAdLeadOnAssign(user.organisationId, conversationId)
+      : null;
+
+    return { ...updated, backfilledLeadId };
   }
 
   /**
