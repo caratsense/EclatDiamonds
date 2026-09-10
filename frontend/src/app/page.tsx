@@ -351,9 +351,14 @@ export default function LandingPage() {
             <h2 className="mt-2 text-balance font-display text-3xl font-bold sm:text-4xl">
               Pick the one you are in.
             </h2>
-            {/* Fetched from the server that owns the packs — see IndustryGrid. */}
-            <IndustryGrid />
           </div>
+          {/*
+            Outside the prose column: the sentence wants a comfortable measure,
+            the grid of sixteen wants the full width. Nesting the grid in the
+            heading's `max-w-2xl` squeezed it into half the page.
+            Fetched from the server that owns the packs — see IndustryGrid.
+          */}
+          <IndustryGrid />
           <p className="mt-8 max-w-2xl text-sm leading-relaxed text-[var(--l-ivory-55)]">
             A pack configures vocabulary, pipelines and qualification questions. It does not
             configure regulated workflow: dispensing rules, clinical records and statutory

@@ -221,7 +221,13 @@ export function AttendanceTab({ records, fence }: AttendanceTabProps) {
                   <TableCell className="num">{r.checkIn ?? "—"}</TableCell>
                   <TableCell className="num">{r.checkOut ?? "—"}</TableCell>
                   <TableCell className="num text-right">
-                    {r.checkIn ? `${r.distanceM} m` : "—"}
+                    {/*
+                      A dash when there is no distance, not the word "null".
+                      `distanceM` is null whenever the store has no coordinates
+                      or the punch captured no fix, and the template string
+                      rendered that as "null m" on the manager's own table.
+                    */}
+                    {r.checkIn && r.distanceM != null ? `${r.distanceM} m` : "—"}
                   </TableCell>
                   <TableCell>
                     {r.checkIn ? <FenceBadge within={r.withinFence} /> : (
