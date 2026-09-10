@@ -12,6 +12,7 @@ import {
 
 import { useT } from "@/lib/i18n";
 import { useOmnichannelSummary, type OmnichannelSummary } from "@/lib/queries/omnichannel";
+import { STAT_LABEL, STAT_VALUE_SM } from "@/components/ui/stat";
 
 /**
  * The omnichannel headline bar.
@@ -164,8 +165,11 @@ function Totals({
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-7">
       {cards.map((c) => (
-        <div key={c.key} className="rounded-md border border-border p-3">
-          <div className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <div
+          key={c.key}
+          className="rounded-xl border border-border/80 bg-card p-3 shadow-sm"
+        >
+          <div className={`${STAT_LABEL} mb-1.5`}>
             <c.icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
             {/* The title carries the full wording: at seven across, a long
                 label clips, and a clipped label is a number nobody can read. */}
@@ -173,7 +177,7 @@ function Totals({
               {c.label}
             </span>
           </div>
-          <div className="font-[family-name:var(--font-display-face)] text-2xl tabular-nums">
+          <div className={`${STAT_VALUE_SM} text-foreground`}>
             {loading ? <span className="text-muted-foreground">—</span> : formatCount(c.value)}
           </div>
         </div>

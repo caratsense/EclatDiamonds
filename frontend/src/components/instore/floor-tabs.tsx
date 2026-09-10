@@ -26,6 +26,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AuthedImage } from "@/components/ui/authed-image";
+import { StatusPill, type PillTone } from "@/components/ui/status-pill";
+import { STAT_LABEL, STAT_VALUE_SM } from "@/components/ui/stat";
 import {
   useFloorDay,
   useFloorForms,
@@ -116,10 +118,10 @@ function Failed({ error, what }: { error: unknown; what: string }) {
 
 /* ================================================================= visits */
 
-const VISIT_TONE: Record<FloorVisit["status"], "success" | "destructive" | "secondary"> = {
-  converted: "success",
-  walked_out: "destructive",
-  open: "secondary",
+const VISIT_TONE: Record<FloorVisit["status"], PillTone> = {
+  converted: "good",
+  walked_out: "bad",
+  open: "wait",
 };
 const VISIT_WORD: Record<FloorVisit["status"], string> = {
   converted: "Converted",
@@ -158,9 +160,9 @@ function VisitCard({ visit }: { visit: FloorVisit }) {
               {visit.customerId ? ` · ${visit.customerId}` : ""}
             </p>
           </div>
-          <Badge variant={VISIT_TONE[visit.status]} className="shrink-0 text-[10px]">
+          <StatusPill tone={VISIT_TONE[visit.status]}>
             {VISIT_WORD[visit.status]}
-          </Badge>
+          </StatusPill>
         </div>
 
         {visit.attendedBy || visit.purpose ? (
@@ -310,13 +312,15 @@ function Tile({
   tone?: "warn";
 }) {
   return (
-    <div className="rounded-md border border-border p-3">
-      <div className="truncate text-xs text-muted-foreground" title={hint ?? label}>
-        {label}
+    <div className="rounded-xl border border-border/80 bg-card p-3 shadow-sm">
+      <div className={`${STAT_LABEL} mb-1.5`}>
+        <span className="truncate" title={hint ?? label}>
+          {label}
+        </span>
       </div>
       <div
-        className={`font-[family-name:var(--font-display-face)] text-2xl tabular-nums ${
-          tone === "warn" ? "text-destructive" : ""
+        className={`${STAT_VALUE_SM} ${
+          tone === "warn" ? "text-destructive" : "text-foreground"
         }`}
       >
         {value}
@@ -437,9 +441,9 @@ function TaskCard({ task }: { task: QueueTask }) {
             <p className="line-clamp-2 text-xs text-muted-foreground">{task.title}</p>
           </div>
           {late ? (
-            <Badge variant="destructive" className="shrink-0 text-[10px]">
+            <StatusPill tone="bad">
               {late === 1 ? "1 day late" : `${late} days late`}
-            </Badge>
+            </StatusPill>
           ) : null}
         </div>
 

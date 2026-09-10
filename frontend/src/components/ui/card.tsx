@@ -6,7 +6,13 @@ function Card({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn(
-        "rounded-xl border bg-card text-card-foreground shadow-sm",
+        // border-border/80 rather than the flat token: at full strength the
+        // outline competes with the content; at 80% it separates the surface
+        // without drawing a box around every paragraph. `transition-shadow`
+        // is here so a card that IS clickable can add `hover:shadow-md` and
+        // have it animate; it is not added globally, because a card nobody
+        // can click should not respond to a pointer passing over it.
+        "rounded-xl border border-border/80 bg-card text-card-foreground shadow-sm transition-shadow",
         className,
       )}
       {...props}
