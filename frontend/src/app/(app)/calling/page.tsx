@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
 import {
   AlertTriangle,
   CalendarClock,
@@ -9,6 +10,7 @@ import {
   Phone,
   Search,
   Users,
+  Zap,
 } from "lucide-react";
 
 import { SectionHeader } from "@/components/section/section-header";
@@ -20,6 +22,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { STAT_LABEL, STAT_VALUE } from "@/components/ui/stat";
+import { StatusPill } from "@/components/ui/status-pill";
 import {
   useCallingQueue,
   useCallingSummary,
@@ -68,7 +72,7 @@ const PRIORITY_TONE: Record<string, "destructive" | "warning" | "secondary" | "o
 function TaskRow({ task, onAct }: { task: QueueTask; onAct: () => void }) {
   const late = overdueLabel(task.overdueDays);
   return (
-    <Card>
+    <Card className="hover:shadow-md">
       <CardContent className="flex flex-wrap items-start justify-between gap-4 p-4">
         <div className="min-w-0 flex-1 space-y-1.5">
           <div className="flex flex-wrap items-center gap-2">
@@ -76,11 +80,7 @@ function TaskRow({ task, onAct }: { task: QueueTask; onAct: () => void }) {
             <Badge variant={PRIORITY_TONE[task.priority] ?? "outline"} className="text-[10px]">
               {task.priority}
             </Badge>
-            {late ? (
-              <Badge variant="destructive" className="text-[10px]">
-                {late}
-              </Badge>
-            ) : null}
+            {late ? <StatusPill tone="bad">{late}</StatusPill> : null}
           </div>
 
           <p className="text-xs text-muted-foreground">{task.title}</p>
@@ -136,17 +136,18 @@ function Kpi({
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-md border p-4 text-left transition-colors ${
-        active ? "border-foreground bg-muted/60" : "border-border hover:bg-muted/30"
+      aria-pressed={active}
+      className={`rounded-xl border bg-card p-4 text-left shadow-sm transition-shadow hover:shadow-md ${
+        active ? "border-foreground" : "border-border/80"
       }`}
     >
-      <div className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+      <div className={`${STAT_LABEL} mb-1.5`}>
         <Icon className="h-3.5 w-3.5" />
         {label}
       </div>
       <div
-        className={`font-[family-name:var(--font-display-face)] text-3xl tabular-nums ${
-          tone === "bad" && (value ?? 0) > 0 ? "text-destructive" : ""
+        className={`${STAT_VALUE} ${
+          tone === "bad" && (value ?? 0) > 0 ? "text-destructive" : "text-foreground"
         }`}
       >
         {value === undefined ? "—" : value.toLocaleString()}
@@ -160,6 +161,17 @@ export default function CallingPage() {
   const [mine, setMine] = useState(false);
   const [search, setSearch] = useState("");
   const [actOn, setActOn] = useState<string | null>(null);
+  /*
+   * A call session: the ids to work through, and where we are in them.
+   *
+   * The ids are SNAPSHOTTED when the session starts rather than re-read from
+   * the query on every step. The list refetches as calls are logged, and a
+   * cursor into a list that reorders underneath you skips customers — the one
+   * failure a calling team would never notice and could never reconstruct.
+   */
+  const [session, setSession] = useState<{ ids: string[]; at: number } | null>(
+    null,
+  );
 
   const summary = useCallingSummary({ mine });
   const queue = useCallingQueue({
@@ -224,6 +236,31 @@ export default function CallingPage() {
             className="pl-9"
           />
         </div>
+
+        {/*
+          Only over work that is still owed. Starting a "session" on the
+          Completed bucket would walk a caller through calls somebody has
+          already made.
+        */}
+        {bucket !== "completed" ? (
+          <Button
+            onClick={() => {
+              const ids = queue.data?.items.map((t) => t.id) ?? [];
+              if (!ids.length) return;
+              setSession({ ids, at: 0 });
+              setActOn(ids[0]);
+            }}
+            disabled={!queue.data?.items.length}
+            title={
+              queue.data?.items.length
+                ? "Work this queue one call at a time"
+                : "Nothing in this queue to call"
+            }
+          >
+            <Zap className="mr-1.5 h-4 w-4" />
+            Start call session
+          </Button>
+        ) : null}
       </div>
 
       <div className="space-y-3">
@@ -268,7 +305,36 @@ export default function CallingPage() {
       </div>
 
       {actOn ? (
-        <TakeActionDialog taskId={actOn} open onOpenChange={(o) => !o && setActOn(null)} />
+        <TakeActionDialog
+          /* Keyed, so each call in a session opens on an empty form. */
+          key={actOn}
+          taskId={actOn}
+          open
+          onOpenChange={(o) => {
+            if (o) return;
+            setActOn(null);
+            setSession(null);
+          }}
+          session={
+            session
+              ? {
+                  index: session.at,
+                  total: session.ids.length,
+                  onNext: () => {
+                    const next = session.at + 1;
+                    if (next >= session.ids.length) {
+                      setSession(null);
+                      setActOn(null);
+                      toast.success("Session finished — the queue is worked through.");
+                      return;
+                    }
+                    setSession({ ids: session.ids, at: next });
+                    setActOn(session.ids[next]);
+                  },
+                }
+              : undefined
+          }
+        />
       ) : null}
     </div>
   );

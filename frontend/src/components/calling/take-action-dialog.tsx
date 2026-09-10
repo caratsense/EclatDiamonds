@@ -134,9 +134,19 @@ interface Props {
   taskId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * Set while a caller is working the queue in one sitting.
+   *
+   * When present, logging a call hands control back to the queue instead of
+   * closing — the caller never returns to a list to find their place. The
+   * PARENT must key this component by `taskId` so each call starts on a clean
+   * form; without that the disposition and notes of the last call would still
+   * be sitting in the boxes when the next customer answers.
+   */
+  session?: { index: number; total: number; onNext: () => void };
 }
 
-export function TakeActionDialog({ taskId, open, onOpenChange }: Props) {
+export function TakeActionDialog({ taskId, open, onOpenChange, session }: Props) {
   const [tab, setTab] = useState<string>("journey");
   const [disposition, setDisposition] = useState("");
   const [notes, setNotes] = useState("");
@@ -176,7 +186,8 @@ export function TakeActionDialog({ taskId, open, onOpenChange }: Props) {
                 ? "Logged and marked done."
                 : "Logged.",
           );
-          onOpenChange(false);
+          if (session) session.onNext();
+          else onOpenChange(false);
         },
         onError: (e) => toast.error(apiErrorMessage(e, "Could not log this call.")),
       },
@@ -414,10 +425,23 @@ export function TakeActionDialog({ taskId, open, onOpenChange }: Props) {
                 />
               </div>
 
-              <div className="flex justify-end gap-2">
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {session ? (
+                  <span className="mr-auto text-xs tabular-nums text-muted-foreground">
+                    Call {session.index + 1} of {session.total}
+                  </span>
+                ) : null}
                 <Button variant="outline" onClick={() => onOpenChange(false)}>
-                  Close
+                  {session ? "End session" : "Close"}
                 </Button>
+                {/* Skipping is a real outcome: the customer did not pick up and
+                    there is nothing to log yet. Without it the only way past a
+                    task is to invent a disposition for it. */}
+                {session ? (
+                  <Button variant="outline" onClick={session.onNext}>
+                    Skip
+                  </Button>
+                ) : null}
                 <Button onClick={submit} disabled={logCall.isPending}>
                   {logCall.isPending ? (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
