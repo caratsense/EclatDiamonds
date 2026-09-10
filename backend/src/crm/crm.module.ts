@@ -18,6 +18,9 @@ import { AdSetRulesService } from './adset-rules.service';
 import { AI_RESPONDER, ConversationAiGate } from './ai-responder';
 import { RequalificationService } from './requalification.service';
 import { AdvancedCrmService } from './advanced-crm.service';
+import { LeadIntakeService } from './lead-intake.service';
+import { LeadFormsService } from './lead-forms.service';
+import { CrmImportLeadsController, CrmLeadFormsController, PublicLeadFormsController } from './lead-forms.controller';
 import {
   CrmLeadAgeingController,
   CrmLeadQrController,
@@ -66,6 +69,9 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
     CrmRoundRobinController,
     CrmLeadQrController,
     CrmPublicQrCaptureController,
+    CrmLeadFormsController,
+    PublicLeadFormsController,
+    CrmImportLeadsController,
   ],
   providers: [
     IdentityService,
@@ -82,6 +88,8 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
     AiDraftsService,
     RequalificationService,
     AdvancedCrmService,
+    LeadIntakeService,
+    LeadFormsService,
     // The default binding: honestly reports "no provider configured" rather than
     // leaving the token undefined. A real adapter replaces this when credentials
     // exist; tests replace it with a spy to assert invoked / not invoked.
@@ -104,6 +112,8 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
     AttributionService,
     AdSetRulesService,
     AdvancedCrmService,
+    LeadIntakeService,
+    LeadFormsService,
   ],
 })
 export class CrmModule {}

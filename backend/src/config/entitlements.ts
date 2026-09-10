@@ -76,6 +76,16 @@ export const ROUTE_FAMILIES: readonly RouteFamily[] = Object.freeze([
   { prefix: '/search', capability: null, why: 'Searches whatever the tenant already has.' },
   { prefix: '/assistant', capability: null, why: 'The AI assistant is the core product.' },
   { prefix: '/crm', capability: null, why: 'AI CRM, conversations, customers, pipelines: the core product.' },
+  {
+    prefix: '/public',
+    capability: null,
+    why:
+      'Anonymous, visitor-facing routes (the embedded website enquiry form). ' +
+      'Universal because a capability gate here would be meaningless: there is ' +
+      'no signed-in principal to hold a capability, and the tenant is resolved ' +
+      'from the unguessable key in the URL. What actually protects these routes ' +
+      'is that key, the per-IP throttle and the tenant-status check.',
+  },
   { prefix: '/leads', capability: null, why: 'A lead is the CRM record itself.' },
   { prefix: '/parties', capability: null, why: 'The customer directory.' },
   { prefix: '/knowledge', capability: null, why: 'Tenant knowledge base feeding the assistant.' },

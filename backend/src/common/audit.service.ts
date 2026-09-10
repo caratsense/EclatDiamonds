@@ -18,6 +18,12 @@ export const SYSTEM_ACTORS = {
   round_robin: 'Automatic assignment',
   /** A visitor submitting the public QR enquiry form. */
   qr_lead_capture: 'QR lead capture',
+  /** A visitor submitting a lead form embedded on the tenant's own website. */
+  web_form_capture: 'Website enquiry form',
+  /** A person converting an ordinary conversation into a sales lead. */
+  conversation_conversion: 'Conversation converted to a lead',
+  /** A spreadsheet or connector import electing to open leads, not just customers. */
+  import_lead_capture: 'Import lead capture',
 } as const;
 
 export type SystemActor = keyof typeof SYSTEM_ACTORS;

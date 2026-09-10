@@ -82,6 +82,10 @@ enum LeadSource {
   /// rows reference them. `instagram` is the organic channel, not a paid lead
   /// form, so the two are deliberately separate values.
   meta_ads
+  /// Opened from a spreadsheet or connector import. Says only what is known —
+  /// this came out of a file — rather than crediting a marketing channel that
+  /// may never have been involved.
+  imported
 }
 
 enum QuoteStatus {
@@ -493,6 +497,7 @@ model Organisation {
   aiDraftRecords AiDraftRecord[]
   adSpendDays                  AdSpendDaily[]
   adSpendCoverage              AdSpendCoverage[]
+  leadForms                    LeadForm[]
 }
 
 /// CaratOS import-engine provenance + reconciliation record. One row per import
@@ -705,6 +710,7 @@ model Store {
   @@unique([organisationId, code])
   @@index([regionId])
   @@index([organisationId])
+  leadForms LeadForm[]
 }
 
 /// Application user (staff login). Legacy: SPM_Users (logins only).
@@ -1183,6 +1189,55 @@ model Lead {
 /// Auto follow-up reminders for a lead (Module 1). SOP defaults: +7d (seq 1) and
 /// +30d (seq 2) from lead creation; store manager can edit dates or mark done.
 /// In-app only � no WhatsApp/push (see docs/CLIENT-CALL-2026-07.md, Module 1).
+/// A lead-capture form a tenant embeds on its own website.
+///
+/// Deliberately a table and not a key in `Organisation.settings`: the public
+/// submit endpoint has to find a form by its key with no tenant in hand, and
+/// scanning every organisation's settings JSON to do that would be both slow and
+/// exactly the modelling escape hatch the Organisation.settings comment forbids.
+model LeadForm {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  /// The unguessable identifier that appears in the customer's page. Globally
+  /// unique because the public endpoint resolves the tenant FROM it — a
+  /// guessable or shared key would let anyone file leads into any tenant.
+  publicKey String @unique
+
+  /// Shown to staff only, so two forms can be told apart.
+  name String
+
+  /// Destination branch. Every lead needs one and a branch is never guessed, so
+  /// this is required — an unrouted website form would produce leads nobody owns.
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id])
+
+  /// Used when the visitor leaves the enquiry box empty, so the lead still says
+  /// what it was about.
+  defaultInterest String?
+
+  /// Declared campaign metadata. Never presented as measured attribution: the
+  /// tenant typed it, the provider did not report it.
+  campaign String?
+
+  /// Origins permitted to submit, e.g. ["https://www.example.com"]. Empty means
+  /// any origin, which is the honest default for a form whose whole job is to be
+  /// embedded somewhere this system cannot see.
+  allowedOrigins Json?
+
+  /// The kill switch. A form that is turned off returns the same refusal as one
+  /// that never existed, so probing cannot distinguish them.
+  enabled Boolean @default(true)
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([organisationId])
+  @@index([storeId])
+}
+
 model LeadFollowUp {
   id        String    @id @default(cuid())
   leadId    String

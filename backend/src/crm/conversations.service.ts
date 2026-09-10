@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { LeadSource, Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
@@ -12,6 +12,7 @@ import { AdSetRulesService, type AdSetRoutingContext } from './adset-rules.servi
 import { AttributionService } from './attribution.service';
 import { RequalificationService } from './requalification.service';
 import { AdvancedCrmService } from './advanced-crm.service';
+import { LeadIntakeService } from './lead-intake.service';
 import type { AdReferral } from '../integration/contracts/ad-referral';
 
 /**
@@ -83,6 +84,7 @@ export class ConversationsService {
     private readonly audit: AuditService,
     private readonly requalification: RequalificationService,
     private readonly advanced: AdvancedCrmService,
+    private readonly intake: LeadIntakeService,
   ) {}
 
   private readonly logger = new Logger(ConversationsService.name);
@@ -563,6 +565,124 @@ export class ConversationsService {
       );
       return null;
     }
+  }
+
+  /**
+   * Turn an ordinary conversation into a sales lead, because a person said so.
+   *
+   * Inbound WhatsApp traffic deliberately creates no lead. Most of it is not a
+   * sales enquiry — it is a delivery question, a wrong number, someone asking
+   * the closing time — and opening a lead for each would fill the pipeline with
+   * work nobody should chase and make every conversion rate meaningless.
+   *
+   * So the judgement stays with the human who read the message, and this is the
+   * command they issue. It is idempotent on the conversation: pressing the
+   * button twice, or two people pressing it at once, yields one lead and the
+   * second caller is told it already exists.
+   *
+   * Everything after the decision is the SAME pipeline every other door uses —
+   * identity, routing, follow-ups, audit, fair queue — so a converted
+   * conversation is indistinguishable downstream from a lead that arrived any
+   * other way.
+   */
+  async convertToLead(
+    user: AuthUser,
+    conversationId: string,
+    input: { storeId?: string | null; interest: string; customerName?: string },
+  ) {
+    const conversation = await this.load(user, conversationId);
+
+    // The branch: the thread's own, or one the caller names and is allowed to
+    // use. Never guessed — an unrouted thread converted with no branch would
+    // produce a lead no branch owns.
+    const storeId = input.storeId ?? conversation.storeId;
+    if (!storeId) {
+      throw new BadRequestException(
+        'Route this conversation to a branch before converting it, or choose one here.',
+      );
+    }
+    this.scope.assertStoreAllowed(user, storeId);
+    if (input.storeId) {
+      const target = await this.prisma.store.findFirst({
+        where: { id: input.storeId, organisationId: user.organisationId, isAggregate: false },
+        select: { id: true },
+      });
+      if (!target) throw new BadRequestException('Choose a branch that belongs to this organisation.');
+    }
+
+    const interest = input.interest.trim();
+    if (!interest) throw new BadRequestException('Say what this customer is interested in.');
+
+    /*
+     * Identify the customer if the thread never did.
+     *
+     * An organic thread stays anonymous until someone attaches it — that is what
+     * stops every wrong number becoming a customer record. Converting IS that
+     * attachment: a person has read the messages and decided this is a real
+     * enquiry, so resolving the sender to a Party is now correct.
+     */
+    let partyId = conversation.partyId;
+    let phone: string | null = null;
+    if (conversation.externalThreadId) {
+      const resolved = await this.identity.resolveInbound(user.organisationId, {
+        kind: 'whatsapp',
+        value: conversation.externalThreadId,
+        name: input.customerName ?? undefined,
+        storeId,
+        source: 'conversation_conversion',
+      });
+      if (resolved.partyId) partyId = resolved.partyId;
+    }
+    if (partyId) {
+      const party = await this.prisma.party.findFirst({
+        where: { id: partyId, organisationId: user.organisationId },
+        select: { name: true, phone: true, whatsapp: true },
+      });
+      phone = party?.phone ?? party?.whatsapp ?? null;
+      if (!input.customerName && party?.name) input.customerName = party.name;
+    }
+
+    const result = await this.intake.capture({
+      organisationId: user.organisationId,
+      storeId,
+      // Keyed on the conversation, so the button is idempotent for the life of
+      // the thread rather than per click.
+      originKey: `convo_convert:${conversationId}`,
+      customerName: input.customerName?.trim() || 'WhatsApp customer',
+      phone: phone ?? conversation.externalThreadId ?? null,
+      interest,
+      source: LeadSource.whatsapp,
+      identitySource: 'conversation_conversion',
+      summary: 'A conversation was converted into a lead.',
+      auditAction: 'crm.lead_converted_from_conversation',
+      systemActor: 'conversation_conversion',
+      followUpNote: 'Converted conversation follow-up',
+      metadata: { conversationId, convertedByUserId: user.id },
+    });
+
+    // Link the thread to the lead it produced, so the inbox can show it and a
+    // second conversion attempt has something to find.
+    if (!result.duplicate && partyId && !conversation.partyId) {
+      await this.prisma.conversation.update({
+        where: { id: conversationId },
+        data: { partyId },
+      });
+    }
+
+    // The human who made the call is named here, separately from the system
+    // actor that intake records for the mechanical write.
+    await this.audit.record(user, {
+      action: 'crm.conversation_converted',
+      entityType: 'Conversation',
+      entityId: conversationId,
+      storeId,
+      summary: result.duplicate
+        ? 'Conversation was already converted; the existing lead was returned.'
+        : 'Converted this conversation into a lead.',
+      metadata: { leadId: result.leadId, reference: result.reference, duplicate: result.duplicate },
+    });
+
+    return result;
   }
 
   /**

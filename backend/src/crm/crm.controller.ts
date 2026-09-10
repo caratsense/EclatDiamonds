@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
-import { IsIn, IsOptional, IsString, MaxLength, ValidateIf } from 'class-validator';
+import { IsIn, IsNotEmpty, IsOptional, IsString, MaxLength, ValidateIf } from 'class-validator';
 
 import { AuthUser, CurrentUser } from '../common/auth-user';
 import { Roles } from '../auth/roles.decorator';
@@ -142,6 +142,19 @@ export class AssignConversationDto {
   reason?: string;
 }
 
+export class ConvertConversationDto {
+  /** Optional when the thread already has a branch; required when it does not. */
+  @IsOptional() @IsString() @IsNotEmpty()
+  storeId?: string;
+
+  @IsString() @IsNotEmpty() @MaxLength(280)
+  interest!: string;
+
+  /** Lets the salesperson put a real name on a thread that only has a number. */
+  @IsOptional() @IsString() @MaxLength(120)
+  customerName?: string;
+}
+
 export class ResolveRoutingConflictDto {
   @IsIn(['kept_original', 'accepted_proposed', 'manual'])
   decision!: 'kept_original' | 'accepted_proposed' | 'manual';
@@ -221,6 +234,20 @@ export class CrmConversationsController {
     @Body() dto: AssignConversationDto,
   ) {
     return this.conversations.assign(user, id, dto);
+  }
+
+  /**
+   * Turn an ordinary conversation into a lead, because a person decided it is
+   * one. Salesperson and above: the rep reading the thread is exactly who should
+   * make this call, unlike reassigning work between branches.
+   */
+  @Post(':id/convert-to-lead')
+  convertToLead(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: ConvertConversationDto,
+  ) {
+    return this.conversations.convertToLead(user, id, dto);
   }
 
   /**
