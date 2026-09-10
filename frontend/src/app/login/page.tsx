@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowRight,
   ArrowLeft,
@@ -613,7 +613,25 @@ function OrganisationSignupCard({
   );
 }
 
-export default function LoginPage() {
+/**
+ * The route entry.
+ *
+ * `useSearchParams()` opts a page out of static prerendering unless it sits
+ * inside a Suspense boundary — this page IS prerendered, so without the wrapper
+ * the build fails outright rather than degrading. The fallback is null because
+ * the boundary resolves on the client immediately; there is no server fetch
+ * behind it to wait on, and a spinner that flashes for one frame is worse than
+ * nothing.
+ */
+export default function LoginRoute() {
+  return (
+    <React.Suspense fallback={null}>
+      <LoginPage />
+    </React.Suspense>
+  );
+}
+
+function LoginPage() {
   const router = useRouter();
   const hydrate = useSession((s) => s.hydrate);
   const login = useLogin();
@@ -622,9 +640,23 @@ export default function LoginPage() {
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [showPassword, setShowPassword] = React.useState(false);
-  const [mode, setMode] = React.useState<"signin" | "signup">("signin");
+  /*
+   * Where the visitor asked to start.
+   *
+   * The landing page has a "Create your organisation" button, and it used to
+   * land here on the sign-IN tab — two hidden steps away from what it promised,
+   * because this screen read no query string at all. `?start=create` opens on
+   * the create-organisation form; anything else keeps the default.
+   *
+   * Read once, as the initial state, so the person can still switch tabs
+   * afterwards without the URL yanking them back.
+   */
+  const startAt = useSearchParams().get("start");
+  const [mode, setMode] = React.useState<"signin" | "signup">(
+    startAt === "create" || startAt === "join" ? "signup" : "signin",
+  );
   const [signupKind, setSignupKind] = React.useState<"join" | "organisation">(
-    "join",
+    startAt === "create" ? "organisation" : "join",
   );
 
   function finishLogin(me: AuthMeResponse) {
