@@ -36,6 +36,7 @@ import {
   Send,
   Globe,
   Smartphone,
+  PhoneCall,
 } from "lucide-react";
 
 import type { Role } from "@/lib/types";
@@ -286,6 +287,16 @@ export const NAV_GROUPS: NavGroup[] = [
         primaryAction: "New Project",
         icon: Building2,
         roles: ["head_office"],
+      },
+      {
+        module: 1,
+        slug: "calling",
+        title: "Calling",
+        purpose:
+          "Every follow-up owed to a customer, oldest first, with the history on one screen before you dial.",
+        primaryAction: "",
+        icon: PhoneCall,
+        roles: ["salesperson", "store_manager", "area_manager", "head_office"],
       },
       {
         module: 7,

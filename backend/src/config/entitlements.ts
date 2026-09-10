@@ -126,6 +126,14 @@ export const ROUTE_FAMILIES: readonly RouteFamily[] = Object.freeze([
   { prefix: '/targets', capability: 'settings/targets', why: 'Sales-target administration.' },
   { prefix: '/new-store', capability: 'new-store', why: 'New-branch opening projects.' },
   {
+    prefix: '/calling',
+    capability: 'calling',
+    why:
+      'The central follow-up / tele-calling queue. Gated so a tenant with no ' +
+      'calling team can hide it, and in core navigation because chasing a ' +
+      'follow-up is what every CRM is for.',
+  },
+  {
     prefix: '/instore',
     capability: 'instore',
     why:

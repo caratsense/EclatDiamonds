@@ -124,6 +124,8 @@ const CORE_NAVIGATION = [
    * came for, record what happened.
    */
   'instore',
+  /* Chasing a follow-up is what every CRM is for. */
+  'calling',
   'settings/onboarding',
   'settings/stores',
   'settings/team',
