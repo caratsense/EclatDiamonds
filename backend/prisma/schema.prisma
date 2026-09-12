@@ -93,6 +93,16 @@ enum QuoteStatus {
   shared
   accepted
   expired
+  /// APPENDED, never inserted: Postgres enum values are positional and existing
+  /// rows reference them by position. Adding these in the middle would silently
+  /// re-label every quote already in the table.
+  ///
+  /// A quote whose amount is over the tenant's threshold sits here until a
+  /// manager decides. Tenants with no threshold configured never see it, and
+  /// every quote written before this existed keeps the status it had.
+  pending_approval
+  approved
+  rejected
 }
 
 /// Whether a quote is a normal sale quote or a making-only repair quote (Round 2).
@@ -506,6 +516,7 @@ model Organisation {
   leadTags                     LeadTag[]
   leadTagAssignments           LeadTagAssignment[]
   staffDigestSettings          StaffDigestSettings?
+  quoteApprovalSettings        QuoteApprovalSettings?
   staffDigestRuns              StaffDigestRun[]
 }
 
@@ -818,6 +829,8 @@ model User {
   checkInFollowUpsOwned    CheckIn[]                     @relation("CheckInFollowUpOwner")
   partiesArchived          Party[]                       @relation("PartyArchivedBy")
   staffDigestRuns          StaffDigestRun[]              @relation("StaffDigestRecipient")
+  quotesApprovalRequested  Quote[]                       @relation("QuoteApprovalRequestedBy")
+  quotesApprovalDecided    Quote[]                       @relation("QuoteApprovalDecidedBy")
   callsHandled             CallLog[]                     @relation("CallLogAgent")
 
   @@unique([organisationId, legacyId])
@@ -1355,6 +1368,31 @@ model LeadTagAssignment {
   @@index([tagId])
 }
 
+/// When a quote needs a manager's decision before it can leave the building.
+///
+/// The threshold is on the AMOUNT, not on a discount percentage. Discount caps
+/// already live in DiscountLimit, per role and per store, and duplicating them
+/// here would create a second answer to the same question — and the first thing
+/// that drifts is the copy nobody can see. This gate answers a different
+/// question: is this quote large enough that somebody senior should look at it.
+model QuoteApprovalSettings {
+  organisationId String       @id
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  /// Quotes with a grand total at or above this need approval before sharing.
+  /// NULL means no approval is ever required, which is the default and keeps
+  /// every existing tenant behaving exactly as it did.
+  valueThreshold Decimal? @db.Decimal(14, 2)
+
+  /// Whether the person who asked may also decide. False by default: separation
+  /// is the entire point of an approval step.
+  allowSelfApproval Boolean @default(false)
+
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
 /// When, and whether, this tenant sends its staff their morning call list.
 ///
 /// One row per organisation. Off by default: a system that starts messaging a
@@ -1510,6 +1548,24 @@ model Quote {
   isKaccha Boolean @default(false)
 
   /// Money rollup snapshot (recomputed from lines, persisted for fast listing).
+  /*
+   * Approval.
+   *
+   * `approvedTotal` is the amount that was actually approved, snapshotted at the
+   * moment of the decision. Sharing compares the CURRENT grand total against it
+   * and refuses if they differ — otherwise a quote approved at one price could be
+   * edited downward and sent, and the approval would be decoration.
+   */
+  requestedById  String?
+  requestedAt    DateTime?
+  decidedById    String?
+  decidedAt      DateTime?
+  decisionReason String?
+  approvedTotal  Decimal?  @db.Decimal(14, 2)
+
+  requestedBy User? @relation("QuoteApprovalRequestedBy", fields: [requestedById], references: [id])
+  decidedBy   User? @relation("QuoteApprovalDecidedBy", fields: [decidedById], references: [id])
+
   metalValue    Decimal @default(0) @db.Decimal(14, 2)
   makingCharges Decimal @default(0) @db.Decimal(14, 2)
   stoneCharges  Decimal @default(0) @db.Decimal(14, 2)

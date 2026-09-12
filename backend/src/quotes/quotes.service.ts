@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { OrderStatus, Prisma, QuoteKind } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
+import { QuoteApprovalService } from './quote-approval.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { isAllStoreRole } from '../common/role.util';
 import { SequenceService } from '../common/sequence.service';
@@ -96,6 +97,7 @@ export class QuotesService {
     private readonly whatsapp: WhatsAppService,
     private readonly identity: IdentityService,
     private readonly activity: ActivityService,
+    private readonly approval: QuoteApprovalService,
   ) {}
 
   /**
@@ -115,6 +117,19 @@ export class QuotesService {
     const quote = await this.get(user, id); // scope + kaccha checks live here
     if (!quote.phone) {
       throw new BadRequestException('This quote has no phone number to send to');
+    }
+
+    /*
+     * The approval gate, checked BEFORE anything is composed or sent.
+     *
+     * This is the only door out to a customer, so it is the only place the check
+     * has to exist — and the only place it must not be possible to skip. A
+     * tenant with no threshold configured passes straight through, which is why
+     * this is safe to ship ahead of anybody choosing their number.
+     */
+    const gate = await this.approval.gate(user.organisationId, id);
+    if (!gate.cleared) {
+      throw new ForbiddenException(gate.reason ?? 'This quote cannot be sent yet.');
     }
 
     const store = await this.prisma.store.findUnique({
