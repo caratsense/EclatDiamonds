@@ -12,6 +12,7 @@ import { AuditService } from '../../common/audit.service';
 import { AuthUser } from '../../common/auth-user';
 import { CredentialCrypto } from './credential-crypto';
 import { getProvider, listProviders, platformScopedProviders } from './provider-registry';
+import { tenantAllows } from '../../config/entitlements';
 
 /**
  * IntegrationsRegistryService — a tenant's connections and their secrets
@@ -46,18 +47,39 @@ export class IntegrationsRegistryService {
   catalogue(user: AuthUser) {
     const platformScoped = platformScopedProviders();
     return {
-      providers: listProviders().map((p) => ({
-        code: p.code,
-        name: p.name,
-        category: p.category,
-        description: p.description,
-        available: p.available,
-        blockedReason: p.blockedReason ?? null,
-        credentialScope: p.credentialScope,
-        credentialKinds: p.credentialKinds ?? [],
-        entities: p.entities ?? [],
-        webhooks: !!p.webhooks,
-      })),
+      /*
+       * Filtered to what this tenant's modules can actually use.
+       *
+       * A clinic was being offered a "Gold rate feed" — connectable, and then
+       * permanently inert, because the module that reads a metal rate is not in
+       * their product. A catalogue that lists it is not merely untidy: it is the
+       * same class of claim as an integration reporting itself connected because
+       * an environment variable exists.
+       *
+       * The provider names its own requirement; this does not know about gold.
+       */
+      providers: listProviders()
+        .filter(
+          (p) =>
+            !p.requiresCapability ||
+            tenantAllows(
+              user.industryPackCode,
+              user.disabledCapabilities,
+              p.requiresCapability,
+            ),
+        )
+        .map((p) => ({
+          code: p.code,
+          name: p.name,
+          category: p.category,
+          description: p.description,
+          available: p.available,
+          blockedReason: p.blockedReason ?? null,
+          credentialScope: p.credentialScope,
+          credentialKinds: p.credentialKinds ?? [],
+          entities: p.entities ?? [],
+          webhooks: !!p.webhooks,
+        })),
       encryption: {
         configured: this.crypto.isConfigured,
         note: this.crypto.isConfigured

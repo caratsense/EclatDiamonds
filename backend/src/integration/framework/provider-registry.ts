@@ -22,6 +22,8 @@
  *      only entities backed by an explicit profile and require preview before sync.
  */
 
+import { METAL_RATES_CAPABILITY } from '../../config/entitlements';
+
 export type CredentialScope =
   /** Secrets are per-tenant, in IntegrationCredential. The target for everything. */
   | 'tenant'
@@ -52,6 +54,21 @@ export interface ProviderDefinition {
   entities?: string[];
   /** True when it receives webhooks and therefore needs signature verification. */
   webhooks?: boolean;
+  /**
+   * The tenant capability this provider only makes sense alongside.
+   *
+   * Almost every provider is universal — a clinic, a mill and a jeweller all
+   * message customers, take payments and import spreadsheets — so this is
+   * normally absent. It exists for the handful that are meaningless without a
+   * specific module: a clinic offered a "Gold rate feed" can connect something
+   * that will never do anything for them, and a catalogue that lists it is
+   * quietly wrong about what the product is.
+   *
+   * It filters the LISTING only. It is not an authorisation check: the
+   * entitlement guard already refuses the routes behind the module, and this
+   * would be a poor second gate.
+   */
+  requiresCapability?: string;
 }
 
 export const PROVIDERS: ProviderDefinition[] = [
@@ -124,6 +141,10 @@ export const PROVIDERS: ProviderDefinition[] = [
     description: 'Automatic daily metal rate. Keyless public source.',
     available: true,
     credentialScope: 'none',
+    // Meaningless without the metal-rate module, which only a pack that
+    // maintains rates includes. Named here rather than special-cased in the
+    // catalogue, so the next vertical provider declares the same thing.
+    requiresCapability: METAL_RATES_CAPABILITY,
   },
   {
     code: 'tally',

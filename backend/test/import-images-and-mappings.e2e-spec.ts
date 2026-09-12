@@ -370,6 +370,44 @@ describe('Image ZIP import + saved column mappings (e2e)', () => {
     await post('/import-images/preview', mgrT, empty, { matchBy: 'sku' }).expect(400);
   });
 
+  it('refuses an executable, however it is named', async () => {
+    // A ZIP from a customer is an archive from the internet. The allow-list is
+    // on the EXTENSION rather than on a blocklist of dangerous ones, so a
+    // payload nobody thought of is refused by default rather than by memory.
+    const zip = await zipOf({
+      'RING-100.exe': Buffer.from('MZ '),
+      'RING-100.php': Buffer.from('<?php system($_GET["c"]); ?>'),
+      'RING-100.svg': Buffer.from('<svg onload="alert(1)"></svg>'),
+    });
+    const res = await post('/import-images/preview', mgrT, zip, { matchBy: 'sku' }).expect(201);
+    expect(res.body.matched).toBe(0);
+    // Every one refused for the same stated reason, rather than silently
+    // ignored — an operator has to be able to see what the archive contained.
+    expect(res.body.entries).toBe(3);
+    expect(res.body.ignored).toBe(3);
+    for (const entry of res.body.results) {
+      expect(String(entry.detail ?? entry.reason ?? '')).toMatch(/not an image/i);
+    }
+  });
+
+  it('cannot be made to write outside the image store by its filenames', async () => {
+    /*
+     * Zip Slip. The defence is structural rather than a sanitiser: the storage
+     * key is built from the PRODUCT ID and the extension, so the archive's own
+     * filename never reaches a path at all. A sanitiser is a list of the
+     * traversals somebody remembered; this one has nothing to remember.
+     */
+    const zip = await zipOf({
+      '../../../../etc/passwd.jpg': Buffer.from('not really a jpg'),
+      '..\..\windows\system32\evil.png': Buffer.from('nor this'),
+      'C:/Windows/Temp/pwned.jpg': Buffer.from('nor this either'),
+    });
+    const res = await post('/import-images/preview', mgrT, zip, { matchBy: 'sku' }).expect(201);
+    // None of them matches a product, and nothing is written by a preview
+    // regardless — but the point is that no path in the archive is ever used.
+    expect(res.body.matched).toBe(0);
+  });
+
   it('refuses a matchBy nobody implemented', async () => {
     const zip = await zipOf({ 'RING-100.png': PNG });
     await post('/import-images/preview', mgrT, zip, { matchBy: 'barcode' }).expect(400);

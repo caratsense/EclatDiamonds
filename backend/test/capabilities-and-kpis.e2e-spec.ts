@@ -333,6 +333,69 @@ describe('Tenant module switches and the management view (e2e)', () => {
     });
   });
 
+  /* ========================================== 1b. the provider catalogue */
+
+  describe('the provider catalogue', () => {
+    it('offers a jewellery tenant the metal-rate feed', async () => {
+      const res = await request(server())
+        .get('/integrations-registry/providers')
+        .set(auth(hoT))
+        .expect(200);
+      expect(res.body.providers.map((p: { code: string }) => p.code)).toContain(
+        'gold_rate_feed',
+      );
+    });
+
+    it('does not offer it to a tenant whose product has no metal rates', async () => {
+      // Found by driving a clinic in a browser: it was being offered a "Gold
+      // rate feed" it could connect and which would then be permanently inert,
+      // because the module that reads a metal rate is not in its product. That
+      // is the same class of claim as an integration reporting itself connected
+      // because an environment variable exists.
+      const clinic = await prisma.organisation.create({
+        data: {
+          id: 'org_cap_clinic',
+          name: 'Cap Clinic',
+          slug: 'cap-clinic',
+          industryPackCode: 'healthcare',
+        },
+      });
+      const store = await prisma.store.create({
+        data: { id: 'store_cap_clinic', name: 'Clinic', city: 'Pune', organisationId: clinic.id },
+      });
+      await prisma.user.create({
+        data: {
+          id: 'u_cap_clinic',
+          email: 'ho.clinic@cap-a.local',
+          name: 'clinic ho',
+          role: 'head_office' as never,
+          passwordHash: await bcrypt.hash(PASSWORD, 10),
+          isActive: true,
+          approvalStatus: 'approved',
+          organisationId: clinic.id,
+          userStores: { create: { storeId: store.id, isPrimary: true } },
+        },
+      });
+      const token = await login('ho.clinic@cap-a.local');
+
+      const res = await request(server())
+        .get('/integrations-registry/providers')
+        .set(auth(token))
+        .expect(200);
+      const codes = res.body.providers.map((p: { code: string }) => p.code);
+      expect(codes).not.toContain('gold_rate_feed');
+      // Everything universal is still offered — this filters one provider, not
+      // the catalogue.
+      expect(codes).toContain('whatsapp_cloud');
+      expect(codes).toContain('csv');
+
+      await prisma.userStore.deleteMany({ where: { user: { organisationId: clinic.id } } });
+      await prisma.user.deleteMany({ where: { organisationId: clinic.id } });
+      await prisma.store.deleteMany({ where: { organisationId: clinic.id } });
+      await prisma.organisation.delete({ where: { id: clinic.id } });
+    });
+  });
+
   /* ================================================ 2. every screen reachable */
 
   describe('navigation completeness', () => {
