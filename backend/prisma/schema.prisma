@@ -814,6 +814,7 @@ model User {
   aiDraftsReviewed         AiDraftRecord[]               @relation("AiDraftReviewer")
   checkInsAttended         CheckIn[]                     @relation("CheckInAttendedBy")
   checkInFollowUpsOwned    CheckIn[]                     @relation("CheckInFollowUpOwner")
+  partiesArchived          Party[]                       @relation("PartyArchivedBy")
   callsHandled             CallLog[]                     @relation("CallLogAgent")
 
   @@unique([organisationId, legacyId])
@@ -1077,6 +1078,26 @@ model Party {
 
   creditLimit   Decimal? @db.Decimal(14, 2)
   isBlacklisted Boolean  @default(false)
+
+  /*
+   * Archived — taken out of the working lists, NOT deleted.
+   *
+   * The meeting asked to "delete blocked contacts". Deleting is the one thing
+   * this must not do. A person who sent STOP is remembered BY their record: the
+   * consent events, the opt-out, the blacklist flag and the delivery history all
+   * hang off this row. Remove it and the next inbound message from that number
+   * resolves to a brand-new customer with no opt-out on it, and the system
+   * cheerfully messages someone who told it to stop.
+   *
+   * So archiving hides, and identity resolution deliberately still finds
+   * archived rows — that is what keeps the refusal attached to the person.
+   */
+  archivedAt     DateTime?
+  archivedById   String?
+  archivedBy     User?     @relation("PartyArchivedBy", fields: [archivedById], references: [id])
+  /// Why, in the archiver's own words. Required by the API, not by the column,
+  /// because rows written before this existed have no reason to give.
+  archiveReason  String?
 
   // Legacy provenance (PartyMst.PartyNo).
   legacyId        String?

@@ -76,6 +76,9 @@ export class SearchService {
     // same treatment finance gives the nullable LedgerEntry.storeId).
     const partyWhere: Prisma.PartyWhereInput = {
       ...scope,
+      // Archived contacts are out of the working lists, and search is the most
+      // common way back into one. The Archived Contacts screen is the only door.
+      archivedAt: null,
       OR: [{ name: ci }, { phone: ci }, ...phoneOr('phone')],
     };
 

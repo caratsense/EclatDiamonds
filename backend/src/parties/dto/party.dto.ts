@@ -30,3 +30,19 @@ export class CreatePartyDto {
   @IsString()
   city?: string;
 }
+
+
+/**
+ * Archiving takes a contact out of the working lists. It never deletes one, and
+ * it never touches consent, opt-out or the blacklist — see PartyArchiveService.
+ */
+export class ArchivePartyDto {
+  /**
+   * Required, and required to be meaningful. "x" tells the next person nothing
+   * about why a customer vanished from their list six months from now.
+   */
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  reason!: string;
+}

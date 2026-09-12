@@ -22,6 +22,8 @@ export interface PartyFilters {
   q?: string;
   /** PartyType to filter by, or 'all'. Controller defaults it to 'customer'. */
   type?: PartyType | 'all';
+  /** true = the Archived Contacts screen. Omitted = active contacts only. */
+  archived?: boolean;
 }
 
 export interface PartyRow {
@@ -45,6 +47,10 @@ export interface PartyRow {
   /** Bills this party is linked to — the quick "how much of a customer" signal. */
   salesCount: number;
   createdAt: string | null;
+  /** Present only on the archived list, so the screen can show who and why. */
+  archivedAt: string | null;
+  archivedByName: string | null;
+  archiveReason: string | null;
 }
 
 /** One place to define the row shape, shared by list + create. */
@@ -67,6 +73,9 @@ const PARTY_SELECT = {
   creditLimit: true,
   isBlacklisted: true,
   createdAt: true,
+  archivedAt: true,
+  archiveReason: true,
+  archivedBy: { select: { name: true } },
   _count: { select: { sales: true } },
 } satisfies Prisma.PartySelect;
 
@@ -93,6 +102,9 @@ function toPartyRow(p: PartySelected): PartyRow {
     isBlacklisted: p.isBlacklisted,
     salesCount: p._count.sales,
     createdAt: iso(p.createdAt),
+    archivedAt: iso(p.archivedAt),
+    archivedByName: p.archivedBy?.name ?? null,
+    archiveReason: p.archiveReason ?? null,
   };
 }
 
@@ -114,7 +126,18 @@ export class PartiesService {
     headerStore: string | undefined,
     pagination: PageRequest,
   ): Promise<Paginated<PartyRow>> {
-    const where: Prisma.PartyWhereInput = { ...this.scope.storeFilter(user, headerStore) };
+    const where: Prisma.PartyWhereInput = {
+      ...this.scope.storeFilter(user, headerStore),
+      /*
+       * Archived contacts are not in the directory.
+       *
+       * Set `archived: true` to see only them — that is the Archived Contacts
+       * screen, and it is the only way to reach one. There is deliberately no
+       * "show both" mode: a list that mixes active and archived people is a list
+       * somebody will campaign from by mistake.
+       */
+      archivedAt: f.archived ? { not: null } : null,
+    };
 
     // Role filter (customer / supplier / …). Unknown values are ignored rather
     // than 500-ing on an invalid enum; 'all' skips the filter entirely.

@@ -203,6 +203,9 @@ export class InStoreService {
     const parties = await this.prisma.party.findMany({
       where: {
         organisationId: user.organisationId,
+        // Not offered at the counter. A salesperson picking an archived contact
+        // from a lookup is how one quietly returns to active use.
+        archivedAt: null,
         ...(byDigits
           ? {
               contactPoints: {

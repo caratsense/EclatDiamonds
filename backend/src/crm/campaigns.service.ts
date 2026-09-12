@@ -276,6 +276,16 @@ export class CampaignsService implements OnModuleInit {
   ): Prisma.PartyWhereInput {
     const scope: Prisma.PartyWhereInput = {
       organisationId: user.organisationId,
+      /*
+       * An archived contact is never in an audience.
+       *
+       * This is the single most important exclusion of the set: a segment rule
+       * is written once and re-evaluated on every send, so a contact archived
+       * after the segment was built would otherwise walk back into it silently.
+       * Placed here rather than in the compiled rule because the rule is the
+       * tenant's, and this is not theirs to switch off.
+       */
+      archivedAt: null,
       AND: [compiled],
     };
     const allowed = this.visibleStores(user, storeIds);
