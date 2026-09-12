@@ -411,6 +411,33 @@ model Organisation {
   /// (packCode set) and leave tenant-created ones alone.
   industryPackVersion Int?
 
+  /// Modules this tenant has switched OFF, on top of what their industry pack
+  /// includes.
+  ///
+  /// ── Why a column and not a key in `settings` ─────────────────────────────
+  ///
+  /// The entitlement guard reads this on EVERY request, alongside the status and
+  /// pack code it already selects. `settings` is a shared JSONB bag holding
+  /// branding, assistant switches, qualification policy and routing rules;
+  /// pulling all of it into the authentication path to read one array would cost
+  /// every request, and writing to it needs the row lock in `org-settings.ts`
+  /// because three unrelated features share it. A dedicated array is cheap to
+  /// select, has no lost-update problem, and says what it is.
+  ///
+  /// ── Why subtract rather than store the whole list ────────────────────────
+  ///
+  /// Storing the tenant's complete enabled list would freeze it: a module added
+  /// to their industry pack in a later release would never appear, exactly as
+  /// the old stored `featureProfile.enabledNavigation` froze tenants on the
+  /// navigation of whichever industry they signed up under. The pack stays the
+  /// source of what the industry INCLUDES; this records only what this tenant
+  /// has deliberately turned off, so the two compose and neither drifts.
+  ///
+  /// Entries are navigation slugs, which are the same strings the entitlement
+  /// registry calls capabilities. Empty for every tenant until somebody switches
+  /// something off.
+  disabledCapabilities String[] @default([])
+
   /// Regional defaults. Eclat is India/INR/Asia-Kolkata; a new tenant elsewhere
   /// sets its own rather than inheriting a hardcoded assumption. `timezone` is
   /// the tenant-level fallback — a store's own timezone still wins (tz.util).

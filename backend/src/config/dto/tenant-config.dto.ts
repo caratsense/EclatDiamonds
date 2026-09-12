@@ -1,4 +1,5 @@
 import {
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsIn,
@@ -165,4 +166,21 @@ export class UpsertFieldPolicyDto {
   @Min(0)
   @Max(10_000)
   sortOrder?: number;
+}
+
+/**
+ * PUT /config/capabilities — the complete list of modules to keep switched off.
+ *
+ * The WHOLE list, not a delta. A delta ("turn this one off") reads more nicely
+ * and loses to the last writer: two administrators on two screens each send
+ * their own change and the second silently restores whatever the first removed.
+ * Sending the full intended state makes the outcome the same whichever order
+ * they arrive in, and lets the screen show exactly what it is about to save.
+ */
+export class SetCapabilitiesDto {
+  @IsArray()
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  @MaxLength(80, { each: true })
+  disabled!: string[];
 }

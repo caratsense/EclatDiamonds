@@ -32,7 +32,18 @@ export interface LoyaltyMember {
   name: string | null;
   tier: string | null;
   status: string;
+  /** Signed. Negative only after a reversal, and then it is a debt. */
   pointsBalance: number;
+  /**
+   * What can actually be spent — never negative.
+   *
+   * Kept apart from `pointsBalance` deliberately. A member in debt has zero to
+   * spend, and showing the negative number where a redeemable balance belongs
+   * would put a negative discount in front of a checkout.
+   */
+  spendablePoints: number;
+  /** Points owed back after a cancelled sale. Zero for almost every member. */
+  adjustmentDebt: number;
   lifetimeEarned: number;
   lifetimeRedeemed: number;
   storeId: string | null;

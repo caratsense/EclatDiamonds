@@ -1,10 +1,11 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
 
 import { AuthUser, CurrentUser } from '../common/auth-user';
 import { Roles } from '../auth/roles.decorator';
 import { TenantConfigService } from './tenant-config.service';
 import {
   ApplyPackDto,
+  SetCapabilitiesDto,
   CreateTermDto,
   UpdateTermDto,
   UpsertAttributeDto,
@@ -45,6 +46,30 @@ export class TenantConfigController {
   @Post('packs/apply')
   applyPack(@CurrentUser() user: AuthUser, @Body() body: ApplyPackDto) {
     return this.config.applyPack(user, body.packCode);
+  }
+
+  /**
+   * GET /config/capabilities — which of this industry's modules are on.
+   *
+   * Readable by any signed-in user, like the rest of the configuration reads: a
+   * salesperson's client needs to know the same thing the sidebar does.
+   */
+  @Get('capabilities')
+  capabilities(@CurrentUser() user: AuthUser) {
+    return this.config.capabilities(user);
+  }
+
+  /**
+   * PUT /config/capabilities — switch modules off, or back on.
+   *
+   * Head office only. Switching a module off changes what every person in every
+   * branch can reach, and the same list gates the API — so this is not a display
+   * preference, it is an authorisation change, and it is audited as one.
+   */
+  @Roles('head_office')
+  @Put('capabilities')
+  setCapabilities(@CurrentUser() user: AuthUser, @Body() body: SetCapabilitiesDto) {
+    return this.config.setCapabilities(user, { disabled: body.disabled });
   }
 
   @Get('taxonomy')

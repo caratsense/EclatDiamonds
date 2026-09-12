@@ -26,6 +26,7 @@ import { CreateOrganisationDto } from './dto/create-organisation.dto';
 import { uniqueEmailHandle } from '../users/users.util';
 import { LoginLockout } from './login-lockout';
 import { DEFAULT_PACK_CODE, getPack, listPacks } from '../config/industry-packs/packs';
+import { enabledCapabilitiesFor } from '../config/entitlements';
 import { provisionIndustryPack } from '../config/industry-packs/provision';
 import { packQuestions } from '../config/industry-packs/pack-managed';
 import { DEFAULT_QUALIFICATION_POLICY } from '../crm/qualification-policy';
@@ -770,7 +771,7 @@ export class AuthService {
     const organisation = user.organisationId
       ? await this.prisma.organisation.findUnique({
           where: { id: user.organisationId },
-          select: { industryPackCode: true, settings: true },
+          select: { industryPackCode: true, settings: true, disabledCapabilities: true },
         })
       : null;
     const { storeIds, allStores } = await this.scope.resolveScope(
@@ -838,7 +839,13 @@ export class AuthService {
          * Deriving it here uses the same source GET /config/bootstrap uses, so
          * the destination is always inside the navigation the sidebar will draw.
          */
-        enabledNavigation: getPack(organisation?.industryPackCode)?.onboarding?.enabledNavigation ?? null,
+        // The same subtraction the config endpoint and the entitlement guard
+        // make, so the navigation a user is handed at login cannot disagree
+        // with what the server will actually let them open.
+        enabledNavigation: enabledCapabilitiesFor(
+          organisation?.industryPackCode,
+          organisation?.disabledCapabilities,
+        ),
       },
     };
   }

@@ -112,9 +112,15 @@ export class JwtAuthGuard implements CanActivate {
         role: true,
         isActive: true,
         organisationId: true,
-        // industryPackCode rides along on a select that already runs, so the
-        // entitlement guard needs no query of its own.
-        organisation: { select: { status: true, industryPackCode: true } },
+        // industryPackCode and the tenant's own module switches ride along on a
+        // select that already runs, so the entitlement guard needs no query of
+        // its own. `disabledCapabilities` is a plain text array and costs
+        // nothing here; reading the same thing out of the shared `settings`
+        // JSONB would have dragged branding, routing rules and the
+        // qualification policy into every authenticated request.
+        organisation: {
+          select: { status: true, industryPackCode: true, disabledCapabilities: true },
+        },
       },
     });
     if (!dbUser || !dbUser.isActive) {
@@ -152,6 +158,7 @@ export class JwtAuthGuard implements CanActivate {
       storeIds,
       allStores,
       industryPackCode: dbUser.organisation?.industryPackCode ?? null,
+      disabledCapabilities: dbUser.organisation?.disabledCapabilities ?? [],
     };
     // A machine must never reach a route marked @HumansOnly(). Checked for every
     // principal, not only machines, so the marker is a property of the ROUTE

@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
 import { DEFAULT_PACK_CODE, getPack, listPacks } from './industry-packs/packs';
+import { enabledCapabilitiesFor, UNDISABLEABLE_CAPABILITIES } from './entitlements';
 import { labelsFor, lexiconFor } from './industry-packs/lexicon';
 import { provisionIndustryPack } from './industry-packs/provision';
 import type { ConfigurableEntity } from './industry-packs/types';
@@ -81,6 +82,7 @@ export class TenantConfigService {
           status: true,
           industryPackCode: true,
           industryPackVersion: true,
+          disabledCapabilities: true,
           country: true,
           currency: true,
           timezone: true,
@@ -169,7 +171,24 @@ export class TenantConfigService {
          * Null when the pack is unknown to this release, which the client reads
          * as "impose nothing" and falls back to the stored profile.
          */
-        enabledNavigation: pack?.onboarding?.enabledNavigation ?? null,
+        /*
+         * MINUS what this tenant has switched off.
+         *
+         * Subtracted here rather than stored, for the same reason the list is
+         * derived rather than stored: a module added to this industry in a later
+         * release must reach the tenant, while one they deliberately turned off
+         * must stay off. The sidebar and the entitlement guard both read this
+         * answer, so hiding a module is not cosmetic — typing its address gets
+         * the same refusal.
+         */
+        enabledNavigation: enabledCapabilitiesFor(
+          organisation.industryPackCode,
+          organisation.disabledCapabilities,
+        ),
+        /** What the INDUSTRY includes, so the modules screen can offer them back. */
+        packNavigation: pack?.onboarding?.enabledNavigation ?? null,
+        disabledCapabilities: organisation.disabledCapabilities ?? [],
+        undisableableCapabilities: UNDISABLEABLE_CAPABILITIES,
         /** What this industry's CRM assistant is for. Descriptive, not a prompt. */
         aiContext: pack?.onboarding?.aiCrmContext ?? null,
       },
@@ -188,6 +207,124 @@ export class TenantConfigService {
       /** Per-field visibility/labels for BUILT-IN fields, grouped by entity. */
       fieldPolicies: this.groupBy(policies, (p) => p.entity),
       configurableEntities: CONFIGURABLE_ENTITIES,
+    };
+  }
+
+  /**
+   * Switch a module off for this organisation, or back on.
+   *
+   * ## Why this exists rather than an edit to the industry pack
+   *
+   * Éclat runs the jewellery pack and does not want Marketing or Stock
+   * Transfer. Removing them from the pack would take them from every jewellery
+   * tenant — including the next one, who may well want both — and special-casing
+   * a tenant slug in the entitlement guard would put a customer's name in the
+   * authorisation path, where the following customer with the same preference
+   * needs another release to be served. The pack keeps describing the INDUSTRY;
+   * this records what one tenant has turned off.
+   *
+   * ## One-directional, deliberately
+   *
+   * A tenant may only switch off something their pack includes. Enabling a
+   * module the pack never provisioned would open a screen with no vocabulary, no
+   * attributes and no pipeline behind it — the taxonomy rows simply do not
+   * exist — so the request is refused with that as the reason rather than
+   * granting a broken module.
+   *
+   * ## The spine cannot be removed
+   *
+   * `settings/team` is the clearest case: switching it off removes the only
+   * screen that could switch it back on, and nobody in the organisation could
+   * undo it. The audit log, the customer directory and the CRM are refused for
+   * the same reason — a tenant that cannot see who did what, or who their
+   * customers are, is not running the product.
+   */
+  async setCapabilities(user: AuthUser, input: { disabled: string[] }) {
+    const organisation = await this.prisma.organisation.findUniqueOrThrow({
+      where: { id: user.organisationId },
+      select: { industryPackCode: true, disabledCapabilities: true },
+    });
+    const pack = getPack(organisation.industryPackCode);
+    const packNavigation = pack?.onboarding?.enabledNavigation ?? [];
+    if (!packNavigation.length) {
+      throw new BadRequestException(
+        'Choose an industry before switching individual modules off — there is nothing to switch off yet.',
+      );
+    }
+
+    const requested = [...new Set(input.disabled.map((c) => c.trim()).filter(Boolean))];
+
+    const notInPack = requested.filter((c) => !packNavigation.includes(c));
+    if (notInPack.length) {
+      throw new BadRequestException(
+        `Your industry does not include ${notInPack.join(', ')}, so there is nothing to switch off. ` +
+          'Change your industry if you need a module it does not provide.',
+      );
+    }
+    const protectedOnes = requested.filter((c) => UNDISABLEABLE_CAPABILITIES.includes(c));
+    if (protectedOnes.length) {
+      throw new BadRequestException(
+        `${protectedOnes.join(', ')} cannot be switched off: they are how the product is run and ` +
+          'how this setting itself would be undone.',
+      );
+    }
+
+    const before = organisation.disabledCapabilities ?? [];
+    const turnedOff = requested.filter((c) => !before.includes(c));
+    const turnedOn = before.filter((c) => !requested.includes(c));
+    if (!turnedOff.length && !turnedOn.length) {
+      return this.capabilitiesView(organisation.industryPackCode, before);
+    }
+
+    await this.prisma.organisation.update({
+      where: { id: user.organisationId },
+      data: { disabledCapabilities: requested },
+    });
+
+    await this.audit.record(user, {
+      action: 'config.capabilities_changed',
+      entityType: 'Organisation',
+      entityId: user.organisationId,
+      summary:
+        [
+          turnedOff.length ? `Switched off ${turnedOff.join(', ')}` : '',
+          turnedOn.length ? `Switched on ${turnedOn.join(', ')}` : '',
+        ]
+          .filter(Boolean)
+          .join('; ') + '.',
+      // Both sides recorded: "what did it used to be" is the question asked
+      // when somebody's screen disappears and nobody remembers changing it.
+      metadata: { before, after: requested, turnedOff, turnedOn },
+    });
+
+    return this.capabilitiesView(organisation.industryPackCode, requested);
+  }
+
+  /** What the modules screen renders: the industry's list, and which are off. */
+  async capabilities(user: AuthUser) {
+    const organisation = await this.prisma.organisation.findUniqueOrThrow({
+      where: { id: user.organisationId },
+      select: { industryPackCode: true, disabledCapabilities: true },
+    });
+    return this.capabilitiesView(
+      organisation.industryPackCode,
+      organisation.disabledCapabilities ?? [],
+    );
+  }
+
+  private capabilitiesView(packCode: string | null, disabled: readonly string[]) {
+    const packNavigation = getPack(packCode)?.onboarding?.enabledNavigation ?? [];
+    return {
+      packCode,
+      /** Everything the industry includes, whether on or off right now. */
+      modules: packNavigation.map((capability) => ({
+        capability,
+        enabled: !disabled.includes(capability),
+        /** False for the spine, which has no switch on the screen at all. */
+        canDisable: !UNDISABLEABLE_CAPABILITIES.includes(capability),
+      })),
+      disabled: [...disabled],
+      undisableable: [...UNDISABLEABLE_CAPABILITIES],
     };
   }
 

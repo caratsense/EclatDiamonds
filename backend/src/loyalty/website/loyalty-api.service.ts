@@ -362,15 +362,35 @@ export class LoyaltyApiService {
     if (!account) return { enrolled: false as const, phone };
 
     const settings = readSettings(auth.config);
+    /*
+     * A NEGATIVE BALANCE IS A DEBT, NOT SPENDABLE POINTS.
+     *
+     * It can only arise from a reversal — a sale cancelled after the customer
+     * had already spent what it earned — and the caller cannot choose that
+     * figure. Reporting it as `redeemableValue: -250` would put a negative
+     * discount in front of a checkout, and any total that summed redeemable
+     * value across members would quietly net one customer's debt against
+     * another's balance.
+     *
+     * So the two are reported as separate, non-overlapping fields: what can
+     * actually be spent (floored at zero) and what is owed back. A website that
+     * renders only the first is correct; one that renders both can say why.
+     */
+    const spendable = Math.max(0, account.pointsBalance);
+    const adjustmentDebt = Math.max(0, -account.pointsBalance);
     return {
       enrolled: true as const,
       member: {
         ...account,
-        // What the balance is WORTH, so the website does not reimplement the
-        // tenant's redemption rate and drift from it.
+        /** Never negative. Zero when the member is in debt. */
+        spendablePoints: spendable,
+        /** Points owed back after a reversal. Zero for almost every member. */
+        adjustmentDebt,
+        // What the SPENDABLE balance is worth, so the website does not
+        // reimplement the tenant's redemption rate and drift from it.
         redeemableValue:
           settings.redeemValuePerPoint != null
-            ? round2(account.pointsBalance * settings.redeemValuePerPoint)
+            ? round2(spendable * settings.redeemValuePerPoint)
             : null,
         minRedeemPoints: settings.minRedeemPoints,
       },
@@ -1206,6 +1226,9 @@ export class LoyaltyApiService {
       tier: a.tier,
       status: a.status,
       pointsBalance: a.pointsBalance,
+      /** Never negative — see `lookup` for why the two are kept apart. */
+      spendablePoints: Math.max(0, a.pointsBalance),
+      adjustmentDebt: Math.max(0, -a.pointsBalance),
       lifetimeEarned: a.lifetimeEarned,
       lifetimeRedeemed: a.lifetimeRedeemed,
       storeId: a.storeId,

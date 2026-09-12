@@ -82,6 +82,8 @@ const MEMBER = '9876500011';
 const OTHER = '9876500022';
 const B_MEMBER = '9876500033';
 const STRANGER = '9811100099';
+/** Its own member, so the clawback arithmetic disturbs no other test. */
+const DEBTOR = '9876500044';
 
 /** Reachable on no network. Used to prove a failed announcement is recorded. */
 const DEAD_WEBHOOK = 'https://127.0.0.1:9/loyalty-hook';
@@ -658,6 +660,48 @@ describe('Loyalty website API (e2e)', () => {
         .set(withKey(keyA))
         .send({ phone: MEMBER, amount: 20_000, idempotencyKey: idem('restore') })
         .expect(200);
+    });
+
+    it('reports a debt as a debt, never as spendable points', async () => {
+      const clawed = 'debt-earn-0001-fixture';
+      // Its own member, so the arithmetic does not depend on any other test.
+      await request(server())
+        .post('/public/loyalty/members')
+        .set(withKey(keyA))
+        .send({ phone: DEBTOR, name: 'Debt Case' })
+        .expect(201);
+      await request(server())
+        .post('/public/loyalty/earn')
+        .set(withKey(keyA))
+        .send({ phone: DEBTOR, amount: 3000, idempotencyKey: clawed })
+        .expect(200);
+      // Spend it all, then reverse the sale it came from.
+      const account = await prisma.loyaltyAccount.findUnique({
+        where: { organisationId_phone: { organisationId: A.org, phone: DEBTOR } },
+      });
+      await prisma.loyaltyAccount.update({
+        where: { id: account!.id },
+        data: { pointsBalance: 0 },
+      });
+      await request(server())
+        .post('/public/loyalty/reverse')
+        .set(withKey(keyA))
+        .send({ idempotencyKey: idem('debt-reverse'), originalIdempotencyKey: clawed })
+        .expect(200);
+
+      const res = await request(server())
+        .get(`/public/loyalty/members/${DEBTOR}`)
+        .set(withKey(keyA))
+        .expect(200);
+      // The signed balance is negative, and the website is handed the two
+      // facts separately: nothing to spend, and something owed back. Reporting
+      // `redeemableValue: -15` would put a NEGATIVE DISCOUNT in front of a
+      // checkout, and any total summing redeemable value across members would
+      // net one customer's debt against another's balance.
+      expect(res.body.member.pointsBalance).toBeLessThan(0);
+      expect(res.body.member.spendablePoints).toBe(0);
+      expect(res.body.member.adjustmentDebt).toBe(30);
+      expect(res.body.member.redeemableValue).toBe(0);
     });
 
     it('refuses to reverse a reversal', async () => {

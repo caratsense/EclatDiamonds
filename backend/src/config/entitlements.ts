@@ -166,6 +166,15 @@ export const ROUTE_FAMILIES: readonly RouteFamily[] = Object.freeze([
   { prefix: '/requests', capability: 'requests', why: 'Special customer requests.' },
   { prefix: '/reporting', capability: 'reporting', why: 'DSR and operational reporting.' },
   { prefix: '/dashboard', capability: 'dashboards', why: 'Departmental operational dashboards.' },
+  {
+    prefix: '/management',
+    capability: 'management',
+    why:
+      'The cross-branch management view: how the business did over a window, ' +
+      'with filters. A different question from /dashboard, which answers what is ' +
+      'happening in one branch right now — and a separate capability, so a ' +
+      'tenant can have the shop-floor screen without the management one.',
+  },
   { prefix: '/targets', capability: 'settings/targets', why: 'Sales-target administration.' },
   { prefix: '/new-store', capability: 'new-store', why: 'New-branch opening projects.' },
   {
@@ -291,6 +300,65 @@ export function packAllows(packCode: string | null | undefined, capability: stri
 }
 
 /**
+ * What this TENANT can reach: their industry's modules, minus the ones they
+ * have switched off.
+ *
+ * Two questions, deliberately separate. `packAllows` answers "does this
+ * industry's product include this module" and is a property of the release.
+ * This answers "can this organisation reach it today" and is a property of the
+ * tenant. Collapsing them would mean either editing a pack to suit one customer
+ * — which changes it for every other tenant in that industry — or putting a
+ * customer's name in the authorisation path, where the next customer with the
+ * same preference needs another code change to be served.
+ *
+ * The subtraction is one-directional on purpose: a tenant can turn OFF a module
+ * their industry includes, never turn ON one it does not. Enabling something the
+ * pack never provisioned would give them a screen with no vocabulary, no
+ * attributes and no pipeline behind it.
+ */
+export function tenantAllows(
+  packCode: string | null | undefined,
+  disabledCapabilities: readonly string[] | null | undefined,
+  capability: string,
+): boolean {
+  if (disabledCapabilities?.includes(capability)) return false;
+  return packAllows(packCode, capability);
+}
+
+/**
+ * The modules a tenant can actually reach, as one list.
+ *
+ * Derived on every read rather than stored — see the note on
+ * `Organisation.disabledCapabilities` for why a stored copy freezes.
+ */
+export function enabledCapabilitiesFor(
+  packCode: string | null | undefined,
+  disabledCapabilities: readonly string[] | null | undefined,
+): string[] | null {
+  const enabled = getPack(packCode)?.onboarding?.enabledNavigation;
+  if (!enabled?.length) return null;
+  const off = new Set(disabledCapabilities ?? []);
+  return enabled.filter((capability) => !off.has(capability));
+}
+
+/**
+ * Which modules a tenant may switch off.
+ *
+ * Everything their pack includes EXCEPT the universal spine. Turning off the
+ * customer directory, the team screen or the audit log would leave a tenant
+ * unable to run the product or to see who did what — and, for settings/team,
+ * unable to give themselves back the access they just removed.
+ */
+export const UNDISABLEABLE_CAPABILITIES: readonly string[] = Object.freeze([
+  'crm',
+  'conversations',
+  'customers',
+  'settings/team',
+  'settings/configuration',
+  'settings/audit',
+]);
+
+/**
  * The metal-rate capability, named once.
  *
  * Used by the entitlement guard (via the registry) AND by the hourly refresh
@@ -303,15 +371,26 @@ export function packMaintainsMetalRates(packCode: string | null | undefined): bo
   return packAllows(packCode, METAL_RATES_CAPABILITY);
 }
 
-/** Convenience for the guard: may this pack reach this path? */
+/**
+ * Convenience for the guard: may this tenant reach this path?
+ *
+ * Returns WHY it was refused, because the two reasons need different sentences:
+ * a module the industry never included is a configuration question for an
+ * administrator, while one the tenant switched off is a switch somebody here can
+ * turn back on.
+ */
 export function pathAllowedForPack(
   packCode: string | null | undefined,
   path: string,
-): { allowed: true } | { allowed: false; capability: string } {
+  disabledCapabilities?: readonly string[] | null,
+): { allowed: true } | { allowed: false; capability: string; reason: 'pack' | 'disabled' } {
   const capability = capabilityForPath(path);
   if (!capability) return { allowed: true };
+  if (disabledCapabilities?.includes(capability)) {
+    return { allowed: false, capability, reason: 'disabled' };
+  }
   if (packAllows(packCode, capability)) return { allowed: true };
-  return { allowed: false, capability };
+  return { allowed: false, capability, reason: 'pack' };
 }
 
 function normalise(rawPath: string): string {

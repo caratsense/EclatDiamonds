@@ -1,0 +1,31 @@
+-- Modules a tenant has switched off, on top of what their industry includes.
+--
+-- THE PROBLEM. Éclat's product is the jewellery pack, and the jewellery pack
+-- includes Marketing and Stock Transfer. Éclat does not want either. The two
+-- obvious answers are both wrong: removing them from the pack takes them from
+-- every jewellery tenant, and hard-coding a slug check in the guard puts a
+-- customer's name in the authorisation path, where the next customer with the
+-- same preference cannot be served without another code change.
+--
+-- So the pack keeps saying what the INDUSTRY includes, and this column records
+-- what THIS TENANT has turned off. The two compose: enabled = pack minus this.
+--
+-- WHY NOT A KEY IN `settings`. The entitlement guard reads this on every
+-- request, in the same select that already fetches the tenant's status and pack
+-- code. `settings` is a shared JSONB bag — branding, assistant switches,
+-- qualification policy, ad-set routing — so reading one array out of it would
+-- drag all of that into the authentication path, and writing to it needs the
+-- row lock in org-settings.ts because three unrelated features share it. A
+-- dedicated array costs nothing to select and cannot lose a neighbour's update.
+--
+-- WHY SUBTRACT RATHER THAN STORE THE WHOLE ENABLED LIST. Storing the complete
+-- list freezes it. That is precisely what the old `settings.featureProfile.
+-- enabledNavigation` did: written once at signup and never rewritten, so a
+-- tenant who later changed industry kept the previous one's navigation for
+-- ever. Recording only the subtraction means a module added to an industry in a
+-- later release reaches every tenant of that industry automatically.
+--
+-- Additive, defaulted empty. Every existing tenant keeps exactly what it has.
+
+ALTER TABLE "Organisation"
+    ADD COLUMN "disabledCapabilities" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];

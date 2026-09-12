@@ -60,6 +60,14 @@ export interface AuthUser {
    * `config/entitlements.ts` treats as "impose nothing".
    */
   industryPackCode?: string | null;
+  /**
+   * Modules this organisation has switched off, read in the same query as the
+   * pack code so the entitlement gate still costs no extra round trip.
+   *
+   * Empty for almost every tenant. Present on the principal rather than fetched
+   * in the guard because the guard runs on every request and must not query.
+   */
+  disabledCapabilities?: readonly string[];
 }
 
 /** @CurrentUser() — inject the resolved AuthUser into a controller method. */

@@ -38,6 +38,18 @@ import {
   Smartphone,
   PhoneCall,
   MessageSquareHeart,
+  Timer,
+  Archive,
+  Tags,
+  CalendarClock,
+  Images,
+  PackageX,
+  Receipt as ReceiptIcon,
+  Gift,
+  Radio,
+  Route,
+  ListTodo,
+  ScanSearch,
 } from "lucide-react";
 
 import type { Role } from "@/lib/types";
@@ -539,7 +551,167 @@ export const NAV_ITEMS: NavItem[] = [
     group: "Administration",
     roles: ["store_manager", "area_manager", "head_office"],
   },
+
+  /* ----------------------------------------------------------------------
+   * Screens that existed but could not be reached.
+   *
+   * Each of these was built, tested and deployed, and then discoverable only
+   * by somebody typing its address. A feature nobody can find is a feature
+   * nobody uses, and "it is in the product" stops being true in any way the
+   * customer would recognise.
+   *
+   * They are sub-routes of the sections they belong to rather than new
+   * sections, so the nine-section shape holds and each one sits next to the
+   * screen a person would have been looking at when they wanted it.
+   * -------------------------------------------------------------------- */
+  {
+    module: 3,
+    slug: "management",
+    title: "Management View",
+    purpose:
+      "Leads, conversations, follow-ups, the floor, quotes and feedback across every branch, over a period you choose.",
+    primaryAction: "",
+    icon: BarChart3,
+    group: "Overview & Analytics",
+    roles: ["store_manager", "area_manager", "head_office"],
+  },
+  {
+    module: 10,
+    slug: "reporting/scheduled",
+    title: "Scheduled Reports",
+    purpose: "Reports that send themselves at month-end, and what happened to the last one.",
+    primaryAction: "New schedule",
+    icon: CalendarClock,
+    group: "Overview & Analytics",
+    roles: ["store_manager", "area_manager", "head_office"],
+  },
+  {
+    module: 1,
+    slug: "conversations/sla",
+    title: "Response SLA",
+    purpose:
+      "The promise to answer within five minutes, measured — who is late, and who was told.",
+    primaryAction: "",
+    icon: Timer,
+    group: "Omnichannel & CRM",
+    roles: ["store_manager", "area_manager", "head_office"],
+  },
+  {
+    module: 1,
+    slug: "customers/archived",
+    title: "Archived Contacts",
+    purpose:
+      "People taken out of the working lists. Their consent history is kept, which is what stops them being messaged again.",
+    primaryAction: "",
+    icon: Archive,
+    group: "Omnichannel & CRM",
+    roles: ["store_manager", "area_manager", "head_office"],
+  },
+  {
+    module: 1,
+    slug: "tasks",
+    title: "Tasks",
+    purpose: "Everything owed to a customer or a colleague, in one list.",
+    primaryAction: "New Task",
+    icon: ListTodo,
+    group: "Omnichannel & CRM",
+  },
+  {
+    module: 9,
+    slug: "inventory/dead-stock",
+    title: "Dead Stock",
+    purpose:
+      "Pieces that have not moved, against thresholds you set per category rather than one number for everything.",
+    primaryAction: "",
+    icon: PackageX,
+    group: "Inventory & Supply",
+    roles: ["store_manager", "area_manager", "head_office"],
+  },
+  {
+    module: 5,
+    slug: "find-similar",
+    title: "Find Similar",
+    purpose: "Upload a photograph and find the closest pieces in your own catalogue.",
+    primaryAction: "",
+    icon: ScanSearch,
+    group: "Inventory & Supply",
+  },
+  {
+    module: 17,
+    slug: "loyalty/programme",
+    title: "Points Programme",
+    purpose:
+      "What a purchase earns, what a point is worth, and the key your own website signs in with.",
+    primaryAction: "",
+    icon: Gift,
+    group: "Commerce & Orders",
+    roles: ["store_manager", "area_manager", "head_office"],
+  },
+  {
+    module: 6,
+    slug: "hrms/payroll",
+    title: "Roster & Pay",
+    purpose:
+      "Each person's own weekly off, and a payslip counted from the attendance register.",
+    primaryAction: "",
+    icon: ReceiptIcon,
+    group: "Team & Workforce",
+    roles: ["store_manager", "area_manager", "head_office"],
+  },
+  {
+    module: 1,
+    slug: "settings/staff-digest",
+    title: "Morning Digest",
+    purpose:
+      "The message that tells somebody what they owe a customer today, and exactly what it would say.",
+    primaryAction: "",
+    icon: BellRing,
+    group: "Administration",
+  },
+  {
+    module: 1,
+    slug: "settings/lead-tags",
+    title: "Lead Tags",
+    purpose: "Your own labels for a lead, and what they mean.",
+    primaryAction: "New tag",
+    icon: Tags,
+    group: "Administration",
+    roles: ["store_manager", "area_manager", "head_office"],
+  },
+  {
+    module: 11,
+    slug: "data/images",
+    title: "Product Images",
+    purpose:
+      "Match a folder of photographs to the products you already have, and reuse the column mapping you worked out last month.",
+    primaryAction: "",
+    icon: Images,
+    group: "Administration",
+    roles: ["store_manager", "area_manager", "head_office"],
+  },
+  {
+    module: 1,
+    slug: "settings/messaging-routes",
+    title: "Messaging Routes",
+    purpose:
+      "Which of your numbers each branch answers on, so a customer is replied to by the shop they wrote to.",
+    primaryAction: "",
+    icon: Route,
+    group: "Administration",
+    roles: ["head_office"],
+  },
+  {
+    module: 1,
+    slug: "settings/channels",
+    title: "Channels",
+    purpose:
+      "What can actually reach a customer today, and what is missing where it cannot.",
+    primaryAction: "",
+    icon: Radio,
+    group: "Administration",
+  },
 ];
+
 
 /** Sections in render order, derived — never maintained by hand. */
 export const NAV_GROUPS: NavGroup[] = NAV_GROUP_ORDER.map((label) => ({
@@ -557,15 +729,24 @@ export const CORE_NAVIGATION: readonly string[] = Object.freeze([
   "crm",
   "conversations",
   "customers",
+  "customers/archived",
+  "conversations/sla",
+  "tasks",
   "reminders",
   "catalogue",
   "checkins",
   "hrms",
+  "hrms/payroll",
   "settings/onboarding",
   "settings/stores",
   "settings/team",
   "settings/configuration",
+  "settings/staff-digest",
+  "settings/lead-tags",
+  "settings/messaging-routes",
+  "settings/channels",
   "data",
+  "data/images",
   "settings/integrations",
   "settings/audit",
 ]);

@@ -58,15 +58,34 @@ export class EntitlementGuard implements CanActivate {
     // without that prefix — matching a shorter string here would silently let a
     // gated route through.
     const path: string = req.originalUrl ?? req.url ?? '/';
-    const verdict = pathAllowedForPack(user.industryPackCode, path);
+    const verdict = pathAllowedForPack(
+      user.industryPackCode,
+      path,
+      user.disabledCapabilities,
+    );
     if (verdict.allowed) return true;
 
-    // Names the module rather than the URL: the person reading this is an admin
-    // wondering why a link 404s for their team, not an attacker probing.
+    /*
+     * THE URL IS NOT THE POLICY. This is what makes typing a hidden address do
+     * the same thing as not seeing the link: the navigation list and this guard
+     * read the same capability, so hiding a module in the sidebar is not
+     * cosmetic. A screen that is merely absent from a menu is one bookmark away
+     * from being used.
+     *
+     * Two different refusals, because they have two different fixes. A module
+     * the industry never included is a question for whoever chose the industry;
+     * one this organisation switched off is a switch somebody here can turn back
+     * on, and saying "change your industry" to them would send them to the wrong
+     * screen entirely.
+     */
     throw new ForbiddenException(
-      `This module is not part of your organisation's industry setup. ` +
-        `Ask an administrator to enable "${verdict.capability}" by changing your ` +
-        `industry in Settings → Business configuration.`,
+      verdict.reason === 'disabled'
+        ? `"${verdict.capability}" has been switched off for your organisation. ` +
+            'An administrator can turn it back on under Settings → Business ' +
+            'configuration → Modules.'
+        : `This module is not part of your organisation's industry setup. ` +
+            `Ask an administrator to enable "${verdict.capability}" by changing your ` +
+            `industry in Settings → Business configuration.`,
     );
   }
 }

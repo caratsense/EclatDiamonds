@@ -376,19 +376,33 @@ export default function LoyaltyProgrammePage() {
                       ? stores.find((s) => s.id === m.storeId)?.name ?? "—"
                       : "Joined online"}
                   </TableCell>
-                  <TableCell
-                    className={
-                      m.pointsBalance < 0
-                        ? "num text-right font-semibold text-rose-600 dark:text-rose-400"
-                        : "num text-right font-semibold"
-                    }
-                  >
-                    {formatNumber(m.pointsBalance)}
+                  <TableCell className="text-right">
+                    {m.adjustmentDebt > 0 ? (
+                      <>
+                        {/*
+                          Labelled, not just coloured. A negative number in a
+                          "balance" column reads as points somebody has; this is
+                          the opposite — a cancelled sale took back what had
+                          already been spent, and they owe it.
+                        */}
+                        <div className="num font-semibold text-rose-600 dark:text-rose-400">
+                          &minus;{formatNumber(m.adjustmentDebt)}
+                        </div>
+                        <StatusPill tone="bad">Owed back</StatusPill>
+                      </>
+                    ) : (
+                      <div className="num font-semibold">
+                        {formatNumber(m.spendablePoints)}
+                      </div>
+                    )}
                   </TableCell>
                   <TableCell className="num text-right text-muted-foreground">
-                    {settings.data?.redeemValuePerPoint != null
-                      ? formatINR(m.pointsBalance * settings.data.redeemValuePerPoint)
-                      : "—"}
+                    {settings.data?.redeemValuePerPoint == null
+                      ? "—"
+                      : m.adjustmentDebt > 0
+                        ? // Nothing to spend. Never a negative discount.
+                          formatINR(0)
+                        : formatINR(m.spendablePoints * settings.data.redeemValuePerPoint)}
                   </TableCell>
                   <TableCell className="num text-right text-muted-foreground">
                     {formatNumber(m.lifetimeEarned)}

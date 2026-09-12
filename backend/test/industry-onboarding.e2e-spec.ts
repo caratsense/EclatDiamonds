@@ -82,6 +82,23 @@ const JEWELLERY_ONLY_ROUTES = [
   'ticketing',
   'settings/rates',
   'settings/targets',
+  /*
+   * Added with the screens themselves, and deliberately on THIS list rather
+   * than the universal one.
+   *
+   * `management` and `reporting/scheduled` answer a multi-branch question — a
+   * single-location tenant on the universal suite has nothing to compare and
+   * nobody to send a month-end file to. `loyalty/programme` and
+   * `inventory/dead-stock` are sub-screens of modules that are already
+   * jewellery-only, so including them anywhere else would offer a door into a
+   * module the tenant does not have. `find-similar` searches a photograph
+   * against the catalogue using the jewellery similarity model.
+   */
+  'management',
+  'reporting/scheduled',
+  'loyalty/programme',
+  'inventory/dead-stock',
+  'find-similar',
 ] as const;
 
 /** The universal suite every industry gets, jewellery included. */
@@ -112,6 +129,34 @@ const UNIVERSAL_ROUTES = [
   'instore',
   'calling',
   'feedback',
+  /*
+   * A second deliberate widening, and the reason is different from the first.
+   *
+   * These nine screens were already BUILT, tested and deployed — and missing
+   * from this list, which is simultaneously the navigation and the entitlement.
+   * So each one was in the product, refused by the API, and absent from the
+   * sidebar: reachable only by typing its address, and then 403.
+   *
+   * Every one is cross-industry by nature. Archiving a contact and keeping
+   * their consent evidence, measuring how long a customer waited, chasing a
+   * task, paying people from the attendance register you already keep,
+   * labelling a lead, matching a folder of photographs to products, choosing
+   * which of your numbers a branch answers on, and seeing which channels can
+   * actually reach somebody — a clinic, a mill and a dealership each need all
+   * of them.
+   *
+   * The jewellery-only list above is untouched by this, which remains the
+   * invariant that matters: no pack gains finance, loyalty, returns or stock.
+   */
+  'customers/archived',
+  'conversations/sla',
+  'tasks',
+  'hrms/payroll',
+  'settings/staff-digest',
+  'settings/lead-tags',
+  'settings/messaging-routes',
+  'settings/channels',
+  'data/images',
   'settings/onboarding',
   'settings/stores',
   'settings/team',

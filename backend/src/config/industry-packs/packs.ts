@@ -128,6 +128,30 @@ const CORE_NAVIGATION = [
   'calling',
   /* Asking how it went, and keeping an unhappy answer off a public review page. */
   'feedback',
+  /*
+   * The screens below were BUILT AND UNREACHABLE.
+   *
+   * Each has shipped, been tested and been deployed, and then could only be
+   * opened by somebody typing its address — because this list is the
+   * entitlement AND the navigation, and a slug missing from it means both "not
+   * in the sidebar" and "403 from the API". A feature nobody can find is a
+   * feature nobody uses, whatever the release notes say.
+   *
+   * Every one of them is universal. Archiving a contact, measuring how long a
+   * customer waited, chasing a task, running the payroll the attendance
+   * register implies, labelling a lead, matching photographs to products,
+   * choosing which number a branch answers on, and seeing which channels
+   * actually work — a clinic, a mill and a dealership each need all of them.
+   */
+  'customers/archived',
+  'conversations/sla',
+  'tasks',
+  'hrms/payroll',
+  'settings/staff-digest',
+  'settings/lead-tags',
+  'settings/messaging-routes',
+  'settings/channels',
+  'data/images',
   'settings/onboarding',
   'settings/stores',
   'settings/team',
@@ -148,6 +172,17 @@ function eclatNavigation(...additional: string[]): string[] {
       ...CORE_NAVIGATION,
       'dashboards',
       'reporting',
+      /*
+       * The cross-branch management view and the reports that send themselves.
+       *
+       * Grouped with `dashboards` and `reporting` rather than put in the
+       * universal spine, because both answer a MULTI-BRANCH question. A
+       * single-location tenant on the universal suite has nothing to compare
+       * and nobody to send a month-end file to, so giving them the screen would
+       * be giving them an empty one.
+       */
+      'management',
+      'reporting/scheduled',
       'marketing',
       'ticketing',
       ...additional,
@@ -339,8 +374,11 @@ const JEWELLERY: IndustryPack = {
       'returns',
       'discounts',
       'loyalty',
+      'loyalty/programme',
       'sales-performance',
       'inventory',
+      'inventory/dead-stock',
+      'find-similar',
       'stock-transfers',
       'payments',
       'finance',
