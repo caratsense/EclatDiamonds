@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { LeadSource, Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
+import { ResponseSlaService } from './response-sla.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuditService } from '../common/audit.service';
 import { SequenceService } from '../common/sequence.service';
@@ -85,6 +86,7 @@ export class ConversationsService {
     private readonly requalification: RequalificationService,
     private readonly advanced: AdvancedCrmService,
     private readonly intake: LeadIntakeService,
+    private readonly sla: ResponseSlaService,
   ) {}
 
   private readonly logger = new Logger(ConversationsService.name);
@@ -340,6 +342,27 @@ export class ConversationsService {
       // two genuinely identical messages both appear.
       dedupeKey: msg.externalId ? `message:${msg.externalId}` : null,
       occurredAt: msg.sentAt ?? new Date(),
+    });
+
+    /*
+     * Start the first-response clock.
+     *
+     * This is the ONLY producer hook the SLA has: everything after it — whether
+     * anybody replied, whether it is late, whether it has escalated — is decided
+     * by a sweep reading Message rows, so a new outbound path cannot silently
+     * cause false breaches. `open` is a no-op when the tenant has no target set,
+     * when a clock is already running on this thread, and on a replay.
+     *
+     * Deliberately AFTER the message is committed, and it swallows its own
+     * errors: a measurement failing must never be why a customer's message is
+     * not stored.
+     */
+    await this.sla.open({
+      organisationId,
+      conversationId: conversation.id,
+      storeId: conversation.storeId,
+      messageId: message.id,
+      at: msg.sentAt ?? new Date(),
     });
 
     // A later ad pointed somewhere else. Recorded as a ROW, not just a sentence:

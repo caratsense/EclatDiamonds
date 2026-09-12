@@ -518,6 +518,8 @@ model Organisation {
   staffDigestSettings          StaffDigestSettings?
   quoteApprovalSettings        QuoteApprovalSettings?
   staffDigestRuns              StaffDigestRun[]
+  conversationSlaSettings      ConversationSlaSettings?
+  conversationResponseSlas     ConversationResponseSla[]
 }
 
 /// CaratOS import-engine provenance + reconciliation record. One row per import
@@ -719,6 +721,7 @@ model Store {
   activityEvents        ActivityEvent[]
   conversations         Conversation[]
   productInteractions   ProductInteraction[]
+  responseSlas          ConversationResponseSla[]
   /// Phase A7 — the file or Connect import run that created this row. Later
   /// updates do not rewrite creation provenance; legacyId identifies its source.
   importBatchId         String?
@@ -829,6 +832,7 @@ model User {
   checkInFollowUpsOwned    CheckIn[]                     @relation("CheckInFollowUpOwner")
   partiesArchived          Party[]                       @relation("PartyArchivedBy")
   staffDigestRuns          StaffDigestRun[]              @relation("StaffDigestRecipient")
+  slaResponses             ConversationResponseSla[]     @relation("SlaResponder")
   quotesApprovalRequested  Quote[]                       @relation("QuoteApprovalRequestedBy")
   quotesApprovalDecided    Quote[]                       @relation("QuoteApprovalDecidedBy")
   callsHandled             CallLog[]                     @relation("CallLogAgent")
@@ -3878,6 +3882,7 @@ model Conversation {
   messages           Message[]
   leadQualifications LeadQualification[]
   routingConflicts   ConversationRoutingConflict[]
+  responseSlas       ConversationResponseSla[]
 
   @@unique([organisationId, channel, externalThreadId])
   @@index([organisationId, status, lastMessageAt])
@@ -5032,4 +5037,122 @@ model FeedbackRequest {
   @@index([organisationId, status, createdAt])
   @@index([organisationId, storeId, respondedAt])
   @@index([organisationId, partyId])
+}
+
+/// How long a customer may wait for a first reply, per tenant.
+///
+/// From the meeting: "a customer message must be answered within five minutes".
+/// Five is the Éclat number, not the product's — a clinic answering emails and a
+/// showroom answering WhatsApp do not share a target, so the number is
+/// configuration and the default is OFF.
+model ConversationSlaSettings {
+  organisationId String       @id
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  /// Minutes allowed for the first genuine reply. NULL means the SLA is not
+  /// running at all: no clocks are opened and nothing changes for a tenant who
+  /// has not chosen a number. Setting it to 5 is what the meeting asked for.
+  firstResponseMinutes Int?
+
+  /// Minutes from the customer's message at which an unanswered thread goes to
+  /// the store manager. NULL means it never escalates — a breach still alerts
+  /// the assigned employee and still lands in the calling queue.
+  ///
+  /// Measured from the START of the clock, not from the breach, so "five minutes
+  /// to answer, fifteen before your manager hears about it" is written as 5 and
+  /// 15 rather than 5 and 10. The service refuses a value below the target.
+  escalateAfterMinutes Int?
+
+  /// Whether a breach may place an automatic outbound call.
+  ///
+  /// False by default, and today it changes nothing either way: no telephony
+  /// provider in this system can PLACE a call — the telephony integration is an
+  /// inbound webhook. The flag exists so the answer to "does it ring the
+  /// customer automatically?" is a recorded decision plus a live-provider check,
+  /// rather than something a future connector could switch on by accident.
+  autoCallOnBreach Boolean @default(false)
+
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+/// One first-response clock: a customer said something, and this is whether
+/// anybody answered in time.
+///
+/// ── Why a row and not a computed view ────────────────────────────────────────
+///
+/// The breach alert, the calling-queue task and the escalation each have to
+/// happen EXACTLY ONCE, across restarts and across replicas. A view can tell you
+/// a thread is late; it cannot remember that somebody was already told. The
+/// `breachedAt`/`escalatedAt` columns are claimed by a conditional UPDATE, so
+/// whichever instance gets the row does the work and the others see zero rows
+/// affected and do nothing.
+///
+/// ── One open clock per conversation ──────────────────────────────────────────
+///
+/// `openConversationId` holds the conversation id while the clock runs and NULL
+/// once it stops. Postgres treats NULLs as distinct in a unique index, so this
+/// is a partial-unique in disguise: a second customer message on a thread that
+/// is already waiting cannot start a second clock. That is the right reading of
+/// "first response" — the wait is measured from the first unanswered message,
+/// not restarted by an impatient customer sending three in a row.
+model ConversationResponseSla {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  /// The branch that owes the reply. Null for an unrouted thread — which is
+  /// still tracked, because "nobody's branch" is the worst case, not an excuse.
+  storeId String?
+  store   Store?  @relation(fields: [storeId], references: [id])
+
+  /// The customer message that started the wait. Also the idempotency key: the
+  /// same inbound message can never open two clocks.
+  triggerMessageId String
+
+  /// conversationId while waiting, NULL once answered or closed. See above.
+  openConversationId String? @unique
+
+  startedAt DateTime
+  /// startedAt + target. Stored rather than recomputed so changing the tenant's
+  /// target does not retroactively breach or un-breach threads already running.
+  dueAt     DateTime
+  /// startedAt + escalation delay, or NULL when the tenant does not escalate.
+  escalateAt DateTime?
+  /// The target in force when this clock started, kept for the same reason.
+  targetMinutes Int
+
+  /// 'waiting' | 'met' | 'breached'.
+  ///
+  /// A thread answered AFTER it breached stays 'breached' — the breach happened,
+  /// and a late reply does not unhappen it — but still records respondedAt and
+  /// responseSeconds, which is how "how long did they actually wait" stays
+  /// answerable for the ones that went wrong.
+  status String @default("waiting")
+
+  respondedAt     DateTime?
+  responderId     String?
+  responder       User?     @relation("SlaResponder", fields: [responderId], references: [id])
+  /// 'agent' | 'ai' — an approved AI reply counts, and is never recorded as a
+  /// person's.
+  responderType   String?
+  responseSeconds Int?
+
+  breachedAt  DateTime?
+  escalatedAt DateTime?
+  /// The calling-queue task a breach created, so the queue and the SLA row point
+  /// at each other instead of duplicating on a re-run.
+  taskId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organisationId, triggerMessageId])
+  /// The sweep's own query: everything still owed, oldest deadline first.
+  @@index([status, dueAt])
+  @@index([organisationId, storeId, startedAt])
 }

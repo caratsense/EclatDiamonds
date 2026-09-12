@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { JobsService } from '../jobs/jobs.service';
 import { StaffDigestService } from '../crm/staff-digest.service';
+import { ResponseSlaService } from '../crm/response-sla.service';
 import { JobAlertsService } from '../jobs/job-alerts.service';
 import { Role } from '@prisma/client';
 
@@ -73,6 +74,7 @@ export class SchedulerService {
     private readonly templateSync: TemplateSyncService,
     private readonly jobAlerts: JobAlertsService,
     private readonly staffDigest: StaffDigestService,
+    private readonly responseSla: ResponseSlaService,
   ) {}
 
   /**
@@ -221,6 +223,38 @@ export class SchedulerService {
    * database, not by this wrapper: runOnce keeps replicas from scanning at once,
    * but only the constraint can stop a retry after a partial run.
    */
+  /**
+   * Settle every first-response clock that is owed something.
+   *
+   * EVERY MINUTE, and deliberately not wrapped in `runOnce`. A five-minute
+   * promise measured on an hourly tick is not a promise, and there is no run key
+   * a minute-granular sweep could sensibly dedupe on. It needs none: the sweep
+   * is idempotent by construction — a reply already recorded is skipped, and the
+   * breach and the escalation are each claimed by a conditional UPDATE, so two
+   * replicas sweeping the same second produce one alert between them.
+   *
+   * It is also restart-safe for the same reason. Nothing is held in memory; a
+   * process that dies mid-sweep leaves rows that the next tick picks up exactly
+   * where it left off.
+   */
+  @Cron(CronExpression.EVERY_MINUTE, { name: 'crm.response-sla' })
+  async sweepResponseSla(): Promise<void> {
+    if (!this.enabled) return;
+    try {
+      const res = await this.responseSla.sweep();
+      if (res.breached || res.escalated) {
+        this.logger.warn(
+          `Response SLA: ${res.breached} breached, ${res.escalated} escalated ` +
+            `(${res.examined} examined)`,
+        );
+      }
+    } catch (e) {
+      this.logger.error(
+        `Response SLA sweep failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
   @Cron(CronExpression.EVERY_HOUR, { name: 'crm.staff-digest' })
   async sendStaffDigests(): Promise<void> {
     if (!this.enabled) return;

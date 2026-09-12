@@ -33,6 +33,8 @@ import { LeadExportController } from './lead-export.controller';
 import { StaffDigestService } from './staff-digest.service';
 import { StaffDigestController } from './staff-digest.controller';
 import { LeadTagsController } from './lead-tags.controller';
+import { ResponseSlaService } from './response-sla.service';
+import { ResponseSlaController } from './response-sla.controller';
 import { CallingController } from './calling.controller';
 import { OmnichannelKpiController } from './omnichannel-kpi.controller';
 import { InStoreController } from './instore.controller';
@@ -109,6 +111,7 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
     LeadTagsController,
     LeadExportController,
     StaffDigestController,
+    ResponseSlaController,
   ],
   providers: [
     IdentityService,
@@ -116,6 +119,7 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
     LeadTagsService,
     LeadExportService,
     StaffDigestService,
+    ResponseSlaService,
     Customer360Service,
     ConversationsService,
     PipelinesService,
@@ -146,6 +150,7 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
   exports: [
     LeadTagsService,
     StaffDigestService,
+    ResponseSlaService,
     ConversationAiGate,
     AiDraftsService,
     KnowledgeRetrievalService,
