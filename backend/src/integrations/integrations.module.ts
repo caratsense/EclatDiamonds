@@ -16,6 +16,13 @@ import { MetaDeliveryReceiptAdapter } from './meta-delivery-receipt.adapter';
 import { MetaLeadAdapter } from './meta-lead.adapter';
 import { MetaHealthService } from './meta-health.service';
 import { TelephonyService } from './telephony.service';
+import { AdaptersController } from './adapters/adapters.controller';
+import { ChannelAdaptersService } from './adapters/channel-adapters.service';
+import { EmailOutboundAdapter } from './adapters/email-outbound.adapter';
+import { InstagramAdapter } from './adapters/instagram.adapter';
+import { OutboundHttp } from './adapters/outbound-http';
+import { TelephonyOutboundAdapter } from './adapters/telephony-outbound.adapter';
+import { WhatsAppOutboundAdapter } from './adapters/whatsapp-outbound.adapter';
 import { MessagingRoutesController } from './messaging-routes.controller';
 import { MessagingRoutesService } from './messaging-routes.service';
 
@@ -31,7 +38,7 @@ import { MessagingRoutesService } from './messaging-routes.service';
 @Global()
 @Module({
   imports: [WhatsAppBotModule, IntegrationModule],
-  controllers: [IntegrationsController, MessagingRoutesController],
+  controllers: [IntegrationsController, MessagingRoutesController, AdaptersController],
   providers: [
     WhatsAppService,
     WhatsAppCredentialsService,
@@ -57,6 +64,15 @@ import { MessagingRoutesService } from './messaging-routes.service';
     // runs one way only (integrations reach into CRM; CRM never reaches back).
     TelephonyService,
     MessagingRoutesService,
+    // The outbound adapters and the registry that answers "can this channel
+    // reach anybody". Three of the four have never had a live provider
+    // response, which each of them reports for itself.
+    OutboundHttp,
+    WhatsAppOutboundAdapter,
+    InstagramAdapter,
+    EmailOutboundAdapter,
+    TelephonyOutboundAdapter,
+    ChannelAdaptersService,
   ],
   exports: [
     WhatsAppService,
@@ -71,6 +87,11 @@ import { MessagingRoutesService } from './messaging-routes.service';
     MetaWebhookService,
     TelephonyService,
     MessagingRoutesService,
+    ChannelAdaptersService,
+    // Exported by name because the response-SLA depends on VOICE specifically:
+    // it asks the thing that would dial whether a call can be placed, so there
+    // is one answer rather than its own reading of an Integration row.
+    TelephonyOutboundAdapter,
   ],
 })
 export class IntegrationsModule {}

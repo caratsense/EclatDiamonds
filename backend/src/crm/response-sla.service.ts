@@ -4,6 +4,7 @@ import { Prisma, Role } from '@prisma/client';
 import { AuditService } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
 import { PrismaService } from '../prisma/prisma.service';
+import { TelephonyOutboundAdapter } from '../integrations/adapters/telephony-outbound.adapter';
 import { StoreScopeService } from '../common/store-scope.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { businessDate, resolveTz } from '../common/tz.util';
@@ -87,6 +88,11 @@ export class ResponseSlaService {
     private readonly scope: StoreScopeService,
     private readonly notifications: NotificationsService,
     private readonly audit: AuditService,
+    /**
+     * The thing that would actually dial. Injected so there is ONE answer to
+     * "can a call be placed" rather than this service's own reading of a row.
+     */
+    private readonly voice: TelephonyOutboundAdapter,
   ) {}
 
   // ==========================================================================
@@ -219,18 +225,16 @@ export class ResponseSlaService {
    * provider exists". It is a query, not an assumption.
    */
   private async autoCallBlockedReason(organisationId: string): Promise<string | null> {
-    const integration = await this.prisma.integration.findFirst({
-      where: { organisationId, providerCode: 'telephony', status: 'connected' },
-      select: { capabilities: true, name: true },
-    });
-    if (!integration) {
-      return 'No telephony provider is connected, so no call can be placed.';
-    }
-    const caps = (integration.capabilities ?? {}) as Record<string, unknown>;
-    if (caps.outboundCall !== true) {
-      return `“${integration.name}” receives call notifications but cannot place calls.`;
-    }
-    return null;
+    // ONE ANSWER, and the adapter that would place the call owns it.
+    //
+    // This used to read the Integration row itself, so two places decided
+    // whether a call could be made: here, and whatever would eventually dial.
+    // They could disagree — this checked the connection and the capability flag
+    // but not the dialling endpoint or the API key, so a tenant could be told
+    // automatic calling was ready and then have every breach skipped silently.
+    // The adapter checks all four and says which one is missing.
+    const state = await this.voice.deliverability(organisationId);
+    return state.state === 'live' ? null : state.reason;
   }
 
   // ==========================================================================
@@ -530,15 +534,104 @@ export class ResponseSlaService {
       select: { autoCallOnBreach: true },
     });
     if (settings?.autoCallOnBreach) {
-      const blocked = await this.autoCallBlockedReason(clock.organisationId);
-      if (blocked) {
-        this.log.warn(`Automatic call skipped for ${clock.conversationId}: ${blocked}`);
-      }
-      // No `else`. Placing the call belongs to the connector that can place it,
-      // and writing a fake "called" record here is exactly the thing that would
-      // make the SLA report lie.
+      await this.tryAutoCall(clock);
     }
     return true;
+  }
+
+  /**
+   * Ask the telephony provider to ring the customer.
+   *
+   * Three rules.
+   *
+   * NOTHING IS RECORDED UNLESS THE PROVIDER ACCEPTED IT. A dry run and a refusal
+   * are both logged and neither is written as a call. A fake "we called them"
+   * row is precisely what would make the SLA report lie, and the SLA exists to
+   * be believed.
+   *
+   * A FAILED CALL DOES NOT UNDO THE BREACH. The notification has already gone to
+   * the branch, the task is already due, and a human is already the fallback.
+   * The call was the extra, not the mechanism.
+   *
+   * IT CANNOT THROW INTO THE SWEEP. One tenant's misconfigured dialler must not
+   * stop the tick that is measuring everybody else's SLA.
+   */
+  private async tryAutoCall(clock: {
+    organisationId: string;
+    conversationId: string;
+    storeId: string | null;
+    conversation: { channel: string; party: { name: string } | null };
+  }): Promise<void> {
+    try {
+      const number = await this.customerNumber(clock.organisationId, clock.conversationId);
+      if (!number) {
+        this.log.warn(
+          `Automatic call skipped for ${clock.conversationId}: no phone number on file for this customer.`,
+        );
+        return;
+      }
+      const result = await this.voice.send(clock.organisationId, {
+        to: number,
+        storeId: clock.storeId,
+      });
+      if (result.delivered) {
+        // Accepting a dial request is not a conversation, and the message says
+        // so. Whether anybody picked up arrives later on the inbound webhook.
+        this.log.log(
+          `Automatic call requested for ${clock.conversationId} (provider reference ${
+            result.externalId ?? 'none given'
+          }).`,
+        );
+        return;
+      }
+      this.log.warn(
+        `Automatic call not placed for ${clock.conversationId}: ${
+          result.reason ?? result.error ?? 'the provider gave no reason'
+        }`,
+      );
+    } catch (error) {
+      this.log.error(
+        `Automatic call failed for ${clock.conversationId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  /** The number to ring. Null rather than a guess — a wrong number is worse. */
+  private async customerNumber(
+    organisationId: string,
+    conversationId: string,
+  ): Promise<string | null> {
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { id: conversationId, organisationId },
+      select: {
+        externalThreadId: true,
+        party: {
+          select: {
+            phone: true,
+            whatsapp: true,
+            contactPoints: {
+              where: { kind: { in: ['phone', 'whatsapp'] } },
+              orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+              select: { value: true },
+              take: 1,
+            },
+          },
+        },
+      },
+    });
+    const party = conversation?.party;
+    return (
+      party?.phone ??
+      party?.whatsapp ??
+      party?.contactPoints[0]?.value ??
+      // A WhatsApp thread's own key IS the customer's number, so it is a real
+      // answer rather than a fallback. Other channels' thread ids are not
+      // numbers and must not be dialled.
+      conversation?.externalThreadId ??
+      null
+    );
   }
 
   /** Climb to the branch's managers, once. */

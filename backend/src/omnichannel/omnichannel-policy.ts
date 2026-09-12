@@ -17,6 +17,17 @@ export interface DeliveryPolicyInput {
   hasApprovedTemplate: boolean;
   lastInboundAt?: Date | null;
   now?: Date;
+  /**
+   * Whether the channel has a working outbound path for THIS tenant, answered
+   * by the adapter registry.
+   *
+   * Supplied rather than decided here because the answer depends on the
+   * tenant's own rows: a business that has connected Instagram and one that has
+   * not must not get the same verdict, and this function is pure. Omitted, the
+   * fallback below is the most restrictive answer available with no
+   * information, which is the correct way for a pure gate to fail.
+   */
+  channelDeliverable?: { deliverable: boolean; reason: string };
 }
 
 export type DeliveryPolicyDecision =
@@ -116,10 +127,30 @@ export function isUnambiguousOptOut(body: string | null | undefined): boolean {
  * provider is called.
  */
 export function evaluateDeliveryPolicy(input: DeliveryPolicyInput): DeliveryPolicyDecision {
-  // WhatsApp is the only outbound adapter currently implemented. The schema is
-  // channel-neutral, but calling another channel "sent" without a transport
-  // would be materially worse than refusing it.
-  if (input.channel !== 'whatsapp') {
+  /*
+   * IS THERE A PATH AT ALL, before any of the tenant's rules are considered.
+   *
+   * The caller asks the adapter registry, which reads that tenant's own
+   * connections and can say which of "no app review", "no verified domain" or
+   * "no dialling endpoint" it is. This used to be `channel !== 'whatsapp'`,
+   * which was honest while WhatsApp was the only adapter and became a lie the
+   * moment a second one existed: it gave the same answer to a business that had
+   * connected Instagram and one that had not.
+   *
+   * With nothing supplied the old rule stands, because a pure function with no
+   * information must give the most restrictive answer it can rather than
+   * assuming a transport exists. Calling another channel "sent" with nothing to
+   * send it through is materially worse than refusing it.
+   */
+  if (input.channelDeliverable) {
+    if (!input.channelDeliverable.deliverable) {
+      return {
+        allowed: false,
+        code: 'channel_not_connected',
+        reason: input.channelDeliverable.reason,
+      };
+    }
+  } else if (input.channel !== 'whatsapp') {
     return {
       allowed: false,
       code: 'channel_not_connected',
@@ -147,6 +178,17 @@ export function evaluateDeliveryPolicy(input: DeliveryPolicyInput): DeliveryPoli
   }
 
   if (input.hasApprovedTemplate) return { allowed: true, mode: 'template' };
+
+  /*
+   * The 24-hour customer-care window is a WHATSAPP rule.
+   *
+   * Every other channel has its own, and imposing WhatsApp's on them would
+   * refuse mail a tenant is perfectly entitled to send. A channel the registry
+   * has already declared deliverable and that needs no template passes here as
+   * free text; its own provider refuses if this gate was wrong, which is the
+   * safe direction.
+   */
+  if (input.channel !== 'whatsapp') return { allowed: true, mode: 'free_text' };
 
   const now = input.now ?? new Date();
   const lastInboundAt = input.lastInboundAt?.getTime();

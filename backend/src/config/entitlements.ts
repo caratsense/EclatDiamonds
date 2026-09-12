@@ -125,6 +125,14 @@ export const ROUTE_FAMILIES: readonly RouteFamily[] = Object.freeze([
   { prefix: '/integrations', capability: null, why: 'Channel integrations; the one vertical screen inside it is listed below.' },
   { prefix: '/integrations-registry', capability: null, why: 'Which providers exist. Distinct path from /integrations.' },
   {
+    prefix: '/adapters',
+    capability: null,
+    why:
+      'Read-only: which channels can actually reach a customer today, and why not. ' +
+      'Universal, and deliberately open to every role — a salesperson who cannot see ' +
+      'that a channel is disconnected keeps promising customers a message on it.',
+  },
+  {
     prefix: '/messaging-routes',
     capability: null,
     why:

@@ -1,5 +1,7 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+
+import { businessDate, dateOnly } from '../src/common/tz.util';
 import request = require('supertest');
 import * as bcrypt from 'bcryptjs';
 
@@ -71,8 +73,18 @@ describe('Staff digest (e2e)', () => {
    * now"), so a fixture pinned to a future month would give the run and the
    * preview two different days and only one of them would find anything.
    */
-  const todayUtc = new Date();
-  const ymd = todayUtc.toISOString().slice(0, 10);
+  /*
+   * TODAY IN THE BRANCH'S TIMEZONE, not in UTC.
+   *
+   * This read `new Date().toISOString()`, which is the UTC date. The branch is
+   * Asia/Kolkata (UTC+5:30), so between 18:30Z and midnight — 00:00 to 05:30
+   * for anybody actually in the shop — the two disagree by a day. The fixture
+   * would then file "due today" against yesterday's date while the preview,
+   * which asks the same question in the branch's zone, correctly reported it
+   * overdue. The suite went red for five and a half hours out of every
+   * twenty-four for reasons nothing in the product had changed.
+   */
+  const ymd = dateOnly(businessDate(new Date(), 'Asia/Kolkata'));
   /** 09:00 in Asia/Kolkata is 03:30 UTC. */
   const nineAmIst = new Date(`${ymd}T03:30:00.000Z`);
   const daysAgo = (n: number) =>

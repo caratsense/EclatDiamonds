@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 
+import { AiProviderConfig } from './ai-provider-config';
+
 import { AiReply, AiReplyContext, AiResponder } from '../ai-responder';
 import {
   POLICY_VERSION,
@@ -40,22 +42,41 @@ import {
 export class ProviderAiResponder implements AiResponder {
   private readonly logger = new Logger(ProviderAiResponder.name);
 
-  private readonly provider = (process.env.CRM_AI_PROVIDER ?? '').trim().toLowerCase();
-  private readonly model = (process.env.CRM_AI_MODEL ?? '').trim();
-  private readonly apiKey = (process.env.CRM_AI_API_KEY ?? '').trim();
-  private readonly baseUrl = (process.env.CRM_AI_BASE_URL ?? '').trim();
+  constructor(private readonly ai: AiProviderConfig) {}
+
+  /*
+   * ONE CONFIGURATION, shared with the signal extractor.
+   *
+   * These four values were read here from `process.env` with one set of rules
+   * and in `CrmAiProvider` with another, and the two disagreed about the same
+   * environment: a bare key made extraction report itself available while
+   * drafting returned null on every message, and naming OpenAI did the reverse.
+   * Either way a screen could say "AI is connected" while half of what it
+   * enables did nothing. Read `ai-provider-config.ts` for the full account.
+   *
+   * Read through getters rather than captured at construction, so a deployment
+   * that changes the variables does not need a restart to be believed.
+   */
+  private get provider(): string {
+    return this.ai.vendor ?? '';
+  }
+  private get model(): string {
+    return this.ai.model ?? '';
+  }
+  private get apiKey(): string {
+    return this.ai.apiKey;
+  }
+  private get baseUrl(): string {
+    return this.ai.baseUrl;
+  }
 
   /** Provider and model only. The key is never part of a name that gets logged. */
   get name(): string {
-    return this.isConfigured() ? `${this.provider}/${this.model}` : 'none';
+    return this.isConfigured() ? this.ai.name : 'none';
   }
 
   isConfigured(): boolean {
-    return (
-      (this.provider === 'anthropic' || this.provider === 'openai') &&
-      this.model.length > 0 &&
-      this.apiKey.length > 0
-    );
+    return this.ai.can('drafting');
   }
 
   async propose(context: AiReplyContext): Promise<AiReply | null> {

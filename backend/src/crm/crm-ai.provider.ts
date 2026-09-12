@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import { fetchJson } from '../integrations/integrations.util';
+import { AiProviderConfig } from './ai/ai-provider-config';
 import type { QualificationPolicy, SignalResult } from './qualification-policy';
 
 /**
@@ -41,35 +42,40 @@ export interface ExtractionResult {
 export class CrmAiProvider {
   private readonly log = new Logger(CrmAiProvider.name);
 
-  constructor(private readonly config: ConfigService) {}
+  /**
+   * The configuration is read from ONE place, shared with the reply drafter.
+   *
+   * It used to be read here with its own defaults and there with its own rules,
+   * and the two disagreed: a bare `CRM_AI_API_KEY` made this report itself
+   * available while drafting silently did nothing, and naming OpenAI did the
+   * reverse. See `ai/ai-provider-config.ts` for the whole of it.
+   */
+  constructor(
+    private readonly config: ConfigService,
+    private readonly ai: AiProviderConfig,
+  ) {}
 
   private get apiKey(): string {
-    return this.config.get<string>('CRM_AI_API_KEY') ?? '';
+    return this.ai.apiKey;
   }
-  /** Only 'anthropic' is implemented. An unknown value is reported, not guessed at. */
   private get providerName(): string {
-    return (this.config.get<string>('CRM_AI_PROVIDER') ?? 'anthropic').toLowerCase();
+    return this.ai.vendor ?? '';
   }
   private get model(): string {
-    return this.config.get<string>('CRM_AI_MODEL') ?? 'claude-sonnet-5';
+    return this.ai.model ?? '';
   }
   private get baseUrl(): string {
-    return this.config.get<string>('CRM_AI_BASE_URL') ?? 'https://api.anthropic.com';
+    return this.ai.baseUrl;
   }
 
   get available(): boolean {
-    return Boolean(this.apiKey) && this.providerName === 'anthropic';
+    return this.ai.can('extraction');
   }
 
   /** Why it is unavailable, in words a settings screen can show verbatim. */
   get unavailableReason(): string | null {
-    if (this.apiKey && this.providerName !== 'anthropic') {
-      return `CRM_AI_PROVIDER is set to "${this.providerName}", which is not implemented. Only "anthropic" is supported today.`;
-    }
-    if (!this.apiKey) {
-      return 'No AI provider is configured. Qualification is running on your own keyword rules, which is exact but literal — it only sees the phrases you listed.';
-    }
-    return null;
+    const state = this.ai.describe();
+    return state.capabilities.extraction.reason;
   }
 
   /**

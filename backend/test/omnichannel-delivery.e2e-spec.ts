@@ -141,6 +141,19 @@ describe('omnichannel durable worker', () => {
       activity as any,
       {} as any,
       whatsapp as any,
+      // The adapter registry. The harness answers "yes, deliverable" so this
+      // stays a test of the OUTBOX, not of channel availability — which has its
+      // own tests. A real registry would refuse an unconnected channel here, and
+      // that path is asserted in the adapter suite.
+      {
+        deliverability: jest.fn(async () => ({
+          channel: 'whatsapp',
+          state: 'live',
+          code: 'ready',
+          reason: 'Fixture.',
+          verified: false,
+        })),
+      } as any,
       // Identity resolution is only used by the send-to-a-bare-number path,
       // which this harness never exercises.
       {} as any,

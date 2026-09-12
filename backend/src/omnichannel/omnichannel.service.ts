@@ -14,6 +14,7 @@ import { ConversationsService } from '../crm/conversations.service';
 import { ActivityService } from '../crm/activity.service';
 import { IdentityService } from '../crm/identity.service';
 import { WhatsAppService } from '../integrations/whatsapp.service';
+import { ChannelAdaptersService } from '../integrations/adapters/channel-adapters.service';
 import { JobContext, JobsService } from '../jobs/jobs.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -116,6 +117,16 @@ export class OmnichannelService implements OnModuleInit {
     private readonly activity: ActivityService,
     private readonly audit: AuditService,
     private readonly whatsapp: WhatsAppService,
+    /**
+     * Asked, per tenant, whether a channel has a working outbound path.
+     *
+     * The policy function is pure and cannot read a tenant's connections, so
+     * the answer is fetched here and handed to it. Before this the policy
+     * decided it with `channel !== 'whatsapp'`, which could not say why a
+     * channel was unavailable and gave the same answer to a business that had
+     * connected Instagram and one that had not.
+     */
+    private readonly adapters: ChannelAdaptersService,
     private readonly identity: IdentityService,
   ) {}
 
@@ -519,6 +530,21 @@ export class OmnichannelService implements OnModuleInit {
   }
 
   /**
+   * Whether this channel can reach anybody for this tenant, in the shape the
+   * pure policy takes.
+   *
+   * A dry-run channel counts as deliverable ON PURPOSE. The path is complete
+   * and running it is how a tenant checks a template before their sending
+   * domain is verified; the adapter reports `dryRun` on the result and the
+   * message is never recorded as sent. Refusing here instead would make the
+   * unconfigured state indistinguishable from an unbuilt one.
+   */
+  private async channelDeliverable(organisationId: string, channel: string) {
+    const state = await this.adapters.deliverability(organisationId, channel);
+    return { deliverable: state.state !== 'unavailable', reason: state.reason };
+  }
+
+  /**
    * The thread for a number, created only if this tenant has none.
    *
    * Keyed on `@@unique([organisationId, channel, externalThreadId])`, the same
@@ -588,6 +614,10 @@ export class OmnichannelService implements OnModuleInit {
       consent: consent.state,
       hasApprovedTemplate: !!template,
       lastInboundAt: conversation.lastInboundAt,
+      channelDeliverable: await this.channelDeliverable(
+        user.organisationId,
+        conversation.channel,
+      ),
     });
     if (!decision.allowed) throw new BadRequestException(decision.reason);
     if (input.purpose === 'marketing' && !conversation.partyId) {
@@ -747,6 +777,10 @@ export class OmnichannelService implements OnModuleInit {
       consent: consent.state,
       hasApprovedTemplate: false,
       lastInboundAt: conversation.lastInboundAt,
+      channelDeliverable: await this.channelDeliverable(
+        input.organisationId,
+        conversation.channel,
+      ),
     });
     if (!decision.allowed) {
       return { queued: false, reason: decision.reason ?? 'Delivery policy refused this message.' };
@@ -1063,6 +1097,13 @@ export class OmnichannelService implements OnModuleInit {
       consent: consent.state,
       hasApprovedTemplate: !!template,
       lastInboundAt: message.conversation.lastInboundAt,
+      // The worker is the authority, so the check happens here and not only
+      // where the message was queued: a queued message can be days old and the
+      // connection it depended on may have been revoked since.
+      channelDeliverable: await this.channelDeliverable(
+        ctx.organisationId,
+        message.conversation.channel,
+      ),
     });
     if (!policy.allowed) return this.failPermanently(message, policy.code, policy.reason);
     if (instructions.purpose === 'marketing' && !message.conversation.partyId) {
