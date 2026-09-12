@@ -505,6 +505,8 @@ model Organisation {
   campaignRecipients           CampaignRecipient[]
   leadTags                     LeadTag[]
   leadTagAssignments           LeadTagAssignment[]
+  staffDigestSettings          StaffDigestSettings?
+  staffDigestRuns              StaffDigestRun[]
 }
 
 /// CaratOS import-engine provenance + reconciliation record. One row per import
@@ -815,6 +817,7 @@ model User {
   checkInsAttended         CheckIn[]                     @relation("CheckInAttendedBy")
   checkInFollowUpsOwned    CheckIn[]                     @relation("CheckInFollowUpOwner")
   partiesArchived          Party[]                       @relation("PartyArchivedBy")
+  staffDigestRuns          StaffDigestRun[]              @relation("StaffDigestRecipient")
   callsHandled             CallLog[]                     @relation("CallLogAgent")
 
   @@unique([organisationId, legacyId])
@@ -1350,6 +1353,80 @@ model LeadTagAssignment {
   @@unique([leadId, tagId])
   @@index([organisationId])
   @@index([tagId])
+}
+
+/// When, and whether, this tenant sends its staff their morning call list.
+///
+/// One row per organisation. Off by default: a system that starts messaging a
+/// client's staff the moment it is deployed is a system nobody trusts again.
+model StaffDigestSettings {
+  organisationId String       @id
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  enabled Boolean @default(false)
+
+  /// 0-23, read in each STORE's timezone rather than the tenant's. A chain with
+  /// branches in two zones wants both to get it at nine in the morning where
+  /// they are, not at nine in head office's morning.
+  sendHourLocal Int @default(9)
+
+  /// WhatsApp is a second, optional channel. The in-app notification always goes
+  /// out; this only decides whether a message is also attempted.
+  whatsappEnabled Boolean @default(false)
+
+  /// Meta requires an approved template for a business-initiated message. With
+  /// no template named here, the WhatsApp half is skipped and says so — it does
+  /// not fall back to free text, which Meta would refuse anyway.
+  templateName     String?
+  templateLanguage String?
+
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+/// One person's digest for one day.
+///
+/// The unique key on (userId, businessDate) is the idempotency guard: a
+/// scheduler that fires twice, or a container that restarts mid-run, cannot send
+/// somebody their list a second time.
+model StaffDigestRun {
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  id             String       @id @default(cuid())
+
+  userId String
+  user   User   @relation("StaffDigestRecipient", fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The branch whose local morning this was.
+  storeId String?
+
+  businessDate DateTime @db.Date
+
+  dueCount     Int @default(0)
+  overdueCount Int @default(0)
+
+  inAppNotified Boolean @default(false)
+
+  /// 'skipped' | 'sent' | 'failed' | 'dead'.
+  ///
+  /// `skipped` is a first-class outcome, not a failure: no staff phone, WhatsApp
+  /// off for the tenant, no approved template, or an unhealthy sender. The
+  /// REASON is stored beside it so the settings screen can say which, instead of
+  /// the team guessing why nobody got a message.
+  whatsappStatus String  @default("skipped")
+  whatsappReason String?
+
+  /// Retries before the row is left as `dead`. A digest is worth very few — it
+  /// is stale by lunchtime, and a queue that keeps retrying yesterday's list is
+  /// worse than one that gives up and says so.
+  attempts Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, businessDate])
+  @@index([organisationId, businessDate])
 }
 
 model LeadNote {

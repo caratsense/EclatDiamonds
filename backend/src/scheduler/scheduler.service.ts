@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { JobsService } from '../jobs/jobs.service';
+import { StaffDigestService } from '../crm/staff-digest.service';
 import { JobAlertsService } from '../jobs/job-alerts.service';
 import { Role } from '@prisma/client';
 
@@ -71,6 +72,7 @@ export class SchedulerService {
     private readonly omnichannel: OmnichannelService,
     private readonly templateSync: TemplateSyncService,
     private readonly jobAlerts: JobAlertsService,
+    private readonly staffDigest: StaffDigestService,
   ) {}
 
   /**
@@ -207,6 +209,48 @@ export class SchedulerService {
    * feed itself is global, so N orgs = N feed hits per stale window — fine at
    * today's tenant count; if that grows, fetch spot once and fan the write out.
    */
+  /**
+   * The morning call list.
+   *
+   * Hourly rather than on a fixed cron time, because the hour that matters is
+   * each STORE's local one — a chain across two timezones wants nine in the
+   * morning where the staff are, not nine where head office is. The service
+   * checks the local hour itself and returns 'not-the-hour' for the other 23.
+   *
+   * Double-send is prevented by a unique key on (userId, businessDate) in the
+   * database, not by this wrapper: runOnce keeps replicas from scanning at once,
+   * but only the constraint can stop a retry after a partial run.
+   */
+  @Cron(CronExpression.EVERY_HOUR, { name: 'crm.staff-digest' })
+  async sendStaffDigests(): Promise<void> {
+    if (!this.enabled) return;
+    const now = new Date();
+
+    for (const store of await this.rosteredStores()) {
+      if (!store.organisationId) continue;
+      const tz = resolveTz(store.timezone);
+      const runKey = `${dateOnly(businessDate(now, tz))}:${zonedParts(now, tz).hour}`;
+      try {
+        const res = await this.runner.runOnce(
+          store.organisationId,
+          'crm.staff-digest',
+          store.id,
+          runKey,
+          () => this.staffDigest.runForStore(store.organisationId!, store.id, store.timezone, now),
+        );
+        if (res && res.sent) {
+          this.logger.log(`Staff digest: ${res.sent} sent for ${store.name}`);
+        }
+      } catch (e) {
+        // One branch's digest failing must not stop the others. The per-person
+        // outcome is already recorded on StaffDigestRun either way.
+        this.logger.error(
+          `Staff digest failed for ${store.name}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+  }
+
   @Cron(CronExpression.EVERY_HOUR, { name: 'pricing.gold-rate-refresh' })
   async refreshGoldRate(): Promise<void> {
     if (!this.enabled || !this.goldRate.enabled) return;

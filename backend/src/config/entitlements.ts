@@ -134,6 +134,14 @@ export const ROUTE_FAMILIES: readonly RouteFamily[] = Object.freeze([
       'someone can ask. Visibility is the pack navigation slug, as with /crm.',
   },
   {
+    prefix: '/staff-digest',
+    capability: null,
+    why:
+      'The morning list of who a staff member owes a follow-up. Universal for ' +
+      'the same reason /calling is — chasing a follow-up is what every CRM is ' +
+      'for. Visibility follows the pack navigation slug, not a capability gate.',
+  },
+  {
     prefix: '/lead-tags',
     capability: null,
     why:

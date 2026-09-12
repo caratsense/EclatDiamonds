@@ -30,6 +30,8 @@ import { FeedbackController, PublicFeedbackController } from './feedback.control
 import { LeadTagsService } from './lead-tags.service';
 import { LeadExportService } from './lead-export.service';
 import { LeadExportController } from './lead-export.controller';
+import { StaffDigestService } from './staff-digest.service';
+import { StaffDigestController } from './staff-digest.controller';
 import { LeadTagsController } from './lead-tags.controller';
 import { CallingController } from './calling.controller';
 import { OmnichannelKpiController } from './omnichannel-kpi.controller';
@@ -106,12 +108,14 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
     PublicFeedbackController,
     LeadTagsController,
     LeadExportController,
+    StaffDigestController,
   ],
   providers: [
     IdentityService,
     ActivityService,
     LeadTagsService,
     LeadExportService,
+    StaffDigestService,
     Customer360Service,
     ConversationsService,
     PipelinesService,
@@ -141,6 +145,7 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
   ],
   exports: [
     LeadTagsService,
+    StaffDigestService,
     ConversationAiGate,
     AiDraftsService,
     KnowledgeRetrievalService,
