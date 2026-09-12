@@ -94,8 +94,29 @@ export function gateDecision(
 ): GateDecision {
   const slug = navSlugForPath(pathname);
   if (!slug) return "render";
-  if (CORE_NAVIGATION.includes(slug)) return "render";
-  if (enabled === undefined) return "hold";
+  /*
+   * A CORE route renders immediately WHILE THE ANSWER IS STILL IN FLIGHT, and
+   * only then.
+   *
+   * The original rule was `if (CORE_NAVIGATION.includes(slug)) return "render"`
+   * unconditionally, which was exactly right when the only thing that could
+   * remove a module was the industry pack: every pack contains the core, so no
+   * answer could arrive that took one away, and making the universal suite —
+   * nearly every navigation in practice — sit behind a skeleton bought nothing.
+   *
+   * A tenant can now switch individual modules off, and most of the core is
+   * switchable (the spine that is not is listed in the backend's
+   * UNDISABLEABLE_CAPABILITIES). Under the old rule a tenant who turned the
+   * catalogue off would still be handed the catalogue shell, whose every panel
+   * then 403s — which is precisely the "reads as a broken product rather than
+   * one they do not have" failure this gate exists to prevent.
+   *
+   * So the fast path survives where it earns its keep (no skeleton while
+   * loading) and defers to the tenant's own list once there is one.
+   */
+  if (enabled === undefined) {
+    return CORE_NAVIGATION.includes(slug) ? "render" : "hold";
+  }
   return enabled.includes(slug) ? "render" : "refuse";
 }
 

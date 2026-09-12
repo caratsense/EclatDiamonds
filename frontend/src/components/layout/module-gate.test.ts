@@ -52,6 +52,38 @@ describe("navSlugForPath", () => {
   });
 });
 
+describe("gateDecision — a tenant switched a core module off", () => {
+  /*
+   * A tenant can now disable individual modules on top of what their industry
+   * includes, and most of the core is disableable — the spine that is not is
+   * listed in the backend's UNDISABLEABLE_CAPABILITIES.
+   *
+   * The gate used to render every CORE route unconditionally, which was right
+   * when only the industry pack could remove one: every pack contains the core,
+   * so no answer could arrive that took one away. It is wrong now. A tenant who
+   * switches the catalogue off would have been handed the catalogue shell whose
+   * every panel then 403s — the "reads as a broken product rather than one they
+   * do not have" failure this gate exists to prevent.
+   */
+  const withoutCatalogue = CORE_NAVIGATION.filter((s) => s !== "catalogue");
+
+  it("refuses a core module the tenant has turned off", () => {
+    expect(gateDecision("/catalogue", withoutCatalogue)).toBe("refuse");
+  });
+
+  it("still renders the core modules they kept", () => {
+    for (const slug of withoutCatalogue) {
+      expect(gateDecision(`/${slug}`, withoutCatalogue)).toBe("render");
+    }
+  });
+
+  it("keeps the no-skeleton fast path while the answer is still in flight", () => {
+    // The reason the old rule existed: the universal suite is nearly every
+    // navigation in practice, and putting it behind a skeleton buys nothing.
+    expect(gateDecision("/catalogue", undefined)).toBe("render");
+  });
+});
+
 describe("gateDecision — bootstrap has not answered yet", () => {
   it("holds a vertical route rather than flashing it", () => {
     expect(gateDecision("/finance", undefined)).toBe("hold");
