@@ -524,6 +524,9 @@ model Organisation {
   scheduledReportRuns          ScheduledReportRun[]
   importMappingProfiles        ImportMappingProfile[]
   deadStockPolicies            DeadStockPolicy[]
+  staffWeekOffs                StaffWeekOff[]
+  staffCompensations           StaffCompensation[]
+  payslips                     Payslip[]
 }
 
 /// CaratOS import-engine provenance + reconciliation record. One row per import
@@ -838,6 +841,9 @@ model User {
   partiesArchived          Party[]                       @relation("PartyArchivedBy")
   staffDigestRuns          StaffDigestRun[]              @relation("StaffDigestRecipient")
   slaResponses             ConversationResponseSla[]     @relation("SlaResponder")
+  weekOffs                 StaffWeekOff[]
+  compensation             StaffCompensation?
+  payslips                 Payslip[]
   quotesApprovalRequested  Quote[]                       @relation("QuoteApprovalRequestedBy")
   quotesApprovalDecided    Quote[]                       @relation("QuoteApprovalDecidedBy")
   callsHandled             CallLog[]                     @relation("CallLogAgent")
@@ -5372,4 +5378,145 @@ model DeadStockPolicy {
   /// repeatedly. The migration adds a partial unique index on organisationId
   /// WHERE category IS NULL for that.
   @@unique([organisationId, category])
+}
+
+/// One employee's weekly off day.
+///
+/// Until now the week off was a property of the STORE: one day, everybody, every
+/// week. A shop that never closes cannot work that way — the staff rotate, and
+/// marking the whole branch off on a Tuesday when half of it is on the floor
+/// makes the attendance register fiction.
+///
+/// A row per employee per off day, so somebody with two days off has two rows.
+/// NO rows means the employee follows the store's `weekOffDay`, which is what
+/// keeps every existing tenant behaving exactly as it does today.
+model StaffWeekOff {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The branch this roster belongs to. An employee mapped to two branches can
+  /// have a different off day at each.
+  storeId String?
+
+  /// 0 = Sunday … 6 = Saturday, read in the STORE's timezone.
+  dayOfWeek Int
+
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, storeId, dayOfWeek])
+  @@index([organisationId, storeId])
+}
+
+/// What an employee is paid, and on what basis.
+///
+/// Deliberately thin. This is not a payroll system: there is no tax table, no
+/// statutory deduction engine, no bank file. It holds the few numbers needed to
+/// turn an attendance register into a payslip, and everything it cannot compute
+/// honestly it leaves to the accountant rather than guessing.
+model StaffCompensation {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// 'monthly' — a fixed salary, of which unpaid absence is deducted.
+  /// 'daily'   — a wage per day actually worked.
+  ///
+  /// The distinction is not cosmetic: on a monthly basis the weekly offs and
+  /// holidays are PAID, on a daily basis they are not, and paying one as the
+  /// other is a real overpayment or a real underpayment every month.
+  basis String @default("monthly")
+
+  /// Monthly gross for 'monthly', or the day rate for 'daily'.
+  amount Decimal @db.Decimal(12, 2)
+
+  /// Paid leave days a month before an absence starts costing money. Null = none,
+  /// so every unapproved absence is a deduction.
+  paidLeavePerMonth Decimal? @db.Decimal(4, 1)
+
+  /// Per HOUR. Null means overtime is not paid — the honest default, because
+  /// paying it by accident is worse than the conversation about whether to.
+  overtimeHourlyRate Decimal? @db.Decimal(10, 2)
+
+  effectiveFrom DateTime? @db.Date
+  updatedById   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+/// One employee's pay for one month, computed from the attendance register.
+///
+/// ── Why every figure is stored, not derived ─────────────────────────────────
+///
+/// A payslip is a statement about money that somebody may query six months
+/// later. If it recomputed from live data, a roster edited in October would
+/// silently change September's payslip, and the number the employee was shown
+/// would no longer exist anywhere. Everything that went into the figure is
+/// frozen here at generation, including the day-by-day breakdown.
+///
+/// ── What this is not ────────────────────────────────────────────────────────
+///
+/// Not statutory payroll. No tax, no PF, no ESI, no bank file. It answers "how
+/// many days was this person paid for, and what does that come to", which is the
+/// question the attendance register can actually answer. Anything requiring a
+/// tax table is left to the accountant rather than approximated.
+model Payslip {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  storeId String?
+
+  /// '2026-09'. The period the slip COVERS.
+  periodKey   String
+  periodStart DateTime @db.Date
+  periodEnd   DateTime @db.Date
+
+  /// 'draft' | 'issued'. A draft recomputes on request; an issued one never
+  /// changes, because it is what the employee was shown.
+  status     String    @default("draft")
+  issuedAt   DateTime?
+  issuedById String?
+
+  // ── The attendance, as counted ────────────────────────────────────────────
+  calendarDays  Int
+  weeklyOffDays Int
+  holidayDays   Int
+  /// Sum of dayFraction: a half day counts 0.5, which is what payroll consumes.
+  presentDays   Decimal @db.Decimal(5, 2)
+  paidLeaveDays Decimal @db.Decimal(5, 2)
+  /// Absences nobody paid for. The number that actually costs the employee.
+  unpaidDays    Decimal @db.Decimal(5, 2)
+  overtimeMins  Int     @default(0)
+
+  // ── The money, as computed ────────────────────────────────────────────────
+  basis            String
+  /// The compensation figures AS THEY WERE when this was generated.
+  amount           Decimal  @db.Decimal(12, 2)
+  perDayRate       Decimal  @db.Decimal(12, 2)
+  earnedAmount     Decimal  @db.Decimal(12, 2)
+  overtimeAmount   Decimal  @db.Decimal(12, 2) @default(0)
+  deductionAmount  Decimal  @db.Decimal(12, 2) @default(0)
+  netPay           Decimal  @db.Decimal(12, 2)
+
+  /// Day by day, so a disputed slip can be walked line by line rather than
+  /// argued about from a single total.
+  breakdown Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, periodKey])
+  @@index([organisationId, periodKey])
+  @@index([organisationId, storeId, periodKey])
 }

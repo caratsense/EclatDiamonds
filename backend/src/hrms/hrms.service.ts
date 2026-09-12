@@ -885,9 +885,37 @@ export class HrmsService {
     const onLeave = new Set(approvedLeave.map((l) => l.staffId));
     // `date` is a UTC-midnight stand-in for a local calendar day, so its weekday
     // is read at local noon to stay clear of the zone offset.
-    const isWeekOff =
-      store.weekOffDay != null &&
-      weekdayInTz(instantFromLocalTime(date, 12 * 60, store.tz), store.tz) === store.weekOffDay;
+    const weekday = weekdayInTz(instantFromLocalTime(date, 12 * 60, store.tz), store.tz);
+
+    /*
+     * The weekly off is now PER PERSON, falling back to the branch's day for
+     * anybody without their own roster.
+     *
+     * It used to be the branch's day for everybody, which for a shop that never
+     * closes made the register fiction: half the floor was marked off while they
+     * were serving customers. Resolved once here, for every rostered person, so
+     * this stays one query rather than one per employee.
+     */
+    const ownOffs = await this.prisma.staffWeekOff.findMany({
+      where: {
+        userId: { in: assignments.map((a) => a.userId) },
+        OR: [{ storeId }, { storeId: null }],
+      },
+      select: { userId: true, dayOfWeek: true },
+    });
+    const offDaysByStaff = new Map<string, Set<number>>();
+    for (const row of ownOffs) {
+      const set = offDaysByStaff.get(row.userId) ?? new Set<number>();
+      set.add(row.dayOfWeek);
+      offDaysByStaff.set(row.userId, set);
+    }
+    const storeIsOff = store.weekOffDay != null && weekday === store.weekOffDay;
+    const isOffFor = (staffId: string) => {
+      const own = offDaysByStaff.get(staffId);
+      // Their own roster REPLACES the branch's, it does not add to it. Somebody
+      // whose day off was moved to Wednesday is not also off on Tuesday.
+      return own ? own.has(weekday) : storeIsOff;
+    };
 
     let autoClosedCount = 0;
     let absentCount = 0;
@@ -943,7 +971,7 @@ export class HrmsService {
       } else if (holiday) {
         status = 'holiday';
         nonWorkingCount++;
-      } else if (isWeekOff) {
+      } else if (isOffFor(a.userId)) {
         status = 'week_off';
         nonWorkingCount++;
       } else {
