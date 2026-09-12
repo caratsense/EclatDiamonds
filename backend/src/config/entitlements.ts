@@ -134,6 +134,15 @@ export const ROUTE_FAMILIES: readonly RouteFamily[] = Object.freeze([
       'someone can ask. Visibility is the pack navigation slug, as with /crm.',
   },
   {
+    prefix: '/lead-tags',
+    capability: null,
+    why:
+      'Tenant-defined labels on a lead. Universal for the same reason /crm is: ' +
+      'a clinic tagging a patient enquiry "insurance query" and a jeweller ' +
+      'tagging one "potential lead" are the same feature. The vocabulary is the ' +
+      'tenant\'s own, so nothing here is vertical.',
+  },
+  {
     prefix: '/calling',
     capability: null,
     why:

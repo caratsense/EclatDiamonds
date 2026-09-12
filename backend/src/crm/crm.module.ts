@@ -27,6 +27,10 @@ import { CallingService } from './calling.service';
 import { OmnichannelKpiService } from './omnichannel-kpi.service';
 import { FeedbackService } from './feedback.service';
 import { FeedbackController, PublicFeedbackController } from './feedback.controller';
+import { LeadTagsService } from './lead-tags.service';
+import { LeadExportService } from './lead-export.service';
+import { LeadExportController } from './lead-export.controller';
+import { LeadTagsController } from './lead-tags.controller';
 import { CallingController } from './calling.controller';
 import { OmnichannelKpiController } from './omnichannel-kpi.controller';
 import { InStoreController } from './instore.controller';
@@ -100,10 +104,14 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
     OmnichannelKpiController,
     FeedbackController,
     PublicFeedbackController,
+    LeadTagsController,
+    LeadExportController,
   ],
   providers: [
     IdentityService,
     ActivityService,
+    LeadTagsService,
+    LeadExportService,
     Customer360Service,
     ConversationsService,
     PipelinesService,
@@ -132,6 +140,7 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
     { provide: AI_RESPONDER, useClass: ProviderAiResponder },
   ],
   exports: [
+    LeadTagsService,
     ConversationAiGate,
     AiDraftsService,
     KnowledgeRetrievalService,

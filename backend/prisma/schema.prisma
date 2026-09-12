@@ -503,6 +503,8 @@ model Organisation {
   feedbackRequests             FeedbackRequest[]
   messagingCampaigns           MessagingCampaign[]
   campaignRecipients           CampaignRecipient[]
+  leadTags                     LeadTag[]
+  leadTagAssignments           LeadTagAssignment[]
 }
 
 /// CaratOS import-engine provenance + reconciliation record. One row per import
@@ -1184,6 +1186,7 @@ model Lead {
   /// never limits how many opportunities a customer may legitimately have.
   originKey String?
   callLogs  CallLog[]
+  tagAssignments LeadTagAssignment[]
 
   @@unique([organisationId, originKey])
   @@index([storeId, createdAt])
@@ -1266,6 +1269,64 @@ model LeadFollowUp {
 
   @@index([storeId, done, dueDate])
   @@index([leadId])
+}
+
+/// A label a tenant puts on a lead, in the tenant's own words.
+///
+/// Deliberately NOT an enum and NOT a `isPotentialLead` boolean on Lead. The
+/// meeting asked for "potential lead", but also asked for fields larger stores
+/// can configure themselves — one tenant-defined tag list answers both, where a
+/// hard-coded flag answers only the first and then has to be extended by a
+/// migration every time somebody wants a second label.
+///
+/// This is NOT the same thing as ad-set routing tags. Those decide which branch
+/// an inbound click belongs to and are written by the attribution engine; these
+/// are written by a salesperson about a person they spoke to.
+model LeadTag {
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  id             String       @id @default(cuid())
+
+  name String
+  /// Case- and space-normalised `name`, so "Potential Lead", "potential lead"
+  /// and "Potential  Lead" cannot all exist side by side in one tenant.
+  slug String
+
+  /// A token name, not a raw hex value — the palette is the product's, so a tag
+  /// stays legible when the theme changes underneath it.
+  colour    String?
+  isActive  Boolean @default(true)
+  sortOrder Int     @default(0)
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  assignments LeadTagAssignment[]
+
+  /// Tenant-scoped, so two organisations may both have "Potential Lead".
+  @@unique([organisationId, slug])
+  @@index([organisationId, isActive, sortOrder])
+}
+
+/// One tag on one lead.
+model LeadTagAssignment {
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  id             String       @id @default(cuid())
+
+  leadId String
+  lead   Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  tagId  String
+  tag    LeadTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  assignedById String?
+  createdAt    DateTime @default(now())
+
+  /// Applying a tag twice is the same tag, not two.
+  @@unique([leadId, tagId])
+  @@index([organisationId])
+  @@index([tagId])
 }
 
 model LeadNote {
