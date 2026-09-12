@@ -2,6 +2,12 @@ import { Module } from '@nestjs/common';
 
 import { ImportController } from './import/import.controller';
 import { ImportService } from './import/import.service';
+import { MappingProfilesService } from './import/mapping-profiles.service';
+import { ImageZipService } from './import/image-zip.service';
+import {
+  ImportImagesController,
+  ImportMappingsController,
+} from './import/import-extras.controller';
 import { ConnectorsController } from './connectors/connectors.controller';
 import { ConnectorRegistry } from './connectors/connector-registry';
 import { FieldOwnershipService } from './framework/field-ownership.service';
@@ -22,6 +28,8 @@ import { ConnectAdminController, ConnectAgentController } from './connect/connec
 @Module({
   controllers: [
     ImportController,
+    ImportMappingsController,
+    ImportImagesController,
     ConnectorsController,
     IntegrationsRegistryController,
     ConnectAdminController,
@@ -29,6 +37,8 @@ import { ConnectAdminController, ConnectAgentController } from './connect/connec
   ],
   providers: [
     ImportService,
+    MappingProfilesService,
+    ImageZipService,
     ConnectorRegistry,
     FieldOwnershipService,
     IntegrationsRegistryService,

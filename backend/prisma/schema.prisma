@@ -522,6 +522,7 @@ model Organisation {
   conversationResponseSlas     ConversationResponseSla[]
   scheduledReports             ScheduledReport[]
   scheduledReportRuns          ScheduledReportRun[]
+  importMappingProfiles        ImportMappingProfile[]
 }
 
 /// CaratOS import-engine provenance + reconciliation record. One row per import
@@ -5259,4 +5260,47 @@ model ScheduledReportRun {
 
   @@unique([reportId, periodKey])
   @@index([organisationId, createdAt])
+}
+
+/// A column mapping somebody already worked out once.
+///
+/// The import pipeline already maps any spreadsheet's columns onto canonical
+/// fields, but the mapping was re-done by hand on every upload. A supplier file
+/// arrives every month with the same forty columns, and re-mapping it monthly is
+/// both tedious and the place a mistake creeps in — the column that was "Cost"
+/// last month is "Cost Price" this month and nobody notices it landed in
+/// `price`.
+///
+/// A profile remembers the answer AND the question: `sourceHeaders` is the header
+/// row it was built from, so applying it to a file whose columns have changed
+/// reports what moved instead of silently mapping the wrong column.
+model ImportMappingProfile {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  /// The tenant's name for it — "Gati monthly stock", "Tally customers".
+  name String
+
+  /// 'customers' | 'stores' | 'products'. A profile is only valid for the entity
+  /// it was built against; the canonical fields differ per entity.
+  entity String
+
+  /// `[{ sourceColumn, canonicalField }]` — exactly the shape the import
+  /// endpoints already take, so a saved profile is replayed, not translated.
+  mappings Json
+
+  /// The header row this was built from. Kept so a file with renamed, added or
+  /// removed columns is REPORTED rather than quietly mapped by position.
+  sourceHeaders String[]
+
+  createdById String?
+  lastUsedAt  DateTime?
+  useCount    Int       @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organisationId, entity, name])
+  @@index([organisationId, entity])
 }

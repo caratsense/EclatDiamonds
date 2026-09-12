@@ -94,6 +94,24 @@ export const ROUTE_FAMILIES: readonly RouteFamily[] = Object.freeze([
   { prefix: '/checkins', capability: null, why: 'Customer visits are universal; every pack seeds visit purposes.' },
   { prefix: '/hrms', capability: null, why: 'Attendance is sold to every industry.' },
   { prefix: '/imports', capability: null, why: 'Bringing your own data in is universal.' },
+  {
+    prefix: '/import-mappings',
+    capability: null,
+    why:
+      'Saved column mappings for the import engine. Universal for the same ' +
+      'reason /imports is — every tenant arrives with a spreadsheet somebody ' +
+      'else designed. A separate prefix from /imports because ImportController ' +
+      'owns `:entity/preview`, and a two-segment route under the same prefix ' +
+      'would be decided by controller registration order.',
+  },
+  {
+    prefix: '/import-images',
+    capability: null,
+    why:
+      'A ZIP of product photographs matched to the catalogue by filename. ' +
+      'Universal: a clinic importing treatment photos and a jeweller importing ' +
+      'design shots are the same mechanism over the same catalogue table.',
+  },
   { prefix: '/integration', capability: null, why: 'Connect agents and connectors: universal ingestion.' },
   { prefix: '/integrations', capability: null, why: 'Channel integrations; the one vertical screen inside it is listed below.' },
   { prefix: '/integrations-registry', capability: null, why: 'Which providers exist. Distinct path from /integrations.' },
