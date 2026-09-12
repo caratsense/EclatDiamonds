@@ -7,6 +7,7 @@ import { ActivityService } from '../crm/activity.service';
 import { IdentityService } from '../crm/identity.service';
 import { CheckoutDto, CreateCheckInDto } from './dto/checkin.dto';
 import { DEFAULT_TZ, formatHHMMInTz } from '../common/tz.util';
+import { SequenceService } from '../common/sequence.service';
 
 const PURPOSE_LABEL: Record<string, string> = {
   bridal: 'Bridal',
@@ -17,6 +18,12 @@ const PURPOSE_LABEL: Record<string, string> = {
   scheme: 'Gold Scheme',
   other: 'Browsing',
 };
+
+/** A yyyy-mm-dd string as UTC midnight, which is what a `@db.Date` column holds. */
+function parseYmdUtc(s: string): Date {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
+}
 
 function initialsOf(name?: string | null): string {
   if (!name) return '—';
@@ -83,6 +90,7 @@ export class CheckinsService {
     private readonly scope: StoreScopeService,
     private readonly identity: IdentityService,
     private readonly activity: ActivityService,
+    private readonly sequence: SequenceService,
   ) {}
 
   /** GET /checkins — footfall log, store-scoped (most recent first). */
@@ -168,11 +176,143 @@ export class CheckinsService {
     if (user.role === 'salesperson' && existing.repId !== user.id) {
       throw new ForbiddenException('You can only check out your own walk-ins');
     }
+    /*
+     * The follow-up decision, if one was made.
+     *
+     * Resolved BEFORE the update so a bad owner id or an unreachable lead fails
+     * the whole checkout rather than leaving a visit closed with a follow-up
+     * that silently went nowhere. The floor's complaint in the meeting was
+     * precisely that what they promised the customer never reached the system.
+     */
+    const leadId = dto.followUpDate
+      ? await this.ensureLeadForFollowUp(user, existing)
+      : existing.leadId;
+
+    if (dto.followUpOwnerId) {
+      const owner = await this.prisma.user.findFirst({
+        where: {
+          id: dto.followUpOwnerId,
+          organisationId: user.organisationId,
+          isActive: true,
+        },
+        select: { id: true },
+      });
+      if (!owner) throw new NotFoundException('That follow-up owner is not available.');
+    }
+
     const row = await this.prisma.checkIn.update({
       where: { id },
-      data: { timeOut: new Date(), outcome: dto.outcome ?? 'left' },
+      data: {
+        timeOut: new Date(),
+        outcome: dto.outcome ?? 'left',
+        ...(dto.remark !== undefined ? { remark: dto.remark.trim() || null } : {}),
+        ...(dto.followUpDate ? { followUpDate: parseYmdUtc(dto.followUpDate) } : {}),
+        ...(dto.followUpDate
+          ? { followUpOwnerId: dto.followUpOwnerId ?? existing.repId ?? user.id }
+          : {}),
+        ...(dto.preferredAction ? { preferredAction: dto.preferredAction } : {}),
+        ...(leadId ? { leadId } : {}),
+      },
       include: { attendedBy: { select: { id: true, name: true } } },
     });
+
+    if (dto.followUpDate && leadId) {
+      /*
+       * A real LeadFollowUp, on the same queue the calling workspace already
+       * works from — not a second parallel list of things to do. `seq` is the
+       * next free slot after the SOP's +7d and +30d rows so a visit-booked
+       * callback sorts alongside them instead of colliding.
+       */
+      const seq = await this.prisma.leadFollowUp.count({ where: { leadId } });
+      await this.prisma.leadFollowUp.create({
+        data: {
+          leadId,
+          storeId: existing.storeId,
+          seq: seq + 1,
+          dueDate: parseYmdUtc(dto.followUpDate),
+          note: dto.remark?.trim() || `Follow-up booked at the counter${
+            dto.preferredAction ? ` (${dto.preferredAction})` : ''
+          }`,
+        },
+      });
+    }
+
+    // The remark belongs on the customer's timeline, not only on the visit row —
+    // the next person to open the customer has no reason to go looking in a
+    // closed visit for what was said.
+    if (dto.remark?.trim() || dto.followUpDate) {
+      await this.activity.recordFor(user, {
+        type: 'visit.closed',
+        summary: dto.remark?.trim()
+          ? `Visit ended — ${dto.remark.trim().slice(0, 200)}`
+          : 'Visit ended, follow-up booked',
+        partyId: existing.partyId,
+        leadId: leadId ?? undefined,
+        storeId: existing.storeId,
+        entityType: 'CheckIn',
+        entityId: existing.id,
+        channel: 'store',
+        metadata: {
+          followUpDate: dto.followUpDate ?? null,
+          preferredAction: dto.preferredAction ?? null,
+        },
+      });
+    }
+
     return toView(row, await this.scope.resolveTimezone(user, headerStore));
+  }
+
+  /**
+   * The enquiry a visit follow-up is filed against.
+   *
+   * Reuses an OPEN lead for this customer at this branch when there is one —
+   * a second visit about the same ring is the same opportunity, and opening a
+   * new lead each time would inflate every count the meeting asked to report
+   * on. Creates one only when the customer has no open enquiry here.
+   *
+   * Not routed through LeadIntakeService.capture(): that door exists for leads
+   * nobody typed — it demands a `systemActor` and stamps an automatic origin
+   * key. A salesperson booking a callback is a person acting, and recording it
+   * as an automation would put the wrong name on the audit trail.
+   */
+  private async ensureLeadForFollowUp(
+    user: AuthUser,
+    visit: { id: string; storeId: string; partyId: string | null; customerName: string; phone: string | null; leadId: string | null },
+  ): Promise<string> {
+    if (visit.leadId) return visit.leadId;
+
+    if (visit.partyId) {
+      const open = await this.prisma.lead.findFirst({
+        where: {
+          organisationId: user.organisationId,
+          storeId: visit.storeId,
+          partyId: visit.partyId,
+          outcome: 'open',
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true },
+      });
+      if (open) return open.id;
+    }
+
+    const seq = await this.sequence.next('LD:global');
+    const lead = await this.prisma.lead.create({
+      data: {
+        organisationId: user.organisationId,
+        ref: `LD-${5000 + seq}`,
+        storeId: visit.storeId,
+        partyId: visit.partyId,
+        customerName: visit.customerName,
+        phone: visit.phone,
+        // The customer walked in. That is what happened, and it is the one
+        // source value that cannot be wrong here.
+        source: 'walk_in',
+        stage: 'inquiry',
+        ownerId: user.id,
+        lastActivity: new Date(),
+      },
+      select: { id: true },
+    });
+    return lead.id;
   }
 }

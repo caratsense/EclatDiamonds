@@ -813,6 +813,7 @@ model User {
   resolvedRoutingConflicts ConversationRoutingConflict[] @relation("RoutingConflictResolver")
   aiDraftsReviewed         AiDraftRecord[]               @relation("AiDraftReviewer")
   checkInsAttended         CheckIn[]                     @relation("CheckInAttendedBy")
+  checkInFollowUpsOwned    CheckIn[]                     @relation("CheckInFollowUpOwner")
   callsHandled             CallLog[]                     @relation("CallLogAgent")
 
   @@unique([organisationId, legacyId])
@@ -1187,6 +1188,7 @@ model Lead {
   originKey String?
   callLogs  CallLog[]
   tagAssignments LeadTagAssignment[]
+  visits    CheckIn[] @relation("CheckInLead")
 
   @@unique([organisationId, originKey])
   @@index([storeId, createdAt])
@@ -2398,6 +2400,40 @@ model CheckIn {
   /// A picture, not an identification: nothing compares it to anything, and who
   /// the visitor is comes from the customer record this visit is attached to.
   photoUrl String?
+
+  /*
+   * What was decided when the customer left.
+   *
+   * `remark` and `followUpDate` are deliberately two columns, not one. The
+   * meeting argued about exactly this and stopped without settling it, so the
+   * reading taken here is the one where they do not overlap: the remark is what
+   * was SAID, the follow-up date is what will be DONE. A visit can carry either
+   * alone — somebody can say something worth recording and need no callback,
+   * and a callback can be booked with nothing quotable to write down.
+   */
+  remark String?
+
+  /// A calendar date in the STORE's timezone, not an instant. "Call them
+  /// Tuesday" is a day; storing it as a timestamp makes it a different day for
+  /// anyone reading from another zone.
+  followUpDate DateTime? @db.Date
+
+  /// Who owes the follow-up. Defaults to whoever served the visit, but a manager
+  /// may hand it to whoever is on shift that day.
+  followUpOwnerId String?
+  followUpOwner   User?   @relation("CheckInFollowUpOwner", fields: [followUpOwnerId], references: [id])
+
+  /// How the customer said they would rather be reached. Free text, not an enum:
+  /// the channels a tenant uses are not ours to fix, and a clinic's answer is
+  /// not a jeweller's.
+  preferredAction String?
+
+  /// The enquiry the follow-up was filed against, so the visit, what they looked
+  /// at, the remark and the callback all read as one thing in Customer 360.
+  /// SET NULL, not CASCADE: losing the enquiry must not delete the record that
+  /// the person came to the shop.
+  leadId String?
+  lead   Lead?   @relation("CheckInLead", fields: [leadId], references: [id], onDelete: SetNull)
 
   /// Who actually attended, as an id. `repName` is a display string kept for
   /// rows written before this existed; a name is not an identity.
