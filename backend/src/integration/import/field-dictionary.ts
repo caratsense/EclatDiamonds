@@ -52,6 +52,9 @@ export const FIELD_DICTIONARY: Record<ImportEntity, CanonicalFieldSpec[]> = {
   products: [
     { field: 'sku', label: 'SKU', required: true, aliases: ['sku', 'itemcode', 'code', 'productcode', 'designcode', 'articlecode', 'stylecode', 'tagno'] },
     { field: 'name', label: 'Product Name', required: true, aliases: ['name', 'itemname', 'productname', 'designname', 'description', 'item'] },
+    // The DESIGN, above the SKU. Many SKUs share one style number, which is why
+    // it is a separate field and not another alias for `sku`.
+    { field: 'styleNumber', label: 'Style / Design Number', required: false, recommended: true, aliases: ['styleno', 'stylenumber', 'style', 'designno', 'designnumber', 'design', 'modelno', 'modelnumber', 'pattern', 'patternno'] },
     { field: 'category', label: 'Category', required: false, recommended: true, aliases: ['category', 'type', 'producttype', 'group', 'itemgroup'] },
     { field: 'metal', label: 'Material / Metal', required: false, recommended: true, aliases: ['metal', 'metaltype', 'material', 'materialtype', 'composition'] },
     { field: 'karat', label: 'Karat / Purity', required: false, recommended: true, aliases: ['karat', 'carat', 'kt', 'purity', 'fineness', 'touch'] },

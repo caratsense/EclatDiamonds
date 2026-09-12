@@ -294,4 +294,10 @@ export class ListStockDto {
   @IsOptional()
   @IsString()
   ageBucket?: string;
+
+  /** Every piece of one design. Exact match — a grouping, not a search. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  styleNumber?: string;
 }

@@ -11,6 +11,7 @@ import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuditService } from '../common/audit.service';
 import { GoldRateService } from '../integrations/gold-rate.service';
+import { DeadStockService } from './dead-stock.service';
 import { PageRequest, Paginated } from '../common/pagination';
 import {
   ADJUST_REASON_TO_STATUS,
@@ -25,8 +26,12 @@ const ACTIVE_TRANSFER_STATUSES = ['ho_approved', 'dispatched'] as const;
 
 const DAY_MS = 86_400_000;
 
-/** Pieces past this age are dead stock. Mirrors the frontend threshold. */
-const DEAD_STOCK_THRESHOLD_DAYS = 180;
+/**
+ * The dead-stock threshold now comes from `DeadStockService`, per tenant and per
+ * category. The platform default lives there as DEFAULT_DEAD_STOCK_DAYS, so
+ * there is one definition rather than a constant here and another on the
+ * frontend quietly disagreeing with it.
+ */
 
 /** The four statuses that stay in the ledger view (sold/melted/transferred drop out). */
 const LEDGER_STATUSES: StockStatus[] = ['in_stock', 'aging', 'dead_stock', 'reserved'];
@@ -51,6 +56,8 @@ export interface StockFilters {
   status?: StockStatus;
   storeId?: string;
   ageBucket?: string;
+  /** Every piece of one design. Exact, not a search. */
+  styleNumber?: string;
 }
 
 /** Age-bucket key → inward-days range (matches the frontend age filter + aging chart). */
@@ -130,6 +137,11 @@ function toView(s: any) {
   return {
     id: s.id,
     sku: s.sku ?? '',
+    /** The DESIGN. Falls back to the linked product's, which is where a synced
+     *  piece carries it. */
+    styleNumber: s.styleNumber ?? s.product?.styleNumber ?? null,
+    /** The PIECE. Null until somebody issues one — see DeadStockService. */
+    vin: s.vin ?? null,
     name: s.name ?? s.product?.name ?? '',
     category: CATEGORY_LABEL[catKey] ?? catKey,
     karat: s.karat ?? 0,
@@ -149,6 +161,7 @@ export class StockService {
     private readonly scope: StoreScopeService,
     private readonly audit: AuditService,
     private readonly gold: GoldRateService,
+    private readonly deadStock: DeadStockService,
   ) {}
 
   /** Combine store scope + the ledger status set + the optional facet/search filters. */
@@ -164,8 +177,17 @@ export class StockService {
         OR: [
           { sku: { contains: filters.q, mode: 'insensitive' } },
           { name: { contains: filters.q, mode: 'insensitive' } },
+          // A person searching the shelf types whichever code is in front of
+          // them: the design number on the docket, or the piece number on the
+          // tag. Both find it.
+          { styleNumber: { contains: filters.q, mode: 'insensitive' } },
+          { vin: { contains: filters.q, mode: 'insensitive' } },
         ],
       });
+    }
+    if (filters?.styleNumber) {
+      // Exact: "show me every piece of this design" is a grouping, not a search.
+      and.push({ styleNumber: { equals: filters.styleNumber, mode: 'insensitive' } });
     }
     if (filters?.storeId) {
       // Explicit store facet — must be in the caller's scope (throws if not).
@@ -202,7 +224,7 @@ export class StockService {
 
     const include = {
       store: true,
-      product: { select: { category: true, name: true } },
+      product: { select: { category: true, name: true, styleNumber: true } },
     };
 
     // No page/pageSize → legacy plain-array response (existing frontend shape).
@@ -235,6 +257,9 @@ export class StockService {
    * (same rule as the ledger), so the chart and the dead-stock KPI always agree.
    */
   async summary(user: AuthUser, headerStore?: string) {
+    // The tenant's own thresholds, resolved ONCE for the whole pass. A lookup
+    // per row would be a query per piece on a screen that loads the whole shelf.
+    const ruleFor = await this.deadStock.resolverFor(user.organisationId);
     const where: Prisma.StockItemWhereInput = {
       ...this.scope.storeFilter(user, headerStore),
       status: { in: LEDGER_STATUSES },
@@ -250,6 +275,10 @@ export class StockService {
         grossWeight: true,
         tagPrice: true,
         metal: true,
+        // Needed to pick the right threshold: a chain and a bridal set do not
+        // go dead at the same age, which is the whole reason the policy exists.
+        category: true,
+        product: { select: { category: true } },
       },
     });
 
@@ -281,7 +310,11 @@ export class StockService {
       const value = valueOf(r);
       counts[bi]++;
       bucketValue[bi] += value;
-      if (age > DEAD_STOCK_THRESHOLD_DAYS) deadStock++;
+      // A synced piece leaves `category` at the `other` default and carries the
+      // real design category on the linked product — the same fallback the
+      // ledger view uses, so the KPI and the rows agree.
+      const cat = r.category && r.category !== 'other' ? r.category : (r.product?.category ?? r.category);
+      if (age > ruleFor(cat).thresholdDays) deadStock++;
 
       const grams = r.grossWeight != null ? Number(r.grossWeight) : 0;
       totalStockValue += value;

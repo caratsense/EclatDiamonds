@@ -283,6 +283,10 @@ const products: EntityImporter = {
     if (issues.length) return { ok: false, issues, warnings };
     const category = clean(mapped.category);
     const unitOfMeasure = clean(mapped.unitOfMeasure);
+    // The DESIGN, above the SKU. Blank rather than falling back to the SKU: a
+    // style number that is secretly the SKU makes every "how is this design
+    // selling" answer a per-piece answer wearing a design's label.
+    const styleNumber = clean(mapped.styleNumber);
     return {
       ok: true,
       issues: [],
@@ -290,6 +294,8 @@ const products: EntityImporter = {
       value: {
         sku,
         name,
+        styleNumber: styleNumber || null,
+        styleNumberSupplied: Boolean(styleNumber),
         metal: toMetal(metalRaw, karat, neutralDefault),
         materialLabel: metalRaw || null,
         karat: karat ?? 0,
@@ -314,6 +320,8 @@ const products: EntityImporter = {
       weight: number | null;
       category: string | null;
       unitOfMeasure: string | null;
+      styleNumber: string | null;
+      styleNumberSupplied: boolean;
       materialSupplied: boolean;
       categorySupplied: boolean;
       unitOfMeasureSupplied: boolean;
@@ -334,6 +342,9 @@ const products: EntityImporter = {
         : {}),
       ...(v.categorySupplied ? { categoryLabel: v.category } : {}),
       ...(v.unitOfMeasureSupplied ? { unitOfMeasure: v.unitOfMeasure } : {}),
+      // Only when the file carried the column. A source that does not send style
+      // numbers must not blank the ones a person typed in by hand.
+      ...(v.styleNumberSupplied ? { styleNumber: v.styleNumber } : {}),
       ...(v.price != null ? { price: new Prisma.Decimal(v.price) } : {}),
       ...(v.weight != null ? { weightGrams: new Prisma.Decimal(v.weight) } : {}),
       ...(v.price != null ? { priceKnown: true } : {}),
@@ -367,6 +378,7 @@ const products: EntityImporter = {
         categoryLabel: v.category,
         materialLabel: v.materialLabel,
         unitOfMeasure: v.unitOfMeasure,
+        styleNumber: v.styleNumber,
         ...(v.price != null ? { price: new Prisma.Decimal(v.price) } : {}),
         ...(v.weight != null ? { weightGrams: new Prisma.Decimal(v.weight) } : {}),
       },
