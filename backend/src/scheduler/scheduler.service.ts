@@ -5,6 +5,7 @@ import { JobsService } from '../jobs/jobs.service';
 import { StaffDigestService } from '../crm/staff-digest.service';
 import { ResponseSlaService } from '../crm/response-sla.service';
 import { ScheduledReportsService } from '../reporting/scheduled-reports.service';
+import { LoyaltyApiService } from '../loyalty/website/loyalty-api.service';
 import { JobAlertsService } from '../jobs/job-alerts.service';
 import { Role } from '@prisma/client';
 
@@ -77,6 +78,7 @@ export class SchedulerService {
     private readonly staffDigest: StaffDigestService,
     private readonly responseSla: ResponseSlaService,
     private readonly scheduledReports: ScheduledReportsService,
+    private readonly loyaltyApi: LoyaltyApiService,
   ) {}
 
   /**
@@ -314,6 +316,36 @@ export class SchedulerService {
     } catch (e) {
       this.logger.error(
         `Scheduled report sweep failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
+  /**
+   * Push loyalty movements the tenant's website never heard about.
+   *
+   * Every five minutes rather than hourly, because the stale thing is a balance
+   * on a page a customer is looking at now. Bounded retries live in the service;
+   * this only decides how often to ask.
+   *
+   * Not wrapped in `runOnce`. The work is idempotent by construction —
+   * `webhookedAt` is stamped on success — and a movement announced twice is
+   * something the receiver already has to tolerate, keyed as it is by entry id.
+   * A movement announced zero times is a wrong number in front of a customer.
+   */
+  @Cron(CronExpression.EVERY_5_MINUTES, { name: 'loyalty.announcements' })
+  async pushLoyaltyAnnouncements(): Promise<void> {
+    if (!this.enabled) return;
+    try {
+      const res = await this.loyaltyApi.sweepAnnouncements();
+      if (res.sent || res.failed) {
+        this.logger.log(
+          `Loyalty announcements: ${res.sent} sent, ${res.failed} failed ` +
+            `across ${res.organisations} organisation(s)`,
+        );
+      }
+    } catch (e) {
+      this.logger.error(
+        `Loyalty announcement sweep failed: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
   }

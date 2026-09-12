@@ -28,6 +28,8 @@ export const SYSTEM_ACTORS = {
   campaign_expansion: 'Campaign audience expansion',
   /** A verified telephony provider notification opening an enquiry from a call. */
   telephony_webhook: 'Inbound call',
+  /** The tenant's own website calling the loyalty API with its own key. */
+  loyalty_website: 'Loyalty website',
 } as const;
 
 export type SystemActor = keyof typeof SYSTEM_ACTORS;

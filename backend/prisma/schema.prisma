@@ -527,6 +527,8 @@ model Organisation {
   staffWeekOffs                StaffWeekOff[]
   staffCompensations           StaffCompensation[]
   payslips                     Payslip[]
+  loyaltyAccounts              LoyaltyAccount[]
+  loyaltyLedgerEntries         LoyaltyLedgerEntry[]
 }
 
 /// CaratOS import-engine provenance + reconciliation record. One row per import
@@ -737,6 +739,8 @@ model Store {
   targetedImportBatches ImportBatch[]              @relation("ImportBatchTargetStore")
   connectAgents         ConnectAgent[]
   leadForms             LeadForm[]
+  loyaltyAccounts       LoyaltyAccount[]
+  loyaltyLedgerEntries  LoyaltyLedgerEntry[]
 
   @@unique([organisationId, legacyId])
   @@unique([organisationId, code])
@@ -1170,6 +1174,7 @@ model Party {
   leadQualifications LeadQualification[]
   callLogs           CallLog[]
   feedbackRequests   FeedbackRequest[]
+  loyaltyAccounts    LoyaltyAccount[]
 
   @@unique([organisationId, legacyId])
   @@index([storeId, createdAt])
@@ -5519,4 +5524,152 @@ model Payslip {
   @@unique([userId, periodKey])
   @@index([organisationId, periodKey])
   @@index([organisationId, storeId, periodKey])
+}
+
+// ============================================================================
+// BLOCK 11 — the loyalty website API
+// ============================================================================
+//
+// ── Why a points ledger and not a balance column ────────────────────────────
+//
+// A balance is a conclusion. When a customer stands at a counter saying "your
+// website told me I had 4,000 points", the only useful answer is the list of
+// things that happened: earned on this bill, redeemed on that one, reversed
+// because the sale was cancelled. A single mutable number cannot produce that
+// answer, and cannot be reconciled against the website afterwards.
+//
+// So every movement is a row, `points` is SIGNED, and `balanceAfter` is written
+// at the same instant inside the same transaction. The balance on the account is
+// a cache of the last entry's `balanceAfter`, kept only so a lookup does not sum
+// the ledger. If the two ever disagree the ledger wins, and the entries are the
+// thing a dispute is settled from.
+//
+// ── Why idempotency is a database constraint, not a check ───────────────────
+//
+// The caller here is somebody else's website, retrying over a network we do not
+// control. "Did my redeem go through?" cannot be answered by asking again — the
+// second call would debit again. `(organisationId, idempotencyKey)` is unique,
+// so a replay collides in the database and returns the ORIGINAL entry. Two
+// concurrent identical requests cannot both win; that is a property of the
+// index, not of the order the application happens to read in.
+
+/// A customer's standing in the tenant's loyalty programme.
+///
+/// Keyed by phone, because that is what the website's visitor can type and what
+/// the counter already asks for. `partyId` links it to the CRM customer once one
+/// exists — which is often AFTER the account (somebody joins on the website
+/// before they ever walk in), so it is nullable on purpose and never a gate.
+model LoyaltyAccount {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  /// Set once the customer is matched into the CRM. Never used for scoping.
+  partyId String?
+  party   Party?  @relation(fields: [partyId], references: [id])
+
+  /// Normalised to digits, the same way the CRM normalises a contact number.
+  phone String
+  name  String?
+
+  /// The branch that enrolled them. Nullable: a website signup has no branch.
+  storeId String?
+  store   Store?  @relation(fields: [storeId], references: [id])
+
+  /// Cache of the newest entry's `balanceAfter`. The ledger is authoritative.
+  pointsBalance    Int @default(0)
+  lifetimeEarned   Int @default(0)
+  lifetimeRedeemed Int @default(0)
+
+  /// The tenant's own label ('silver', 'gold'). Never computed here: a tier
+  /// threshold is a business rule the tenant owns, and one invented in code is
+  /// one nobody can change.
+  tier String?
+
+  /// 'active' | 'suspended' | 'closed'. A suspended account can be read but
+  /// cannot earn or redeem, which is what a fraud hold actually needs.
+  status String @default("active")
+
+  enrolledAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  entries LoyaltyLedgerEntry[]
+
+  @@unique([organisationId, phone])
+  @@index([organisationId, partyId])
+  @@index([organisationId, storeId])
+}
+
+/// One movement of points. Append-only: nothing here is ever updated except the
+/// webhook bookkeeping columns at the bottom.
+model LoyaltyLedgerEntry {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  accountId String
+  account   LoyaltyAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  /// 'earn' | 'redeem' | 'reversal' | 'adjustment'
+  kind String
+
+  /// SIGNED. An earn is positive, a redeem negative, a reversal the exact
+  /// negation of the entry it undoes. Summing the column gives the balance,
+  /// which is the property that makes the ledger auditable.
+  points Int
+
+  /// The balance immediately after this entry, written in the same transaction.
+  /// This is what makes a statement printable without re-summing history.
+  balanceAfter Int
+
+  /// The money this movement corresponds to, when there is any — a bill total
+  /// for an earn, the discount given for a redeem. Recorded for reconciliation
+  /// against the tenant's own sales, never used to recompute points.
+  amount Decimal? @db.Decimal(14, 2)
+
+  /// The caller's replay key. NULL for movements made inside CaratOS, where
+  /// there is no network to retry across. Postgres treats NULLs as distinct, so
+  /// the unique index below constrains only the calls that supplied one.
+  idempotencyKey String?
+
+  /// The entry this one reverses. Unique, so an entry can be reversed ONCE:
+  /// two concurrent reversals of the same sale cannot both succeed.
+  reversesId String?             @unique
+  reverses   LoyaltyLedgerEntry? @relation("LoyaltyReversal", fields: [reversesId], references: [id])
+  reversedBy LoyaltyLedgerEntry? @relation("LoyaltyReversal")
+
+  /// Free text for the statement line ("Diwali purchase", "cancelled sale").
+  reason String?
+  /// The caller's own identifier — invoice number, web order id. Not unique:
+  /// one invoice can legitimately produce an earn and later a reversal.
+  reference String?
+
+  storeId String?
+  store   Store?  @relation(fields: [storeId], references: [id])
+
+  /// 'website' | 'store' | 'system'. Where the movement came from, so a
+  /// statement can say "earned online" without guessing.
+  source String @default("store")
+  /// 'api_client' | 'user' | 'system', and which one.
+  actorType String
+  actorId   String?
+
+  // ── Outbound notification bookkeeping ─────────────────────────────────────
+  //
+  // Points also move at the counter, and the website's cached balance goes stale
+  // the moment they do. So every entry is announced to the tenant's configured
+  // endpoint, signed. These three columns record what actually happened to that
+  // announcement: a webhook nobody can see the failure of is worse than none.
+  webhookAttempts Int       @default(0)
+  webhookedAt     DateTime?
+  webhookError    String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([organisationId, idempotencyKey])
+  @@index([accountId, createdAt])
+  @@index([organisationId, createdAt])
+  /// The retry sweep's read: unannounced entries, oldest first.
+  @@index([organisationId, webhookedAt, webhookAttempts])
 }

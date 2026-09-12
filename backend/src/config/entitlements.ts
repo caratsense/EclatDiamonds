@@ -86,6 +86,15 @@ export const ROUTE_FAMILIES: readonly RouteFamily[] = Object.freeze([
       'from the unguessable key in the URL. What actually protects these routes ' +
       'is that key, the per-IP throttle and the tenant-status check.',
   },
+  {
+    prefix: '/public/loyalty',
+    capability: null,
+    why:
+      'The tenant’s own website calling the loyalty API with its own key. ' +
+      'Inside /public for the same reason as the enquiry form: there is no ' +
+      'signed-in principal to hold a capability. The key resolves to one tenant, ' +
+      'and the /loyalty capability still gates every screen a person uses.',
+  },
   { prefix: '/leads', capability: null, why: 'A lead is the CRM record itself.' },
   { prefix: '/parties', capability: null, why: 'The customer directory.' },
   { prefix: '/knowledge', capability: null, why: 'Tenant knowledge base feeding the assistant.' },

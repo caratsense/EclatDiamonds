@@ -303,6 +303,41 @@ export const PROVIDERS: ProviderDefinition[] = [
     webhooks: true,
   },
   {
+    /*
+     * AVAILABLE, and the reason is the direction of the call.
+     *
+     * Every other entry in this registry describes software we have to talk TO,
+     * and is unavailable when nobody has provisioned an account at the far end.
+     * This one is the opposite: the tenant's website calls US. The whole of it —
+     * the key, the ledger, the idempotency guarantee, the signed announcement —
+     * ships here, so there is no far end to provision and nothing to wait for.
+     * What the tenant brings is a website and an earn rate.
+     *
+     * The signed OUTBOUND announcement is the one part that depends on somebody
+     * else being reachable, and it reports its own state per movement rather
+     * than letting this row claim delivery.
+     */
+    code: 'loyalty_website',
+    name: 'Loyalty website API',
+    category: 'loyalty',
+    description:
+      'Lets your own website read a customer’s points balance and statement, enrol ' +
+      'new members, award points on a purchase, redeem them at checkout and reverse a ' +
+      'cancelled sale. The website authenticates with its own key — never a staff ' +
+      'login — and every movement is replay-safe, so a retry over a flaky network ' +
+      'cannot debit a customer twice. Points movements made at the counter are ' +
+      'announced back to your site, signed, so the balance it shows does not go stale. ' +
+      'CaratOS computes what a purchase earns from the rate you set: the website ' +
+      'reports the spend, not the points.',
+    available: true,
+    credentialScope: 'tenant',
+    credentialKinds: ['api_key', 'shared_secret'],
+    entities: ['loyalty_members', 'loyalty_ledger'],
+    // Inbound requests are key-authenticated rather than signature-verified; the
+    // signing in this integration is on what we SEND.
+    webhooks: false,
+  },
+  {
     code: 'google_business',
     name: 'Google Business Profile',
     category: 'reviews',
