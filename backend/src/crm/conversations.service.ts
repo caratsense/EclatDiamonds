@@ -50,6 +50,15 @@ export interface InboundMessage {
   sentAt?: Date;
   storeId?: string | null;
   integrationId?: string | null;
+  /**
+   * WHICH of the tenant's numbers this arrived on.
+   *
+   * Recorded on the conversation so every reply leaves from the same number. A
+   * tenant with eight numbers across two accounts would otherwise answer from
+   * whichever was registered first, which starts a second thread on the
+   * customer's phone and reads to them as a different business.
+   */
+  senderAssetId?: string | null;
   payload?: Prisma.InputJsonValue;
   /**
    * The adapter recognised this message as an unambiguous opt-out.
@@ -244,6 +253,7 @@ export class ConversationsService {
           : null,
         lastMessageAt: msg.sentAt ?? new Date(),
         lastInboundAt: msg.sentAt ?? new Date(),
+        senderAssetId: msg.senderAssetId ?? null,
         sourceAdId: ref?.adId ?? null,
         sourceAdSetId: ref?.adSetId ?? null,
         sourceCampaignId: ref?.campaignId ?? null,
@@ -258,6 +268,22 @@ export class ConversationsService {
         lastInboundAt: msg.sentAt ?? new Date(),
         // Fill in the customer if the thread was anonymous and now resolves.
         ...(holder?.partyId ? { partyId: holder.partyId } : {}),
+        /*
+         * THE SENDER MOVES WITH THE CUSTOMER; THE BRANCH DOES NOT.
+         *
+         * A thread is keyed on the customer's own number, so a customer who
+         * writes to two of the tenant's numbers lands in ONE conversation. The
+         * number to answer on is the one they last wrote to, because that is
+         * where their 24-hour customer-care window is open — replying on the
+         * other one needs an approved template and arrives as a different
+         * business.
+         *
+         * Deliberately unlike `storeId`, which is set once and never re-routed:
+         * moving an active thread (and its history, and its owner's pipeline) to
+         * another branch is a decision for a person. Which NUMBER carries the
+         * reply is not — it is dictated by where the customer just wrote.
+         */
+        ...(msg.senderAssetId ? { senderAssetId: msg.senderAssetId } : {}),
         // The ad origin is deliberately NOT updated here. It is set once, when
         // the thread is created, so a customer who later clicks a second ad does
         // not rewrite the ad that originated the conversation — first-touch

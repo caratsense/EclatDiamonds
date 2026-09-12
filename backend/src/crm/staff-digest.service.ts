@@ -339,6 +339,8 @@ export class StaffDigestService {
             ],
           },
         ],
+        // The digest is this branch's, so it leaves on this branch's number.
+        { storeId },
       );
 
       const attempts = run.attempts + 1;

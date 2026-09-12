@@ -59,6 +59,53 @@ export interface WhatsAppSender {
   reason: string | null;
   /** True when this organisation is borrowing the platform's number. */
   shared: boolean;
+  /**
+   * WHICH of the tenant's numbers this is, and how it was chosen.
+   *
+   * Recorded because "the message went out" is not the useful fact once a
+   * tenant has eight numbers across two accounts — "it went out from the Surat
+   * number because that thread arrived there" is. `assetId` is stored on the
+   * conversation so every later reply leaves from the same number.
+   */
+  assetId: string | null;
+  /** 'thread' | 'store_route' | 'only_number' | 'platform_env' | null. */
+  resolvedBy: SenderResolution | null;
+  /** The branch whose route was used, when one was. */
+  storeId: string | null;
+}
+
+/**
+ * How a sender was chosen. Ordered by authority, and the order is the design:
+ *
+ *   thread       — the number this conversation arrived on. A reply MUST leave
+ *                  from it, or the customer gets a second thread from what
+ *                  reads as a different business.
+ *   store_route  — the branch's configured sender, for a NEW conversation.
+ *   only_number  — the tenant has exactly one, so there is nothing to choose.
+ *   platform_env — the explicitly bound platform number.
+ */
+export type SenderResolution = 'thread' | 'store_route' | 'only_number' | 'platform_env';
+
+/** Where a send is going, so the right number can be chosen for it. */
+export interface SenderRoute {
+  /** The asset a conversation already belongs to. Highest authority. */
+  assetId?: string | null;
+  /** The branch the message is on behalf of. */
+  storeId?: string | null;
+}
+
+/**
+ * The outcome of choosing a number, before any credential is read.
+ *
+ * `asset: null` means this tenant has none of its own, which is the ONLY case
+ * that may fall through to the platform binding. Distinguished from a refusal
+ * on purpose: a tenant with several numbers and no route must never silently
+ * borrow the platform's.
+ */
+interface ChosenSender {
+  asset: { id: string; externalId: string; integrationId: string } | null;
+  resolvedBy: SenderResolution | null;
+  storeId: string | null;
 }
 
 export const WHATSAPP_PROVIDER_CODE = 'whatsapp_cloud';
@@ -86,103 +133,19 @@ export class WhatsAppCredentialsService {
    * to assemble those two from separate optional fields would eventually send
    * with one and not the other.
    */
-  async senderFor(organisationId: string): Promise<WhatsAppSender> {
+  async senderFor(organisationId: string, route: SenderRoute = {}): Promise<WhatsAppSender> {
     // ---------------------------------------------------------- 1. tenant
-    const integration = await this.prisma.integration.findFirst({
-      where: {
-        organisationId,
-        providerCode: WHATSAPP_PROVIDER_CODE,
-        status: { notIn: ['disabled'] },
-      },
-      include: {
-        credentials: { where: { kind: 'access_token' } },
-        assets: { where: { kind: 'phone_number', isActive: true }, orderBy: { createdAt: 'asc' } },
-      },
-    });
-
-    if (integration) {
-      const credential = integration.credentials[0];
-      const asset = integration.assets[0];
-
-      if (!credential) {
-        return this.unusable(
-          'tenant',
-          'A WhatsApp integration exists but no access token has been saved for it.',
-          integration.id,
-        );
-      }
-      if (!asset) {
-        return this.unusable(
-          'tenant',
-          'A WhatsApp integration exists but no phone number has been registered against it.',
-          integration.id,
-        );
-      }
-      if (credential.expiresAt && credential.expiresAt.getTime() < Date.now()) {
-        return this.unusable(
-          'tenant',
-          `The stored WhatsApp token expired on ${credential.expiresAt.toISOString().slice(0, 10)}. Replace it to resume sending.`,
-          integration.id,
-        );
-      }
-
-      try {
-        const encrypted = {
-          ciphertext: credential.ciphertext,
-          iv: credential.iv,
-          authTag: credential.authTag,
-          keyVersion: credential.keyVersion,
-        };
-        const context = {
-          organisationId,
-          integrationId: integration.id,
-          kind: 'access_token',
-        };
-        const accessToken = this.crypto.decrypt(encrypted, context);
-        // Verify cryptographic ownership by ACTIVE, not only the version stamp.
-        // This also heals a key rotation where VERSION was accidentally unchanged.
-        const needsUpgrade = !this.crypto.isEncryptedWithActiveKey(encrypted, context);
-        const upgraded = needsUpgrade ? this.crypto.encrypt(accessToken, context) : null;
-        // Touched on use, so an unused credential can be spotted and revoked.
-        // Fire-and-forget: failing to write a usage timestamp must not stop a
-        // customer message going out.
-        void this.prisma.integrationCredential
-          .updateMany({
-            where: { id: credential.id, ciphertext: credential.ciphertext },
-            data: {
-              lastUsedAt: new Date(),
-              ...(upgraded
-                ? {
-                    ciphertext: upgraded.ciphertext,
-                    iv: upgraded.iv,
-                    authTag: upgraded.authTag,
-                    keyVersion: upgraded.keyVersion,
-                  }
-                : {}),
-            },
-          })
-          .catch(() => undefined);
-
-        return {
-          usable: true,
-          scope: 'tenant',
-          accessToken,
-          phoneNumberId: asset.externalId,
-          integrationId: integration.id,
-          reason: null,
-          shared: false,
-        };
-      } catch (e) {
-        // A credential that will not decrypt is a real, actionable state — a
-        // rotated master key, a corrupted row — and saying so is far better than
-        // quietly falling through to the platform number and sending as someone
-        // else's business.
-        return this.unusable(
-          'tenant',
-          `The stored WhatsApp token could not be decrypted (${e instanceof Error ? e.message : 'unknown error'}). It must be re-entered.`,
-          integration.id,
-        );
-      }
+    //
+    // WHICH NUMBER, resolved before any credential is touched. The old code
+    // took the first active asset of the first integration, which with eight
+    // numbers across two accounts meant every branch sent from whichever was
+    // registered first.
+    const chosen = await this.chooseAsset(organisationId, route);
+    if ('reason' in chosen) {
+      return this.unusable('tenant', chosen.reason, chosen.integrationId ?? null);
+    }
+    if (chosen.asset) {
+      return this.withToken(organisationId, { ...chosen, asset: chosen.asset });
     }
 
     // -------------------------------------------------- 2. platform number
@@ -201,6 +164,11 @@ export class WhatsAppCredentialsService {
         // Surfaced so the UI can state plainly that this number belongs to the
         // platform, not to the tenant.
         shared: true,
+        // No asset row exists for the platform number, so there is nothing for a
+        // conversation to pin itself to. Correct: the binding is per-deployment.
+        assetId: null,
+        resolvedBy: 'platform_env',
+        storeId: null,
       };
     }
 
@@ -217,9 +185,257 @@ export class WhatsAppCredentialsService {
 
     return this.unusable(
       'none',
-      'No WhatsApp number is connected for this organisation. Connect one under Settings → Integrations.',
+      'No WhatsApp number is connected for this organisation. Connect one under Settings \u2192 Integrations.',
       null,
     );
+  }
+
+  /**
+   * Which of the tenant's numbers should carry this message.
+   *
+   * Returns `{ asset: null }` to mean "this tenant has no number of its own" --
+   * the only case that may fall through to the platform binding. A `reason`
+   * means the tenant HAS numbers and none of them could be chosen, which must
+   * never fall through: sending from an arbitrary one of eight is the bug this
+   * whole block exists to remove.
+   *
+   * ## The order, and why each step is above the next
+   *
+   *   1. THE THREAD'S OWN NUMBER. A customer who wrote to the Surat line must be
+   *      answered from the Surat line. Replying from another number opens a
+   *      second thread on their phone, abandons the 24-hour customer-care window
+   *      the first one earned, and reads as a different business.
+   *
+   *   2. THE BRANCH'S ROUTE. For a NEW conversation there is no thread to
+   *      honour, so the branch acting decides.
+   *
+   *   3. THE ONLY NUMBER. With exactly one there is nothing to choose, which is
+   *      why every single-number tenant keeps working with no configuration.
+   *
+   *   4. REFUSE. With several numbers and no route, the honest answer is to not
+   *      send and to say which branch needs mapping. The previous behaviour --
+   *      picking the oldest -- sent as the wrong branch and said nothing.
+   */
+  private async chooseAsset(
+    organisationId: string,
+    route: SenderRoute,
+  ): Promise<ChosenSender | { reason: string; integrationId?: string | null }> {
+    // -- 1. the thread's own number ----------------------------------------
+    if (route.assetId) {
+      const pinned = await this.prisma.integrationAsset.findFirst({
+        where: {
+          id: route.assetId,
+          organisationId,
+          kind: 'phone_number',
+          isActive: true,
+          integration: {
+            providerCode: WHATSAPP_PROVIDER_CODE,
+            status: { notIn: ['disabled'] },
+          },
+        },
+        select: { id: true, externalId: true, integrationId: true },
+      });
+      if (pinned) {
+        return { asset: pinned, resolvedBy: 'thread', storeId: route.storeId ?? null };
+      }
+      // The number this thread arrived on has since been retired, or its account
+      // disabled. Falling through is the lesser harm: the alternative is never
+      // answering the customer at all. `resolvedBy` reports whatever was used
+      // instead, so the substitution is visible rather than silent.
+    }
+
+    // -- 2. the branch's route ---------------------------------------------
+    if (route.storeId) {
+      const configured = await this.prisma.storeMessagingRoute.findUnique({
+        where: { storeId_channel: { storeId: route.storeId, channel: 'whatsapp' } },
+        select: {
+          organisationId: true,
+          asset: {
+            select: {
+              id: true,
+              externalId: true,
+              integrationId: true,
+              isActive: true,
+              organisationId: true,
+              integration: { select: { providerCode: true, status: true } },
+            },
+          },
+        },
+      });
+      const asset = configured?.asset;
+      // Every one of these has to agree. A route whose tenant does not match its
+      // asset is corruption, not a choice to make quietly: the foreign keys
+      // prevent new ones, and this stays as the fail-closed guard for any
+      // historical or hand-edited row.
+      if (
+        configured &&
+        asset &&
+        configured.organisationId === organisationId &&
+        asset.organisationId === organisationId &&
+        asset.isActive &&
+        asset.integration.providerCode === WHATSAPP_PROVIDER_CODE &&
+        asset.integration.status !== 'disabled'
+      ) {
+        return {
+          asset: {
+            id: asset.id,
+            externalId: asset.externalId,
+            integrationId: asset.integrationId,
+          },
+          resolvedBy: 'store_route',
+          storeId: route.storeId,
+        };
+      }
+    }
+
+    // -- 3. the only number, or 4. refuse ----------------------------------
+    const active = await this.prisma.integrationAsset.findMany({
+      where: {
+        organisationId,
+        kind: 'phone_number',
+        isActive: true,
+        integration: {
+          providerCode: WHATSAPP_PROVIDER_CODE,
+          status: { notIn: ['disabled'] },
+        },
+      },
+      select: { id: true, externalId: true, integrationId: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    if (active.length === 1) {
+      return { asset: active[0], resolvedBy: 'only_number', storeId: route.storeId ?? null };
+    }
+    if (active.length === 0) {
+      // Does the tenant have a connection at all? The distinction matters: one
+      // is "finish setting this up", the other is "you have no WhatsApp".
+      const integration = await this.prisma.integration.findFirst({
+        where: {
+          organisationId,
+          providerCode: WHATSAPP_PROVIDER_CODE,
+          status: { notIn: ['disabled'] },
+        },
+        select: { id: true },
+      });
+      if (integration) {
+        return {
+          reason:
+            'A WhatsApp integration exists but no phone number has been registered against it.',
+          integrationId: integration.id,
+        };
+      }
+      // No numbers AND no connection: the platform binding may still apply.
+      return { asset: null, resolvedBy: null, storeId: null };
+    }
+
+    // Several numbers and nothing said which. The count goes in the sentence
+    // because "no sender configured" reads like a missing connection, and the
+    // actual state is the opposite -- there are too many to guess between.
+    return {
+      reason:
+        `This organisation has ${active.length} WhatsApp numbers connected and ` +
+        `${
+          route.storeId
+            ? 'this branch has no sender mapped to it'
+            : 'no branch was named for this message'
+        }. ` +
+        'Map each branch to the number it sends from under Settings \u2192 Integrations. ' +
+        'Nothing is sent until then, because sending from the wrong number reaches the ' +
+        'customer as a different business.',
+    };
+  }
+
+  /**
+   * Decrypt the token belonging to the chosen number's own account.
+   *
+   * Read from THAT asset's integration, not the tenant's first one. With two
+   * WABA accounts the two tokens are different, and using one account's token
+   * against the other's number is refused by the provider -- which would have
+   * surfaced as an inexplicable send failure on exactly half the branches.
+   */
+  private async withToken(
+    organisationId: string,
+    chosen: ChosenSender & { asset: NonNullable<ChosenSender['asset']> },
+  ): Promise<WhatsAppSender> {
+    const integrationId = chosen.asset.integrationId;
+    const credential = await this.prisma.integrationCredential.findUnique({
+      where: { integrationId_kind: { integrationId, kind: 'access_token' } },
+    });
+    if (!credential || credential.organisationId !== organisationId) {
+      return this.unusable(
+        'tenant',
+        'The account that owns this number has no access token saved for it.',
+        integrationId,
+      );
+    }
+    if (credential.expiresAt && credential.expiresAt.getTime() < Date.now()) {
+      return this.unusable(
+        'tenant',
+        `The stored WhatsApp token expired on ${credential.expiresAt
+          .toISOString()
+          .slice(0, 10)}. Replace it to resume sending.`,
+        integrationId,
+      );
+    }
+
+    try {
+      const encrypted = {
+        ciphertext: credential.ciphertext,
+        iv: credential.iv,
+        authTag: credential.authTag,
+        keyVersion: credential.keyVersion,
+      };
+      const context = { organisationId, integrationId, kind: 'access_token' };
+      const accessToken = this.crypto.decrypt(encrypted, context);
+      // Verify cryptographic ownership by ACTIVE, not only the version stamp.
+      // This also heals a key rotation where VERSION was accidentally unchanged.
+      const needsUpgrade = !this.crypto.isEncryptedWithActiveKey(encrypted, context);
+      const upgraded = needsUpgrade ? this.crypto.encrypt(accessToken, context) : null;
+      // Touched on use, so an unused credential can be spotted and revoked.
+      // Fire-and-forget: failing to write a usage timestamp must not stop a
+      // customer message going out.
+      void this.prisma.integrationCredential
+        .updateMany({
+          where: { id: credential.id, ciphertext: credential.ciphertext },
+          data: {
+            lastUsedAt: new Date(),
+            ...(upgraded
+              ? {
+                  ciphertext: upgraded.ciphertext,
+                  iv: upgraded.iv,
+                  authTag: upgraded.authTag,
+                  keyVersion: upgraded.keyVersion,
+                }
+              : {}),
+          },
+        })
+        .catch(() => undefined);
+
+      return {
+        usable: true,
+        scope: 'tenant',
+        accessToken,
+        phoneNumberId: chosen.asset.externalId,
+        integrationId,
+        reason: null,
+        shared: false,
+        assetId: chosen.asset.id,
+        resolvedBy: chosen.resolvedBy,
+        storeId: chosen.storeId,
+      };
+    } catch (e) {
+      // A credential that will not decrypt is a real, actionable state -- a
+      // rotated master key, a corrupted row -- and saying so is far better than
+      // quietly falling through to the platform number and sending as someone
+      // else's business.
+      return this.unusable(
+        'tenant',
+        `The stored WhatsApp token could not be decrypted (${
+          e instanceof Error ? e.message : 'unknown error'
+        }). It must be re-entered.`,
+        integrationId,
+      );
+    }
   }
 
   /**
@@ -237,6 +453,17 @@ export class WhatsAppCredentialsService {
     organisationId: string;
     integrationId: string | null;
     scope: CredentialScope;
+    /**
+     * WHICH number it arrived on. Null for the platform sender, which has no
+     * asset row. Stored on the conversation so every reply leaves from here.
+     */
+    assetId: string | null;
+    /**
+     * The branch that number is mapped to, when one is. This is the inbound
+     * half of routing: a message to the Surat line opens a Surat thread, rather
+     * than landing unattributed and being picked up by whoever looks first.
+     */
+    storeId: string | null;
   } | null> {
     if (!phoneNumberId) return null;
 
@@ -252,9 +479,19 @@ export class WhatsAppCredentialsService {
       },
       take: 2,
       select: {
+        id: true,
         organisationId: true,
         integrationId: true,
         integration: { select: { organisationId: true } },
+        // The branch this number answers for, so inbound lands in the right one.
+        messagingRoutes: {
+          where: { channel: 'whatsapp' },
+          select: { storeId: true, organisationId: true },
+          // A number may serve several branches (a head-office line answering
+          // for three shops). Two is enough to know it is ambiguous, and an
+          // ambiguous inbound branch is left null rather than guessed.
+          take: 2,
+        },
       },
     });
     const boundOrg = this.platformOrganisationId;
@@ -267,7 +504,13 @@ export class WhatsAppCredentialsService {
         return null;
       }
       return boundOrg
-        ? { organisationId: boundOrg, integrationId: null, scope: 'platform_env' }
+        ? {
+            organisationId: boundOrg,
+            integrationId: null,
+            scope: 'platform_env',
+            assetId: null,
+            storeId: null,
+          }
         : null;
     }
 
@@ -287,22 +530,51 @@ export class WhatsAppCredentialsService {
       );
       return null;
     }
+    const routes = asset.messagingRoutes.filter(
+      (r) => r.organisationId === parentOrganisationId,
+    );
     return {
       organisationId: parentOrganisationId,
       integrationId: asset.integrationId,
       scope: 'tenant',
+      assetId: asset.id,
+      // Exactly one branch, or none. A number shared by three shops cannot say
+      // which one an inbound message belongs to, and picking one would file a
+      // customer's enquiry against a branch that never spoke to them.
+      storeId: routes.length === 1 ? routes[0].storeId : null,
     };
   }
 
   /** Sender state for a settings screen, with no secret in the payload. */
   async describeFor(organisationId: string) {
     const sender = await this.senderFor(organisationId);
+    // How many numbers there are is the single most useful fact on this screen
+    // once there is more than one: it turns "not usable" from a mystery into
+    // "you have eight and have not said which branch uses which".
+    const numbers = await this.prisma.integrationAsset.count({
+      where: {
+        organisationId,
+        kind: 'phone_number',
+        isActive: true,
+        integration: {
+          providerCode: WHATSAPP_PROVIDER_CODE,
+          status: { notIn: ['disabled'] },
+        },
+      },
+    });
+    const routed = await this.prisma.storeMessagingRoute.count({
+      where: { organisationId, channel: 'whatsapp' },
+    });
     return {
       usable: sender.usable,
       scope: sender.scope,
       shared: sender.shared,
       reason: sender.reason,
       integrationId: sender.integrationId,
+      numbersConnected: numbers,
+      branchesRouted: routed,
+      /** How the default sender was chosen, when there is one. */
+      resolvedBy: sender.resolvedBy,
       // The last four digits only — enough to confirm which number is connected,
       // useless to anyone who intercepts it.
       phoneNumberIdSuffix: sender.phoneNumberId ? `…${sender.phoneNumberId.slice(-4)}` : null,
@@ -313,7 +585,11 @@ export class WhatsAppCredentialsService {
     };
   }
 
-  private unusable(scope: CredentialScope, reason: string, integrationId: string | null): WhatsAppSender {
+  private unusable(
+    scope: CredentialScope,
+    reason: string,
+    integrationId: string | null,
+  ): WhatsAppSender {
     return {
       usable: false,
       scope,
@@ -322,6 +598,9 @@ export class WhatsAppCredentialsService {
       integrationId,
       reason,
       shared: false,
+      assetId: null,
+      resolvedBy: null,
+      storeId: null,
     };
   }
 }

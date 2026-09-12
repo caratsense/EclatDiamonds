@@ -16,6 +16,8 @@ import { MetaDeliveryReceiptAdapter } from './meta-delivery-receipt.adapter';
 import { MetaLeadAdapter } from './meta-lead.adapter';
 import { MetaHealthService } from './meta-health.service';
 import { TelephonyService } from './telephony.service';
+import { MessagingRoutesController } from './messaging-routes.controller';
+import { MessagingRoutesService } from './messaging-routes.service';
 
 /**
  * External integrations (Phase 4): WhatsApp Business, Razorpay, gold-rate feed,
@@ -29,7 +31,7 @@ import { TelephonyService } from './telephony.service';
 @Global()
 @Module({
   imports: [WhatsAppBotModule, IntegrationModule],
-  controllers: [IntegrationsController],
+  controllers: [IntegrationsController, MessagingRoutesController],
   providers: [
     WhatsAppService,
     WhatsAppCredentialsService,
@@ -54,6 +56,7 @@ import { TelephonyService } from './telephony.service';
     // as @Global — the same edge MetaLeadAdapter already relies on, and it
     // runs one way only (integrations reach into CRM; CRM never reaches back).
     TelephonyService,
+    MessagingRoutesService,
   ],
   exports: [
     WhatsAppService,
@@ -67,6 +70,7 @@ import { TelephonyService } from './telephony.service';
     MetaLeadAdsService,
     MetaWebhookService,
     TelephonyService,
+    MessagingRoutesService,
   ],
 })
 export class IntegrationsModule {}

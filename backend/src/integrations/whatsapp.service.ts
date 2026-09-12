@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
 import { fetchJson, safeEqual } from './integrations.util';
-import { WhatsAppCredentialsService } from './whatsapp-credentials.service';
+import { SenderRoute, WhatsAppCredentialsService } from './whatsapp-credentials.service';
 
 export interface WhatsAppSendResult {
   /** Accepted by the WhatsApp Cloud API. */
@@ -16,6 +16,13 @@ export interface WhatsAppSendResult {
   to: string;
   messageId?: string;
   error?: string;
+  /**
+   * Which of the tenant's numbers carried it, when one did. Stored on the
+   * conversation so every later reply leaves from the same number.
+   */
+  senderAssetId?: string | null;
+  /** How that number was chosen: the thread's, the branch's, or the only one. */
+  resolvedBy?: string | null;
 }
 
 /**
@@ -91,9 +98,27 @@ export class WhatsAppService {
     return digits;
   }
 
-  /** Send a plain-text message (only allowed inside an open 24h conversation window). */
-  async sendText(organisationId: string, to: string, body: string): Promise<WhatsAppSendResult> {
-    return this.send(organisationId, to, { type: 'text', text: { preview_url: false, body } });
+  /**
+   * Send a plain-text message (only allowed inside an open 24h conversation window).
+   *
+   * `route` says WHICH of the tenant's numbers this leaves from. Optional so
+   * every existing caller still compiles, and safe to omit only while a tenant
+   * has one number — with several, an omitted route is refused rather than
+   * guessed at. Callers that know the conversation pass its `senderAssetId`;
+   * callers that know only the branch pass `storeId`.
+   */
+  async sendText(
+    organisationId: string,
+    to: string,
+    body: string,
+    route?: SenderRoute,
+  ): Promise<WhatsAppSendResult> {
+    return this.send(
+      organisationId,
+      to,
+      { type: 'text', text: { preview_url: false, body } },
+      route,
+    );
   }
 
   /** Send a pre-approved template message — the only way to *start* a conversation. */
@@ -103,21 +128,28 @@ export class WhatsAppService {
     templateName: string,
     languageCode = 'en',
     components?: unknown[],
+    route?: SenderRoute,
   ): Promise<WhatsAppSendResult> {
-    return this.send(organisationId, to, {
-      type: 'template',
-      template: {
-        name: templateName,
-        language: { code: languageCode },
-        ...(components ? { components } : {}),
+    return this.send(
+      organisationId,
+      to,
+      {
+        type: 'template',
+        template: {
+          name: templateName,
+          language: { code: languageCode },
+          ...(components ? { components } : {}),
+        },
       },
-    });
+      route,
+    );
   }
 
   private async send(
     organisationId: string,
     to: string,
     payload: Record<string, unknown>,
+    route?: SenderRoute,
   ): Promise<WhatsAppSendResult> {
     const recipient = this.normalise(to);
 
@@ -150,7 +182,7 @@ export class WhatsAppService {
       };
     }
 
-    const sender = await this.credentials.senderFor(organisationId);
+    const sender = await this.credentials.senderFor(organisationId, route ?? {});
     if (!sender.usable || !sender.accessToken || !sender.phoneNumberId) {
       this.logger.log(`[dry-run] WhatsApp → ${maskNumber(recipient)}: ${sender.reason}`);
       return {
@@ -180,6 +212,10 @@ export class WhatsAppService {
         to: recipient,
         messageId,
         credentialScope: sender.scope,
+        // WHICH number carried it, and why that one. Once a tenant has eight,
+        // "it was sent" stops being the useful fact.
+        senderAssetId: sender.assetId,
+        resolvedBy: sender.resolvedBy,
       };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);

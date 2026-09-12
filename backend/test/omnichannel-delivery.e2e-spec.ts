@@ -161,7 +161,13 @@ describe('omnichannel durable worker', () => {
       { jobId: 'job-a', organisationId: 'org-a', attempt: 1, kind: OMNICHANNEL_DELIVERY_JOB },
     );
 
-    expect(h.whatsapp.sendText).toHaveBeenCalledWith('org-a', '919999999999', 'Hello');
+    // The fourth argument is WHICH number this leaves from: the thread's own if
+    // it has one, otherwise the branch's. A tenant with several numbers and
+    // neither set is refused rather than sent as the wrong branch.
+    expect(h.whatsapp.sendText).toHaveBeenCalledWith('org-a', '919999999999', 'Hello', {
+      assetId: undefined,
+      storeId: 'store-a',
+    });
     expect(h.updates.at(-1).data).toMatchObject({ status: 'sent', externalId: 'wamid.accepted', error: null });
     expect(result).toMatchObject({ delivered: true, status: 'sent' });
   });

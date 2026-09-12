@@ -529,6 +529,7 @@ model Organisation {
   payslips                     Payslip[]
   loyaltyAccounts              LoyaltyAccount[]
   loyaltyLedgerEntries         LoyaltyLedgerEntry[]
+  storeMessagingRoutes         StoreMessagingRoute[]
 }
 
 /// CaratOS import-engine provenance + reconciliation record. One row per import
@@ -741,6 +742,7 @@ model Store {
   leadForms             LeadForm[]
   loyaltyAccounts       LoyaltyAccount[]
   loyaltyLedgerEntries  LoyaltyLedgerEntry[]
+  messagingRoutes       StoreMessagingRoute[]
 
   @@unique([organisationId, legacyId])
   @@unique([organisationId, code])
@@ -3892,6 +3894,16 @@ model Conversation {
   /// redelivered webhook re-attaches to the existing thread instead of forking it.
   externalThreadId String?
 
+  /// THE NUMBER THIS THREAD ARRIVED ON, and the one a reply must leave from.
+  ///
+  /// Outranks the branch's route at send time. Answering from a different number
+  /// starts a second thread on the customer's phone, abandons the 24-hour
+  /// customer-care window opened on the first, and reads to them as a different
+  /// business. Null for threads that predate multi-number routing or were
+  /// started from inside CaratOS, where the branch route decides.
+  senderAssetId String?
+  senderAsset   IntegrationAsset? @relation("ConversationSender", fields: [senderAssetId], references: [id])
+
   /// 'open' | 'snoozed' | 'closed'
   status   String @default("open")
   /// Who is answering right now: 'ai' | 'human' | 'unassigned'. The handoff state
@@ -3936,6 +3948,7 @@ model Conversation {
   @@index([organisationId, partyId, lastMessageAt])
   @@index([organisationId, assignedUserId, status])
   @@index([organisationId, sourceAdId])
+  @@index([senderAssetId])
 }
 
 /// One message in a Conversation.
@@ -4157,6 +4170,7 @@ model Integration {
   assets          IntegrationAsset[]
   adSpendDays     AdSpendDaily[]
   adSpendCoverage AdSpendCoverage[]
+  messagingRoutes StoreMessagingRoute[]
 
   @@unique([organisationId, providerCode, name])
   @@index([organisationId, status])
@@ -4326,6 +4340,10 @@ model IntegrationAsset {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  messagingRoutes StoreMessagingRoute[]
+  /// Threads that arrived on this sender and must be answered from it.
+  conversations   Conversation[]        @relation("ConversationSender")
 
   @@unique([integrationId, kind, externalId])
   @@index([organisationId, kind])
@@ -5672,4 +5690,75 @@ model LoyaltyLedgerEntry {
   @@index([organisationId, createdAt])
   /// The retry sweep's read: unannounced entries, oldest first.
   @@index([organisationId, webhookedAt, webhookAttempts])
+}
+
+// ============================================================================
+// BLOCK 12 — which number does this branch send from
+// ============================================================================
+//
+// ── The problem, concretely ─────────────────────────────────────────────────
+//
+// A business with eight WhatsApp numbers across two WABA accounts had, until
+// now, exactly one sender: `senderFor` read the tenant's phone-number assets
+// ordered by creation date and took the FIRST. Every branch therefore sent from
+// whichever number was registered first, and a customer who wrote to the Surat
+// shop was answered from the Mumbai one. The registry made this worse by
+// design, deactivating every other number whenever a new one was registered —
+// "exactly one active sender per connection" was a deliberate simplification
+// that is now the blocker.
+//
+// ── Why a route table and not a column on Store ────────────────────────────
+//
+// A column would answer "which number does this branch use" for WhatsApp and
+// then need a second column for Instagram, a third for SMS. More importantly a
+// column cannot express what actually has to be true: the same number may serve
+// several branches (a head-office line answering for three shops), and a branch
+// may have no number of its own and correctly fall back. A row per
+// (branch, channel) says exactly that, and its absence is a meaningful state
+// rather than a null that has to be interpreted.
+//
+// ── Why the conversation remembers its number ──────────────────────────────
+//
+// `Conversation.senderAssetId` is the number the thread ARRIVED on, and it
+// outranks the branch route when a reply goes out. A customer who wrote to a
+// number must be answered from that number: replying from a different one
+// starts a second thread on their phone, loses the 24-hour customer-care window
+// on the first, and reads as a different business. The branch route is what
+// decides where a NEW outbound conversation starts.
+
+/// Which sender a branch uses on one channel.
+///
+/// The asset is the provider identity (a WhatsApp phone-number id); the
+/// integration is the account that owns it. Both are stored so a route cannot
+/// outlive the connection it depends on.
+model StoreMessagingRoute {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  /// 'whatsapp' | 'instagram' | 'sms' | 'email'. Kept as a string for the same
+  /// reason the Conversation channel is: a new channel must not need a
+  /// migration to an enum before a tenant can be routed on it.
+  channel String
+
+  integrationId String
+  integration   Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  /// The phone-number (or equivalent) asset this branch sends from.
+  assetId String
+  asset   IntegrationAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  /// Who set it, for the conversation that follows "why is Surat sending from
+  /// the Mumbai number".
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  /// One sender per branch per channel. Two would be a coin toss at send time.
+  @@unique([storeId, channel])
+  @@index([organisationId, channel])
+  @@index([assetId])
 }

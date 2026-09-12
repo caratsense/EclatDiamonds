@@ -124,6 +124,14 @@ export const ROUTE_FAMILIES: readonly RouteFamily[] = Object.freeze([
   { prefix: '/integration', capability: null, why: 'Connect agents and connectors: universal ingestion.' },
   { prefix: '/integrations', capability: null, why: 'Channel integrations; the one vertical screen inside it is listed below.' },
   { prefix: '/integrations-registry', capability: null, why: 'Which providers exist. Distinct path from /integrations.' },
+  {
+    prefix: '/messaging-routes',
+    capability: null,
+    why:
+      'Which of a tenant\u2019s numbers each branch sends from. Universal: any industry ' +
+      'with more than one location and more than one number has to answer it, and the ' +
+      'channel it configures serves the universal CRM.',
+  },
   { prefix: '/whatsapp', capability: null, why: 'The WhatsApp channel serves the universal CRM.' },
   { prefix: '/sync', capability: null, why: 'Source-of-truth ingestion, governed by connector auth not industry.' },
   { prefix: '/jobs', capability: null, why: 'Background work plumbing.' },

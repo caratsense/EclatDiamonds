@@ -324,19 +324,26 @@ export class IntegrationsRegistryService {
                 'That WhatsApp phone number ID is already registered to another connection.',
               );
             }
-            // Exactly one active sender per WhatsApp connection. Serializable
-            // isolation turns concurrent first-time registrations into a retry
-            // instead of allowing two active phone-number rows (write skew).
-            await tx.integrationAsset.updateMany({
-              where: {
-                integrationId,
-                organisationId: user.organisationId,
-                kind: 'phone_number',
-                externalId: { not: externalId },
-                isActive: true,
-              },
-              data: { isActive: false, ownershipKey: null },
-            });
+            // ONE ACTIVE SENDER PER CONNECTION WAS LIFTED HERE, deliberately.
+            //
+            // This block used to deactivate every other phone number on the
+            // connection, so registering a second number silently switched the
+            // first one off. That was a real simplification while a tenant had
+            // one number; a business with eight across two WABA accounts cannot
+            // express itself at all under it, and the failure was invisible —
+            // the branch whose number had just been deactivated simply started
+            // sending as somebody else.
+            //
+            // What is NOT relaxed is the property that actually matters: the
+            // unique `ownershipKey` still allows exactly one ACTIVE claim on a
+            // given phone-number id across the whole platform, so two tenants
+            // can never both own an inbound routing identity. Serializable
+            // isolation and the P2002 branch below remain the guard for
+            // concurrent first-time registrations of the SAME number.
+            //
+            // Which of a tenant's own numbers a branch sends from is now a
+            // routing decision (StoreMessagingRoute), which is where it belongs:
+            // it is a business choice, not a database constraint.
             return tx.integrationAsset.upsert({
               where: {
                 integrationId_kind_externalId: {
@@ -384,7 +391,7 @@ export class IntegrationsRegistryService {
       action: 'integration.asset_set',
       entityType: 'Integration',
       entityId: integrationId,
-      summary: `Registered the WhatsApp phone-number identity for "${integration.name}".`,
+      summary: `Registered a WhatsApp phone-number identity for "${integration.name}".`,
       // Provider ownership cannot be proven without a live Meta token/API call.
       // Keep that gate explicit instead of presenting fixture validation as live.
       metadata: { kind: 'phone_number', providerOwnershipVerified: false },

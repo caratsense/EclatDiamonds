@@ -1090,6 +1090,22 @@ export class OmnichannelService implements OnModuleInit {
       return this.failPermanently(message, 'recipient_missing', errorMessage(error));
     }
 
+    /*
+     * WHICH NUMBER this leaves from.
+     *
+     * The thread's own number first — a customer who wrote to the Surat line is
+     * answered from the Surat line, because that is where their 24-hour window is
+     * open. A thread that has none (started from inside CaratOS, or older than
+     * multi-number routing) falls back to the branch's route. With one number
+     * connected both are ignored and nothing changes; with several and neither
+     * set, the resolver refuses and says which branch needs mapping rather than
+     * sending as the wrong one.
+     */
+    const senderRoute = {
+      assetId: message.conversation.senderAssetId,
+      storeId: message.conversation.storeId,
+    };
+
     const result = template
       ? await this.whatsapp.sendTemplate(
           ctx.organisationId,
@@ -1099,8 +1115,14 @@ export class OmnichannelService implements OnModuleInit {
           template.name ?? '',
           template.metadata.languageCode,
           instructions.templateComponents,
+          senderRoute,
         )
-      : await this.whatsapp.sendText(ctx.organisationId, recipient, message.body!.trim());
+      : await this.whatsapp.sendText(
+          ctx.organisationId,
+          recipient,
+          message.body!.trim(),
+          senderRoute,
+        );
 
     if (!result.delivered || result.dryRun || !result.messageId) {
       const reason = safeProviderError(
@@ -1108,6 +1130,27 @@ export class OmnichannelService implements OnModuleInit {
       );
       await this.markTransientFailure(message, reason, ctx.attempt);
       throw new Error(reason);
+    }
+
+    /*
+     * Pin the thread to the number that just carried it, if it had none.
+     *
+     * This is what makes an outbound-first conversation stable: the branch route
+     * chose the number for the FIRST message, and from here every later reply
+     * uses the same one even if the branch is later re-routed. A customer's
+     * thread must not migrate between numbers because an administrator changed a
+     * setting — that would silently start a second thread on their phone.
+     *
+     * Fire-and-forget: a message that has left must not be reported as failed
+     * because a bookkeeping write did not land.
+     */
+    if (!message.conversation.senderAssetId && result.senderAssetId) {
+      void this.prisma.conversation
+        .updateMany({
+          where: { id: message.conversationId, senderAssetId: null },
+          data: { senderAssetId: result.senderAssetId },
+        })
+        .catch(() => undefined);
     }
 
     const sentAt = new Date();

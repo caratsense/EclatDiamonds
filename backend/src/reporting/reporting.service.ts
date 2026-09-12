@@ -493,7 +493,10 @@ export class ReportingService {
     if (dto.channel === 'whatsapp') {
       // Per-organisation now: whether WhatsApp works is a property of the
       // tenant's own connection, not of the process.
-      const result = await this.whatsapp.sendText(user.organisationId, to, preview);
+      // The branch the report is ABOUT is the branch it should come from.
+      const result = await this.whatsapp.sendText(user.organisationId, to, preview, {
+        storeId: headerStore ?? user.storeIds[0] ?? null,
+      });
       sent = result.delivered;
       disabled = result.dryRun;
     } else if (this.email.enabled) {
@@ -763,7 +766,10 @@ export class ReportingService {
     if (dto.channel === 'whatsapp') {
       // Per-organisation now: whether WhatsApp works is a property of the
       // tenant's own connection, not of the process.
-      const result = await this.whatsapp.sendText(user.organisationId, to, preview);
+      // The branch the report is ABOUT is the branch it should come from.
+      const result = await this.whatsapp.sendText(user.organisationId, to, preview, {
+        storeId: report.storeId ?? user.storeIds[0] ?? null,
+      });
       sent = result.delivered;
       disabled = result.dryRun;
     } else if (this.email.enabled) {

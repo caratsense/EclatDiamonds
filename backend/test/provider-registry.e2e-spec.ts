@@ -424,11 +424,19 @@ describe('integration credential owner rotation', () => {
         }),
       }),
     );
-    expect(updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ organisationId: context.organisationId }),
-      }),
-    );
+    // REGISTERING NO LONGER DEACTIVATES ITS SIBLINGS.
+    //
+    // This used to assert the opposite: that saving a number switched every
+    // other number on the connection off. That was a real simplification while a
+    // tenant had one number, and a blocker for a business with eight across two
+    // WABA accounts — the branches on the numbers it silently deactivated
+    // started sending as somebody else and nothing said so.
+    //
+    // What is NOT relaxed is the unique ownership claim below, which is the
+    // property that actually matters: two connections can never both own the
+    // same phone-number id. Which of a tenant's own numbers a branch uses is now
+    // a routing decision, where it belongs.
+    expect(updateMany).not.toHaveBeenCalled();
     expect(upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         create: expect.objectContaining({
@@ -740,14 +748,26 @@ describe('integration credential owner rotation', () => {
     const updateMany = jest.fn().mockResolvedValue({ count: 1 });
     const service = new WhatsAppCredentialsService(
       {
-        integration: {
-          findFirst: jest.fn().mockResolvedValue({
-            id: context.integrationId,
-            credentials: [credential],
-            assets: [{ externalId: 'phone-number-a' }],
-          }),
+        // The sender is now chosen BEFORE any credential is read, so the double
+        // hands over one active number and then the credential of the account
+        // that owns it. With several numbers the resolver refuses instead of
+        // taking the first, which is what the routing tests cover.
+        integrationAsset: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 'asset-a',
+              externalId: 'phone-number-a',
+              integrationId: context.integrationId,
+            },
+          ]),
         },
-        integrationCredential: { updateMany },
+        integrationCredential: {
+          findUnique: jest.fn().mockResolvedValue({
+            ...credential,
+            organisationId: context.organisationId,
+          }),
+          updateMany,
+        },
       } as never,
       { get: jest.fn().mockReturnValue(undefined) } as never,
       activeCrypto,
@@ -782,14 +802,26 @@ describe('integration credential owner rotation', () => {
     const updateMany = jest.fn().mockResolvedValue({ count: 1 });
     const service = new WhatsAppCredentialsService(
       {
-        integration: {
-          findFirst: jest.fn().mockResolvedValue({
-            id: context.integrationId,
-            credentials: [credential],
-            assets: [{ externalId: 'phone-number-a' }],
-          }),
+        // The sender is now chosen BEFORE any credential is read, so the double
+        // hands over one active number and then the credential of the account
+        // that owns it. With several numbers the resolver refuses instead of
+        // taking the first, which is what the routing tests cover.
+        integrationAsset: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 'asset-a',
+              externalId: 'phone-number-a',
+              integrationId: context.integrationId,
+            },
+          ]),
         },
-        integrationCredential: { updateMany },
+        integrationCredential: {
+          findUnique: jest.fn().mockResolvedValue({
+            ...credential,
+            organisationId: context.organisationId,
+          }),
+          updateMany,
+        },
       } as never,
       { get: jest.fn().mockReturnValue(undefined) } as never,
       changedWithoutVersionBump,
@@ -854,9 +886,13 @@ describe('WhatsApp inbound phone-number ownership', () => {
   it('derives the tenant from the parent Integration and caps lookup at two owners', async () => {
     const service = serviceFor([
       {
+        id: 'asset-a',
         organisationId: 'org-a',
         integrationId: 'integration-a',
         integration: { organisationId: 'org-a' },
+        // No branch mapped to this number, which is the ordinary state for a
+        // tenant with one.
+        messagingRoutes: [],
       },
     ]);
 
@@ -864,6 +900,11 @@ describe('WhatsApp inbound phone-number ownership', () => {
       organisationId: 'org-a',
       integrationId: 'integration-a',
       scope: 'tenant',
+      // WHICH number it arrived on, so the reply leaves from the same one.
+      assetId: 'asset-a',
+      // No branch is mapped to it here, and an unmapped number does not name a
+      // branch rather than guessing one.
+      storeId: null,
     });
     expect(
       (service as unknown as { prisma: { integrationAsset: { findMany: jest.Mock } } }).prisma
@@ -874,14 +915,20 @@ describe('WhatsApp inbound phone-number ownership', () => {
   it('returns null instead of guessing when two active assets claim one phone ID', async () => {
     const service = serviceFor([
       {
+        id: 'asset-a',
         organisationId: 'org-a',
         integrationId: 'integration-a',
         integration: { organisationId: 'org-a' },
+        // No branch mapped to this number, which is the ordinary state for a
+        // tenant with one.
+        messagingRoutes: [],
       },
       {
+        id: 'asset-b',
         organisationId: 'org-b',
         integrationId: 'integration-b',
         integration: { organisationId: 'org-b' },
+        messagingRoutes: [],
       },
     ]);
     const expectedLog = jest
@@ -895,9 +942,11 @@ describe('WhatsApp inbound phone-number ownership', () => {
   it('returns null when the asset tenant differs from its parent Integration', async () => {
     const service = serviceFor([
       {
+        id: 'asset-a',
         organisationId: 'wrong-org',
         integrationId: 'integration-a',
         integration: { organisationId: 'org-a' },
+        messagingRoutes: [],
       },
     ]);
     const expectedLog = jest

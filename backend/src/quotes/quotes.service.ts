@@ -154,7 +154,12 @@ export class QuotesService {
       .filter(Boolean)
       .join('\n');
 
-    const result = await this.whatsapp.sendText(user.organisationId, quote.phone, body);
+    // From the branch that RAISED the quote, not one it can be redeemed at.
+    // With several numbers connected an unrouted send is refused rather than
+    // going out as another branch, so the branch has to be named here.
+    const result = await this.whatsapp.sendText(user.organisationId, quote.phone, body, {
+      storeId: quote.originStoreId,
+    });
     return {
       delivered: result.delivered,
       dryRun: result.dryRun,

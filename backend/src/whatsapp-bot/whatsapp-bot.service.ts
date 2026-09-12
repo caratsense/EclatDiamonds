@@ -205,7 +205,17 @@ export class WhatsAppBotService {
     // ARRIVED ON, before anything is sent — a reply has to leave on the same
     // number the customer wrote to, and with per-tenant credentials there is no
     // longer a single process-wide sender to fall back on.
-    const inboundOrgId = await this.resolveTenantForInbound(event.payload);
+    const inbound = await this.resolveTenantForInbound(event.payload);
+    const inboundOrgId = inbound?.organisationId ?? null;
+    /*
+     * Every reply below carries this. A staff member who wrote to the Surat line
+     * is answered from the Surat line: without it, `senderFor` sees eight numbers
+     * and no route and refuses to send at all — which is the correct refusal, but
+     * the inbound number is right here and is the best answer there is.
+     */
+    const replyRoute = inbound
+      ? { assetId: inbound.assetId, storeId: inbound.storeId }
+      : undefined;
 
     const user = await this.identity.resolveActiveUser(from);
 
@@ -216,11 +226,12 @@ export class WhatsAppBotService {
           user.organisationId,
           from,
           'I can only read text messages right now. Say *hi* for the menu.',
+          replyRoute,
         );
         return { status: 'processed', userId: user.id, organisationId: user.organisationId };
       }
       const reply = await this.conversation.handle(from, user, text);
-      await this.wa.sendText(user.organisationId, from, reply);
+      await this.wa.sendText(user.organisationId, from, reply, replyRoute);
       return { status: 'processed', userId: user.id, organisationId: user.organisationId };
     }
 
@@ -242,6 +253,7 @@ export class WhatsAppBotService {
           res.alreadyLinked
             ? `You're already linked as ${res.userName}. ✅`
             : `✅ Linked as ${res.userName}. You can now send your daily updates here.`,
+          replyRoute,
         );
         return { status: 'processed', userId: res.userId, organisationId: res.organisationId };
       }
@@ -255,6 +267,7 @@ export class WhatsAppBotService {
           res.reason === 'phone_taken'
             ? 'This number is already linked to another account. Contact your manager.'
             : "That code didn't work or has expired. Start again from CaratSense → Settings.",
+          replyRoute,
         );
       }
       return { status: 'processed' };
@@ -287,6 +300,11 @@ export class WhatsAppBotService {
           body: text ?? undefined,
           sentAt: event.createdAt,
           payload: event.payload as never,
+          // The number this arrived on, so every reply leaves from it.
+          senderAssetId: inbound?.assetId ?? null,
+          // The branch that number answers for. Only when unambiguous: a line
+          // shared by three shops cannot say which one an enquiry belongs to.
+          storeId: inbound?.storeId ?? null,
           // The Click-to-WhatsApp referral, read from the raw provider message
           // that `persist()` has been storing all along. Only the first message
           // of an ad-originated thread carries one; null everywhere else, and a
@@ -399,12 +417,23 @@ export class WhatsAppBotService {
    * organisation happens to be first would put one business's customer
    * conversation in another business's inbox.
    */
-  private async resolveTenantForInbound(payload: unknown): Promise<string | null> {
+  private async resolveTenantForInbound(payload: unknown): Promise<{
+    organisationId: string;
+    /** The number it arrived on, so the reply leaves from the same one. */
+    assetId: string | null;
+    /** The branch that number answers for, when exactly one does. */
+    storeId: string | null;
+  } | null> {
     const meta = (payload as { caratosMeta?: { businessPhoneNumberId?: string | null } } | null)
       ?.caratosMeta;
     const phoneNumberId = meta?.businessPhoneNumberId;
     if (!phoneNumberId) return null;
     const owner = await this.credentials.organisationForPhoneNumberId(phoneNumberId);
-    return owner?.organisationId ?? null;
+    if (!owner) return null;
+    return {
+      organisationId: owner.organisationId,
+      assetId: owner.assetId,
+      storeId: owner.storeId,
+    };
   }
 }

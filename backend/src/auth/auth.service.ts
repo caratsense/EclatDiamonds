@@ -669,10 +669,24 @@ export class AuthService {
     // Resolved from the looked-up user record, never from the request — the
     // caller supplies only a phone number and must not be able to influence
     // which tenant's sender is used.
+    // WHICH number it leaves from, for a tenant with several.
+    //
+    // Their primary branch. Not because a sign-in code belongs to a branch — it
+    // does not — but because a tenant with eight numbers has no single "the"
+    // number, and an unrouted send is refused. Refusing would lock somebody out
+    // of the product over a messaging setting, so the branch they work at is
+    // named here; the code still reaches them from a number their own business
+    // owns.
+    const primaryStore = await this.prisma.userStore.findFirst({
+      where: { userId: user.id },
+      orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+      select: { storeId: true },
+    });
     const result = await this.whatsapp.sendText(
       user.organisationId!,
       user.phone!,
       `Your Eclat sign-in code is ${code}. It expires in 5 minutes. Do not share it.`,
+      { storeId: primaryStore?.storeId ?? null },
     );
     const dryRun = result.dryRun;
     if (dryRun) {
