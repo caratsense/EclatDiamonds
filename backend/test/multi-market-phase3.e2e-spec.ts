@@ -390,6 +390,9 @@ describe('Multi-market phase 3 — identity, funnel ownership, entitlement (e2e)
      */
     const PROBES: [string, string][] = [
       ['/finance/summary', 'finance'],
+      // The cross-branch management view, gated separately from `dashboards`
+      // so a tenant can have the shop-floor screen without it.
+      ['/management/kpis', 'management'],
       ['/loyalty/plans', 'loyalty'],
       ['/returns', 'returns'],
       ['/discounts', 'discounts'],

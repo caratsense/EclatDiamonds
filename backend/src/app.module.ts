@@ -25,6 +25,7 @@ import { HrmsModule } from './hrms/hrms.module';
 import { CheckinsModule } from './checkins/checkins.module';
 import { TimelinesModule } from './timelines/timelines.module';
 import { ReportingModule } from './reporting/reporting.module';
+import { ManagementModule } from './management/management.module';
 import { NewStoreModule } from './new-store/new-store.module';
 import { PaymentsModule } from './payments/payments.module';
 import { SalesModule } from './sales/sales.module';
@@ -84,6 +85,7 @@ import { AttributionModule } from './attribution/attribution.module';
     CheckinsModule,
     TimelinesModule,
     ReportingModule,
+    ManagementModule,
     NewStoreModule,
     PaymentsModule,
     SalesModule,
