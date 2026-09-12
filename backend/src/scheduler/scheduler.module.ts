@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 
 import { HrmsModule } from '../hrms/hrms.module';
+import { ReportingModule } from '../reporting/reporting.module';
 import { JobRunnerService } from './job-runner.service';
 import { SchedulerService } from './scheduler.service';
 import { SchedulerController } from './scheduler.controller';
@@ -12,7 +13,10 @@ import { SchedulerController } from './scheduler.controller';
  * module — the read-only run log stays available either way.
  */
 @Module({
-  imports: [ScheduleModule.forRoot(), HrmsModule],
+  // ReportingModule is not @Global, so the scheduled-report tick needs it
+  // named here. The edge runs one way (scheduler drives reporting), so there
+  // is no cycle.
+  imports: [ScheduleModule.forRoot(), HrmsModule, ReportingModule],
   controllers: [SchedulerController],
   providers: [SchedulerService, JobRunnerService],
   exports: [JobRunnerService],

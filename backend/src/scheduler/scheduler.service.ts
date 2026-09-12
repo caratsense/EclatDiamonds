@@ -4,6 +4,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { JobsService } from '../jobs/jobs.service';
 import { StaffDigestService } from '../crm/staff-digest.service';
 import { ResponseSlaService } from '../crm/response-sla.service';
+import { ScheduledReportsService } from '../reporting/scheduled-reports.service';
 import { JobAlertsService } from '../jobs/job-alerts.service';
 import { Role } from '@prisma/client';
 
@@ -75,6 +76,7 @@ export class SchedulerService {
     private readonly jobAlerts: JobAlertsService,
     private readonly staffDigest: StaffDigestService,
     private readonly responseSla: ResponseSlaService,
+    private readonly scheduledReports: ScheduledReportsService,
   ) {}
 
   /**
@@ -282,6 +284,37 @@ export class SchedulerService {
           `Staff digest failed for ${store.name}: ${e instanceof Error ? e.message : String(e)}`,
         );
       }
+    }
+  }
+
+  /**
+   * Reports that send themselves.
+   *
+   * Hourly, and the "is it the 1st at 07:00" question is asked per report in ITS
+   * branch's timezone rather than written into a cron expression — a cron fires
+   * on the server's clock, and month-end has to mean month-end where the staff
+   * are.
+   *
+   * Not wrapped in `runOnce`: the unique key on (reportId, periodKey) in the
+   * database is the guard, and it is the only one that holds across a restart
+   * mid-send. A second replica ticking the same hour loses the insert and does
+   * nothing.
+   */
+  @Cron(CronExpression.EVERY_HOUR, { name: 'reporting.scheduled' })
+  async sendScheduledReports(): Promise<void> {
+    if (!this.enabled) return;
+    try {
+      const res = await this.scheduledReports.sweep();
+      if (res.due) {
+        this.logger.log(
+          `Scheduled reports: ${res.delivered} delivered, ${res.skipped} already done ` +
+            `(${res.due} due)`,
+        );
+      }
+    } catch (e) {
+      this.logger.error(
+        `Scheduled report sweep failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
 

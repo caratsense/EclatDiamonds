@@ -148,6 +148,7 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
     { provide: AI_RESPONDER, useClass: ProviderAiResponder },
   ],
   exports: [
+    LeadExportService,
     LeadTagsService,
     StaffDigestService,
     ResponseSlaService,

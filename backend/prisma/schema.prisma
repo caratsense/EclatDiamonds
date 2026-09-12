@@ -520,6 +520,8 @@ model Organisation {
   staffDigestRuns              StaffDigestRun[]
   conversationSlaSettings      ConversationSlaSettings?
   conversationResponseSlas     ConversationResponseSla[]
+  scheduledReports             ScheduledReport[]
+  scheduledReportRuns          ScheduledReportRun[]
 }
 
 /// CaratOS import-engine provenance + reconciliation record. One row per import
@@ -722,6 +724,7 @@ model Store {
   conversations         Conversation[]
   productInteractions   ProductInteraction[]
   responseSlas          ConversationResponseSla[]
+  scheduledReports      ScheduledReport[]
   /// Phase A7 — the file or Connect import run that created this row. Later
   /// updates do not rewrite creation provenance; legacyId identifies its source.
   importBatchId         String?
@@ -5155,4 +5158,105 @@ model ConversationResponseSla {
   /// The sweep's own query: everything still owed, oldest deadline first.
   @@index([status, dueAt])
   @@index([organisationId, storeId, startedAt])
+}
+
+/// A report that arrives without anybody asking for it.
+///
+/// From the meeting: the month-end lead report should land in an inbox on the
+/// first of the month rather than being remembered, filtered and downloaded by
+/// hand. The manual export stays exactly as it is — this is the same workbook,
+/// on a schedule, with the columns the tenant chose.
+model ScheduledReport {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  /// What the tenant calls it. Unique per tenant so two people cannot both
+  /// create "Monthly leads" and then argue about which one is wrong.
+  name String
+
+  /// 'leads' — the only report shape today. A string rather than an enum because
+  /// the next one is a new value, not a migration of every existing row.
+  kind String @default("leads")
+
+  /// Null = every branch. A report scoped to one branch is the common case for a
+  /// store manager; head office wants the chain.
+  storeId String?
+  store   Store?  @relation(fields: [storeId], references: [id])
+
+  /// 'monthly' | 'weekly'. Monthly runs on the 1st for the month just ended;
+  /// weekly runs on Monday for the week just ended. Both are "the period that
+  /// has finished", never a partial one — a report covering three days of a
+  /// month is the kind of number somebody quotes in a meeting by mistake.
+  cadence String @default("monthly")
+
+  /// The hour, at the BRANCH, to send it. The scheduler ticks hourly and asks
+  /// each report what time it is where its store is, so a chain across two
+  /// timezones gets its report at breakfast in each.
+  sendHour Int @default(7)
+
+  /// Which columns, in which order. Empty means every column the export has.
+  /// This is the configurable mapping: a tenant that only wants name, phone and
+  /// follow-up date gets a file with three columns, not sixteen and a hidden
+  /// instruction to ignore thirteen of them.
+  columns String[]
+
+  /// Where it goes. Email addresses; an empty list produces the file and records
+  /// that nobody was configured to receive it, rather than failing silently.
+  recipients String[]
+
+  isActive    Boolean   @default(true)
+  lastRunAt   DateTime?
+  createdById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  runs ScheduledReportRun[]
+
+  @@unique([organisationId, name])
+  @@index([organisationId, isActive])
+}
+
+/// One delivery of one scheduled report.
+///
+/// `@@unique([reportId, periodKey])` is the idempotency guard, and it is the
+/// whole reliability story: an hourly tick that overlaps, a replica, a restart
+/// mid-send, or a manual re-run all collide on the same key and the second one
+/// does nothing. Nobody gets September's leads twice.
+model ScheduledReportRun {
+  id             String          @id @default(cuid())
+  organisationId String
+  organisation   Organisation    @relation(fields: [organisationId], references: [id])
+  reportId       String
+  report         ScheduledReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  /// '2026-08' for a month, '2026-W35' for a week. The period the file COVERS,
+  /// not the day it was sent — which is what makes a re-run a no-op instead of a
+  /// second copy with a different name.
+  periodKey  String
+  periodFrom DateTime
+  periodTo   DateTime
+
+  rows Int @default(0)
+
+  /// 'ok' | 'empty' | 'failed'. `empty` is a real outcome and is reported as
+  /// one: a branch with no leads last month gets a row saying so rather than a
+  /// blank spreadsheet that reads like a broken job.
+  status String  @default("ok")
+  detail String?
+
+  /// 'sent' | 'dry_run' | 'no_recipients' | 'failed'.
+  ///
+  /// `dry_run` is the honest label for "SMTP is not configured here". The file
+  /// was built and nothing was delivered; saying 'sent' would be a lie the
+  /// tenant only discovers by asking why they never got it.
+  emailStatus String  @default("no_recipients")
+  emailDetail String?
+  recipients  String[]
+
+  createdAt DateTime @default(now())
+
+  @@unique([reportId, periodKey])
+  @@index([organisationId, createdAt])
 }

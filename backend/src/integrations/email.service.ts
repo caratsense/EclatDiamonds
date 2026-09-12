@@ -3,6 +3,12 @@ import { ConfigService } from '@nestjs/config';
 import { createTransport } from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 
+export interface EmailAttachment {
+  filename: string;
+  content: Buffer;
+  contentType?: string;
+}
+
 export interface EmailSendResult {
   /** Accepted by the SMTP server. */
   sent: boolean;
@@ -68,10 +74,25 @@ export class EmailService {
     return this.transporter;
   }
 
-  /** Send a plain-text email. No-op (logged) when SMTP is not configured. */
-  async send(to: string, subject: string, body: string): Promise<EmailSendResult> {
+  /**
+   * Send a plain-text email, optionally with files attached. No-op (logged) when
+   * SMTP is not configured.
+   *
+   * `to` may be several addresses, comma-separated — one message with several
+   * recipients rather than several messages, so a reply-all reaches the group
+   * that was sent the report.
+   */
+  async send(
+    to: string,
+    subject: string,
+    body: string,
+    attachments?: EmailAttachment[],
+  ): Promise<EmailSendResult> {
     if (!this.enabled) {
-      this.logger.log(`[dry-run] Email → ${to}: ${subject}`);
+      this.logger.log(
+        `[dry-run] Email → ${to}: ${subject}` +
+          (attachments?.length ? ` (+${attachments.length} attachment)` : ''),
+      );
       return { sent: false, dryRun: true, to };
     }
     try {
@@ -80,6 +101,15 @@ export class EmailService {
         to,
         subject,
         text: body,
+        ...(attachments?.length
+          ? {
+              attachments: attachments.map((a) => ({
+                filename: a.filename,
+                content: a.content,
+                contentType: a.contentType,
+              })),
+            }
+          : {}),
       });
       return { sent: true, dryRun: false, to, messageId: info.messageId };
     } catch (err) {

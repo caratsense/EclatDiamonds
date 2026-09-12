@@ -70,6 +70,20 @@ const WIDTHS: Record<ExportColumn, number> = {
 export interface LeadExportFilters {
   from?: string;
   to?: string;
+  /**
+   * Exact window bounds, when the caller has already resolved them.
+   *
+   * `from`/`to` are calendar dates read as UTC days, which is close enough for a
+   * manager picking a range by hand. A scheduled month-end report is not: in
+   * Asia/Kolkata a lead created at 02:00 on the 1st is 20:30 UTC on the previous
+   * day, so an unadjusted month boundary files it in the wrong month's report —
+   * the one figure the client will reconcile against. The scheduled path
+   * computes the boundary in the BRANCH's timezone and passes the instants here.
+   *
+   * `toInstant` is exclusive; `to` remains inclusive of its whole day.
+   */
+  fromInstant?: Date;
+  toInstant?: Date;
   storeId?: string;
   ownerId?: string;
   source?: string;
@@ -77,6 +91,8 @@ export interface LeadExportFilters {
   outcome?: string;
   tagIds?: string[];
   columns?: ExportColumn[];
+  /** Basename for the workbook, without the extension. Defaults to the date. */
+  filenameStem?: string;
 }
 
 @Injectable()
@@ -100,7 +116,14 @@ export class LeadExportService {
   private where(user: AuthUser, f: LeadExportFilters): Prisma.LeadWhereInput {
     const and: Prisma.LeadWhereInput[] = [];
 
-    if (f.from || f.to) {
+    if (f.fromInstant || f.toInstant) {
+      // Already resolved by the caller, exclusive upper bound. Takes precedence:
+      // a caller that did the timezone work must not have it re-approximated.
+      const createdAt: Prisma.DateTimeFilter = {};
+      if (f.fromInstant) createdAt.gte = f.fromInstant;
+      if (f.toInstant) createdAt.lt = f.toInstant;
+      and.push({ createdAt });
+    } else if (f.from || f.to) {
       const createdAt: Prisma.DateTimeFilter = {};
       if (f.from) createdAt.gte = new Date(`${f.from}T00:00:00.000Z`);
       // Inclusive of the end date: a person asking for 1–30 September means the
@@ -222,7 +245,10 @@ export class LeadExportService {
 
     const buffer = Buffer.from(await wb.xlsx.writeBuffer());
     const stamp = new Date().toISOString().slice(0, 10);
-    const filename = `leads-${stamp}.xlsx`;
+    // A scheduled report names the period it covers; a manual one names the day
+    // it was taken. "leads-2026-08.xlsx" in an inbox answers a question that
+    // "leads-2026-09-01.xlsx" makes somebody open the file to answer.
+    const filename = f.filenameStem ? `${f.filenameStem}.xlsx` : `leads-${stamp}.xlsx`;
 
     /*
      * Exports are audited because the file leaves the system carrying customer
