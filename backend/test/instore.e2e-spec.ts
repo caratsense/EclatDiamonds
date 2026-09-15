@@ -344,9 +344,11 @@ describe('In-store / field application (e2e)', () => {
 
   describe('the lead feed', () => {
     it('reports the uncapped total beside the page', async () => {
+      // The rep's own lead: a salesperson's feed is the leads they own.
+      const rep = await prisma.user.findUniqueOrThrow({ where: { email: A.rep }, select: { id: true } });
       await prisma.lead.create({
         data: {
-          organisationId: A.org, storeId: A.store, partyId: 'p_is1',
+          organisationId: A.org, storeId: A.store, partyId: 'p_is1', ownerId: rep.id,
           customerName: 'Vedant Kothari', interest: 'Bearings', source: 'walk_in',
           stage: 'inquiry', ref: 'LD-9001',
         },

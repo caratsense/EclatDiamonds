@@ -44,11 +44,15 @@ export class CrmMergeController {
 export class CrmSegmentsController {
   constructor(private readonly advanced: AdvancedCrmService) {}
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get()
   list(@CurrentUser() user: AuthUser) {
     return this.advanced.listSegments(user);
   }
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Post('preview')
   @RateLimit('expensive')
   preview(@CurrentUser() user: AuthUser, @Body() body: PreviewLeadSegmentDto) {
@@ -61,6 +65,8 @@ export class CrmSegmentsController {
     return this.advanced.createSegment(user, body.name, body.filters);
   }
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get(':id/results')
   @RateLimit('expensive')
   results(
@@ -83,6 +89,7 @@ export class CrmSegmentsController {
 export class CrmLeadAgeingController {
   constructor(private readonly advanced: AdvancedCrmService) {}
 
+  // Owner-scoped in the service: a salesperson ages only their own leads.
   @Get()
   report(@CurrentUser() user: AuthUser, @Query() query: LeadAgeingQueryDto) {
     return this.advanced.leadAgeing(user, query);
@@ -105,6 +112,8 @@ export class CrmLeadAgeingController {
 export class CrmRoundRobinController {
   constructor(private readonly advanced: AdvancedCrmService) {}
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('policy')
   policy(@CurrentUser() user: AuthUser) {
     return this.advanced.getRoundRobinPolicy(user);

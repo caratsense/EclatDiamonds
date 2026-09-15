@@ -9,6 +9,8 @@ import { Roles } from '../auth/roles.decorator';
 export class PaymentsController {
   constructor(private readonly payments: PaymentsService) {}
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get()
   list(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.payments.list(user, store);

@@ -7,6 +7,7 @@ import { StoreScopeService } from '../common/store-scope.service';
 import { AuditService } from '../common/audit.service';
 import { SequenceService } from '../common/sequence.service';
 import { AuthUser } from '../common/auth-user';
+import { isSalesScoped } from '../common/sales-scope';
 import { ActivityService } from './activity.service';
 import { IdentityService, ContactKind } from './identity.service';
 import { AdSetRulesService, type AdSetRoutingContext } from './adset-rules.service';
@@ -1273,10 +1274,15 @@ export class ConversationsService {
    * routing rules exist precisely so that traffic reaches a branch. Give this
    * back to regional managers once a real region link exists on User.
    */
-  private visibility(user: AuthUser): Prisma.ConversationWhereInput {
+  private visibility(user: AuthUser, recordAuthorised = false): Prisma.ConversationWhereInput {
     const storeScope = this.scope.storeFilter(user);
     // Staff notice threads (the morning digest) are the business talking to its
     // own people. They are in the outbox, never in the customer inbox.
+    // A salesperson's inbox is the threads assigned to them. An unassigned or
+    // colleague's thread reaches them by assignment, not by being at the branch.
+    if (isSalesScoped(user) && !recordAuthorised) {
+      return { audience: 'customer', ...storeScope, assignedUserId: user.id };
+    }
     return user.role === 'head_office'
       ? { audience: 'customer', OR: [storeScope, { storeId: null }] }
       : { audience: 'customer', ...storeScope };
@@ -1530,8 +1536,13 @@ export class ConversationsService {
    * than reimplementing it — a second copy is how the central-queue rule ends up
    * enforced in one place and forgotten in another. Throws 404 when not.
    */
-  async assertCanAccess(user: AuthUser, conversationId: string) {
-    return this.load(user, conversationId);
+  /**
+   * `recordAuthorised`: the caller reached this thread through a record they
+   * own (their quote), so it is held to branch scope only. The thread's content
+   * is not returned to them by that path.
+   */
+  async assertCanAccess(user: AuthUser, conversationId: string, recordAuthorised = false) {
+    return this.load(user, conversationId, recordAuthorised);
   }
 
   /**
@@ -1540,14 +1551,14 @@ export class ConversationsService {
    * id is a 404 exactly once rather than in five places that each had to
    * remember.
    */
-  private async load(user: AuthUser, conversationId: string) {
+  private async load(user: AuthUser, conversationId: string, recordAuthorised = false) {
     const conversation = await this.prisma.conversation.findFirst({
       where: {
         id: conversationId,
         organisationId: user.organisationId,
         // Same central-queue policy as the list. Without this a salesperson
         // could open by id exactly what the list correctly refuses to show.
-        ...this.visibility(user),
+        ...this.visibility(user, recordAuthorised),
       },
       // The same three relations the list resolves. Without them the detail
       // header rendered "Unknown sender" for every thread, including ones with a

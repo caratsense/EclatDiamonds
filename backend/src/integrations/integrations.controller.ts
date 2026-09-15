@@ -82,6 +82,8 @@ export class IntegrationsController {
   }
 
   /** WhatsApp sender detail for the settings screen. Never returns a secret. */
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('whatsapp/sender')
   whatsappSender(@CurrentUser() user: AuthUser) {
     return this.whatsappCredentials.describeFor(user.organisationId);

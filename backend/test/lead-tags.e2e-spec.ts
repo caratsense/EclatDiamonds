@@ -131,16 +131,17 @@ describe('Lead tags (e2e)', () => {
       },
     });
 
-    const mkLead = async (id: string, org: string, storeId: string, ref: string) => {
+    const mkLead = async (id: string, org: string, storeId: string, ref: string, ownerId?: string) => {
       await prisma.lead.create({
         data: {
-          id, organisationId: org, storeId, ref,
+          id, organisationId: org, storeId, ref, ownerId,
           customerName: 'Test Customer', source: 'walk_in', stage: 'inquiry',
         },
       });
       return id;
     };
-    leadMain = await mkLead('lead_tag_main', A.org, A.storeMain, 'LD-TAG-1');
+    // The rep's own lead: a salesperson labels the leads they work, not a colleague's.
+    leadMain = await mkLead('lead_tag_main', A.org, A.storeMain, 'LD-TAG-1', 'u_tag_a_rep');
     leadOther = await mkLead('lead_tag_other', A.org, A.storeOther, 'LD-TAG-2');
     leadB = await mkLead('lead_tag_b', B.org, B.store, 'LD-TAG-3');
 

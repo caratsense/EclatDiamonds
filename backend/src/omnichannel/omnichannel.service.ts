@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 
 import { AuditService, SYSTEM_ACTORS, type SystemActor } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
+import { readableParty } from '../common/sales-scope';
 import { ConversationsService } from '../crm/conversations.service';
 import { ActivityService } from '../crm/activity.service';
 import { IdentityService } from '../crm/identity.service';
@@ -485,6 +486,13 @@ export class OmnichannelService implements OnModuleInit {
       idempotencyKey?: string;
     },
     document?: QueuedDocument,
+    /**
+     * Set when the caller already proved the right to message this number
+     * through a record they may act on (their own quote). A salesperson then
+     * reaches the number's customer even if another record of theirs does not
+     * link them; branch scope still applies.
+     */
+    opts: { recordAuthorised?: boolean } = {},
   ) {
     const org = await this.prisma.organisation.findUnique({
       where: { id: user.organisationId },
@@ -509,7 +517,9 @@ export class OmnichannelService implements OnModuleInit {
     // Store scope is enforced for a KNOWN customer. An unmatched number stays
     // anonymous — it is still bound by consent, window and template rules, and
     // marketing to it is refused outright by the policy.
-    const party = holder?.partyId ? await this.assertPartyAccess(user, holder.partyId) : null;
+    const party = holder?.partyId
+      ? await this.assertPartyAccess(user, holder.partyId, opts.recordAuthorised)
+      : null;
 
     let templateAssetId: string | undefined;
     if (input.templateName) {
@@ -550,7 +560,7 @@ export class OmnichannelService implements OnModuleInit {
       templateAssetId,
       templateComponents: input.templateComponents,
       idempotencyKey: input.idempotencyKey,
-    } as QueueOmnichannelMessageDto, document);
+    } as QueueOmnichannelMessageDto, document, opts.recordAuthorised);
   }
 
   /**
@@ -619,8 +629,9 @@ export class OmnichannelService implements OnModuleInit {
     conversationId: string,
     input: QueueOmnichannelMessageDto,
     document?: QueuedDocument,
+    recordAuthorised = false,
   ) {
-    const conversation = await this.conversations.assertCanAccess(user, conversationId);
+    const conversation = await this.conversations.assertCanAccess(user, conversationId, recordAuthorised);
     if (!input.body?.trim() && !input.templateAssetId) {
       throw new BadRequestException('A message body or approved template is required.');
     }
@@ -1840,9 +1851,9 @@ export class OmnichannelService implements OnModuleInit {
     return contact!;
   }
 
-  private async assertPartyAccess(user: AuthUser, partyId: string) {
+  private async assertPartyAccess(user: AuthUser, partyId: string, recordAuthorised = false) {
     const party = await this.prisma.party.findFirst({
-      where: { id: partyId, organisationId: user.organisationId },
+      where: { id: partyId, ...(recordAuthorised ? { organisationId: user.organisationId } : readableParty(user)) },
       select: { id: true, storeId: true },
     });
     if (!party) throw new NotFoundException('Customer not found');

@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuthUser } from '../common/auth-user';
+import { readableParty } from '../common/sales-scope';
 
 /**
  * Attribution (Phase A10) — where a customer came from, and what that was worth.
@@ -223,7 +224,7 @@ export class AttributionService {
    */
   async forParty(user: AuthUser, partyId: string) {
     const touches = await this.prisma.attributionTouch.findMany({
-      where: { organisationId: user.organisationId, partyId },
+      where: { organisationId: user.organisationId, partyId, party: readableParty(user) },
       orderBy: { occurredAt: 'asc' },
       include: { campaign: { select: { id: true, name: true, type: true } } },
     });

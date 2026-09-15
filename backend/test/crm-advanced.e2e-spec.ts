@@ -132,7 +132,8 @@ describe('Advanced CRM: merge, segments, ageing, round-robin and QR (e2e)', () =
       const otherOwner = await http().post('/crm/segments/preview').set(auth(repToken)).send({
         filters: { ownerIds: [rep2Id] },
       });
-      expect(otherOwner.status).toBe(400);
+      // Segments are management information: a salesperson is refused outright.
+      expect(otherOwner.status).toBe(403);
     });
   });
 

@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuthUser } from '../common/auth-user';
+import { isSalesScoped, readableParty } from '../common/sales-scope';
 
 /**
  * ActivityService — the one place anything is written to the customer timeline
@@ -128,6 +129,11 @@ export class ActivityService {
       partyId,
       ...(opts.types?.length ? { type: { in: opts.types } } : {}),
       OR: [storeScope, { storeId: null }],
+      // A salesperson reads their own part of a customer's story: what they did,
+      // and what happened on their own leads — not a colleague's notes.
+      ...(isSalesScoped(user)
+        ? { party: readableParty(user), AND: [{ OR: [{ actorUserId: user.id }, { lead: { ownerId: user.id } }] }] }
+        : {}),
     };
 
     const rows = await this.prisma.activityEvent.findMany({
@@ -161,6 +167,9 @@ export class ActivityService {
         ...(opts.types?.length ? { type: { in: opts.types } } : {}),
         ...(opts.since ? { occurredAt: { gte: opts.since } } : {}),
         OR: [storeScope, { storeId: null }],
+        ...(isSalesScoped(user)
+          ? { AND: [{ OR: [{ actorUserId: user.id }, { lead: { ownerId: user.id } }] }] }
+          : {}),
       },
       orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
       take,

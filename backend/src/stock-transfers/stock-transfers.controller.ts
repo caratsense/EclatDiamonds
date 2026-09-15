@@ -22,6 +22,8 @@ import { Roles } from '../auth/roles.decorator';
 export class StockTransfersController {
   constructor(private readonly transfers: StockTransfersService) {}
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get()
   list(
     @CurrentUser() user: AuthUser,
@@ -31,6 +33,8 @@ export class StockTransfersController {
     return this.transfers.list(user, store, query ?? {});
   }
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get(':id')
   detail(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.transfers.detail(user, id);

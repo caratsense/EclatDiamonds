@@ -222,24 +222,29 @@ describe('Calling workspace (e2e)', () => {
       // that arrives as ?mine=false used to read as "mine only" and the screen
       // showed the opposite of the toggle. Only an over-the-wire test catches
       // this: calling the service with a real `false` always worked.
-      const all = await request(server())
+      // Asked by head office: a salesperson's queue is their own either way.
+      const hoToken = (await login(A.ho)).body.token;
+      const summary = (mine?: string) =>
+        request(server())
+          .get('/calling/summary')
+          .set({ Authorization: `Bearer ${hoToken}` })
+          .query(mine === undefined ? {} : { mine })
+          .expect(200);
+      const all = await summary('false');
+      const mine = await summary('true');
+      const unfiltered = await summary();
+
+      expect(mine.body.overdue).toBe(0);
+      expect(all.body.overdue).toBe(unfiltered.body.overdue);
+      expect(all.body.overdue).toBeGreaterThan(mine.body.overdue);
+
+      // A salesperson asking for everything still gets their own tasks.
+      const repAll = await request(server())
         .get('/calling/summary')
         .set({ Authorization: `Bearer ${otherToken}` })
         .query({ mine: 'false' })
         .expect(200);
-      const mine = await request(server())
-        .get('/calling/summary')
-        .set({ Authorization: `Bearer ${otherToken}` })
-        .query({ mine: 'true' })
-        .expect(200);
-      const unfiltered = await request(server())
-        .get('/calling/summary')
-        .set({ Authorization: `Bearer ${otherToken}` })
-        .expect(200);
-
-      expect(mine.body.overdue).toBe(1);
-      expect(all.body.overdue).toBe(unfiltered.body.overdue);
-      expect(all.body.overdue).toBeGreaterThan(mine.body.overdue);
+      expect(repAll.body.overdue).toBe(1);
     });
 
     it('refuses a “mine” that is neither true nor false', async () => {
@@ -391,7 +396,7 @@ describe('Calling workspace (e2e)', () => {
       expect(res.body.items.length).toBeGreaterThan(0);
     });
 
-    it('masks the number on a colleague’s task and shows it on your own', async () => {
+    it('shows a salesperson only their own tasks, with the number in full', async () => {
       // Asked as two queries rather than one page: there are 122 overdue tasks
       // and the page caps at 100, so the row this agent owns is not necessarily
       // on the first page. Paging luck must not decide whether the test passes.
@@ -403,15 +408,15 @@ describe('Calling workspace (e2e)', () => {
       expect(own.body.items).toHaveLength(1);
       expect(own.body.items[0].customer.contact).toBe('+919876500011');
 
+      // Without `mine`, a colleague's task is not in the queue at all — masked
+      // or otherwise.
       const all = await request(server())
         .get('/calling/queue')
         .set({ Authorization: `Bearer ${otherToken}` })
         .query({ bucket: 'overdue', limit: 5 })
         .expect(200);
-      const notOwn = all.body.items.find(
-        (i: { title: string }) => i.title !== 'Someone else’s call',
-      );
-      expect(notOwn.customer.contact).toMatch(/^••••0011$/);
+      expect(all.body.items).toHaveLength(1);
+      expect(all.body.items[0].customer.contact).toBe('+919876500011');
     });
 
     it('pages with a cursor', async () => {

@@ -1152,7 +1152,13 @@ export class HrmsService {
     const [grouped, attended] = await Promise.all([
       this.prisma.attendanceRecord.groupBy({
         by: ['staffId', 'staffName', 'storeId'],
-        where: { storeId: { in: storeIds }, isLate: true, date: { gte: start, lt: end } },
+        // A colleague's lateness is a manager's business; front-line staff see their own.
+        where: {
+          storeId: { in: storeIds },
+          isLate: true,
+          date: { gte: start, lt: end },
+          ...(isFrontLine(user.role) ? { staffId: user.id } : {}),
+        },
         _count: { _all: true },
       }),
       // Denominator for punctuality: days the staffer actually attended.

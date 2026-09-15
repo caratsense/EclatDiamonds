@@ -259,6 +259,8 @@ export class CrmConversationsController {
    * panel asks for `all` on purpose: a resolved conflict is the record of a
    * decision a person made, and it stays readable after it is answered.
    */
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('routing-conflicts')
   routingConflicts(
     @CurrentUser() user: AuthUser,

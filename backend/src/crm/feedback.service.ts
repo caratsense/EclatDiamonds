@@ -10,6 +10,7 @@ import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
+import { readableParty } from '../common/sales-scope';
 import { StoreScopeService } from '../common/store-scope.service';
 import { ActivityService } from './activity.service';
 import { updateOrgSettings } from '../config/org-settings';
@@ -241,7 +242,7 @@ export class FeedbackService {
     }
 
     const party = await this.prisma.party.findFirst({
-      where: { id: input.partyId, organisationId: user.organisationId },
+      where: { id: input.partyId, ...readableParty(user) },
       select: { id: true, name: true, storeId: true },
     });
     if (!party) throw new NotFoundException('That customer does not exist.');

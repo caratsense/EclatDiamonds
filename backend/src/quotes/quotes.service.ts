@@ -8,6 +8,7 @@ import {
 import { OrderStatus, Prisma, QuoteKind } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
+import { isSalesScoped } from '../common/sales-scope';
 import { AuditService } from '../common/audit.service';
 import { OmnichannelService } from '../omnichannel/omnichannel.service';
 import { ApprovalGate, approvalResetFor, QuoteApprovalService } from './quote-approval.service';
@@ -291,6 +292,8 @@ export class QuotesService {
         languageCode: dto.languageCode,
       },
       { storageKey: doc.storageKey, filename: doc.filename, mimeType: 'application/pdf' },
+      // `get` above already held the caller to this quote.
+      { recordAuthorised: true },
     );
 
     await this.audit.record(user, {
@@ -486,6 +489,15 @@ export class QuotesService {
     return toView(updated);
   }
 
+  /**
+   * A salesperson's quotes are the ones assigned to them (the rep a quote is
+   * created for). By id, a colleague's reads as absent, so re-pricing, sharing,
+   * the PDF and converting to an order all follow.
+   */
+  private ownQuotes(user: AuthUser): Prisma.QuoteWhereInput {
+    return isSalesScoped(user) ? { assignedRepId: user.id } : {};
+  }
+
   async list(user: AuthUser, headerStore?: string, includeKaccha = false) {
     // "@" kaccha provision: rough no-GST estimates are hidden from the normal
     // list. Only head_office may opt back in (includeKaccha); any non-HO request
@@ -493,6 +505,7 @@ export class QuotesService {
     const showKaccha = includeKaccha && isAllStoreRole(user.role);
     const where: Prisma.QuoteWhereInput = {
       ...this.scope.storeFilter(user, headerStore),
+      ...this.ownQuotes(user),
       ...(showKaccha ? {} : { isKaccha: false }),
     };
     const quotes = await this.prisma.quote.findMany({
@@ -505,7 +518,7 @@ export class QuotesService {
 
   async get(user: AuthUser, id: string) {
     const q = await this.prisma.quote.findFirst({
-      where: { id, ...this.scope.storeFilter(user) },
+      where: { id, ...this.scope.storeFilter(user), ...this.ownQuotes(user) },
       include: { assignedRep: true, lines: true, redeemableStores: true, photos: true },
     });
     if (!q) throw new NotFoundException('Quote not found');
@@ -664,7 +677,7 @@ export class QuotesService {
     }
 
     const q = await this.prisma.quote.findFirst({
-      where: { id, ...this.scope.storeFilter(user) },
+      where: { id, ...this.scope.storeFilter(user), ...this.ownQuotes(user) },
       select: { id: true },
     });
     if (!q) throw new NotFoundException('Quote not found');
@@ -687,7 +700,7 @@ export class QuotesService {
    */
   async convertToOrder(user: AuthUser, id: string, dto: ConvertToOrderDto) {
     const q = await this.prisma.quote.findFirst({
-      where: { id, ...this.scope.storeFilter(user) },
+      where: { id, ...this.scope.storeFilter(user), ...this.ownQuotes(user) },
       include: { lines: true },
     });
     if (!q) throw new NotFoundException('Quote not found');

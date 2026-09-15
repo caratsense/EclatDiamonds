@@ -115,6 +115,8 @@ export class CrmQualificationController {
    * writable by head office only: it decides whether a model touches customer
    * conversations across the whole organisation.
    */
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('ai-settings')
   aiSettings(@CurrentUser() user: AuthUser) {
     return this.aiGate.settings(user.organisationId);
@@ -138,6 +140,8 @@ export class CrmQualificationController {
     return after;
   }
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('adset-rules')
   adSetRulesList(@CurrentUser() user: AuthUser) {
     return this.adSetRules.list(user.organisationId);
@@ -150,6 +154,8 @@ export class CrmQualificationController {
   }
 
   /** Current policy + whether an AI provider is actually configured. */
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('policy')
   policy(@CurrentUser() user: AuthUser) {
     return this.qualification.describe(user);

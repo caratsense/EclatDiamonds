@@ -3,6 +3,7 @@ import { Prisma, ProductCategory } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuthUser } from '../common/auth-user';
+import { isSalesScoped, partyWorkedBy } from '../common/sales-scope';
 import { isAllStoreRole } from '../common/role.util';
 
 /**
@@ -74,8 +75,10 @@ export class SearchService {
     // Party is synced from legacy PartyMst with storeId always set by the sync
     // agent, so it is store-scoped like everything else (no OR-null carve-out —
     // same treatment finance gives the nullable LedgerEntry.storeId).
+    const mine = isSalesScoped(user);
     const partyWhere: Prisma.PartyWhereInput = {
       ...scope,
+      ...(mine ? { AND: [partyWorkedBy(user.id)] } : {}),
       // Archived contacts are out of the working lists, and search is the most
       // common way back into one. The Archived Contacts screen is the only door.
       archivedAt: null,
@@ -99,6 +102,7 @@ export class SearchService {
 
     const saleWhere: Prisma.SaleWhereInput = {
       ...scope,
+      ...(mine ? { salesPersonId: user.id } : {}),
       OR: [
         { docNo: ci },
         { customerName: ci },
@@ -111,12 +115,14 @@ export class SearchService {
     const leadWhere: Prisma.LeadWhereInput = {
       ...scope,
       // A salesperson only owns their leads — don't leak colleagues' via search.
-      ...(user.role === 'salesperson' ? { ownerId: user.id } : {}),
+      ...(mine ? { ownerId: user.id } : {}),
       OR: [{ customerName: ci }, { phone: ci }, { ref: ci }, ...phoneOr('phone')],
     };
 
     const orderWhere: Prisma.CustomOrderWhereInput = {
       ...scope,
+      // An order has no owner of its own; a salesperson sees their customers'.
+      ...(mine ? { party: partyWorkedBy(user.id) } : {}),
       OR: [{ ref: ci }, { customerName: ci }, { item: ci }],
     };
 
@@ -124,6 +130,7 @@ export class SearchService {
     // never leak them through global search either.
     const quoteWhere: Prisma.QuoteWhereInput = {
       ...scope,
+      ...(mine ? { assignedRepId: user.id } : {}),
       ...(isAllStoreRole(user.role) ? {} : { isKaccha: false }),
       OR: [{ ref: ci }, { customerName: ci }, { phone: ci }, ...phoneOr('phone')],
     };

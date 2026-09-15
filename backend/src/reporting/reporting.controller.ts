@@ -81,12 +81,17 @@ export class ReportingController {
   }
 
   /** POST /reporting/daily — capture a store-close Daily Sales Report (Module 10). */
+  // Filing upserts the branch's report for the day, so it is a manager's act:
+  // a salesperson could otherwise overwrite the day's figures.
+  @Roles('store_manager')
   @Post('daily')
   createDaily(@CurrentUser() user: AuthUser, @Body() dto: CreateDailyReportDto) {
     return this.reporting.createDaily(user, dto);
   }
 
   /** GET /reporting/daily?date=YYYY-MM-DD&storeId= — store-scoped DSR list. */
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('daily')
   listDaily(
     @CurrentUser() user: AuthUser,
@@ -97,6 +102,8 @@ export class ReportingController {
   }
 
   /** GET /reporting/daily/:id — a single DSR, gated to the caller's store scope. */
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('daily/:id')
   getDaily(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.reporting.getDaily(user, id);

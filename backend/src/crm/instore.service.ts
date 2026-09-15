@@ -1,8 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
+import { isSalesScoped, partyWorkedBy } from '../common/sales-scope';
 import { StoreScopeService } from '../common/store-scope.service';
 import { ActivityService } from './activity.service';
 import { Customer360Service } from './customer360.service';
@@ -114,6 +115,7 @@ export class InStoreService {
     const where: Prisma.LeadWhereInput = {
       organisationId: user.organisationId,
       ...this.scope.storeFilter(user),
+      ...(isSalesScoped(user) ? { ownerId: user.id } : {}),
       ...(opts.storeId ? { storeId: opts.storeId } : {}),
       ...(opts.stage ? { stage: opts.stage as never } : {}),
       ...(opts.source ? { source: opts.source as never } : {}),
@@ -203,6 +205,9 @@ export class InStoreService {
     const parties = await this.prisma.party.findMany({
       where: {
         organisationId: user.organisationId,
+        // A salesperson finds their own customers; a phone search is not a way
+        // to page through a colleague's book.
+        ...(isSalesScoped(user) ? partyWorkedBy(user.id) : {}),
         // Not offered at the counter. A salesperson picking an archived contact
         // from a lookup is how one quietly returns to active use.
         archivedAt: null,
@@ -396,6 +401,10 @@ export class InStoreService {
       }
     }
 
+    // A salesperson records their own visits, never one under a colleague's name.
+    if (isSalesScoped(user) && input.attendedByUserId && input.attendedByUserId !== user.id) {
+      throw new ForbiddenException('You can only record your own visits.');
+    }
     const attendedBy = input.attendedByUserId ?? user.id;
     let staffName = user.name;
     if (input.attendedByUserId) {
@@ -551,6 +560,7 @@ export class InStoreService {
       organisationId: user.organisationId,
       ...this.scope.storeFilter(user, opts.storeId),
       timeIn: { gte: dayStart, lt: dayEnd },
+      ...(isSalesScoped(user) ? { OR: [{ attendedById: user.id }, { repId: user.id }] } : {}),
     };
 
     const rows = await this.prisma.checkIn.findMany({

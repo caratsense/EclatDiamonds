@@ -83,6 +83,8 @@ export class OmnichannelController {
     return this.templateSync.schedule(user, integrationId);
   }
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('outbox')
   outbox(
     @CurrentUser() user: AuthUser,
@@ -101,6 +103,8 @@ export class OmnichannelController {
     return this.omnichannel.sweepQueued(user.organisationId);
   }
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Post('outbox/:messageId/retry')
   retry(@CurrentUser() user: AuthUser, @Param('messageId') messageId: string) {
     return this.omnichannel.retryMessage(user, messageId);

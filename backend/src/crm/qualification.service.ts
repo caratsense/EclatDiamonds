@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuditService } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
+import { isSalesScoped } from '../common/sales-scope';
 import { ActivityService } from './activity.service';
 import { CrmAiProvider } from './crm-ai.provider';
 import {
@@ -142,7 +143,12 @@ export class QualificationService {
       },
     });
     if (!conversation) throw new NotFoundException('Conversation not found');
-    if (conversation.storeId) this.scope.assertStoreAllowed(user, conversation.storeId);
+    // The same rule as opening the thread: a routed thread in scope (assigned to
+    // them, for a salesperson), an unrouted one only for head office.
+    const reachable = await this.prisma.conversation.count({
+      where: { id: conversation.id, ...this.readableConversation(user) },
+    });
+    if (!reachable) throw new NotFoundException('Conversation not found');
 
     // Only what the CUSTOMER said. Including our own replies would let the
     // business's own sales language ("are you ready to buy?") fire the signals
@@ -183,6 +189,9 @@ export class QualificationService {
     });
     if (!lead) throw new NotFoundException('Lead not found');
     this.scope.assertStoreAllowed(user, lead.storeId);
+    if (isSalesScoped(user) && !(await this.prisma.lead.count({ where: { id: lead.id, ownerId: user.id } }))) {
+      throw new NotFoundException('Lead not found');
+    }
 
     const parts = [lead.interest ?? '', ...lead.notes.map((n) => n.text)].filter(Boolean);
     return this.assess(user, {
@@ -346,6 +355,7 @@ export class QualificationService {
     const row = await this.prisma.leadQualification.findFirst({
       where: {
         organisationId: user.organisationId,
+        ...this.readableAssessment(user),
         ...(target.partyId ? { partyId: target.partyId } : {}),
         ...(target.leadId ? { leadId: target.leadId } : {}),
         ...(target.conversationId ? { conversationId: target.conversationId } : {}),
@@ -362,6 +372,7 @@ export class QualificationService {
     const rows = await this.prisma.leadQualification.findMany({
       where: {
         organisationId: user.organisationId,
+        ...this.readableAssessment(user),
         ...(target.partyId ? { partyId: target.partyId } : {}),
         ...(target.leadId ? { leadId: target.leadId } : {}),
       },
@@ -370,6 +381,35 @@ export class QualificationService {
     });
     const policy = await this.policyFor(user.organisationId);
     return rows.map((r) => this.toView(r, policy, false));
+  }
+
+  /** Threads this caller may read — the inbox rule. */
+  private readableConversation(user: AuthUser): Prisma.ConversationWhereInput {
+    const inStores = { storeId: { in: user.storeIds } };
+    if (isSalesScoped(user)) return { audience: 'customer', ...inStores, assignedUserId: user.id };
+    return user.role === 'head_office'
+      ? { audience: 'customer', OR: [inStores, { storeId: null }] }
+      : { audience: 'customer', ...inStores };
+  }
+
+  /**
+   * Assessments this caller may read: those on a lead or a thread they can
+   * reach. These were read by organisation alone, so any id — or none, which
+   * returned the organisation's latest twenty — showed another branch's
+   * customers and their AI summaries.
+   */
+  private readableAssessment(user: AuthUser): Prisma.LeadQualificationWhereInput {
+    return {
+      OR: [
+        {
+          lead: {
+            storeId: { in: user.storeIds },
+            ...(isSalesScoped(user) ? { ownerId: user.id } : {}),
+          },
+        },
+        { conversation: this.readableConversation(user) },
+      ],
+    };
   }
 
   private toView(

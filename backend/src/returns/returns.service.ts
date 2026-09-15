@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
+import { isSalesScoped } from '../common/sales-scope';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuditService } from '../common/audit.service';
 import { SequenceService } from '../common/sequence.service';
@@ -149,7 +150,11 @@ export class ReturnsService {
   /** GET /returns — returns/exchanges/buybacks, store-scoped. */
   async list(user: AuthUser, headerStore?: string) {
     const rows = await this.prisma.returnRecord.findMany({
-      where: this.scope.storeFilter(user, headerStore),
+      where: {
+        ...this.scope.storeFilter(user, headerStore),
+        // A salesperson's own intake; the branch's returns ledger is a manager's.
+        ...(isSalesScoped(user) ? { raisedById: user.id } : {}),
+      },
       include: { photos: true },
       orderBy: { createdAt: 'desc' },
     });
@@ -170,7 +175,7 @@ export class ReturnsService {
   /** GET /returns/:id — one record with intake photos. */
   async get(user: AuthUser, id: string) {
     const r = await this.prisma.returnRecord.findFirst({
-      where: { id, ...this.scope.storeFilter(user) },
+      where: { id, ...this.scope.storeFilter(user), ...(isSalesScoped(user) ? { raisedById: user.id } : {}) },
       include: { photos: true },
     });
     if (!r) throw new NotFoundException('Return not found');

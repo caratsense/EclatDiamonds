@@ -307,6 +307,8 @@ export class PublicLoyaltyController {
 export class LoyaltyProgrammeController {
   constructor(private readonly api: LoyaltyApiService) {}
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('settings')
   settings(@CurrentUser() user: AuthUser) {
     return this.api.settingsFor(user.organisationId);
@@ -336,6 +338,8 @@ export class LoyaltyProgrammeController {
     return this.api.rotateSigningSecret(user);
   }
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('members')
   members(
     @CurrentUser() user: AuthUser,
@@ -345,6 +349,8 @@ export class LoyaltyProgrammeController {
     return this.api.members(user, { q: q || undefined, storeId: storeId || undefined });
   }
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('members/:phone/ledger')
   async ledger(
     @CurrentUser() user: AuthUser,

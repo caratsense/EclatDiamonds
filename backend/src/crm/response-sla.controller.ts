@@ -77,6 +77,7 @@ export class ResponseSlaQueryDto {
 export class ResponseSlaController {
   constructor(private readonly sla: ResponseSlaService) {}
 
+  // Whether a clock is running is not a secret; the board of breaches is scoped below.
   @Get('settings')
   settings(@CurrentUser() user: AuthUser) {
     return this.sla.settingsFor(user.organisationId);
@@ -89,11 +90,14 @@ export class ResponseSlaController {
     return this.sla.saveSettings(user, dto);
   }
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('summary')
   summary(@CurrentUser() user: AuthUser, @Query() query: ResponseSlaQueryDto) {
     return this.sla.summary(user, { storeId: query.storeId, days: query.days });
   }
 
+  // A salesperson sees the clocks on the threads assigned to them (service).
   @Get('clocks')
   clocks(@CurrentUser() user: AuthUser, @Query() query: ResponseSlaQueryDto) {
     return this.sla.list(user, query);

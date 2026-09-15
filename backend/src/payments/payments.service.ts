@@ -76,9 +76,15 @@ export class PaymentsService {
       throw new BadRequestException('A collection cannot be dated in the future');
     }
 
+    // A customer named on a collection must be this organisation's — the id
+    // arrives from a client and was written unchecked.
+    if (dto.partyId && !(await this.prisma.party.count({ where: { id: dto.partyId, organisationId: user.organisationId } }))) {
+      throw new NotFoundException('Customer not found');
+    }
+
     if (dto.saleId) {
-      const sale = await this.prisma.sale.findUnique({
-        where: { id: dto.saleId },
+      const sale = await this.prisma.sale.findFirst({
+        where: { id: dto.saleId, organisationId: user.organisationId },
         select: { id: true, storeId: true, totalAmount: true, docNo: true, isCancelled: true },
       });
       if (!sale) throw new NotFoundException('Sale not found');

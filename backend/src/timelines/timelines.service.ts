@@ -7,6 +7,7 @@ import {
 import { OrderKind, OrderStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
+import { isSalesScoped, partyWorkedBy } from '../common/sales-scope';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuditService } from '../common/audit.service';
 import { SequenceService } from '../common/sequence.service';
@@ -57,6 +58,8 @@ export class TimelinesService {
   async orders(user: AuthUser, query: OrdersQueryDto = {}, headerStore?: string) {
     const where: Prisma.CustomOrderWhereInput = {
       ...this.scope.storeFilter(user, headerStore),
+      // Orders carry no owner; a salesperson follows their own customers' orders.
+      ...(isSalesScoped(user) ? { party: partyWorkedBy(user.id) } : {}),
     };
 
     const scope = query.scope ?? 'ongoing';
@@ -88,6 +91,7 @@ export class TimelinesService {
     const legacy = await this.prisma.manufacturingOrder.findMany({
       where: {
         ...this.scope.storeFilter(user, headerStore),
+        ...(isSalesScoped(user) ? { party: partyWorkedBy(user.id) } : {}),
         ...(scope === 'ongoing' ? { status: { notIn: [...TERMINAL_STAGES] } } : {}),
       },
       include: { store: true, party: true, _count: { select: { items: true } } },
@@ -131,7 +135,7 @@ export class TimelinesService {
   /** GET /timelines/orders/:id — one custom order plus its full event history. */
   async order(user: AuthUser, id: string) {
     const o = await this.prisma.customOrder.findFirst({
-      where: { id, ...this.scope.storeFilter(user) },
+      where: { id, ...this.scope.storeFilter(user), ...(isSalesScoped(user) ? { party: partyWorkedBy(user.id) } : {}) },
       include: { store: true, events: { orderBy: { occurredAt: 'asc' } } },
     });
     if (!o) throw new NotFoundException('Custom order not found');

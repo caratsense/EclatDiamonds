@@ -43,12 +43,16 @@ export class DiscountsController {
   }
 
   /** Approve — only a role ranked >= the request's requiredRole may act (403 otherwise). */
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Patch(':id/approve')
   approve(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: DecideDiscountDto) {
     return this.discounts.approve(user, id, dto?.reason, dto?.note);
   }
 
   /** Reject — only a role ranked >= the request's requiredRole may act (403 otherwise). */
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Patch(':id/reject')
   reject(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: DecideDiscountDto) {
     return this.discounts.reject(user, id, dto?.reason, dto?.note);

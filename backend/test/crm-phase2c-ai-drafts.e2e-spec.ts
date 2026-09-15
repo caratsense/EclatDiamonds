@@ -242,6 +242,9 @@ describe('CRM Phase 2C — AI drafting, screening and human review (e2e)', () =>
 
     it('is stored as a draft with its full provenance — and nothing is sent', async () => {
       const c = await convo(prisma, O.org, O.store, 'ai');
+      // The rep's thread: a salesperson reviews drafts only in conversations assigned to them.
+      const rep = await prisma.user.findUniqueOrThrow({ where: { email: O.rep }, select: { id: true } });
+      await prisma.conversation.update({ where: { id: c.id }, data: { assignedUserId: rep.id } });
       conversationId = c.id;
       spy.next = spy.good();
       const decision = await gate.consider(ctx(O.org, c.id, 'what are your opening hours'));

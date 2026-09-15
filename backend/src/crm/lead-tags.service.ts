@@ -7,6 +7,7 @@ import {
 import { Prisma } from '@prisma/client';
 
 import { AuthUser } from '../common/auth-user';
+import { isSalesScoped } from '../common/sales-scope';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { ActivityService } from './activity.service';
@@ -293,7 +294,12 @@ export class LeadTagsService {
     leadId: string,
   ): Promise<{ storeId: string; partyId: string | null }> {
     const lead = await this.prisma.lead.findFirst({
-      where: { id: leadId, ...this.scope.orgFilter(user), ...this.scope.storeFilter(user) },
+      where: {
+        id: leadId,
+        ...this.scope.orgFilter(user),
+        ...this.scope.storeFilter(user),
+        ...(isSalesScoped(user) ? { ownerId: user.id } : {}),
+      },
       select: { storeId: true, partyId: true },
     });
     if (!lead) throw new NotFoundException('Lead not found.');

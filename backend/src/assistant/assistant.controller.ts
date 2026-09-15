@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Roles } from '../auth/roles.decorator';
 import { AssistantService } from './assistant.service';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
@@ -11,6 +12,8 @@ import { AskDto } from './dto/assistant.dto';
  * already reach by navigating — a faster route to their own information, never a
  * wider one.
  */
+// Answers from branch-wide data; store manager and above.
+@Roles('store_manager')
 @Controller('assistant')
 export class AssistantController {
   constructor(private readonly assistant: AssistantService) {}

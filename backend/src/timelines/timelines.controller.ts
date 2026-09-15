@@ -80,6 +80,8 @@ export class TimelinesController {
     return this.timelines.setOrderReceipt(user, id, file);
   }
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('replenishment')
   replenishment(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.timelines.replenishment(user, store);

@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { SequenceService } from '../common/sequence.service';
 import { AuthUser } from '../common/auth-user';
+import { isSalesScoped } from '../common/sales-scope';
 import { AttributionService } from '../crm/attribution.service';
 import { ActivityService } from '../crm/activity.service';
 import { IdentityService } from '../crm/identity.service';
@@ -211,6 +212,38 @@ export class LeadsService {
     private readonly followUpReminders: FollowUpRemindersService,
   ) {}
 
+  /**
+   * The leads this caller may change: their branches, and for a salesperson only
+   * the ones they own. Writes used the store alone, so any salesperson could add
+   * notes to, close, or take a colleague's lead.
+   */
+  private ownLead(user: AuthUser): Prisma.LeadWhereInput {
+    return { ...this.scope.storeFilter(user), ...(isSalesScoped(user) ? { ownerId: user.id } : {}) };
+  }
+
+  /**
+   * Who a lead may be given to. A salesperson does not reassign — their leads
+   * move by a manager or the round-robin queue. A manager assigns within the
+   * organisation, to an active person who works the lead's branch.
+   */
+  private async assertAssignableOwner(user: AuthUser, ownerId: string | null | undefined, storeId: string) {
+    if (isSalesScoped(user)) {
+      if (ownerId && ownerId === user.id) return;
+      throw new ForbiddenException('Only a manager can reassign a lead.');
+    }
+    if (!ownerId) return;
+    const owner = await this.prisma.user.findFirst({
+      where: {
+        id: ownerId,
+        organisationId: user.organisationId,
+        isActive: true,
+        OR: [{ role: 'head_office' }, { userStores: { some: { storeId } } }],
+      },
+      select: { id: true },
+    });
+    if (!owner) throw new BadRequestException('That person cannot take leads at this branch.');
+  }
+
   async list(user: AuthUser, q: ListLeadsQuery, headerStore?: string) {
     const where: Prisma.LeadWhereInput = {
       ...this.scope.storeFilter(user, q.storeId ?? headerStore),
@@ -273,6 +306,9 @@ export class LeadsService {
 
   async create(user: AuthUser, dto: CreateLeadDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
+    if (dto.ownerId && dto.ownerId !== user.id) {
+      await this.assertAssignableOwner(user, dto.ownerId, dto.storeId);
+    }
     // Sequence-backed: `count() + 1` handed the same number to two reps
     // creating a lead at once, and re-used a number after any deletion.
     const seq = await this.sequence.next('LD:global');
@@ -379,9 +415,12 @@ export class LeadsService {
 
   async update(user: AuthUser, id: string, dto: UpdateLeadDto) {
     const existing = await this.prisma.lead.findFirst({
-      where: { id, ...this.scope.storeFilter(user) },
+      where: { id, ...this.ownLead(user) },
     });
     if (!existing) throw new NotFoundException('Lead not found');
+    if (dto.ownerId !== undefined && dto.ownerId !== existing.ownerId) {
+      await this.assertAssignableOwner(user, dto.ownerId, existing.storeId);
+    }
 
     const enteredQuotation = dto.stage === 'quotation' && existing.stage !== 'quotation';
     const enteredOrderPlaced = dto.stage === 'order_placed' && existing.stage !== 'order_placed';
@@ -445,7 +484,7 @@ export class LeadsService {
   /** Log an activity (note/call/visit/whatsapp) as a LeadNote and bump lastActivity. */
   async addActivity(user: AuthUser, leadId: string, dto: CreateActivityDto) {
     const lead = await this.prisma.lead.findFirst({
-      where: { id: leadId, ...this.scope.storeFilter(user) },
+      where: { id: leadId, ...this.ownLead(user) },
     });
     if (!lead) throw new NotFoundException('Lead not found');
 
@@ -469,7 +508,7 @@ export class LeadsService {
   /** Add an ad-hoc follow-up task (next seq after the lead's current max). */
   async addFollowUp(user: AuthUser, leadId: string, dto: CreateFollowUpDto) {
     const lead = await this.prisma.lead.findFirst({
-      where: { id: leadId, ...this.scope.storeFilter(user) },
+      where: { id: leadId, ...this.ownLead(user) },
     });
     if (!lead) throw new NotFoundException('Lead not found');
 
@@ -505,7 +544,7 @@ export class LeadsService {
   /** Set won/lost/open outcome; 'lost' requires a reason (Zoho closed-lost). */
   async setOutcome(user: AuthUser, id: string, dto: UpdateOutcomeDto) {
     const existing = await this.prisma.lead.findFirst({
-      where: { id, ...this.scope.storeFilter(user) },
+      where: { id, ...this.ownLead(user) },
     });
     if (!existing) throw new NotFoundException('Lead not found');
 

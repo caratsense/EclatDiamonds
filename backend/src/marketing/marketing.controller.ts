@@ -15,6 +15,8 @@ import {
 export class MarketingController {
   constructor(private readonly marketing: MarketingService) {}
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('campaigns')
   campaigns(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.marketing.campaigns(user, store);
@@ -27,6 +29,8 @@ export class MarketingController {
     return this.marketing.create(user, dto);
   }
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('assets')
   assets(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.marketing.assets(user, store);
@@ -50,6 +54,8 @@ export class MarketingController {
     return this.marketing.updateAssetStatus(user, id, dto);
   }
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('agency-tasks')
   agencyTasks(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.marketing.agencyTasks(user, store);

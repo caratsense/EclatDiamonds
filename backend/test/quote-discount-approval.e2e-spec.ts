@@ -303,6 +303,12 @@ describe('Quote discount approval + quote PDF (e2e)', () => {
   });
 
   it('the PDF on WhatsApp is an outbox row with a private document — and is never reported sent', async () => {
+    // The customer's thread is a colleague's. The rep's own quote still reaches them.
+    const mgr = await prisma.user.findUniqueOrThrow({ where: { email: A.mgr }, select: { id: true } });
+    await prisma.conversation.updateMany({
+      where: { organisationId: A.org, externalThreadId: CUSTOMER },
+      data: { assignedUserId: mgr.id },
+    });
     const res = await request(server()).post(`/quotes/${held.id}/send-pdf`).set(as('rep')).send({});
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ queued: true, revision: 1, status: 'queued', dryRun: true });
@@ -313,6 +319,9 @@ describe('Quote discount approval + quote PDF (e2e)', () => {
       .omnichannel.document;
     expect(document.filename).toBe(`${held.ref}-r1.pdf`);
     expect(document.storageKey.startsWith(`org/${A.org}/quote-pdfs/`)).toBe(true);
+    // Sending did not hand the rep the colleague's thread, or open it to them.
+    await request(server()).get(`/crm/conversations/${message.conversationId}`).set(as('rep')).expect(404);
+    expect((await prisma.conversation.findUniqueOrThrow({ where: { id: message.conversationId } })).assignedUserId).toBe(mgr.id);
     expect(JSON.stringify(message.payload)).not.toMatch(/https?:\/\//);
 
     const job = await prisma.jobTask.findFirst({
@@ -416,6 +425,10 @@ describe('Quote discount approval + quote PDF (e2e)', () => {
 
   it('a manager discount within their own cap needs nothing, even when a salesperson sends it', async () => {
     const q = await createQuote('mgr', 8);
+    // Priced by the manager, handed to the rep to send: a salesperson acts only
+    // on quotes assigned to them, and the cap is still the pricer's.
+    const rep = await prisma.user.findUniqueOrThrow({ where: { email: A.rep }, select: { id: true } });
+    await prisma.quote.update({ where: { id: q.id }, data: { assignedRepId: rep.id } });
     expect((await gate('rep', q.id)).required).toBe(false);
     await request(server()).post(`/quotes/${q.id}/share`).set(as('rep')).expect(201);
   });

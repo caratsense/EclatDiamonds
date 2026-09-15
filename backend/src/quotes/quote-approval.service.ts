@@ -8,6 +8,7 @@ import {
 import { Prisma, Role } from '@prisma/client';
 
 import { AuthUser } from '../common/auth-user';
+import { isSalesScoped } from '../common/sales-scope';
 import { AuditService } from '../common/audit.service';
 import { assertNotSelfApproval } from '../common/approval.util';
 import { ROLE_LABELS, ROLE_RANK } from '../common/role.util';
@@ -473,6 +474,7 @@ export class QuoteApprovalService {
         id: quoteId,
         ...this.scope.orgFilter(user),
         ...this.scope.storeFilter(user),
+        ...(isSalesScoped(user) ? { assignedRepId: user.id } : {}),
       },
       select: QUOTE_SELECT,
     });

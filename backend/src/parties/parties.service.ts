@@ -3,6 +3,7 @@ import { Prisma, PartyType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuthUser } from '../common/auth-user';
+import { isSalesScoped, partyWorkedBy } from '../common/sales-scope';
 import { PageRequest, Paginated } from '../common/pagination';
 import { isValidEmail, normalizeIndianMobile } from '../common/contact.util';
 import { CreatePartyDto } from './dto/party.dto';
@@ -128,6 +129,9 @@ export class PartiesService {
   ): Promise<Paginated<PartyRow>> {
     const where: Prisma.PartyWhereInput = {
       ...this.scope.storeFilter(user, headerStore),
+      // A salesperson's directory is their own customers — never the branch's
+      // phone list.
+      ...(isSalesScoped(user) ? { AND: [partyWorkedBy(user.id)] } : {}),
       /*
        * Archived contacts are not in the directory.
        *

@@ -8,6 +8,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
+import { isSalesScoped, readableParty } from '../common/sales-scope';
 import { StoreScopeService } from '../common/store-scope.service';
 import { ROLE_RANK } from '../common/role.util';
 import {
@@ -286,6 +287,8 @@ export class DashboardService {
         organisationId: user.organisationId,
         OR: [this.scope.storeFilter(user, headerStore), { storeId: null }],
         ...(filter.mine ? { assigneeId: user.id } : {}),
+        // A salesperson's tasks are the ones on them or raised by them.
+        ...(isSalesScoped(user) ? { AND: [{ OR: [{ assigneeId: user.id }, { createdById: user.id }] }] } : {}),
         ...(filter.status ? { status: filter.status } : {}),
         ...(filter.priority ? { priority: filter.priority } : {}),
         ...(filter.partyId ? { partyId: filter.partyId } : {}),
@@ -320,6 +323,11 @@ export class DashboardService {
     // if that user is later deactivated or renamed.
     let assigneeId: string | null = null;
     let assigneeName = assignee;
+    // A salesperson puts tasks on themselves; handing work to a colleague is a
+    // hand-off or a manager's assignment.
+    if (isSalesScoped(user) && dto.assigneeId && dto.assigneeId !== user.id) {
+      throw new ForbiddenException('You can only create tasks for yourself.');
+    }
     if (dto.assigneeId) {
       const target = await this.prisma.user.findFirst({
         where: { id: dto.assigneeId, organisationId: user.organisationId, isActive: true },
@@ -337,6 +345,14 @@ export class DashboardService {
     // tenant's customer would expose that customer's name on this screen.
     if (dto.partyId) await this.assertOwnedRecord('party', dto.partyId, user.organisationId);
     if (dto.leadId) await this.assertOwnedRecord('lead', dto.leadId, user.organisationId);
+    if (isSalesScoped(user)) {
+      if (dto.partyId && !(await this.prisma.party.count({ where: { id: dto.partyId, ...readableParty(user) } }))) {
+        throw new NotFoundException('Customer not found');
+      }
+      if (dto.leadId && !(await this.prisma.lead.count({ where: { id: dto.leadId, ownerId: user.id } }))) {
+        throw new NotFoundException('Lead not found');
+      }
+    }
 
     const task = await this.prisma.task.create({
       data: {
@@ -375,6 +391,9 @@ export class DashboardService {
       this.scope.assertStoreAllowed(user, task.storeId);
     } else if (ROLE_RANK[user.role] < ROLE_RANK.store_manager) {
       throw new ForbiddenException('Only store managers may change global tasks');
+    }
+    if (isSalesScoped(user) && task.assigneeId !== user.id && task.createdById !== user.id) {
+      throw new NotFoundException('Task not found');
     }
 
     const updated = await this.prisma.task.update({
@@ -456,19 +475,30 @@ export class DashboardService {
     const tomorrowStart = dayStartInTz(tz, -1);
     const today = { gte: todayStart, lt: tomorrowStart };
 
+    const mine = isSalesScoped(user);
     const [followUps, tasks, checkIns] = await Promise.all([
       this.prisma.leadFollowUp.findMany({
-        where: { ...filter, done: false, dueDate: today },
+        where: {
+          ...filter,
+          done: false,
+          dueDate: today,
+          ...(mine ? { OR: [{ assigneeId: user.id }, { lead: { ownerId: user.id } }] } : {}),
+        },
         include: { lead: { select: { id: true, customerName: true } } },
         take: 20,
       }),
       this.prisma.task.findMany({
-        where: { ...filter, status: { not: 'done' }, dueDate: today },
+        where: { ...filter, status: { not: 'done' }, dueDate: today, ...(mine ? { assigneeId: user.id } : {}) },
         orderBy: { createdAt: 'desc' },
         take: 20,
       }),
       this.prisma.checkIn.findMany({
-        where: { ...filter, timeIn: today, outcome: { in: ['in_store', 'follow_up'] } },
+        where: {
+          ...filter,
+          timeIn: today,
+          outcome: { in: ['in_store', 'follow_up'] },
+          ...(mine ? { OR: [{ repId: user.id }, { attendedById: user.id }] } : {}),
+        },
         orderBy: { timeIn: 'asc' },
         take: 20,
       }),
@@ -521,7 +551,10 @@ export class DashboardService {
   /** GET /dashboard/handoffs — cross-department hand-offs in scope, newest first. */
   async listHandoffs(user: AuthUser, headerStore?: string) {
     const rows = await this.prisma.handoff.findMany({
-      where: this.scope.storeFilter(user, headerStore),
+      where: {
+        ...this.scope.storeFilter(user, headerStore),
+        ...(isSalesScoped(user) ? { OR: [{ createdById: user.id }, { assignedToId: user.id }] } : {}),
+      },
       orderBy: { createdAt: 'desc' },
       take: 100,
     });
@@ -568,8 +601,14 @@ export class DashboardService {
     const assignedToId = dto.assignedToId ?? null;
     let assignedTo = dto.assignedTo?.trim() || null;
     if (assignedToId) {
-      const assignee = await this.prisma.user.findUnique({
-        where: { id: assignedToId },
+      // Organisation-bound and at this branch. A bare id lookup here let a
+      // hand-off — and its notification — go to another tenant's user.
+      const assignee = await this.prisma.user.findFirst({
+        where: {
+          id: assignedToId,
+          organisationId: user.organisationId,
+          OR: [{ role: 'head_office' }, { userStores: { some: { storeId } } }],
+        },
         select: { name: true, isActive: true },
       });
       if (!assignee || !assignee.isActive) throw new BadRequestException('Assignee not found');
@@ -634,6 +673,9 @@ export class DashboardService {
     }
     if (dto.status === 'closed' && !isCreator && !isManager) {
       throw new ForbiddenException('Only the person who raised it can approve it');
+    }
+    if (dto.status === 'open' && !isCreator && !isAssignee && !isManager) {
+      throw new ForbiddenException('Only the people on this hand-off can reopen it');
     }
 
     const updated = await this.prisma.handoff.update({

@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Roles } from '../auth/roles.decorator';
 import { DashboardService } from './dashboard.service';
 import {
   CreateHandoffDto,
@@ -13,11 +14,15 @@ import { StoreHeader } from '../common/store-header.decorator';
 export class DashboardController {
   constructor(private readonly dashboard: DashboardService) {}
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('kpis')
   kpis(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.dashboard.kpis(user, store);
   }
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('charts')
   charts(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.dashboard.charts(user, store);
@@ -70,6 +75,8 @@ export class DashboardController {
   }
 
   /** Active staff in scope, for the hand-off "Assign to" picker. */
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('assignable-users')
   assignableUsers(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.dashboard.assignableUsers(user, store);

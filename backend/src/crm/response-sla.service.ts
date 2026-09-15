@@ -3,6 +3,7 @@ import { Prisma, Role } from '@prisma/client';
 
 import { AuditService } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
+import { isSalesScoped } from '../common/sales-scope';
 import { PrismaService } from '../prisma/prisma.service';
 import { TelephonyOutboundAdapter } from '../integrations/adapters/telephony-outbound.adapter';
 import { StoreScopeService } from '../common/store-scope.service';
@@ -755,6 +756,8 @@ export class ResponseSlaService {
         storeId: { in: storeIds },
         startedAt: { gte: new Date(Date.now() - days * 24 * 60 * 60_000) },
         ...(opts.status ? { status: opts.status } : {}),
+        // A salesperson's clocks are the ones on their own threads.
+        ...(isSalesScoped(user) ? { conversation: { assignedUserId: user.id } } : {}),
       },
       orderBy: [{ startedAt: 'desc' }],
       take: Math.min(Math.max(opts.limit ?? 50, 1), 200),

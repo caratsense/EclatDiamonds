@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 
 import { AuthUser } from '../../common/auth-user';
+import { isSalesScoped } from '../../common/sales-scope';
 import { AuditService } from '../../common/audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityService } from '../activity.service';
@@ -183,9 +184,12 @@ export class AiDraftsService {
 
   /** Only conversations this caller may open. Mirrors the inbox rule exactly. */
   private visibleConversations(user: AuthUser): Prisma.ConversationWhereInput {
+    if (isSalesScoped(user)) {
+      return { audience: 'customer', storeId: { in: user.storeIds }, assignedUserId: user.id };
+    }
     return user.role === 'head_office'
-      ? { OR: [{ storeId: { in: user.storeIds } }, { storeId: null }] }
-      : { storeId: { in: user.storeIds } };
+      ? { audience: 'customer', OR: [{ storeId: { in: user.storeIds } }, { storeId: null }] }
+      : { audience: 'customer', storeId: { in: user.storeIds } };
   }
 
   private async loadPending(user: AuthUser, draftId: string) {

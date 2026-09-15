@@ -217,9 +217,13 @@ describe('The floor app (e2e)', () => {
         })
         .expect(201);
 
-      const res = await request(server()).get('/instore/visits').set(rep()).expect(200);
+      // Read as head office: the second visit is head office's, and a
+      // salesperson's day lists only the visits they attended.
+      const res = await request(server()).get('/instore/visits').set(ho()).expect(200);
       const first = res.body.items.find((v: { id: string }) => v.id === visitId);
       const other = res.body.items.find((v: { id: string }) => v.id === second.body.checkInId);
+      const repView = await request(server()).get('/instore/visits').set(rep()).expect(200);
+      expect(repView.body.items.map((v: { id: string }) => v.id)).not.toContain(second.body.checkInId);
 
       expect(first.enquiries).toHaveLength(2);
       expect(other.enquiries.map((e: { name: string }) => e.name)).toEqual([

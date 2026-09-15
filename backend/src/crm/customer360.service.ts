@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
+import { isSalesScoped, readableParty } from '../common/sales-scope';
 import { AuthUser } from '../common/auth-user';
 import { ActivityService } from './activity.service';
 import { IdentityService } from './identity.service';
@@ -44,9 +45,21 @@ export class Customer360Service {
       return { found: false as const, reason: result.reason ?? 'No customer matched.' };
     }
     const party = await this.prisma.party.findFirst({
-      where: { id: result.partyId, organisationId: user.organisationId },
+      where: { id: result.partyId, ...readableParty(user) },
       select: { id: true, name: true, phone: true, email: true, city: true, createdAt: true },
     });
+    /*
+     * A number that belongs to a colleague's customer is not a way to read that
+     * customer. The salesperson learns the number is known — enough not to open
+     * a duplicate record — and nothing else: no name, no contact, no history.
+     */
+    if (!party) {
+      return {
+        found: true as const,
+        restricted: true as const,
+        reason: 'This customer is looked after by a colleague. Ask your manager to assign them to you.',
+      };
+    }
     return { found: true as const, customer: party };
   }
 
@@ -58,9 +71,13 @@ export class Customer360Service {
   async profile(user: AuthUser, partyId: string) {
     const organisationId = user.organisationId;
     const storeScope = this.scope.storeFilter(user);
+    // A salesperson sees a customer they work with, and only their own dealings
+    // with them — never a colleague's leads, visits, quotes or bills, nor the
+    // customer's payment ledger.
+    const mine = isSalesScoped(user);
 
     const party = await this.prisma.party.findFirst({
-      where: { id: partyId, organisationId },
+      where: { id: partyId, ...readableParty(user) },
       select: {
         id: true,
         name: true,
@@ -103,7 +120,7 @@ export class Customer360Service {
     ] = await Promise.all([
       this.identity.contactPointsFor(user, partyId),
       this.prisma.lead.findMany({
-        where: { organisationId, partyId, ...storeScope },
+        where: { organisationId, partyId, ...storeScope, ...(mine ? { ownerId: user.id } : {}) },
         orderBy: { createdAt: 'desc' },
         take: 25,
         select: {
@@ -114,7 +131,15 @@ export class Customer360Service {
         },
       }),
       this.prisma.conversation.findMany({
-        where: { organisationId, partyId },
+        // Scoped like the inbox. This read the organisation's every thread with
+        // the customer, other branches and the head-office queue included.
+        where: {
+          organisationId,
+          partyId,
+          audience: 'customer',
+          AND: [user.allStores ? { OR: [storeScope, { storeId: null }] } : storeScope],
+          ...(mine ? { assignedUserId: user.id } : {}),
+        },
         orderBy: { lastMessageAt: 'desc' },
         take: 20,
         select: {
@@ -124,7 +149,12 @@ export class Customer360Service {
         },
       }),
       this.prisma.checkIn.findMany({
-        where: { organisationId, partyId, ...storeScope },
+        where: {
+          organisationId,
+          partyId,
+          ...storeScope,
+          ...(mine ? { OR: [{ repId: user.id }, { attendedById: user.id }] } : {}),
+        },
         orderBy: { createdAt: 'desc' },
         take: 25,
         select: {
@@ -143,13 +173,13 @@ export class Customer360Service {
         },
       }),
       this.prisma.quote.findMany({
-        where: { organisationId, partyId, ...storeScope },
+        where: { organisationId, partyId, ...storeScope, ...(mine ? { assignedRepId: user.id } : {}) },
         orderBy: { createdAt: 'desc' },
         take: 25,
         select: { id: true, ref: true, status: true, kind: true, createdAt: true },
       }),
       this.prisma.sale.findMany({
-        where: { organisationId, partyId, ...storeScope },
+        where: { organisationId, partyId, ...storeScope, ...(mine ? { salesPersonId: user.id } : {}) },
         orderBy: { docDate: 'desc' },
         take: 50,
         select: {
@@ -158,7 +188,8 @@ export class Customer360Service {
         },
       }),
       this.prisma.payment.findMany({
-        where: { organisationId, partyId, ...storeScope },
+        // The payment ledger is a manager's; a salesperson gets none of it.
+        where: mine ? { id: '__none__' } : { organisationId, partyId, ...storeScope },
         orderBy: { paidAt: 'desc' },
         take: 50,
         select: {
@@ -170,7 +201,7 @@ export class Customer360Service {
       // never read back here, so a customer's own return history was invisible
       // on their profile — the one screen a counter asks about it from.
       this.prisma.returnRecord.findMany({
-        where: { organisationId, partyId, ...storeScope },
+        where: { organisationId, partyId, ...storeScope, ...(mine ? { raisedById: user.id } : {}) },
         orderBy: { createdAt: 'desc' },
         take: 25,
         select: {
@@ -186,7 +217,11 @@ export class Customer360Service {
         // `storeScope` rather than a hand-rolled storeIds check: it is the one
         // definition of "stores this user may read", and it stays bounded to the
         // organisation even for head office.
-        where: { done: false, lead: { organisationId, partyId }, ...storeScope },
+        where: {
+          done: false,
+          lead: { organisationId, partyId, ...(mine ? { ownerId: user.id } : {}) },
+          ...storeScope,
+        },
         orderBy: { dueDate: 'asc' },
         take: 25,
         select: {
@@ -296,6 +331,21 @@ export class Customer360Service {
     // explicitly rather than trusting the id, since these arrive from a client.
     if (input.partyId) await this.assertOwned('party', input.partyId, organisationId);
     if (input.leadId) await this.assertOwned('lead', input.leadId, organisationId);
+    // And, for a salesperson, it must be their own customer and their own lead.
+    if (isSalesScoped(user)) {
+      if (
+        input.partyId &&
+        !(await this.prisma.party.count({ where: { id: input.partyId, ...readableParty(user) } }))
+      ) {
+        throw new NotFoundException('Customer not found');
+      }
+      if (
+        input.leadId &&
+        !(await this.prisma.lead.count({ where: { id: input.leadId, organisationId, ownerId: user.id } }))
+      ) {
+        throw new NotFoundException('Lead not found');
+      }
+    }
     if (input.productId) await this.assertOwned('product', input.productId, organisationId);
 
     // Phase A4 — a scanned or typed SKU becomes a real catalogue link when one

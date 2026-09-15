@@ -25,11 +25,15 @@ import {
 export class FeedbackController {
   constructor(private readonly feedback: FeedbackService) {}
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('summary')
   summary(@CurrentUser() user: AuthUser, @Query() query: FeedbackSummaryDto) {
     return this.feedback.summary(user, query);
   }
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('responses')
   list(@CurrentUser() user: AuthUser, @Query() query: ListFeedbackDto) {
     return this.feedback.list(user, query);

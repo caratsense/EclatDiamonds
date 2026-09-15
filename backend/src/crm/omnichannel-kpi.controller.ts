@@ -1,4 +1,5 @@
 import { Controller, Get, Query } from '@nestjs/common';
+import { Roles } from '../auth/roles.decorator';
 import { Type } from 'class-transformer';
 import { IsInt, IsOptional, IsString, Length, Max, Min } from 'class-validator';
 
@@ -27,6 +28,8 @@ export class OmnichannelSummaryDto {
 export class OmnichannelKpiController {
   constructor(private readonly kpi: OmnichannelKpiService) {}
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('summary')
   summary(@CurrentUser() user: AuthUser, @Query() query: OmnichannelSummaryDto) {
     return this.kpi.summary(user, query);

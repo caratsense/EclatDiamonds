@@ -58,6 +58,8 @@ export class LoyaltyController {
     return this.loyalty.deletePlan(user, id);
   }
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('members')
   members(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.loyalty.members(user, store);
@@ -70,6 +72,8 @@ export class LoyaltyController {
 
   // --- Module 17: "Earn with Éclat" referral / commission program ---
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('referral-codes')
   referralCodes(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.loyalty.referralCodes(user, store);
@@ -85,6 +89,8 @@ export class LoyaltyController {
     return this.loyalty.createReferralCode(user, dto);
   }
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('referral-codes/:id/wallet')
   wallet(
     @CurrentUser() user: AuthUser,
@@ -105,6 +111,8 @@ export class LoyaltyController {
     return this.loyalty.payout(user, id, dto);
   }
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('referrals')
   referrals(
     @CurrentUser() user: AuthUser,

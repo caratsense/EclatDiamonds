@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
+import { isSalesScoped, readableParty } from '../common/sales-scope';
 import { normalizeIndianMobile, isValidEmail } from '../common/contact.util';
 
 /**
@@ -370,7 +371,7 @@ export class IdentityService {
   ) {
     const organisationId = user.organisationId;
     const party = await this.prisma.party.findFirst({
-      where: { id: partyId, organisationId },
+      where: { id: partyId, ...readableParty(user) },
       select: { id: true, name: true },
     });
     if (!party) throw new NotFoundException('Customer not found');
@@ -404,7 +405,9 @@ export class IdentityService {
       return {
         status: 'conflict' as const,
         contactPointId: null,
-        heldByPartyId: holder.partyId,
+        // Which customer holds it is not a salesperson's to learn; the merge
+        // review carries it to someone who may.
+        heldByPartyId: isSalesScoped(user) ? null : holder.partyId,
         mergeCandidateId: candidate.id,
         message:
           `That ${input.kind} already belongs to another customer. Nothing was changed — ` +
@@ -443,7 +446,7 @@ export class IdentityService {
 
   async unlink(user: AuthUser, contactPointId: string) {
     const cp = await this.prisma.contactPoint.findFirst({
-      where: { id: contactPointId, organisationId: user.organisationId },
+      where: { id: contactPointId, organisationId: user.organisationId, party: readableParty(user) },
       select: { id: true, partyId: true, kind: true },
     });
     if (!cp) throw new NotFoundException('Contact detail not found');
@@ -459,7 +462,7 @@ export class IdentityService {
 
   async contactPointsFor(user: AuthUser, partyId: string) {
     return this.prisma.contactPoint.findMany({
-      where: { organisationId: user.organisationId, partyId },
+      where: { organisationId: user.organisationId, partyId, party: readableParty(user) },
       orderBy: [{ isPrimary: 'desc' }, { kind: 'asc' }, { createdAt: 'asc' }],
     });
   }

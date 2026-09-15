@@ -142,7 +142,11 @@ export class QuotesController {
    * can show the state rather than discovering it through an error.
    */
   @Get(':id/approval')
-  approvalState(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+  async approvalState(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    // Reached through the same lookup as the quote itself: store, kaccha and
+    // (for a salesperson) assignment. This read any quote in the organisation
+    // by id, total and discount reasons included.
+    await this.quotes.get(user, id);
     return this.approval.gate(user.organisationId, id);
   }
 

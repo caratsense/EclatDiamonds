@@ -124,6 +124,8 @@ export class HrmsController {
    * "Attendance Report" + "GPS Report"). Self by default; a store_manager+ may
    * pass ?staffId for anyone in their store scope.
    */
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
   @Get('attendance/report')
   attendanceReport(
     @CurrentUser() user: AuthUser,

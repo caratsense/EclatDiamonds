@@ -4,6 +4,7 @@ import { Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
+import { isSalesScoped, readableParty } from '../common/sales-scope';
 import { StoreScopeService } from '../common/store-scope.service';
 import { ActivityService } from './activity.service';
 import { businessDate } from '../common/tz.util';
@@ -318,14 +319,23 @@ export class CallingService {
       }),
       task.leadId
         ? this.prisma.leadNote.findMany({
-            where: { leadId: task.leadId },
+            where: { leadId: task.leadId, lead: { organisationId: user.organisationId } },
             orderBy: { createdAt: 'desc' },
             take: 20,
           })
         : Promise.resolve([]),
       task.partyId
         ? this.prisma.activityEvent.findMany({
-            where: { organisationId: user.organisationId, partyId: task.partyId },
+            // The caller's branches, and for a salesperson their own part of it.
+            // This read every event about the customer across the organisation.
+            where: {
+              organisationId: user.organisationId,
+              partyId: task.partyId,
+              OR: [{ storeId: { in: user.storeIds } }, { storeId: null }],
+              ...(isSalesScoped(user)
+                ? { AND: [{ OR: [{ actorUserId: user.id }, { lead: { ownerId: user.id } }] }] }
+                : {}),
+            },
             orderBy: { occurredAt: 'desc' },
             take: 30,
             select: {
@@ -388,14 +398,18 @@ export class CallingService {
           city: true, createdAt: true, isBlacklisted: true,
         },
       }),
+      // The caller's branches, like every other figure they can see. These
+      // totals were organisation-wide.
       this.prisma.sale.aggregate({
-        where: { organisationId: user.organisationId, partyId },
+        where: { organisationId: user.organisationId, partyId, storeId: { in: user.storeIds } },
         _count: { _all: true },
         _sum: { totalAmount: true },
       }),
-      this.prisma.checkIn.count({ where: { organisationId: user.organisationId, partyId } }),
+      this.prisma.checkIn.count({
+        where: { organisationId: user.organisationId, partyId, storeId: { in: user.storeIds } },
+      }),
       this.prisma.checkIn.findFirst({
-        where: { organisationId: user.organisationId, partyId },
+        where: { organisationId: user.organisationId, partyId, storeId: { in: user.storeIds } },
         orderBy: { timeIn: 'desc' },
         select: {
           timeIn: true,
@@ -547,11 +561,19 @@ export class CallingService {
   /** Call history for one customer, across every task. */
   async callsForParty(user: AuthUser, partyId: string) {
     const owned = await this.prisma.party.count({
-      where: { id: partyId, organisationId: user.organisationId },
+      where: { id: partyId, ...readableParty(user) },
     });
     if (!owned) throw new NotFoundException('That customer does not exist.');
     const rows = await this.prisma.callLog.findMany({
-      where: { organisationId: user.organisationId, partyId },
+      where: {
+        organisationId: user.organisationId,
+        partyId,
+        // A salesperson's own calls and the calls on their tasks; a manager's
+        // branches. This was every call to the customer in the organisation.
+        ...(isSalesScoped(user)
+          ? { OR: [{ agentUserId: user.id }, { task: { assigneeId: user.id } }] }
+          : { OR: [{ storeId: { in: user.storeIds } }, { storeId: null }] }),
+      },
       orderBy: { startedAt: 'desc' },
       take: 50,
     });
@@ -603,6 +625,11 @@ export class CallingService {
     });
     if (!task) throw new NotFoundException('That task does not exist.');
     if (task.storeId) this.scope.assertStoreAllowed(user, task.storeId);
+    // A salesperson works the tasks put on them. By id, a colleague's reads as
+    // absent, exactly as it would in their queue.
+    if (isSalesScoped(user) && task.assigneeId !== user.id) {
+      throw new NotFoundException('That task does not exist.');
+    }
     return task;
   }
 
@@ -631,7 +658,8 @@ export class CallingService {
        * cross a tenant.
        */
       OR: [this.scope.storeFilter(user, opts.storeId), { storeId: null }],
-      ...(opts.mine ? { assigneeId: user.id } : {}),
+      // A salesperson's queue is always their own, whatever the request says.
+      ...(opts.mine || isSalesScoped(user) ? { assigneeId: user.id } : {}),
     };
   }
 }

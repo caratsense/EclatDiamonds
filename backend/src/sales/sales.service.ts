@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { PaymentMode, Prisma, SaleDocType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
+import { isSalesScoped } from '../common/sales-scope';
 import { AttributionService } from '../crm/attribution.service';
 import { AuditService } from '../common/audit.service';
 import { ActivityService } from '../crm/activity.service';
@@ -171,6 +172,9 @@ export class SalesService {
           organisationId: user.organisationId,
           storeId: dto.storeId,
           partyId,
+          // The person who rang the bill up: their own sales list and the
+          // leaderboard both read it.
+          salesPersonId: user.isMachine ? null : user.id,
           docNo: dto.invoiceNo,
           docType: SaleDocType.sale,
           docDate: new Date(),
@@ -349,6 +353,8 @@ export class SalesService {
     const scope = query.scope ?? 'manual';
     const where: Prisma.SaleWhereInput = {
       ...this.scope.storeFilter(user, headerStore),
+      // A salesperson's own bills; the branch's sales are a manager's.
+      ...(isSalesScoped(user) ? { salesPersonId: user.id } : {}),
     };
     if (scope === 'manual') where.isManual = true;
 
@@ -367,7 +373,7 @@ export class SalesService {
   /** GET /sales/:id — one sale plus its payments. Store-scoped. */
   async get(user: AuthUser, id: string) {
     const sale = await this.prisma.sale.findFirst({
-      where: { id, ...this.scope.storeFilter(user) },
+      where: { id, ...this.scope.storeFilter(user), ...(isSalesScoped(user) ? { salesPersonId: user.id } : {}) },
       include: {
         party: true,
         store: true,
