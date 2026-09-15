@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Hourglass, ScanLine, Tag, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, Hourglass, ScanLine, Tag, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -23,12 +23,19 @@ import {
 } from "@/components/ui/table";
 import {
   STOCK_CATEGORIES,
+  STOCK_CLASS_OPTIONS,
+  SUGGESTION_LABEL,
+  useClassifyPiece,
   useClearDeadStockRule,
   useDeadStock,
   useDeadStockPolicy,
+  useDownloadDeadStockExport,
   useIssueMissingVins,
   useSetDeadStockRule,
   useVinLookup,
+  type DeadStockState,
+  type DeadStockView,
+  type StockClass,
 } from "@/lib/queries/dead-stock";
 import { formatINR } from "@/lib/format";
 import { apiErrorMessage } from "@/lib/utils";
@@ -51,20 +58,43 @@ export default function DeadStockPage() {
 
   const [storeId, setStoreId] = useState("");
   const [category, setCategory] = useState("");
-  const [includeWarning, setIncludeWarning] = useState(false);
+  const [state, setState] = useState<DeadStockState>("dead");
+  const [view, setView] = useState<DeadStockView>("stock");
   const [vin, setVin] = useState("");
 
-  const policy = useDeadStockPolicy();
-  const list = useDeadStock({
+  const filters = {
     storeId: storeId || undefined,
     category: category || undefined,
-    includeWarning,
-    limit: 500,
-  });
+    state,
+    view,
+  };
+  const policy = useDeadStockPolicy();
+  const list = useDeadStock({ ...filters, limit: 500 });
   const setRule = useSetDeadStockRule();
   const clearRule = useClearDeadStockRule();
   const issueMissing = useIssueMissingVins();
   const lookup = useVinLookup(vin);
+  const classify = useClassifyPiece();
+  const download = useDownloadDeadStockExport();
+
+  const onClassify = (
+    id: string,
+    body: { stockClass?: StockClass | null; remakeSuitable?: boolean },
+  ) =>
+    classify.mutate(
+      { id, ...body },
+      {
+        onSuccess: () => toast.success("Classification saved"),
+        onError: (e) => toast.error(apiErrorMessage(e, "Could not classify that piece.")),
+      },
+    );
+
+  const onExport = () =>
+    download.mutate(filters, {
+      onSuccess: (res) =>
+        toast.success(res.rows != null ? `${res.rows} row(s) exported` : "Export downloaded"),
+      onError: (e) => toast.error(apiErrorMessage(e, "Could not export the list.")),
+    });
 
   const [ruleCategory, setRuleCategory] = useState("");
   const [threshold, setThreshold] = useState("");
@@ -189,6 +219,29 @@ export default function DeadStockPage() {
       </Card>
 
       {/* ---------------------------------------------------------------- */}
+      {/* The four things Block 9 asks this screen to tell apart. Counts are dead
+          pieces per view and come back with every view, so opening one never
+          hides that the others exist. */}
+      <div className="flex flex-wrap gap-2" role="tablist" aria-label="Which pieces">
+        {VIEWS.map((v) => (
+          <Button
+            key={v.value}
+            role="tab"
+            aria-selected={view === v.value}
+            size="sm"
+            variant={view === v.value ? "default" : "outline"}
+            onClick={() => setView(v.value)}
+            title={v.hint}
+          >
+            {v.label}
+            {v.value !== "all" && data ? (
+              <span className="num ml-1 opacity-70">{data.buckets[v.value]}</span>
+            ) : null}
+          </Button>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">{VIEWS.find((v) => v.value === view)?.hint}</p>
+
       {data ? (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Tile
@@ -230,14 +283,24 @@ export default function DeadStockPage() {
             </option>
           ))}
         </select>
-        <label className="flex items-center gap-2 text-sm text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={includeWarning}
-            onChange={(e) => setIncludeWarning(e.target.checked)}
-          />
-          Include pieces heading that way
-        </label>
+        <select
+          aria-label="Age"
+          className="h-9 rounded-md border bg-background px-3 text-sm"
+          value={state}
+          onChange={(e) => setState(e.target.value as DeadStockState)}
+        >
+          <option value="dead">Dead only</option>
+          <option value="ageing">Dead and heading that way</option>
+          {/* Every piece, so a fresh made-to-order piece can be classified
+              before it ever ages into the wrong list. */}
+          <option value="all">Every piece, any age</option>
+        </select>
+        {canIssue ? (
+          <Button variant="outline" size="sm" onClick={onExport} disabled={download.isPending}>
+            <Download className="size-4" />
+            {download.isPending ? "Exporting…" : "Export this view"}
+          </Button>
+        ) : null}
       </div>
 
       {list.isLoading ? (
@@ -245,8 +308,12 @@ export default function DeadStockPage() {
       ) : (data?.items ?? []).length === 0 ? (
         <EmptyState
           icon={Hourglass}
-          title="Nothing is dead"
-          description="Every piece is inside the threshold you set for its category."
+          title={view === "stock" && state === "dead" ? "Nothing is dead" : "Nothing in this view"}
+          description={
+            view === "stock" && state === "dead"
+              ? "Every piece is inside the threshold you set for its category."
+              : "No piece matches this view and age filter."
+          }
         />
       ) : (
         <>
@@ -262,6 +329,8 @@ export default function DeadStockPage() {
                   <TableHead className="text-right">Over by</TableHead>
                   <TableHead className="text-right">Tag price</TableHead>
                   <TableHead>State</TableHead>
+                  <TableHead>Classification</TableHead>
+                  <TableHead>Suggested</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -288,9 +357,62 @@ export default function DeadStockPage() {
                     </TableCell>
                     <TableCell className="num text-right">{formatINR(r.tagPrice)}</TableCell>
                     <TableCell>
-                      <StatusPill tone={r.state === "dead" ? "bad" : "wait"}>
-                        {r.state === "dead" ? "Dead" : "Ageing"}
+                      <StatusPill
+                        tone={r.state === "dead" ? "bad" : r.state === "ageing" ? "wait" : "mute"}
+                      >
+                        {r.state === "dead" ? "Dead" : r.state === "ageing" ? "Ageing" : "Fresh"}
                       </StatusPill>
+                    </TableCell>
+                    <TableCell className="min-w-52">
+                      {canIssue ? (
+                        <div className="space-y-1">
+                          <select
+                            aria-label={`Classification of ${r.sku}`}
+                            className="h-8 w-full rounded-md border bg-background px-2 text-xs"
+                            // "design" is its own option so clearing a piece's
+                            // override is a choice, not an empty value.
+                            value={r.stockClassSource === "design" ? "" : r.stockClass}
+                            disabled={classify.isPending}
+                            onChange={(e) =>
+                              onClassify(r.id, {
+                                stockClass: e.target.value
+                                  ? (e.target.value as StockClass)
+                                  : null,
+                              })
+                            }
+                          >
+                            <option value="">
+                              {r.stockClassSource === "design"
+                                ? `As its design: ${classLabel(r.stockClass)}`
+                                : "As its design"}
+                            </option>
+                            {STOCK_CLASS_OPTIONS.map((o) => (
+                              <option key={o.value} value={o.value}>
+                                {o.label}
+                              </option>
+                            ))}
+                          </select>
+                          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <input
+                              type="checkbox"
+                              checked={r.remakeSuitable}
+                              disabled={classify.isPending}
+                              onChange={(e) =>
+                                onClassify(r.id, { remakeSuitable: e.target.checked })
+                              }
+                            />
+                            Suitable for remaking
+                          </label>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">
+                          {classLabel(r.stockClass)}
+                          {r.remakeSuitable ? " · suitable for remaking" : ""}
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {r.suggestion ? SUGGESTION_LABEL[r.suggestion] : "—"}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -299,7 +421,8 @@ export default function DeadStockPage() {
           </div>
           {data?.truncated ? (
             <p className="text-xs text-muted-foreground">
-              Showing the worst 500. Narrow by branch or category to see the rest.
+              Showing the worst {data.items.length} of {data.total}. Narrow by branch or category
+              to see the rest.
             </p>
           ) : null}
         </>
@@ -407,6 +530,33 @@ export default function DeadStockPage() {
     </div>
   );
 }
+
+const classLabel = (c: StockClass) =>
+  STOCK_CLASS_OPTIONS.find((o) => o.value === c)?.label ?? c;
+
+const VIEWS: { value: DeadStockView; label: string; hint: string }[] = [
+  {
+    value: "stock",
+    label: "Ordinary dead stock",
+    hint: "Standard merchandise past its threshold — the list to sell or promote from.",
+  },
+  {
+    value: "customised",
+    label: "Customised pieces",
+    hint: "Made to order or for one customer. Old, but not the shop's to sell to somebody else.",
+  },
+  {
+    value: "remake",
+    label: "Suitable for remaking",
+    hint: "Pieces somebody has marked worth remaking or customising rather than selling as they are.",
+  },
+  {
+    value: "excluded",
+    label: "Excluded (non-stock)",
+    hint: "Display pieces and samples. Not merchandise, so never counted as dead stock.",
+  },
+  { value: "all", label: "Everything", hint: "Every classification together." },
+];
 
 function Tile({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
