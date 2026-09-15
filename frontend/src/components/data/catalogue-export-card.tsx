@@ -40,7 +40,7 @@ const SELECT = "h-9 w-full rounded-md border bg-background px-3 text-sm";
  */
 export function CatalogueExportCard() {
   const stores = useSession((s) => s.stores).filter((s) => !s.isAggregate);
-  const exports = useCatalogueExports(true);
+  const exports = useCatalogueExports();
   const create = useCreateCatalogueExport();
   const download = useDownloadCatalogueExport();
 

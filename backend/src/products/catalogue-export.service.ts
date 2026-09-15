@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Availability, JobTask, Prisma, ProductCategory, StockClass } from '@prisma/client';
+import { randomBytes } from 'crypto';
 import { createReadStream, createWriteStream } from 'fs';
 import { mkdir, readdir, readFile, rename, stat, unlink } from 'fs/promises';
 import JSZip from 'jszip';
@@ -224,7 +225,7 @@ export class CatalogueExportService implements OnModuleInit {
     const result = job.result as unknown as ExportResult;
     // Server-written, but read back from a column: only a bare file name is
     // ever joined to the export folder.
-    if (!/^[a-z0-9]+\.zip$/i.test(result.archive)) throw new NotFoundException('Export not found');
+    if (!/^[a-z0-9-]+\.zip$/i.test(result.archive)) throw new NotFoundException('Export not found');
     if (Date.parse(result.expiresAt) < Date.now()) {
       throw new GoneException('That archive has expired. Generate it again.');
     }
@@ -340,7 +341,10 @@ export class CatalogueExportService implements OnModuleInit {
     const dir = this.exportDir(org);
     await mkdir(dir, { recursive: true });
     await this.prune(dir);
-    const final = join(dir, `${ctx.jobId}.zip`);
+    // Unguessable as well as blocked: the folder is refused by the static
+    // handler, and the name is not derivable from the job id if it ever is not.
+    const archive = `${ctx.jobId}-${randomBytes(12).toString('hex')}.zip`;
+    const final = join(dir, archive);
     const partial = `${final}.partial`;
 
     const zip = new JSZip();
@@ -389,7 +393,7 @@ export class CatalogueExportService implements OnModuleInit {
       `Catalogue export ${ctx.jobId}: ${included.length} photograph(s), ${skipped.length} skipped, ${size(bytes)}`,
     );
     return {
-      archive: `${ctx.jobId}.zip`,
+      archive,
       filename,
       files: included.length,
       bytes,

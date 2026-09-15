@@ -59,10 +59,9 @@ export interface CatalogueExport {
 
 const KEY = ["catalogue-exports"] as const;
 
-export function useCatalogueExports(enabled: boolean) {
+export function useCatalogueExports() {
   return useQuery({
     queryKey: KEY,
-    enabled,
     queryFn: async () => {
       const { data } = await api.get<CatalogueExport[]>("/catalogue-exports");
       return data;

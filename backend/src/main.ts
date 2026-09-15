@@ -5,6 +5,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { json, urlencoded } from 'express';
 import { isAbsolute, join } from 'path';
 import { AppModule } from './app.module';
+import { isPrivateUploadPath } from './storage/private-media';
 
 async function bootstrap() {
   // rawBody: true captures the unparsed request body (req.rawBody) so provider
@@ -65,23 +66,13 @@ async function bootstrap() {
    * file. Those leave only through the head-office download route, which
    * audits who took them (CatalogueExportController).
    *
+   * The match lives in storage/private-media.ts, where it is tested against the
+   * encoded and un-normalised forms of the same path.
+   *
    * 404, not 403: whether a particular photo exists is itself information.
    */
-  const PRIVATE_MEDIA = /^\/uploads\/org\/[^/]+\/(attendance|visits|exports)\//i;
   app.use((req: { path?: string; url: string }, res: any, next: () => void) => {
-    const raw = req.path ?? req.url;
-    if (!/^\/uploads\//i.test(raw)) return next();
-    // Tested DECODED as well: the static handler decodes before it touches the
-    // disk, so `/uploads/org/x/%65xports/…` would otherwise slip past a regex
-    // that only sees the encoded form. An upload path that will not decode is
-    // refused rather than guessed at.
-    let decoded: string | null;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch {
-      decoded = null;
-    }
-    if (decoded === null || PRIVATE_MEDIA.test(raw) || PRIVATE_MEDIA.test(decoded)) {
+    if (isPrivateUploadPath(req.path ?? req.url)) {
       res.status(404).json({ statusCode: 404, message: 'Not found' });
       return;
     }

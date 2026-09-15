@@ -10,6 +10,7 @@ import { join } from 'path';
 import type { PrismaService } from '../src/prisma/prisma.service';
 import type { JobsService } from '../src/jobs/jobs.service';
 import { safeEntryName } from '../src/products/catalogue-export.service';
+import { isPrivateUploadPath } from '../src/storage/private-media';
 
 /**
  * Head office takes the catalogue's photographs away as one ZIP.
@@ -222,6 +223,25 @@ describe('Catalogue photo ZIP export (e2e)', () => {
     expect(names[6]).toBe('RING-1.jpg');
     expect(names[7]).toBe('ring-1-2.jpg');
     expect(new Set(names.map((n) => n.toLowerCase())).size).toBe(names.length);
+  });
+
+  it('the export folder is refused by the public static handler, however the path is spelt', () => {
+    const blocked = [
+      '/uploads/org/o1/exports/a.zip',
+      '/uploads/org/o1/EXPORTS/a.zip',
+      '/uploads/org/o1/%65xports/a.zip',
+      '/uploads/org%2Fo1%2Fexports%2Fa.zip',
+      '/uploads//org/o1/exports/a.zip',
+      '/uploads/org/o1/./exports/a.zip',
+      '/uploads/org/o1/attendance/p.jpg',
+      '/uploads/org/o1/visits/p.jpg',
+      '/uploads/org/o1/%E0%A4%A/bad-encoding',
+    ];
+    for (const p of blocked) expect([p, isPrivateUploadPath(p)]).toEqual([p, true]);
+    // Catalogue photographs stay public, and a bad escape elsewhere is not this handler's business.
+    for (const p of ['/uploads/org/o1/catalogue/x.png', '/catalogue-exports/%E0%A4%A']) {
+      expect([p, isPrivateUploadPath(p)]).toEqual([p, false]);
+    }
   });
 
   it('is refused to everyone but head office', async () => {
