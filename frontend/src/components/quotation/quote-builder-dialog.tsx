@@ -536,6 +536,17 @@ export function QuoteBuilderDialog({
       toast.error("Weight cannot be negative.");
       return;
     }
+    // A quote freezes the gold rate it was priced at. It must not freeze a
+    // built-in default or a rate that has gone out of date while looking like
+    // today's: with either, the person confirms today's rate by entering it.
+    if (mode !== "repair" && weightNum > 0 && rateMode === "auto" && (rateIsFallback || rateIsStale)) {
+      toast.error(
+        rateIsFallback
+          ? `No ${karat}K gold rate is on record. Switch to Manual and enter today's rate.`
+          : `The ${karat}K gold rate is out of date. Switch to Manual and confirm today's rate.`,
+      );
+      return;
+    }
     const discountValue = toNumber(discount);
     if (discount.trim() && (discountValue == null || discountValue < 0 || discountValue > 100)) {
       toast.error("Discount must be a percentage between 0 and 100.");
