@@ -1237,6 +1237,7 @@ model Party {
   @@index([storeId, createdAt])
   @@index([phone])
   @@index([organisationId])
+  @@index([organisationId, archivedAt])
 }
 
 // ============================================================================
@@ -1704,6 +1705,7 @@ model Quote {
   @@index([storeId, createdAt])
   @@index([status])
   @@index([organisationId])
+  @@index([organisationId, status])
 }
 
 /// Reference / repair photos attached to a quote (Round 2) � mirrors ReturnPhoto.
@@ -2771,6 +2773,9 @@ model CheckIn {
 
   @@index([storeId, timeIn])
   @@index([organisationId])
+  @@index([storeId, followUpDate])
+  @@index([followUpOwnerId, followUpDate])
+  @@index([leadId])
 }
 
 // ============================================================================
@@ -5874,7 +5879,8 @@ model LoyaltyLedgerEntry {
   @@index([accountId, createdAt])
   @@index([organisationId, createdAt])
   /// The retry sweep's read: unannounced entries, oldest first.
-  @@index([organisationId, webhookedAt, webhookAttempts])
+  // Named as Postgres stored it: the migration spelt the name past 63 characters.
+  @@index([organisationId, webhookedAt, webhookAttempts], map: "LoyaltyLedgerEntry_organisationId_webhookedAt_webhookAttempts_i")
 }
 
 /// One announcement of one ledger movement to the tenant's website, and
