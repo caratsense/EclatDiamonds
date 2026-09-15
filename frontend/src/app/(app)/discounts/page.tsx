@@ -437,7 +437,9 @@ function DiscountLimitsCard() {
         </CardTitle>
         <CardDescription>
           Diamond &amp; making caps each role can self-approve. Above a role&apos;s
-          cap, the request escalates to the next tier.
+          cap, the request escalates to the next tier. The quote cap is the
+          single discount a role can put on a quote before a manager must
+          approve it.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -454,13 +456,14 @@ function DiscountLimitsCard() {
                 <TableHead>Role</TableHead>
                 <TableHead className="text-right">Diamond cap</TableHead>
                 <TableHead className="text-right">Making cap</TableHead>
+                <TableHead className="text-right">Quote cap</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {limits.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={3}
+                    colSpan={4}
                     className="py-8 text-center text-muted-foreground"
                   >
                     No limits configured.
@@ -480,6 +483,11 @@ function DiscountLimitsCard() {
                     <TableCell className="text-right">
                       <span className="num">
                         {formatPercent(l.makingPercent)}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <span className="num">
+                        {formatPercent(l.quotePercent)}
                       </span>
                     </TableCell>
                   </TableRow>

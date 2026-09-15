@@ -8,11 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { Quote } from "@/lib/mock/quotation";
 import {
+  approvalReasonLabel,
   useDecideQuote,
   useQuoteApproval,
   useRequestQuoteApproval,
+  type QuoteApprovalReason,
 } from "@/lib/queries/quotes";
-import { ROLE_RANK } from "@/lib/types";
+import { ROLE_LABELS, ROLE_RANK } from "@/lib/types";
 import { apiErrorMessage } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
@@ -37,6 +39,9 @@ export function QuoteApprovalPanel({ quote }: { quote: Quote }) {
   const [reason, setReason] = useState("");
 
   if (!gate.data || !gate.data.required) return null;
+  // A discount beyond this manager's own authority escalates past them.
+  const needs = gate.data.reasons.find((r) => r.requiredRole)?.requiredRole;
+  const tooJunior = !!needs && ROLE_RANK[role] < ROLE_RANK[needs];
 
   const busy = request.isPending || decide.isPending;
   const onRequest = () =>
@@ -44,9 +49,16 @@ export function QuoteApprovalPanel({ quote }: { quote: Quote }) {
       onSuccess: () => toast.success(`Approval requested for ${quote.ref}`),
       onError: (e) => toast.error(apiErrorMessage(e, "Could not request approval.")),
     });
+  // The revision the manager is looking at goes with the decision, so an edit
+  // that lands in between is refused instead of approved unseen.
   const onDecide = (approve: boolean) =>
     decide.mutate(
-      { id: quote.id, approve, reason: approve ? undefined : reason.trim() },
+      {
+        id: quote.id,
+        approve,
+        reason: approve ? undefined : reason.trim(),
+        revision: gate.data?.revision,
+      },
       {
         onSuccess: () => {
           toast.success(approve ? `${quote.ref} approved` : `${quote.ref} rejected`);
@@ -71,8 +83,9 @@ export function QuoteApprovalPanel({ quote }: { quote: Quote }) {
       <div className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs">
         <p className="flex items-center gap-2 font-medium text-amber-700 dark:text-amber-300">
           <Clock className="h-4 w-4 shrink-0" aria-hidden="true" />
-          Waiting for a manager to approve this amount.
+          Waiting for a manager to approve this quote.
         </p>
+        <Reasons reasons={gate.data.reasons} />
         {isManager ? (
           rejecting ? (
             <div className="flex flex-wrap items-center gap-2">
@@ -99,8 +112,14 @@ export function QuoteApprovalPanel({ quote }: { quote: Quote }) {
             </div>
           ) : (
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" className="h-8" disabled={busy} onClick={() => onDecide(true)}>
-                Approve amount
+              <Button
+                size="sm"
+                className="h-8"
+                disabled={busy || tooJunior}
+                title={tooJunior && needs ? `Needs ${ROLE_LABELS[needs]} approval` : undefined}
+                onClick={() => onDecide(true)}
+              >
+                {tooJunior && needs ? `Needs ${ROLE_LABELS[needs]}` : "Approve"}
               </Button>
               <Button size="sm" variant="outline" className="h-8" disabled={busy} onClick={() => setRejecting(true)}>
                 Reject
@@ -124,9 +143,28 @@ export function QuoteApprovalPanel({ quote }: { quote: Quote }) {
         )}
         {gate.data.reason ?? "This quote needs a manager’s approval before it can be sent."}
       </p>
+      <Reasons reasons={gate.data.reasons} />
       <Button size="sm" variant="outline" className="h-8" disabled={busy} onClick={onRequest}>
         {quote.status === "rejected" ? "Ask for approval again" : "Request manager approval"}
       </Button>
     </div>
+  );
+}
+
+/** Why a decision is needed: "Discount 8% over 5% cap", with the full sentence on hover. */
+function Reasons({ reasons }: { reasons: QuoteApprovalReason[] }) {
+  if (!reasons?.length) return null;
+  return (
+    <ul className="flex flex-wrap gap-1.5">
+      {reasons.map((r) => (
+        <li
+          key={r.code}
+          title={r.message}
+          className="rounded-full border border-amber-500/30 bg-background px-2 py-0.5 text-[11px] font-medium"
+        >
+          {approvalReasonLabel(r)}
+        </li>
+      ))}
+    </ul>
   );
 }

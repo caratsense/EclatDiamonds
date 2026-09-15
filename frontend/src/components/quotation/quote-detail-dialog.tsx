@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { MessageCircle, Store as StoreIcon, Wrench } from "lucide-react";
+import { Download, FileText, MessageCircle, Store as StoreIcon, Wrench } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -35,7 +35,11 @@ import {
 import { useSession } from "@/store/use-session";
 import { ChannelStatusNotice } from "@/components/integrations/channel-status-notice";
 import { QuoteApprovalPanel } from "@/components/quotation/quote-approval-panel";
-import { useQuoteApproval } from "@/lib/queries/quotes";
+import {
+  useDownloadQuotePdf,
+  useQuoteApproval,
+  useSendQuotePdf,
+} from "@/lib/queries/quotes";
 import { apiErrorMessage } from "@/lib/utils";
 
 interface QuoteDetailDialogProps {
@@ -57,10 +61,40 @@ export function QuoteDetailDialog({
   const { stores, currentStore } = useSession();
   const [sharing, setSharing] = useState(false);
   const gate = useQuoteApproval(quote?.id ?? null);
+  const downloadPdf = useDownloadQuotePdf();
+  const sendPdf = useSendQuotePdf();
   if (!quote) return null;
   // Held until the server says the quote may leave. The server refuses anyway;
   // this only stops a salesperson pressing a button that will be refused.
   const awaitingApproval = !!gate.data && gate.data.required && !gate.data.cleared;
+  const heldTitle = awaitingApproval ? "A manager must approve this quote first" : undefined;
+
+  const onDownloadPdf = () =>
+    downloadPdf.mutate(quote.id, {
+      onError: (e) => toast.error(apiErrorMessage(e, "Could not download the quote PDF.")),
+    });
+
+  /**
+   * Queue the detailed PDF on WhatsApp. "Queued" is all the server can promise —
+   * consent, the 24-hour window and the provider still decide — so the toast
+   * says queued, and says plainly when WhatsApp is not connected at all.
+   */
+  const onSendPdf = () =>
+    sendPdf.mutate(quote.id, {
+      onSuccess: (data) => {
+        if (data.dryRun) {
+          toast.warning("WhatsApp is not connected yet — the PDF will not be delivered.", {
+            description: "It is in the outbox and will show as failed. Download the PDF and share it another way for now.",
+            duration: 8000,
+          });
+        } else {
+          toast.success(`Quote ${quote.ref} PDF queued for WhatsApp`, {
+            description: "Delivery status appears in the outbox.",
+          });
+        }
+      },
+      onError: (e) => toast.error(apiErrorMessage(e, "Could not send the quote PDF.")),
+    });
 
   const isRepair = quote.kind === "repair";
   const totals = computeQuoteTotals(quote);
@@ -293,6 +327,17 @@ export function QuoteDetailDialog({
                 value={formatINR(totals.makingCharges)}
               />
             )}
+            {totals.discount > 0 ? (
+              <Row
+                label={
+                  <>
+                    Discount{" "}
+                    <span className="num">{formatPercent(quote.discountPercent ?? 0, Number.isInteger(quote.discountPercent ?? 0) ? 0 : 2)}</span>
+                  </>
+                }
+                value={`- ${formatINR(totals.discount)}`}
+              />
+            ) : null}
             <Separator className="my-1" />
             <Row label="Taxable value" value={formatINR(totals.taxable)} />
             <Row
@@ -330,11 +375,29 @@ export function QuoteDetailDialog({
 
         <ChannelStatusNotice channel="whatsapp" className="mt-2" />
 
-        <DialogFooter>
+        <DialogFooter className="flex-wrap gap-2">
+          <Button
+            variant="outline"
+            disabled={downloadPdf.isPending || awaitingApproval}
+            title={heldTitle}
+            onClick={onDownloadPdf}
+          >
+            <Download className="h-4 w-4" />
+            {downloadPdf.isPending ? "Preparing…" : "Download PDF"}
+          </Button>
+          <Button
+            variant="outline"
+            disabled={sendPdf.isPending || awaitingApproval || !quote.phone}
+            title={heldTitle}
+            onClick={onSendPdf}
+          >
+            <FileText className="h-4 w-4" />
+            {sendPdf.isPending ? "Queueing…" : "Send PDF on WhatsApp"}
+          </Button>
           <Button
             variant="outline"
             disabled={sharing || awaitingApproval}
-            title={awaitingApproval ? "A manager must approve this amount first" : undefined}
+            title={heldTitle}
             onClick={shareOnWhatsApp}
           >
             <MessageCircle className="h-4 w-4" />

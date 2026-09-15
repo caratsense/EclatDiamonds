@@ -5,10 +5,12 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { AxiosError } from "axios";
 
 import { api } from "@/lib/api";
 import { useStoreKey } from "@/lib/queries/keys";
 import type { Quote, QuoteKind, QuoteLine } from "@/lib/mock/quotation";
+import type { Role } from "@/lib/types";
 
 export interface CreateQuoteInput {
   storeId: string;
@@ -24,6 +26,8 @@ export interface CreateQuoteInput {
   grossWeightG?: number;
   /** Kaccha ("@") estimate — server forces GST = 0 and hides it from the list. */
   isKaccha?: boolean;
+  /** One % off making + diamonds (never gold). Over the role's cap needs approval. */
+  discountPercent?: number;
   lines: Omit<QuoteLine, "id">[];
 }
 
@@ -135,11 +139,26 @@ export function useConvertQuoteToOrder() {
 
 /* ------------------------------------------------------- manager approval */
 
-/** Whether a quote may go to the customer yet — the same gate sharing enforces. */
+/** One rule that asks for a manager's decision, with the numbers behind it. */
+export interface QuoteApprovalReason {
+  code: "total_over_threshold" | "discount_over_cap";
+  /** The server's own sentence. */
+  message: string;
+  total?: number;
+  threshold?: number;
+  discountPercent?: number;
+  cap?: number;
+  requiredRole?: Role;
+}
+
+/** Whether a quote may go to the customer yet — the same gate every send enforces. */
 export interface QuoteApprovalGate {
   required: boolean;
   cleared: boolean;
   reason: string | null;
+  reasons: QuoteApprovalReason[];
+  /** The quote revision this answer is about. */
+  revision: number;
 }
 
 export interface PendingQuoteApproval {
@@ -151,6 +170,20 @@ export interface PendingQuoteApproval {
   requestedByName: string | null;
   requestedById: string | null;
   storeName: string | null;
+  revision: number;
+  discountPercent: number;
+  discountAmount: number;
+  reasons: QuoteApprovalReason[];
+}
+
+/** Short label for a reason chip: "Total over ₹2,00,000" / "Discount 8% over 5% cap". */
+export function approvalReasonLabel(r: QuoteApprovalReason): string {
+  if (r.code === "discount_over_cap") {
+    return `Discount ${r.discountPercent}% over ${r.cap}% cap`;
+  }
+  return r.threshold != null
+    ? `Total over ${new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(r.threshold)}`
+    : "Total over threshold";
 }
 
 export interface QuoteApprovalSettings {
@@ -189,15 +222,19 @@ export function useRequestQuoteApproval() {
   });
 }
 
-/** POST /quotes/:id/decide — a reason is required to reject. */
+/**
+ * POST /quotes/:id/decide — a reason is required to reject. `revision` is the
+ * one the manager was looking at; the server refuses if the quote moved on.
+ */
 export function useDecideQuote() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { id: string; approve: boolean; reason?: string }) =>
+    mutationFn: async (input: { id: string; approve: boolean; reason?: string; revision?: number }) =>
       (
         await api.post(`/quotes/${input.id}/decide`, {
           approve: input.approve,
           reason: input.reason,
+          revision: input.revision,
         })
       ).data,
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["quotes"] }),
@@ -221,5 +258,65 @@ export function useSaveQuoteApprovalSettings() {
     mutationFn: async (input: Partial<QuoteApprovalSettings>) =>
       (await api.put<QuoteApprovalSettings>("/quotes/approval/settings", input)).data,
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["quotes"] }),
+  });
+}
+
+/* ------------------------------------------------------------ quote PDF */
+
+/**
+ * GET /quotes/:id/pdf — download the detailed quote.
+ *
+ * `responseType: "blob"` means a refusal also arrives as a Blob, which would hide
+ * the server's reason ("needs a manager's approval") behind a generic toast; it
+ * is read back into JSON so `apiErrorMessage` can show it.
+ */
+export function useDownloadQuotePdf() {
+  return useMutation({
+    mutationFn: async (id: string) => {
+      let res;
+      try {
+        res = await api.get<Blob>(`/quotes/${id}/pdf`, { responseType: "blob" });
+      } catch (e) {
+        if (e instanceof AxiosError && e.response?.data instanceof Blob) {
+          try {
+            e.response.data = JSON.parse(await e.response.data.text());
+          } catch {
+            // Not JSON: leave it, the caller falls back to its own sentence.
+          }
+        }
+        throw e;
+      }
+      const disposition = String(res.headers?.["content-disposition"] ?? "");
+      const filename = /filename="?([^";]+)"?/i.exec(disposition)?.[1] ?? "quote.pdf";
+      const url = URL.createObjectURL(res.data);
+      try {
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        a.click();
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+      return { filename };
+    },
+  });
+}
+
+/** Shape returned by POST /quotes/:id/send-pdf. Queued is not sent. */
+export interface SendQuotePdfResult {
+  queued: boolean;
+  ref: string;
+  revision: number;
+  messageId: string;
+  status: string;
+  /** WhatsApp is not connected: the message will fail with the reason, not send. */
+  dryRun: boolean;
+}
+
+/** POST /quotes/:id/send-pdf — queue the PDF to the quote's customer on WhatsApp. */
+export function useSendQuotePdf() {
+  return useMutation({
+    mutationFn: async (id: string) =>
+      (await api.post<SendQuotePdfResult>(`/quotes/${id}/send-pdf`, {})).data,
   });
 }
