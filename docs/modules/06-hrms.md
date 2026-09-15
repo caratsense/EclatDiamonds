@@ -63,4 +63,8 @@ Researched from Zoho People's attendance + leave docs:
 
 ## Deferred (note, don't build now)
 - Multi-level approval chains, leave carry-forward/accrual schedules, IP restriction,
-  shift rotation automation, payroll/payslips, biometric/face kiosk.
+  shift rotation automation, biometric/face kiosk.
+- Payroll/payslips is no longer deferred (2026-09-12/15): week-offs, compensation,
+  payslip drafts and the month-end run log live on `/hrms/payroll` (API
+  `/hrms/payroll/week-offs`, `/hrms/payroll/payslips`, `/hrms/payroll/runs`).
+  Statutory deductions (PF/ESI/PT/TDS) are not computed — that policy is the client's.

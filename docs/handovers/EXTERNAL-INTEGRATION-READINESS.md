@@ -83,12 +83,12 @@ Subscribe the app to the fields: `messages`, `message_template_status_update`
 
 ### Per-tenant setup inside CaratOS
 
-1. **Settings → Integrations** — connect `whatsapp_cloud`, once per WABA. Two
+1. **Settings → Integrations** (`/settings/integrations`, head office) — connect `whatsapp_cloud`, once per WABA. Two
    WABAs means two connections, each with its own access token.
 2. Register each phone-number id against its own connection. Registering a
    number no longer switches the others off; a number may only be claimed by one
    connection across the whole platform.
-3. **Settings → Messaging Routes** (`GET /messaging-routes`) — map each branch to
+3. **Settings → Messaging Routes** (screen `/settings/messaging-routes`, head office; API `GET /messaging-routes`) — map each branch to
    the number it answers on. **This is not optional with more than one number:**
    an unrouted branch is refused at send time, with a message naming it, rather
    than sending as a different branch.
@@ -264,7 +264,7 @@ needed to verify the final column mapping.
 
 ## 7. Loyalty website API
 
-1. **Settings → Loyalty → Points programme**: set the earn rate (both halves) and
+1. **Loyalty → Points programme** (`/loyalty/programme`; it is not under Settings): set the earn rate (both halves) and
    what a point is worth. Until both halves are set, earning is refused with that
    as the reason rather than silently awarded at 1:1.
 2. Issue an **API key** — shown once, stored as a hash.
@@ -303,9 +303,16 @@ Sandbox: point the announcement URL at a test endpoint and use a test member.
 Nothing distinguishes a sandbox tenant from a live one, so use a separate
 organisation.
 
+Every announcement is a row in the delivery log: the **Website announcements**
+panel on `/loyalty/programme` lists each one with its state, response code and
+next retry; head office can retry a dead one (`GET /loyalty/programme/webhooks`,
+`POST /loyalty/programme/webhooks/:id/retry`). Only a 2xx from the website marks
+an announcement delivered.
+
 **Status: FIXTURE-TESTED.** Inbound is driven end to end against the
-application's own container. Outbound announcements have only ever been exercised
-against a deliberately unreachable URL, to prove they record their own failure.
+application's own container. Outbound announcements are exercised against a local
+HTTP receiver (2xx, non-2xx, retry to dead, replay) — never against the client's
+real website.
 
 ---
 
