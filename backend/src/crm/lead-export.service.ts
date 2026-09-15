@@ -7,6 +7,7 @@ import { AuditService } from '../common/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { businessDate, resolveTz } from '../common/tz.util';
+import { leadSearchWhere, leadTagWhere } from '../leads/lead-filters';
 
 /**
  * Hard ceiling on one export.
@@ -90,6 +91,7 @@ export interface LeadExportFilters {
   stage?: string;
   outcome?: string;
   tagIds?: string[];
+  q?: string;
   columns?: ExportColumn[];
   /** Basename for the workbook, without the extension. Defaults to the date. */
   filenameStem?: string;
@@ -135,11 +137,10 @@ export class LeadExportService {
     if (f.source) and.push({ source: f.source as Prisma.EnumLeadSourceFilter['equals'] });
     if (f.stage) and.push({ stage: f.stage as Prisma.EnumLeadStageFilter['equals'] });
     if (f.outcome) and.push({ outcome: f.outcome });
-    if (f.tagIds?.length) {
-      // ANY of the tags, not ALL — "show me everything flagged potential or VIP"
-      // is the question people actually ask.
-      and.push({ tagAssignments: { some: { tagId: { in: f.tagIds } } } });
-    }
+    const tagged = leadTagWhere(user.organisationId, f.tagIds);
+    if (tagged) and.push(tagged);
+    const searched = leadSearchWhere(f.q);
+    if (searched) and.push(searched);
 
     return {
       ...this.scope.orgFilter(user),

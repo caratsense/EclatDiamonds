@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowDown,
   ArrowUp,
@@ -14,6 +15,7 @@ import {
   Phone,
   QrCode,
   Rows3,
+  Search,
   Sparkles,
   Square,
   UserCheck,
@@ -23,6 +25,7 @@ import { toast } from "sonner";
 
 import { LeadCard } from "@/components/crm/lead-card";
 import { LeadDetailDialog } from "@/components/crm/lead-detail-dialog";
+import { LeadTagFilter } from "@/components/crm/lead-tag-filter";
 import { SectionHeader } from "@/components/section/section-header";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -66,6 +69,7 @@ import {
   type LeadStage,
 } from "@/lib/mock/crm";
 import {
+  matchesLeadSearch,
   useLeads,
   useMoveLeadStage,
   useCreateLead,
@@ -131,7 +135,36 @@ const OUTCOME_TABS: { value: LeadOutcomeFilter; label: string }[] = [
 ];
 
 export default function CrmPage() {
+  // The tag and search filters live in the URL so a filtered board survives a
+  // refresh and can be shared. useSearchParams needs a Suspense boundary or the
+  // production build refuses to prerender the page.
+  return (
+    <Suspense fallback={<Skeleton className="h-96 w-full rounded-xl" />}>
+      <CrmView />
+    </Suspense>
+  );
+}
+
+function CrmView() {
   const { currentStore, role } = useSession();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const tagIds = (searchParams.get("tags") ?? "").split(",").filter(Boolean);
+  const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
+  /** Write one filter back to the URL without adding a history entry per click. */
+  const setUrlParam = (key: string, value: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (value) params.set(key, value);
+    else params.delete(key);
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  };
+  const setTagIds = (ids: string[]) => setUrlParam("tags", ids.join(","));
+  const onSearch = (value: string) => {
+    setSearch(value);
+    setUrlParam("q", value.trim());
+  };
   // Date-range filter (inclusive; API returns latest-first).
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -149,7 +182,7 @@ export default function CrmPage() {
     isLoading,
     isError,
     refetch,
-  } = useLeads({ from: from || undefined, to: to || undefined, outcome: "all" });
+  } = useLeads({ from: from || undefined, to: to || undefined, outcome: "all", tagIds });
   const moveStage = useMoveLeadStage();
   // The board's columns come from the tenant's configured pipeline, not from a
   // constant compiled into this file — a business whose funnel is not
@@ -200,11 +233,12 @@ export default function CrmPage() {
     if (!open) clearQuick();
   };
 
-  // Source facet applies to both views.
-  const sourceScoped =
-    sourceFilter === "all"
-      ? leads
-      : leads.filter((l) => l.source === sourceFilter);
+  // Source and search facets apply to both views; tags were applied server-side.
+  const sourceScoped = leads.filter(
+    (l) =>
+      (sourceFilter === "all" || l.source === sourceFilter) &&
+      matchesLeadSearch(l, search),
+  );
   // The board renders all outcomes so won/lost cards stay put after a drop.
   const byStage = (stage: LeadStage) =>
     sourceScoped.filter((l) => l.stage === stage);
@@ -321,6 +355,26 @@ export default function CrmPage() {
             </TabsList>
           </Tabs>
           <div className="grid gap-1.5">
+            <Label htmlFor="lead-search" className="text-xs text-muted-foreground">
+              Search
+            </Label>
+            <div className="relative">
+              <Search
+                className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <Input
+                id="lead-search"
+                type="search"
+                value={search}
+                onChange={(e) => onSearch(e.target.value)}
+                placeholder="Name, ref or phone"
+                className="h-9 w-[11rem] pl-8"
+              />
+            </div>
+          </div>
+          <LeadTagFilter value={tagIds} onChange={setTagIds} />
+          <div className="grid gap-1.5">
             <Label
               htmlFor="lead-source-filter"
               className="text-xs text-muted-foreground"
@@ -411,6 +465,12 @@ export default function CrmPage() {
                     from: from || undefined,
                     to: to || undefined,
                     storeId: currentStore.isAggregate ? undefined : currentStore.id,
+                    // The file is the list on screen: same source, tags and
+                    // search, and the outcome tab when the table is showing.
+                    source: sourceFilter === "all" ? undefined : sourceFilter,
+                    outcome: view === "list" && outcome !== "all" ? outcome : undefined,
+                    tagIds,
+                    q: search.trim() || undefined,
                   },
                   {
                     onSuccess: (r) =>
@@ -454,12 +514,14 @@ export default function CrmPage() {
       ) : visible.length === 0 ? (
         (view === "list" && outcome !== "open") ||
         sourceFilter !== "all" ||
+        tagIds.length > 0 ||
+        search.trim() ||
         from ||
         to ? (
           <EmptyState
             icon={Users}
             title="No leads match these filters"
-            description="Adjust the outcome, source or date range to see more."
+            description="Adjust the outcome, source, tags, search or date range to see more."
           />
         ) : (
           <EmptyState

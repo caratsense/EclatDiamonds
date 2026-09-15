@@ -9,17 +9,8 @@ import {
   Length,
 } from 'class-validator';
 
+import { csv } from '../../common/query-csv';
 import { EXPORT_COLUMNS } from '../lead-export.service';
-
-/** Split a comma list from a query string into an array; leave arrays alone. */
-const csv = ({ value }: { value: unknown }): string[] | undefined => {
-  if (value == null || value === '') return undefined;
-  if (Array.isArray(value)) return value.map(String);
-  return String(value)
-    .split(',')
-    .map((v) => v.trim())
-    .filter(Boolean);
-};
 
 export class LeadExportQueryDto {
   /** Inclusive calendar dates, `YYYY-MM-DD`, in the store's own timezone. */
@@ -62,6 +53,12 @@ export class LeadExportQueryDto {
   @ArrayMaxSize(30)
   @IsString({ each: true })
   tagIds?: string[];
+
+  /** The CRM board's search box, so the file matches what was on screen. */
+  @IsOptional()
+  @IsString()
+  @Length(1, 80)
+  q?: string;
 
   /**
    * Which columns, in case a tenant's spreadsheet has a fixed shape. Validated

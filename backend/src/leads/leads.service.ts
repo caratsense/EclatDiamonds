@@ -13,6 +13,7 @@ import { AuthUser } from '../common/auth-user';
 import { AttributionService } from '../crm/attribution.service';
 import { ActivityService } from '../crm/activity.service';
 import { IdentityService } from '../crm/identity.service';
+import { leadSearchWhere, leadTagWhere } from './lead-filters';
 import {
   CreateActivityDto,
   CreateFollowUpDto,
@@ -217,13 +218,22 @@ export class LeadsService {
     // Default to open leads so the kanban board keeps showing only active work.
     const outcome = q.outcome ?? 'open';
     if (outcome !== 'all') where.outcome = outcome;
-    if (q.rep) where.OR = [{ ownerId: q.rep }, { owner: { name: { contains: q.rep, mode: 'insensitive' } } }];
+    if (q.source) where.source = q.source;
     if (q.from || q.to) {
       where.createdAt = {
         ...(q.from ? { gte: parseYmd(q.from) } : {}),
         ...(q.to ? { lte: endOfDayUtc(q.to) } : {}),
       };
     }
+    // Each OR-shaped filter is its own AND term: assigning two of them to
+    // `where.OR` would let the second silently replace the first.
+    const and: Prisma.LeadWhereInput[] = [];
+    if (q.rep) and.push({ OR: [{ ownerId: q.rep }, { owner: { name: { contains: q.rep, mode: 'insensitive' } } }] });
+    const tagged = leadTagWhere(user.organisationId, q.tagIds);
+    if (tagged) and.push(tagged);
+    const searched = leadSearchWhere(q.q);
+    if (searched) and.push(searched);
+    if (and.length) where.AND = and;
 
     const leads = await this.prisma.lead.findMany({
       where,

@@ -22,6 +22,7 @@ export interface LeadExportFilters {
   stage?: string;
   outcome?: string;
   tagIds?: string[];
+  q?: string;
   columns?: string[];
 }
 

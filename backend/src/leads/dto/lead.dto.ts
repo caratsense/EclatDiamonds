@@ -1,4 +1,7 @@
+import { Transform } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsEnum,
   IsIn,
@@ -14,6 +17,7 @@ import {
 } from 'class-validator';
 import { LeadSource, LeadStage } from '@prisma/client';
 import { IsIndianMobile, IsRealName } from '../../common/contact.util';
+import { csv } from '../../common/query-csv';
 
 /** Follow-up reminder scopes for GET /leads/reminders. */
 export const REMINDER_SCOPES = ['today', 'overdue', 'upcoming', 'pending', 'all'] as const;
@@ -163,6 +167,24 @@ export class ListLeadsQuery {
   @IsOptional()
   @IsIn(LEAD_OUTCOME_FILTERS)
   outcome?: LeadOutcomeFilter;
+
+  @IsOptional()
+  @IsEnum(LeadSource)
+  source?: LeadSource;
+
+  /** Leads carrying ANY of these tags (`?tagIds=a,b`). Empty means every lead. */
+  @IsOptional()
+  @Transform(csv)
+  @IsArray()
+  @ArrayMaxSize(30)
+  @IsString({ each: true })
+  tagIds?: string[];
+
+  /** Name, lead reference or phone digits. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  q?: string;
 }
 
 /** POST /leads/:id/activities body (Zoho-style logged activity → LeadNote). */

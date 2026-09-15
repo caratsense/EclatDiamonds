@@ -49,22 +49,40 @@ export interface LeadFilter {
   to?: string;
   /** 'open' (default) | 'won' | 'lost' | 'all'. */
   outcome?: LeadOutcomeFilter;
+  /** Leads carrying ANY of these tags. Empty means every lead. */
+  tagIds?: string[];
+}
+
+/**
+ * The CRM search box, matched the way the server matches `?q=` for the export:
+ * name or reference contains the text, or — when it is mostly a number — the
+ * phone contains its digits.
+ */
+export function matchesLeadSearch(lead: Lead, query: string): boolean {
+  const text = query.trim().toLocaleLowerCase();
+  if (!text) return true;
+  if (lead.customer.toLocaleLowerCase().includes(text)) return true;
+  if (lead.ref.toLocaleLowerCase().includes(text)) return true;
+  const digits = text.replace(/\D/g, "");
+  return digits.length >= 4 && (lead.phone ?? "").includes(digits);
 }
 
 /** GET /leads — store-scoped, role-filtered server-side. Optional date range. */
 export function useLeads(filter: LeadFilter = {}) {
   const storeId = useStoreKey();
   const { from, to, outcome } = filter;
+  const tagIds = [...(filter.tagIds ?? [])].sort().join(",");
   return useQuery({
-    // Keep the range + outcome in the key so changing either refetches
+    // Keep the range + outcome + tags in the key so changing any refetches
     // like a fresh query.
-    queryKey: ["leads", storeId, from ?? null, to ?? null, outcome ?? "open"],
+    queryKey: ["leads", storeId, from ?? null, to ?? null, outcome ?? "open", tagIds],
     queryFn: async () => {
       const { data } = await api.get<Lead[]>("/leads", {
         params: {
           ...(from ? { from } : {}),
           ...(to ? { to } : {}),
           ...(outcome ? { outcome } : {}),
+          ...(tagIds ? { tagIds } : {}),
         },
       });
       // Normalise the collection fields: the list endpoint may omit occasion
