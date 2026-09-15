@@ -1495,14 +1495,19 @@ model StaffDigestRun {
 
   inAppNotified Boolean @default(false)
 
-  /// 'skipped' | 'sent' | 'failed' | 'dead'.
+  /// 'skipped' | 'queued' | 'refused' (rows before the outbox: 'sent' | 'failed' | 'dead').
   ///
-  /// `skipped` is a first-class outcome, not a failure: no staff phone, WhatsApp
-  /// off for the tenant, no approved template, or an unhealthy sender. The
-  /// REASON is stored beside it so the settings screen can say which, instead of
-  /// the team guessing why nobody got a message.
+  /// `skipped` is a first-class outcome, not a failure: WhatsApp off for the
+  /// tenant or no template configured. `refused` is the outbox declining before
+  /// anything was queued — no usable staff number, a template the provider has
+  /// not approved, a disconnected sender, an opt-out. `queued` means an outbox
+  /// message exists; whether it was delivered is that message's status, never a
+  /// copy kept here. The REASON is stored beside it so the settings screen can
+  /// say which, instead of the team guessing why nobody got a message.
   whatsappStatus String  @default("skipped")
   whatsappReason String?
+  /// The outbox Message carrying the WhatsApp half, once queued.
+  whatsappMessageId String?
 
   /// Retries before the row is left as `dead`. A digest is worth very few — it
   /// is stale by lunchtime, and a queue that keeps retrying yesterday's list is
@@ -3936,6 +3941,13 @@ model Conversation {
   /// Who is answering right now: 'ai' | 'human' | 'unassigned'. The handoff state
   /// is explicit rather than inferred from whether an assignee exists.
   handling String @default("unassigned")
+
+  /// 'customer' | 'staff'. A staff thread carries the business's own notices to
+  /// an employee (the morning digest) through the same outbox, consent, template
+  /// and delivery-receipt path as a customer message, and is kept out of the
+  /// customer inbox, its counts and its KPIs. Its key never matches an inbound
+  /// sender, so a reply from that employee still lands in an ordinary thread.
+  audience String @default("customer")
 
   assignedUserId String?
   assignedUser   User?   @relation("ConversationAssignee", fields: [assignedUserId], references: [id])

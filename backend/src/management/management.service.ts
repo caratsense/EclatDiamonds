@@ -271,6 +271,8 @@ export class ManagementService {
   private async engagementSection(ctx: Ctx, filters: KpiFilters) {
     const conversationWhere: Prisma.ConversationWhereInput = {
       organisationId: ctx.organisationId,
+      // A staff notice thread is not customer engagement.
+      audience: 'customer',
       createdAt: { gte: ctx.window.from, lt: ctx.window.to },
       // AND, not a top-level OR: the unanswered count below adds an OR of its
       // own, and a second OR key would silently replace the scope.

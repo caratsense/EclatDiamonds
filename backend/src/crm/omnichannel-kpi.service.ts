@@ -151,7 +151,7 @@ export class OmnichannelKpiService {
       // the sender resolves to a customer, and a branch filter would silently
       // report every unresolved thread as "no conversations".
       this.prisma.conversation.count({
-        where: { organisationId: org, createdAt: { gte: since } },
+        where: { organisationId: org, audience: 'customer', createdAt: { gte: since } },
       }),
     ]);
 

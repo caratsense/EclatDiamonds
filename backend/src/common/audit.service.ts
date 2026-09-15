@@ -30,6 +30,8 @@ export const SYSTEM_ACTORS = {
   telephony_webhook: 'Inbound call',
   /** The tenant's own website calling the loyalty API with its own key. */
   loyalty_website: 'Loyalty website',
+  /** The morning follow-up digest queuing a staff member's WhatsApp notice. */
+  staff_digest: 'Morning staff digest',
 } as const;
 
 export type SystemActor = keyof typeof SYSTEM_ACTORS;

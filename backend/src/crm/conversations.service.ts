@@ -1275,9 +1275,11 @@ export class ConversationsService {
    */
   private visibility(user: AuthUser): Prisma.ConversationWhereInput {
     const storeScope = this.scope.storeFilter(user);
+    // Staff notice threads (the morning digest) are the business talking to its
+    // own people. They are in the outbox, never in the customer inbox.
     return user.role === 'head_office'
-      ? { OR: [storeScope, { storeId: null }] }
-      : storeScope;
+      ? { audience: 'customer', OR: [storeScope, { storeId: null }] }
+      : { audience: 'customer', ...storeScope };
   }
 
   /**

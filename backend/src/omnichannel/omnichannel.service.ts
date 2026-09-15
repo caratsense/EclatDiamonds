@@ -66,7 +66,14 @@ interface MessageInstructions {
   templateAssetId?: string;
   templateComponents?: unknown[];
   queuedAt?: string;
+  /** On a staff thread: the employee the notice is for, re-read at delivery. */
+  staffUserId?: string;
 }
+
+/** The outcome of queuing a notice to a member of staff. */
+export type StaffNoticeResult =
+  | { queued: true; messageId: string; jobId?: string; deduplicated: boolean }
+  | { queued: false; code: string; reason: string };
 
 export const CONSENT_PURPOSES = ['service', 'marketing', 'all'] as const;
 export type ConsentPurpose = (typeof CONSENT_PURPOSES)[number];
@@ -844,6 +851,225 @@ export class OmnichannelService implements OnModuleInit {
   }
 
   /**
+   * Queue a notice from the business to one of its own staff — the morning
+   * digest — through the same outbox a customer message uses.
+   *
+   * The digest used to call the provider directly: no outbox row, no durable
+   * retry, no dead letter, no delivery receipt, and a failure was a line in a
+   * log. Everything below is the customer path, with the two differences an
+   * employee genuinely needs:
+   *
+   *  - THE DESTINATION IS A PERSON ON THE STAFF, NOT A NUMBER. It is read from an
+   *    active, approved user of this organisation — never from a value a caller
+   *    supplies — and read AGAIN by the worker, so somebody deactivated between
+   *    the queue and the send is not messaged.
+   *  - THE THREAD IS A STAFF THREAD. `audience: 'staff'`, keyed so that no inbound
+   *    sender can ever land in it, and kept out of the customer inbox and its
+   *    figures.
+   *
+   * Consent is not waived: an employee who is also a customer and has opted out
+   * on that record is refused like anyone else. Refusals are returned rather than
+   * thrown, because "no approved template" on a scheduler run is an expected
+   * answer, not an incident.
+   */
+  async queueStaffNotice(input: {
+    organisationId: string;
+    /** The branch the notice belongs to, and so the number it leaves from. */
+    storeId: string;
+    recipientUserId: string;
+    templateName: string;
+    languageCode: string;
+    templateComponents: unknown[];
+    /** Stable per notice, so a scheduler retry resolves to the same message. */
+    idempotencyKey: string;
+    /** What the outbox row shows. No customer detail — it is read on a lock screen. */
+    summary: string;
+  }): Promise<StaffNoticeResult> {
+    const refuse = (code: string, reason: string): StaffNoticeResult => ({
+      queued: false,
+      code,
+      reason,
+    });
+    const org = input.organisationId;
+    this.assertComponentsBounded(input.templateComponents);
+
+    const staff = await this.resolveStaffRecipient(org, input.recipientUserId);
+    if ('reason' in staff) return refuse('recipient_missing', staff.reason);
+
+    const store = await this.prisma.store.findFirst({
+      where: { id: input.storeId, organisationId: org },
+      select: { id: true },
+    });
+    if (!store) {
+      return refuse('store_missing', 'The branch sending this notice is not part of this organisation.');
+    }
+
+    const key = templateKey(input.templateName, input.languageCode);
+    const asset = key
+      ? await this.prisma.integrationAsset.findFirst({
+          where: {
+            organisationId: org,
+            kind: TEMPLATE_ASSET_KIND,
+            externalId: key,
+            integration: { providerCode: 'whatsapp_cloud' },
+          },
+          select: { id: true },
+        })
+      : null;
+    if (!asset) {
+      return refuse(
+        'template_unavailable',
+        `No "${input.templateName}" template in "${input.languageCode}" is registered for this organisation. Synchronise templates first.`,
+      );
+    }
+    let template: Awaited<ReturnType<OmnichannelService['loadApprovedTemplate']>>;
+    try {
+      template = await this.loadApprovedTemplate(org, asset.id);
+    } catch (error) {
+      return refuse('template_unavailable', errorMessage(error));
+    }
+
+    const consent = staff.partyId
+      ? await this.resolveConsent(org, staff.partyId, 'whatsapp', 'service')
+      : ({ state: 'unknown' } as ConsentSnapshot);
+    const decision = evaluateDeliveryPolicy({
+      channel: 'whatsapp',
+      purpose: 'service',
+      consent: consent.state,
+      hasApprovedTemplate: true,
+      lastInboundAt: null,
+      channelDeliverable: await this.channelDeliverable(org, 'whatsapp'),
+    });
+    if (!decision.allowed) return refuse(decision.code, decision.reason);
+
+    const conversation = await this.findOrCreateStaffThread(org, store.id, staff.userId);
+    const dedupeKey = `omnichannel:staff-notice:${input.idempotencyKey}`;
+    const now = new Date();
+    const instructions: MessageInstructions = {
+      purpose: 'service',
+      templateAssetId: template.id,
+      templateComponents: input.templateComponents,
+      queuedAt: now.toISOString(),
+      staffUserId: staff.userId,
+    };
+
+    let messageId: string;
+    let deduplicated = false;
+    try {
+      messageId = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.message.create({
+          data: {
+            organisationId: org,
+            conversationId: conversation.id,
+            direction: 'outbound',
+            authorType: 'system',
+            body: input.summary.slice(0, 500),
+            status: 'queued',
+            payload: { omnichannel: instructions } as unknown as Prisma.InputJsonValue,
+          },
+        });
+        await tx.conversation.update({
+          where: { id: conversation.id },
+          data: { lastMessageAt: now },
+        });
+        // The dedupe key is unique: a second queue for the same notice fails
+        // here and resolves to the message the first one created.
+        await tx.activityEvent.create({
+          data: {
+            organisationId: org,
+            storeId: store.id,
+            type: 'message.queued',
+            summary: `Staff notice queued on WhatsApp`,
+            entityType: 'Message',
+            entityId: created.id,
+            channel: 'whatsapp',
+            dedupeKey,
+            metadata: compactJson({ purpose: 'service', audience: 'staff', templateAssetId: template.id }),
+          },
+        });
+        return created.id;
+      });
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+      const prior = await this.prisma.activityEvent.findFirst({
+        where: { organisationId: org, dedupeKey, type: 'message.queued', entityType: 'Message' },
+        select: { entityId: true },
+      });
+      if (!prior?.entityId) throw error;
+      messageId = prior.entityId;
+      deduplicated = true;
+    }
+
+    const job = await this.enqueueMessage(org, messageId, undefined);
+    if (!deduplicated) {
+      await this.audit.recordSystem(org, 'staff_digest', {
+        action: 'omnichannel.staff_notice_queued',
+        entityType: 'Message',
+        entityId: messageId,
+        storeId: store.id,
+        summary: `Queued a WhatsApp staff notice (${input.templateName}) for delivery.`,
+        metadata: { recipientUserId: staff.userId, templateAssetId: template.id, jobId: job?.id ?? null },
+      });
+    }
+    return { queued: true, messageId, jobId: job?.id, deduplicated };
+  }
+
+  /**
+   * The WhatsApp number of an active, approved member of this organisation, or
+   * the reason there is none.
+   */
+  private async resolveStaffRecipient(
+    organisationId: string,
+    userId: string,
+  ): Promise<{ userId: string; recipient: string; partyId: string | null } | { reason: string }> {
+    const staff = await this.prisma.user.findFirst({
+      where: { id: userId, organisationId, isActive: true, approvalStatus: 'approved' },
+      select: { id: true, phone: true, partyId: true, organisation: { select: { country: true } } },
+    });
+    if (!staff) return { reason: 'That person is not an active member of this organisation.' };
+    if (!staff.phone) return { reason: 'This staff member has no phone number on file.' };
+    const recipient = this.identity.normalize('whatsapp', staff.phone, staff.organisation?.country ?? 'IN');
+    if (!recipient) return { reason: 'This staff member\'s phone number is not a usable WhatsApp number.' };
+    return { userId: staff.id, recipient, partyId: staff.partyId };
+  }
+
+  /**
+   * One staff thread per branch and person.
+   *
+   * Keyed `staff:<store>:<user>`, which no inbound provider id can ever equal, so
+   * a reply from that employee's phone opens or finds an ordinary thread instead
+   * of landing among the notices.
+   */
+  private async findOrCreateStaffThread(organisationId: string, storeId: string, userId: string) {
+    const where = {
+      organisationId_channel_externalThreadId: {
+        organisationId,
+        channel: 'whatsapp',
+        externalThreadId: `staff:${storeId}:${userId}`,
+      },
+    };
+    const existing = await this.prisma.conversation.findUnique({ where });
+    if (existing) return existing;
+    try {
+      return await this.prisma.conversation.create({
+        data: {
+          organisationId,
+          channel: 'whatsapp',
+          externalThreadId: `staff:${storeId}:${userId}`,
+          audience: 'staff',
+          storeId,
+          subject: 'Staff notices',
+        },
+      });
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+      const raced = await this.prisma.conversation.findUnique({ where });
+      if (!raced) throw error;
+      return raced;
+    }
+  }
+
+  /**
    * Find queued rows THIS MODULE COMPOSED and give each exactly one durable job.
    *
    * The filter on `payload.omnichannel` is the whole safety of this method, so
@@ -1083,10 +1309,25 @@ export class OmnichannelService implements OnModuleInit {
         return this.failPermanently(message, 'template_unavailable', errorMessage(error));
       }
     }
-    const consent = message.conversation.partyId
+    /*
+     * A staff notice's recipient is the employee, read again now: somebody
+     * deactivated, or whose number changed, since the notice was queued is not
+     * messaged at the old number.
+     */
+    const isStaffNotice = message.conversation.audience === 'staff';
+    const staff = isStaffNotice
+      ? instructions.staffUserId
+        ? await this.resolveStaffRecipient(ctx.organisationId, instructions.staffUserId)
+        : { reason: 'The staff notice does not name its recipient.' }
+      : null;
+    if (staff && 'reason' in staff) {
+      return this.failPermanently(message, 'recipient_missing', staff.reason);
+    }
+    const consentPartyId = staff ? staff.partyId : message.conversation.partyId;
+    const consent = consentPartyId
       ? await this.resolveConsent(
           ctx.organisationId,
-          message.conversation.partyId,
+          consentPartyId,
           message.conversation.channel,
           instructions.purpose,
         )
@@ -1125,10 +1366,14 @@ export class OmnichannelService implements OnModuleInit {
     }
 
     let recipient: string;
-    try {
-      recipient = await this.resolveRecipient(ctx.organisationId, message.conversation);
-    } catch (error) {
-      return this.failPermanently(message, 'recipient_missing', errorMessage(error));
+    if (staff) {
+      recipient = staff.recipient;
+    } else {
+      try {
+        recipient = await this.resolveRecipient(ctx.organisationId, message.conversation);
+      } catch (error) {
+        return this.failPermanently(message, 'recipient_missing', errorMessage(error));
+      }
     }
 
     /*
@@ -1381,6 +1626,7 @@ function messageInstructions(value: unknown): MessageInstructions {
     ...(typeof raw.templateAssetId === 'string' ? { templateAssetId: raw.templateAssetId } : {}),
     ...(Array.isArray(raw.templateComponents) ? { templateComponents: raw.templateComponents } : {}),
     ...(typeof raw.queuedAt === 'string' ? { queuedAt: raw.queuedAt } : {}),
+    ...(typeof raw.staffUserId === 'string' ? { staffUserId: raw.staffUserId } : {}),
   };
 }
 
