@@ -288,6 +288,7 @@ export class HrmsService {
     lng: number | undefined,
     note: string | undefined,
     kind: 'check-in' | 'check-out',
+    accuracyM?: number,
   ): { distanceM: number | null; withinFence: boolean } {
     if (store.latitude == null || store.longitude == null) {
       // No geofence configured for this store — nothing to verify against, so
@@ -308,6 +309,31 @@ export class HrmsService {
       return { distanceM: null, withinFence: false };
     }
     const dist = haversineM(store.latitude, store.longitude, lat, lng);
+    /*
+     * HOW SURE IS THE FIX. A phone indoors can report a position with a radius
+     * of uncertainty of several hundred metres. Such a fix can neither confirm
+     * someone is inside a 150 m fence nor prove they are outside it, and
+     * pretending either way is the failure: blocking a person standing at the
+     * counter, or waving through a punch from down the road. When the reported
+     * uncertainty reaches the far side of the fence the punch is not decided by
+     * GPS at all — it needs a reason and goes to the manager, exactly like a
+     * punch with no fix. This is not anti-spoofing; a spoofed position reports
+     * whatever accuracy it likes.
+     */
+    const uncertain =
+      accuracyM != null &&
+      Number.isFinite(accuracyM) &&
+      accuracyM > 0 &&
+      dist <= store.geofenceRadiusM + accuracyM &&
+      (accuracyM > store.geofenceRadiusM || dist > store.geofenceRadiusM);
+    if (uncertain) {
+      if (!note?.trim()) {
+        throw new BadRequestException(
+          `Your location is only accurate to about ${Math.round(accuracyM!)} m, which cannot confirm this ${kind} is within ${store.geofenceRadiusM} m of ${store.name}. Move near a window or outdoors and try again, or add a reason — your manager will review it.`,
+        );
+      }
+      return { distanceM: Math.round(dist), withinFence: false };
+    }
     const withinFence = dist <= store.geofenceRadiusM;
     if (!withinFence) {
       if (kind === 'check-in') {
@@ -579,6 +605,7 @@ export class HrmsService {
       dto.lng,
       dto.note,
       'check-in',
+      dto.accuracyM,
     );
 
     // Lateness vs the assigned shift (or the store's first/default shift if none given).
@@ -698,6 +725,7 @@ export class HrmsService {
       dto.lng,
       dto.note,
       'check-out',
+      dto.accuracyM,
     );
 
     const shift = record.shiftId ? await this.resolveShift(storeId, record.shiftId) : null;

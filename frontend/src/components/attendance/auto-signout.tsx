@@ -44,14 +44,15 @@ const ACTIVITY_EVENTS = [
  * Best-effort one-shot position with a tight (~5s) budget, mirroring the lenient
  * check-in flow: a null just means the check-out records without geo verification.
  */
-function getPositionQuick(): Promise<{ lat: number; lng: number } | null> {
+function getPositionQuick(): Promise<{ lat: number; lng: number; accuracyM?: number } | null> {
   return new Promise((resolve) => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
       resolve(null);
       return;
     }
     navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      (pos) =>
+        resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracyM: pos.coords.accuracy }),
       () => resolve(null),
       { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 },
     );
@@ -155,8 +156,8 @@ export function AutoSignOut() {
     const pos = await getPositionQuick();
     checkOutRef.current.mutate(
       {
-        lat: pos?.lat ?? 0,
-        lng: pos?.lng ?? 0,
+        // No fix → no coordinates, never 0/0 (Null Island).
+        ...(pos ? { lat: pos.lat, lng: pos.lng, accuracyM: pos.accuracyM } : {}),
         // Always send a note. It explains the punch on the attendance record,
         // and it doubles as the justification the API requires when the fix
         // lands outside the store geofence — without it an off-site idle

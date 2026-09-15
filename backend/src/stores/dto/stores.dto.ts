@@ -1,11 +1,14 @@
 import {
   IsBoolean,
   IsEmail,
+  IsInt,
   IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
+  Min,
   MinLength,
 } from 'class-validator';
 import { IsIndianMobile, IsRealName } from '../../common/contact.util';
@@ -34,10 +37,14 @@ export class CreateStoreDto {
 
   @IsOptional()
   @IsNumber()
+  @Min(-90)
+  @Max(90)
   latitude?: number;
 
   @IsOptional()
   @IsNumber()
+  @Min(-180)
+  @Max(180)
   longitude?: number;
 }
 
@@ -69,11 +76,26 @@ export class UpdateStoreDto {
 
   @IsOptional()
   @IsNumber()
+  @Min(-90)
+  @Max(90)
   latitude?: number;
 
   @IsOptional()
   @IsNumber()
+  @Min(-180)
+  @Max(180)
   longitude?: number;
+
+  /**
+   * The attendance fence around the branch, in metres. Bounded: under 25 m a
+   * phone's own GPS error decides every punch; over 2 km it no longer says the
+   * person is at this store rather than the one down the road.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(25)
+  @Max(2000)
+  geofenceRadiusM?: number;
 
   // Office address + contact. Editable because what the sync imports is only as
   // good as the client's branch master, which is often years out of date, and

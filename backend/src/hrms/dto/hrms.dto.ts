@@ -193,6 +193,13 @@ export class CheckInDto {
   @Max(180)
   lng?: number;
 
+  /** The device's own radius of uncertainty for that fix, in metres (`coords.accuracy`). */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(1_000_000)
+  accuracyM?: number;
+
   /** Assigned shift for this punch. When omitted the store's first shift is used. */
   @IsOptional()
   @IsString()
@@ -251,6 +258,13 @@ export class CheckOutDto {
   @Min(-180)
   @Max(180)
   lng?: number;
+
+  /** See {@link CheckInDto.accuracyM}. */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(1_000_000)
+  accuracyM?: number;
 
   /** Justification when the check-out lands outside the store geofence. */
   @IsOptional()

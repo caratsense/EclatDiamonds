@@ -354,6 +354,7 @@ export class StoresService {
     if (dto.latitude !== undefined) {
       data.latitude = dto.latitude != null ? String(dto.latitude) : null;
     }
+    if (dto.geofenceRadiusM !== undefined) data.geofenceRadiusM = dto.geofenceRadiusM;
     if (dto.longitude !== undefined) {
       data.longitude = dto.longitude != null ? String(dto.longitude) : null;
     }

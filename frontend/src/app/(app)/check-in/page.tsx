@@ -99,14 +99,15 @@ function formatDistance(m: number): string {
  * is lenient: a null just means the punch records without geo-verification.
  * Used by the manual "Check in anyway" fallback (the auto flow uses watchPosition).
  */
-function getPosition(): Promise<{ lat: number; lng: number } | null> {
+function getPosition(): Promise<{ lat: number; lng: number; accuracyM?: number } | null> {
   return new Promise((resolve) => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
       resolve(null);
       return;
     }
     navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      (pos) =>
+        resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracyM: pos.coords.accuracy }),
       () => resolve(null),
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
     );
@@ -155,7 +156,7 @@ export default function CheckInPage() {
   // True when the fresh check-in couldn't capture a location.
   const [geoMissed, setGeoMissed] = useState(false);
   // Latest watched position (drives the live distance card). Null until first fix.
-  const [watchPos, setWatchPos] = useState<{ lat: number; lng: number } | null>(
+  const [watchPos, setWatchPos] = useState<{ lat: number; lng: number; accuracyM?: number } | null>(
     null,
   );
   // True once the browser denies permission / geolocation is unsupported.
@@ -182,7 +183,7 @@ export default function CheckInPage() {
   // watchPosition handle, so we can clearWatch on unmount / after a punch.
   const watchIdRef = useRef<number | null>(null);
   // Freshest coords for the auto-punch, without waiting on a state flush.
-  const latestPosRef = useRef<{ lat: number; lng: number } | null>(null);
+  const latestPosRef = useRef<{ lat: number; lng: number; accuracyM?: number } | null>(null);
   // Fires the auto check-in exactly once; also set by the manual button so the
   // watcher never double-punches.
   const punchedRef = useRef(false);
@@ -266,7 +267,7 @@ export default function CheckInPage() {
    * first; see {@link startManual}.
    */
   function runCheckIn(
-    pos: { lat: number; lng: number } | null,
+    pos: { lat: number; lng: number; accuracyM?: number } | null,
     note?: string,
     photo?: string | null,
   ) {
@@ -276,7 +277,7 @@ export default function CheckInPage() {
       // Omit the coordinates entirely when there is no fix. Sending 0/0 put the
       // punch at Null Island, 8,200 km away, and the server rightly refused it.
       {
-        ...(pos ? { lat: pos.lat, lng: pos.lng } : {}),
+        ...(pos ? { lat: pos.lat, lng: pos.lng, accuracyM: pos.accuracyM } : {}),
         ...(note ? { note } : {}),
         ...(photo ? { photo } : {}),
       },
@@ -316,7 +317,7 @@ export default function CheckInPage() {
     if (typeof navigator === "undefined" || !navigator.geolocation) return;
     const id = navigator.geolocation.watchPosition(
       (pos) => {
-        const next = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        const next = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracyM: pos.coords.accuracy };
         latestPosRef.current = next;
         setWatchPos(next);
         setGeoDenied(false);

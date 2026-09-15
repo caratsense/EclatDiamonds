@@ -85,14 +85,15 @@ function formatWorked(mins: number | null): string {
  * unsupported / permission is denied / the fix times out. The caller is lenient:
  * a null just means the punch records without geo-verification (backend allows it).
  */
-function getPosition(): Promise<{ lat: number; lng: number } | null> {
+function getPosition(): Promise<{ lat: number; lng: number; accuracyM?: number } | null> {
   return new Promise((resolve) => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
       resolve(null);
       return;
     }
     navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      (pos) =>
+        resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracyM: pos.coords.accuracy }),
       () => resolve(null),
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
     );
@@ -207,15 +208,15 @@ export function GeoPunchCard() {
   }
 
   function submitCheckIn(
-    pos: { lat: number; lng: number } | null,
+    pos: { lat: number; lng: number; accuracyM?: number } | null,
     note?: string,
     photo?: string,
   ) {
     const captured = pos != null;
     checkIn.mutate(
       {
-        lat: pos?.lat ?? 0,
-        lng: pos?.lng ?? 0,
+        // No fix → no coordinates. 0/0 is Null Island, 8,200 km from the store.
+        ...(pos ? { lat: pos.lat, lng: pos.lng, accuracyM: pos.accuracyM } : {}),
         shiftId: shiftId || undefined,
         ...(note ? { note } : {}),
         ...(photo ? { photo } : {}),
@@ -245,14 +246,13 @@ export function GeoPunchCard() {
   }
 
   function submitCheckOut(
-    pos: { lat: number; lng: number } | null,
+    pos: { lat: number; lng: number; accuracyM?: number } | null,
     note?: string,
     photo?: string,
   ) {
     checkOut.mutate(
       {
-        lat: pos?.lat ?? 0,
-        lng: pos?.lng ?? 0,
+        ...(pos ? { lat: pos.lat, lng: pos.lng, accuracyM: pos.accuracyM } : {}),
         ...(note ? { note } : {}),
         ...(photo ? { photo } : {}),
       },

@@ -178,6 +178,8 @@ export interface PunchInput {
    */
   lat?: number;
   lng?: number;
+  /** The device's radius of uncertainty for that fix, in metres. */
+  accuracyM?: number;
   /** Optional shift/batch to score lateness against (check-in only). */
   shiftId?: string;
   /**
@@ -241,7 +243,8 @@ export function useCheckIn() {
 export function useCheckOut() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { lat: number; lng: number; note?: string; photo?: string }) => {
+    // Coordinates OMITTED when there is no fix — never 0/0, see PunchInput.
+    mutationFn: async (input: { lat?: number; lng?: number; accuracyM?: number; note?: string; photo?: string }) => {
       const { data } = await api.post<SelfAttendance>(
         "/hrms/attendance/check-out",
         input,
