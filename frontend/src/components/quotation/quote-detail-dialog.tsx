@@ -34,6 +34,9 @@ import {
 } from "@/lib/mock/quotation";
 import { useSession } from "@/store/use-session";
 import { ChannelStatusNotice } from "@/components/integrations/channel-status-notice";
+import { QuoteApprovalPanel } from "@/components/quotation/quote-approval-panel";
+import { useQuoteApproval } from "@/lib/queries/quotes";
+import { apiErrorMessage } from "@/lib/utils";
 
 interface QuoteDetailDialogProps {
   quote: Quote | null;
@@ -53,7 +56,11 @@ export function QuoteDetailDialog({
 }: QuoteDetailDialogProps) {
   const { stores, currentStore } = useSession();
   const [sharing, setSharing] = useState(false);
+  const gate = useQuoteApproval(quote?.id ?? null);
   if (!quote) return null;
+  // Held until the server says the quote may leave. The server refuses anyway;
+  // this only stops a salesperson pressing a button that will be refused.
+  const awaitingApproval = !!gate.data && gate.data.required && !gate.data.cleared;
 
   const isRepair = quote.kind === "repair";
   const totals = computeQuoteTotals(quote);
@@ -109,8 +116,9 @@ export function QuoteDetailDialog({
       } else {
         toast.error("WhatsApp refused the message — the quote was not sent.");
       }
-    } catch {
-      toast.error("Could not send the quote. Please try again.");
+    } catch (e) {
+      // A refusal (needs approval, amount changed) arrives here with its reason.
+      toast.error(apiErrorMessage(e, "Could not send the quote. Please try again."));
     } finally {
       setSharing(false);
     }
@@ -318,10 +326,17 @@ export function QuoteDetailDialog({
           </div>
         </div>
 
+        <QuoteApprovalPanel quote={quote} />
+
         <ChannelStatusNotice channel="whatsapp" className="mt-2" />
 
         <DialogFooter>
-          <Button variant="outline" disabled={sharing} onClick={shareOnWhatsApp}>
+          <Button
+            variant="outline"
+            disabled={sharing || awaitingApproval}
+            title={awaitingApproval ? "A manager must approve this amount first" : undefined}
+            onClick={shareOnWhatsApp}
+          >
             <MessageCircle className="h-4 w-4" />
             {sharing ? "Sending…" : "Share on WhatsApp"}
           </Button>

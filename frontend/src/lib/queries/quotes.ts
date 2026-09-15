@@ -132,3 +132,94 @@ export function useConvertQuoteToOrder() {
     },
   });
 }
+
+/* ------------------------------------------------------- manager approval */
+
+/** Whether a quote may go to the customer yet — the same gate sharing enforces. */
+export interface QuoteApprovalGate {
+  required: boolean;
+  cleared: boolean;
+  reason: string | null;
+}
+
+export interface PendingQuoteApproval {
+  id: string;
+  ref: string;
+  customerName: string;
+  amount: number;
+  requestedAt: string | null;
+  requestedByName: string | null;
+  requestedById: string | null;
+  storeName: string | null;
+}
+
+export interface QuoteApprovalSettings {
+  /** Quotes at or above this grand total need a manager. `null` = approval off. */
+  valueThreshold: number | null;
+  allowSelfApproval: boolean;
+}
+
+/** GET /quotes/:id/approval */
+export function useQuoteApproval(id: string | null) {
+  return useQuery({
+    queryKey: ["quotes", "approval", id],
+    enabled: !!id,
+    queryFn: async () => (await api.get<QuoteApprovalGate>(`/quotes/${id}/approval`)).data,
+  });
+}
+
+/** GET /quotes/approval/pending — store manager and head office. */
+export function usePendingQuoteApprovals(enabled: boolean) {
+  const storeId = useStoreKey();
+  return useQuery({
+    queryKey: ["quotes", "approval", "pending", storeId],
+    enabled,
+    queryFn: async () =>
+      (await api.get<PendingQuoteApproval[]>("/quotes/approval/pending")).data,
+  });
+}
+
+/** POST /quotes/:id/request-approval */
+export function useRequestQuoteApproval() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) =>
+      (await api.post(`/quotes/${id}/request-approval`)).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["quotes"] }),
+  });
+}
+
+/** POST /quotes/:id/decide — a reason is required to reject. */
+export function useDecideQuote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { id: string; approve: boolean; reason?: string }) =>
+      (
+        await api.post(`/quotes/${input.id}/decide`, {
+          approve: input.approve,
+          reason: input.reason,
+        })
+      ).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["quotes"] }),
+  });
+}
+
+/** GET /quotes/approval/settings */
+export function useQuoteApprovalSettings(enabled: boolean) {
+  return useQuery({
+    queryKey: ["quotes", "approval", "settings"],
+    enabled,
+    queryFn: async () =>
+      (await api.get<QuoteApprovalSettings>("/quotes/approval/settings")).data,
+  });
+}
+
+/** PUT /quotes/approval/settings — head office. */
+export function useSaveQuoteApprovalSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: Partial<QuoteApprovalSettings>) =>
+      (await api.put<QuoteApprovalSettings>("/quotes/approval/settings", input)).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["quotes"] }),
+  });
+}

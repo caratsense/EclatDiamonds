@@ -5,13 +5,23 @@
  * Replace with react-query hooks against the NestJS backend in Phase 2.
  */
 
-export type QuoteStatus = "draft" | "shared" | "accepted" | "expired";
+export type QuoteStatus =
+  | "draft"
+  | "shared"
+  | "accepted"
+  | "expired"
+  | "pending_approval"
+  | "approved"
+  | "rejected";
 
 export const QUOTE_STATUS_LABELS: Record<QuoteStatus, string> = {
   draft: "Draft",
   shared: "Shared",
   accepted: "Accepted",
   expired: "Expired",
+  pending_approval: "Awaiting approval",
+  approved: "Approved",
+  rejected: "Rejected",
 };
 
 /**

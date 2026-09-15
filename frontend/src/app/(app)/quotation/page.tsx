@@ -32,6 +32,8 @@ import {
 import { useQuotes } from "@/lib/queries/quotes";
 import { useSession } from "@/store/use-session";
 import { api } from "@/lib/api";
+import { apiErrorMessage } from "@/lib/utils";
+import { QuoteApprovalsCard } from "@/components/quotation/quote-approvals-card";
 
 const nav = getNavItem("quotation")!;
 
@@ -43,6 +45,9 @@ const STATUS_VARIANT: Record<
   shared: "secondary",
   accepted: "success",
   expired: "destructive",
+  pending_approval: "outline",
+  approved: "success",
+  rejected: "destructive",
 };
 
 export default function QuotationPage() {
@@ -89,8 +94,16 @@ export default function QuotationPage() {
         });
         return;
       }
-    } catch {
-      // Fallback to wa.me direct client link
+    } catch (err) {
+      /*
+       * A refusal is final. The server says no when a manager has not approved
+       * this amount (or it changed after approval); falling back to a wa.me link
+       * here would send the price anyway and make the approval meaningless.
+       * The fallback below is only for a quote the server cleared but could not
+       * deliver itself because WhatsApp is not connected.
+       */
+      toast.error(apiErrorMessage(err, "The quote could not be sent."));
+      return;
     }
 
     const text = `Hello ${q.customer}, here is your quotation #${q.ref} from Éclat Diamonds for ${formatINR(total)}. Please let us know if you would like to proceed or have any customizations!`;
@@ -119,6 +132,8 @@ export default function QuotationPage() {
         </TabsList>
 
         <TabsContent value="quotes" className="space-y-4">
+          <QuoteApprovalsCard />
+
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-muted-foreground">
               {currentStore.isAggregate
@@ -274,7 +289,13 @@ export default function QuotationPage() {
         </TabsContent>
       </Tabs>
 
-      <QuoteDetailDialog quote={active} open={open} onOpenChange={setOpen} />
+      {/* The live row, not the snapshot taken when the dialog opened — otherwise
+          requesting or deciding approval leaves the dialog showing the old status. */}
+      <QuoteDetailDialog
+        quote={scoped.find((q) => q.id === active?.id) ?? active}
+        open={open}
+        onOpenChange={setOpen}
+      />
       <QuoteBuilderDialog open={newOpen} onOpenChange={setNewOpen} />
     </>
   );
