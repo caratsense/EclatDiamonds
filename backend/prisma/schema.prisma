@@ -146,6 +146,19 @@ enum Availability {
   lead_time
 }
 
+/// What kind of stock a design or a piece is (Block 9).
+///
+/// `standard` is ordinary merchandise anybody may be sold. `customised` is made
+/// to order or for one customer: it sits on the shelf but is not the shop's to
+/// offer to the next person, so it is never counted as available and never told
+/// to "sell" when it ages. `non_stock` is a display piece, sample or showpiece —
+/// physically present, not merchandise at all, and excluded from both.
+enum StockClass {
+  standard
+  customised
+  non_stock
+}
+
 /// Module 5 � relevance label a user attaches to a jewelry similarity-search hit.
 /// Training signal for future ranking calibration; never changes the live result.
 enum SimilarityFeedback {
@@ -1735,6 +1748,11 @@ model Product {
   /// the entire point.
   styleNumber    String?
 
+  /// Block 9 — the design's classification. A made-to-order design is
+  /// `customised`, and every piece of it inherits that unless the piece says
+  /// otherwise. Defaulted, so every existing design stays ordinary stock.
+  stockClass     StockClass      @default(standard)
+
   // Image lives in object storage; only the URL is stored here.
   imageUrl String?
   stlUrl   String?
@@ -1893,6 +1911,16 @@ model StockItem {
   /// Nullable, because every piece that already exists has none and inventing
   /// them retroactively would put a number on a tag that the tag does not carry.
   vin           String?
+
+  /// Block 9 — this piece's own classification. NULL means "whatever the design
+  /// is", which is what every existing piece gets: one ring made for a customer
+  /// on a standard design must be markable without reclassifying its siblings.
+  stockClass     StockClass?
+
+  /// A person has judged this piece worth remaking or customising rather than
+  /// selling as it is. Set by hand, never inferred — a flag nobody decided would
+  /// send a sellable piece to the melting pot.
+  remakeSuitable Boolean     @default(false)
 
   hallmarkNo    String?
   /// BIS Hallmark Unique ID (6-char alphanumeric, one per hallmarked piece).

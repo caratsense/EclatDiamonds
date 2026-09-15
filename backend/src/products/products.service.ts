@@ -10,6 +10,7 @@ import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
 import { PageRequest, Paginated } from '../common/pagination';
 import { StorageService } from '../storage/storage.service';
+import { stockClassWhere } from '../stock/stock-class';
 import { CreateProductDto } from './dto/product.dto';
 
 /**
@@ -80,6 +81,8 @@ function toView(p: any, presence?: StockPresence) {
     priceKnown: p.priceKnown ?? true,
     unitOfMeasure: p.unitOfMeasure ?? undefined,
     availability: p.availability,
+    /** Block 9 — standard / customised / non_stock. */
+    stockClass: p.stockClass,
     leadTimeDays: p.leadTimeDays ?? undefined,
     storeId: p.storeId ?? '',
     description: p.description ?? '',
@@ -133,6 +136,10 @@ export class ProductsService {
         productId: { in: productIds },
         // Sold and returned pieces are not on the shelf; only countable stock is.
         status: { in: ['in_stock', 'aging', 'dead_stock'] },
+        // And only merchandise. A ring made for one customer, or a display
+        // sample, is on the shelf but is not something to offer the next person
+        // — counting it is how a salesperson promises a piece that is spoken for.
+        ...stockClassWhere('standard'),
         ...(visibleStoreIds ? { storeId: { in: visibleStoreIds } } : {}),
       },
       _count: { _all: true },
@@ -279,6 +286,9 @@ export class ProductsService {
       where: {
         productId,
         status: { in: ['in_stock', 'aging', 'dead_stock'] },
+        // The counter's list of what can be sold: the same set the "on the
+        // shelf" count above is taken from, so the two cannot disagree.
+        ...stockClassWhere('standard'),
         ...storeFilter,
       },
       orderBy: [{ inwardDate: 'desc' }],

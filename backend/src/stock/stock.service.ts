@@ -12,6 +12,7 @@ import { StoreScopeService } from '../common/store-scope.service';
 import { AuditService } from '../common/audit.service';
 import { GoldRateService } from '../integrations/gold-rate.service';
 import { DeadStockService } from './dead-stock.service';
+import { effectiveStockClass } from './stock-class';
 import { PageRequest, Paginated } from '../common/pagination';
 import {
   ADJUST_REASON_TO_STATUS,
@@ -278,7 +279,10 @@ export class StockService {
         // Needed to pick the right threshold: a chain and a bridal set do not
         // go dead at the same age, which is the whole reason the policy exists.
         category: true,
-        product: { select: { category: true } },
+        // A customised or display piece is not dead MERCHANDISE however old it
+        // is — the dead-stock list's default view excludes them, so this does.
+        stockClass: true,
+        product: { select: { category: true, stockClass: true } },
       },
     });
 
@@ -314,7 +318,7 @@ export class StockService {
       // real design category on the linked product — the same fallback the
       // ledger view uses, so the KPI and the rows agree.
       const cat = r.category && r.category !== 'other' ? r.category : (r.product?.category ?? r.category);
-      if (age > ruleFor(cat).thresholdDays) deadStock++;
+      if (age > ruleFor(cat).thresholdDays && effectiveStockClass(r) === 'standard') deadStock++;
 
       const grams = r.grossWeight != null ? Number(r.grossWeight) : 0;
       totalStockValue += value;

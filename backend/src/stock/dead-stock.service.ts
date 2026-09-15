@@ -1,11 +1,13 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
-import { ProductCategory } from '@prisma/client';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { ProductCategory, StockClass } from '@prisma/client';
+import { Workbook } from 'exceljs';
 
 import { AuditService } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { SequenceService } from '../common/sequence.service';
+import { effectiveStockClass, STOCK_CLASS_LABEL, STOCK_CLASSES } from './stock-class';
 
 /**
  * When a piece counts as dead, and how a piece is identified.
@@ -41,6 +43,72 @@ const MAX_DAYS = 3650;
 
 /** One VIN check character, so a mistyped code is rejected rather than mis-looked-up. */
 const CHECK_ALPHABET = '0123456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+
+export type DeadStockView = 'stock' | 'customised' | 'remake' | 'excluded' | 'all';
+export const DEAD_STOCK_VIEWS: DeadStockView[] = ['stock', 'customised', 'remake', 'excluded', 'all'];
+
+/** dead = past the threshold; ageing = past the warning too; all = every piece in scope. */
+export type DeadStockState = 'dead' | 'ageing' | 'all';
+export const DEAD_STOCK_STATES: DeadStockState[] = ['dead', 'ageing', 'all'];
+
+export interface DeadStockListOptions {
+  storeId?: string;
+  category?: string;
+  limit?: number;
+  /** Kept for callers from before `state`; `true` is `state: 'ageing'`. */
+  includeWarning?: boolean;
+  state?: DeadStockState;
+  view?: DeadStockView;
+  /** Internal: the export may return more rows than a screen. */
+  maxLimit?: number;
+}
+
+/** A workbook, not a screen — but still bounded, and says so when it is cut. */
+const EXPORT_MAX_ROWS = 10_000;
+
+export type DeadStockSuggestion = 'sell' | 'remake' | 'contact_customer';
+
+const SUGGESTION_LABEL: Record<DeadStockSuggestion, string> = {
+  sell: 'Sell / promote',
+  remake: 'Remake or customise',
+  contact_customer: 'Contact the customer',
+};
+
+/**
+ * What to do with an ageing piece — and, as much as anything, what NOT to.
+ *
+ * "Sell" goes only to ordinary stock. A customised piece is somebody's order:
+ * the action is the customer, never a discount to a stranger. A display piece
+ * gets nothing, because it is not for sale. A remake flag was set by a person
+ * and wins over both, except on a display piece.
+ */
+function suggestionFor(
+  state: 'dead' | 'ageing' | 'fresh',
+  cls: StockClass,
+  remakeSuitable: boolean,
+): DeadStockSuggestion | null {
+  if (state === 'fresh' || cls === 'non_stock') return null;
+  if (remakeSuitable) return 'remake';
+  return cls === 'customised' ? 'contact_customer' : 'sell';
+}
+
+function inDeadStockView(
+  view: DeadStockView,
+  r: { stockClass: StockClass; remakeSuitable: boolean },
+): boolean {
+  switch (view) {
+    case 'stock':
+      return r.stockClass === 'standard';
+    case 'customised':
+      return r.stockClass === 'customised';
+    case 'remake':
+      return r.remakeSuitable && r.stockClass !== 'non_stock';
+    case 'excluded':
+      return r.stockClass === 'non_stock';
+    default:
+      return true;
+  }
+}
 
 export interface DeadStockRule {
   category: ProductCategory | null;
@@ -195,19 +263,44 @@ export class DeadStockService {
   // ==========================================================================
 
   /**
-   * Pieces that are past their category's threshold, oldest first.
+   * Pieces that are past their category's threshold, worst first.
    *
    * Grouped by the rule that condemned them, because "these 40 rings are dead at
    * 90 days and these 12 bridal sets at 365" is actionable and "52 dead pieces"
    * is not.
+   *
+   * ── Views (Block 9) ─────────────────────────────────────────────────────────
+   *
+   * `stock` (the default) is ordinary merchandise — the list a manager discounts
+   * from, and the only one whose count is "dead stock" on the summary card.
+   * `customised` is made-to-order and customer pieces: old, but not the shop's to
+   * sell to somebody else. `remake` is whatever a person has marked worth
+   * remaking. `excluded` is display and sample pieces, which are not stock at
+   * all. The four bucket counts come back with every view, so switching views
+   * never hides that the others exist.
    */
-  async list(
-    user: AuthUser,
-    opts: { storeId?: string; category?: string; limit?: number; includeWarning?: boolean } = {},
-  ) {
+  async list(user: AuthUser, opts: DeadStockListOptions = {}) {
     const rule = await this.resolverFor(user.organisationId);
     const category = opts.category ? this.parseCategory(opts.category) : null;
+    const view = opts.view ?? 'stock';
+    if (!DEAD_STOCK_VIEWS.includes(view)) {
+      throw new BadRequestException(`view must be one of: ${DEAD_STOCK_VIEWS.join(', ')}.`);
+    }
+    const stateFilter = opts.state ?? (opts.includeWarning ? 'ageing' : 'dead');
+    if (!DEAD_STOCK_STATES.includes(stateFilter)) {
+      throw new BadRequestException(`state must be one of: ${DEAD_STOCK_STATES.join(', ')}.`);
+    }
+    const take = Math.min(Math.max(opts.limit ?? 200, 1), opts.maxLimit ?? 500);
 
+    /*
+     * The whole scope in one slim pass, not the oldest N.
+     *
+     * With a threshold per category, the oldest piece is not the most overdue
+     * one: a 100-day chain at 45 is further gone than a 300-day necklace at 365.
+     * Reading the oldest 500 and sorting those was the right shortcut with one
+     * threshold and is the wrong one with several. The stock summary already
+     * reads the same set, so this costs nothing that screen does not.
+     */
     const rows = await this.prisma.stockItem.findMany({
       where: {
         ...this.scope.orgFilter(user),
@@ -215,63 +308,242 @@ export class DeadStockService {
         status: { in: ['in_stock', 'aging', 'dead_stock', 'reserved'] },
         ...(category ? { category } : {}),
       },
-      orderBy: { inwardDate: 'asc' },
-      // Bounded: this is a screen, and a tenant whose whole shelf is dead does
-      // not need every row to learn that.
-      take: Math.min(Math.max(opts.limit ?? 200, 1), 500),
       select: {
         id: true, sku: true, name: true, vin: true, styleNumber: true,
         category: true, inwardDate: true, ageDays: true, tagPrice: true,
+        stockClass: true, remakeSuitable: true,
         storeId: true, store: { select: { name: true } },
-        product: { select: { category: true, styleNumber: true } },
+        product: { select: { category: true, styleNumber: true, stockClass: true } },
       },
     });
 
     const now = Date.now();
-    const out = rows
-      .map((r) => {
-        const cat = r.category && r.category !== 'other' ? r.category : (r.product?.category ?? r.category);
-        const applied = rule(cat);
-        const age = liveAgeDays(r, now);
-        const state =
-          age > applied.thresholdDays
-            ? ('dead' as const)
-            : applied.warnAfterDays != null && age > applied.warnAfterDays
-              ? ('ageing' as const)
-              : ('fresh' as const);
-        return {
-          id: r.id,
-          sku: r.sku ?? '',
-          vin: r.vin,
-          styleNumber: r.styleNumber ?? r.product?.styleNumber ?? null,
-          name: r.name ?? '',
-          category: cat,
-          storeId: r.storeId,
-          storeName: r.store?.name ?? '',
-          ageDays: age,
-          thresholdDays: applied.thresholdDays,
-          warnAfterDays: applied.warnAfterDays,
-          /** How far past the line, so a list can be sorted by "worst first". */
-          daysOver: Math.max(0, age - applied.thresholdDays),
-          state,
-          tagPrice: r.tagPrice != null ? Number(r.tagPrice) : 0,
-        };
-      })
-      .filter((r) => (opts.includeWarning ? r.state !== 'fresh' : r.state === 'dead'))
-      .sort((a, b) => b.daysOver - a.daysOver);
+    const all = rows.map((r) => {
+      const cat = r.category && r.category !== 'other' ? r.category : (r.product?.category ?? r.category);
+      const applied = rule(cat);
+      const age = liveAgeDays(r, now);
+      const state =
+        age > applied.thresholdDays
+          ? ('dead' as const)
+          : applied.warnAfterDays != null && age > applied.warnAfterDays
+            ? ('ageing' as const)
+            : ('fresh' as const);
+      const stockClass = effectiveStockClass(r);
+      return {
+        id: r.id,
+        sku: r.sku ?? '',
+        vin: r.vin,
+        styleNumber: r.styleNumber ?? r.product?.styleNumber ?? null,
+        name: r.name ?? '',
+        category: cat,
+        storeId: r.storeId,
+        storeName: r.store?.name ?? '',
+        ageDays: age,
+        thresholdDays: applied.thresholdDays,
+        warnAfterDays: applied.warnAfterDays,
+        /** How far past the line, so a list can be sorted by "worst first". */
+        daysOver: Math.max(0, age - applied.thresholdDays),
+        state,
+        tagPrice: r.tagPrice != null ? Number(r.tagPrice) : 0,
+        stockClass,
+        /** Whether the piece says so itself, or inherits it from its design. */
+        stockClassSource: r.stockClass ? ('piece' as const) : ('design' as const),
+        remakeSuitable: r.remakeSuitable,
+        suggestion: suggestionFor(state, stockClass, r.remakeSuitable),
+      };
+    });
+
+    const dead = all.filter((r) => r.state === 'dead');
+    const inView = all
+      .filter((r) => inDeadStockView(view, r))
+      .filter((r) =>
+        stateFilter === 'all' ? true : stateFilter === 'ageing' ? r.state !== 'fresh' : r.state === 'dead',
+      )
+      .sort((a, b) => b.daysOver - a.daysOver || b.ageDays - a.ageDays);
 
     return {
-      items: out,
+      view,
+      items: inView.slice(0, take),
       /*
-       * Counted from the SAME pass that produced the list, so the headline and
-       * the rows cannot disagree. A count computed separately over a different
-       * filter is how a screen ends up saying 52 above a table of 40.
+       * Counted from the SAME pass that produced the list, over the whole view
+       * rather than the page shown, so the headline agrees with the summary
+       * card even when the table is truncated — and `truncated` says it is.
        */
-      dead: out.filter((r) => r.state === 'dead').length,
-      ageing: out.filter((r) => r.state === 'ageing').length,
-      value: Math.round(out.reduce((sum, r) => sum + r.tagPrice, 0)),
-      truncated: rows.length >= Math.min(Math.max(opts.limit ?? 200, 1), 500),
+      dead: inView.filter((r) => r.state === 'dead').length,
+      ageing: inView.filter((r) => r.state === 'ageing').length,
+      value: Math.round(inView.reduce((sum, r) => sum + r.tagPrice, 0)),
+      total: inView.length,
+      truncated: inView.length > take,
+      /** Dead pieces per view, whichever view is open. */
+      buckets: {
+        stock: dead.filter((r) => inDeadStockView('stock', r)).length,
+        customised: dead.filter((r) => inDeadStockView('customised', r)).length,
+        remake: dead.filter((r) => inDeadStockView('remake', r)).length,
+        excluded: dead.filter((r) => inDeadStockView('excluded', r)).length,
+      },
     };
+  }
+
+  /**
+   * The dead-stock list as a workbook, classification and all.
+   *
+   * Same list, same view, same numbers — a report that recomputed "dead" its own
+   * way would eventually disagree with the screen it was exported from.
+   */
+  async exportWorkbook(user: AuthUser, opts: DeadStockListOptions = {}) {
+    const res = await this.list(user, { ...opts, limit: EXPORT_MAX_ROWS, maxLimit: EXPORT_MAX_ROWS });
+
+    const wb = new Workbook();
+    wb.creator = 'CaratSense';
+    wb.created = new Date();
+    const ws = wb.addWorksheet('Dead stock', { views: [{ state: 'frozen', ySplit: 1 }] });
+    ws.columns = [
+      { header: 'Piece', key: 'name', width: 32 },
+      { header: 'SKU', key: 'sku', width: 18 },
+      { header: 'VIN', key: 'vin', width: 14 },
+      { header: 'Style number', key: 'styleNumber', width: 16 },
+      { header: 'Category', key: 'category', width: 12 },
+      { header: 'Branch', key: 'storeName', width: 22 },
+      { header: 'Classification', key: 'classification', width: 28 },
+      { header: 'Classified on', key: 'source', width: 14 },
+      { header: 'Suitable for remaking', key: 'remake', width: 12 },
+      { header: 'Days in stock', key: 'ageDays', width: 12 },
+      { header: 'Threshold (days)', key: 'thresholdDays', width: 12 },
+      { header: 'Days over', key: 'daysOver', width: 10 },
+      { header: 'State', key: 'state', width: 10 },
+      { header: 'Suggested action', key: 'suggestion', width: 18 },
+      { header: 'Tag price', key: 'tagPrice', width: 14 },
+    ];
+    ws.getRow(1).font = { bold: true };
+    for (const r of res.items) {
+      ws.addRow({
+        ...r,
+        vin: r.vin ?? '',
+        styleNumber: r.styleNumber ?? '',
+        classification: STOCK_CLASS_LABEL[r.stockClass],
+        source: r.stockClassSource === 'piece' ? 'This piece' : 'Its design',
+        remake: r.remakeSuitable ? 'Yes' : 'No',
+        suggestion: r.suggestion ? SUGGESTION_LABEL[r.suggestion] : '',
+      });
+    }
+    if (res.truncated) {
+      // In the file itself, where the reader is: a short workbook that does not
+      // say it is short reads as the whole answer.
+      ws.addRow({
+        name: `Only the worst ${res.items.length} of ${res.total} rows are in this file. Narrow by branch or category for the rest.`,
+      });
+    }
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    await this.audit.record(user, {
+      action: 'stock.dead_stock_exported',
+      entityType: 'dead_stock_export',
+      entityId: `${user.organisationId}:${stamp}`,
+      storeId: opts.storeId ?? null,
+      summary: `Exported ${res.items.length} dead-stock row(s) (${res.view})`,
+      metadata: { rows: res.items.length, truncated: res.truncated, view: res.view, state: opts.state ?? null },
+    });
+
+    return {
+      buffer: Buffer.from(await wb.xlsx.writeBuffer()),
+      filename: `dead-stock-${res.view}-${stamp}.xlsx`,
+      rows: res.items.length,
+      truncated: res.truncated,
+    };
+  }
+
+  // ==========================================================================
+  // Classification
+  // ==========================================================================
+
+  /**
+   * Classify one piece, or mark it worth remaking.
+   *
+   * `stockClass: null` returns the piece to whatever its design is. Only the
+   * fields sent change: marking a piece for remaking must not quietly reset a
+   * classification somebody else set.
+   */
+  async classifyPiece(
+    user: AuthUser,
+    stockItemId: string,
+    input: { stockClass?: string | null; remakeSuitable?: boolean },
+  ) {
+    const item = await this.prisma.stockItem.findFirst({
+      where: { id: stockItemId, ...this.scope.orgFilter(user) },
+      select: { id: true, sku: true, storeId: true, stockClass: true, remakeSuitable: true },
+    });
+    // Not found for another tenant's id, and for a branch outside scope the
+    // scope check below refuses it — the same two answers every piece route gives.
+    if (!item) throw new NotFoundException('No such piece here.');
+    this.scope.assertStoreAllowed(user, item.storeId);
+
+    const data: { stockClass?: StockClass | null; remakeSuitable?: boolean } = {};
+    if (input.stockClass !== undefined) data.stockClass = this.parseClass(input.stockClass, true);
+    if (input.remakeSuitable !== undefined) data.remakeSuitable = input.remakeSuitable;
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('Send a stockClass, remakeSuitable, or both.');
+    }
+
+    const updated = await this.prisma.stockItem.update({
+      where: { id: item.id },
+      data,
+      select: {
+        id: true, stockClass: true, remakeSuitable: true,
+        product: { select: { stockClass: true } },
+      },
+    });
+    await this.audit.record(user, {
+      action: 'stock.classified',
+      entityType: 'StockItem',
+      entityId: item.id,
+      storeId: item.storeId,
+      summary: `${item.sku ?? item.id}: ${STOCK_CLASS_LABEL[effectiveStockClass(updated)]}${
+        updated.remakeSuitable ? ', suitable for remaking' : ''
+      }`,
+      metadata: {
+        from: { stockClass: item.stockClass, remakeSuitable: item.remakeSuitable },
+        to: { stockClass: updated.stockClass, remakeSuitable: updated.remakeSuitable },
+      },
+    });
+    return {
+      id: updated.id,
+      stockClass: effectiveStockClass(updated),
+      stockClassSource: updated.stockClass ? 'piece' : 'design',
+      remakeSuitable: updated.remakeSuitable,
+    };
+  }
+
+  /**
+   * Classify a design. Every piece of it that has no classification of its own
+   * follows. Head office only, because it changes what every branch may sell.
+   */
+  async classifyProduct(user: AuthUser, productId: string, stockClass: string) {
+    const product = await this.prisma.product.findFirst({
+      where: { id: productId, organisationId: user.organisationId },
+      select: { id: true, sku: true, stockClass: true },
+    });
+    if (!product) throw new NotFoundException('No such design here.');
+    const to = this.parseClass(stockClass, false)!;
+    await this.prisma.product.update({ where: { id: product.id }, data: { stockClass: to } });
+    await this.audit.record(user, {
+      action: 'catalogue.classified',
+      entityType: 'Product',
+      entityId: product.id,
+      summary: `${product.sku}: ${STOCK_CLASS_LABEL[to]}`,
+      metadata: { from: product.stockClass, to },
+    });
+    return { id: product.id, stockClass: to };
+  }
+
+  private parseClass(value: string | null, allowNull: boolean): StockClass | null {
+    if (value == null || value === '') {
+      if (allowNull) return null;
+      throw new BadRequestException('Give a classification.');
+    }
+    if (!(STOCK_CLASSES as string[]).includes(value)) {
+      throw new BadRequestException(`stockClass must be one of: ${STOCK_CLASSES.join(', ')}.`);
+    }
+    return value as StockClass;
   }
 
   // ==========================================================================
