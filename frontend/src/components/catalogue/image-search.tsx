@@ -131,11 +131,11 @@ export function ImageSearch() {
           )}
           <p className="text-sm font-medium">
             {search.isPending
-              ? "Searching the catalogue…"
+              ? "Searching the catalogue with AI…"
               : fileName ?? "Drop an image here or click to upload"}
           </p>
           <p className="text-xs text-muted-foreground">
-            JPG / PNG · Pinterest screenshots and hand sketches welcome
+            JPG / PNG · Pinterest screenshots, phone photos and hand sketches welcome
           </p>
           <input
             ref={inputRef}
@@ -147,10 +147,10 @@ export function ImageSearch() {
         </div>
 
         {result ? (
-          <div className="space-y-3">
+          <div className="space-y-3 pt-2">
             <div className="flex items-center justify-between">
               <p className="text-xs font-medium text-muted-foreground">
-                Closest matches (best first)
+                Closest catalogue matches (ranked best-first by DINOv2 + SigLIP 2)
               </p>
               <Button variant="ghost" size="sm" onClick={reset}>
                 <X className="h-4 w-4" /> Clear
