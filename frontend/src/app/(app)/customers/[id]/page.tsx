@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Separator } from "@/components/ui/separator";
@@ -86,6 +87,7 @@ export default function Customer360Page({
   const { data: config } = useConfigBootstrap();
   const label = useTermLabel(config);
   const [tab, setTab] = useState("timeline");
+  const [timelineFilter, setTimelineFilter] = useState<"all" | "whatsapp" | "sales" | "visits">("all");
 
   if (isLoading) {
     return (
@@ -99,14 +101,18 @@ export default function Customer360Page({
 
   if (isError || !data) {
     return (
-      <EmptyState
-        icon={UserRound}
-        title="Customer not found"
-        description={
-          (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-          "This customer does not exist, or is not in your organisation."
-        }
-      />
+      <div className="space-y-4">
+        <Link
+          href="/customers"
+          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          All customers
+        </Link>
+        <p className="py-12 text-center text-sm text-muted-foreground">
+          {error instanceof Error ? error.message : "Could not load customer"}
+        </p>
+      </div>
     );
   }
 
@@ -129,7 +135,17 @@ export default function Customer360Page({
               "No contact details on file"}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {Number(summary.totalSpend) > 50000 || summary.saleCount >= 1 ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-semibold text-amber-700 dark:text-amber-300 border border-amber-500/30">
+              👑 VIP High Value
+            </span>
+          ) : null}
+          {summary.leadCount >= 1 || summary.visitCount >= 1 ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-purple-500/15 px-2.5 py-1 text-xs font-semibold text-purple-700 dark:text-purple-300 border border-purple-500/30">
+              💍 Solitaire Prospect
+            </span>
+          ) : null}
           {customer.isBlacklisted && <Badge variant="destructive">Blacklisted</Badge>}
           {identity.openMergeReviews > 0 && (
             <Badge variant="outline" className="gap-1 border-amber-500 text-amber-600">
@@ -137,6 +153,39 @@ export default function Customer360Page({
               {identity.openMergeReviews} merge review
               {identity.openMergeReviews === 1 ? "" : "s"}
             </Badge>
+          )}
+
+          {customer.phone && (
+            <div className="flex items-center gap-1.5 ml-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 gap-1.5 border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10"
+                onClick={() => {
+                  const dialable = customer.phone?.replace(/[^0-9]/g, "");
+                  if (dialable) {
+                    window.open(
+                      `https://wa.me/${dialable}?text=${encodeURIComponent(`Hello ${customer.name}, following up from Éclat Diamonds.`)}`,
+                      "_blank",
+                    );
+                  }
+                }}
+              >
+                <MessageSquare className="h-3.5 w-3.5 fill-emerald-600/20" />
+                WhatsApp
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 gap-1.5"
+                asChild
+              >
+                <a href={`tel:${customer.phone.replace(/[^0-9]/g, "")}`}>
+                  <Phone className="h-3.5 w-3.5" />
+                  Call
+                </a>
+              </Button>
+            </div>
           )}
         </div>
       </div>
@@ -211,23 +260,72 @@ export default function Customer360Page({
 
         <TabsContent value="timeline" className="mt-4">
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Everything, newest first</CardTitle>
+            <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 pb-4">
+              <div>
+                <CardTitle className="text-base">Omnichannel Journey & History</CardTitle>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Showing {timelineFilter === "all" ? "all events" : timelineFilter} across WhatsApp, calls, showroom visits, and sales.
+                </p>
+              </div>
+              <div className="flex items-center gap-1.5">
+                {(
+                  [
+                    { id: "all", label: "All Activity" },
+                    { id: "whatsapp", label: "💬 WhatsApp" },
+                    { id: "sales", label: "🛍️ Sales & Quotes" },
+                    { id: "visits", label: "🏬 Visits & Calls" },
+                  ] as const
+                ).map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => setTimelineFilter(f.id)}
+                    className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+                      timelineFilter === f.id
+                        ? "bg-primary text-primary-foreground font-semibold shadow-xs"
+                        : "bg-muted/70 text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
             </CardHeader>
             <CardContent>
-              {data.timeline.length === 0 ? (
-                <EmptyState
-                  icon={CalendarDays}
-                  title="Nothing recorded yet"
-                  description="Leads, visits, sales and messages appear here as they happen."
-                />
-              ) : (
-                <ol className="space-y-4">
-                  {data.timeline.map((e) => (
-                    <TimelineRow key={e.id} event={e} />
-                  ))}
-                </ol>
-              )}
+              {(() => {
+                const events = data.timeline.filter((e) => {
+                  if (timelineFilter === "all") return true;
+                  if (timelineFilter === "whatsapp")
+                    return e.type.startsWith("message.") || e.type.includes("conversation");
+                  if (timelineFilter === "sales")
+                    return (
+                      e.type.startsWith("sale.") ||
+                      e.type.startsWith("quote.") ||
+                      e.type.startsWith("payment.") ||
+                      e.type.startsWith("return.")
+                    );
+                  if (timelineFilter === "visits")
+                    return (
+                      e.type.startsWith("visit.") ||
+                      e.type.startsWith("lead.") ||
+                      e.type.startsWith("call.")
+                    );
+                  return true;
+                });
+                return events.length === 0 ? (
+                  <EmptyState
+                    icon={CalendarDays}
+                    title="No events in this view"
+                    description={`No ${timelineFilter === "all" ? "activity" : timelineFilter} records found for this customer.`}
+                  />
+                ) : (
+                  <ol className="space-y-4">
+                    {events.map((e) => (
+                      <TimelineRow key={e.id} event={e} />
+                    ))}
+                  </ol>
+                );
+              })()}
             </CardContent>
           </Card>
         </TabsContent>

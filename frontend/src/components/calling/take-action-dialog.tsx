@@ -6,10 +6,13 @@ import {
   CalendarClock,
   Check,
   FileText,
+  Lightbulb,
   Loader2,
+  MessageSquare,
   Phone,
   PhoneOff,
   Route,
+  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -275,6 +278,54 @@ export function TakeActionDialog({ taskId, open, onOpenChange, session }: Props)
                 {d.customer.blocked ? <Badge variant="destructive">Blocked</Badge> : null}
               </div>
             ) : null}
+
+            {/* Call Assistant & Talking Points Banner */}
+            <div className="rounded-lg border border-primary/20 bg-primary/5 p-3.5 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-primary" />
+                  <span className="text-xs font-semibold text-foreground uppercase tracking-wider">
+                    Retail Call Assistant & Talking Points
+                  </span>
+                </div>
+                {d.customer?.contact && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 text-xs text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/10 gap-1.5 px-2"
+                    onClick={() => {
+                      const dialable = d.customer?.contact?.replace(/[^0-9]/g, "");
+                      if (dialable) {
+                        const name = d.customer?.name ?? "Customer";
+                        const text = `Hello ${name}, thank you for speaking with Éclat Diamonds. Please let us know if you have any questions regarding your enquiry or shortlisted pieces!`;
+                        window.open(`https://wa.me/${dialable}?text=${encodeURIComponent(text)}`, "_blank");
+                      }
+                    }}
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" />
+                    WhatsApp Follow-up
+                  </Button>
+                )}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-muted-foreground pt-1">
+                <div className="bg-background/80 rounded p-2.5 border border-border/50 space-y-1">
+                  <span className="font-semibold text-foreground block">🎯 Recommended Opening:</span>
+                  <p className="leading-relaxed">
+                    {d.lead?.interest 
+                      ? `"Hello, I am calling from Éclat regarding your interest in our ${d.lead.interest} collection. We have fresh certified inventory matching your preference."` 
+                      : `"Hello, I am following up from Éclat on your recent inquiry. Have you had a chance to consider your shortlisted jewellery designs?"`}
+                  </p>
+                </div>
+                <div className="bg-background/80 rounded p-2.5 border border-border/50 space-y-1">
+                  <span className="font-semibold text-foreground block">💎 Value Hooks & Guarantees:</span>
+                  <p className="leading-relaxed">
+                    • 100% Certified Natural & Lab Diamonds (IGI / GIA)<br />
+                    • Transparent Hallmark & Lifetime Buyback / Upgrade<br />
+                    • Complimentary Bespoke CAD Design within 24 hours
+                  </p>
+                </div>
+              </div>
+            </div>
 
             <Tabs value={tab} onValueChange={setTab}>
               <TabsList>

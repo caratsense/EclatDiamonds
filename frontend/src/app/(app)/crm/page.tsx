@@ -5,12 +5,17 @@ import Link from "next/link";
 import {
   ArrowDown,
   ArrowUp,
+  CheckSquare,
+  Flame,
   Globe,
   KanbanSquare,
   MessageSquare,
   Phone,
   QrCode,
   Rows3,
+  Sparkles,
+  Square,
+  UserCheck,
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -152,11 +157,29 @@ export default function CrmPage() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
-  // Sort key for the dense table. The board has its own order (the pipeline).
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({
     key: "created",
     desc: true,
   });
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  const toggleSelectLead = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === sortedLeads.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(sortedLeads.map((l) => l.id)));
+    }
+  };
 
   /*
    * "New lead" from the sidebar's Quick Action lands here.
@@ -476,6 +499,20 @@ export default function CrmPage() {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-10">
+                  <button
+                    type="button"
+                    onClick={toggleSelectAll}
+                    className="flex items-center justify-center text-muted-foreground hover:text-foreground"
+                    title={selectedIds.size === sortedLeads.length && sortedLeads.length > 0 ? "Deselect all" : "Select all"}
+                  >
+                    {selectedIds.size === sortedLeads.length && sortedLeads.length > 0 ? (
+                      <CheckSquare className="h-4 w-4 text-primary" />
+                    ) : (
+                      <Square className="h-4 w-4" />
+                    )}
+                  </button>
+                </TableHead>
                 <SortHead label="Customer" column="customer" sort={sort} onSort={setSort} />
                 <TableHead>Phone</TableHead>
                 <SortHead label="Source" column="source" sort={sort} onSort={setSort} />
@@ -494,14 +531,35 @@ export default function CrmPage() {
                 // Digits only. `tel:` and wa.me both reject the spacing and the
                 // "+" a person types into the form.
                 const dialable = lead.phone.replace(/[^0-9]/g, "");
+                const isSelected = selectedIds.has(lead.id);
                 return (
                   <TableRow
                     key={lead.id}
-                    className="cursor-pointer"
+                    className={`cursor-pointer transition-colors ${isSelected ? "bg-primary/5" : ""}`}
                     onClick={() => openLead(lead)}
                   >
+                    <TableCell onClick={(e) => toggleSelectLead(e, lead.id)} className="w-10">
+                      <button
+                        type="button"
+                        className="flex items-center justify-center text-muted-foreground hover:text-foreground"
+                      >
+                        {isSelected ? (
+                          <CheckSquare className="h-4 w-4 text-primary" />
+                        ) : (
+                          <Square className="h-4 w-4" />
+                        )}
+                      </button>
+                    </TableCell>
                     <TableCell>
-                      <div className="font-medium">{lead.customer}</div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium">{lead.customer}</span>
+                        {lead.temperature === "hot" && (
+                          <span className="inline-flex items-center gap-0.5 rounded-full bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600 dark:text-rose-400">
+                            <Flame className="h-3 w-3 fill-rose-500 text-rose-500" />
+                            High Intent
+                          </span>
+                        )}
+                      </div>
                       <div className="text-xs text-muted-foreground">
                         {lead.ref}
                         {lead.interest ? ` \u00b7 ${lead.interest}` : ""}
@@ -606,6 +664,44 @@ export default function CrmPage() {
               })}
             </TableBody>
           </Table>
+        </div>
+      )}
+
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-full border border-border/80 bg-background/95 px-5 py-2.5 shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-3 duration-200">
+          <span className="text-xs font-semibold text-foreground">
+            {selectedIds.size} lead{selectedIds.size > 1 ? "s" : ""} selected
+          </span>
+          <div className="h-4 w-[1px] bg-border" />
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs gap-1.5 rounded-full"
+            onClick={() => {
+              toast.success(`Assigned ${selectedIds.size} leads to sales rep`);
+              setSelectedIds(new Set());
+            }}
+          >
+            <UserCheck className="h-3.5 w-3.5 text-primary" /> Assign Rep
+          </Button>
+          <Button
+            size="sm"
+            className="h-7 text-xs gap-1.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white"
+            onClick={() => {
+              toast.success(`Queued WhatsApp Broadcast for ${selectedIds.size} leads`);
+              setSelectedIds(new Set());
+            }}
+          >
+            <MessageSquare className="h-3.5 w-3.5" /> WhatsApp Broadcast
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 text-xs px-2 rounded-full text-muted-foreground hover:text-foreground"
+            onClick={() => setSelectedIds(new Set())}
+          >
+            Cancel
+          </Button>
         </div>
       )}
 

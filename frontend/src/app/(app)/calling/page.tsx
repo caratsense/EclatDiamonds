@@ -7,8 +7,10 @@ import {
   CalendarClock,
   CheckCircle2,
   Clock,
+  MessageSquare,
   Phone,
   Search,
+  Sparkles,
   Users,
   Zap,
 } from "lucide-react";
@@ -71,8 +73,12 @@ const PRIORITY_TONE: Record<string, "destructive" | "warning" | "secondary" | "o
 
 function TaskRow({ task, onAct }: { task: QueueTask; onAct: () => void }) {
   const late = overdueLabel(task.overdueDays);
+  const rawPhone = task.customer?.contact?.replace(/[^0-9]/g, "");
+  const dialable = rawPhone && rawPhone.length >= 10 ? rawPhone : null;
+  const customerName = task.customer?.name ?? "Customer";
+
   return (
-    <Card className="hover:shadow-md">
+    <Card className="hover:shadow-md transition-shadow">
       <CardContent className="flex flex-wrap items-start justify-between gap-4 p-4">
         <div className="min-w-0 flex-1 space-y-1.5">
           <div className="flex flex-wrap items-center gap-2">
@@ -81,6 +87,11 @@ function TaskRow({ task, onAct }: { task: QueueTask; onAct: () => void }) {
               {task.priority}
             </Badge>
             {late ? <StatusPill tone="bad">{late}</StatusPill> : null}
+            {task.priority === "urgent" || task.priority === "high" ? (
+              <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                <Sparkles className="h-3 w-3 text-amber-500" /> High Priority Call
+              </span>
+            ) : null}
           </div>
 
           <p className="text-xs text-muted-foreground">{task.title}</p>
@@ -108,10 +119,27 @@ function TaskRow({ task, onAct }: { task: QueueTask; onAct: () => void }) {
           </div>
         </div>
 
-        <Button size="sm" onClick={onAct}>
-          <Phone className="mr-1.5 h-3.5 w-3.5" />
-          Take action
-        </Button>
+        <div className="flex items-center gap-2">
+          {dialable && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-emerald-600 border-emerald-500/30 hover:bg-emerald-500/10 gap-1.5"
+              title="Send WhatsApp Follow-up"
+              onClick={() => {
+                const text = `Hello ${customerName}, following up from Éclat regarding our conversation. Please let us know if you have any questions!`;
+                window.open(`https://wa.me/${dialable}?text=${encodeURIComponent(text)}`, "_blank");
+              }}
+            >
+              <MessageSquare className="h-3.5 w-3.5 fill-emerald-600/20" />
+              WhatsApp
+            </Button>
+          )}
+          <Button size="sm" onClick={onAct}>
+            <Phone className="mr-1.5 h-3.5 w-3.5" />
+            Take action
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );

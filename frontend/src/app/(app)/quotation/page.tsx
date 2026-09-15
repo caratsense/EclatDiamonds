@@ -31,6 +31,7 @@ import {
 } from "@/lib/mock/quotation";
 import { useQuotes } from "@/lib/queries/quotes";
 import { useSession } from "@/store/use-session";
+import { api } from "@/lib/api";
 
 const nav = getNavItem("quotation")!;
 
@@ -72,6 +73,35 @@ export default function QuotationPage() {
   }
 
   const openBuilder = () => setNewOpen(true);
+
+  async function handleSendQuoteWhatsApp(e: React.MouseEvent, q: Quote) {
+    e.stopPropagation();
+    const total = computeQuoteTotals(q).grandTotal;
+    const cleanPhone = q.phone?.replace(/[^0-9]/g, "") || "";
+
+    try {
+      const { data } = await api.post<{ delivered: boolean; dryRun?: boolean }>(
+        `/quotes/${q.id}/share`,
+      );
+      if (data?.delivered) {
+        toast.success(`Quotation #${q.ref} delivered via WhatsApp`, {
+          description: `${q.customer} · ${q.phone}`,
+        });
+        return;
+      }
+    } catch {
+      // Fallback to wa.me direct client link
+    }
+
+    const text = `Hello ${q.customer}, here is your quotation #${q.ref} from Éclat Diamonds for ${formatINR(total)}. Please let us know if you would like to proceed or have any customizations!`;
+    const targetUrl = cleanPhone
+      ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`
+      : `https://wa.me/?text=${encodeURIComponent(text)}`;
+    window.open(targetUrl, "_blank");
+    toast.success(`Opening WhatsApp for Quotation #${q.ref}`, {
+      description: `${q.customer} · ${formatINR(total)}`,
+    });
+  }
 
   return (
     <>
@@ -222,15 +252,11 @@ export default function QuotationPage() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      title="WhatsApp sending coming soon"
-                      onClick={() =>
-                        toast("WhatsApp sending isn't configured yet", {
-                          description:
-                            "This will be available once WhatsApp Business is connected.",
-                        })
-                      }
+                      className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/10"
+                      title="Send Quotation on WhatsApp"
+                      onClick={(e) => handleSendQuoteWhatsApp(e, q)}
                     >
-                      <MessageCircle className="h-4 w-4" />
+                      <MessageCircle className="h-4 w-4 fill-emerald-600/20" />
                       <span className="sr-only">Share on WhatsApp</span>
                     </Button>
                   </TableCell>
