@@ -207,7 +207,7 @@ export const NAV_ITEMS: NavItem[] = [
     primaryAction: "",
     icon: MessageSquareHeart,
     group: "Omnichannel & CRM",
-    roles: ["salesperson", "store_manager", "area_manager", "head_office"],
+    roles: ["store_manager", "area_manager", "head_office"],
   },
 
   /* ------------------------------------------- Showroom Floor */

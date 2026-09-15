@@ -322,7 +322,9 @@ function CrmView() {
         board below is one page of open work — two different questions, so two
         different sources.
       */}
-      <OmnichannelKpis storeId={currentStore.isAggregate ? undefined : currentStore.id} />
+      {ROLE_RANK[role] >= ROLE_RANK.store_manager ? (
+        <OmnichannelKpis storeId={currentStore.isAggregate ? undefined : currentStore.id} />
+      ) : null}
 
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div className="flex flex-wrap items-end gap-3">

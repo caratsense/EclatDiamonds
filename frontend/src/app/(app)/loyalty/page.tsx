@@ -72,7 +72,9 @@ export default function LoyaltyPage() {
   const nav = getNavItem("loyalty");
   const { currentStore } = useSession();
   const role = useSession((s) => s.role);
-  const { data: rows = [], isLoading, isError } = useSchemeMembers();
+  // Member and referral lists are customer lists: store managers and head office.
+  const isManager = role === "store_manager" || role === "area_manager" || role === "head_office";
+  const { data: rows = [], isLoading, isError } = useSchemeMembers({ enabled: isManager });
   const { data: plans = [] } = useSchemePlans();
   const enroll = useEnrollMember();
 
@@ -330,6 +332,7 @@ export default function LoyaltyPage() {
       ) : null}
 
       {/* member list */}
+      {isManager ? (
       <Card>
         <CardHeader>
           <CardTitle>Members</CardTitle>
@@ -415,10 +418,21 @@ export default function LoyaltyPage() {
           )}
         </CardContent>
       </Card>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          Scheme member lists are visible to store managers and head office.
+        </p>
+      )}
         </TabsContent>
 
         <TabsContent value="referral">
-          <ReferralProgram />
+          {isManager ? (
+            <ReferralProgram />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Referral codes and payouts are managed by store managers and head office.
+            </p>
+          )}
         </TabsContent>
       </Tabs>
     </>

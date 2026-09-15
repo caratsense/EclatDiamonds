@@ -34,6 +34,7 @@ import {
   type QueueTask,
 } from "@/lib/queries/calling";
 import { apiErrorMessage } from "@/lib/utils";
+import { useSession } from "@/store/use-session";
 
 /**
  * The calling team's queue.
@@ -186,6 +187,7 @@ function Kpi({
 }
 
 export default function CallingPage() {
+  const role = useSession((s) => s.role);
   const [bucket, setBucket] = useState<CallingBucket>("overdue");
   const [mine, setMine] = useState(false);
   const [search, setSearch] = useState("");
@@ -251,12 +253,15 @@ export default function CallingPage() {
       <FollowUpRemindersStrip />
 
       <div className="flex flex-wrap items-center gap-3">
-        <Tabs value={mine ? "mine" : "all"} onValueChange={(v) => setMine(v === "mine")}>
-          <TabsList>
-            <TabsTrigger value="mine">My tasks</TabsTrigger>
-            <TabsTrigger value="all">All tasks</TabsTrigger>
-          </TabsList>
-        </Tabs>
+        {/* A salesperson's queue is always their own (the server enforces it). */}
+        {role !== "salesperson" ? (
+          <Tabs value={mine ? "mine" : "all"} onValueChange={(v) => setMine(v === "mine")}>
+            <TabsList>
+              <TabsTrigger value="mine">My tasks</TabsTrigger>
+              <TabsTrigger value="all">All tasks</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        ) : null}
 
         <div className="relative min-w-[14rem] flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

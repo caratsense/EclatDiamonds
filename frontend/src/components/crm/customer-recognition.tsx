@@ -54,6 +54,15 @@ export function CustomerRecognition({
   // the walk-in from being logged, and there is no action the user could take.
   if (!result) return null;
 
+  if (result.found && result.restricted) {
+    return (
+      <p className="flex items-center gap-2 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+        <UserCheck className="h-3.5 w-3.5" />
+        {result.reason ?? "This customer is looked after by a colleague."}
+      </p>
+    );
+  }
+
   if (!result.found || !result.customer) {
     return (
       <p className="flex items-center gap-2 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">

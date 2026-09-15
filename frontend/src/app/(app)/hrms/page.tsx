@@ -147,7 +147,7 @@ export default function HrmsPage() {
           <TabsTrigger value="roster">
             {isManager ? "Roster & Leave" : "Leave"}
           </TabsTrigger>
-          <TabsTrigger value="reports">Reports</TabsTrigger>
+          {isManager ? <TabsTrigger value="reports">Reports</TabsTrigger> : null}
           <TabsTrigger value="regularize">Fix attendance</TabsTrigger>
         </TabsList>
 
@@ -219,9 +219,11 @@ export default function HrmsPage() {
             ) : null}
           </div>
         </TabsContent>
-        <TabsContent value="reports">
-          <AttendanceReportsTab />
-        </TabsContent>
+        {isManager ? (
+          <TabsContent value="reports">
+            <AttendanceReportsTab />
+          </TabsContent>
+        ) : null}
         <TabsContent value="regularize">
           <RegularizationTab />
         </TabsContent>

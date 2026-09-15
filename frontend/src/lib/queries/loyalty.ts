@@ -107,9 +107,10 @@ export function useDeleteSchemePlan() {
 }
 
 /** GET /loyalty/members — enrolled accounts with paid/missed + maturity. */
-export function useSchemeMembers() {
+export function useSchemeMembers(options: { enabled?: boolean } = {}) {
   const storeId = useSession((s) => s.currentStore.id);
   return useQuery({
+    enabled: options.enabled ?? true,
     queryKey: loyaltyKeys.members(storeId),
     queryFn: async () => {
       const { data } = await api.get<SchemeMember[]>("/loyalty/members");

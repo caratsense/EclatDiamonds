@@ -157,6 +157,11 @@ export function useCustomer360(partyId: string | null) {
 
 export interface LookupResult {
   found: boolean;
+  /**
+   * The number belongs to a customer a colleague looks after. Nothing about them
+   * is returned — enough to avoid opening a duplicate record, and no more.
+   */
+  restricted?: boolean;
   reason?: string;
   customer?: {
     id: string;
