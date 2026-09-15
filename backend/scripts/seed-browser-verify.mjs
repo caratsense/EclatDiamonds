@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Three tenants on three industries, each with three roles, for the browser run.
+ * Three tenants on three industries, each with four roles, for the browser run.
  *
  * Kept separate from the demo seed on purpose: this creates exactly what the
  * verification needs and nothing else, into its own organisations, so it can be
@@ -21,7 +21,7 @@ const TENANTS = [
   { id: 'org_bv_textile', slug: 'bv-textile', name: 'BV Mills', pack: 'textile' },
 ];
 
-const ROLES = ['head_office', 'store_manager', 'salesperson'];
+const ROLES = ['head_office', 'store_manager', 'salesperson', 'storeperson'];
 
 async function main() {
   const hash = await bcrypt.hash(PASSWORD, 10);

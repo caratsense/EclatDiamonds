@@ -2,7 +2,7 @@
 // Callbacks passed to page.evaluate run in the browser, not in Node.
 /* global document, localStorage, sessionStorage */
 /**
- * Browser verification: three roles, three industries, three viewports.
+ * Browser verification: four roles, three industries, three viewports.
  *
  * ## What this is for, and what it deliberately is not
  *
@@ -109,6 +109,7 @@ async function token(email, password) {
 const NAV_SOURCE = new URL('../../frontend/src/lib/navigation.ts', import.meta.url).pathname
   .replace(/^\/([A-Za-z]:)/, '$1');
 const ROLE_BY_SLUG = new Map();
+const STOREPERSON_SLUGS = new Set();
 try {
   /*
    * Normalised first. The checkout may have CRLF endings, and a split on
@@ -128,6 +129,13 @@ try {
       roles ? roles.split(',').map((r) => r.trim().replace(/"/g, '')).filter(Boolean) : null,
     );
   }
+  // The storeperson is not on the ladder: its screens are one explicit set.
+  const storeperson = /STOREPERSON_NAVIGATION[^=]*=\s*new Set\(\[([^\]]*)\]/.exec(src)?.[1];
+  if (storeperson) {
+    for (const s of storeperson.split(',').map((x) => x.trim().replace(/"/g, '')).filter(Boolean)) {
+      STOREPERSON_SLUGS.add(s);
+    }
+  }
 } catch {
   // Backend-only checkout: fall back to visiting everything the tenant has.
 }
@@ -145,6 +153,7 @@ if (ROLE_BY_SLUG.size && ROLE_BY_SLUG.size < 20) {
 
 function roleCanSee(slug, role) {
   if (!ROLE_BY_SLUG.size) return true;
+  if (role === 'storeperson') return STOREPERSON_SLUGS.has(slug);
   const roles = ROLE_BY_SLUG.get(slug);
   // Absent from the table means the frontend has no nav item for it at all.
   if (roles === undefined) return false;
@@ -357,6 +366,39 @@ try {
             check: `route /${slug}`,
             status: 'PASS',
           });
+        }
+
+        /*
+         * NEGATIVE CONTROL: a screen outside the role, opened by typing its URL.
+         *
+         * The sidebar hiding it proves nothing; the page must refuse. Checked on
+         * the desktop viewport only — the refusal does not depend on width.
+         */
+        if (viewport.name === 'desktop') {
+          const denied = session.nav.filter((slug) => !roleCanSee(slug, role)).slice(0, 8);
+          for (const slug of denied) {
+            pageErrors.length = 0;
+            let refused = false;
+            let detail = '';
+            try {
+              await page.goto(`${FRONTEND}/${slug}`, { waitUntil: 'domcontentloaded', timeout: 25_000 });
+              await page.locator('h1, h2').first().waitFor({ state: 'visible', timeout: 20_000 });
+              await page.waitForTimeout(400);
+              const body = (await page.locator('body').innerText().catch(() => '')) || '';
+              refused = /not part of your role/i.test(body);
+              if (!refused) detail = `rendered: ${body.replace(/\s+/g, ' ').slice(0, 100)}`;
+            } catch (e) {
+              detail = `navigation: ${String(e.message).slice(0, 120)}`;
+            }
+            record({
+              tenant: tenant.label,
+              role,
+              viewport: viewport.name,
+              check: `refuses /${slug}`,
+              status: refused ? 'PASS' : 'FAIL',
+              detail,
+            });
+          }
         }
 
         // One screenshot per role/viewport, as evidence rather than as a test.
