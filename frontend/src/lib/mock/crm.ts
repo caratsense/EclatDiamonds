@@ -57,6 +57,8 @@ export interface OccasionReminder {
  */
 export interface FollowUp {
   id: string;
+  /** When the owner is reminded, at the branch; null for an older follow-up with none. */
+  reminder?: import("@/lib/reminder").ReminderView | null;
   /** 1 = the +7-day follow-up, 2 = the +30-day follow-up. */
   seq: number;
   /** Due date, yyyy-mm-dd. */

@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { JobsService } from '../jobs/jobs.service';
 import { StaffDigestService } from '../crm/staff-digest.service';
+import { FollowUpRemindersService } from '../crm/follow-up-reminders.service';
+import { VisitFeedbackService } from '../crm/visit-feedback.service';
 import { ResponseSlaService } from '../crm/response-sla.service';
 import { ScheduledReportsService } from '../reporting/scheduled-reports.service';
 import { LoyaltyApiService } from '../loyalty/website/loyalty-api.service';
@@ -76,6 +78,8 @@ export class SchedulerService {
     private readonly templateSync: TemplateSyncService,
     private readonly jobAlerts: JobAlertsService,
     private readonly staffDigest: StaffDigestService,
+    private readonly followUpReminders: FollowUpRemindersService,
+    private readonly visitFeedback: VisitFeedbackService,
     private readonly responseSla: ResponseSlaService,
     private readonly scheduledReports: ScheduledReportsService,
     private readonly loyaltyApi: LoyaltyApiService,
@@ -256,6 +260,42 @@ export class SchedulerService {
       this.logger.error(
         `Response SLA sweep failed: ${e instanceof Error ? e.message : String(e)}`,
       );
+    }
+  }
+
+  /**
+   * Follow-up reminders that have come due. Every minute: a reminder is a time
+   * somebody chose, and the claim inside the sweep makes overlap harmless.
+   */
+  @Cron(CronExpression.EVERY_MINUTE, { name: 'crm.follow-up-reminders' })
+  async sendFollowUpReminders(): Promise<void> {
+    if (!this.enabled) return;
+    try {
+      const res = await this.followUpReminders.sweep();
+      if (res.notified || res.released) {
+        this.logger.log(
+          `Follow-up reminders: ${res.notified} sent, ${res.skipped} skipped, ${res.released} released for retry`,
+        );
+      }
+    } catch (e) {
+      this.logger.error(`Follow-up reminder sweep failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  /** Automatic feedback asks after a visit, once each is due. */
+  @Cron(CronExpression.EVERY_10_MINUTES, { name: 'feedback.visit-requests' })
+  async sendVisitFeedback(): Promise<void> {
+    if (!this.enabled) return;
+    try {
+      const res = await this.visitFeedback.sweep();
+      if (res.examined) {
+        this.logger.log(
+          `Visit feedback: ${res.queued} queued, ${res.handedToStaff} handed to staff, ` +
+            `${res.cancelled} cancelled, ${res.retrying} retrying`,
+        );
+      }
+    } catch (e) {
+      this.logger.error(`Visit feedback sweep failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 

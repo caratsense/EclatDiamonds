@@ -14,6 +14,7 @@ import { AttributionService } from '../crm/attribution.service';
 import { ActivityService } from '../crm/activity.service';
 import { IdentityService } from '../crm/identity.service';
 import { leadSearchWhere, leadTagWhere } from './lead-filters';
+import { FollowUpRemindersService, reminderView } from '../crm/follow-up-reminders.service';
 import {
   CreateActivityDto,
   CreateFollowUpDto,
@@ -172,6 +173,7 @@ function toView(l: any) {
       done: f.done,
       doneAt: f.doneAt ? f.doneAt.toISOString() : null,
       note: f.note ?? null,
+      reminder: reminderView(f, l.store?.timezone),
     })),
   };
 }
@@ -191,6 +193,7 @@ function toReminderView(f: any) {
     done: f.done,
     interest: f.lead?.interest ?? '',
     source: f.lead?.source ?? null,
+    reminder: reminderView(f, f.lead?.store?.timezone),
   };
 }
 
@@ -205,6 +208,7 @@ export class LeadsService {
     private readonly identity: IdentityService,
     private readonly activity: ActivityService,
     private readonly attribution: AttributionService,
+    private readonly followUpReminders: FollowUpRemindersService,
   ) {}
 
   async list(user: AuthUser, q: ListLeadsQuery, headerStore?: string) {
@@ -239,6 +243,7 @@ export class LeadsService {
       where,
       include: {
         owner: true,
+        store: { select: { timezone: true } },
         notes: { include: { author: true } },
         reminders: true,
         followUps: followUpInclude,
@@ -256,6 +261,7 @@ export class LeadsService {
       where,
       include: {
         owner: true,
+        store: { select: { timezone: true } },
         notes: { include: { author: true }, orderBy: { createdAt: 'desc' } },
         reminders: { orderBy: { date: 'asc' } },
         followUps: followUpInclude,
@@ -362,6 +368,7 @@ export class LeadsService {
       where: { id: lead.id },
       include: {
         owner: true,
+        store: { select: { timezone: true } },
         notes: { include: { author: true }, orderBy: { createdAt: 'desc' } },
         reminders: true,
         followUps: followUpInclude,
@@ -424,6 +431,7 @@ export class LeadsService {
       },
       include: {
         owner: true,
+        store: { select: { timezone: true } },
         notes: { include: { author: true } },
         reminders: true,
         followUps: followUpInclude,
@@ -469,6 +477,16 @@ export class LeadsService {
       where: { leadId },
       _max: { seq: true },
     });
+    const store = await this.prisma.store.findUnique({
+      where: { id: lead.storeId },
+      select: { timezone: true },
+    });
+    const reminderAt = await this.followUpReminders.resolveReminderAt({
+      organisationId: user.organisationId,
+      timezone: store?.timezone,
+      dueDay: parseYmd(dto.dueDate),
+      explicitLocal: dto.reminderAt,
+    });
     const created = await this.prisma.leadFollowUp.create({
       data: {
         leadId,
@@ -476,6 +494,8 @@ export class LeadsService {
         seq: (max._max.seq ?? 0) + 1,
         dueDate: parseYmd(dto.dueDate),
         note: dto.note,
+        assigneeId: lead.ownerId ?? user.id,
+        reminderAt,
       },
       include: { lead: { include: { store: true } } },
     });
@@ -505,6 +525,7 @@ export class LeadsService {
             },
       include: {
         owner: true,
+        store: { select: { timezone: true } },
         notes: { include: { author: true }, orderBy: { createdAt: 'desc' } },
         reminders: true,
         followUps: followUpInclude,
@@ -568,6 +589,22 @@ export class LeadsService {
 
     const data: Prisma.LeadFollowUpUpdateInput = {};
     if (dto.dueDate) data.dueDate = parseYmd(dto.dueDate);
+    const newDueDay = dto.dueDate ? parseYmd(dto.dueDate) : existing.dueDate;
+    if (dto.reminderAt) {
+      // An explicit new time is a new reminder, even if the old one already went.
+      data.reminderAt = await this.followUpReminders.resolveReminderAt({
+        organisationId: existing.lead.organisationId,
+        timezone: existing.lead.store?.timezone,
+        dueDay: newDueDay,
+        explicitLocal: dto.reminderAt,
+      });
+      data.reminderNotifiedAt = null;
+    } else if (dto.dueDate && existing.reminderAt && !existing.reminderNotifiedAt) {
+      // Moving the due day moves a pending reminder by the same number of days,
+      // keeping whatever time of day was chosen.
+      const shift = newDueDay.getTime() - existing.dueDate.getTime();
+      data.reminderAt = new Date(existing.reminderAt.getTime() + shift);
+    }
     if (dto.note !== undefined) data.note = dto.note;
     if (dto.done !== undefined) {
       data.done = dto.done;

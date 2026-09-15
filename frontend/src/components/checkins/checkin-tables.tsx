@@ -27,6 +27,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { VISIT_OUTCOME_LABELS, type CheckIn } from "@/lib/mock/checkins";
+import { reminderLabel } from "@/lib/reminder";
 
 const OUTCOME_VARIANT: Record<
   string,
@@ -51,6 +52,26 @@ const ACTION_LABEL: Record<"call" | "whatsapp" | "visit", string> = {
   whatsapp: "WhatsApp",
   visit: "Visit",
 };
+
+/** The visit's automatic feedback ask, in plain words. Never "sent" unless it was. */
+function feedbackLabel(f: NonNullable<CheckIn["feedback"]>): string {
+  const day = f.scheduledFor
+    ? new Date(f.scheduledFor).toLocaleDateString("en-IN", { day: "numeric", month: "short" })
+    : null;
+  switch (f.status) {
+    case "scheduled":
+    case "processing":
+      return day ? `Feedback ask due ${day}` : "Feedback ask booked";
+    case "sent":
+      return "Feedback asked on WhatsApp";
+    case "responded":
+      return "Feedback received";
+    case "cancelled":
+      return "Feedback ask cancelled";
+    default:
+      return f.note ? "Feedback ask with staff" : "Feedback ask queued";
+  }
+}
 
 /** "18 Sep" from a yyyy-mm-dd follow-up date, read as a calendar date. */
 function formatFollowUp(ymd: string): string {
@@ -273,6 +294,14 @@ export function CheckInLog({ checkins }: { checkins: CheckIn[] }) {
                     <p className="mt-1 text-xs font-medium text-foreground">
                       Follow up {formatFollowUp(c.followUpDate)}
                       {c.preferredAction ? ` · ${ACTION_LABEL[c.preferredAction]}` : ""}
+                    </p>
+                  ) : null}
+                  {c.reminder ? (
+                    <p className="mt-0.5 text-xs text-muted-foreground">{reminderLabel(c.reminder)}</p>
+                  ) : null}
+                  {c.feedback ? (
+                    <p className="mt-0.5 text-xs text-muted-foreground" title={c.feedback.note ?? undefined}>
+                      {feedbackLabel(c.feedback)}
                     </p>
                   ) : null}
                   {c.remark ? (

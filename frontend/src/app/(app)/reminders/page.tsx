@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { format, parseISO } from "date-fns";
 import {
+  BellRing,
   CalendarClock,
   Check,
   Pencil,
@@ -39,6 +40,9 @@ import {
 } from "@/lib/queries/reminders";
 import { useSession } from "@/store/use-session";
 import { apiErrorMessage } from "@/lib/utils";
+import { ReminderDefaultsCard } from "@/components/reminders/reminder-defaults-card";
+import { ROLE_RANK } from "@/lib/types";
+import { reminderLabel } from "@/lib/reminder";
 
 const nav = getNavItem("reminders")!;
 
@@ -97,6 +101,8 @@ export default function RemindersPage() {
   return (
     <>
       <SectionHeader title={nav.title} purpose={nav.purpose} />
+
+      {ROLE_RANK[role] >= ROLE_RANK.store_manager ? <ReminderDefaultsCard /> : null}
 
       <div className="mb-6 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
         <span>{scopeNote}</span>
@@ -246,6 +252,11 @@ function ReminderRow({
           <span className="inline-flex items-center gap-1">
             <StoreIcon className="h-3 w-3" /> {item.storeName}
           </span>
+          {item.reminder ? (
+            <span className="inline-flex items-center gap-1">
+              <BellRing className="h-3 w-3" /> {reminderLabel(item.reminder)}
+            </span>
+          ) : null}
         </div>
       </div>
 

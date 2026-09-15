@@ -8,7 +8,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 
-import { AuditService } from '../common/audit.service';
+import { AuditService, SYSTEM_ACTORS, type SystemActor } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
 import { ConversationsService } from '../crm/conversations.service';
 import { ActivityService } from '../crm/activity.service';
@@ -904,30 +904,8 @@ export class OmnichannelService implements OnModuleInit {
       return refuse('store_missing', 'The branch sending this notice is not part of this organisation.');
     }
 
-    const key = templateKey(input.templateName, input.languageCode);
-    const asset = key
-      ? await this.prisma.integrationAsset.findFirst({
-          where: {
-            organisationId: org,
-            kind: TEMPLATE_ASSET_KIND,
-            externalId: key,
-            integration: { providerCode: 'whatsapp_cloud' },
-          },
-          select: { id: true },
-        })
-      : null;
-    if (!asset) {
-      return refuse(
-        'template_unavailable',
-        `No "${input.templateName}" template in "${input.languageCode}" is registered for this organisation. Synchronise templates first.`,
-      );
-    }
-    let template: Awaited<ReturnType<OmnichannelService['loadApprovedTemplate']>>;
-    try {
-      template = await this.loadApprovedTemplate(org, asset.id);
-    } catch (error) {
-      return refuse('template_unavailable', errorMessage(error));
-    }
+    const template = await this.sendableTemplateByName(org, input.templateName, input.languageCode);
+    if ('reason' in template) return refuse('template_unavailable', template.reason);
 
     const consent = staff.partyId
       ? await this.resolveConsent(org, staff.partyId, 'whatsapp', 'service')
@@ -1012,6 +990,210 @@ export class OmnichannelService implements OnModuleInit {
       });
     }
     return { queued: true, messageId, jobId: job?.id, deduplicated };
+  }
+
+  /**
+   * Queue a notice the business sends a CUSTOMER on its own initiative — the
+   * automatic feedback ask a week after a visit — with no person pressing send.
+   *
+   * `queue()` needs a signed-in person and `queueAiReply()` answers a message the
+   * customer sent. This is neither, so it is its own door, and it is not a
+   * shortcut: the customer's WhatsApp contact, an archived record, the
+   * provider-approved template, consent and the 24-hour window are all decided
+   * here exactly as they are for a colleague's message, the worker decides them
+   * again before sending, and the result is an ordinary outbox message with a
+   * durable job, retries, a dead letter and a delivery receipt.
+   *
+   * A refusal is returned with a reason rather than thrown, so the caller can do
+   * the honest thing with it — put the ask in front of a person instead of
+   * claiming it was sent.
+   */
+  async queueCustomerNotice(input: {
+    organisationId: string;
+    partyId: string;
+    /** The branch the notice belongs to, when the customer has none of their own. */
+    storeId: string | null;
+    purpose: MessagePurpose;
+    templateName: string;
+    languageCode: string;
+    templateComponents: unknown[];
+    idempotencyKey: string;
+    summary: string;
+    automation: SystemActor;
+  }): Promise<StaffNoticeResult> {
+    const refuse = (code: string, reason: string): StaffNoticeResult => ({ queued: false, code, reason });
+    const org = input.organisationId;
+    this.assertComponentsBounded(input.templateComponents);
+
+    const party = await this.prisma.party.findFirst({
+      where: { id: input.partyId, organisationId: org },
+      select: {
+        id: true,
+        storeId: true,
+        archivedAt: true,
+        phone: true,
+        whatsapp: true,
+        contactPoints: {
+          where: { kind: { in: ['whatsapp', 'phone'] } },
+          orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+          select: { kind: true, value: true },
+        },
+        organisation: { select: { country: true } },
+      },
+    });
+    if (!party) return refuse('recipient_missing', 'That customer is not part of this organisation.');
+    // Archived means "take them out of the working lists". An automatic message
+    // is the most working-list thing there is.
+    if (party.archivedAt) return refuse('recipient_archived', 'This customer has been archived.');
+
+    const raw =
+      party.contactPoints.find((c) => c.kind === 'whatsapp')?.value ??
+      party.contactPoints.find((c) => c.kind === 'phone')?.value ??
+      party.whatsapp ??
+      party.phone;
+    const normalized = raw ? this.identity.normalize('whatsapp', raw, party.organisation?.country ?? 'IN') : null;
+    if (!normalized) return refuse('recipient_missing', 'This customer has no usable WhatsApp number.');
+
+    const template = await this.sendableTemplateByName(org, input.templateName, input.languageCode);
+    if ('reason' in template) return refuse('template_unavailable', template.reason);
+
+    const thread = await this.prisma.conversation.findUnique({
+      where: {
+        organisationId_channel_externalThreadId: {
+          organisationId: org,
+          channel: 'whatsapp',
+          externalThreadId: normalized,
+        },
+      },
+    });
+    const consent = await this.resolveConsent(org, party.id, 'whatsapp', input.purpose);
+    const decision = evaluateDeliveryPolicy({
+      channel: 'whatsapp',
+      purpose: input.purpose,
+      consent: consent.state,
+      hasApprovedTemplate: true,
+      lastInboundAt: thread?.lastInboundAt ?? null,
+      channelDeliverable: await this.channelDeliverable(org, 'whatsapp'),
+    });
+    if (!decision.allowed) return refuse(decision.code, decision.reason);
+
+    const conversation = thread ?? (await this.createSystemContactThread(org, normalized, party.id, party.storeId ?? input.storeId));
+    const dedupeKey = `omnichannel:system-notice:${input.idempotencyKey}`;
+    const now = new Date();
+    const instructions: MessageInstructions = {
+      purpose: input.purpose,
+      templateAssetId: template.id,
+      templateComponents: input.templateComponents,
+      queuedAt: now.toISOString(),
+    };
+
+    let messageId: string;
+    let deduplicated = false;
+    try {
+      messageId = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.message.create({
+          data: {
+            organisationId: org,
+            conversationId: conversation.id,
+            direction: 'outbound',
+            authorType: 'system',
+            body: input.summary.slice(0, 500),
+            status: 'queued',
+            payload: { omnichannel: instructions } as unknown as Prisma.InputJsonValue,
+          },
+        });
+        await tx.conversation.update({ where: { id: conversation.id }, data: { lastMessageAt: now } });
+        await tx.activityEvent.create({
+          data: {
+            organisationId: org,
+            storeId: conversation.storeId,
+            partyId: party.id,
+            type: 'message.queued',
+            summary: `${SYSTEM_ACTORS[input.automation]} queued a WhatsApp ${input.purpose} message`,
+            entityType: 'Message',
+            entityId: created.id,
+            channel: 'whatsapp',
+            dedupeKey,
+            metadata: compactJson({ purpose: input.purpose, automation: input.automation, templateAssetId: template.id }),
+          },
+        });
+        return created.id;
+      });
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+      const prior = await this.prisma.activityEvent.findFirst({
+        where: { organisationId: org, dedupeKey, type: 'message.queued', entityType: 'Message' },
+        select: { entityId: true },
+      });
+      if (!prior?.entityId) throw error;
+      messageId = prior.entityId;
+      deduplicated = true;
+    }
+
+    const job = await this.enqueueMessage(org, messageId, undefined);
+    if (!deduplicated) {
+      await this.audit.recordSystem(org, input.automation, {
+        action: 'omnichannel.system_notice_queued',
+        entityType: 'Message',
+        entityId: messageId,
+        storeId: conversation.storeId,
+        summary: `Queued a WhatsApp ${input.purpose} template (${input.templateName}) for a customer.`,
+        metadata: { partyId: party.id, templateAssetId: template.id, jobId: job?.id ?? null },
+      });
+    }
+    return { queued: true, messageId, jobId: job?.id, deduplicated };
+  }
+
+  /** A customer thread opened by the business, keyed like inbound so a reply joins it. */
+  private async createSystemContactThread(
+    organisationId: string,
+    normalized: string,
+    partyId: string,
+    storeId: string | null,
+  ) {
+    const where = {
+      organisationId_channel_externalThreadId: {
+        organisationId,
+        channel: 'whatsapp',
+        externalThreadId: normalized,
+      },
+    };
+    try {
+      return await this.prisma.conversation.create({
+        data: { organisationId, channel: 'whatsapp', externalThreadId: normalized, partyId, storeId },
+      });
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+      const raced = await this.prisma.conversation.findUnique({ where });
+      if (!raced) throw error;
+      return raced;
+    }
+  }
+
+  /** A template registered under this name and language AND approved by the provider. */
+  private async sendableTemplateByName(organisationId: string, name: string, languageCode: string) {
+    const key = templateKey(name, languageCode);
+    const asset = key
+      ? await this.prisma.integrationAsset.findFirst({
+          where: {
+            organisationId,
+            kind: TEMPLATE_ASSET_KIND,
+            externalId: key,
+            integration: { providerCode: 'whatsapp_cloud' },
+          },
+          select: { id: true },
+        })
+      : null;
+    if (!asset) {
+      return {
+        reason: `No "${name}" template in "${languageCode}" is registered for this organisation. Synchronise templates first.`,
+      };
+    }
+    try {
+      return await this.loadApprovedTemplate(organisationId, asset.id);
+    } catch (error) {
+      return { reason: errorMessage(error) };
+    }
   }
 
   /**
@@ -1459,6 +1641,12 @@ export class OmnichannelService implements OnModuleInit {
         sentAt,
         payload: updatedPayload as Prisma.InputJsonValue,
       },
+    });
+    // A feedback ask counts as sent when the PROVIDER took it, not when it was
+    // composed — the response rate is measured against this.
+    await this.prisma.feedbackRequest.updateMany({
+      where: { organisationId: ctx.organisationId, messageId: message.id, sentAt: null },
+      data: { sentAt, status: 'sent' },
     });
     await this.activity.record({
       organisationId: ctx.organisationId,

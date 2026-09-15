@@ -32,6 +32,8 @@ export const SYSTEM_ACTORS = {
   loyalty_website: 'Loyalty website',
   /** The morning follow-up digest queuing a staff member's WhatsApp notice. */
   staff_digest: 'Morning staff digest',
+  /** The automatic feedback ask a set number of days after a walk-in. */
+  visit_feedback: 'Visit feedback request',
 } as const;
 
 export type SystemActor = keyof typeof SYSTEM_ACTORS;

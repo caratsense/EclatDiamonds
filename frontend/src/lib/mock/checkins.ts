@@ -61,6 +61,14 @@ export interface CheckIn {
   followUpDate?: string | null;
   /** How the follow-up reminder should be acted on. */
   preferredAction?: "call" | "whatsapp" | "visit" | null;
+  /** When the follow-up's owner is reminded, and whether that has happened. */
+  reminder?: import("@/lib/reminder").ReminderView | null;
+  /**
+   * The automatic feedback ask for a visit that booked no follow-up. A feedback
+   * request, not a sales chase: `scheduled` until its day, `pending` once put to
+   * the customer or handed to staff, `sent` when WhatsApp delivered it.
+   */
+  feedback?: { status: string; scheduledFor: string | null; note: string | null } | null;
 }
 
 export interface HourlyFootfall {

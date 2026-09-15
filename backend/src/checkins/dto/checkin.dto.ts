@@ -1,3 +1,4 @@
+import { LOCAL_DATETIME } from '../../crm/follow-up-reminders.service';
 import {
   IsEnum,
   IsIn,
@@ -76,4 +77,13 @@ export class CheckoutDto {
   @IsOptional()
   @IsIn(['call', 'whatsapp', 'visit'])
   preferredAction?: 'call' | 'whatsapp' | 'visit';
+
+  /**
+   * When the employee is reminded, `YYYY-MM-DDTHH:MM` in the store's timezone.
+   * Independent of the follow-up date: omitted, the tenant's default applies;
+   * sent alone, the follow-up is due on the reminder's day.
+   */
+  @IsOptional()
+  @Matches(LOCAL_DATETIME, { message: 'reminderAt must be YYYY-MM-DDTHH:MM.' })
+  reminderAt?: string;
 }

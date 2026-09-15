@@ -31,6 +31,9 @@ import { LeadTagsService } from './lead-tags.service';
 import { LeadExportService } from './lead-export.service';
 import { LeadExportController } from './lead-export.controller';
 import { StaffDigestService } from './staff-digest.service';
+import { FollowUpRemindersService } from './follow-up-reminders.service';
+import { FollowUpRemindersController } from './follow-up-reminders.controller';
+import { VisitFeedbackService } from './visit-feedback.service';
 import { StaffDigestController } from './staff-digest.controller';
 import { LeadTagsController } from './lead-tags.controller';
 import { ResponseSlaService } from './response-sla.service';
@@ -112,6 +115,7 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
     LeadExportController,
     StaffDigestController,
     ResponseSlaController,
+    FollowUpRemindersController,
   ],
   providers: [
     IdentityService,
@@ -119,6 +123,8 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
     LeadTagsService,
     LeadExportService,
     StaffDigestService,
+    FollowUpRemindersService,
+    VisitFeedbackService,
     ResponseSlaService,
     Customer360Service,
     ConversationsService,
@@ -151,6 +157,8 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
     LeadExportService,
     LeadTagsService,
     StaffDigestService,
+    FollowUpRemindersService,
+    VisitFeedbackService,
     ResponseSlaService,
     ConversationAiGate,
     AiDraftsService,

@@ -17,6 +17,7 @@ import {
 
 import { SectionHeader } from "@/components/section/section-header";
 import { TakeActionDialog } from "@/components/calling/take-action-dialog";
+import { FollowUpRemindersStrip } from "@/components/calling/follow-up-reminders-strip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -246,6 +247,8 @@ export default function CallingPage() {
           onClick={() => setBucket("completed")}
         />
       </div>
+
+      <FollowUpRemindersStrip />
 
       <div className="flex flex-wrap items-center gap-3">
         <Tabs value={mine ? "mine" : "all"} onValueChange={(v) => setMine(v === "mine")}>

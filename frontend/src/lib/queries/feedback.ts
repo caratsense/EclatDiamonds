@@ -10,12 +10,27 @@ import { api } from "@/lib/api";
  * answering a survey to /login. Same reasoning as the public enquiry form.
  */
 
+/** The automatic ask after a walk-in with no follow-up booked. */
+export interface AfterVisitPolicy {
+  enabled: boolean;
+  delayDays: number;
+  /** "HH:MM" at the branch. */
+  sendTimeLocal: string;
+  templateName: string | null;
+  templateLanguage: string | null;
+}
+
 export interface FeedbackSettings {
   enabled: boolean;
   positiveThreshold: number;
   escalateAtOrBelow: number;
   reviewLinks: Record<string, string>;
+  afterVisit: AfterVisitPolicy;
 }
+
+export type FeedbackSettingsInput = Partial<Omit<FeedbackSettings, "afterVisit">> & {
+  afterVisit?: Partial<AfterVisitPolicy>;
+};
 
 export interface FeedbackSummary {
   responses: number;
@@ -53,7 +68,7 @@ export function useFeedbackSettings() {
 export function useUpdateFeedbackSettings() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: Partial<FeedbackSettings>) => {
+    mutationFn: async (input: FeedbackSettingsInput) => {
       const { data } = await api.patch<FeedbackSettings>("/feedback/settings", input);
       return data;
     },

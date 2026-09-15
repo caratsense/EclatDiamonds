@@ -7,6 +7,7 @@ import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
 import { ROLE_RANK } from '../common/role.util';
 import { KpiWindow, ratio, resolveKpiWindow } from './kpi-window';
+import { ASKED_FEEDBACK } from '../crm/feedback.service';
 
 /**
  * The management KPI system (Block 15).
@@ -584,6 +585,8 @@ export class ManagementService {
       organisationId: ctx.organisationId,
       ...this.branchClause(ctx),
       createdAt: { gte: ctx.window.from, lt: ctx.window.to },
+      // An automatic ask still waiting for its day has asked nobody anything.
+      AND: [ASKED_FEEDBACK],
     };
 
     const [requested, delivered, responded, positive, escalated, reviewOffered] =

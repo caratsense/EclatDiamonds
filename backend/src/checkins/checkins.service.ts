@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
@@ -8,6 +8,8 @@ import { IdentityService } from '../crm/identity.service';
 import { CheckoutDto, CreateCheckInDto } from './dto/checkin.dto';
 import { DEFAULT_TZ, formatHHMMInTz } from '../common/tz.util';
 import { SequenceService } from '../common/sequence.service';
+import { FollowUpRemindersService, reminderView } from '../crm/follow-up-reminders.service';
+import { VisitFeedbackService } from '../crm/visit-feedback.service';
 
 const PURPOSE_LABEL: Record<string, string> = {
   bridal: 'Bridal',
@@ -85,17 +87,28 @@ function toView(c: any, tz: string = DEFAULT_TZ) {
     remark: c.remark ?? null,
     followUpDate: c.followUpDate ? c.followUpDate.toISOString().slice(0, 10) : null,
     preferredAction: c.preferredAction ?? null,
+    /** The booked follow-up's reminder: when, in the branch's time, and whether it went. */
+    reminder: c.followUpReminder ?? null,
+    /**
+     * The automatic feedback ask for a visit that booked no follow-up. Separate
+     * from the follow-up on purpose: it is not a sales chase.
+     */
+    feedback: c.visitFeedback ?? null,
   };
 }
 
 @Injectable()
 export class CheckinsService {
+  private readonly log = new Logger(CheckinsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
     private readonly identity: IdentityService,
     private readonly activity: ActivityService,
     private readonly sequence: SequenceService,
+    private readonly reminders: FollowUpRemindersService,
+    private readonly visitFeedback: VisitFeedbackService,
   ) {}
 
   /** GET /checkins — footfall log, store-scoped (most recent first). */
@@ -119,7 +132,44 @@ export class CheckinsService {
       take: 200,
       include: { attendedBy: { select: { id: true, name: true } } },
     });
-    return rows.map((r) => toView(r, tz));
+    return (await this.withOutcomes(rows, tz)).map((r) => toView(r, tz));
+  }
+
+  /**
+   * Attach each visit's follow-up reminder and feedback ask, in two queries for
+   * the whole page rather than two per row.
+   */
+  private async withOutcomes<T extends { id: string; leadId: string | null; followUpDate: Date | null }>(
+    rows: T[],
+    tz: string,
+  ) {
+    const leadIds = [...new Set(rows.map((r) => r.leadId).filter((x): x is string => !!x))];
+    const [followUps, asks] = await Promise.all([
+      this.prisma.leadFollowUp.findMany({
+        where: { leadId: { in: leadIds } },
+        select: { leadId: true, dueDate: true, reminderAt: true, reminderNotifiedAt: true, createdAt: true },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.feedbackRequest.findMany({
+        where: { checkInId: { in: rows.map((r) => r.id) }, origin: 'visit_auto' },
+        select: { checkInId: true, status: true, scheduledFor: true, deliveryNote: true },
+      }),
+    ]);
+    return rows.map((r) => {
+      const fu = r.leadId && r.followUpDate
+        ? followUps.find(
+            (f) => f.leadId === r.leadId && f.dueDate.getTime() === r.followUpDate!.getTime(),
+          )
+        : undefined;
+      const ask = asks.find((a) => a.checkInId === r.id);
+      return {
+        ...r,
+        followUpReminder: fu ? reminderView(fu, tz) : null,
+        visitFeedback: ask
+          ? { status: ask.status, scheduledFor: ask.scheduledFor?.toISOString() ?? null, note: ask.deliveryNote }
+          : null,
+      };
+    });
   }
 
   /** POST /checkins — register a walk-in. */
@@ -189,7 +239,22 @@ export class CheckinsService {
      * that silently went nowhere. The floor's complaint in the meeting was
      * precisely that what they promised the customer never reached the system.
      */
-    const leadId = dto.followUpDate
+    // A reminder sent without a date books the follow-up on the reminder's day.
+    const followUpDate = dto.followUpDate ?? dto.reminderAt?.slice(0, 10);
+    const store = await this.prisma.store.findUnique({
+      where: { id: existing.storeId },
+      select: { timezone: true },
+    });
+    const reminderAt = followUpDate
+      ? await this.reminders.resolveReminderAt({
+          organisationId: user.organisationId,
+          timezone: store?.timezone,
+          dueDay: parseYmdUtc(followUpDate),
+          explicitLocal: dto.reminderAt,
+        })
+      : null;
+
+    const leadId = followUpDate
       ? await this.ensureLeadForFollowUp(user, existing)
       : existing.leadId;
 
@@ -211,8 +276,8 @@ export class CheckinsService {
         timeOut: new Date(),
         outcome: dto.outcome ?? 'left',
         ...(dto.remark !== undefined ? { remark: dto.remark.trim() || null } : {}),
-        ...(dto.followUpDate ? { followUpDate: parseYmdUtc(dto.followUpDate) } : {}),
-        ...(dto.followUpDate
+        ...(followUpDate ? { followUpDate: parseYmdUtc(followUpDate) } : {}),
+        ...(followUpDate
           ? { followUpOwnerId: dto.followUpOwnerId ?? existing.repId ?? user.id }
           : {}),
         ...(dto.preferredAction ? { preferredAction: dto.preferredAction } : {}),
@@ -221,7 +286,7 @@ export class CheckinsService {
       include: { attendedBy: { select: { id: true, name: true } } },
     });
 
-    if (dto.followUpDate && leadId) {
+    if (followUpDate && leadId) {
       /*
        * A real LeadFollowUp, on the same queue the calling workspace already
        * works from — not a second parallel list of things to do. `seq` is the
@@ -234,18 +299,37 @@ export class CheckinsService {
           leadId,
           storeId: existing.storeId,
           seq: seq + 1,
-          dueDate: parseYmdUtc(dto.followUpDate),
+          dueDate: parseYmdUtc(followUpDate),
           note: dto.remark?.trim() || `Follow-up booked at the counter${
             dto.preferredAction ? ` (${dto.preferredAction})` : ''
           }`,
+          assigneeId: row.followUpOwnerId ?? user.id,
+          reminderAt,
         },
       });
+    } else if (row.outcome !== 'in_store') {
+      /*
+       * No follow-up booked: the tenant may want to ask how the visit went, a
+       * set number of days later. Booked, not sent, and never allowed to fail
+       * the checkout — the customer has already left either way.
+       */
+      try {
+        await this.visitFeedback.scheduleAfterVisit({
+          organisationId: user.organisationId,
+          checkIn: { id: existing.id, storeId: existing.storeId, partyId: existing.partyId },
+          closedAt: row.timeOut ?? new Date(),
+          timezone: store?.timezone,
+          createdById: user.id,
+        });
+      } catch (error) {
+        this.log.warn(`Visit feedback not booked for ${existing.id}: ${(error as Error).message}`);
+      }
     }
 
     // The remark belongs on the customer's timeline, not only on the visit row —
     // the next person to open the customer has no reason to go looking in a
     // closed visit for what was said.
-    if (dto.remark?.trim() || dto.followUpDate) {
+    if (dto.remark?.trim() || followUpDate) {
       await this.activity.recordFor(user, {
         type: 'visit.closed',
         summary: dto.remark?.trim()
@@ -258,13 +342,15 @@ export class CheckinsService {
         entityId: existing.id,
         channel: 'store',
         metadata: {
-          followUpDate: dto.followUpDate ?? null,
+          followUpDate: followUpDate ?? null,
           preferredAction: dto.preferredAction ?? null,
         },
       });
     }
 
-    return toView(row, await this.scope.resolveTimezone(user, headerStore));
+    const tz = await this.scope.resolveTimezone(user, headerStore);
+    const [withOutcomes] = await this.withOutcomes([row], tz);
+    return toView(withOutcomes, tz);
   }
 
   /**

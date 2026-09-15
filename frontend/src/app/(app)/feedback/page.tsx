@@ -29,6 +29,7 @@ import {
 import { ROLE_RANK } from "@/lib/types";
 import { apiErrorMessage } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
+import { AfterVisitCard } from "@/components/feedback/after-visit-card";
 
 /**
  * Feedback.
@@ -178,6 +179,8 @@ export default function FeedbackPage() {
           </CardContent>
         </Card>
       ) : null}
+
+      {isManager ? <AfterVisitCard /> : null}
 
       <Card>
         <CardHeader>

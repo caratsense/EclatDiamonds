@@ -12,6 +12,7 @@ import { AuditService } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
 import { ActivityService } from './activity.service';
+import { updateOrgSettings } from '../config/org-settings';
 
 /**
  * Customer feedback.
@@ -38,7 +39,58 @@ const SETTINGS = {
   positiveThreshold: 'feedbackPositiveThreshold',
   escalateAtOrBelow: 'feedbackEscalateAtOrBelow',
   enabled: 'feedbackEnabled',
+  afterVisit: 'feedbackAfterVisit',
 } as const;
+
+/**
+ * The automatic ask after a walk-in. OFF unless a tenant turns it on: one
+ * business asked for "a week later", which is a policy for that business, not a
+ * default to impose on every tenant.
+ */
+export interface AfterVisitPolicy {
+  enabled: boolean;
+  /** Local days after the visit ended. */
+  delayDays: number;
+  /** Local "HH:MM" on that day. */
+  sendTimeLocal: string;
+  /** A provider-approved utility template taking {{1}} first name, {{2}} link. */
+  templateName: string | null;
+  templateLanguage: string | null;
+}
+
+const AFTER_VISIT_DEFAULTS: AfterVisitPolicy = {
+  enabled: false,
+  delayDays: 7,
+  sendTimeLocal: '11:00',
+  templateName: null,
+  templateLanguage: null,
+};
+
+/**
+ * Requests that were actually PUT to somebody. An automatic ask that is still
+ * waiting for its day, or was cancelled before it came due, asked nobody
+ * anything and must not dilute a response rate.
+ */
+export const ASKED_FEEDBACK: Prisma.FeedbackRequestWhereInput = {
+  status: { notIn: ['scheduled', 'processing'] },
+  NOT: { origin: 'visit_auto', status: 'cancelled', messageId: null, taskId: null },
+};
+
+function readAfterVisit(value: unknown): AfterVisitPolicy {
+  const raw = jsonObject(value);
+  const days = Number(raw.delayDays);
+  return {
+    enabled: raw.enabled === true,
+    delayDays: Number.isInteger(days) && days >= 1 && days <= 60 ? days : AFTER_VISIT_DEFAULTS.delayDays,
+    sendTimeLocal:
+      typeof raw.sendTimeLocal === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(raw.sendTimeLocal)
+        ? raw.sendTimeLocal
+        : AFTER_VISIT_DEFAULTS.sendTimeLocal,
+    templateName: typeof raw.templateName === 'string' && raw.templateName ? raw.templateName : null,
+    templateLanguage:
+      typeof raw.templateLanguage === 'string' && raw.templateLanguage ? raw.templateLanguage : null,
+  };
+}
 
 const DEFAULT_POSITIVE = 4;
 const DEFAULT_ESCALATE = 2;
@@ -82,7 +134,20 @@ export class FeedbackService {
        * visited Nashik to review the Pune branch.
        */
       reviewLinks: links as Record<string, string>,
+      afterVisit: readAfterVisit(s[SETTINGS.afterVisit]),
     };
+  }
+
+  /** The after-visit policy for a tenant, for automation that has no signed-in user. */
+  async afterVisitPolicy(organisationId: string): Promise<AfterVisitPolicy> {
+    const org = await this.prisma.organisation.findUnique({
+      where: { id: organisationId },
+      select: { settings: true },
+    });
+    const s = jsonObject(org?.settings);
+    // Collection switched off switches the automatic ask off with it.
+    if (s[SETTINGS.enabled] === false) return { ...readAfterVisit(s[SETTINGS.afterVisit]), enabled: false };
+    return readAfterVisit(s[SETTINGS.afterVisit]);
   }
 
   async updateSettings(
@@ -92,6 +157,7 @@ export class FeedbackService {
       positiveThreshold?: number;
       escalateAtOrBelow?: number;
       reviewLinks?: Record<string, string>;
+      afterVisit?: Partial<AfterVisitPolicy>;
     },
   ) {
     this.assertManager(user);
@@ -121,27 +187,29 @@ export class FeedbackService {
       }
     }
 
-    const org = await this.prisma.organisation.findUnique({
-      where: { id: user.organisationId },
-      select: { settings: true },
-    });
-    const merged = {
-      ...jsonObject(org?.settings),
+    // Only the fields that were sent: a validated DTO carries the rest as
+    // `undefined`, and spreading those would switch the policy off.
+    const sent = Object.fromEntries(
+      Object.entries(input.afterVisit ?? {}).filter(([, v]) => v !== undefined),
+    );
+    const afterVisit = readAfterVisit({ ...current.afterVisit, ...sent });
+    // Enabling without a template is allowed: each ask then becomes a task for
+    // the person who served the customer, and says why.
+    // Under the settings row lock: several unrelated features share this column.
+    await updateOrgSettings(this.prisma, user.organisationId, (s) => ({
+      ...s,
       [SETTINGS.enabled]: input.enabled ?? current.enabled,
       [SETTINGS.positiveThreshold]: positive,
       [SETTINGS.escalateAtOrBelow]: escalate,
       [SETTINGS.reviewLinkByStore]: links,
-    };
-    await this.prisma.organisation.update({
-      where: { id: user.organisationId },
-      data: { settings: merged as Prisma.InputJsonValue },
-    });
+      [SETTINGS.afterVisit]: afterVisit,
+    }));
 
     await this.audit.record(user, {
       action: 'feedback.settings_updated',
       entityType: 'Organisation',
       entityId: user.organisationId,
-      summary: `Feedback settings updated — happy at ${positive}+, escalate at ${escalate} or below.`,
+      summary: `Feedback settings updated — happy at ${positive}+, escalate at ${escalate} or below; after-visit ask ${afterVisit.enabled ? `on, ${afterVisit.delayDays} day(s) later at ${afterVisit.sendTimeLocal}` : 'off'}.`,
     });
 
     return this.settings(user);
@@ -345,7 +413,8 @@ export class FeedbackService {
         publicKey,
         // A tenant that has been suspended stops collecting, and a cancelled or
         // expired request is indistinguishable from one that never existed.
-        status: { notIn: ['cancelled', 'expired'] },
+        // Nor is one still waiting for its day: nobody has been sent that link.
+        status: { notIn: ['cancelled', 'expired', 'scheduled', 'processing'] },
         organisation: { status: { in: ['active', 'onboarding'] } },
         OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
       },
@@ -390,6 +459,7 @@ export class FeedbackService {
           ...this.scope.storeFilter(user),
           ...(opts.storeId ? { storeId: opts.storeId } : {}),
           createdAt: { gte: since },
+          AND: [ASKED_FEEDBACK],
         },
       }),
     ]);

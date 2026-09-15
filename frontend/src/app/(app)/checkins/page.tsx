@@ -26,6 +26,8 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSession } from "@/store/use-session";
+import { describeDefaultReminder, useFollowUpReminderSettings } from "@/lib/queries/follow-up-reminders";
+import { reminderLabel } from "@/lib/reminder";
 import { useQuickAction } from "@/store/use-quick-action";
 import {
   StoreScopeField,
@@ -319,6 +321,8 @@ function CloseVisitDialog({
   const [remark, setRemark] = useState("");
   const [followUpDate, setFollowUpDate] = useState("");
   const [remindBy, setRemindBy] = useState<"call" | "whatsapp" | "visit" | "">("");
+  const [reminderAt, setReminderAt] = useState("");
+  const reminderDefaults = useFollowUpReminderSettings();
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   function clearError(field: string) {
@@ -333,6 +337,7 @@ function CloseVisitDialog({
     setRemark("");
     setFollowUpDate("");
     setRemindBy("");
+    setReminderAt("");
     setErrors({});
   });
 
@@ -341,7 +346,12 @@ function CloseVisitDialog({
     const next: Record<string, string> = {};
     if (!outcome) next.outcome = "Select the visit outcome.";
     // "Follow up" with no date is a promise nobody is reminded of.
-    if (outcome === "follow_up" && !followUpDate) next.followUpDate = "Pick the follow-up date.";
+    if (outcome === "follow_up" && !followUpDate && !reminderAt) {
+      next.followUpDate = "Pick the follow-up date or a reminder.";
+    }
+    if (followUpDate && reminderAt && reminderAt.slice(0, 10) > followUpDate) {
+      next.reminderAt = "The reminder must be on or before the follow-up date.";
+    }
     if (Object.keys(next).length) {
       setErrors(next);
       toast.error("Please fix the highlighted fields.");
@@ -353,12 +363,17 @@ function CloseVisitDialog({
         outcome: outcome as CheckinOutcomeInput,
         remark: remark.trim() || undefined,
         followUpDate: followUpDate || undefined,
-        preferredAction: followUpDate && remindBy ? remindBy : undefined,
+        preferredAction: (followUpDate || reminderAt) && remindBy ? remindBy : undefined,
+        reminderAt: reminderAt || undefined,
       },
       {
-        onSuccess: () => {
+        onSuccess: (row) => {
           toast.success(
-            followUpDate ? "Visit closed — follow-up added to the calling queue" : "Visit closed",
+            row.reminder
+              ? `Visit closed — follow-up booked, ${reminderLabel(row.reminder)?.toLowerCase()}`
+              : row.feedback?.status === "scheduled" && row.feedback.scheduledFor
+                ? `Visit closed — we'll ask how it went on ${new Date(row.feedback.scheduledFor).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}`
+                : "Visit closed",
           );
           onOpenChange(false);
         },
@@ -439,7 +454,7 @@ function CloseVisitDialog({
               <p className="text-xs text-destructive">{errors.followUpDate}</p>
             ) : (
               <p className="text-xs text-muted-foreground">
-                Adds a reminder on the calling queue for that day.
+                Adds the follow-up to Reminders for that day.
               </p>
             )}
           </div>
@@ -456,13 +471,37 @@ function CloseVisitDialog({
                   role="radio"
                   aria-checked={remindBy === r.value}
                   variant={remindBy === r.value ? "default" : "outline"}
-                  disabled={!followUpDate}
+                  disabled={!followUpDate && !reminderAt}
                   onClick={() => setRemindBy(remindBy === r.value ? "" : r.value)}
                 >
                   {r.label}
                 </Button>
               ))}
             </div>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="close-reminder-at">Remind me at</Label>
+            <Input
+              id="close-reminder-at"
+              type="datetime-local"
+              min={`${todayYmd()}T00:00`}
+              max={followUpDate ? `${followUpDate}T23:59` : undefined}
+              value={reminderAt}
+              aria-invalid={!!errors.reminderAt}
+              onChange={(e) => {
+                setReminderAt(e.target.value);
+                clearError("reminderAt");
+              }}
+            />
+            {errors.reminderAt ? (
+              <p className="text-xs text-destructive">{errors.reminderAt}</p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                {followUpDate || !reminderAt
+                  ? `Leave empty to be reminded ${describeDefaultReminder(reminderDefaults.data)}.`
+                  : "With no date, the follow-up is due on the reminder's day."}
+              </p>
+            )}
           </div>
         </fieldset>
 

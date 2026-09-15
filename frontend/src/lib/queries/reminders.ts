@@ -46,6 +46,8 @@ export interface ReminderItem {
   done: boolean;
   interest: string;
   source: LeadSource;
+  /** When the owner is reminded, at the branch, and whether it has gone out. */
+  reminder?: import("@/lib/reminder").ReminderView | null;
 }
 
 const REMINDERS_KEY = "reminders";

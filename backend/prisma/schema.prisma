@@ -847,6 +847,7 @@ model User {
   ownedLeads            Lead[]               @relation("LeadOwner")
   leadNotes             LeadNote[]
   followUpsDone         LeadFollowUp[]       @relation("FollowUpDoneBy")
+  followUpsAssigned     LeadFollowUp[]       @relation("FollowUpAssignee")
   quotes                Quote[]
   discountRequested     DiscountRequest[]    @relation("DiscountRequester")
   discountApproved      DiscountRequest[]    @relation("DiscountApprover")
@@ -1354,6 +1355,21 @@ model LeadFollowUp {
 
   lead   Lead  @relation(fields: [leadId], references: [id], onDelete: Cascade)
   doneBy User? @relation("FollowUpDoneBy", fields: [doneById], references: [id])
+
+  /// Three different things, kept apart. `dueDate` is the day the CUSTOMER is
+  /// owed the call or visit; `reminderAt` is the instant the EMPLOYEE is told,
+  /// resolved in the branch's timezone; the note is what was said. A reminder can
+  /// fall before the due day (a heads-up) or on it.
+  ///
+  /// Who is reminded. Null means the lead's owner at the time the reminder fires.
+  assigneeId String?
+  assignee   User?   @relation("FollowUpAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  reminderAt DateTime?
+  /// Set when the reminder went out, by a conditional claim, so two replicas or a
+  /// retried sweep cannot both notify.
+  reminderNotifiedAt DateTime?
+
+  @@index([done, reminderNotifiedAt, reminderAt])
 
   @@index([storeId, done, dueDate])
   @@index([leadId])
@@ -5110,7 +5126,10 @@ model FeedbackRequest {
   /// caller cannot choose whose CRM to write into.
   publicKey String @unique
 
-  /// 'pending' | 'sent' | 'responded' | 'expired' | 'cancelled'
+  /// 'scheduled' | 'processing' | 'pending' | 'sent' | 'responded' | 'expired' | 'cancelled'
+  ///
+  /// `scheduled` is an automatic ask not yet due; `processing` is a sweep holding
+  /// it. Neither has asked anybody anything, so neither counts as requested.
   status String @default("pending")
 
   /// The outbound Message, when one was sent. Null for a request created but
@@ -5134,6 +5153,16 @@ model FeedbackRequest {
   /// tenant can prove it never invited an unhappy customer to review publicly.
   reviewLinkOffered Boolean @default(false)
 
+  /// 'manual' | 'visit_auto'. An automatic ask after a walk-in that ended with no
+  /// follow-up booked. It is a feedback request, never a sales follow-up.
+  origin       String    @default("manual")
+  scheduledFor DateTime?
+  /// One automatic ask per visit, whatever retries or a second checkout do.
+  dedupeKey    String?   @unique
+  /// Why an automatic ask did not go out on WhatsApp, in words a manager can act on.
+  deliveryNote String?
+  dispatchAttempts Int   @default(0)
+
   createdById String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -5141,6 +5170,7 @@ model FeedbackRequest {
   @@index([organisationId, status, createdAt])
   @@index([organisationId, storeId, respondedAt])
   @@index([organisationId, partyId])
+  @@index([status, scheduledFor])
 }
 
 /// How long a customer may wait for a first reply, per tenant.

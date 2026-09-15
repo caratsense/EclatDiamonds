@@ -90,6 +90,8 @@ export function useCheckoutCheckin() {
       /** yyyy-mm-dd. Creates a real follow-up on the calling queue. */
       followUpDate?: string;
       preferredAction?: "call" | "whatsapp" | "visit";
+      /** "YYYY-MM-DDTHH:MM" at the branch. Omitted, the tenant's default applies. */
+      reminderAt?: string;
     }) => {
       const { data } = await api.patch<CheckIn>(`/checkins/${id}`, body);
       return data;

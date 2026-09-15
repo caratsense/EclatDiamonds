@@ -45,6 +45,7 @@ import {
 } from "@/lib/queries/leads";
 import { useSession } from "@/store/use-session";
 import { apiErrorMessage } from "@/lib/utils";
+import { reminderLabel } from "@/lib/reminder";
 
 interface LeadDetailDialogProps {
   lead: Lead | null;
@@ -80,6 +81,7 @@ type TimelineEntry =
       dueDate: string;
       done: boolean;
       note: string | null;
+      reminder: string | null;
     };
 
 /** Merge activities + follow-ups into one list, newest first. */
@@ -102,6 +104,7 @@ function buildTimeline(lead: Lead): TimelineEntry[] {
     dueDate: f.dueDate,
     done: f.done,
     note: f.note ?? null,
+    reminder: reminderLabel(f.reminder),
   }));
   return [...activities, ...followUps].sort((a, b) =>
     b.ts.localeCompare(a.ts),
@@ -546,6 +549,9 @@ function LeadDetailBody({
                       <p className="text-xs font-medium text-muted-foreground">
                         Follow-up ·{" "}
                         <span className="num">due {entry.dueDate}</span>
+                        {entry.reminder && !entry.done ? (
+                          <span className="font-normal"> · {entry.reminder}</span>
+                        ) : null}
                       </p>
                       <Badge
                         variant={entry.done ? "success" : "warning"}

@@ -18,6 +18,7 @@ import {
 import { LeadSource, LeadStage } from '@prisma/client';
 import { IsIndianMobile, IsRealName } from '../../common/contact.util';
 import { csv } from '../../common/query-csv';
+import { LOCAL_DATETIME } from '../../crm/follow-up-reminders.service';
 
 /** Follow-up reminder scopes for GET /leads/reminders. */
 export const REMINDER_SCOPES = ['today', 'overdue', 'upcoming', 'pending', 'all'] as const;
@@ -203,6 +204,11 @@ export class CreateFollowUpDto {
   @Matches(YMD, { message: 'dueDate must be yyyy-mm-dd' })
   dueDate!: string;
 
+  /** When to remind, "YYYY-MM-DDTHH:MM" in the branch's time. Defaults per tenant. */
+  @IsOptional()
+  @Matches(LOCAL_DATETIME, { message: 'reminderAt must be YYYY-MM-DDTHH:MM.' })
+  reminderAt?: string;
+
   @IsOptional()
   @IsString()
   note?: string;
@@ -225,6 +231,11 @@ export class UpdateFollowUpDto {
   @IsString()
   @Matches(YMD, { message: 'dueDate must be yyyy-mm-dd' })
   dueDate?: string;
+
+  /** Re-time the reminder, "YYYY-MM-DDTHH:MM" in the branch's time. */
+  @IsOptional()
+  @Matches(LOCAL_DATETIME, { message: 'reminderAt must be YYYY-MM-DDTHH:MM.' })
+  reminderAt?: string;
 
   /** Mark the follow-up done (approve tick). */
   @IsOptional()
