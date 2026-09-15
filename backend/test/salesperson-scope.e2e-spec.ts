@@ -330,6 +330,11 @@ describe('Salesperson scope (e2e)', () => {
     expect(listOf(convs.body).map((c) => c.id).sort()).toEqual([id.conv1, id.conv2, id.convUnassigned].sort());
     await get('u_ssc_mgr', `/quotes/${id.quote2}`).expect(200);
     await get('u_ssc_mgr', `/crm/customers/${id.party2}`).expect(200);
+    // Customer 360: the same customer however the number is typed at the counter.
+    for (const value of ['9812501002', '+91 98125 01002', '+91-9812501002', '09812501002', '919812501002']) {
+      const found = await request(server()).post('/crm/customers/lookup').set(as('u_ssc_mgr')).send({ kind: 'phone', value }).expect(201);
+      expect({ value, id: found.body.customer?.id }).toEqual({ value, id: id.party2 });
+    }
   });
 
   it('a hand-off cannot be assigned to another tenant’s user', async () => {
