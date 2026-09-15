@@ -150,6 +150,16 @@ async function main() {
     else await prisma.discountLimit.create({ data: { role, ...data } });
   }
 
+  // --- Dead stock (Block 9) — Eclat asked for 90 days across the board. Seeded
+  // as THIS tenant's default rule, never as a platform constant: every other
+  // tenant keeps the 180-day platform default until it decides otherwise.
+  // Created only when absent, so a head office that has since changed the rule
+  // is not reset by a re-seed.
+  const eclatDefaultRule = await prisma.deadStockPolicy.findFirst({ where: { category: null } });
+  if (!eclatDefaultRule) {
+    await prisma.deadStockPolicy.create({ data: { category: null, thresholdDays: 90 } });
+  }
+
   // --- Users across roles ---
   const userDefs = [
     { id: "u-rep-priya", name: "Priya Verma", email: "priya.rep@caratsense.in", initials: "PV", role: "salesperson", stores: ["surat-main"] },
