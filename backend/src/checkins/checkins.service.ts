@@ -80,6 +80,11 @@ function toView(c: any, tz: string = DEFAULT_TZ) {
     timeInAt: c.timeIn,
     durationMin,
     outcome: c.outcome,
+    // What was promised at the counter when the visit closed. Returned so the
+    // walk-in log shows it; before this the fields were written and never read.
+    remark: c.remark ?? null,
+    followUpDate: c.followUpDate ? c.followUpDate.toISOString().slice(0, 10) : null,
+    preferredAction: c.preferredAction ?? null,
   };
 }
 

@@ -165,6 +165,15 @@ describe('Visit follow-up (e2e)', () => {
     expect(booked).toBeTruthy();
     expect(booked?.note).toContain('bring her mother');
     expect(booked?.storeId).toBe(A.store);
+
+    // And the walk-in log can show it: the list returns what was promised.
+    const list = await request(server()).get('/checkins').set(auth(hoA)).expect(200);
+    const row = list.body.find((c: { id: string }) => c.id === id);
+    expect(row).toMatchObject({
+      remark: 'Liked the 0.5ct band, wants to bring her mother',
+      followUpDate: '2026-10-02',
+      preferredAction: 'whatsapp',
+    });
   });
 
   it('a second visit by the same customer reuses the open enquiry', async () => {

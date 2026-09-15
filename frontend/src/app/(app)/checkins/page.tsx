@@ -16,6 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -126,6 +127,8 @@ export default function CheckinsPage() {
   const [addOpen, setAddOpen] = useState(false);
   // The visit currently being closed (drives the "Close visit" dialog).
   const [closing, setClosing] = useState<CheckIn | null>(null);
+  // Opened from the "Follow up" button: the dialog starts on that outcome.
+  const [closingAsFollowUp, setClosingAsFollowUp] = useState(false);
 
   /*
    * "Log walk-in" from the sidebar's Quick Action lands here.
@@ -179,9 +182,12 @@ export default function CheckinsPage() {
     return [...map.values()];
   }, [todaysVisits, isAggregate, stores]);
 
-  function handleCheckout(id: string) {
+  function handleCheckout(id: string, asFollowUp = false) {
     const target = checkins.find((c) => c.id === id);
-    if (target) setClosing(target);
+    if (target) {
+      setClosingAsFollowUp(asFollowUp);
+      setClosing(target);
+    }
   }
 
   return (
@@ -246,7 +252,8 @@ export default function CheckinsPage() {
           <>
             <LiveInStore
               checkins={checkins}
-              onCheckout={handleCheckout}
+              onCheckout={(id) => handleCheckout(id)}
+              onFollowUp={(id) => handleCheckout(id, true)}
               checkingOutId={closing?.id ?? null}
             />
 
@@ -265,6 +272,7 @@ export default function CheckinsPage() {
       <AddCheckinDialog open={addDialogOpen} onOpenChange={setAddDialogOpen} />
       <CloseVisitDialog
         checkin={closing}
+        startAsFollowUp={closingAsFollowUp}
         open={closing != null}
         onOpenChange={(o) => {
           if (!o) setClosing(null);
@@ -278,22 +286,39 @@ export default function CheckinsPage() {
 const CLOSE_OUTCOME_OPTIONS: { value: CheckinOutcomeInput; label: string }[] = [
   { value: "sale_closed", label: "Sale closed" },
   { value: "quote_given", label: "Quote given" },
-  { value: "follow_up", label: "Follow-up needed" },
+  { value: "follow_up", label: "Follow up" },
   { value: "left", label: "Just browsing" },
 ];
+
+const REMIND_BY: { value: "call" | "whatsapp" | "visit"; label: string }[] = [
+  { value: "call", label: "Call" },
+  { value: "whatsapp", label: "WhatsApp" },
+  { value: "visit", label: "Visit" },
+];
+
+/** Today as yyyy-mm-dd on this device's calendar — the earliest follow-up date. */
+function todayYmd(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 /** Capture the real visit outcome as a customer leaves the store. */
 function CloseVisitDialog({
   checkin,
+  startAsFollowUp = false,
   open,
   onOpenChange,
 }: {
   checkin: CheckIn | null;
+  startAsFollowUp?: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   const checkout = useCheckoutCheckin();
   const [outcome, setOutcome] = useState<CheckinOutcomeInput | "">("");
+  const [remark, setRemark] = useState("");
+  const [followUpDate, setFollowUpDate] = useState("");
+  const [remindBy, setRemindBy] = useState<"call" | "whatsapp" | "visit" | "">("");
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   function clearError(field: string) {
@@ -304,22 +329,37 @@ function CloseVisitDialog({
   // render, so the dialog is never painted holding the previous visit's outcome.
   useResetOn(open ? checkin?.id ?? "open" : null, () => {
     if (!open) return;
-    setOutcome("");
+    setOutcome(startAsFollowUp ? "follow_up" : "");
+    setRemark("");
+    setFollowUpDate("");
+    setRemindBy("");
     setErrors({});
   });
 
   function submit() {
     if (!checkin) return;
-    if (!outcome) {
-      setErrors({ outcome: "Select the visit outcome." });
+    const next: Record<string, string> = {};
+    if (!outcome) next.outcome = "Select the visit outcome.";
+    // "Follow up" with no date is a promise nobody is reminded of.
+    if (outcome === "follow_up" && !followUpDate) next.followUpDate = "Pick the follow-up date.";
+    if (Object.keys(next).length) {
+      setErrors(next);
       toast.error("Please fix the highlighted fields.");
       return;
     }
     checkout.mutate(
-      { id: checkin.id, outcome },
+      {
+        id: checkin.id,
+        outcome: outcome as CheckinOutcomeInput,
+        remark: remark.trim() || undefined,
+        followUpDate: followUpDate || undefined,
+        preferredAction: followUpDate && remindBy ? remindBy : undefined,
+      },
       {
         onSuccess: () => {
-          toast.success("Visit closed");
+          toast.success(
+            followUpDate ? "Visit closed — follow-up added to the calling queue" : "Visit closed",
+          );
           onOpenChange(false);
         },
         onError: (err) => toast.error(apiErrorMessage(err, "Could not close the visit.")),
@@ -364,6 +404,68 @@ function CloseVisitDialog({
             <p className="mt-1 text-xs text-destructive">{errors.outcome}</p>
           ) : null}
         </div>
+
+        <div className="grid gap-1.5">
+          <Label htmlFor="close-remark">Remark</Label>
+          <Textarea
+            id="close-remark"
+            rows={2}
+            maxLength={2000}
+            value={remark}
+            onChange={(e) => setRemark(e.target.value)}
+            placeholder="What did the customer say? e.g. liked the necklace, wants it in rose gold"
+          />
+        </div>
+
+        <fieldset className="grid gap-3 rounded-lg border p-3">
+          <legend className="px-1 text-sm font-medium">Follow up</legend>
+          <div className="grid gap-1.5">
+            <Label htmlFor="close-followup-date">
+              Follow-up date
+              {outcome === "follow_up" ? <span className="text-destructive"> *</span> : null}
+            </Label>
+            <Input
+              id="close-followup-date"
+              type="date"
+              min={todayYmd()}
+              value={followUpDate}
+              aria-invalid={!!errors.followUpDate}
+              onChange={(e) => {
+                setFollowUpDate(e.target.value);
+                clearError("followUpDate");
+              }}
+            />
+            {errors.followUpDate ? (
+              <p className="text-xs text-destructive">{errors.followUpDate}</p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Adds a reminder on the calling queue for that day.
+              </p>
+            )}
+          </div>
+          <div className="grid gap-1.5">
+            <span id="close-remind-by" className="text-sm font-medium">
+              Reminder — follow up by
+            </span>
+            <div role="radiogroup" aria-labelledby="close-remind-by" className="flex flex-wrap gap-2">
+              {REMIND_BY.map((r) => (
+                <Button
+                  key={r.value}
+                  type="button"
+                  size="sm"
+                  role="radio"
+                  aria-checked={remindBy === r.value}
+                  variant={remindBy === r.value ? "default" : "outline"}
+                  disabled={!followUpDate}
+                  onClick={() => setRemindBy(remindBy === r.value ? "" : r.value)}
+                >
+                  {r.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+        </fieldset>
+
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel

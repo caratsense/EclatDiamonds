@@ -81,12 +81,17 @@ export function useCheckoutCheckin() {
   return useMutation({
     mutationFn: async ({
       id,
-      outcome,
+      ...body
     }: {
       id: string;
       outcome?: CheckinOutcomeInput;
+      /** What the customer said. Lands on their timeline too. */
+      remark?: string;
+      /** yyyy-mm-dd. Creates a real follow-up on the calling queue. */
+      followUpDate?: string;
+      preferredAction?: "call" | "whatsapp" | "visit";
     }) => {
-      const { data } = await api.patch<CheckIn>(`/checkins/${id}`, { outcome });
+      const { data } = await api.patch<CheckIn>(`/checkins/${id}`, body);
       return data;
     },
     onSuccess: () => {

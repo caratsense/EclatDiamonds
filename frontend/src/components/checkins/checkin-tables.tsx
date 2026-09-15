@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { DoorOpen, LogOut, ScanLine, UserCheck } from "lucide-react";
+import { CalendarClock, DoorOpen, LogOut, ScanLine, UserCheck } from "lucide-react";
 
 import {
   Card,
@@ -46,6 +46,18 @@ const OUTCOME_LABEL_FALLBACK: Record<string, string> = {
   left: "Browsed, left",
 };
 
+const ACTION_LABEL: Record<"call" | "whatsapp" | "visit", string> = {
+  call: "Call",
+  whatsapp: "WhatsApp",
+  visit: "Visit",
+};
+
+/** "18 Sep" from a yyyy-mm-dd follow-up date, read as a calendar date. */
+function formatFollowUp(ymd: string): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+}
+
 function RepCell({
   name,
   initials,
@@ -67,11 +79,14 @@ function RepCell({
 export function LiveInStore({
   checkins,
   onCheckout,
+  onFollowUp,
   checkingOutId,
 }: {
   checkins: CheckIn[];
   /** Check a customer out (PATCH /checkins/:id). */
   onCheckout?: (id: string) => void;
+  /** Close the visit with a follow-up date and reminder already asked for. */
+  onFollowUp?: (id: string) => void;
   /** Id of the check-in whose checkout is in flight. */
   checkingOutId?: string | null;
 }) {
@@ -142,6 +157,17 @@ export function LiveInStore({
                         <Link href={`/customers/${c.partyId}`}>History</Link>
                       </Button>
                     </>
+                  ) : null}
+                  {onFollowUp ? (
+                    <Button
+                      size="sm"
+                      className="flex-1"
+                      disabled={checkingOutId === c.id}
+                      onClick={() => onFollowUp(c.id)}
+                    >
+                      <CalendarClock className="h-3.5 w-3.5" />
+                      Follow up
+                    </Button>
                   ) : null}
                   {onCheckout ? (
                     <Button
@@ -243,6 +269,17 @@ export function CheckInLog({ checkins }: { checkins: CheckIn[] }) {
                   <Badge variant={OUTCOME_VARIANT[c.outcome] ?? "secondary"}>
                     {OUTCOME_LABEL_FALLBACK[c.outcome] ?? c.outcome}
                   </Badge>
+                  {c.followUpDate ? (
+                    <p className="mt-1 text-xs font-medium text-foreground">
+                      Follow up {formatFollowUp(c.followUpDate)}
+                      {c.preferredAction ? ` · ${ACTION_LABEL[c.preferredAction]}` : ""}
+                    </p>
+                  ) : null}
+                  {c.remark ? (
+                    <p className="mt-0.5 max-w-56 truncate text-xs text-muted-foreground" title={c.remark}>
+                      “{c.remark}”
+                    </p>
+                  ) : null}
                 </TableCell>
               </TableRow>
             ))}

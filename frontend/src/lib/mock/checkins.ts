@@ -55,6 +55,12 @@ export interface CheckIn {
   /** Minutes spent in store; null while in-store. */
   durationMin: number | null;
   outcome: VisitOutcome;
+  /** What the customer said, recorded when the visit closed. */
+  remark?: string | null;
+  /** yyyy-mm-dd — when to follow up, if a date was promised. */
+  followUpDate?: string | null;
+  /** How the follow-up reminder should be acted on. */
+  preferredAction?: "call" | "whatsapp" | "visit" | null;
 }
 
 export interface HourlyFootfall {
