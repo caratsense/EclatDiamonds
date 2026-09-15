@@ -38,6 +38,8 @@ import { ROLE_RANK } from "@/lib/types";
 import { apiErrorMessage, cn } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
+import { MetalRatesWidget } from "@/components/rates/metal-rates-widget";
+
 const nav = getNavItem("settings/rates")!;
 
 const METAL_LABEL: Partial<Record<MetalKind, string>> = {
@@ -101,6 +103,8 @@ export default function RatesPage() {
   return (
     <div>
       <SectionHeader title={nav.title} purpose={nav.purpose} />
+
+      <MetalRatesWidget className="mb-6" />
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>

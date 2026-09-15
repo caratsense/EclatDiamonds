@@ -13,6 +13,7 @@ import {
   SalesTrendChart,
   StoreComparisonChart,
 } from "@/components/dashboards/dashboard-charts";
+import { MetalRatesWidget } from "@/components/rates/metal-rates-widget";
 import {
   Card,
   CardContent,
@@ -122,6 +123,10 @@ export default function DashboardsPage() {
                 href={kpiHref(k.id)}
               />
             ))}
+      </div>
+
+      <div className="mt-4">
+        <MetalRatesWidget />
       </div>
 
       {chartsQuery.isLoading ? (
@@ -269,7 +274,7 @@ function TaskRow({ task }: { task: DashboardTask }) {
   return (
     <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
       <div className="min-w-0">
-        <p className="flex flex-wrap items-center gap-2 truncate text-sm font-medium">
+        <div className="flex flex-wrap items-center gap-2 truncate text-sm font-medium">
           {task.title}
           {task.priority && task.priority !== "normal" ? (
             <Badge
@@ -279,7 +284,7 @@ function TaskRow({ task }: { task: DashboardTask }) {
               {task.priority}
             </Badge>
           ) : null}
-        </p>
+        </div>
         <p className="text-xs text-muted-foreground">
           {task.assignedTo?.name ?? task.assignee ?? "Unassigned"}
           {task.dueDate ? ` · Due ${formatDue(task.dueDate)}` : ""}

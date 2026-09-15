@@ -1,7 +1,8 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
-import { Coins } from "lucide-react";
+import { Coins, ExternalLink } from "lucide-react";
 
 import { useMetalRates } from "@/lib/queries/integrations";
 import { useRouteEnabled } from "@/lib/queries/tenant-config";
@@ -9,23 +10,22 @@ import { formatINR } from "@/lib/format";
 import { ROLE_RANK } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { MetalRatesWidget } from "@/components/rates/metal-rates-widget";
 
 /**
- * Live gold-rate chip in the top bar — the current 22K rate, on every screen, so
- * whoever is creating a lead or building a quote always sees the latest number
- * without going to look for it. `useMetalRates` polls, so it tracks the auto
- * feed (or a manual override) on its own. Managers tap through to set/override
- * it; everyone else sees it read-only. Renders nothing until a rate exists.
- *
- * ONLY for a tenant whose product actually has a metal rate. The top bar is
- * outside the navigation, so nothing here was ever filtered by industry: a
- * pharmacy got a gold-coin chip reading "₹X /g 22K" on every screen, and for a
- * manager it was a one-click link into /settings/rates — a screen the pack
- * layer means to hide. The rate is real, too: the refresh job runs for every
- * organisation that has a store, so there was always a number to display.
- * Gating on the route keeps the chip and the screen it opens in agreement.
+ * Live gold-rate chip in the top bar.
+ * Clicking opens the live Metal Rates card matching official CaratOS specs.
  */
 export function GoldRateChip() {
+  const [open, setOpen] = React.useState(false);
   const role = useSession((s) => s.role);
   const canEdit = ROLE_RANK[role] >= ROLE_RANK.store_manager;
   const showsRates = useRouteEnabled("settings/rates");
@@ -34,35 +34,69 @@ export function GoldRateChip() {
   const rate = rateFor(22);
   if (!showsRates || isLoading || !rate) return null;
 
-  const content = (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs font-medium text-foreground shadow-xs",
-        canEdit && "transition-colors hover:bg-muted/60",
-      )}
-      title={
-        rate.stale
-          ? `22K gold · updated ${Math.round(rate.ageHours)}h ago`
-          : "22K gold · live"
-      }
-    >
-      <span
-        className={cn(
-          "h-1.5 w-1.5 rounded-full",
-          rate.stale ? "bg-[var(--warning)]" : "bg-[var(--success)]",
-        )}
-      />
-      <Coins className="h-3.5 w-3.5 text-[var(--gold)]" />
-      <span className="num">{formatINR(rate.ratePerGram)}</span>
-      <span className="text-muted-foreground">/g 22K</span>
-    </span>
-  );
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs font-medium text-foreground shadow-xs transition-colors hover:bg-muted/60 focus:outline-none focus:ring-1 focus:ring-primary/40",
+          )}
+          title={
+            rate.stale
+              ? `22K gold · updated ${Math.round(rate.ageHours)}h ago (click for all rates)`
+              : "22K gold · live (click for all rates)"
+          }
+        >
+          <span
+            className={cn(
+              "h-1.5 w-1.5 rounded-full",
+              rate.stale ? "bg-[var(--warning)]" : "bg-[var(--success)]",
+            )}
+          />
+          <Coins className="h-3.5 w-3.5 text-[var(--gold)]" />
+          <span className="num">{formatINR(rate.ratePerGram)}</span>
+          <span className="text-muted-foreground">/g 22K</span>
+        </button>
+      </DialogTrigger>
 
-  return canEdit ? (
-    <Link href="/settings/rates" aria-label="Gold rate">
-      {content}
-    </Link>
-  ) : (
-    content
+      <DialogContent className="max-w-2xl border-border/80 bg-[#090e13] p-6 text-foreground sm:rounded-2xl">
+        <DialogHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <div className="flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400">
+              <Coins className="h-4 w-4" />
+            </div>
+            <div>
+              <DialogTitle className="text-base font-bold text-white">Live Metal Rates</DialogTitle>
+              <p className="text-xs text-muted-foreground">
+                Official daily market benchmark rates across bullion categories.
+              </p>
+            </div>
+          </div>
+        </DialogHeader>
+
+        <MetalRatesWidget />
+
+        <div className="flex items-center justify-between pt-2">
+          <span className="text-[11px] text-muted-foreground">
+            Market source: IBJA benchmark feed
+          </span>
+          {canEdit && (
+            <Button
+              asChild
+              variant="outline"
+              size="sm"
+              className="gap-1.5 border-slate-700 bg-slate-900/60 text-xs text-slate-200 hover:bg-slate-800"
+              onClick={() => setOpen(false)}
+            >
+              <Link href="/settings/rates">
+                <span>Manage Store Overrides</span>
+                <ExternalLink className="h-3.5 w-3.5" />
+              </Link>
+            </Button>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
