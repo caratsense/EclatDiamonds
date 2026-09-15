@@ -2,18 +2,29 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Param,
+  Patch,
   Post,
   Put,
   Query,
+  Res,
+  StreamableFile,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { QuotesService } from './quotes.service';
 import { QuoteApprovalService } from './quote-approval.service';
 import { DecideQuoteDto, QuoteApprovalSettingsDto } from './dto/quote-approval.dto';
-import { ConvertToOrderDto, CreateQuoteDto, QuotePhotoDto } from './dto/quote.dto';
+import {
+  ConvertToOrderDto,
+  CreateQuoteDto,
+  QuotePhotoDto,
+  SendQuotePdfDto,
+  UpdateQuoteDto,
+} from './dto/quote.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
 import { Roles } from '../auth/roles.decorator';
@@ -44,6 +55,41 @@ export class QuotesController {
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateQuoteDto) {
     return this.quotes.create(user, dto);
+  }
+
+  /** Re-price a quote. Bumps its revision and withdraws any approval. */
+  @Patch(':id')
+  update(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateQuoteDto) {
+    return this.quotes.update(user, id, dto);
+  }
+
+  /**
+   * The detailed quote PDF, as bytes from an authorised route. The stored copy
+   * has no URL of its own. Refused (403) until any required approval exists.
+   */
+  @Get(':id/pdf')
+  @Header('Content-Type', 'application/pdf')
+  @Header('Cache-Control', 'private, no-store')
+  async pdf(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { buffer, filename } = await this.quotes.pdf(user, id);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', String(buffer.byteLength));
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return new StreamableFile(buffer);
+  }
+
+  /** Queue the detailed quote PDF to the quote's own customer on WhatsApp. */
+  @Post(':id/send-pdf')
+  sendPdf(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: SendQuotePdfDto,
+  ) {
+    return this.quotes.sendPdf(user, id, dto);
   }
 
   /** Attach a reference / repair photo (multipart field `file`, optional `label`). Managers and above. */
@@ -114,7 +160,7 @@ export class QuotesController {
     @Param('id') id: string,
     @Body() dto: DecideQuoteDto,
   ) {
-    return this.approval.decide(user, id, dto.approve, dto.reason);
+    return this.approval.decide(user, id, dto.approve, dto.reason, dto.revision);
   }
 
   /** Fork a custom order (timeline) from this quote and mark it accepted. */
