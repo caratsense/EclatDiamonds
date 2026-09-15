@@ -70,7 +70,9 @@ export function useDownloadLeadExport() {
       const disposition = String(res.headers?.["content-disposition"] ?? "");
       const match = /filename="?([^";]+)"?/i.exec(disposition);
       const filename = match?.[1] ?? "leads.xlsx";
-      const rows = Number(res.headers?.["x-export-rows"] ?? 0);
+      // Null when the header is unreadable — never a made-up 0 for a full file.
+      const rowsHeader = res.headers?.["x-export-rows"];
+      const rows = rowsHeader == null ? null : Number(rowsHeader);
 
       const url = URL.createObjectURL(res.data);
       try {

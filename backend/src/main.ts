@@ -129,6 +129,10 @@ async function bootstrap() {
     },
     credentials: true,
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Store-Id'],
+    // A cross-origin page can only read response headers listed here. Without
+    // these, a download saved as "leads.xlsx" instead of its dated name and its
+    // row count read as 0.
+    exposedHeaders: ['Content-Disposition', 'X-Export-Rows'],
   });
 
   // Read PORT straight from the env (Railway injects it) and bind 0.0.0.0 so the

@@ -6,6 +6,7 @@ import {
   ArrowDown,
   ArrowUp,
   CheckSquare,
+  FileSpreadsheet,
   Flame,
   Globe,
   KanbanSquare,
@@ -79,6 +80,8 @@ import {
   useStoreScope,
 } from "@/components/common/store-scope-field";
 import { apiErrorMessage, normalizeIndianMobile } from "@/lib/utils";
+import { useDownloadLeadExport } from "@/lib/queries/lead-export";
+import { ROLE_RANK } from "@/lib/types";
 
 const nav = getNavItem("crm")!;
 
@@ -132,6 +135,7 @@ export default function CrmPage() {
   // Date-range filter (inclusive; API returns latest-first).
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const exportLeads = useDownloadLeadExport();
   // Outcome facet — Open by default. Applied client-side to the LIST only; the
   // board must show every outcome so a card dragged into "Order Placed" (which
   // the backend auto-marks won) doesn't silently vanish.
@@ -393,6 +397,36 @@ export default function CrmPage() {
               <Globe className="mr-1.5 h-4 w-4" /> Web form
             </Link>
           </Button>
+          {/* Name, number and lead details for the branch and dates on screen.
+              Store manager and above: the export endpoint refuses salespeople. */}
+          {ROLE_RANK[role] >= ROLE_RANK.store_manager ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9"
+              disabled={exportLeads.isPending}
+              onClick={() =>
+                exportLeads.mutate(
+                  {
+                    from: from || undefined,
+                    to: to || undefined,
+                    storeId: currentStore.isAggregate ? undefined : currentStore.id,
+                  },
+                  {
+                    onSuccess: (r) =>
+                      toast.success(`Downloaded ${r.filename}`, {
+                        description:
+                          r.rows == null ? undefined : `${r.rows} lead${r.rows === 1 ? "" : "s"}`,
+                      }),
+                    onError: (e) => toast.error(apiErrorMessage(e, "Could not download the leads.")),
+                  },
+                )
+              }
+            >
+              <FileSpreadsheet className="mr-1.5 h-4 w-4" />
+              {exportLeads.isPending ? "Preparing…" : "Download Excel"}
+            </Button>
+          ) : null}
         </div>
       </div>
 
