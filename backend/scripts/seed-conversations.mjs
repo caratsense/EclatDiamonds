@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Four WhatsApp threads for the demo tenant, so the inbox can be worked on
+ * Five WhatsApp threads for the demo tenant, so the inbox can be worked on
  * locally.
  *
  * ── Why this exists ─────────────────────────────────────────────────────────
@@ -26,14 +26,23 @@
  * theatre from a real customer's real message. Phone numbers are in the
  * documentation range and reach nobody.
  *
- * ── The intent records are SHAPED, not stuffed ──────────────────────────────
+ * ── The intent scores are PRODUCED, not typed in ────────────────────────────
  *
- * Each qualification's signals quote the actual seeded message that fired them,
- * so the intent panel's "what moved the score" section shows real evidence
- * drawn from the thread you are looking at. One thread is deliberately left
- * UNASSESSED and one is deliberately unassessable, because those are two of the
- * three states that panel exists to distinguish and neither can be reviewed if
- * the seed only ever produces the happy one.
+ * No score is written by this file. Each customer's messages are worded so the
+ * tenant's qualification rules land the thread in a different band, and then
+ * the running backend assesses every thread through the same endpoint the
+ * intent panel's refresh button calls. What the panel shows is therefore what
+ * the engine concluded from the messages on screen — five situations, five
+ * outcomes:
+ *
+ *   priya   ready to buy this week, ad lead, assistant handling   → Ready to talk
+ *   vikram  bridal customisation, chasing charges, with a person  → Ready to talk
+ *   ananya  moving an appointment, asks about a piece             → Interested
+ *   rohan   browsing, comparing with another shop                 → Early
+ *   neha    asked us to stop messaging her                        → Do not pursue
+ *
+ * If the backend is not running, the threads are still written and the script
+ * says so; open a thread and press refresh in the intent panel to score it.
  *
  * ── Idempotent ──────────────────────────────────────────────────────────────
  *
@@ -90,9 +99,15 @@ const tomorrow = () => {
 /* ------------------------------------------------------------------- threads */
 
 /**
- * Four threads, chosen to cover the states the inbox distinguishes rather than
- * four variations of the same happy path: one with the assistant handling it,
- * one assigned to a person, one nobody has picked up, and one closed.
+ * Five threads, chosen to cover different situations AND different outcomes
+ * rather than five variations of the same happy path: the assistant handling a
+ * ready buyer, a person working a customisation, nobody having picked up a
+ * reschedule, a browser comparing prices, and a customer who asked us to stop.
+ *
+ * The qualification rules read only what the CUSTOMER wrote, and match whole
+ * phrases. The comment on each customer message names the rule it trips, so a
+ * change to the wording that moves a thread into another band is visible here
+ * rather than discovered in the panel.
  *
  * `adId` is set only where a thread genuinely came from a click-to-WhatsApp ad.
  * An absent ad id must stay absent — the inbox renders "not provided by the
@@ -110,28 +125,15 @@ const THREADS = [
     adId: 'demo_ad_solitaire_q3',
     interest: 'Solitaire ring, around 0.5 ct',
     messages: [
+      // specific item: "do you have"
       { at: 26, dir: 'in', body: 'Hi, I saw your ad for solitaire rings. Do you have anything around 0.5 carat?' },
-      { at: 25.8, dir: 'out', by: 'ai', body: 'Hello Priya — yes. We have 0.50 ct solitaires in 18K white and rose gold at our Surat showroom. May I ask what your budget range is?' },
-      { at: 25.2, dir: 'in', body: 'Budget is around 1.5 lakh. Is certification included?' },
-      { at: 25.0, dir: 'out', by: 'ai', body: 'Every diamond above 0.30 ct comes with an IGI certificate at no extra cost. A 0.50 ct VS-clarity solitaire sits at ₹1,42,000 including making.' },
-      { at: 3.5, dir: 'in', body: 'That works. Can I come and see it this Saturday?' },
+      { at: 25.8, dir: 'out', by: 'ai', body: 'Hello Priya — yes, there are 0.50 ct solitaires in 18K white and rose gold at the Surat showroom. What range are you considering?' },
+      // budget: "budget" · purchase intent: "ready to buy" · soon: "this week"
+      { at: 25.2, dir: 'in', body: 'My budget is around 1.5 lakh, and I am ready to buy this week.' },
+      { at: 25.0, dir: 'out', by: 'ai', body: 'A 0.50 ct VS-clarity solitaire is ₹1,42,000 including making, with an IGI certificate.' },
+      // visit: "visit"
+      { at: 3.5, dir: 'in', body: 'Great. Can I visit the showroom on Saturday to see it?' },
     ],
-    /** A real assessment, with the evidence quoting the messages above. */
-    intent: {
-      score: 88,
-      band: 'hot',
-      confidence: '0.820',
-      summary:
-        'Asked for a specific stone size, stated a budget, asked about certification and proposed a date to visit.',
-      recommendedAction: 'Confirm the Saturday appointment and reserve the piece against the visit.',
-      signals: [
-        { key: 'budget_stated', label: 'Stated a budget', weight: 25, matched: true, evidence: 'Budget is around 1.5 lakh' },
-        { key: 'visit_proposed', label: 'Proposed a visit', weight: 30, matched: true, evidence: 'Can I come and see it this Saturday?' },
-        { key: 'spec_named', label: 'Named a specification', weight: 18, matched: true, evidence: 'anything around 0.5 carat' },
-        { key: 'certification', label: 'Asked about certification', weight: 15, matched: true, evidence: 'Is certification included?' },
-      ],
-      requirements: { budget: '₹1,50,000', specification: '0.50 ct solitaire', timeline: 'This Saturday' },
-    },
     task: { title: 'Confirm Saturday appointment — solitaire viewing', priority: 'high' },
   },
   {
@@ -145,25 +147,15 @@ const THREADS = [
     adId: null,
     interest: 'Bridal set, customised',
     messages: [
-      { at: 50, dir: 'in', body: 'We are looking at a bridal set for a December wedding. Can the necklace be made shorter?' },
-      { at: 49.5, dir: 'out', by: 'agent', body: 'Of course — we can adjust the length and the drop. Would you like to come in so we can take measurements?' },
-      { at: 30, dir: 'in', body: 'Yes. Also please share what the making charges would be for the changes.' },
+      // specific item: "this design"
+      { at: 50, dir: 'in', body: 'We are looking at a bridal set for a December wedding. Can this design be made a little shorter?' },
+      { at: 49.5, dir: 'out', by: 'agent', body: 'Yes, we can adjust the length and the drop. Would you like to come in so we can take measurements?' },
+      // budget: "how much"
+      { at: 30, dir: 'in', body: 'Please tell me how much the making charges would be for the change.' },
       { at: 29.2, dir: 'out', by: 'agent', body: 'I will put the revised quote together and send it across today.' },
-      { at: 6, dir: 'in', body: 'Any update on the quote?' },
+      // visit: "visit" · soon: "next week"
+      { at: 6, dir: 'in', body: 'Any update on the quote? We want to visit next week to finalise.' },
     ],
-    intent: {
-      score: 74,
-      band: 'hot',
-      confidence: '0.760',
-      summary: 'Named an occasion with a date, requested a customisation and chased a quote.',
-      recommendedAction: 'Send the revised making-charge quote today; the customer has chased it once.',
-      signals: [
-        { key: 'occasion_named', label: 'Named an occasion', weight: 22, matched: true, evidence: 'a December wedding' },
-        { key: 'customisation', label: 'Requested a customisation', weight: 20, matched: true, evidence: 'Can the necklace be made shorter?' },
-        { key: 'quote_chased', label: 'Chased a quote', weight: 26, matched: true, evidence: 'Any update on the quote?' },
-      ],
-      requirements: { occasion: 'Wedding', timeline: 'December' },
-    },
     task: { title: 'Send revised making-charge quote — bridal set', priority: 'urgent' },
   },
   {
@@ -175,63 +167,52 @@ const THREADS = [
     status: 'open',
     assignee: null,
     adId: null,
-    interest: 'Existing appointment',
+    interest: 'Rose gold pendant',
     messages: [
-      { at: 2.5, dir: 'in', body: 'Hi, I have an appointment tomorrow at 4pm. Could we move it to Friday?' },
+      // visit: "appointment" · soon: "tomorrow"
+      { at: 3, dir: 'in', body: 'Hi, I have an appointment tomorrow at 4pm. Could we move it to Friday?' },
+      // specific item: "is this available"
+      { at: 2.5, dir: 'in', body: 'Also, is this available in rose gold? It is the pendant from your Instagram post.' },
     ],
-    /*
-     * DELIBERATELY UNASSESSABLE. One inbound line is not enough text to score,
-     * and the honest record of that is a row with a null score and a reason —
-     * not a low score, which would say "this customer is cold". The panel's
-     * middle state is only reviewable if the seed produces it.
-     */
-    intent: {
-      score: null,
-      band: null,
-      confidence: null,
-      unavailableReason:
-        'Only one message has been received. The policy needs at least three before it will score a conversation.',
-      summary: null,
-      recommendedAction: null,
-      signals: [],
-      requirements: {},
-    },
     task: { title: 'Confirm the moved appointment with Ananya', priority: 'normal' },
   },
   {
     key: 'rohan',
     party: { id: 'demo_pty_rohan', name: 'Rohan Kapoor', phone: '919000000104' },
     storeId: 'ahmedabad-cg',
-    subject: 'Price and certification',
-    handling: 'human',
-    status: 'closed',
-    assignee: 'rina.rep@caratsense.in',
+    subject: 'Lab-grown bracelet, comparing',
+    handling: 'ai',
+    status: 'open',
+    assignee: null,
     adId: 'demo_ad_tennis_bracelet',
-    interest: 'Tennis bracelet',
+    interest: 'Lab-grown tennis bracelet',
     messages: [
-      { at: 96, dir: 'in', body: 'What is the price of the tennis bracelet in the ad, and is the diamond certified?' },
-      { at: 95.4, dir: 'out', by: 'agent', body: 'It is ₹3,38,000 with 2.10 ct of VVS diamonds, IGI certified. Made to order, about three weeks.' },
-      { at: 94, dir: 'in', body: 'Three weeks is too late for me, thank you.' },
-      { at: 93.6, dir: 'out', by: 'agent', body: 'Understood — I will let you know if a ready piece comes in.' },
+      // specific item: "do you have"
+      { at: 20, dir: 'in', body: 'Hi, just looking for now. Do you have lab-grown tennis bracelets?' },
+      { at: 19.8, dir: 'out', by: 'ai', body: 'Yes — lab-grown tennis bracelets from 2 ct upwards are in the Ahmedabad store.' },
+      // comparison: "other shop"
+      { at: 19, dir: 'in', body: 'OK. The other shop near me seems cheaper, I will think about it.' },
     ],
-    /*
-     * A REAL LOW SCORE, which is a different thing from an absent one: the
-     * customer said no, and the record says so with the sentence they said it
-     * in. This is the row that proves a low band is earned rather than defaulted.
-     */
-    intent: {
-      score: 21,
-      band: 'cold',
-      confidence: '0.880',
-      summary: 'Priced the item, then withdrew on lead time.',
-      recommendedAction: 'Nothing to chase. Contact again only if a ready-stock piece arrives.',
-      signals: [
-        { key: 'price_asked', label: 'Asked for a price', weight: 12, matched: true, evidence: 'What is the price of the tennis bracelet' },
-        { key: 'objection_timeline', label: 'Withdrew on timeline', weight: -35, matched: true, evidence: 'Three weeks is too late for me' },
-      ],
-      requirements: { timeline: 'Sooner than three weeks' },
-    },
     task: null,
+  },
+  {
+    key: 'neha',
+    party: { id: 'demo_pty_neha', name: 'Neha Joshi', phone: '919000000105' },
+    storeId: 'mumbai-bandra',
+    subject: 'Asked to stop messages',
+    handling: 'human',
+    status: 'open',
+    assignee: null,
+    adId: null,
+    interest: 'Opt-out request',
+    messages: [
+      { at: 30, dir: 'out', by: 'agent', body: 'Hello Neha, the new collection preview is open at our Bandra store this weekend.' },
+      // complaint: "not happy"
+      { at: 29, dir: 'in', body: 'Who gave you my number? I am not happy getting these messages.' },
+      // not interested: "remove my number"
+      { at: 28.5, dir: 'in', body: 'Please remove my number.' },
+    ],
+    task: { title: 'Record Neha’s opt-out and stop outreach', priority: 'urgent' },
   },
 ];
 
@@ -317,7 +298,11 @@ async function main() {
     const lead = existingLead
       ? await prisma.lead.update({
           where: { id: existingLead.id },
-          data: { interest: t.interest, lastActivity: ago(t.messages[t.messages.length - 1].at) },
+          data: {
+            interest: t.interest,
+            outcome: t.status === 'closed' ? 'lost' : 'open',
+            lastActivity: ago(t.messages[t.messages.length - 1].at),
+          },
         })
       : await prisma.lead.create({
           data: {
@@ -376,6 +361,18 @@ async function main() {
     threads += 1;
 
     /* ---------------------------------------------------------- the messages */
+    // Only this script's own lines are removed — a reply someone typed into the
+    // thread locally has no DEMO external id and is kept.
+    await prisma.message.deleteMany({
+      where: {
+        organisationId,
+        conversationId: conversation.id,
+        externalId: {
+          startsWith: `wamid.DEMO.${t.key}.`,
+          notIn: t.messages.map((_, i) => `wamid.DEMO.${t.key}.${i}`),
+        },
+      },
+    });
     for (const [i, m] of t.messages.entries()) {
       const externalId = `wamid.DEMO.${t.key}.${i}`;
       const sentAt = ago(m.at);
@@ -402,33 +399,11 @@ async function main() {
     }
 
     /* --------------------------------------------------------- the intent row */
-    // One assessment per thread, replaced on re-run rather than stacked — the
-    // panel reads the LATEST, and a pile of identical rows would make the
-    // history meaningless.
+    // Earlier versions of this script wrote hand-typed scores under the
+    // provider 'demo_seed'. Remove them so the panel only ever shows what the
+    // engine concluded (see assessThroughBackend below).
     await prisma.leadQualification.deleteMany({
       where: { organisationId, conversationId: conversation.id, provider: 'demo_seed' },
-    });
-    await prisma.leadQualification.create({
-      data: {
-        organisationId,
-        partyId: party.id,
-        leadId: lead.id,
-        conversationId: conversation.id,
-        method: 'rules',
-        score: t.intent.score,
-        confidence: t.intent.confidence,
-        band: t.intent.band,
-        recommendedAction: t.intent.recommendedAction,
-        signals: t.intent.signals,
-        requirements: t.intent.requirements,
-        summary: t.intent.summary,
-        unavailableReason: t.intent.unavailableReason ?? null,
-        messagesConsidered: t.messages.length,
-        // Named so it is obvious in the UI footer and in the database that this
-        // score was seeded rather than produced by the qualification engine.
-        provider: 'demo_seed',
-        createdAt: ago(Math.min(...t.messages.map((m) => m.at))),
-      },
     });
 
     /* ----------------------------------------------------------- the follow-up */
@@ -457,7 +432,63 @@ async function main() {
   }
 
   console.log(`Seeded ${threads} WhatsApp threads and ${messages} messages into "${org.slug}".`);
-  console.log('Open http://localhost:3177/conversations to work them.');
+  await assessThroughBackend(organisationId);
+  console.log('Open http://localhost:3000/conversations to work them.');
+}
+
+/**
+ * Score every seeded thread with the REAL qualification engine, through the
+ * running backend — the same request the intent panel's refresh button sends.
+ *
+ * The rules are switched on for the demo tenant first if they are off, because
+ * an engine that is switched off answers "unavailable" for all five threads and
+ * the panel would show nothing to compare. That is a setting on the local demo
+ * tenant only; the guards at the top of this file are what keep it local.
+ */
+async function assessThroughBackend(organisationId) {
+  const base = (process.env.SEED_API_URL ?? `http://localhost:${process.env.PORT ?? 4000}`).replace(/\/+$/, '');
+  const call = async (path, token, body) => {
+    const res = await fetch(base + path, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`${path} answered ${res.status}`);
+    return res.json();
+  };
+
+  let token;
+  try {
+    ({ token } = await call('/auth/login', null, { email: 'head.office@caratsense.in', password: 'password123' }));
+  } catch (error) {
+    console.log(`Scores not produced — the backend at ${base} is not reachable (${error.message}).`);
+    console.log('Start it, then open each thread and press refresh in the intent panel.');
+    return;
+  }
+
+  const { policy } = await call('/crm/qualification/policy', token);
+  if (!policy.enabled) {
+    await call('/crm/qualification/policy', token, { enabled: true });
+    console.log('Switched lead qualification on for the demo tenant (it was off).');
+  }
+
+  for (const t of THREADS) {
+    const conversation = await prisma.conversation.findUnique({
+      where: {
+        organisationId_channel_externalThreadId: {
+          organisationId,
+          channel: 'whatsapp',
+          externalThreadId: `demo-thread-${t.key}`,
+        },
+      },
+      select: { id: true },
+    });
+    const q = await call(`/crm/qualification/conversations/${conversation.id}`, token, {});
+    const outcome = q.available
+      ? `${q.score} · ${q.bandLabel} · confidence ${Math.round((q.confidence ?? 0) * 100)}% · ${q.method}`
+      : `unavailable — ${q.unavailableReason}`;
+    console.log(`  ${t.party.name.padEnd(14)} ${outcome}`);
+  }
 }
 
 main()
