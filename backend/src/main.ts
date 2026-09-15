@@ -71,7 +71,13 @@ async function bootstrap() {
     }
     next();
   });
-  app.useStaticAssets(uploadDir, { prefix: '/uploads' });
+  app.useStaticAssets(uploadDir, {
+    prefix: '/uploads',
+    setHeaders: (res: any) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    },
+  });
 
   // Fail fast if the JWT signing secret is missing/weak. Without this a misconfigured
   // deploy would sign tokens with an `undefined`/placeholder secret (auth bypass risk).
@@ -100,15 +106,27 @@ async function bootstrap() {
     }),
   );
 
-  // CORS for the Next.js frontend. Origins come from CORS_ORIGINS (comma-separated)
-  // in production; default to localhost for dev. Set CORS_ORIGINS to the real
-  // frontend domain(s) on Railway/Vercel before go-live.
-  const corsOrigins = (config.get<string>('CORS_ORIGINS') ?? 'http://localhost:3000')
-    .split(',')
-    .map((o) => o.trim())
-    .filter(Boolean);
+  // CORS for the Next.js frontend. Allows all localhost ports for local dev
+  // (3000, 3177, etc.) and explicit production domains from CORS_ORIGINS.
+  const rawCors = config.get<string>('CORS_ORIGINS');
+  const configuredOrigins = rawCors
+    ? rawCors.split(',').map((o) => o.trim()).filter(Boolean)
+    : [];
+
   app.enableCors({
-    origin: corsOrigins,
+    origin: (origin, callback) => {
+      // Allow requests with no origin (curl, mobile, same-origin)
+      if (!origin) return callback(null, true);
+      // Allow any localhost or 127.0.0.1 port during local development
+      if (/^http:\/\/(localhost|127\.0\.0\.1)(:[0-9]+)?$/.test(origin)) {
+        return callback(null, true);
+      }
+      // Check explicit configured origins
+      if (configuredOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      callback(new Error(`Not allowed by CORS: ${origin}`));
+    },
     credentials: true,
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Store-Id'],
   });
