@@ -378,7 +378,6 @@ const JEWELLERY: IndustryPack = {
       'sales-performance',
       'inventory',
       'inventory/dead-stock',
-      'find-similar',
       'stock-transfers',
       'payments',
       'finance',

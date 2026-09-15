@@ -49,7 +49,6 @@ import {
   Radio,
   Route,
   ListTodo,
-  ScanSearch,
 } from "lucide-react";
 
 import type { Role } from "@/lib/types";
@@ -626,15 +625,6 @@ export const NAV_ITEMS: NavItem[] = [
     icon: PackageX,
     group: "Inventory & Supply",
     roles: ["store_manager", "area_manager", "head_office"],
-  },
-  {
-    module: 5,
-    slug: "find-similar",
-    title: "Find Similar",
-    purpose: "Upload a photograph and find the closest pieces in your own catalogue.",
-    primaryAction: "",
-    icon: ScanSearch,
-    group: "Inventory & Supply",
   },
   {
     module: 17,

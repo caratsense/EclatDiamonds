@@ -91,14 +91,12 @@ const JEWELLERY_ONLY_ROUTES = [
    * nobody to send a month-end file to. `loyalty/programme` and
    * `inventory/dead-stock` are sub-screens of modules that are already
    * jewellery-only, so including them anywhere else would offer a door into a
-   * module the tenant does not have. `find-similar` searches a photograph
-   * against the catalogue using the jewellery similarity model.
+   * module the tenant does not have.
    */
   'management',
   'reporting/scheduled',
   'loyalty/programme',
   'inventory/dead-stock',
-  'find-similar',
 ] as const;
 
 /** The universal suite every industry gets, jewellery included. */
