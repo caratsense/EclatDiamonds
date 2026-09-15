@@ -45,6 +45,9 @@ const BLOCKER_PHONE = '919812350001';
 async function teardown(prisma: import('../src/prisma/prisma.service').PrismaService) {
   const orgs = [A.org, B.org];
   await prisma.auditLog.deleteMany({ where: { organisationId: { in: orgs } } });
+  await prisma.jobTask.deleteMany({ where: { organisationId: { in: orgs } } });
+  await prisma.message.deleteMany({ where: { organisationId: { in: orgs } } });
+  await prisma.conversation.deleteMany({ where: { organisationId: { in: orgs } } });
   await prisma.activityEvent.deleteMany({ where: { organisationId: { in: orgs } } });
   await prisma.contactPoint.deleteMany({ where: { organisationId: { in: orgs } } });
   await prisma.party.deleteMany({ where: { organisationId: { in: orgs } } });
@@ -279,6 +282,45 @@ describe('Contact archive (e2e)', () => {
     expect(
       await prisma.party.count({ where: { organisationId: A.org, archivedAt: null, id: keeperId } }),
     ).toBe(1);
+  });
+
+  it('an archived contact who answered STOP cannot be messaged by any door', async () => {
+    await request(server())
+      .post('/omnichannel/consents')
+      .set(auth(hoA))
+      .send({ partyId: blockerId, channel: 'whatsapp', purpose: 'all', status: 'revoked', source: 'inbound_message' })
+      .expect((r) => expect([200, 201]).toContain(r.status));
+    // They wrote an hour ago, so the 24-hour window is not what refuses them.
+    const thread = await prisma.conversation.create({
+      data: {
+        organisationId: A.org, channel: 'whatsapp', externalThreadId: BLOCKER_PHONE, partyId: blockerId,
+        storeId: A.store, handling: 'human', lastInboundAt: new Date(Date.now() - 3_600_000),
+      },
+    });
+
+    const reply = await request(server())
+      .post(`/omnichannel/conversations/${thread.id}/messages`)
+      .set(auth(hoA))
+      .send({ purpose: 'service', body: 'Are you still interested?' });
+    expect(reply.status).toBe(400);
+    expect(JSON.stringify(reply.body)).toMatch(/opted out/i);
+
+    const direct = await request(server())
+      .post('/integrations/whatsapp/send')
+      .set(auth(hoA))
+      .send({ to: BLOCKER_PHONE, body: 'Are you still interested?' });
+    expect(direct.status).toBe(400);
+    expect(JSON.stringify(direct.body)).toMatch(/opted out/i);
+
+    const { OmnichannelService } = await import('../src/omnichannel/omnichannel.service');
+    const automatic = await app.get(OmnichannelService).queueCustomerNotice({
+      organisationId: A.org, partyId: blockerId, storeId: A.store, purpose: 'service',
+      templateName: 'visit_feedback', languageCode: 'en', templateComponents: [],
+      idempotencyKey: 'arc-archived-notice', summary: 'Feedback ask', automation: 'visit_feedback',
+    });
+    expect(automatic).toMatchObject({ queued: false, code: 'recipient_archived' });
+
+    expect(await prisma.message.count({ where: { organisationId: A.org, direction: 'outbound' } })).toBe(0);
   });
 
   /* ------------------------------------------------------------- restore --- */
