@@ -69,6 +69,9 @@ export default function CataloguePage() {
   const { data: pageConfig } = useConfigBootstrap();
   const productNoun = pageConfig?.lexicon?.product ?? "Product";
   const productNounPlural = pageConfig?.lexicon?.product_plural ?? "Products";
+  // The jewellery category and metal filters mean nothing to a pack that hides
+  // the metal field: a clinic's or mill's products are all "other" and unmetalled.
+  const showsMetalFilters = useFieldVisible(pageConfig)("product", "metal");
   const [active, setActive] = useState<Product | null>(null);
   const [open, setOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -146,45 +149,49 @@ export default function CataloguePage() {
 
       {/* Filters */}
       <div className="mb-4 flex flex-wrap gap-2">
-        <Select
-          value={category}
-          onValueChange={(v) => {
-            setCategory(v as CategoryFilter);
-            setPage(1);
-          }}
-        >
-          <SelectTrigger className="w-[150px]">
-            <SelectValue placeholder="Category" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All categories</SelectItem>
-            {Object.entries(CATEGORY_LABELS).map(([id, label]) => (
-              <SelectItem key={id} value={id}>
-                {label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {showsMetalFilters ? (
+          <>
+            <Select
+              value={category}
+              onValueChange={(v) => {
+                setCategory(v as CategoryFilter);
+                setPage(1);
+              }}
+            >
+              <SelectTrigger className="w-[150px]">
+                <SelectValue placeholder="Category" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All categories</SelectItem>
+                {Object.entries(CATEGORY_LABELS).map(([id, label]) => (
+                  <SelectItem key={id} value={id}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
-        <Select
-          value={metal}
-          onValueChange={(v) => {
-            setMetal(v as MetalFilter);
-            setPage(1);
-          }}
-        >
-          <SelectTrigger className="w-[150px]">
-            <SelectValue placeholder="Metal" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All metals</SelectItem>
-            {metalOptions.map(([id, label]) => (
-              <SelectItem key={id} value={id}>
-                {label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+            <Select
+              value={metal}
+              onValueChange={(v) => {
+                setMetal(v as MetalFilter);
+                setPage(1);
+              }}
+            >
+              <SelectTrigger className="w-[150px]">
+                <SelectValue placeholder="Metal" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All metals</SelectItem>
+                {metalOptions.map(([id, label]) => (
+                  <SelectItem key={id} value={id}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </>
+        ) : null}
 
         <Select
           value={store}
