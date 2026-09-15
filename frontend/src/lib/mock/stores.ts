@@ -18,6 +18,6 @@ export const MOCK_STORES: Store[] = [
 export const MOCK_USER: User = {
   id: "u-001",
   name: "Aarav Mehta",
-  email: "aarav.mehta@caratsense.in",
+  email: "aarav.mehta@caratos.in",
   initials: "AM",
 };

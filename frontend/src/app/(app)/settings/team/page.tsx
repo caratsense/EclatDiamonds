@@ -1138,7 +1138,7 @@ function AddStaffDialog({
                 id="staff-email"
                 type="email"
                 autoComplete="off"
-                placeholder="name@caratsense.in"
+                placeholder="name@caratos.in"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 aria-invalid={touched && emailError}

@@ -10,10 +10,10 @@ export default function manifest(): MetadataRoute.Manifest {
     // One manifest is served to every tenant, so it names the product. A
     // pharmacy installing this on its counter tablet was getting a home-screen
     // icon labelled after a jeweller.
-    name: "CaratSense",
-    short_name: "CaratSense",
+    name: "CaratOS",
+    short_name: "CaratOS",
     description:
-      "Unified operations platform for multi-branch businesses — customers, catalogue, attendance, finance and team, in one place.",
+      "Unified operations platform for multi-branch businesses — CaratOS.",
     start_url: "/",
     scope: "/",
     display: "standalone",

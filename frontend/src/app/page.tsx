@@ -230,7 +230,7 @@ export default function LandingPage() {
                   header and the footer inside the app. The platform is called
                   CaratOS in the architecture docs and CaratSense on every screen
                   a customer sees; putting both here would read as two products. */}
-              <span className="landing-eyebrow">CaratSense</span>
+              <span className="landing-eyebrow">CaratOS</span>
               <h1 className="mt-4 max-w-2xl text-balance font-display text-4xl font-bold leading-[1.08] sm:text-5xl lg:text-[3.4rem]">
                 An AI CRM that speaks your industry&rsquo;s language.
               </h1>
@@ -472,7 +472,7 @@ export default function LandingPage() {
             </div>
           </div>
           <div className="mt-8 flex flex-col items-center justify-between gap-3 border-t border-[var(--l-hairline)] pt-6 text-xs text-[var(--l-ivory-55)] sm:flex-row">
-            <span>© 2026 CaratSense. All rights reserved.</span>
+            <span>© 2026 CaratOS. All rights reserved.</span>
             <span className="font-mono">Multi-industry AI CRM</span>
           </div>
         </div>

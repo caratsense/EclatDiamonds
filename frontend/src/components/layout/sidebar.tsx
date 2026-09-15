@@ -28,7 +28,7 @@ import {
 } from "@/lib/queries/tenant-config";
 import { useSession } from "@/store/use-session";
 import { useQuickAction } from "@/store/use-quick-action";
-import { brandingName, ECLAT_SLUG } from "@/lib/branding";
+import { brandingName } from "@/lib/branding";
 import { useT } from "@/lib/i18n";
 
 export function Sidebar() {
@@ -48,7 +48,6 @@ export function Sidebar() {
    * the legal organisation name when they have set one.
    */
   const brandName = brandingName(config?.organisation.settings) ?? config?.organisation.name ?? null;
-  const isEclat = config?.organisation.slug === ECLAT_SLUG;
   const groups = visibleNavGroups(role, enabledNavigation);
   // Pending follow-ups due today or overdue → the Reminders nav badge.
   const { data: reminders } = useReminders("pending");
@@ -60,48 +59,67 @@ export function Sidebar() {
   };
 
   /*
-   * Which sections are open.
-   *
-   * Only the user's OWN toggles are stored. Everything else is derived from the
-   * route, so walking into a section opens it with no effect, no listener and
-   * nothing to keep in step with the URL. A section the user deliberately shut
-   * stays shut, which is the whole point of letting them shut it.
+   * Sections default to open so features are easily discoverable and the
+   * full vertical sidebar space is utilized gracefully. Users can toggle
+   * individual sections closed as preferred.
    */
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
   const sectionOpen = (group: NavGroup) =>
-    toggled[group.label] ?? group.items.some((item) => isActive(item.slug));
+    toggled[group.label] ?? true;
+
+  const toggleAll = (openState: boolean) => {
+    const next: Record<string, boolean> = {};
+    for (const g of groups) {
+      next[g.label] = openState;
+    }
+    setToggled(next);
+  };
+
+  const isAllCollapsed = groups.every((g) => toggled[g.label] === false);
+
+  const cleanBrandDisplay =
+    brandName && !/eclat|éclat/i.test(brandName)
+      ? `${brandName} · CaratOS`
+      : "CaratOS Platform";
 
   return (
-    <aside className="hidden w-64 shrink-0 flex-col bg-sidebar text-sidebar-foreground md:flex">
+    <aside className="hidden w-68 shrink-0 flex-col bg-sidebar text-sidebar-foreground md:flex">
       {/* Brand */}
       <div className="flex h-16 items-center border-b border-sidebar-border px-5">
         <Link
           href={homeForRole(role, enabledNavigation)}
-          aria-label={brandName ?? "CaratSense"}
+          aria-label={brandName ?? "CaratOS"}
+          className="flex items-center"
         >
-          <Logo className="h-8 w-auto" name={brandName} isEclat={isEclat} />
+          <Logo className="h-8 w-auto" name={brandName} />
         </Link>
       </div>
 
-      <div className="space-y-2 border-b border-sidebar-border px-3 py-3">
+      <div className="space-y-2 border-b border-sidebar-border px-3.5 py-3">
         <QuickActionMenu />
-        {/*
-          Only when there is an index behind it. NEXT_PUBLIC_ENABLE_SEARCH is off
-          by default because the search endpoint matches nothing yet, and a
-          permanent "Search… Ctrl K" pill that finds nothing is a worse first
-          impression than no pill at all. Flip the flag and rebuild and it
-          appears — see lib/features.ts.
-        */}
         {SEARCH_ENABLED ? <SearchPill /> : null}
       </div>
 
-      <nav className="flex-1 overflow-y-auto px-3 py-4">
+      {/* Nav section controls header */}
+      <div className="flex items-center justify-between px-4 pt-3 pb-1 text-[11px] font-medium text-sidebar-foreground/50">
+        <span className="uppercase tracking-wider font-semibold">Workspace</span>
+        <button
+          type="button"
+          onClick={() => toggleAll(isAllCollapsed)}
+          className="rounded px-1.5 py-0.5 text-[10px] hover:bg-white/[0.06] hover:text-sidebar-foreground/80 transition-colors"
+          title={isAllCollapsed ? "Expand all sections" : "Collapse all sections"}
+        >
+          {isAllCollapsed ? "Expand all" : "Collapse all"}
+        </button>
+      </div>
+
+      <nav className="flex-1 overflow-y-auto px-3 py-2 scrollbar-thin">
         {groups.map((group) => {
           const open = sectionOpen(group);
           const panelId = `nav-${group.label.replace(/\W+/g, "-").toLowerCase()}`;
           const activeInside = group.items.some((item) => isActive(item.slug));
           return (
-            <div key={group.label} className="mb-1">
+            <div key={group.label} className="mb-2">
               <button
                 type="button"
                 aria-expanded={open}
@@ -110,31 +128,33 @@ export function Sidebar() {
                   setToggled((prev) => ({ ...prev, [group.label]: !open }))
                 }
                 className={cn(
-                  "flex w-full items-center gap-1.5 rounded-md px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] transition-colors",
+                  "flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-bold uppercase tracking-wider transition-colors",
                   activeInside
-                    ? "text-sidebar-foreground/75"
-                    : "text-sidebar-foreground/45 hover:text-sidebar-foreground/75",
+                    ? "text-sidebar-foreground font-bold bg-white/[0.04]"
+                    : "text-sidebar-foreground/60 hover:text-sidebar-foreground/90 hover:bg-white/[0.02]",
                 )}
               >
                 <ChevronDown
                   className={cn(
-                    "h-3 w-3 shrink-0 transition-transform duration-150",
+                    "h-3.5 w-3.5 shrink-0 transition-transform duration-200 text-sidebar-foreground/50",
                     open ? "" : "-rotate-90",
                   )}
                   aria-hidden
                 />
                 <span className="truncate">{t(`group.${group.label}`, group.label)}</span>
-                {/* A closed section still has to say it holds where you are. */}
+                <span className="ml-auto text-[10px] font-mono font-medium text-sidebar-foreground/35">
+                  {group.items.length}
+                </span>
                 {!open && activeInside ? (
                   <span
-                    className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--sidebar-primary)]"
+                    className="ml-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--sidebar-primary)]"
                     aria-hidden
                   />
                 ) : null}
               </button>
 
               {open ? (
-                <ul id={panelId} className="mb-3 space-y-0.5">
+                <ul id={panelId} className="mt-1 mb-2.5 space-y-1">
                   {group.items.map((item) => (
                     <NavRow
                       key={item.slug}
@@ -151,16 +171,17 @@ export function Sidebar() {
         })}
       </nav>
 
-      <div className="border-t border-sidebar-border px-5 py-3">
-        <p className="text-[11px] tracking-wide text-sidebar-foreground/50">
-          {/*
-            No tenant name as the fallback. The bootstrap is a network call, so
-            on first paint and on any failure this line read "Eclat · CaratSense"
-            in every tenant's sidebar — one customer's name shown to all the
-            others. Until the real name arrives, show the product alone.
-          */}
-          {brandName ? `${brandName} · CaratSense` : "CaratSense"}
-        </p>
+      {/* System info & Footer */}
+      <div className="border-t border-sidebar-border px-4 py-3">
+        <div className="flex items-center justify-between rounded-lg bg-white/[0.025] px-2.5 py-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+            <p className="truncate text-xs font-medium text-sidebar-foreground/80">
+              {cleanBrandDisplay}
+            </p>
+          </div>
+          <span className="text-[10px] font-mono text-sidebar-foreground/40 shrink-0">v2.4</span>
+        </div>
       </div>
     </aside>
   );
@@ -185,25 +206,21 @@ function NavRow({
         title={item.purpose}
         aria-current={active ? "page" : undefined}
         className={cn(
-          "group relative flex items-center gap-3 rounded-lg py-2 pl-3 pr-2 text-sm transition-all duration-150",
+          "group relative flex items-center gap-3 rounded-lg py-2.5 pl-3.5 pr-3 text-sm font-medium transition-all duration-150",
           active
-            ? // The pill, plus a hairline of the accent along its top edge and
-              // the faintest bloom of it underneath. On obsidian a flat white
-              // wash reads as a smudge; the lit edge is what makes it read as
-              // a surface the light is on.
-              "bg-white/[0.09] font-semibold text-white shadow-[inset_0_1px_0_0_rgba(255,255,255,0.09),0_0_18px_-6px_var(--sidebar-primary)]"
-            : "text-sidebar-foreground hover:bg-white/[0.04] hover:text-white",
+            ? "bg-white/[0.09] font-semibold text-white shadow-[inset_0_1px_0_0_rgba(255,255,255,0.09),0_0_18px_-6px_var(--sidebar-primary)]"
+            : "text-sidebar-foreground/80 hover:bg-white/[0.04] hover:text-white",
         )}
       >
         <Icon
           className={cn(
-            "h-4 w-4 shrink-0 transition-colors",
+            "h-4.5 w-4.5 shrink-0 transition-colors",
             active
               ? "text-[var(--sidebar-primary)]"
-              : "text-sidebar-foreground/55 group-hover:text-white",
+              : "text-sidebar-foreground/60 group-hover:text-white",
           )}
         />
-        <span className="truncate">{label}</span>
+        <span className="truncate text-[13.5px]">{label}</span>
         {badgeCount > 0 ? (
           <span
             aria-label={`${badgeCount} due`}

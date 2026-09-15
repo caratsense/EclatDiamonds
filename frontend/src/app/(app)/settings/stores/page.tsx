@@ -1040,7 +1040,7 @@ function AddManagerDialog({
                   id="mgr-email"
                   type="email"
                   autoComplete="off"
-                  placeholder="manager@caratsense.in"
+                  placeholder="manager@caratos.in"
                   value={email}
                   aria-invalid={!!errors.email}
                   onChange={(e) => {

@@ -84,7 +84,7 @@ interface TourStep {
  */
 function buildSteps(role: Role, firstName: string): TourStep[] {
   const welcome: TourStep = {
-    title: `Hello ${firstName} — welcome to CaratSense`,
+    title: `Hello ${firstName} — welcome to CaratOS`,
     where: "Everywhere",
     body:
       "Everything your business does in a day — sales, customers, orders and staff attendance — is kept here in one place, instead of across registers and phones. Press Next and this guide walks you through the handful of pages you will actually use, opening each one for you. It takes about a minute, and you can close it whenever you like.",

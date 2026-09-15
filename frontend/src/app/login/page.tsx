@@ -39,6 +39,7 @@ import {
   type AuthMeResponse,
 } from "@/lib/queries/auth";
 import { useSession } from "@/store/use-session";
+import { ThemeToggle } from "@/components/layout/theme-toggle";
 import type { Role } from "@/lib/types";
 
 function apiMessage(err: unknown, fallback: string): string {
@@ -62,22 +63,19 @@ const SIGNUP_ROLES: { value: Role; label: string; hint: string }[] = [
 ];
 
 /*
- * One field treatment for the whole auth surface.
- *
- * The ring is a HAIRLINE, not a halo: `ring-1` at 40% over a border that lifts
- * to full indigo. A thick glow around a text box on a dark ground bleeds into
- * whatever sits beside it and makes a form of six fields look like six alerts.
- * `outline-none` is safe here only because the border and ring together are the
- * visible focus state — remove them and this becomes a keyboard trap.
+ * One field treatment for the whole auth surface with luxury color grading in both modes.
  */
 const FIELD =
-  "border-white/10 bg-white/[0.02] text-[#f8fafc] placeholder:text-[#f8fafc]/25 " +
-  "focus:border-[#6366f1]/80 focus:ring-1 focus:ring-[#6366f1]/40";
+  "border-slate-300/80 bg-slate-50/70 text-slate-900 placeholder:text-slate-400 " +
+  "dark:border-white/10 dark:bg-white/[0.02] dark:text-[#f8fafc] dark:placeholder:text-[#f8fafc]/25 " +
+  "focus:border-[#6366f1]/90 focus:bg-white dark:focus:bg-white/[0.04] focus:ring-1 focus:ring-[#6366f1]/40 transition-colors shadow-xs dark:shadow-none";
 
 /** The same, as a complete class list for the bare <input>/<select> elements. */
 const inputCls =
-  "w-full rounded-md border border-white/10 bg-white/[0.02] px-3 py-2 text-sm text-[#f8fafc] " +
-  "placeholder:text-[#f8fafc]/25 focus:border-[#6366f1]/80 focus:outline-none focus:ring-1 focus:ring-[#6366f1]/40";
+  "w-full rounded-md border border-slate-300/80 bg-slate-50/70 px-3 py-2 text-sm text-slate-900 " +
+  "dark:border-white/10 dark:bg-white/[0.02] dark:text-[#f8fafc] " +
+  "placeholder:text-slate-400 dark:placeholder:text-[#f8fafc]/25 " +
+  "focus:border-[#6366f1]/90 focus:bg-white dark:focus:bg-white/[0.04] focus:outline-none focus:ring-1 focus:ring-[#6366f1]/40 transition-colors shadow-xs dark:shadow-none";
 
 /**
  * Organisation slugs, as the server mints them: lowercase, alphanumeric, single
@@ -232,7 +230,7 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
       className="glass facet-top relative space-y-3.5 rounded-2xl p-5"
     >
       <div className="space-y-1.5">
-        <Label className="text-xs text-[#f8fafc]/80">Organisation code</Label>
+        <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">Organisation code</Label>
         <input
           className={inputCls}
           value={organisationCode}
@@ -243,12 +241,12 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
           placeholder="e.g. your-company"
           required
         />
-        <p className="text-[11px] text-[#f8fafc]/45">
+        <p className="text-[11px] text-slate-500 dark:text-[#f8fafc]/45">
           Ask your administrator for your organisation code.
         </p>
       </div>
       <div className="space-y-1.5">
-        <Label className="text-xs text-[#f8fafc]/80">Full name</Label>
+        <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">Full name</Label>
         <input
           className={inputCls}
           value={name}
@@ -258,8 +256,8 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
         />
       </div>
       <div className="space-y-1.5">
-        <Label className="text-xs text-[#f8fafc]/80">
-          Personal email <span className="text-[#f8fafc]/40">(optional)</span>
+        <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">
+          Personal email <span className="text-slate-400 dark:text-[#f8fafc]/40">(optional)</span>
         </Label>
         <input
           type="email"
@@ -269,13 +267,13 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
           onChange={(e) => setEmail(e.target.value)}
           placeholder="name@email.com"
         />
-        <p className="text-[11px] text-[#f8fafc]/45">
+        <p className="text-[11px] text-slate-500 dark:text-[#f8fafc]/45">
           For contact only. We create your unique sign-in email for you.
         </p>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
-          <Label className="text-xs text-[#f8fafc]/80">Password</Label>
+          <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">Password</Label>
           <div className="relative">
             <input
               type={showPw ? "text" : "password"}
@@ -291,14 +289,14 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
               onClick={() => setShowPw((s) => !s)}
               aria-label={showPw ? "Hide password" : "Show password"}
               tabIndex={-1}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-[#f8fafc]/50 transition-colors hover:text-[#f8fafc]"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 dark:text-[#f8fafc]/50 transition-colors hover:text-slate-700 dark:hover:text-[#f8fafc]"
             >
               {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
           </div>
         </div>
         <div className="space-y-1.5">
-          <Label className="text-xs text-[#f8fafc]/80">Phone (optional)</Label>
+          <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">Phone (optional)</Label>
           <input
             inputMode="numeric"
             className={inputCls}
@@ -309,31 +307,31 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
         </div>
       </div>
       <div className="space-y-1.5">
-        <Label className="text-xs text-[#f8fafc]/80">I am a…</Label>
+        <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">I am a…</Label>
         <select
           className={inputCls}
           value={requestedRole}
           onChange={(e) => setRequestedRole(e.target.value as Role)}
         >
           {SIGNUP_ROLES.map((r) => (
-            <option key={r.value} value={r.value} className="bg-[#090b10]">
+            <option key={r.value} value={r.value} className="bg-white text-slate-900 dark:bg-[#090b10] dark:text-[#f8fafc]">
               {r.label}
             </option>
           ))}
         </select>
         {roleHint ? (
-          <p className="text-[11px] text-[#f8fafc]/55">{roleHint}</p>
+          <p className="text-[11px] text-slate-500 dark:text-[#f8fafc]/55">{roleHint}</p>
         ) : null}
       </div>
       <div className="space-y-1.5">
-        <Label className="text-xs text-[#f8fafc]/80">Location / store</Label>
+        <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">Location / store</Label>
         <select
           className={inputCls}
           value={requestedStoreId}
           onChange={(e) => setRequestedStoreId(e.target.value)}
           required
         >
-          <option value="" className="bg-[#090b10]">
+          <option value="" className="bg-white text-slate-900 dark:bg-[#090b10] dark:text-[#f8fafc]">
             {!slugUsable
               ? "Enter your organisation code first"
               : storesQuery.isLoading
@@ -341,7 +339,7 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
                 : "Select your store"}
           </option>
           {stores.map((s) => (
-            <option key={s.id} value={s.id} className="bg-[#090b10]">
+            <option key={s.id} value={s.id} className="bg-white text-slate-900 dark:bg-[#090b10] dark:text-[#f8fafc]">
               {s.name}
               {s.city ? ` — ${s.city}` : ""}
             </option>
@@ -369,24 +367,16 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
 
 function OrganisationSignupCard({
   onCreated,
+  onSwitchToSignin,
 }: {
   onCreated: (session: AuthMeResponse) => void;
+  onSwitchToSignin?: (email: string) => void;
 }) {
   const createOrganisation = useCreateOrganisation();
   const industriesQuery = usePublicIndustries();
   const industries = industriesQuery.data?.packs ?? [];
 
   const [organisationName, setOrganisationName] = React.useState("");
-  /*
-   * Starts EMPTY, and the empty option is what a fresh form shows.
-   *
-   * It used to default to "retail", which meant the commonest path through this
-   * form was to never look at the question — a clinic could sign up and be
-   * provisioned as a shop, then wonder why the product used the wrong words.
-   * The industry decides this tenant's vocabulary, fields, pipeline and which
-   * modules exist, so it is a decision the owner should make once, deliberately,
-   * rather than a default they can miss.
-   */
   const [industryCode, setIndustryCode] = React.useState("");
   const [ownerName, setOwnerName] = React.useState("");
   const [email, setEmail] = React.useState("");
@@ -396,6 +386,7 @@ function OrganisationSignupCard({
     React.useState("Main location");
   const [city, setCity] = React.useState("");
   const [showPw, setShowPw] = React.useState(false);
+  const [duplicateEmailError, setDuplicateEmailError] = React.useState<string | null>(null);
 
   const selectedIndustry = industries.find(
     (industry) => industry.code === industryCode,
@@ -403,6 +394,7 @@ function OrganisationSignupCard({
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
+    setDuplicateEmailError(null);
     if (organisationName.trim().length < 2)
       return toast.error("Enter your organisation name.");
     if (ownerName.trim().length < 2)
@@ -432,10 +424,13 @@ function OrganisationSignupCard({
       },
       {
         onSuccess: onCreated,
-        onError: (err) =>
-          toast.error(
-            apiMessage(err, "Couldn't set up your organisation. Try again."),
-          ),
+        onError: (err) => {
+          const msg = apiMessage(err, "Couldn't set up your organisation. Try again.");
+          if (msg.includes("already have a CaratOS account") || msg.includes("sign in instead")) {
+            setDuplicateEmailError(email.trim());
+          }
+          toast.error(msg);
+        },
       },
     );
   }
@@ -443,11 +438,11 @@ function OrganisationSignupCard({
   return (
     <form
       onSubmit={submit}
-      className="glass facet-top relative space-y-3.5 rounded-2xl p-5"
+      className="glass facet-top relative space-y-3.5 rounded-2xl p-5 shadow-xs"
     >
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1.5">
-          <Label className="text-xs text-[#f8fafc]/80">
+          <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">
             Organisation name
           </Label>
           <input
@@ -459,7 +454,7 @@ function OrganisationSignupCard({
           />
         </div>
         <div className="space-y-1.5">
-          <Label className="text-xs text-[#f8fafc]/80">
+          <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">
             What industry do you cater to?
           </Label>
           <select
@@ -469,13 +464,7 @@ function OrganisationSignupCard({
             disabled={industriesQuery.isLoading}
             required
           >
-            {/*
-              An unselectable prompt, so "no answer" is visibly no answer rather
-              than a plausible-looking industry the user never chose. The list
-              itself is the server's — nothing here hardcodes a pack code, so
-              adding or renaming a pack needs no frontend release.
-            */}
-            <option value="" disabled className="bg-[#090b10]">
+            <option value="" disabled className="bg-white text-slate-900 dark:bg-[#090b10] dark:text-[#f8fafc]">
               {industriesQuery.isLoading
                 ? "Loading industries…"
                 : industriesQuery.isError
@@ -486,7 +475,7 @@ function OrganisationSignupCard({
               <option
                 key={industry.code}
                 value={industry.code}
-                className="bg-[#090b10]"
+                className="bg-white text-slate-900 dark:bg-[#090b10] dark:text-[#f8fafc]"
               >
                 {industry.name}
               </option>
@@ -496,13 +485,13 @@ function OrganisationSignupCard({
       </div>
 
       {selectedIndustry ? (
-        <div className="flex gap-2.5 rounded-lg border border-white/[0.08] bg-black/25 p-3">
-          <Bot className="mt-0.5 h-4 w-4 shrink-0 text-[#818cf8]" />
+        <div className="flex gap-2.5 rounded-lg border border-indigo-200/70 dark:border-white/[0.08] bg-indigo-50/60 dark:bg-black/25 p-3">
+          <Bot className="mt-0.5 h-4 w-4 shrink-0 text-[#6366f1] dark:text-[#818cf8]" />
           <div>
-            <p className="text-xs font-medium text-[#f8fafc]">
+            <p className="text-xs font-medium text-indigo-950 dark:text-[#f8fafc]">
               Industry-ready CRM setup
             </p>
-            <p className="mt-0.5 text-[11px] leading-relaxed text-[#f8fafc]/55">
+            <p className="mt-0.5 text-[11px] leading-relaxed text-indigo-900/75 dark:text-[#f8fafc]/55">
               {selectedIndustry.description}
             </p>
           </div>
@@ -511,7 +500,7 @@ function OrganisationSignupCard({
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1.5">
-          <Label className="text-xs text-[#f8fafc]/80">Owner name</Label>
+          <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">Owner name</Label>
           <input
             className={inputCls}
             value={ownerName}
@@ -521,7 +510,7 @@ function OrganisationSignupCard({
           />
         </div>
         <div className="space-y-1.5">
-          <Label className="text-xs text-[#f8fafc]/80">
+          <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">
             Work email / login
           </Label>
           <input
@@ -529,7 +518,10 @@ function OrganisationSignupCard({
             autoComplete="email"
             className={inputCls}
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              if (duplicateEmailError) setDuplicateEmailError(null);
+            }}
             placeholder="owner@company.com"
             required
           />
@@ -538,7 +530,7 @@ function OrganisationSignupCard({
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1.5">
-          <Label className="text-xs text-[#f8fafc]/80">Password</Label>
+          <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">Password</Label>
           <div className="relative">
             <input
               type={showPw ? "text" : "password"}
@@ -551,10 +543,10 @@ function OrganisationSignupCard({
             />
             <button
               type="button"
-              onClick={() => setShowPw((value) => !value)}
+              onClick={() => setShowPw((s) => !s)}
               aria-label={showPw ? "Hide password" : "Show password"}
               tabIndex={-1}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-[#f8fafc]/50 hover:text-[#f8fafc]"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 transition-colors hover:text-slate-700 dark:text-[#f8fafc]/50 dark:hover:text-[#f8fafc]"
             >
               {showPw ? (
                 <EyeOff className="h-4 w-4" />
@@ -565,35 +557,34 @@ function OrganisationSignupCard({
           </div>
         </div>
         <div className="space-y-1.5">
-          <Label className="text-xs text-[#f8fafc]/80">
-            Phone <span className="text-[#f8fafc]/40">(optional)</span>
+          <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">
+            Phone <span className="text-slate-400 dark:text-[#f8fafc]/40">(optional)</span>
           </Label>
           <input
-            type="tel"
-            autoComplete="tel"
+            inputMode="tel"
             className={inputCls}
             value={phone}
-            onChange={(e) => setPhone(e.target.value.slice(0, 21))}
-            placeholder="+91 98765 43210"
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="+91..."
           />
         </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1.5">
-          <Label className="text-xs text-[#f8fafc]/80">
-            First location
+          <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">
+            First location name
           </Label>
           <input
             className={inputCls}
             value={primaryLocationName}
             onChange={(e) => setPrimaryLocationName(e.target.value)}
-            placeholder="Main location"
+            placeholder="e.g. Flagship / Main Store"
             required
           />
         </div>
         <div className="space-y-1.5">
-          <Label className="text-xs text-[#f8fafc]/80">City</Label>
+          <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">City</Label>
           <input
             className={inputCls}
             value={city}
@@ -604,15 +595,39 @@ function OrganisationSignupCard({
         </div>
       </div>
 
-      <p className="text-[11px] leading-relaxed text-[#f8fafc]/50">
+      <p className="text-[11px] leading-relaxed text-slate-500 dark:text-[#f8fafc]/50">
         Omnichannel CRM, AI catalogue, attendance, imports and integrations are
         included. AI qualification and draft assistance start enabled; automatic
         sending stays off until you connect and approve a provider.
       </p>
 
+      {duplicateEmailError && (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5 text-xs text-amber-900 dark:text-amber-200 flex flex-col gap-2.5 animate-in fade-in">
+          <div className="flex items-start gap-2.5">
+            <ShieldCheck className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+            <div className="space-y-0.5">
+              <p className="font-semibold text-amber-950 dark:text-amber-100">
+                Account already registered ({duplicateEmailError})
+              </p>
+              <p className="text-amber-800/90 dark:text-amber-200/80 leading-relaxed">
+                An organisation account already exists for this email address. You do not need to set up another organisation — please sign in directly to your workspace.
+              </p>
+            </div>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            className="self-start bg-amber-600 hover:bg-amber-700 text-white font-medium h-7 text-xs rounded-lg px-3 gap-1 shadow-xs"
+            onClick={() => onSwitchToSignin?.(duplicateEmailError)}
+          >
+            Sign In with {duplicateEmailError} →
+          </Button>
+        </div>
+      )}
+
       <Button
         type="submit"
-        className="w-full bg-[#6366f1] font-semibold text-white hover:bg-[#4f46e5]"
+        className="w-full bg-[#6366f1] font-semibold text-white hover:bg-[#4f46e5] shadow-xs"
         disabled={createOrganisation.isPending || industriesQuery.isLoading}
       >
         {createOrganisation.isPending ? (
@@ -725,45 +740,33 @@ function LoginPage() {
     mode === "signup" && signupKind === "organisation";
 
   return (
-    <div className="grid min-h-dvh bg-[#090b10] text-[#f8fafc] lg:grid-cols-[1.1fr_1fr]">
+    <div className="grid min-h-dvh bg-[#f8f9fc] dark:bg-[#090b10] text-slate-900 dark:text-[#f8fafc] lg:grid-cols-[1.1fr_1fr] transition-colors">
       {/* ── Left Realistic Luxury Showroom Panel ───────────────────── */}
-      <aside className="relative hidden flex-col justify-between overflow-hidden p-10 lg:flex xl:p-14">
-        {/*
-          A generated ground rather than a photograph. The panel used to carry a
-          jewellery hero image, which quietly told a clinic, a mill and a
-          school that this product was not for them. Two offset radial sources
-          cost nothing to ship and belong to no industry.
-
-          Two sources, not one, and in two hues: a single centred wash reads as
-          a vignette, while indigo at the top-left against cyan at the
-          bottom-right gives the ground a direction and keeps the glass cards
-          in front of it from all catching the same flat light.
-        */}
+      <aside className="relative hidden flex-col justify-between overflow-hidden p-10 lg:flex xl:p-14 border-r border-slate-200/80 dark:border-white/[0.08] bg-[#f0f4f9]/80 dark:bg-transparent">
         <div
-          className="absolute inset-0 z-0"
+          className="absolute inset-0 z-0 opacity-75 dark:opacity-100"
           style={{
             backgroundImage:
-              "radial-gradient(40rem 30rem at 20% 20%, rgba(99,102,241,0.18), transparent 70%)," +
-              "radial-gradient(40rem 30rem at 80% 80%, rgba(56,189,248,0.12), transparent 70%)",
+              "radial-gradient(40rem 30rem at 20% 20%, rgba(99,102,241,0.14), transparent 70%)," +
+              "radial-gradient(40rem 30rem at 80% 80%, rgba(56,189,248,0.10), transparent 70%)",
           }}
         />
-        {/* Vertical settle, so the footer rule reads against a darker ground. */}
-        <div className="absolute inset-0 z-0 bg-gradient-to-b from-transparent via-[#090b10]/40 to-[#06080d]/90" />
+        <div className="absolute inset-0 z-0 bg-gradient-to-b from-transparent via-[#eef2f8]/40 dark:via-[#090b10]/40 to-[#e2e8f0]/60 dark:to-[#06080d]/90" />
 
         {/* Top Header */}
         <div className="relative z-10 flex items-center justify-between">
           {creatingOrganisation ? (
-            <div className="flex items-center gap-2 text-[#818cf8]">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#818cf8]/40 bg-[#818cf8]/10">
+            <div className="flex items-center gap-2 text-[#6366f1] dark:text-[#818cf8]">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-indigo-500/30 bg-indigo-500/10">
                 <Bot className="h-5 w-5" />
               </div>
-              <span className="font-display text-xl font-bold">CaratSense</span>
+              <span className="font-display text-xl font-bold">CaratOS</span>
             </div>
           ) : (
             <Logo className="h-10 w-auto" />
           )}
-          <span className="inline-flex items-center gap-2 rounded-full border border-[#818cf8]/30 bg-[#818cf8]/10 px-3.5 py-1 text-xs font-medium text-[#818cf8]">
-            <Sparkles className="h-3.5 w-3.5 text-[#818cf8]" />
+          <span className="inline-flex items-center gap-2 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-3.5 py-1 text-xs font-medium text-[#4f46e5] dark:text-[#818cf8]">
+            <Sparkles className="h-3.5 w-3.5 text-[#6366f1] dark:text-[#818cf8]" />
             {creatingOrganisation ? "Universal AI CRM" : "Omnichannel AI CRM"}
           </span>
         </div>
@@ -771,10 +774,10 @@ function LoginPage() {
         {/* Middle Content & Live Glassmorphism Widgets */}
         <div className="relative z-10 my-auto max-w-lg space-y-7 py-8">
           <div>
-            <span className="text-xs font-medium uppercase tracking-[0.2em] text-[#818cf8]">
-              {creatingOrganisation ? "Built for every industry" : "CaratSense"}
+            <span className="text-xs font-medium uppercase tracking-[0.2em] text-[#6366f1] dark:text-[#818cf8]">
+              {creatingOrganisation ? "Built for every industry" : "CaratOS"}
             </span>
-            <h1 className="mt-3 font-display text-4xl font-bold leading-[1.05] tracking-tight text-[#f8fafc] xl:text-[3.25rem]">
+            <h1 className="mt-3 font-display text-4xl font-bold leading-[1.05] tracking-tight text-slate-900 dark:text-[#f8fafc] xl:text-[3.25rem]">
               {creatingOrganisation ? (
                 <>
                   One AI CRM, shaped around{" "}
@@ -787,22 +790,13 @@ function LoginPage() {
                 </>
               )}
             </h1>
-            <p className="mt-4 text-base leading-relaxed text-[#f8fafc]/75">
+            <p className="mt-4 text-base leading-relaxed text-slate-600 dark:text-[#f8fafc]/75">
               {creatingOrganisation
                 ? "Start with industry-specific fields and workflows, while omnichannel CRM, AI cataloguing, attendance and integrations stay at the core."
                 : "Every enquiry, visit and follow-up your team handles, in one place — whichever channel it arrived on."}
             </p>
           </div>
 
-          {/*
-            THREE CAPABILITIES, AND NOT ONE FIGURE.
-
-            A sign-in panel is a shop window, and the temptation is to fill it
-            with numbers — messages handled, leads scored, uptime. There is no
-            tenant here: nobody has signed in, no organisation is resolved, and
-            any number printed on this page would be invented. So these say what
-            the product DOES, in the product's own words, and stop there.
-          */}
           <div className="grid gap-3">
             {[
               {
@@ -832,9 +826,9 @@ function LoginPage() {
             ].map((card) => (
               <div
                 key={card.title}
-                className="glass flex items-start gap-3.5 rounded-2xl p-4"
+                className="glass flex items-start gap-3.5 rounded-2xl p-4 shadow-xs"
               >
-                <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#818cf8]/15 text-[#818cf8]">
+                <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-500/10 text-[#6366f1] dark:bg-[#818cf8]/15 dark:text-[#818cf8]">
                   <card.icon className="h-5 w-5" />
                   {card.live ? (
                     <span className="absolute -right-0.5 -top-0.5 flex h-2.5 w-2.5">
@@ -844,10 +838,10 @@ function LoginPage() {
                   ) : null}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold tracking-tight text-[#f8fafc]">
+                  <p className="text-sm font-semibold tracking-tight text-slate-900 dark:text-[#f8fafc]">
                     {card.title}
                   </p>
-                  <p className="mt-1 text-xs leading-relaxed text-[#f8fafc]/60">
+                  <p className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-[#f8fafc]/60">
                     {card.body}
                   </p>
                 </div>
@@ -857,46 +851,48 @@ function LoginPage() {
         </div>
 
         {/* Bottom Footer */}
-        <div className="relative z-10 flex items-center justify-between border-t border-white/[0.08] pt-5 text-xs text-[#f8fafc]/45">
-          {/*
-            The name, and no version number. "v2.4" was typed here once and no
-            process has updated it since — a release number on a public page
-            that nothing increments is worse than no release number, because
-            people quote it.
-          */}
-          <span className="font-mono uppercase tracking-[0.16em]">CaratSense OS</span>
+        <div className="relative z-10 flex items-center justify-between border-t border-slate-200/80 dark:border-white/[0.08] pt-5 text-xs text-slate-500 dark:text-[#f8fafc]/45">
+          <span className="font-mono uppercase tracking-[0.16em]">CaratOS</span>
           <span>
             {creatingOrganisation
               ? "Universal CRM · Isolated workspaces"
-              : "© 2026 CaratSense. All rights reserved."}
+              : "© 2026 CaratOS. All rights reserved."}
           </span>
         </div>
       </aside>
 
       {/* ── Right Live Interactive Sign-in Form ─────────────────────── */}
-      <main className="relative flex flex-col justify-between bg-[#090b10] px-6 py-10 sm:px-12 lg:px-16">
+      <main className="relative flex flex-col justify-between bg-[#f8f9fc] dark:bg-[#090b10] px-6 py-10 sm:px-12 lg:px-16 transition-colors">
         <div className="mx-auto my-auto w-full max-w-xl space-y-7">
-          {/* Mobile Logo */}
-          <div className="mb-4 lg:hidden">
-            {creatingOrganisation ? (
-              <div className="flex items-center gap-2 text-[#818cf8]">
-                <Bot className="h-6 w-6" />
-                <span className="font-display text-xl font-bold">CaratSense</span>
-              </div>
-            ) : (
-              <Logo className="h-9 w-auto" />
-            )}
+          {/* Header Bar with Logo and Theme Toggle */}
+          <div className="flex items-center justify-between">
+            <div>
+              {creatingOrganisation ? (
+                <div className="flex items-center gap-2 text-[#6366f1] dark:text-[#818cf8]">
+                  <Bot className="h-6 w-6" />
+                  <span className="font-display text-xl font-bold">CaratOS</span>
+                </div>
+              ) : (
+                <Logo className="h-9 w-auto" />
+              )}
+            </div>
+
+            {/* Luxury Theme Selector */}
+            <div className="flex items-center gap-2 rounded-full border border-slate-200/90 dark:border-white/10 bg-white/80 dark:bg-white/[0.04] px-3 py-1 shadow-xs backdrop-blur-md">
+              <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">Theme</span>
+              <ThemeToggle />
+            </div>
           </div>
 
           <div>
-            <h2 className="font-display text-3xl font-bold tracking-tight text-[#f8fafc]">
+            <h2 className="font-display text-3xl font-bold tracking-tight text-slate-900 dark:text-[#f8fafc]">
               {mode === "signin"
                 ? "Sign in to your workspace"
                 : signupKind === "organisation"
                   ? "Set up your organisation"
                   : "Join your organisation"}
             </h2>
-            <p className="mt-1.5 text-sm text-[#f8fafc]/70">
+            <p className="mt-1.5 text-sm text-slate-600 dark:text-[#f8fafc]/70">
               {mode === "signin"
                 ? "Enter your email and password to start the session."
                 : signupKind === "organisation"
@@ -930,18 +926,18 @@ function LoginPage() {
             ) : (
               <GoogleButtonShell reason="Not set up for this workspace yet — use your email and password below." />
             )}
-            <div className="mt-4 flex items-center gap-3 text-xs text-[#f8fafc]/40">
-              <div className="h-px flex-1 bg-white/[0.08]" />
+            <div className="mt-4 flex items-center gap-3 text-xs text-slate-500 dark:text-[#f8fafc]/40">
+              <div className="h-px flex-1 bg-slate-200 dark:bg-white/[0.08]" />
               or continue with credentials
-              <div className="h-px flex-1 bg-white/[0.08]" />
+              <div className="h-px flex-1 bg-slate-200 dark:bg-white/[0.08]" />
             </div>
           </div>
 
           {/* Auth Form Container */}
-          <div className="glass facet-top relative rounded-2xl p-5">
+          <div className="glass facet-top relative rounded-2xl p-5 shadow-xs">
             <form onSubmit={onSubmitPassword} className="space-y-4">
                 <div className="space-y-1.5">
-                  <Label htmlFor="email" className="text-xs text-[#f8fafc]/80">Email address</Label>
+                  <Label htmlFor="email" className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">Email address</Label>
                   <Input
                     id="email"
                     type="email"
@@ -953,7 +949,7 @@ function LoginPage() {
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="password" className="text-xs text-[#f8fafc]/80">Password</Label>
+                  <Label htmlFor="password" className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">Password</Label>
                   <div className="relative">
                     <Input
                       id="password"
@@ -969,7 +965,7 @@ function LoginPage() {
                       onClick={() => setShowPassword((s) => !s)}
                       aria-label={showPassword ? "Hide password" : "Show password"}
                       tabIndex={-1}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-[#f8fafc]/50 transition-colors hover:text-[#f8fafc]"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 transition-colors hover:text-slate-700 dark:text-[#f8fafc]/50 dark:hover:text-[#f8fafc]"
                     >
                       {showPassword ? (
                         <EyeOff className="h-4 w-4" />
@@ -981,7 +977,7 @@ function LoginPage() {
                 </div>
                 <Button
                   type="submit"
-                  className="w-full bg-[#6366f1] text-white font-semibold hover:bg-[#4f46e5]"
+                  className="w-full bg-[#6366f1] text-white font-semibold hover:bg-[#4f46e5] shadow-xs"
                   disabled={login.isPending}
                 >
                   {login.isPending ? (
@@ -998,15 +994,15 @@ function LoginPage() {
           </>
           ) : (
             <div className="space-y-3.5">
-              <div className="grid grid-cols-2 gap-2 rounded-xl border border-white/[0.08] bg-black/25 p-1.5">
+              <div className="grid grid-cols-2 gap-2 rounded-xl border border-slate-200/80 dark:border-white/[0.08] bg-slate-100/70 dark:bg-black/25 p-1.5 shadow-xs">
                 <button
                   type="button"
                   onClick={() => setSignupKind("join")}
                   className={
                     "flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-colors " +
                     (signupKind === "join"
-                      ? "bg-[#6366f1] text-white"
-                      : "text-[#f8fafc]/65 hover:bg-white/5")
+                      ? "bg-[#6366f1] text-white shadow-xs"
+                      : "text-slate-600 dark:text-[#f8fafc]/65 hover:bg-white/60 dark:hover:bg-white/5")
                   }
                 >
                   <UserPlus className="h-3.5 w-3.5" /> Join a team
@@ -1017,15 +1013,22 @@ function LoginPage() {
                   className={
                     "flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-colors " +
                     (signupKind === "organisation"
-                      ? "bg-[#6366f1] text-white"
-                      : "text-[#f8fafc]/65 hover:bg-white/5")
+                      ? "bg-[#6366f1] text-white shadow-xs"
+                      : "text-slate-600 dark:text-[#f8fafc]/65 hover:bg-white/60 dark:hover:bg-white/5")
                   }
                 >
                   <Building2 className="h-3.5 w-3.5" /> Create organisation
                 </button>
               </div>
               {signupKind === "organisation" ? (
-                <OrganisationSignupCard onCreated={finishLogin} />
+                <OrganisationSignupCard
+                  onCreated={finishLogin}
+                  onSwitchToSignin={(dupEmail) => {
+                    setMode("signin");
+                    setEmail(dupEmail);
+                    toast.info(`Please enter your password to sign in as ${dupEmail}`);
+                  }}
+                />
               ) : (
                 <SignupCard onBackToSignin={() => setMode("signin")} />
               )}
@@ -1036,7 +1039,7 @@ function LoginPage() {
           <button
             type="button"
             onClick={() => setMode((m) => (m === "signin" ? "signup" : "signin"))}
-            className="flex w-full items-center justify-center gap-1.5 text-sm text-[#f8fafc]/70 transition-colors hover:text-[#818cf8]"
+            className="flex w-full items-center justify-center gap-1.5 text-sm text-slate-600 dark:text-[#f8fafc]/70 transition-colors hover:text-[#6366f1] dark:hover:text-[#818cf8]"
           >
             {mode === "signin" ? (
               <>
@@ -1048,12 +1051,12 @@ function LoginPage() {
               </>
             )}
           </button>
+        </div>
 
-          <InstallAppButton
-            label="Install App on Phone"
-            variant="ghost"
-            className="mt-2 w-full border border-white/[0.08] text-[#f8fafc]/70 hover:bg-white/[0.04] hover:text-[#f8fafc]"
-          />
+        {/* PWA Install Footer Notice */}
+        <div className="mt-8 flex items-center justify-between border-t border-slate-200/80 dark:border-white/[0.08] pt-4 text-xs text-slate-500 dark:text-[#f8fafc]/40">
+          <span>Operational ERP · All stores scoped</span>
+          <InstallAppButton />
         </div>
       </main>
     </div>

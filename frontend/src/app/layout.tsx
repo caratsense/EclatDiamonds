@@ -62,7 +62,7 @@ export const metadata: Metadata = {
    * every clinic, factory and pharmacy on the platform. A per-tenant title would
    * need the tenant resolved at request time, which this file cannot do.
    */
-  title: "CaratSense",
+  title: "CaratOS",
   description:
     "Unified operations platform: customers, catalogue, attendance, finance and team across every branch.",
   // iOS Safari ignores the web manifest for "Add to Home Screen"; these enable
@@ -70,7 +70,7 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "CaratSense",
+    title: "CaratOS",
   },
   // Point at the pre-built PNGs in /public (192/512 for browsers and the
   // manifest fallback; apple-touch-icon for the iOS home screen).

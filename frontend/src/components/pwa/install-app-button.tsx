@@ -29,9 +29,9 @@ export function IosInstallDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>Install CaratSense</DialogTitle>
+          <DialogTitle>Install CaratOS</DialogTitle>
           <DialogDescription>
-            Add CaratSense to your Home Screen to open it like an app.
+            Add CaratOS to your Home Screen to open it like an app.
           </DialogDescription>
         </DialogHeader>
         <ol className="space-y-3 text-sm">
@@ -58,7 +58,7 @@ export function IosInstallDialog({
               3
             </span>
             <span className="pt-0.5">
-              Tap <span className="font-medium">Add</span>. CaratSense will
+              Tap <span className="font-medium">Add</span>. CaratOS will
               appear on your Home Screen.
             </span>
           </li>

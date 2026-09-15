@@ -1,62 +1,120 @@
+import * as React from "react";
 import { cn } from "@/lib/utils";
 
 /**
- * The brand lockup at the top of the sidebar and on the sign-in screen.
- *
- * ## Why this is not simply an image any more
- *
- * It used to render `/eclat-logo.svg` unconditionally — a gold "ED" monogram
- * and an ECLAT DIAMONDS wordmark — at the top of every page of every tenant. A
- * pharmacy, a clinic and a factory all ran an application that announced itself
- * as a jeweller they have no relationship with.
- *
- * ## What it does instead
- *
- * The Eclat organisation keeps its own mark, byte for byte: same file, same alt
- * text, same size. Every other tenant gets their own name set in the product's
- * display face. That is a deliberate stopping point — this phase does not build
- * logo upload or storage, and a tenant's NAME is something the product already
- * knows from signup, so it can be shown honestly today without inventing an
- * asset pipeline.
- *
- * Pre-authentication (the sign-in screen) there is no tenant to ask, so the
- * neutral product name is used. That is the honest answer to "whose app is
- * this?" before anyone has said who they are.
+ * Modern faceted diamond prism icon for CaratOS.
+ * Renders an ultra-clean, jewel-inspired isometric vector mark.
+ */
+export function CaratIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 32 32"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={cn("h-7 w-7 shrink-0", className)}
+      aria-hidden="true"
+    >
+      <defs>
+        <linearGradient id="carat-brand-grad-a" x1="4" y1="4" x2="28" y2="28" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#818cf8" />
+          <stop offset="50%" stopColor="#6366f1" />
+          <stop offset="100%" stopColor="#38bdf8" />
+        </linearGradient>
+        <linearGradient id="carat-brand-grad-b" x1="16" y1="4" x2="16" y2="28" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#c084fc" />
+          <stop offset="100%" stopColor="#6366f1" />
+        </linearGradient>
+      </defs>
+      {/* Faceted gemstone prism */}
+      <path
+        d="M9 5L23 5L28 12L16 28L4 12L9 5Z"
+        fill="url(#carat-brand-grad-a)"
+        fillOpacity="0.2"
+        stroke="url(#carat-brand-grad-a)"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M9 5L16 12L23 5"
+        stroke="url(#carat-brand-grad-b)"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M4 12L28 12"
+        stroke="url(#carat-brand-grad-a)"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M16 12L16 28"
+        stroke="url(#carat-brand-grad-a)"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M9 5L4 12L16 28L28 12L23 5"
+        stroke="url(#carat-brand-grad-b)"
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/**
+ * Official CaratOS brand lockup.
+ * Replaces the legacy Éclat Diamonds / CaratSense branding across the entire app.
  */
 export function Logo({
   className,
-  /** The tenant's own name. Absent => the neutral product lockup. */
   name,
-  /** True only for the organisation that owns the Eclat artwork. */
-  isEclat = false,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  isEclat,
   alt,
+  showIcon = true,
 }: {
   className?: string;
   name?: string | null;
   isEclat?: boolean;
   alt?: string;
+  showIcon?: boolean;
 }) {
-  if (isEclat) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src="/eclat-logo.svg"
-        alt={alt ?? "Éclat Diamonds"}
-        className={cn("h-9 w-auto select-none", className)}
-        draggable={false}
-      />
-    );
-  }
+  // Any legacy or null tenant name resolves directly to the brand CaratOS
+  const isDefaultBrand =
+    !name ||
+    /^(eclat|éclat|caratsense)/i.test(name.trim());
+
+  const displayName = isDefaultBrand ? "CaratOS" : name.trim();
 
   return (
-    <span
-      aria-label={alt ?? name ?? "CaratSense"}
+    <div
+      aria-label={alt ?? displayName}
       className={cn(
-        "flex select-none items-center font-display text-[17px] font-semibold leading-none tracking-tight",
+        "flex select-none items-center gap-2.5 font-display transition-opacity",
         className,
       )}
     >
-      <span className="truncate">{name?.trim() || "CaratSense"}</span>
-    </span>
+      {showIcon && (
+        <CaratIcon className="h-7 w-7 shrink-0 text-primary drop-shadow-[0_0_12px_rgba(99,102,241,0.35)]" />
+      )}
+      {isDefaultBrand ? (
+        <span className="flex items-center text-xl font-extrabold tracking-tight text-inherit">
+          <span className="text-white">Carat</span>
+          <span className="ml-1 bg-gradient-to-r from-indigo-400 via-indigo-300 to-cyan-400 bg-clip-text font-black text-transparent">
+            OS
+          </span>
+        </span>
+      ) : (
+        <div className="flex flex-col min-w-0 leading-tight">
+          <span className="truncate text-base font-bold tracking-tight text-white">
+            {displayName}
+          </span>
+          <span className="text-[9.5px] font-semibold tracking-wider uppercase text-slate-400">
+            CaratOS
+          </span>
+        </div>
+      )}
+    </div>
   );
 }
