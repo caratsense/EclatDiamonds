@@ -80,6 +80,14 @@ export class GeneratePayslipDto {
   periodKey!: string;
 }
 
+export class RunPayrollDto {
+  @IsString()
+  storeId!: string;
+
+  @Matches(/^\d{4}-\d{2}$/, { message: 'A period looks like 2026-09.' })
+  periodKey!: string;
+}
+
 /**
  * The roster and the payslip.
  *
@@ -168,5 +176,31 @@ export class PayrollController {
   @Get('payslips/:id')
   one(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.payroll.one(user, id);
+  }
+
+  // ── Month-end runs ────────────────────────────────────────────────────────
+
+  /** What the month-end scheduler and every manual run did, newest first. */
+  @Roles('store_manager', 'head_office')
+  @Get('runs')
+  runs(
+    @CurrentUser() user: AuthUser,
+    @Query('periodKey') periodKey?: string,
+    @Query('storeId') storeId?: string,
+  ) {
+    return this.payroll.runs(user, {
+      periodKey: periodKey || undefined,
+      storeId: storeId || undefined,
+    });
+  }
+
+  /**
+   * Run one branch's month now: recovery when the automatic run failed or was
+   * interrupted, or a recount after late corrections. Drafts only, audited.
+   */
+  @Roles('store_manager', 'head_office')
+  @Post('runs')
+  rerun(@CurrentUser() user: AuthUser, @Body() dto: RunPayrollDto) {
+    return this.payroll.rerun(user, dto);
   }
 }

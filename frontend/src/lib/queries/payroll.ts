@@ -87,10 +87,46 @@ export interface Payslip {
   /** Shown on every slip, so "net pay" is never read as take-home. */
   note: string;
   breakdown?: PayslipDay[];
+  /**
+   * Issued, and the register has moved since. The figures above stand; this
+   * names what changed so a person can settle it.
+   */
+  difference: PayslipDifference | null;
+  differenceDetectedAt: string | null;
+}
+
+export interface PayslipDifference {
+  days: {
+    date: string;
+    was: { kind: PayslipDay["kind"]; credit: number } | null;
+    now: { kind: PayslipDay["kind"]; credit: number };
+  }[];
+  presentDays: { was: number; now: number };
+  overtimeMins: { was: number; now: number };
+}
+
+/** One branch-month run: the month-end scheduler's, or a person's re-run. */
+export interface PayrollRun {
+  id: string;
+  storeId: string;
+  periodKey: string;
+  trigger: "scheduler" | "user";
+  triggeredByName: string | null;
+  /** A 'started' run that never finished is a process that died part-way. */
+  status: "started" | "completed" | "failed";
+  generated: number;
+  skipped: number;
+  issued: number;
+  differences: number;
+  skippedDetail: { name: string; reason: string }[] | null;
+  error: string | null;
+  startedAt: string;
+  finishedAt: string | null;
 }
 
 const ROSTER_KEY = ["week-offs"] as const;
 const SLIP_KEY = ["payslips"] as const;
+const RUN_KEY = ["payroll-runs"] as const;
 
 export function useWeekOffRoster(storeId?: string) {
   return useQuery({
@@ -188,6 +224,38 @@ export function useGeneratePayslips() {
       return data;
     },
     onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: SLIP_KEY });
+      // Generating is a run too, and leaves a row in the run log.
+      void qc.invalidateQueries({ queryKey: RUN_KEY });
+    },
+  });
+}
+
+/** Management only — the endpoint refuses anybody else. */
+export function usePayrollRuns(filters: { periodKey?: string; storeId?: string }, enabled: boolean) {
+  return useQuery({
+    queryKey: [...RUN_KEY, filters],
+    enabled,
+    queryFn: async () => {
+      const { data } = await api.get<PayrollRun[]>("/hrms/payroll/runs", { params: filters });
+      return data;
+    },
+    staleTime: 60_000,
+  });
+}
+
+/** Run one branch's month again. Drafts only; an issued slip is never rewritten. */
+export function useRerunPayroll() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { storeId: string; periodKey: string }) => {
+      const { data } = await api.post<PayrollRun>("/hrms/payroll/runs", input, {
+        timeout: 120_000,
+      });
+      return data;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: RUN_KEY });
       void qc.invalidateQueries({ queryKey: SLIP_KEY });
     },
   });

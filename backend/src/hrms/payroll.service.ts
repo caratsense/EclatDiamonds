@@ -5,13 +5,20 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, Role } from '@prisma/client';
+import { PayrollRun, Payslip, Prisma, Role } from '@prisma/client';
 
 import { AuditService } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
-import { dateOnly, instantFromLocalTime, resolveTz, weekdayInTz } from '../common/tz.util';
+import { NotificationsService } from '../notifications/notifications.service';
+import {
+  dateOnly,
+  instantFromLocalTime,
+  resolveTz,
+  weekdayInTz,
+  zonedParts,
+} from '../common/tz.util';
 
 /**
  * Weekly offs an employee actually has, and a payslip built from what the
@@ -40,9 +47,24 @@ import { dateOnly, instantFromLocalTime, resolveTz, weekdayInTz } from '../commo
  * to" — the question an attendance register can actually answer. Everything
  * needing a tax table is left to the accountant rather than approximated, and
  * the response says so.
+ *
+ * ── Month end ───────────────────────────────────────────────────────────────
+ *
+ * Once a branch's month has closed — at midnight WHERE THE BRANCH IS — the
+ * scheduler drafts it and tells the branch's managers and head office. It only
+ * ever drafts. Issuing is a person's act, and nothing here pays anybody.
  */
 
 const DAY_MS = 86_400_000;
+
+/**
+ * How long after a branch's month closes the scheduler will still draft it.
+ *
+ * The window is what lets a missed tick, a restart or a deploy on the 1st still
+ * catch the month. Its END is what stops a deploy on the 15th drafting a month
+ * the business already paid by hand.
+ */
+export const MONTH_END_CATCH_UP_DAYS = 7;
 
 /** Who may see somebody else's pay. Deliberately short. */
 const PAYROLL_ROLES: Role[] = [Role.store_manager, Role.area_manager, Role.head_office];
@@ -63,6 +85,7 @@ export class PayrollService {
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ==========================================================================
@@ -294,30 +317,95 @@ export class PayrollService {
     if (!PAYROLL_ROLES.includes(user.role)) {
       throw new ForbiddenException('Only a manager can generate a payslip.');
     }
-    const { start, end } = parsePeriod(input.periodKey);
+    const result = await this.draftOne(user, input.userId, input.periodKey);
+    if (result.issued) {
+      throw new BadRequestException(
+        `${result.staffName}'s ${input.periodKey} payslip has already been issued and cannot be regenerated.`,
+      );
+    }
+    return this.view(result.row, result.staffName);
+  }
+
+  /**
+   * Every branch in scope, for one month. Skips and reports the ones it cannot do.
+   *
+   * Each branch goes through the same run the month-end scheduler uses, so a
+   * person pressing "Generate" leaves the same record behind as the automatic
+   * run does.
+   */
+  async generateForStore(
+    user: AuthUser,
+    input: { storeId?: string; periodKey: string },
+  ) {
+    if (!PAYROLL_ROLES.includes(user.role)) {
+      throw new ForbiddenException('Only a manager can generate payslips.');
+    }
+    parsePeriod(input.periodKey);
+    const storeIds = this.scope.effectiveStoreIds(user, input.storeId);
+    const stores = await this.prisma.store.findMany({
+      where: { id: { in: storeIds }, organisationId: user.organisationId, isAggregate: false },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true, organisationId: true },
+    });
+
+    let generated = 0;
+    const skipped: { name: string; reason: string }[] = [];
+    for (const store of stores) {
+      const run = await this.runForStore(store, input.periodKey, user);
+      if (!run) continue;
+      generated += run.generated;
+      // Reported by NAME, not counted. "3 skipped" tells a payroll clerk
+      // nothing they can act on.
+      skipped.push(...((run.skippedDetail as { name: string; reason: string }[] | null) ?? []));
+      if (run.status === 'failed') {
+        skipped.push({ name: store.name, reason: run.error ?? 'The run did not finish.' });
+      }
+    }
+    return { periodKey: input.periodKey, generated, skipped };
+  }
+
+  /**
+   * Draft one employee's slip for one month, or leave an issued one alone.
+   *
+   * The write is conditional on the row STILL being a draft, and Postgres
+   * evaluates that condition — so a slip issued between the read and the write,
+   * or a second run drafting the same person in the same instant, cannot be
+   * overwritten. The unique (userId, periodKey) index is what stops two drafts;
+   * a read-then-write could stop neither.
+   *
+   * An issued slip is recounted, never rewritten: if the register has moved
+   * since, the slip is flagged (see {@link flagDifference}).
+   */
+  private async draftOne(
+    actor: AuthUser,
+    userId: string,
+    periodKey: string,
+  ): Promise<{ row: Payslip; staffName: string; issued: boolean; differs: boolean }> {
+    const { start, end } = parsePeriod(periodKey);
 
     const staff = await this.prisma.user.findFirst({
-      where: { id: input.userId, organisationId: user.organisationId },
+      where: { id: userId, organisationId: actor.organisationId },
       select: {
         id: true,
         name: true,
-        userStores: { select: { storeId: true, isPrimary: true } },
+        userStores: { select: { storeId: true, isPrimary: true }, orderBy: { createdAt: 'asc' } },
       },
     });
     if (!staff) throw new NotFoundException('No such employee here.');
 
-    const storeId =
-      staff.userStores.find((s) => s.isPrimary)?.storeId ?? staff.userStores[0]?.storeId ?? null;
-    if (storeId) this.scope.assertStoreAllowed(user, storeId);
+    const storeId = primaryStoreOf(staff.userStores);
+    if (storeId) this.scope.assertStoreAllowed(actor, storeId);
 
-    const existing = await this.prisma.payslip.findUnique({
-      where: { userId_periodKey: { userId: staff.id, periodKey: input.periodKey } },
+    const key = { userId_periodKey: { userId: staff.id, periodKey } };
+    const leaveIssued = async (slip: Payslip) => ({
+      row: slip,
+      staffName: staff.name,
+      issued: true,
+      differs: await this.flagDifference(slip),
     });
-    if (existing?.status === 'issued') {
-      throw new BadRequestException(
-        `${staff.name}'s ${input.periodKey} payslip has already been issued and cannot be regenerated.`,
-      );
-    }
+
+    const existing = await this.prisma.payslip.findUnique({ where: key });
+    if (existing?.status === 'issued') return leaveIssued(existing);
 
     const comp = await this.prisma.staffCompensation.findUnique({ where: { userId: staff.id } });
     if (!comp) {
@@ -329,73 +417,119 @@ export class PayrollService {
     const computed = await this.compute(staff.id, storeId, start, end, comp);
 
     const data = {
-      organisationId: user.organisationId,
+      organisationId: actor.organisationId,
       userId: staff.id,
       storeId,
-      periodKey: input.periodKey,
+      periodKey,
       periodStart: start,
       periodEnd: end,
       status: 'draft',
       ...computed.totals,
       breakdown: computed.days as unknown as Prisma.InputJsonValue,
     };
-    const row = existing
-      ? await this.prisma.payslip.update({ where: { id: existing.id }, data })
-      : await this.prisma.payslip.create({ data });
+    const overwriteDraft = () =>
+      this.prisma.payslip.updateMany({
+        where: { userId: staff.id, periodKey, status: 'draft' },
+        data,
+      });
 
-    return this.view(row, staff.name);
-  }
-
-  /** Every employee in scope, for one month. Skips and reports the ones it cannot do. */
-  async generateForStore(
-    user: AuthUser,
-    input: { storeId?: string; periodKey: string },
-  ) {
-    if (!PAYROLL_ROLES.includes(user.role)) {
-      throw new ForbiddenException('Only a manager can generate payslips.');
-    }
-    const storeIds = this.scope.effectiveStoreIds(user, input.storeId);
-    const staff = await this.prisma.user.findMany({
-      where: {
-        organisationId: user.organisationId,
-        isActive: true,
-        role: { in: [Role.salesperson, Role.store_manager] },
-        userStores: { some: { storeId: { in: storeIds } } },
-      },
-      select: { id: true, name: true },
-    });
-
-    let generated = 0;
-    const skipped: { name: string; reason: string }[] = [];
-    for (const s of staff) {
+    if ((await overwriteDraft()).count === 0) {
       try {
-        await this.generate(user, { userId: s.id, periodKey: input.periodKey });
-        generated++;
+        await this.prisma.payslip.create({ data });
       } catch (err) {
-        // Reported by NAME, not counted. "3 skipped" tells a payroll clerk
-        // nothing they can act on.
-        skipped.push({
-          name: s.name,
-          reason: err instanceof Error ? err.message : String(err),
-        });
+        if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) {
+          throw err;
+        }
+        // Somebody else wrote this slip between our read and our write. Still a
+        // draft: ours replaces it. Issued in that instant: it stays as issued.
+        if ((await overwriteDraft()).count === 0) {
+          return leaveIssued(await this.prisma.payslip.findUniqueOrThrow({ where: key }));
+        }
       }
     }
-    await this.audit.record(user, {
-      action: 'hrms.payslips_generated',
-      entityType: 'Payslip',
-      entityId: input.periodKey,
-      storeId: input.storeId ?? null,
-      summary: `Generated ${generated} payslip(s) for ${input.periodKey}`,
-      metadata: { generated, skipped: skipped.length },
-    });
-    return { periodKey: input.periodKey, generated, skipped };
+
+    const row = await this.prisma.payslip.findUniqueOrThrow({ where: key });
+    return { row, staffName: staff.name, issued: false, differs: false };
   }
 
   /**
-   * Count the month, from the attendance register.
+   * Count an issued slip's month again, and flag it if the register has moved.
    *
-   * Every day of the period is classified, including days with no record at all —
-   * a month where nobody punched must not silently produce a full month's pay.
+   * Only the ATTENDANCE is compared — day by day, and overtime. Pay is not
+   * recomputed: a raise recorded in October is not a correction to September,
+   * and turning a late correction into money (an arrear, a recovery) is the
+   * business's decision, not one to invent here. The issued figures are never
+   * written; only the flag beside them, and only when it actually changed, so a
+   * run that finds nothing new leaves the row exactly as it was.
+   */
+  private async flagDifference(slip: Payslip): Promise<boolean> {
+    const counted = await this.countDays(
+      slip.userId,
+      slip.storeId,
+      slip.periodStart,
+      slip.periodEnd,
+    );
+    const issuedDays = new Map(
+      ((slip.breakdown as unknown as PayslipDay[] | null) ?? []).map((d) => [d.date, d]),
+    );
+    const days = counted.days.flatMap((now) => {
+      const was = issuedDays.get(now.date);
+      return was && was.kind === now.kind && was.credit === now.credit
+        ? []
+        : [
+            {
+              date: now.date,
+              was: was ? { kind: was.kind, credit: was.credit } : null,
+              now: { kind: now.kind, credit: now.credit },
+            },
+          ];
+    });
+
+    const difference =
+      days.length || counted.overtimeMins !== slip.overtimeMins
+        ? {
+            days,
+            presentDays: { was: Number(slip.presentDays), now: round2(counted.presentDays) },
+            overtimeMins: { was: slip.overtimeMins, now: counted.overtimeMins },
+          }
+        : null;
+
+    if (canonical(difference) !== canonical(slip.difference ?? null)) {
+      await this.prisma.payslip.updateMany({
+        where: { id: slip.id, status: 'issued' },
+        data: {
+          difference: difference ?? Prisma.DbNull,
+          differenceDetectedAt: difference ? new Date() : null,
+        },
+      });
+    }
+    return difference != null;
+  }
+
+  /**
+   * A correction to one day has landed. If that month was already issued to
+   * this person, flag the slip now rather than wait for somebody to re-run.
+   *
+   * Best effort by contract: a correction must never fail because payroll could
+   * not be recounted.
+   */
+  async recheckIssued(userId: string, date: Date): Promise<void> {
+    try {
+      const slip = await this.prisma.payslip.findFirst({
+        where: { userId, periodKey: dateOnly(date).slice(0, 7), status: 'issued' },
+      });
+      if (slip) await this.flagDifference(slip);
+    } catch (err) {
+      this.log.warn(
+        `Could not recheck an issued payslip after a correction: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
+  /**
+   * Put a month's money on the day count.
    */
   private async compute(
     userId: string,
@@ -409,6 +543,69 @@ export class PayrollService {
       overtimeHourlyRate: Prisma.Decimal | null;
     },
   ) {
+    const { days, presentDays, paidLeaveDays, unpaidDays, weeklyOffDays, holidayDays, overtimeMins } =
+      await this.countDays(userId, storeId, start, end);
+
+    const calendarDays = days.length;
+    const amount = Number(comp.amount);
+    const allowance = comp.paidLeavePerMonth == null ? 0 : Number(comp.paidLeavePerMonth);
+
+    /*
+     * Paid leave inside the allowance costs nothing; beyond it, it is unpaid.
+     * Counted here rather than at classification time so the day-by-day
+     * breakdown still shows WHICH days were leave.
+     */
+    const excessLeave = Math.max(0, paidLeaveDays - allowance);
+    const chargeableUnpaid = round2(unpaidDays + excessLeave);
+
+    let perDayRate: number;
+    let earned: number;
+    if (comp.basis === 'daily') {
+      // Paid per day WORKED. Offs and holidays are not paid — which is the
+      // difference between the two bases, and paying one as the other is a real
+      // overpayment every month.
+      perDayRate = amount;
+      earned = round2(perDayRate * presentDays);
+    } else {
+      // A fixed monthly salary: offs, holidays and allowed leave are paid, and
+      // unpaid absence is deducted at the month's own day rate.
+      perDayRate = round2(amount / calendarDays);
+      earned = round2(amount - perDayRate * chargeableUnpaid);
+    }
+
+    const otRate = comp.overtimeHourlyRate == null ? null : Number(comp.overtimeHourlyRate);
+    const overtimeAmount = otRate == null ? 0 : round2((overtimeMins / 60) * otRate);
+
+    return {
+      days,
+      totals: {
+        calendarDays,
+        weeklyOffDays,
+        holidayDays,
+        presentDays: new Prisma.Decimal(round2(presentDays)),
+        paidLeaveDays: new Prisma.Decimal(round2(paidLeaveDays)),
+        unpaidDays: new Prisma.Decimal(chargeableUnpaid),
+        overtimeMins,
+        basis: comp.basis,
+        amount: new Prisma.Decimal(amount),
+        perDayRate: new Prisma.Decimal(perDayRate),
+        earnedAmount: new Prisma.Decimal(Math.max(0, earned)),
+        overtimeAmount: new Prisma.Decimal(overtimeAmount),
+        deductionAmount: new Prisma.Decimal(
+          comp.basis === 'daily' ? 0 : round2(perDayRate * chargeableUnpaid),
+        ),
+        netPay: new Prisma.Decimal(round2(Math.max(0, earned) + overtimeAmount)),
+      },
+    };
+  }
+
+  /**
+   * Count the month, from the attendance register.
+   *
+   * Every day of the period is classified, including days with no record at all —
+   * a month where nobody punched must not silently produce a full month's pay.
+   */
+  private async countDays(userId: string, storeId: string | null, start: Date, end: Date) {
     const [records, holidays, offDays, store] = await Promise.all([
       this.prisma.attendanceRecord.findMany({
         where: { staffId: userId, date: { gte: start, lte: end } },
@@ -511,57 +708,7 @@ export class PayrollService {
       }
     }
 
-    const calendarDays = days.length;
-    const amount = Number(comp.amount);
-    const allowance = comp.paidLeavePerMonth == null ? 0 : Number(comp.paidLeavePerMonth);
-
-    /*
-     * Paid leave inside the allowance costs nothing; beyond it, it is unpaid.
-     * Counted here rather than at classification time so the day-by-day
-     * breakdown still shows WHICH days were leave.
-     */
-    const excessLeave = Math.max(0, paidLeaveDays - allowance);
-    const chargeableUnpaid = round2(unpaidDays + excessLeave);
-
-    let perDayRate: number;
-    let earned: number;
-    if (comp.basis === 'daily') {
-      // Paid per day WORKED. Offs and holidays are not paid — which is the
-      // difference between the two bases, and paying one as the other is a real
-      // overpayment every month.
-      perDayRate = amount;
-      earned = round2(perDayRate * presentDays);
-    } else {
-      // A fixed monthly salary: offs, holidays and allowed leave are paid, and
-      // unpaid absence is deducted at the month's own day rate.
-      perDayRate = round2(amount / calendarDays);
-      earned = round2(amount - perDayRate * chargeableUnpaid);
-    }
-
-    const otRate = comp.overtimeHourlyRate == null ? null : Number(comp.overtimeHourlyRate);
-    const overtimeAmount = otRate == null ? 0 : round2((overtimeMins / 60) * otRate);
-
-    return {
-      days,
-      totals: {
-        calendarDays,
-        weeklyOffDays,
-        holidayDays,
-        presentDays: new Prisma.Decimal(round2(presentDays)),
-        paidLeaveDays: new Prisma.Decimal(round2(paidLeaveDays)),
-        unpaidDays: new Prisma.Decimal(chargeableUnpaid),
-        overtimeMins,
-        basis: comp.basis,
-        amount: new Prisma.Decimal(amount),
-        perDayRate: new Prisma.Decimal(perDayRate),
-        earnedAmount: new Prisma.Decimal(Math.max(0, earned)),
-        overtimeAmount: new Prisma.Decimal(overtimeAmount),
-        deductionAmount: new Prisma.Decimal(
-          comp.basis === 'daily' ? 0 : round2(perDayRate * chargeableUnpaid),
-        ),
-        netPay: new Prisma.Decimal(round2(Math.max(0, earned) + overtimeAmount)),
-      },
-    };
+    return { days, presentDays, paidLeaveDays, unpaidDays, weeklyOffDays, holidayDays, overtimeMins };
   }
 
   /** Issue it. After this the numbers are what the employee was shown. */
@@ -646,6 +793,7 @@ export class PayrollService {
       overtimeMins: number; basis: string; amount: Prisma.Decimal; perDayRate: Prisma.Decimal;
       earnedAmount: Prisma.Decimal; overtimeAmount: Prisma.Decimal;
       deductionAmount: Prisma.Decimal; netPay: Prisma.Decimal;
+      difference: Prisma.JsonValue | null; differenceDetectedAt: Date | null;
     },
     staffName: string,
   ) {
@@ -679,8 +827,318 @@ export class PayrollService {
        * person who finds out otherwise is the employee.
        */
       note: 'Before tax and statutory deductions. Computed from the attendance register.',
+      /** Issued, and the register has moved since. The figures above stand. */
+      difference: r.difference,
+      differenceDetectedAt: r.differenceDetectedAt,
     };
   }
+
+  // ==========================================================================
+  // Month-end runs
+  // ==========================================================================
+
+  /**
+   * Draft every branch whose month has just closed, where it is.
+   *
+   * Driven hourly by the scheduler; `now` is a parameter so the boundary can be
+   * tested without a clock. A branch where nobody has pay recorded is passed
+   * over: a tenant that does not use payroll gets no runs and no notifications,
+   * rather than a monthly row saying nobody could be paid.
+   */
+  async sweepMonthEnd(now = new Date()): Promise<{ due: number; ran: number }> {
+    const stores = await this.prisma.store.findMany({
+      where: { isActive: true, isAggregate: false },
+      select: { id: true, name: true, timezone: true, organisationId: true },
+    });
+    let due = 0;
+    let ran = 0;
+    for (const store of stores) {
+      const periodKey = closedPeriodAt(now, resolveTz(store.timezone));
+      if (!periodKey) continue;
+      // The cheap read first. After the first tick of the month every later one
+      // finds the claim here instead of provoking a unique violation per branch
+      // per hour. The unique index is still what decides a race.
+      const claimed = await this.prisma.payrollRun.findUnique({
+        where: { schedulerKey: schedulerKey(store.id, periodKey) },
+        select: { id: true },
+      });
+      if (claimed) continue;
+      const paid = await this.prisma.staffCompensation.count({
+        where: {
+          organisationId: store.organisationId,
+          user: { isActive: true, userStores: { some: { storeId: store.id } } },
+        },
+      });
+      if (!paid) continue;
+
+      due++;
+      try {
+        if (await this.runForStore(store, periodKey, null)) ran++;
+      } catch (err) {
+        // One branch must not stop the others.
+        this.log.error(
+          `Month-end payroll for ${store.name} failed to start: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+    return { due, ran };
+  }
+
+  /**
+   * A person running one branch's month: recovery for a failed or interrupted
+   * run, or a recount after corrections. Always a new run record, always drafts.
+   */
+  async rerun(user: AuthUser, input: { storeId: string; periodKey: string }) {
+    if (!PAYROLL_ROLES.includes(user.role)) {
+      throw new ForbiddenException('Only a manager can run payroll.');
+    }
+    this.scope.assertStoreAllowed(user, input.storeId);
+    const store = await this.prisma.store.findFirst({
+      where: { id: input.storeId, organisationId: user.organisationId, isAggregate: false },
+      select: { id: true, name: true, organisationId: true },
+    });
+    if (!store) throw new NotFoundException('No such branch here.');
+    return this.runForStore(store, input.periodKey, user);
+  }
+
+  /** The run log a manager reads on the payroll screen. */
+  async runs(user: AuthUser, opts: { periodKey?: string; storeId?: string } = {}) {
+    if (!PAYROLL_ROLES.includes(user.role)) {
+      throw new ForbiddenException('Only a manager can see payroll runs.');
+    }
+    return this.prisma.payrollRun.findMany({
+      where: {
+        organisationId: user.organisationId,
+        storeId: { in: this.scope.effectiveStoreIds(user, opts.storeId) },
+        ...(opts.periodKey ? { periodKey: opts.periodKey } : {}),
+      },
+      orderBy: { startedAt: 'desc' },
+      take: 50,
+    });
+  }
+
+  /**
+   * One branch, one month: claim, draft everybody whose slip lives here, record
+   * what happened, and tell the people who review it.
+   *
+   * `by` null is the scheduler, whose claim is unique per branch-month. Returns
+   * null when that claim already exists — the normal outcome of a retried or
+   * concurrent tick, not an error. A person's run has no claim to lose.
+   */
+  private async runForStore(
+    store: { id: string; name: string; organisationId: string },
+    periodKey: string,
+    by: AuthUser | null,
+  ): Promise<PayrollRun | null> {
+    parsePeriod(periodKey);
+
+    let run: PayrollRun;
+    try {
+      run = await this.prisma.payrollRun.create({
+        data: {
+          organisationId: store.organisationId,
+          storeId: store.id,
+          periodKey,
+          trigger: by ? 'user' : 'scheduler',
+          triggeredById: by?.id ?? null,
+          triggeredByName: by?.name ?? null,
+          schedulerKey: by ? null : schedulerKey(store.id, periodKey),
+        },
+      });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') return null;
+      throw err;
+    }
+
+    const actor = by ?? schedulerActor(store);
+    let generated = 0;
+    let issued = 0;
+    let differences = 0;
+    const skipped: { name: string; reason: string }[] = [];
+    try {
+      const staff = await this.prisma.user.findMany({
+        where: {
+          organisationId: store.organisationId,
+          isActive: true,
+          role: { in: [Role.salesperson, Role.store_manager] },
+          userStores: { some: { storeId: store.id } },
+        },
+        orderBy: { name: 'asc' },
+        select: {
+          id: true,
+          name: true,
+          userStores: { select: { storeId: true, isPrimary: true }, orderBy: { createdAt: 'asc' } },
+        },
+      });
+      for (const s of staff) {
+        // Drafted by the branch the slip belongs to, so somebody working two
+        // branches is drafted once — not twice, and not refused by the other.
+        if (primaryStoreOf(s.userStores) !== store.id) continue;
+        try {
+          const result = await this.draftOne(actor, s.id, periodKey);
+          if (!result.issued) generated++;
+          else {
+            issued++;
+            if (result.differs) differences++;
+          }
+        } catch (err) {
+          skipped.push({ name: s.name, reason: err instanceof Error ? err.message : String(err) });
+        }
+      }
+      run = await this.prisma.payrollRun.update({
+        where: { id: run.id },
+        data: {
+          status: 'completed',
+          generated,
+          issued,
+          differences,
+          skipped: skipped.length,
+          skippedDetail: skipped,
+          finishedAt: new Date(),
+        },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.log.error(`Payroll ${periodKey} for ${store.name} failed: ${message}`);
+      run = await this.prisma.payrollRun.update({
+        where: { id: run.id },
+        data: {
+          status: 'failed',
+          generated,
+          issued,
+          differences,
+          skipped: skipped.length,
+          skippedDetail: skipped,
+          error: message.slice(0, 500),
+          finishedAt: new Date(),
+        },
+      });
+    }
+
+    const audit = {
+      action: by ? 'hrms.payroll_rerun' : 'hrms.payroll_month_end',
+      entityType: 'PayrollRun',
+      entityId: run.id,
+      storeId: store.id,
+      summary:
+        run.status === 'failed'
+          ? `${periodKey} payroll for ${store.name} did not finish`
+          : `Drafted ${generated} payslip(s) for ${store.name}, ${periodKey}`,
+      metadata: { periodKey, status: run.status, generated, skipped: skipped.length, issued, differences },
+    };
+    if (by) {
+      await this.audit.record(by, audit);
+    } else {
+      await this.audit.recordSystem(store.organisationId, 'payroll_month_end', audit);
+      await this.notifyReviewers(store, run);
+    }
+    return run;
+  }
+
+  /**
+   * Tell the people who review this branch's payroll that it is waiting.
+   *
+   * Resolved by the same walk-up every approval uses — the branch's store and
+   * area managers, and head office — so a salesperson never hears about
+   * somebody else's pay. Nothing is said when nothing was drafted.
+   */
+  private async notifyReviewers(
+    store: { id: string; name: string; organisationId: string },
+    run: PayrollRun,
+  ) {
+    const failed = run.status === 'failed';
+    if (!failed && run.generated === 0 && run.differences === 0) return;
+    const month = periodLabel(run.periodKey);
+    const summary = [
+      `${run.generated} draft payslip(s)`,
+      run.skipped ? `${run.skipped} could not be drafted` : null,
+      run.differences ? `${run.differences} issued slip(s) no longer match the register` : null,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+
+    await this.notifications.emitToApprovers(
+      store.id,
+      Role.store_manager,
+      {
+        kind: 'system',
+        title: failed
+          ? `${month} payroll for ${store.name} did not finish`
+          : `${month} payroll is ready for review — ${store.name}`,
+        body: failed
+          ? `${run.error ?? 'It stopped part-way.'} Re-run it from Roster and pay.`
+          : `${summary}. Nothing has been issued.`,
+        href: '/hrms/payroll',
+        storeId: store.id,
+        entityType: 'PayrollRun',
+        entityId: run.id,
+        priority: failed ? 'high' : 'normal',
+        dedupeKey: `payroll-run:${store.id}:${run.periodKey}`,
+      },
+      undefined,
+      store.organisationId,
+    );
+  }
+}
+
+/**
+ * The month that has just closed at a branch, or null outside the catch-up window.
+ *
+ * Asked in the BRANCH's timezone: August closes at 00:00 on 1 September where
+ * the staff are, not where the server is.
+ */
+export function closedPeriodAt(now: Date, tz: string): string | null {
+  const p = zonedParts(now, tz);
+  if (p.day > MONTH_END_CATCH_UP_DAYS) return null;
+  // Month is 1-12; Date.UTC takes 0-11, so `p.month - 2` is the month before.
+  const prev = new Date(Date.UTC(p.year, p.month - 2, 1));
+  return `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+function schedulerKey(storeId: string, periodKey: string): string {
+  return `${storeId}:${periodKey}`;
+}
+
+/**
+ * The principal a scheduled run drafts as: head office OF THAT TENANT, over that
+ * one branch. The same shape the day-close uses — never global authority.
+ */
+function schedulerActor(store: { id: string; organisationId: string }): AuthUser {
+  return {
+    id: 'system-scheduler',
+    name: 'CaratSense (automatic)',
+    email: 'system@caratsense.local',
+    role: Role.head_office,
+    organisationId: store.organisationId,
+    storeIds: [store.id],
+    allStores: false,
+  };
+}
+
+/**
+ * The branch a person's payslip belongs to: their primary, else their earliest
+ * assignment. Callers order `userStores` by creation so the answer is the same
+ * from every query.
+ */
+function primaryStoreOf(stores: { storeId: string; isPrimary: boolean }[]): string | null {
+  return stores.find((s) => s.isPrimary)?.storeId ?? stores[0]?.storeId ?? null;
+}
+
+/** '2026-08' → 'August 2026'. */
+function periodLabel(periodKey: string): string {
+  const { start } = parsePeriod(periodKey);
+  return start.toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+}
+
+/** JSON with sorted keys. Postgres reorders jsonb keys, so a plain stringify never compares equal. */
+function canonical(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) =>
+    v && typeof v === 'object' && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : v,
+  );
 }
 
 /** '2026-09' → the first and last day of that month, as `@db.Date` values. */

@@ -15,6 +15,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { businessDate, dateOnly, resolveTz, zonedParts } from '../common/tz.util';
 import { HrmsService } from '../hrms/hrms.service';
+import { PayrollService } from '../hrms/payroll.service';
 import { GoldRateService } from '../integrations/gold-rate.service';
 import { JobRunnerService } from './job-runner.service';
 import { packMaintainsMetalRates } from '../config/entitlements';
@@ -83,6 +84,7 @@ export class SchedulerService {
     private readonly responseSla: ResponseSlaService,
     private readonly scheduledReports: ScheduledReportsService,
     private readonly loyaltyApi: LoyaltyApiService,
+    private readonly payroll: PayrollService,
   ) {}
 
   /**
@@ -196,6 +198,30 @@ export class SchedulerService {
       if (result) {
         this.logger.log(`Day close ${runKey} for ${store.name}: ${JSON.stringify(result)}`);
       }
+    }
+  }
+
+  /**
+   * Draft each branch's payroll once its month has closed, where it is.
+   *
+   * Hourly for the same reason as the day close: month-end is midnight at the
+   * branch, not on the server's clock. The service asks each store and returns
+   * straight away for every branch whose month has not just closed.
+   *
+   * Not wrapped in `runOnce`: the unique claim on PayrollRun is the guard, and
+   * unlike an in-process run key it holds across a restart part-way through a
+   * run. Drafts only — nothing here issues or pays.
+   */
+  @Cron(CronExpression.EVERY_HOUR, { name: 'hrms.payroll-month-end' })
+  async draftMonthEndPayroll(): Promise<void> {
+    if (!this.enabled) return;
+    try {
+      const res = await this.payroll.sweepMonthEnd();
+      if (res.due) this.logger.log(`Month-end payroll: ${res.ran} run(s) of ${res.due} due`);
+    } catch (e) {
+      this.logger.error(
+        `Month-end payroll sweep failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
 
@@ -361,26 +387,25 @@ export class SchedulerService {
   }
 
   /**
-   * Push loyalty movements the tenant's website never heard about.
+   * Queue loyalty movements the tenant's website was never told about.
    *
-   * Every five minutes rather than hourly, because the stale thing is a balance
-   * on a page a customer is looking at now. Bounded retries live in the service;
-   * this only decides how often to ask.
+   * Sending, retrying, backoff and the dead state all belong to the job queue
+   * now (`loyalty.webhook`, drained every minute). This only catches a movement
+   * whose announcement was never queued — a restart between the movement
+   * committing and its queue insert. A movement announced zero times is a wrong
+   * number in front of a customer.
    *
-   * Not wrapped in `runOnce`. The work is idempotent by construction —
-   * `webhookedAt` is stamped on success — and a movement announced twice is
-   * something the receiver already has to tolerate, keyed as it is by entry id.
-   * A movement announced zero times is a wrong number in front of a customer.
+   * Not wrapped in `runOnce`: the delivery row is unique per movement, so two
+   * replicas sweeping together queue it once between them.
    */
   @Cron(CronExpression.EVERY_5_MINUTES, { name: 'loyalty.announcements' })
   async pushLoyaltyAnnouncements(): Promise<void> {
     if (!this.enabled) return;
     try {
       const res = await this.loyaltyApi.sweepAnnouncements();
-      if (res.sent || res.failed) {
+      if (res.queued) {
         this.logger.log(
-          `Loyalty announcements: ${res.sent} sent, ${res.failed} failed ` +
-            `across ${res.organisations} organisation(s)`,
+          `Loyalty announcements: ${res.queued} queued across ${res.organisations} organisation(s)`,
         );
       }
     } catch (e) {

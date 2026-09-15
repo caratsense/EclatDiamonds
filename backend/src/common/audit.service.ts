@@ -34,6 +34,8 @@ export const SYSTEM_ACTORS = {
   staff_digest: 'Morning staff digest',
   /** The automatic feedback ask a set number of days after a walk-in. */
   visit_feedback: 'Visit feedback request',
+  /** The month-end sweep drafting a branch's payslips once its month has closed. */
+  payroll_month_end: 'Month-end payroll',
 } as const;
 
 export type SystemActor = keyof typeof SYSTEM_ACTORS;

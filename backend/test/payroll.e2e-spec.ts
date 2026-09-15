@@ -49,6 +49,7 @@ const PERIOD = '2026-09';
 const SEPT = (day: number) => new Date(Date.UTC(2026, 8, day));
 
 async function teardown(prisma: PrismaService) {
+  await prisma.payrollRun.deleteMany({ where: { organisationId: A.org } });
   await prisma.payslip.deleteMany({ where: { organisationId: A.org } });
   await prisma.staffCompensation.deleteMany({ where: { organisationId: A.org } });
   await prisma.staffWeekOff.deleteMany({ where: { organisationId: A.org } });
