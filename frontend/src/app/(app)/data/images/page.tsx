@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ArrowLeft, FileArchive, Images, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 
+import { CatalogueExportCard } from "@/components/data/catalogue-export-card";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -43,6 +44,7 @@ import { useSession } from "@/store/use-session";
  */
 export default function ImageImportPage() {
   const stores = useSession((s) => s.stores);
+  const isHo = useSession((s) => s.role) === "head_office";
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [file, setFile] = useState<File | null>(null);
@@ -317,6 +319,10 @@ export default function ImageImportPage() {
           </div>
         </>
       ) : null}
+
+      {/* ---------------------------------------------------------------- */}
+      {/* The other direction: head office taking the photographs away. */}
+      {isHo ? <CatalogueExportCard /> : null}
 
       {/* ---------------------------------------------------------------- */}
       <Card>
