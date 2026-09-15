@@ -7,7 +7,6 @@ import {
   Check,
   KeyRound,
   Lock,
-  Mail,
   MoreHorizontal,
   Phone,
   Shield,
@@ -49,6 +48,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Table,
   TableBody,
@@ -66,11 +66,14 @@ import {
   useDeactivateStaff,
   usePendingSignups,
   useRejectSignup,
+  useSaveSignupPolicy,
   useSetLeaveAllocation,
+  useSignupPolicy,
   useStaff,
   useUnassignedStaff,
   useUpdateStaffRole,
   useUpdateStaffStore,
+  type ApprovalEmailDelivery,
   type PendingSignup,
   type StaffRole,
   type StaffUser,
@@ -89,7 +92,7 @@ import { useSession } from "@/store/use-session";
 const nav = getNavItem("settings/team")!;
 
 /** Roles assignable from this page, in rank order (salesperson is the default). */
-const STAFF_ROLES: StaffRole[] = ["salesperson", "store_manager"];
+const STAFF_ROLES: StaffRole[] = ["salesperson", "storeperson", "store_manager"];
 
 /**
  * The roles a given viewer may grant — strictly below their own rank, mirroring
@@ -210,7 +213,9 @@ export default function TeamPage() {
         </div>
       )}
 
-      <PendingSignups />
+      <PendingSignups viewerRole={viewerRole} />
+
+      {viewerRole === "head_office" ? <SignupPolicyCard /> : null}
 
       <PendingAssignment viewerRole={viewerRole} />
 
@@ -276,8 +281,11 @@ function UserRow({
             </span>
           ) : null}
           {user.email ? (
-            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Mail className="h-3.5 w-3.5 shrink-0" />
+            <span
+              className="flex items-center gap-1.5 text-xs text-muted-foreground"
+              title="Login ID — a sign-in identifier, not an inbox"
+            >
+              <KeyRound className="h-3.5 w-3.5 shrink-0" />
               <span className="truncate">{user.email}</span>
             </span>
           ) : null}
@@ -881,7 +889,21 @@ function PendingRow({
 /* Self-signup approval queue                                         */
 /* ------------------------------------------------------------------ */
 
-function PendingSignups() {
+/** Roles an approver may grant on a request: below their own rank; managers by head office only. */
+function approvableRoles(viewer: Role): StaffRole[] {
+  return assignableRoles(viewer).filter(
+    (r) => ROLE_RANK[r] < ROLE_RANK.store_manager || viewer === "head_office",
+  );
+}
+
+const DELIVERY_NOTE: Record<ApprovalEmailDelivery, string> = {
+  sent: "We emailed them their Login ID.",
+  dry_run: "Email is not set up, so nothing was sent — share the Login ID with them.",
+  failed: "The approval email could not be sent — share the Login ID with them.",
+  no_contact_email: "They gave no contact email — share the Login ID with them.",
+};
+
+function PendingSignups({ viewerRole }: { viewerRole: Role }) {
   const { data: pending = [], isLoading } = usePendingSignups();
 
   if (isLoading || pending.length === 0) return null;
@@ -894,44 +916,21 @@ function PendingSignups() {
         <Badge variant="secondary">{pending.length}</Badge>
       </div>
       <p className="mb-3 text-xs text-muted-foreground">
-        People who signed up and are waiting for approval. Approving grants the
-        requested role and links them to their store; they can then sign in.
+        People who signed up and are waiting for approval. You see the requests
+        you are allowed to decide. Approving grants the role and links them to
+        the store; they can then sign in with their Login ID.
       </p>
       <div className="rounded-xl border divide-y">
         {pending.map((p) => (
-          <SignupRequestRow key={p.id} req={p} />
+          <SignupRequestRow key={p.id} req={p} viewerRole={viewerRole} />
         ))}
       </div>
     </div>
   );
 }
 
-function SignupRequestRow({ req }: { req: PendingSignup }) {
-  const approve = useApproveSignup();
-  const reject = useRejectSignup();
-  const busy = approve.isPending || reject.isPending;
-
-  function onApprove() {
-    approve.mutate(
-      { id: req.id },
-      {
-        onSuccess: () => toast.success(`${req.name} approved`),
-        onError: (err) =>
-          toast.error(apiErrorMessage(err, "Could not approve this request.")),
-      },
-    );
-  }
-
-  function onReject() {
-    reject.mutate(
-      { id: req.id },
-      {
-        onSuccess: () => toast.success(`${req.name}'s request declined`),
-        onError: (err) =>
-          toast.error(apiErrorMessage(err, "Could not decline this request.")),
-      },
-    );
-  }
+function SignupRequestRow({ req, viewerRole }: { req: PendingSignup; viewerRole: Role }) {
+  const [dialog, setDialog] = useState<"approve" | "reject" | null>(null);
 
   return (
     <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -944,14 +943,26 @@ function SignupRequestRow({ req }: { req: PendingSignup }) {
               {req.requestedStore.name}
             </Badge>
           ) : null}
+          {req.requestedStore && !req.requestedStore.isOpen ? (
+            <Badge variant="destructive">Store not open</Badge>
+          ) : null}
         </div>
-        <div className="mt-0.5 text-xs text-muted-foreground">
-          <span>{req.email}</span>
-          {req.phone ? (
-            <>
-              {" · "}
-              <span className="num">{req.phone}</span>
-            </>
+        <div className="mt-0.5 space-y-0.5 text-xs text-muted-foreground">
+          <p>
+            Login ID <span className="font-mono">{req.loginId}</span>
+          </p>
+          {req.phone || req.contactEmail ? (
+            <p>
+              {req.phone ? <span className="num">{req.phone}</span> : null}
+              {req.phone && req.contactEmail ? " · " : null}
+              {req.contactEmail ?? null}
+            </p>
+          ) : null}
+          {req.priorRejection ? (
+            <p className="text-amber-700 dark:text-amber-400">
+              Declined before
+              {req.priorRejection.reason ? `: “${req.priorRejection.reason}”` : ""}
+            </p>
           ) : null}
         </div>
       </div>
@@ -959,15 +970,305 @@ function SignupRequestRow({ req }: { req: PendingSignup }) {
         <Button
           size="sm"
           variant="outline"
-          onClick={onReject}
-          disabled={busy}
+          onClick={() => setDialog("reject")}
           className="text-destructive hover:text-destructive"
         >
           <X className="h-4 w-4" /> Decline
         </Button>
-        <Button size="sm" onClick={onApprove} disabled={busy}>
+        <Button size="sm" onClick={() => setDialog("approve")}>
           <Check className="h-4 w-4" /> Approve
         </Button>
+      </div>
+
+      <ApproveSignupDialog
+        req={req}
+        viewerRole={viewerRole}
+        open={dialog === "approve"}
+        onOpenChange={(o) => setDialog(o ? "approve" : null)}
+      />
+      <RejectSignupDialog
+        req={req}
+        open={dialog === "reject"}
+        onOpenChange={(o) => setDialog(o ? "reject" : null)}
+      />
+    </div>
+  );
+}
+
+function ApproveSignupDialog({
+  req,
+  viewerRole,
+  open,
+  onOpenChange,
+}: {
+  req: PendingSignup;
+  viewerRole: Role;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const approve = useApproveSignup();
+  const stores = useSession((s) => s.stores);
+  const assignable = useMemo(() => stores.filter((s) => !s.isAggregate), [stores]);
+  const roles = approvableRoles(viewerRole);
+  const [role, setRole] = useState<StaffRole>(req.requestedRole);
+  const [storeId, setStoreId] = useState(req.requestedStore?.id ?? "");
+
+  function confirm() {
+    if (!storeId) {
+      toast.error("Select a store.");
+      return;
+    }
+    approve.mutate(
+      {
+        id: req.id,
+        // Send only what the approver changed; the request's own values are the default.
+        role: role !== req.requestedRole ? role : undefined,
+        storeId: storeId !== req.requestedStore?.id ? storeId : undefined,
+      },
+      {
+        onSuccess: (res) => {
+          toast.success(`${req.name} approved — Login ID ${res.loginId}`, {
+            description: DELIVERY_NOTE[res.contactEmailDelivery],
+            duration: 10_000,
+          });
+          onOpenChange(false);
+        },
+        onError: (err) =>
+          toast.error(apiErrorMessage(err, "Could not approve this request.")),
+      },
+    );
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (o) {
+          setRole(req.requestedRole);
+          setStoreId(req.requestedStore?.id ?? "");
+        }
+        onOpenChange(o);
+      }}
+    >
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Approve {req.name}</DialogTitle>
+          <DialogDescription>
+            They asked to join {req.requestedStore?.name ?? "a store"} as{" "}
+            {ROLE_LABELS[req.requestedRole]}. You can change either, within your
+            own authority.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="grid gap-1.5">
+            <Label htmlFor="approve-role">Role</Label>
+            <Select value={role} onValueChange={(v) => setRole(v as StaffRole)}>
+              <SelectTrigger id="approve-role">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {roles.map((r) => (
+                  <SelectItem key={r} value={r}>
+                    {ROLE_LABELS[r]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="approve-store">Store</Label>
+            <Select value={storeId || undefined} onValueChange={setStoreId}>
+              <SelectTrigger id="approve-store">
+                <SelectValue placeholder="Select a store" />
+              </SelectTrigger>
+              <SelectContent>
+                {assignable.map((store) => (
+                  <SelectItem key={store.id} value={store.id}>
+                    {store.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {storeId && storeId !== req.requestedStore?.id ? (
+              <p className="text-xs text-muted-foreground">
+                A different store can change their Login ID; you will see the
+                final one after approving.
+              </p>
+            ) : null}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={confirm} disabled={approve.isPending}>
+            {approve.isPending ? "Approving…" : "Approve"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function RejectSignupDialog({
+  req,
+  open,
+  onOpenChange,
+}: {
+  req: PendingSignup;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const reject = useRejectSignup();
+  const [reason, setReason] = useState("");
+
+  function confirm() {
+    if (reason.trim().length < 3) {
+      toast.error("Give a short reason.");
+      return;
+    }
+    reject.mutate(
+      { id: req.id, reason: reason.trim() },
+      {
+        onSuccess: () => {
+          toast.success(`${req.name}'s request declined`);
+          onOpenChange(false);
+        },
+        onError: (err) =>
+          toast.error(apiErrorMessage(err, "Could not decline this request.")),
+      },
+    );
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (o) setReason("");
+        onOpenChange(o);
+      }}
+    >
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Decline {req.name}?</DialogTitle>
+          <DialogDescription>
+            This request is closed for good. They can send a fresh request
+            later, and whoever reviews it will see this reason.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-1.5">
+          <Label htmlFor="reject-reason">
+            Reason <span className="text-destructive">*</span>
+          </Label>
+          <Textarea
+            id="reject-reason"
+            maxLength={500}
+            placeholder="e.g. Not on this store's roster"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button variant="destructive" onClick={confirm} disabled={reject.isPending}>
+            {reject.isPending ? "Declining…" : "Decline"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Signup policy (head office)                                        */
+/* ------------------------------------------------------------------ */
+
+function SignupPolicyCard() {
+  const { data: policy } = useSignupPolicy(true);
+  const save = useSaveSignupPolicy();
+  const [template, setTemplate] = useState<string | null>(null);
+
+  if (!policy) return null;
+  const draft = template ?? policy.loginIdTemplate ?? "";
+
+  function saveTemplate(next: string | null) {
+    save.mutate(
+      { loginIdTemplate: next },
+      {
+        onSuccess: (res) => {
+          setTemplate(null);
+          toast.success(`New Login IDs will look like ${res.example}`);
+        },
+        onError: (err) =>
+          toast.error(apiErrorMessage(err, "Could not save the Login ID format.")),
+      },
+    );
+  }
+
+  function toggleManagers(allow: boolean) {
+    save.mutate(
+      { allowManagerSelfRequest: allow },
+      {
+        onError: (err) =>
+          toast.error(apiErrorMessage(err, "Could not update the signup policy.")),
+      },
+    );
+  }
+
+  return (
+    <div className="mt-8">
+      <div className="mb-3 flex items-center gap-2">
+        <Shield className="h-4 w-4 text-muted-foreground" />
+        <h2 className="text-sm font-semibold">Signup and Login IDs</h2>
+      </div>
+      <div className="grid gap-4 rounded-xl border p-4">
+        <div className="grid gap-1.5">
+          <Label htmlFor="login-id-template">Login ID format for new staff</Label>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              id="login-id-template"
+              className="font-mono"
+              placeholder={`Default — e.g. ${policy.defaultExample}`}
+              value={draft}
+              onChange={(e) => setTemplate(e.target.value)}
+            />
+            <Button
+              variant="outline"
+              onClick={() => saveTemplate(draft.trim() || null)}
+              disabled={save.isPending || draft === (policy.loginIdTemplate ?? "")}
+            >
+              Save format
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            A Login ID is a sign-in identifier, not an email inbox. Tokens:{" "}
+            <span className="font-mono">{policy.tokens.join(" ")}</span>. The part
+            after &quot;@&quot; must include your organisation code (
+            <span className="font-mono">{policy.organisationCode}</span>) or{" "}
+            <span className="font-mono">{"{orgslug}"}</span>. A number is added when
+            an ID is taken. Existing Login IDs never change. Currently:{" "}
+            <span className="font-mono">{policy.example}</span>
+          </p>
+        </div>
+        <label className="flex items-start gap-2.5 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5 h-4 w-4"
+            checked={policy.allowManagerSelfRequest}
+            disabled={save.isPending}
+            onChange={(e) => toggleManagers(e.target.checked)}
+          />
+          <span>
+            Let applicants request the Store Manager role
+            <span className="block text-xs text-muted-foreground">
+              Off by default. Staff can always request Salesperson or
+              Storeperson; a Store Manager request is approved by head office
+              only.
+            </span>
+          </span>
+        </label>
       </div>
     </div>
   );
@@ -1063,7 +1364,7 @@ function AddStaffDialog({
       },
       {
         onSuccess: (created) => {
-          toast.success(`Staff added — their login is ${created.email}`);
+          toast.success(`Staff added — their Login ID is ${created.email}`);
           reset();
           onOpenChange(false);
         },
@@ -1090,9 +1391,9 @@ function AddStaffDialog({
         <DialogHeader>
           <DialogTitle>Add staff</DialogTitle>
           <DialogDescription>
-            New staff default to Salesperson. We generate a unique login handle
-            for them from their first name and branch, and show it to you once
-            they are added; a phone also lets them sign in with a WhatsApp OTP.
+            New staff default to Salesperson. We generate a unique Login ID
+            for them in your organisation’s Login ID format, and show it to you
+            once they are added; a phone also lets them sign in with a WhatsApp OTP.
             You can promote them later.
           </DialogDescription>
         </DialogHeader>

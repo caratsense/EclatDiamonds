@@ -35,12 +35,14 @@ import {
   useCreateOrganisation,
   usePublicIndustries,
   useSignup,
+  useSignupPreview,
   useSignupStores,
   type AuthMeResponse,
+  type SignupRole,
 } from "@/lib/queries/auth";
+import { useDebouncedValue } from "@/lib/queries/search";
 import { useSession } from "@/store/use-session";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
-import type { Role } from "@/lib/types";
 
 function apiMessage(err: unknown, fallback: string): string {
   const message = (err as AxiosError<{ message?: string | string[] }>)
@@ -49,11 +51,16 @@ function apiMessage(err: unknown, fallback: string): string {
   return typeof message === "string" && message ? message : fallback;
 }
 
-const SIGNUP_ROLES: { value: Role; label: string; hint: string }[] = [
+const SIGNUP_ROLES: { value: SignupRole; label: string; hint: string }[] = [
   {
     value: "salesperson",
     label: "Salesperson",
-    hint: "Join an existing store. Your store manager approves you.",
+    hint: "Serve customers at your store. Your store manager approves you.",
+  },
+  {
+    value: "storeperson",
+    label: "Storeperson",
+    hint: "Look after stock and the catalogue at your store. Your store manager approves you.",
   },
   {
     value: "store_manager",
@@ -61,6 +68,9 @@ const SIGNUP_ROLES: { value: Role; label: string; hint: string }[] = [
     hint: "Run a store. Head office approves you.",
   },
 ];
+
+/** Offered before the organisation's own policy has loaded. */
+const DEFAULT_REQUESTABLE: SignupRole[] = ["salesperson", "storeperson"];
 
 /*
  * One field treatment for the whole auth surface with luxury color grading in both modes.
@@ -150,17 +160,29 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
   const stores = slugUsable ? storesQuery.data ?? [] : [];
 
   const [name, setName] = React.useState("");
-  const [email, setEmail] = React.useState("");
+  const [contactEmail, setContactEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [phone, setPhone] = React.useState("");
-  const [requestedRole, setRequestedRole] = React.useState<Role>("salesperson");
+  const [requestedRole, setRequestedRole] = React.useState<SignupRole>("salesperson");
   const [requestedStoreId, setRequestedStoreId] = React.useState("");
   const [done, setDone] = React.useState<
-    { message: string; loginEmail: string } | null
+    { message: string; loginId: string } | null
   >(null);
   const [showPw, setShowPw] = React.useState(false);
 
-  const roleHint = SIGNUP_ROLES.find((r) => r.value === requestedRole)?.hint;
+  // Roles and the Login ID shape come from the organisation's own policy. The
+  // preview is rendered from its template only, so it says nothing about
+  // whether someone already holds that ID.
+  const debouncedName = useDebouncedValue(name, 400);
+  const preview = useSignupPreview({
+    organisationCode: slugUsable ? slug : "",
+    requestedStoreId,
+    name: debouncedName,
+  });
+  const requestable = preview.data?.requestableRoles ?? DEFAULT_REQUESTABLE;
+  const roleOptions = SIGNUP_ROLES.filter((r) => requestable.includes(r.value));
+  const role = requestable.includes(requestedRole) ? requestedRole : "salesperson";
+  const roleHint = SIGNUP_ROLES.find((r) => r.value === role)?.hint;
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -169,7 +191,7 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
     if (!slugUsable)
       return toast.error("Enter your organisation code — ask your administrator.");
     if (name.trim().length < 2) return toast.error("Enter your full name.");
-    if (email && !/^\S+@\S+\.\S+$/.test(email))
+    if (contactEmail && !/^\S+@\S+\.\S+$/.test(contactEmail))
       return toast.error("That email doesn't look right (or leave it blank).");
     if (password.length < 8)
       return toast.error("Password must be at least 8 characters.");
@@ -178,15 +200,16 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
     signup.mutate(
       {
         name: name.trim(),
-        email: email.trim(),
+        contactEmail: contactEmail.trim() || undefined,
         password,
         phone: phone.trim() || undefined,
-        requestedRole: requestedRole as "salesperson" | "store_manager",
+        requestedRole: role,
         requestedStoreId,
+        organisationCode: slug,
       },
       {
         onSuccess: (res) =>
-          setDone({ message: res.message, loginEmail: res.loginEmail }),
+          setDone({ message: res.message, loginId: res.loginId }),
         onError: (err) =>
           toast.error(apiMessage(err, "Couldn't create your account. Try again.")),
       },
@@ -203,15 +226,16 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
         <p className="mt-2 text-sm text-[#f8fafc]/75">{done.message}</p>
         <div className="mt-4 rounded-lg border border-white/[0.08] bg-black/25 p-3 text-left">
           <p className="text-[11px] uppercase tracking-wider text-[#818cf8]">
-            Your sign-in email
+            Your Login ID
           </p>
           <p className="mt-0.5 break-all font-mono text-sm text-[#f8fafc]">
-            {done.loginEmail}
+            {done.loginId}
           </p>
         </div>
         <p className="mt-3 text-xs text-[#f8fafc]/50">
-          Save this — you&apos;ll sign in with this email and your password once
-          approved.
+          This is your sign-in ID, not an email inbox — nothing is sent to it.
+          Save it: once approved, you sign in with this Login ID and your
+          password.
         </p>
         <Button
           type="button"
@@ -263,12 +287,13 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
           type="email"
           autoComplete="email"
           className={inputCls}
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          value={contactEmail}
+          onChange={(e) => setContactEmail(e.target.value)}
           placeholder="name@email.com"
         />
         <p className="text-[11px] text-slate-500 dark:text-[#f8fafc]/45">
-          For contact only. We create your unique sign-in email for you.
+          For contact only — we may tell you here when you are approved. You
+          sign in with a Login ID we create for you.
         </p>
       </div>
       <div className="grid grid-cols-2 gap-3">
@@ -310,10 +335,10 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
         <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">I am a…</Label>
         <select
           className={inputCls}
-          value={requestedRole}
-          onChange={(e) => setRequestedRole(e.target.value as Role)}
+          value={role}
+          onChange={(e) => setRequestedRole(e.target.value as SignupRole)}
         >
-          {SIGNUP_ROLES.map((r) => (
+          {roleOptions.map((r) => (
             <option key={r.value} value={r.value} className="bg-white text-slate-900 dark:bg-[#090b10] dark:text-[#f8fafc]">
               {r.label}
             </option>
@@ -346,6 +371,22 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
           ))}
         </select>
       </div>
+      {preview.data?.loginIdPreview ? (
+        <div className="rounded-lg border border-slate-200/80 bg-slate-100/60 p-3 dark:border-white/[0.08] dark:bg-black/25">
+          <p className="text-[11px] uppercase tracking-wider text-[#6366f1] dark:text-[#818cf8]">
+            Your Login ID will look like
+          </p>
+          <p className="mt-0.5 break-all font-mono text-sm text-slate-900 dark:text-[#f8fafc]">
+            {preview.data.loginIdPreview}
+          </p>
+          <p className="mt-1 text-[11px] leading-relaxed text-slate-500 dark:text-[#f8fafc]/50">
+            This is your sign-in ID, not an email inbox. If someone already has
+            it, a number is added (for example{" "}
+            <span className="font-mono">{preview.data.loginIdSuffixExample}</span>
+            ). Your exact Login ID is shown when you send the request.
+          </p>
+        </div>
+      ) : null}
       <Button
         type="submit"
         className="w-full bg-[#6366f1] text-white font-semibold hover:bg-[#4f46e5]"
@@ -728,7 +769,7 @@ function LoginPage() {
           const status = (err as AxiosError)?.response?.status;
           toast.error(
             status === 401
-              ? "Invalid email or password."
+              ? "Invalid Login ID or password."
               : "Couldn't sign in. Check your connection and try again.",
           );
         },
@@ -894,7 +935,7 @@ function LoginPage() {
             </h2>
             <p className="mt-1.5 text-sm text-slate-600 dark:text-[#f8fafc]/70">
               {mode === "signin"
-                ? "Enter your email and password to start the session."
+                ? "Enter your Login ID and password to start the session."
                 : signupKind === "organisation"
                   ? "Choose your industry and start with the right CRM, fields and workflow."
                   : "Request access to an existing team. Your manager will approve you."}
@@ -937,7 +978,7 @@ function LoginPage() {
           <div className="glass facet-top relative rounded-2xl p-5 shadow-xs">
             <form onSubmit={onSubmitPassword} className="space-y-4">
                 <div className="space-y-1.5">
-                  <Label htmlFor="email" className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">Email address</Label>
+                  <Label htmlFor="email" className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">Login ID</Label>
                   <Input
                     id="email"
                     type="email"
