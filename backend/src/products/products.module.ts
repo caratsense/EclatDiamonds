@@ -6,11 +6,14 @@ import { ImageEmbeddingService } from './image-embedding.service';
 import { MlInferenceService } from './ml-inference.service';
 import { JewelryRankingService } from './jewelry-ranking.service';
 import { JewelrySimilarityService } from './jewelry-similarity.service';
+import { CatalogueExportController } from './catalogue-export.controller';
+import { CatalogueExportService } from './catalogue-export.service';
 
 @Module({
-  controllers: [ProductsController],
+  controllers: [ProductsController, CatalogueExportController],
   providers: [
     ProductsService,
+    CatalogueExportService,
     AiImageSearchService,
     ImageEmbeddingService,
     MlInferenceService,

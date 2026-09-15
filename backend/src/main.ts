@@ -61,11 +61,27 @@ async function bootstrap() {
    * path — and a refusal here means a leaked URL is no longer a permanent
    * unauthenticated grant.
    *
+   * `exports` holds generated archives — every catalogue photograph in one
+   * file. Those leave only through the head-office download route, which
+   * audits who took them (CatalogueExportController).
+   *
    * 404, not 403: whether a particular photo exists is itself information.
    */
-  const PRIVATE_MEDIA = /^\/uploads\/org\/[^/]+\/(attendance|visits)\//i;
+  const PRIVATE_MEDIA = /^\/uploads\/org\/[^/]+\/(attendance|visits|exports)\//i;
   app.use((req: { path?: string; url: string }, res: any, next: () => void) => {
-    if (PRIVATE_MEDIA.test(req.path ?? req.url)) {
+    const raw = req.path ?? req.url;
+    if (!/^\/uploads\//i.test(raw)) return next();
+    // Tested DECODED as well: the static handler decodes before it touches the
+    // disk, so `/uploads/org/x/%65xports/…` would otherwise slip past a regex
+    // that only sees the encoded form. An upload path that will not decode is
+    // refused rather than guessed at.
+    let decoded: string | null;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch {
+      decoded = null;
+    }
+    if (decoded === null || PRIVATE_MEDIA.test(raw) || PRIVATE_MEDIA.test(decoded)) {
       res.status(404).json({ statusCode: 404, message: 'Not found' });
       return;
     }
