@@ -8,6 +8,7 @@ import {
   Gift,
   KeyRound,
   RefreshCw,
+  Send,
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
@@ -29,15 +30,20 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  DELIVERY_STATUS,
+  type DeliveryStatus,
   ENTRY_KIND,
   useLoyaltyMembers,
   useManualMovement,
   useMemberLedger,
   useProgrammeSettings,
   useRetryAnnouncements,
+  useRetryWebhookDelivery,
   useRotateApiKey,
   useRotateSigningSecret,
   useUpdateProgrammeSettings,
+  useWebhookDeliveries,
+  useWebhookDelivery,
 } from "@/lib/queries/loyalty-programme";
 import { formatINR, formatNumber } from "@/lib/format";
 import { apiErrorMessage } from "@/lib/utils";
@@ -59,6 +65,7 @@ export default function LoyaltyProgrammePage() {
   const stores = useSession((s) => s.stores);
   const isHo = role === "head_office";
   const canMove = isHo || role === "store_manager";
+  const canReadDeliveries = canMove || role === "area_manager";
 
   const settings = useProgrammeSettings();
   const save = useUpdateProgrammeSettings();
@@ -237,7 +244,9 @@ export default function LoyaltyProgrammePage() {
                   retry.mutate(undefined, {
                     onSuccess: (r) =>
                       toast.success(
-                        `${r.sent} announced, ${r.failed} still failing (${r.considered} tried)`,
+                        r.queued
+                          ? `${r.queued} announcement(s) queued. Watch them below.`
+                          : "Nothing was waiting to be queued.",
                       ),
                     onError: (e) => toast.error(apiErrorMessage(e, "Could not retry those.")),
                   })
@@ -322,6 +331,9 @@ export default function LoyaltyProgrammePage() {
           </CardContent>
         </Card>
       ) : null}
+
+      {/* ---------------------------------------------------------------- */}
+      {canReadDeliveries ? <Announcements canRetry={isHo} /> : null}
 
       {/* ---------------------------------------------------------------- */}
       <div className="flex flex-wrap items-center gap-2">
@@ -508,6 +520,215 @@ export default function LoyaltyProgrammePage() {
           </CardContent>
         </Card>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Every announcement to the website and what became of it.
+ *
+ * "Retrying" and "Dead" are kept apart on purpose: the first needs nobody, the
+ * queue will try again on its own; the second has given up and needs a person
+ * to fix the website and press Retry. Nothing here can show a secret — the
+ * server returns the destination without its query string and the payload only
+ * as field names and a digest.
+ */
+function Announcements({ canRetry }: { canRetry: boolean }) {
+  const [status, setStatus] = useState<DeliveryStatus | undefined>(undefined);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const deliveries = useWebhookDeliveries(status, true);
+  const detail = useWebhookDelivery(openId);
+  const retry = useRetryWebhookDelivery();
+
+  const counts = deliveries.data?.counts;
+  const filters: { value: DeliveryStatus | undefined; label: string; count?: number }[] = [
+    { value: undefined, label: "All" },
+    ...(Object.keys(DELIVERY_STATUS) as DeliveryStatus[]).map((s) => ({
+      value: s,
+      label: DELIVERY_STATUS[s].label,
+      count: counts?.[s],
+    })),
+  ];
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Send className="size-4" /> Website announcements
+        </CardTitle>
+        <CardDescription>
+          Each points movement is posted to your website, signed. It counts as delivered only when
+          your website answers with success; otherwise it is retried with growing gaps and marked
+          dead after the last attempt.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap gap-2">
+          {filters.map((f) => (
+            <Button
+              key={f.label}
+              size="sm"
+              variant={status === f.value ? "default" : "outline"}
+              onClick={() => {
+                setStatus(f.value);
+                setOpenId(null);
+              }}
+            >
+              {f.label}
+              {f.count != null ? ` (${f.count})` : ""}
+            </Button>
+          ))}
+        </div>
+
+        {deliveries.isLoading ? (
+          <Skeleton className="h-32 w-full" />
+        ) : (deliveries.data?.items ?? []).length === 0 ? (
+          <p className="text-sm text-muted-foreground">Nothing here.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Queued</TableHead>
+                  <TableHead>Movement</TableHead>
+                  <TableHead>Destination</TableHead>
+                  <TableHead className="text-right">Attempts</TableHead>
+                  <TableHead>State</TableHead>
+                  <TableHead className="text-right">Answer</TableHead>
+                  <TableHead>Next / done</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(deliveries.data?.items ?? []).map((d) => (
+                  <TableRow
+                    key={d.id}
+                    className="cursor-pointer"
+                    onClick={() => setOpenId(openId === d.id ? null : d.id)}
+                  >
+                    <TableCell className="num whitespace-nowrap text-xs">
+                      {new Date(d.createdAt).toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      {ENTRY_KIND[d.movement.kind]?.label ?? d.movement.kind}{" "}
+                      <span className="num">
+                        {d.movement.points > 0 ? `+${d.movement.points}` : d.movement.points}
+                      </span>
+                      {d.movement.reference ? (
+                        <div className="text-muted-foreground">{d.movement.reference}</div>
+                      ) : null}
+                    </TableCell>
+                    <TableCell className="max-w-[16rem] truncate text-xs text-muted-foreground">
+                      {d.destination ?? "—"}
+                    </TableCell>
+                    <TableCell className="num text-right">
+                      {d.attempts}
+                    </TableCell>
+                    <TableCell>
+                      <StatusPill tone={DELIVERY_STATUS[d.status].tone}>
+                        {DELIVERY_STATUS[d.status].label}
+                      </StatusPill>
+                    </TableCell>
+                    <TableCell className="num text-right text-xs">{d.responseCode ?? "—"}</TableCell>
+                    <TableCell className="num whitespace-nowrap text-xs text-muted-foreground">
+                      {d.deliveredAt
+                        ? new Date(d.deliveredAt).toLocaleString()
+                        : d.nextAttemptAt
+                          ? new Date(d.nextAttemptAt).toLocaleString()
+                          : "—"}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+
+        {openId && detail.data ? (
+          <div className="space-y-3 rounded-md border p-3 text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="font-medium">
+                {detail.data.eventType}{" "}
+                <StatusPill tone={DELIVERY_STATUS[detail.data.status].tone}>
+                  {DELIVERY_STATUS[detail.data.status].label}
+                </StatusPill>
+              </div>
+              {canRetry && detail.data.canRetry ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={retry.isPending}
+                  onClick={() =>
+                    retry.mutate(detail.data.id, {
+                      onSuccess: (r) =>
+                        r.requeued
+                          ? toast.success("Queued again. It will be tried within a minute.")
+                          : toast.info("It is no longer dead, so nothing was queued."),
+                      onError: (e) => toast.error(apiErrorMessage(e, "Could not retry it.")),
+                    })
+                  }
+                >
+                  <RefreshCw className="size-3.5" /> Retry
+                </Button>
+              ) : null}
+            </div>
+
+            <dl className="grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
+              <Meta label="Event id" value={detail.data.eventId} />
+              <Meta label="Ledger entry" value={detail.data.entryId} />
+              <Meta label="Destination" value={detail.data.destination ?? "—"} />
+              <Meta label="Signed with" value={`${detail.data.signature.header} (${detail.data.signature.scheme})`} />
+              <Meta label="Payload SHA-256" value={detail.data.payload.sha256 ?? "not sent yet"} />
+              <Meta label="Fields sent" value={detail.data.payload.fields.join(", ")} />
+              <Meta label="Queue job" value={detail.data.jobId ?? "—"} />
+              <Meta
+                label="Attempts"
+                value={`${detail.data.attempts} (up to ${detail.data.maxAttempts} per queueing${
+                  detail.data.manualRetries ? `, retried by hand ${detail.data.manualRetries}×` : ""
+                })`}
+              />
+            </dl>
+            {detail.data.lastError ? (
+              <p className="text-xs text-rose-600 dark:text-rose-400">{detail.data.lastError}</p>
+            ) : null}
+
+            {detail.data.attemptLog.length ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Attempted</TableHead>
+                    <TableHead className="text-right">Answer</TableHead>
+                    <TableHead className="text-right">Took</TableHead>
+                    <TableHead>Reason</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {detail.data.attemptLog.map((a) => (
+                    <TableRow key={a.at}>
+                      <TableCell className="num whitespace-nowrap text-xs">
+                        {new Date(a.at).toLocaleString()}
+                      </TableCell>
+                      <TableCell className="num text-right text-xs">{a.responseCode ?? "—"}</TableCell>
+                      <TableCell className="num text-right text-xs">{a.durationMs} ms</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {a.error ?? "Delivered"}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : null}
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function Meta({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="break-all font-mono">{value}</dd>
     </div>
   );
 }
