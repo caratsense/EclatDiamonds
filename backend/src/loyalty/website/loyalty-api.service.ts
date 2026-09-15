@@ -4,9 +4,10 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { Prisma } from '@prisma/client';
+import { LoyaltyWebhookDelivery, Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit.service';
@@ -14,7 +15,7 @@ import { AuthUser } from '../../common/auth-user';
 import { StoreScopeService } from '../../common/store-scope.service';
 import { CredentialCrypto } from '../../integration/framework/credential-crypto';
 import { normalizeIndianMobile } from '../../common/contact.util';
-import { fetchJson } from '../../integrations/integrations.util';
+import { backoffMs, JobContext, JobsService } from '../../jobs/jobs.service';
 import { SIGNATURE_HEADER, signWebhook } from './webhook-signature';
 
 /**
@@ -66,8 +67,27 @@ export const LOYALTY_API_PROVIDER_CODE = 'loyalty_website';
 /** So a key is identifiable in a log or a support ticket without being usable. */
 const KEY_PREFIX = 'cs_loy_';
 
-/** Failed webhook announcements are retried this many times, then left alone. */
+/** An announcement is attempted this many times, then it is dead until a person retries it. */
 export const WEBHOOK_MAX_ATTEMPTS = 5;
+
+/** The durable job that carries one announcement attempt. */
+export const LOYALTY_WEBHOOK_JOB = 'loyalty.webhook';
+
+const WEBHOOK_EVENT = 'loyalty.movement';
+const WEBHOOK_TIMEOUT_MS = 8000;
+/** Enough history to see a pattern in; a delivery retried for months stays small. */
+const ATTEMPT_LOG_LIMIT = 20;
+const DELIVERY_STATUSES = ['pending', 'delivered', 'failed', 'dead'] as const;
+
+/**
+ * What an announcement body carries, by NAME. The detail view lists these
+ * instead of the body, so a screen can say what the website was sent without
+ * holding a customer's phone number in a log.
+ */
+const WEBHOOK_FIELDS = [
+  'event', 'eventId', 'entryId', 'member.phone', 'member.tier', 'kind', 'points',
+  'balance', 'amount', 'reference', 'reason', 'source', 'storeId', 'at',
+];
 
 export interface LoyaltyApiAuth {
   organisationId: string;
@@ -94,7 +114,7 @@ export interface ProgrammeSettings {
 }
 
 @Injectable()
-export class LoyaltyApiService {
+export class LoyaltyApiService implements OnModuleInit {
   private readonly log = new Logger(LoyaltyApiService.name);
 
   constructor(
@@ -102,7 +122,12 @@ export class LoyaltyApiService {
     private readonly audit: AuditService,
     private readonly scope: StoreScopeService,
     private readonly crypto: CredentialCrypto,
+    private readonly jobs: JobsService,
   ) {}
+
+  onModuleInit(): void {
+    this.jobs.register(LOYALTY_WEBHOOK_JOB, (payload, ctx) => this.deliver(payload, ctx));
+  }
 
   /* ======================================================== the credential */
 
@@ -813,10 +838,17 @@ export class LoyaltyApiService {
       throw e;
     }
 
-    // Announced AFTER the transaction commits, deliberately. Posting inside it
-    // would hold a row lock open for the length of somebody else's HTTP request,
-    // and would announce a movement that a later rollback un-did.
-    void this.announce(auth.organisationId, created.id).catch(() => undefined);
+    // Queued AFTER the transaction commits, deliberately: queuing inside it would
+    // announce a movement a later rollback un-did. The website is contacted by
+    // the job queue, never on this request. A queue insert that fails here is
+    // picked up by the sweep, so it must not fail a movement that succeeded.
+    await this.queueAnnouncement(auth.organisationId, created.id).catch((err) =>
+      this.log.warn(
+        `Could not queue the announcement of ${created.id}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      ),
+    );
 
     return {
       idempotent: false as const,
@@ -963,31 +995,109 @@ export class LoyaltyApiService {
   /* =========================================================== the webhook */
 
   /**
-   * Announce one entry to the tenant's endpoint, signed.
+   * Put one entry's announcement on the durable queue.
    *
-   * Never throws to its caller: a points movement that succeeded must not be
-   * reported as failed because somebody else's web server was down. The outcome
-   * is written onto the entry instead, and the sweep below retries it.
+   * Idempotent: the delivery row is unique per (tenant, entry, event), so
+   * queuing the same movement twice — a replayed call, the sweep overlapping
+   * the request that made it — finds the first row and queues nothing.
    */
-  async announce(organisationId: string, entryId: string): Promise<'sent' | 'skipped' | 'failed'> {
-    const entry = await this.prisma.loyaltyLedgerEntry.findFirst({
-      where: { id: entryId, organisationId },
-      select: {
-        id: true,
-        kind: true,
-        points: true,
-        balanceAfter: true,
-        amount: true,
-        reference: true,
-        reason: true,
-        source: true,
-        storeId: true,
-        createdAt: true,
-        webhookAttempts: true,
-        account: { select: { phone: true, tier: true } },
+  async queueAnnouncement(
+    organisationId: string,
+    entryId: string,
+  ): Promise<'queued' | 'exists' | 'no_destination'> {
+    const integration = await this.prisma.integration.findFirst({
+      where: { organisationId, providerCode: LOYALTY_API_PROVIDER_CODE },
+      select: { config: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    const url = readSettings(asRecord(integration?.config)).webhookUrl;
+    if (!url) {
+      // Announcements are off. Marked sent-with-no-destination so the sweep does
+      // not retry for ever; the ledger endpoint remains the tenant's way to read
+      // movements, and a tenant with no URL has chosen to pull rather than be
+      // pushed to.
+      await this.prisma.loyaltyLedgerEntry.updateMany({
+        where: { id: entryId, organisationId, webhookedAt: null },
+        data: { webhookedAt: new Date(), webhookError: null },
+      });
+      return 'no_destination';
+    }
+
+    let delivery: { id: string };
+    try {
+      delivery = await this.prisma.loyaltyWebhookDelivery.create({
+        data: {
+          organisationId,
+          entryId,
+          eventType: WEBHOOK_EVENT,
+          destination: redactUrl(url),
+          nextAttemptAt: new Date(),
+        },
+        select: { id: true },
+      });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        return 'exists';
+      }
+      throw err;
+    }
+    await this.enqueueDelivery(organisationId, delivery.id);
+    return 'queued';
+  }
+
+  private async enqueueDelivery(organisationId: string, deliveryId: string, keySuffix = '') {
+    const job = await this.jobs.enqueue({
+      kind: LOYALTY_WEBHOOK_JOB,
+      organisationId,
+      payload: { deliveryId },
+      idempotencyKey: `${LOYALTY_WEBHOOK_JOB}:${organisationId}:${deliveryId}${keySuffix}`,
+      maxAttempts: WEBHOOK_MAX_ATTEMPTS,
+    });
+    await this.prisma.loyaltyWebhookDelivery.update({
+      where: { id: deliveryId },
+      data: { jobId: job.id },
+    });
+  }
+
+  /**
+   * One delivery attempt, run by the job queue.
+   *
+   * Delivered means the destination answered 2xx and nothing else — a redirect
+   * is not followed and is not a delivery. Every other outcome is recorded on the
+   * row (code, redacted reason, next retry) and then THROWN, so the queue's own
+   * backoff and dead state decide what happens next instead of a second retry
+   * policy living here.
+   */
+  private async deliver(payload: unknown, ctx: JobContext) {
+    const deliveryId = (payload as { deliveryId?: unknown } | null)?.deliveryId;
+    if (!ctx.organisationId || typeof deliveryId !== 'string') {
+      throw new Error('Loyalty webhook job is missing its tenant or delivery id.');
+    }
+    const organisationId = ctx.organisationId;
+    const delivery = await this.prisma.loyaltyWebhookDelivery.findFirst({
+      where: { id: deliveryId, organisationId },
+      include: {
+        entry: {
+          select: {
+            id: true,
+            kind: true,
+            points: true,
+            balanceAfter: true,
+            amount: true,
+            reference: true,
+            reason: true,
+            source: true,
+            storeId: true,
+            createdAt: true,
+            account: { select: { phone: true, tier: true } },
+          },
+        },
       },
     });
-    if (!entry) return 'skipped';
+    // Gone, or it already landed on an earlier execution of this job. The queue
+    // is at-least-once; that must not become twice.
+    if (!delivery) return { skipped: 'no_such_delivery' };
+    if (delivery.status === 'delivered') return { skipped: 'already_delivered' };
 
     const integration = await this.prisma.integration.findFirst({
       where: { organisationId, providerCode: LOYALTY_API_PROVIDER_CODE },
@@ -995,148 +1105,195 @@ export class LoyaltyApiService {
       orderBy: { createdAt: 'asc' },
     });
     const url = readSettings(asRecord(integration?.config)).webhookUrl;
+    const startedAt = Date.now();
+
+    let failure: string | null = null;
+    let responseCode: number | null = null;
+    let digest = delivery.payloadSha256;
+
+    const credential = integration?.credentials[0];
+    let secret: string | null = null;
     if (!integration || !url) {
-      // Announcements are off. Marked sent-with-no-destination so the sweep does
-      // not retry for ever; the ledger endpoint remains the tenant's way to read
-      // movements, and a tenant with no URL has chosen to pull rather than be
-      // pushed to.
-      await this.prisma.loyaltyLedgerEntry.update({
-        where: { id: entry.id },
-        data: { webhookedAt: new Date(), webhookError: null },
+      failure = 'No announcement URL is configured. Set one under Settings → Loyalty, then retry.';
+    } else if (!credential) {
+      failure =
+        'No signing secret is configured, so this movement cannot be announced. Issue one under Settings → Loyalty.';
+    } else {
+      try {
+        secret = this.crypto.decrypt(
+          {
+            ciphertext: credential.ciphertext,
+            iv: credential.iv,
+            authTag: credential.authTag,
+            keyVersion: credential.keyVersion,
+          },
+          { organisationId, integrationId: integration.id, kind: 'shared_secret' },
+        );
+      } catch {
+        failure = 'The stored signing secret could not be decrypted. It must be re-issued.';
+      }
+    }
+
+    if (url && secret) {
+      const { entry } = delivery;
+      const body = JSON.stringify({
+        event: WEBHOOK_EVENT,
+        eventId: delivery.id,
+        entryId: entry.id,
+        member: { phone: entry.account.phone, tier: entry.account.tier },
+        kind: entry.kind,
+        points: entry.points,
+        balance: entry.balanceAfter,
+        amount: entry.amount == null ? null : Number(entry.amount),
+        reference: entry.reference,
+        reason: entry.reason,
+        source: entry.source,
+        storeId: entry.storeId,
+        at: entry.createdAt.toISOString(),
       });
-      return 'skipped';
+      digest = createHash('sha256').update(body, 'utf8').digest('hex');
+      // Sign the EXACT string that goes on the wire. Re-serialising a parsed
+      // object produces bytes the receiver cannot reproduce, and the signature
+      // then fails for reasons nobody can find.
+      const signed = signWebhook(secret, body);
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            [SIGNATURE_HEADER]: signed.signature,
+            'x-caratos-event': WEBHOOK_EVENT,
+            'x-caratos-event-id': delivery.id,
+          },
+          body,
+          redirect: 'manual',
+          signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
+        });
+        responseCode = res.status;
+        // The response body is never read or kept: it is not ours, and a
+        // misbehaving receiver may echo things that must not land in a log.
+        await res.body?.cancel().catch(() => undefined);
+        if (res.status < 200 || res.status > 299) {
+          failure = `The destination answered HTTP ${res.status}.`;
+        }
+      } catch (err) {
+        failure = describeDeliveryError(err);
+      }
     }
 
-    const credential = integration.credentials[0];
-    if (!credential) {
-      await this.markWebhookFailure(
-        entry.id,
-        'No signing secret is configured, so this movement cannot be announced. Issue one under Settings → Loyalty.',
-      );
-      return 'failed';
+    const at = new Date();
+    const attemptLog = [
+      ...((Array.isArray(delivery.attemptLog) ? delivery.attemptLog : []) as Prisma.InputJsonValue[]),
+      { at: at.toISOString(), responseCode, error: failure, durationMs: at.getTime() - startedAt },
+    ].slice(-ATTEMPT_LOG_LIMIT);
+    const attempt = {
+      attempts: { increment: 1 },
+      lastAttemptAt: at,
+      responseCode,
+      payloadSha256: digest,
+      destination: url ? redactUrl(url) : delivery.destination,
+      attemptLog,
+    };
+
+    if (!failure) {
+      await this.prisma.loyaltyWebhookDelivery.update({
+        where: { id: delivery.id },
+        data: { ...attempt, status: 'delivered', lastError: null, deliveredAt: at, nextAttemptAt: null },
+      });
+      await this.prisma.loyaltyLedgerEntry.update({
+        where: { id: delivery.entryId },
+        data: { webhookedAt: at, webhookError: null, webhookAttempts: { increment: 1 } },
+      });
+      return { delivered: true, responseCode };
     }
 
-    let secret: string;
-    try {
-      secret = this.crypto.decrypt(
-        {
-          ciphertext: credential.ciphertext,
-          iv: credential.iv,
-          authTag: credential.authTag,
-          keyVersion: credential.keyVersion,
-        },
-        { organisationId, integrationId: integration.id, kind: 'shared_secret' },
-      );
-    } catch {
-      await this.markWebhookFailure(
-        entry.id,
-        'The stored signing secret could not be decrypted. It must be re-issued.',
-      );
-      return 'failed';
-    }
-
-    const body = JSON.stringify({
-      event: 'loyalty.movement',
-      entryId: entry.id,
-      member: { phone: entry.account.phone, tier: entry.account.tier },
-      kind: entry.kind,
-      points: entry.points,
-      balance: entry.balanceAfter,
-      amount: entry.amount == null ? null : Number(entry.amount),
-      reference: entry.reference,
-      reason: entry.reason,
-      source: entry.source,
-      storeId: entry.storeId,
-      at: entry.createdAt.toISOString(),
+    // The job was queued with WEBHOOK_MAX_ATTEMPTS, so this is the same verdict
+    // the queue reaches when the throw below lands.
+    const dead = ctx.attempt >= WEBHOOK_MAX_ATTEMPTS;
+    await this.prisma.loyaltyWebhookDelivery.update({
+      where: { id: delivery.id },
+      data: {
+        ...attempt,
+        status: dead ? 'dead' : 'failed',
+        lastError: failure,
+        nextAttemptAt: dead ? null : new Date(at.getTime() + backoffMs(ctx.attempt)),
+        deadAt: dead ? at : null,
+      },
     });
-    // Sign the EXACT string that goes on the wire. Re-serialising a parsed
-    // object produces bytes the receiver cannot reproduce, and the signature
-    // then fails for reasons nobody can find.
-    const signed = signWebhook(secret, body);
-
-    try {
-      await fetchJson(url, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          [SIGNATURE_HEADER]: signed.signature,
-          'x-caratos-event': 'loyalty.movement',
-        },
-        body,
-        timeoutMs: 8000,
-      });
-      await this.prisma.loyaltyLedgerEntry.update({
-        where: { id: entry.id },
-        data: {
-          webhookedAt: new Date(),
-          webhookError: null,
-          webhookAttempts: { increment: 1 },
-        },
-      });
-      return 'sent';
-    } catch (err) {
-      await this.markWebhookFailure(
-        entry.id,
-        err instanceof Error ? err.message : String(err),
-      );
-      return 'failed';
-    }
+    await this.prisma.loyaltyLedgerEntry.update({
+      where: { id: delivery.entryId },
+      data: { webhookError: failure, webhookAttempts: { increment: 1 } },
+    });
+    throw new Error(failure);
   }
 
   /**
-   * Retry announcements that have not landed.
+   * Queue the movements that were never queued.
    *
-   * Bounded at {@link WEBHOOK_MAX_ATTEMPTS}: an endpoint that has refused five
-   * times is misconfigured, not busy, and a webhook queue that retries for ever
-   * becomes a slow denial of service against the tenant's own website. The error
-   * stays on the entry so a screen can say which movements the website never
-   * heard about, and the ledger endpoint can still be read to catch up.
+   * The queue does the retrying now; this only closes the gap between a movement
+   * committing and its announcement being queued (a restart in that instant),
+   * picks up entries recorded before the queue existed, and re-queues a delivery
+   * row whose queue insert never happened. A movement that exhausted the old
+   * inline retries is left alone, as it was.
    */
   async retryAnnouncements(organisationId: string, limit = 50) {
-    const pending = await this.prisma.loyaltyLedgerEntry.findMany({
+    const entries = await this.prisma.loyaltyLedgerEntry.findMany({
       where: {
         organisationId,
         webhookedAt: null,
         webhookAttempts: { lt: WEBHOOK_MAX_ATTEMPTS },
+        webhookDeliveries: { none: {} },
       },
       orderBy: { createdAt: 'asc' },
       take: limit,
       select: { id: true },
     });
-    let sent = 0;
-    let failed = 0;
-    for (const { id } of pending) {
-      const outcome = await this.announce(organisationId, id);
-      if (outcome === 'sent') sent++;
-      else if (outcome === 'failed') failed++;
+    let queued = 0;
+    for (const { id } of entries) {
+      if ((await this.queueAnnouncement(organisationId, id)) === 'queued') queued++;
     }
-    return { considered: pending.length, sent, failed };
+    const orphans = await this.prisma.loyaltyWebhookDelivery.findMany({
+      where: { organisationId, status: 'pending', jobId: null },
+      take: limit,
+      select: { id: true },
+    });
+    for (const { id } of orphans) {
+      await this.enqueueDelivery(organisationId, id);
+      queued++;
+    }
+    return { considered: entries.length + orphans.length, queued };
   }
 
   /**
-   * Every tenant with movements the website has not heard about.
+   * Every tenant with a movement the queue has not been handed.
    *
-   * Driven by the scheduler. Not wrapped in `runOnce`: the work is idempotent by
-   * construction — `webhookedAt` is set on success, so a second replica sweeping
-   * the same minute finds nothing left to send, and at worst a movement is
-   * announced twice. A receiver already has to tolerate that (it is keyed by
-   * `entryId`), whereas a movement announced ZERO times is a stale balance on a
-   * customer-facing page.
+   * Driven by the scheduler. Not wrapped in `runOnce`: two replicas sweeping
+   * together both try to create the same delivery row and the unique index lets
+   * one of them.
    */
-  async sweepAnnouncements(): Promise<{ organisations: number; sent: number; failed: number }> {
-    const pending = await this.prisma.loyaltyLedgerEntry.groupBy({
-      by: ['organisationId'],
-      where: { webhookedAt: null, webhookAttempts: { lt: WEBHOOK_MAX_ATTEMPTS } },
-      _count: { _all: true },
-    });
-    let sent = 0;
-    let failed = 0;
-    for (const row of pending) {
-      // One tenant's unreachable website must not stop another's.
+  async sweepAnnouncements(): Promise<{ organisations: number; queued: number }> {
+    const [entries, orphans] = await Promise.all([
+      this.prisma.loyaltyLedgerEntry.findMany({
+        where: {
+          webhookedAt: null,
+          webhookAttempts: { lt: WEBHOOK_MAX_ATTEMPTS },
+          webhookDeliveries: { none: {} },
+        },
+        distinct: ['organisationId'],
+        select: { organisationId: true },
+      }),
+      this.prisma.loyaltyWebhookDelivery.findMany({
+        where: { status: 'pending', jobId: null },
+        distinct: ['organisationId'],
+        select: { organisationId: true },
+      }),
+    ]);
+    const organisations = [...new Set([...entries, ...orphans].map((r) => r.organisationId))];
+    let queued = 0;
+    for (const organisationId of organisations) {
+      // One tenant's broken configuration must not stop another's.
       try {
-        const res = await this.retryAnnouncements(row.organisationId);
-        sent += res.sent;
-        failed += res.failed;
+        queued += (await this.retryAnnouncements(organisationId)).queued;
       } catch (e) {
         this.log.error(
           `Loyalty announcement sweep failed for one organisation: ${
@@ -1145,17 +1302,113 @@ export class LoyaltyApiService {
         );
       }
     }
-    return { organisations: pending.length, sent, failed };
+    return { organisations: organisations.length, queued };
+  }
+
+  /* ======================================================= the delivery log */
+
+  /**
+   * The announcement log, newest first, with a count per state for the filters.
+   *
+   * Store-scoped the way the member list is: a movement at another branch is
+   * not this manager's to read, and a website movement with no branch is
+   * everybody's.
+   */
+  async deliveries(user: AuthUser, opts: { status?: string } = {}) {
+    if (opts.status && !(DELIVERY_STATUSES as readonly string[]).includes(opts.status)) {
+      throw new BadRequestException(`status must be one of ${DELIVERY_STATUSES.join(', ')}.`);
+    }
+    const where: Prisma.LoyaltyWebhookDeliveryWhereInput = {
+      organisationId: user.organisationId,
+      entry: { OR: [{ storeId: { in: user.storeIds } }, { storeId: null }] },
+    };
+    const [rows, grouped] = await Promise.all([
+      this.prisma.loyaltyWebhookDelivery.findMany({
+        where: { ...where, ...(opts.status ? { status: opts.status } : {}) },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: 100,
+        include: { entry: { select: DELIVERY_ENTRY } },
+      }),
+      this.prisma.loyaltyWebhookDelivery.groupBy({
+        by: ['status'],
+        where,
+        _count: { _all: true },
+      }),
+    ]);
+    const counts: Record<string, number> = { pending: 0, delivered: 0, failed: 0, dead: 0 };
+    for (const g of grouped) counts[g.status] = g._count._all;
+    return { counts, items: rows.map(deliveryView) };
+  }
+
+  /** One delivery, with its attempts and what was sent — described, never shown. */
+  async delivery(user: AuthUser, id: string) {
+    const row = await this.reachDelivery(user, id);
+    return {
+      ...deliveryView(row),
+      attemptLog: row.attemptLog ?? [],
+      payload: { event: row.eventType, fields: WEBHOOK_FIELDS, sha256: row.payloadSha256 },
+      signature: { header: SIGNATURE_HEADER, scheme: 'HMAC-SHA256 over "<t>.<raw body>"' },
+    };
+  }
+
+  /**
+   * Put a dead announcement back on the queue, once.
+   *
+   * Only a DEAD delivery can be retried: one still failing is already on a
+   * backoff, and one delivered must not be sent again. The claim is a
+   * conditional update, so several people pressing Retry together re-queue it
+   * once between them. The event id does not change, so the website can still
+   * recognise a repeat.
+   */
+  async retryDelivery(user: AuthUser, id: string) {
+    const row = await this.reachDelivery(user, id);
+    if (row.status !== 'dead') return { requeued: false, delivery: deliveryView(row) };
+
+    const claimed = await this.prisma.loyaltyWebhookDelivery.updateMany({
+      where: { id, organisationId: user.organisationId, status: 'dead' },
+      data: {
+        status: 'pending',
+        deadAt: null,
+        nextAttemptAt: new Date(),
+        manualRetries: { increment: 1 },
+        lastRetriedById: user.id,
+      },
+    });
+    if (claimed.count === 1) {
+      // The dead queue row is revived in place. If it has since been pruned, a
+      // fresh one is queued under a key naming this retry, so it cannot collide
+      // with the finished one.
+      const revived = row.jobId ? await this.jobs.retry(user.organisationId, row.jobId) : null;
+      if (!revived) {
+        await this.enqueueDelivery(user.organisationId, id, `:retry-${row.manualRetries + 1}`);
+      }
+      await this.audit.record(user, {
+        action: 'loyalty.webhook_retried',
+        entityType: 'LoyaltyWebhookDelivery',
+        entityId: id,
+        storeId: row.entry.storeId,
+        summary: `Re-queued a dead loyalty announcement to ${row.destination ?? 'the website'}.`,
+        metadata: { entryId: row.entryId, attempts: row.attempts },
+      });
+    }
+    return { requeued: claimed.count === 1, delivery: deliveryView(await this.reachDelivery(user, id)) };
+  }
+
+  /** Not found, whether it is another tenant's, another branch's or nobody's. */
+  private async reachDelivery(user: AuthUser, id: string) {
+    const row = await this.prisma.loyaltyWebhookDelivery.findFirst({
+      where: {
+        id,
+        organisationId: user.organisationId,
+        entry: { OR: [{ storeId: { in: user.storeIds } }, { storeId: null }] },
+      },
+      include: { entry: { select: DELIVERY_ENTRY } },
+    });
+    if (!row) throw new NotFoundException('No such announcement here.');
+    return row;
   }
 
   /* ============================================================== helpers */
-
-  private async markWebhookFailure(entryId: string, error: string) {
-    await this.prisma.loyaltyLedgerEntry.update({
-      where: { id: entryId },
-      data: { webhookError: error.slice(0, 500), webhookAttempts: { increment: 1 } },
-    });
-  }
 
   private async findByKey(organisationId: string, idempotencyKey: string) {
     const existing = await this.prisma.loyaltyLedgerEntry.findUnique({
@@ -1255,6 +1508,79 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+/** The movement a delivery log row shows beside itself. No phone number. */
+const DELIVERY_ENTRY = {
+  kind: true,
+  points: true,
+  reference: true,
+  source: true,
+  storeId: true,
+  createdAt: true,
+} satisfies Prisma.LoyaltyLedgerEntrySelect;
+
+/**
+ * A delivery as a screen may see it. Built field by field rather than spread,
+ * so a column added to the table later is not exposed by default.
+ */
+function deliveryView(
+  d: LoyaltyWebhookDelivery & {
+    entry: Prisma.LoyaltyLedgerEntryGetPayload<{ select: typeof DELIVERY_ENTRY }>;
+  },
+) {
+  return {
+    id: d.id,
+    /** The event id the website receives. Stable across every attempt. */
+    eventId: d.id,
+    eventType: d.eventType,
+    entryId: d.entryId,
+    movement: d.entry,
+    destination: d.destination,
+    status: d.status,
+    attempts: d.attempts,
+    maxAttempts: WEBHOOK_MAX_ATTEMPTS,
+    responseCode: d.responseCode,
+    lastError: d.lastError,
+    nextAttemptAt: d.nextAttemptAt,
+    payloadSha256: d.payloadSha256,
+    /** The queue row carrying it, for anyone following it into the job log. */
+    jobId: d.jobId,
+    manualRetries: d.manualRetries,
+    canRetry: d.status === 'dead',
+    createdAt: d.createdAt,
+    lastAttemptAt: d.lastAttemptAt,
+    deliveredAt: d.deliveredAt,
+    deadAt: d.deadAt,
+  };
+}
+
+/** Scheme, host and path. A receiver's token usually lives in the query string. */
+function redactUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}${u.pathname}`;
+  } catch {
+    return '(not a valid URL)';
+  }
+}
+
+/**
+ * A delivery failure worth showing a person, and nothing more.
+ *
+ * Node's fetch says "fetch failed" and puts the real reason on `cause`. Neither
+ * may carry a URL's query string into the log, so any URL in the text is cut
+ * back to its path.
+ */
+function describeDeliveryError(err: unknown): string {
+  const e = err as { name?: string; message?: string; cause?: { code?: string; message?: string } };
+  if (e?.name === 'TimeoutError' || e?.name === 'AbortError') {
+    return `The destination did not answer within ${WEBHOOK_TIMEOUT_MS / 1000} seconds.`;
+  }
+  const reason = e?.cause?.code ?? e?.cause?.message ?? e?.message ?? String(err);
+  return `Could not reach the destination: ${reason}`
+    .replace(/(https?:\/\/[^\s?#]+)[?#]\S*/gi, '$1')
+    .slice(0, 300);
 }
 
 /** A positive finite number, or null. Anything else in config is not a rate. */

@@ -38,8 +38,12 @@ export interface JobContext {
 /** Lease length. A job still 'running' with an older lock is presumed abandoned. */
 const LEASE_MINUTES = 15;
 
-/** Exponential backoff, capped. attempt 1 → 1m, 2 → 4m, 3 → 9m … capped at 1h. */
-function backoffMs(attempt: number): number {
+/**
+ * Exponential backoff, capped. attempt 1 → 1m, 2 → 4m, 3 → 9m … capped at 1h.
+ * Exported so a handler recording its own "next retry" states the same time the
+ * queue will actually use.
+ */
+export function backoffMs(attempt: number): number {
   return Math.min(attempt * attempt * 60_000, 60 * 60_000);
 }
 

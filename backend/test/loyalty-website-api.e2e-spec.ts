@@ -4,6 +4,7 @@ import request = require('supertest');
 import * as bcrypt from 'bcryptjs';
 
 import type { PrismaService } from '../src/prisma/prisma.service';
+import type { JobsService } from '../src/jobs/jobs.service';
 import {
   SIGNATURE_HEADER,
   signWebhook,
@@ -20,6 +21,7 @@ import {
  * OUTBOUND announcement is the one part that needs a reachable third party, and
  * it is exercised only against a deliberately unreachable URL — so what is
  * proven here is that it records its failure, not that it ever delivered.
+ * Delivery against a real local receiver is loyalty-webhook-deliveries.e2e-spec.
  *
  * What each group of tests is defending:
  *
@@ -90,6 +92,8 @@ const DEAD_WEBHOOK = 'https://127.0.0.1:9/loyalty-hook';
 
 async function teardown(prisma: PrismaService) {
   for (const org of [A.org, B.org]) {
+    await prisma.jobTask.deleteMany({ where: { organisationId: org } });
+    await prisma.loyaltyWebhookDelivery.deleteMany({ where: { organisationId: org } });
     await prisma.loyaltyLedgerEntry.deleteMany({ where: { organisationId: org } });
     await prisma.loyaltyAccount.deleteMany({ where: { organisationId: org } });
     await prisma.integrationCredential.deleteMany({ where: { organisationId: org } });
@@ -107,6 +111,7 @@ async function teardown(prisma: PrismaService) {
 describe('Loyalty website API (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
+  let jobs: JobsService;
 
   let hoT: string;
   let mgrT: string;
@@ -125,6 +130,7 @@ describe('Loyalty website API (e2e)', () => {
   beforeAll(async () => {
     const { AppModule } = await import('../src/app.module');
     const { PrismaService: P } = await import('../src/prisma/prisma.service');
+    const { JobsService: J } = await import('../src/jobs/jobs.service');
 
     const mod = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = mod.createNestApplication();
@@ -138,6 +144,7 @@ describe('Loyalty website API (e2e)', () => {
     );
     await app.init();
     prisma = app.get(P);
+    jobs = app.get(J);
     await teardown(prisma);
 
     const hash = await bcrypt.hash(PASSWORD, 10);
@@ -1109,7 +1116,10 @@ describe('Loyalty website API (e2e)', () => {
         .send({ phone: OTHER, amount: 1000, idempotencyKey: idem('dead-hook') })
         .expect(200);
 
+      // The announcement is on the job queue; run the queue rather than wait a
+      // minute for the scheduler to.
       await waitFor(async () => {
+        await jobs.drain(10);
         const entry = await prisma.loyaltyLedgerEntry.findUnique({
           where: { id: res.body.entryId },
         });
@@ -1130,25 +1140,46 @@ describe('Loyalty website API (e2e)', () => {
       expect(res.body.points).toBe(10);
     });
 
-    it('retries on demand and reports what it managed, not what it hoped', async () => {
+    it('queues on demand exactly the movements that were never queued, once', async () => {
+      // A restart between a movement committing and its announcement being
+      // queued leaves an entry with no delivery row. Made here by removing it
+      // before the queue has run.
+      const movement = await request(server())
+        .post('/public/loyalty/earn')
+        .set(withKey(keyA))
+        .send({ phone: OTHER, amount: 1000, idempotencyKey: idem('never-queued') })
+        .expect(200);
+      const entry = { id: movement.body.entryId as string };
+      await prisma.loyaltyWebhookDelivery.deleteMany({ where: { entryId: entry.id } });
+
       const res = await request(server())
         .post('/loyalty/programme/announcements/retry')
         .set(auth(hoT))
         .expect(200);
-      expect(res.body.sent).toBe(0);
-      expect(res.body.failed).toBeGreaterThan(0);
-      expect(res.body.considered).toBeGreaterThanOrEqual(res.body.failed);
+      expect(res.body.queued).toBe(1);
+      expect(res.body.considered).toBe(1);
+      expect(
+        await prisma.loyaltyWebhookDelivery.count({ where: { entryId: entry.id, status: 'pending' } }),
+      ).toBe(1);
+
+      // Asking again queues nothing: the movement is already on its way.
+      const again = await request(server())
+        .post('/loyalty/programme/announcements/retry')
+        .set(auth(hoT))
+        .expect(200);
+      expect(again.body.queued).toBe(0);
     });
 
-    it('gives up after a bounded number of attempts rather than hammering for ever', async () => {
+    it('does not revive a movement that exhausted its attempts before the queue existed', async () => {
       const { WEBHOOK_MAX_ATTEMPTS } = await import(
         '../src/loyalty/website/loyalty-api.service'
       );
-      const entry = await prisma.loyaltyLedgerEntry.findFirst({
+      const entry = await prisma.loyaltyLedgerEntry.findFirstOrThrow({
         where: { organisationId: A.org, webhookedAt: null, webhookError: { not: null } },
       });
+      await prisma.loyaltyWebhookDelivery.deleteMany({ where: { entryId: entry.id } });
       await prisma.loyaltyLedgerEntry.update({
-        where: { id: entry!.id },
+        where: { id: entry.id },
         data: { webhookAttempts: WEBHOOK_MAX_ATTEMPTS },
       });
 
@@ -1156,11 +1187,8 @@ describe('Loyalty website API (e2e)', () => {
         .post('/loyalty/programme/announcements/retry')
         .set(auth(hoT))
         .expect(200);
-      const ids = await prisma.loyaltyLedgerEntry.findMany({
-        where: { organisationId: A.org, webhookAttempts: { lt: WEBHOOK_MAX_ATTEMPTS }, webhookedAt: null },
-        select: { id: true },
-      });
-      expect(res.body.considered).toBe(ids.length);
+      expect(res.body.queued).toBe(0);
+      expect(await prisma.loyaltyWebhookDelivery.count({ where: { entryId: entry.id } })).toBe(0);
     });
 
     it('issues a signing secret, encrypted, and shows it exactly once', async () => {

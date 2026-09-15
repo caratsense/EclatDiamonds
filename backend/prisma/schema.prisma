@@ -557,6 +557,7 @@ model Organisation {
   payrollRuns                  PayrollRun[]
   loyaltyAccounts              LoyaltyAccount[]
   loyaltyLedgerEntries         LoyaltyLedgerEntry[]
+  loyaltyWebhookDeliveries     LoyaltyWebhookDelivery[]
   storeMessagingRoutes         StoreMessagingRoute[]
 }
 
@@ -5763,6 +5764,8 @@ model LoyaltyLedgerEntry {
   webhookAttempts Int       @default(0)
   webhookedAt     DateTime?
   webhookError    String?
+  /// Every announcement of this entry and what happened to it.
+  webhookDeliveries LoyaltyWebhookDelivery[]
 
   createdAt DateTime @default(now())
 
@@ -5771,6 +5774,62 @@ model LoyaltyLedgerEntry {
   @@index([organisationId, createdAt])
   /// The retry sweep's read: unannounced entries, oldest first.
   @@index([organisationId, webhookedAt, webhookAttempts])
+}
+
+/// One announcement of one ledger movement to the tenant's website, and
+/// everything that happened to it.
+///
+/// The entry's own webhook columns say only whether it landed. This says when,
+/// where, how many times, what the website answered and why it did not — which
+/// is what a person needs to fix a broken integration without reading logs. The
+/// sending itself rides the durable job queue, so retries, backoff and the dead
+/// state are the queue's, not a second policy.
+///
+/// Holds no body and no secret. `payloadSha256` identifies the exact bytes sent
+/// without keeping them.
+model LoyaltyWebhookDelivery {
+  /// Also the EVENT ID: sent as `eventId` and `x-caratos-event-id`, identical on
+  /// every attempt and every manual retry, so the receiver can drop a repeat.
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  /// The movement being announced — the replay reference.
+  entryId String
+  entry   LoyaltyLedgerEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  /// 'loyalty.movement'
+  eventType String
+
+  /// Scheme, host and path of the URL last attempted. Query string and any
+  /// credentials in the URL are removed: a receiver's token often lives there.
+  destination String?
+
+  /// 'pending' | 'delivered' | 'failed' | 'dead'. Delivered is set only on a 2xx.
+  status        String    @default("pending")
+  attempts      Int       @default(0)
+  responseCode  Int?
+  /// Redacted, and short. Never the response body.
+  lastError     String?
+  nextAttemptAt DateTime?
+  payloadSha256 String?
+  /// The JobTask carrying it.
+  jobId         String?
+  /// The last attempts, newest last: { at, responseCode, error, durationMs }.
+  attemptLog    Json?
+
+  manualRetries   Int     @default(0)
+  lastRetriedById String?
+
+  createdAt     DateTime  @default(now())
+  lastAttemptAt DateTime?
+  deliveredAt   DateTime?
+  deadAt        DateTime?
+  updatedAt     DateTime  @updatedAt
+
+  /// One announcement per movement per event. A replay finds this row.
+  @@unique([organisationId, entryId, eventType])
+  @@index([organisationId, status, createdAt])
 }
 
 // ============================================================================

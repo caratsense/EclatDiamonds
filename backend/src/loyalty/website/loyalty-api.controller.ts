@@ -369,15 +369,39 @@ export class LoyaltyProgrammeController {
   }
 
   /**
-   * Push the movements the website never heard about.
+   * Queue the movements the website was never told about.
    *
    * Manual as well as scheduled, because the person fixing a mistyped URL wants
-   * to know immediately whether it works now.
+   * them on their way now rather than at the next sweep.
    */
   @Roles('head_office')
   @Post('announcements/retry')
   @HttpCode(200)
   retry(@CurrentUser() user: AuthUser) {
     return this.api.retryAnnouncements(user.organisationId);
+  }
+
+  /** The announcement delivery log. Managers read it; nobody sees a secret. */
+  @Roles('store_manager', 'head_office')
+  @Get('webhooks')
+  deliveries(@CurrentUser() user: AuthUser, @Query('status') status?: string) {
+    return this.api.deliveries(user, { status: status || undefined });
+  }
+
+  @Roles('store_manager', 'head_office')
+  @Get('webhooks/:id')
+  delivery(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.api.delivery(user, id);
+  }
+
+  /**
+   * Re-send a dead announcement. Head office, like the bulk retry above: it
+   * posts customer data to a system outside CaratOS.
+   */
+  @Roles('head_office')
+  @Post('webhooks/:id/retry')
+  @HttpCode(200)
+  retryDelivery(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.api.retryDelivery(user, id);
   }
 }
