@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, CalendarOff, FileText, Play, Receipt } from "lucide-react";
+import { ArrowLeft, CalendarOff, FileText, History, Play, Receipt, RotateCw } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -23,11 +23,14 @@ import {
 import {
   DAY_KIND,
   DAY_NAMES,
+  type PayrollRun,
   currentPeriodKey,
   useGeneratePayslips,
   useIssuePayslip,
+  usePayrollRuns,
   usePayslip,
   usePayslips,
+  useRerunPayroll,
   useSetWeekOffs,
   useWeekOffRoster,
 } from "@/lib/queries/payroll";
@@ -60,6 +63,25 @@ export default function PayrollPage() {
   const slip = usePayslip(openSlip);
   const generate = useGeneratePayslips();
   const issue = useIssuePayslip();
+  const runs = usePayrollRuns({ periodKey: period, storeId: storeId || undefined }, canManage);
+  const rerun = useRerunPayroll();
+
+  const onRerun = (run: PayrollRun) => {
+    rerun.mutate(
+      { storeId: run.storeId, periodKey: run.periodKey },
+      {
+        onSuccess: (res) =>
+          res.status === "failed"
+            ? toast.error("The run did not finish.", { description: res.error ?? undefined })
+            : toast.success(`${res.generated} draft(s) for ${res.periodKey}`, {
+                description: res.differences
+                  ? `${res.differences} issued slip(s) no longer match the register.`
+                  : undefined,
+              }),
+        onError: (e) => toast.error(apiErrorMessage(e, "Could not run it.")),
+      },
+    );
+  };
 
   const toggleDay = (userId: string, current: number[], day: number) => {
     const next = current.includes(day)
@@ -203,6 +225,103 @@ export default function PayrollPage() {
       ) : null}
 
       {/* ---------------------------------------------------------------- */}
+      {canManage ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <History className="size-4" /> Payroll runs for {period}
+            </CardTitle>
+            <CardDescription>
+              Once a branch&rsquo;s month has closed there, CaratOS drafts its payslips and tells
+              the branch&rsquo;s managers and head office. It only drafts &mdash; nothing is issued
+              or paid automatically. Re-run a month after late corrections or if a run failed.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {runs.isLoading ? (
+              <Skeleton className="h-24 w-full" />
+            ) : (runs.data ?? []).length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No run for this month yet. The automatic one happens after the month closes, for
+                branches where somebody&rsquo;s pay is recorded.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Branch</TableHead>
+                      <TableHead>Started</TableHead>
+                      <TableHead>By</TableHead>
+                      <TableHead>State</TableHead>
+                      <TableHead className="text-right">Drafted</TableHead>
+                      <TableHead className="text-right">Skipped</TableHead>
+                      <TableHead className="text-right">Issued</TableHead>
+                      <TableHead />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(runs.data ?? []).map((r) => {
+                      const state = runState(r);
+                      return (
+                        <TableRow key={r.id}>
+                          <TableCell className="font-medium">
+                            {stores.find((s) => s.id === r.storeId)?.name ?? "—"}
+                          </TableCell>
+                          <TableCell className="num whitespace-nowrap text-xs">
+                            {new Date(r.startedAt).toLocaleString()}
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {r.trigger === "scheduler" ? "Automatic" : (r.triggeredByName ?? "—")}
+                          </TableCell>
+                          <TableCell>
+                            <StatusPill tone={state.tone}>{state.label}</StatusPill>
+                            {r.error ? (
+                              <div className="max-w-xs text-xs text-rose-600 dark:text-rose-400">
+                                {r.error}
+                              </div>
+                            ) : null}
+                          </TableCell>
+                          <TableCell className="num text-right">{r.generated}</TableCell>
+                          <TableCell
+                            className="num text-right text-muted-foreground"
+                            title={(r.skippedDetail ?? [])
+                              .map((s) => `${s.name}: ${s.reason}`)
+                              .join("\n")}
+                          >
+                            {r.skipped}
+                          </TableCell>
+                          <TableCell className="num text-right text-muted-foreground">
+                            {r.issued}
+                            {r.differences ? (
+                              <span className="text-rose-600 dark:text-rose-400">
+                                {" "}
+                                ({r.differences} changed)
+                              </span>
+                            ) : null}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => onRerun(r)}
+                              disabled={rerun.isPending}
+                            >
+                              <RotateCw className="size-3.5" /> Re-run
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {/* ---------------------------------------------------------------- */}
       {slips.isLoading ? (
         <Skeleton className="h-48 w-full" />
       ) : (slips.data ?? []).length === 0 ? (
@@ -273,6 +392,11 @@ export default function PayrollPage() {
                     <StatusPill tone={s.status === "issued" ? "good" : "wait"}>
                       {s.status === "issued" ? "Issued" : "Draft"}
                     </StatusPill>
+                    {s.difference ? (
+                      <StatusPill tone="bad" className="ml-1">
+                        Register changed
+                      </StatusPill>
+                    ) : null}
                   </TableCell>
                   <TableCell className="text-right">
                     {canManage && s.status === "draft" ? (
@@ -318,6 +442,37 @@ export default function PayrollPage() {
               <Figure label="Overtime" value={formatINR(slip.data.overtimeAmount)} />
             </div>
 
+            {slip.data.difference ? (
+              <div className="space-y-2 rounded-md border border-rose-500/40 bg-rose-500/5 p-3 text-sm">
+                <div className="font-medium">The register has changed since this slip was issued</div>
+                <p className="text-xs text-muted-foreground">
+                  The figures above are what was issued and stay as they are. Settle the difference
+                  separately.
+                  {slip.data.differenceDetectedAt
+                    ? ` Noticed ${new Date(slip.data.differenceDetectedAt).toLocaleString()}.`
+                    : ""}
+                </p>
+                <ul className="space-y-1 text-xs">
+                  {slip.data.difference.days.map((d) => (
+                    <li key={d.date} className="num">
+                      {d.date}: {d.was ? DAY_KIND[d.was.kind].label : "—"} &rarr;{" "}
+                      {DAY_KIND[d.now.kind].label}
+                    </li>
+                  ))}
+                  <li className="num">
+                    Present days: {slip.data.difference.presentDays.was} &rarr;{" "}
+                    {slip.data.difference.presentDays.now}
+                  </li>
+                  {slip.data.difference.overtimeMins.was !== slip.data.difference.overtimeMins.now ? (
+                    <li className="num">
+                      Overtime minutes: {slip.data.difference.overtimeMins.was} &rarr;{" "}
+                      {slip.data.difference.overtimeMins.now}
+                    </li>
+                  ) : null}
+                </ul>
+              </div>
+            ) : null}
+
             {slip.data.breakdown ? (
               <div className="overflow-x-auto">
                 <Table>
@@ -353,6 +508,18 @@ export default function PayrollPage() {
       ) : null}
     </div>
   );
+}
+
+/**
+ * How a run reads. A run still "started" long after it began did not finish —
+ * the process stopped part-way — and is shown as such so somebody re-runs it.
+ */
+function runState(r: PayrollRun): { label: string; tone: "good" | "bad" | "wait" } {
+  if (r.status === "completed") return { label: "Completed", tone: "good" };
+  if (r.status === "failed") return { label: "Failed", tone: "bad" };
+  return Date.now() - new Date(r.startedAt).getTime() > 30 * 60_000
+    ? { label: "Interrupted", tone: "bad" }
+    : { label: "Running", tone: "wait" };
 }
 
 function Figure({ label, value }: { label: string; value: string }) {
