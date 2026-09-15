@@ -17,6 +17,7 @@ import { WhatsAppService } from '../integrations/whatsapp.service';
 import { ChannelAdaptersService } from '../integrations/adapters/channel-adapters.service';
 import { JobContext, JobsService } from '../jobs/jobs.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 import {
   QueueOmnichannelMessageDto,
   RecordConsentDto,
@@ -61,10 +62,23 @@ interface TemplateMetadata {
   recordedAt: string;
 }
 
+/**
+ * A document to deliver with a message, by private storage key.
+ *
+ * Only ever built by server code (a quote PDF), never accepted from a request
+ * body: a caller who could name a key could name another record's document.
+ */
+export interface QueuedDocument {
+  storageKey: string;
+  filename: string;
+  mimeType: 'application/pdf';
+}
+
 interface MessageInstructions {
   purpose: MessagePurpose;
   templateAssetId?: string;
   templateComponents?: unknown[];
+  document?: QueuedDocument;
   queuedAt?: string;
   /** On a staff thread: the employee the notice is for, re-read at delivery. */
   staffUserId?: string;
@@ -135,6 +149,8 @@ export class OmnichannelService implements OnModuleInit {
      */
     private readonly adapters: ChannelAdaptersService,
     private readonly identity: IdentityService,
+    /** Reads a queued document's bytes at delivery time. */
+    private readonly storage: StorageService,
   ) {}
 
   onModuleInit(): void {
@@ -468,6 +484,7 @@ export class OmnichannelService implements OnModuleInit {
       templateComponents?: unknown[];
       idempotencyKey?: string;
     },
+    document?: QueuedDocument,
   ) {
     const org = await this.prisma.organisation.findUnique({
       where: { id: user.organisationId },
@@ -533,7 +550,7 @@ export class OmnichannelService implements OnModuleInit {
       templateAssetId,
       templateComponents: input.templateComponents,
       idempotencyKey: input.idempotencyKey,
-    } as QueueOmnichannelMessageDto);
+    } as QueueOmnichannelMessageDto, document);
   }
 
   /**
@@ -597,10 +614,18 @@ export class OmnichannelService implements OnModuleInit {
    * also discovered by sweepQueued, so adoption does not require rewriting
    * every producer in one release.
    */
-  async queue(user: AuthUser, conversationId: string, input: QueueOmnichannelMessageDto) {
+  async queue(
+    user: AuthUser,
+    conversationId: string,
+    input: QueueOmnichannelMessageDto,
+    document?: QueuedDocument,
+  ) {
     const conversation = await this.conversations.assertCanAccess(user, conversationId);
     if (!input.body?.trim() && !input.templateAssetId) {
       throw new BadRequestException('A message body or approved template is required.');
+    }
+    if (document && !document.storageKey.startsWith(`org/${user.organisationId}/`)) {
+      throw new BadRequestException('That document does not belong to this organisation.');
     }
     this.assertComponentsBounded(input.templateComponents);
 
@@ -641,6 +666,7 @@ export class OmnichannelService implements OnModuleInit {
       purpose: input.purpose,
       ...(template ? { templateAssetId: template.id } : {}),
       ...(input.templateComponents ? { templateComponents: input.templateComponents } : {}),
+      ...(document ? { document } : {}),
       queuedAt: now.toISOString(),
     };
 
@@ -657,6 +683,9 @@ export class OmnichannelService implements OnModuleInit {
             authorType: 'agent',
             authorUserId: user.id,
             body: input.body?.trim() || null,
+            // Never a URL: the document is private and is uploaded straight to
+            // the provider at delivery. The type is what the inbox shows.
+            ...(document ? { mediaType: 'document' } : {}),
             status: 'queued',
             payload: { omnichannel: instructions } as unknown as Prisma.InputJsonValue,
           },
@@ -681,7 +710,11 @@ export class OmnichannelService implements OnModuleInit {
             entityId: created.id,
             channel: conversation.channel,
             dedupeKey,
-            metadata: compactJson({ purpose: input.purpose, templateAssetId: template?.id }),
+            metadata: compactJson({
+              purpose: input.purpose,
+              templateAssetId: template?.id,
+              document: document?.filename,
+            }),
           },
         });
         return created;
@@ -1539,12 +1572,26 @@ export class OmnichannelService implements OnModuleInit {
     if (!template && !message.body?.trim()) {
       return this.failPermanently(message, 'content_missing', 'The queued message has no text to send.');
     }
-    if (message.mediaUrl || message.mediaType) {
+    if (!instructions.document && (message.mediaUrl || message.mediaType)) {
       return this.failPermanently(
         message,
         'media_not_supported',
         'WhatsApp media delivery is not connected yet; the attachment was not sent.',
       );
+    }
+    let documentBytes: Buffer | null = null;
+    if (instructions.document) {
+      documentBytes = await this.storage.readPrivate(
+        ctx.organisationId,
+        instructions.document.storageKey,
+      );
+      if (!documentBytes) {
+        return this.failPermanently(
+          message,
+          'attachment_missing',
+          'The document for this message is no longer stored. Send it again from its record.',
+        );
+      }
     }
 
     let recipient: string;
@@ -1574,7 +1621,26 @@ export class OmnichannelService implements OnModuleInit {
       storeId: message.conversation.storeId,
     };
 
-    const result = template
+    const result = instructions.document && documentBytes
+      ? await this.whatsapp.sendDocument(
+          ctx.organisationId,
+          recipient,
+          {
+            buffer: documentBytes,
+            filename: instructions.document.filename,
+            mimeType: instructions.document.mimeType,
+            caption: message.body?.trim() || undefined,
+          },
+          senderRoute,
+          template
+            ? {
+                name: template.name ?? '',
+                languageCode: template.metadata.languageCode,
+                components: instructions.templateComponents,
+              }
+            : undefined,
+        )
+      : template
       ? await this.whatsapp.sendTemplate(
           ctx.organisationId,
           recipient,
@@ -1809,13 +1875,24 @@ function deliveryJobKey(organisationId: string, messageId: string): string {
 function messageInstructions(value: unknown): MessageInstructions {
   const root = jsonObject(value);
   const raw = jsonObject(root.omnichannel);
+  const document = queuedDocument(raw.document);
   return {
     purpose: raw.purpose === 'marketing' ? 'marketing' : 'service',
     ...(typeof raw.templateAssetId === 'string' ? { templateAssetId: raw.templateAssetId } : {}),
     ...(Array.isArray(raw.templateComponents) ? { templateComponents: raw.templateComponents } : {}),
+    ...(document ? { document } : {}),
     ...(typeof raw.queuedAt === 'string' ? { queuedAt: raw.queuedAt } : {}),
     ...(typeof raw.staffUserId === 'string' ? { staffUserId: raw.staffUserId } : {}),
   };
+}
+
+function queuedDocument(value: unknown): QueuedDocument | null {
+  const raw = jsonObject(value);
+  return typeof raw.storageKey === 'string' &&
+    typeof raw.filename === 'string' &&
+    raw.mimeType === 'application/pdf'
+    ? { storageKey: raw.storageKey, filename: raw.filename, mimeType: 'application/pdf' }
+    : null;
 }
 
 function templateMetadata(value: unknown): TemplateMetadata {

@@ -10,13 +10,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatINR } from "@/lib/format";
 import {
+  approvalReasonLabel,
   useDecideQuote,
   usePendingQuoteApprovals,
   useQuoteApprovalSettings,
   useSaveQuoteApprovalSettings,
   type PendingQuoteApproval,
 } from "@/lib/queries/quotes";
-import { ROLE_RANK } from "@/lib/types";
+import { ROLE_LABELS, ROLE_RANK } from "@/lib/types";
 import { apiErrorMessage } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
@@ -79,13 +80,18 @@ export function QuoteApprovalsCard() {
 }
 
 function PendingRow({ row }: { row: PendingQuoteApproval }) {
+  const role = useSession((s) => s.role);
   const decide = useDecideQuote();
+  // A discount over this manager's own authority escalates past them. Say so
+  // here instead of offering an Approve that the server will refuse.
+  const needs = row.reasons?.find((r) => r.requiredRole)?.requiredRole;
+  const tooJunior = !!needs && ROLE_RANK[role] < ROLE_RANK[needs];
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
 
   const act = (approve: boolean) =>
     decide.mutate(
-      { id: row.id, approve, reason: approve ? undefined : reason.trim() },
+      { id: row.id, approve, reason: approve ? undefined : reason.trim(), revision: row.revision },
       {
         onSuccess: () => toast.success(`${row.ref} ${approve ? "approved" : "rejected"}`),
         onError: (e) => toast.error(apiErrorMessage(e, "Could not record the decision.")),
@@ -100,9 +106,27 @@ function PendingRow({ row }: { row: PendingQuoteApproval }) {
         </p>
         <p className="text-xs text-muted-foreground">
           <span className="font-semibold tabular-nums text-foreground">{formatINR(row.amount)}</span>
+          {row.discountPercent > 0 ? (
+            <span className="tabular-nums">
+              {` · ${row.discountPercent}% discount (${formatINR(row.discountAmount)})`}
+            </span>
+          ) : null}
           {row.requestedByName ? ` · asked by ${row.requestedByName}` : ""}
           {row.storeName ? ` · ${row.storeName}` : ""}
         </p>
+        {row.reasons?.length ? (
+          <ul className="mt-1 flex flex-wrap gap-1.5">
+            {row.reasons.map((r) => (
+              <li
+                key={r.code}
+                title={r.message}
+                className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300"
+              >
+                {approvalReasonLabel(r)}
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </div>
       {rejecting ? (
         <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
@@ -129,8 +153,14 @@ function PendingRow({ row }: { row: PendingQuoteApproval }) {
         </div>
       ) : (
         <div className="flex gap-2">
-          <Button size="sm" className="h-8" disabled={decide.isPending} onClick={() => act(true)}>
-            Approve
+          <Button
+            size="sm"
+            className="h-8"
+            disabled={decide.isPending || tooJunior}
+            title={tooJunior && needs ? `Needs ${ROLE_LABELS[needs]} approval` : undefined}
+            onClick={() => act(true)}
+          >
+            {tooJunior && needs ? `Needs ${ROLE_LABELS[needs]}` : "Approve"}
           </Button>
           <Button size="sm" variant="outline" className="h-8" disabled={decide.isPending} onClick={() => setRejecting(true)}>
             Reject

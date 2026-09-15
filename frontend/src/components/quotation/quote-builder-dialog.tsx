@@ -55,7 +55,7 @@ import {
   useUploadQuotePhoto,
 } from "@/lib/queries/quotes";
 import { useMetalRates } from "@/lib/queries/integrations";
-import { cn, normalizeIndianMobile } from "@/lib/utils";
+import { apiErrorMessage, cn, normalizeIndianMobile } from "@/lib/utils";
 import {
   StoreScopeField,
   useStoreScope,
@@ -146,6 +146,8 @@ export function QuoteBuilderDialog({
   const [repairDetails, setRepairDetails] = useState("");
   const [remarks, setRemarks] = useState("");
   const [repairMaking, setRepairMaking] = useState("");
+  /** One discount % off making + diamonds. Gold is never discounted. */
+  const [discount, setDiscount] = useState("");
 
   // Reference photos (uploaded after the quote id is known)
   const [refFiles, setRefFiles] = useState<File[]>([]);
@@ -250,30 +252,36 @@ export function QuoteBuilderDialog({
     setView(next);
   }
 
+  const discountNum = Math.min(Math.max(toNumber(discount) ?? 0, 0), 100);
   const preview = useMemo(() => {
     // Kaccha estimates carry no GST — mirror the server (GST = 0, grand =
-    // taxable) for both Sale and Repair modes.
+    // taxable) for both Sale and Repair modes. The discount comes off making +
+    // diamonds before tax, exactly as the server computes it.
     const rate = isKaccha ? 0 : GST_RATE;
     if (mode === "repair") {
       const makingV = repairMakingNum;
-      const taxable = makingV;
+      const discountV = Math.round(makingV * discountNum) / 100;
+      const taxable = makingV - discountV;
       const gst = taxable * rate;
       return {
         metal: 0,
         making: makingV,
         stones: 0,
+        discount: discountV,
         taxable,
         gst,
         grand: taxable + gst,
       };
     }
     const metal = weightNum * goldRate;
-    const taxable = metal + makingNum + diamondsTotal;
+    const discountV = Math.round((makingNum + diamondsTotal) * discountNum) / 100;
+    const taxable = metal + makingNum + diamondsTotal - discountV;
     const gst = taxable * rate;
     return {
       metal,
       making: makingNum,
       stones: diamondsTotal,
+      discount: discountV,
       taxable,
       gst,
       grand: taxable + gst,
@@ -286,6 +294,7 @@ export function QuoteBuilderDialog({
     goldRate,
     makingNum,
     diamondsTotal,
+    discountNum,
   ]);
 
   const busy =
@@ -346,6 +355,7 @@ export function QuoteBuilderDialog({
     setRepairDetails("");
     setRemarks("");
     setRepairMaking("");
+    setDiscount("");
     setRefFiles([]);
     setChartOpen(false);
     setChartFile(null);
@@ -468,6 +478,11 @@ export function QuoteBuilderDialog({
       } · ${escapeHtml(storeLabel)}</p>
       <table><tbody>${rows}</tbody></table>
       <table class="tot" style="margin-top:16px"><tbody>
+        ${
+          preview.discount > 0
+            ? `<tr><td>Discount ${discountNum}%</td><td style="text-align:right">- ${formatINR(preview.discount)}</td></tr>`
+            : ""
+        }
         <tr><td>Taxable</td><td style="text-align:right">${formatINR(
           preview.taxable,
         )}</td></tr>
@@ -521,6 +536,11 @@ export function QuoteBuilderDialog({
       toast.error("Weight cannot be negative.");
       return;
     }
+    const discountValue = toNumber(discount);
+    if (discount.trim() && (discountValue == null || discountValue < 0 || discountValue > 100)) {
+      toast.error("Discount must be a percentage between 0 and 100.");
+      return;
+    }
     const lines = buildLines();
     // Guard: at least one line must carry a weight or a price before saving.
     if (lines.length === 0) {
@@ -541,6 +561,7 @@ export function QuoteBuilderDialog({
         isKaccha: isKaccha || undefined,
         remarks: mode === "repair" ? remarks.trim() || undefined : undefined,
         grossWeightG: mode === "repair" ? toNumber(grossWeight) : undefined,
+        discountPercent: discountValue || undefined,
         lines,
       });
 
@@ -571,8 +592,8 @@ export function QuoteBuilderDialog({
       }
       reset();
       onOpenChange(false);
-    } catch {
-      toast.error("Could not create the quote. Please try again.");
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Could not create the quote. Please try again."));
     }
   }
 
@@ -1210,6 +1231,24 @@ export function QuoteBuilderDialog({
             </>
           ) : null}
 
+          {/* Discount — judged on the server against the role's cap. Above it,
+              the quote waits for a manager before it can be sent. */}
+          <div className="grid gap-1.5">
+            <Label htmlFor="qb-discount">Discount % (on making + diamonds)</Label>
+            <Input
+              id="qb-discount"
+              inputMode="decimal"
+              value={discount}
+              onChange={(e) => setDiscount(e.target.value.replace(/[^0-9.]/g, ""))}
+              placeholder="0"
+              className="w-32"
+            />
+            <p className="text-xs text-muted-foreground">
+              Gold is never discounted. Above your limit, a manager must approve
+              before the quote can be sent.
+            </p>
+          </div>
+
           {/* Live totals preview */}
           <div className="rounded-lg bg-muted/50 p-3">
             <p className="mb-1.5 text-xs font-medium text-muted-foreground">
@@ -1225,6 +1264,9 @@ export function QuoteBuilderDialog({
               ) : (
                 <PreviewRow label="Making / labour" value={preview.making} />
               )}
+              {preview.discount > 0 ? (
+                <PreviewRow label={`Discount ${discountNum}%`} value={-preview.discount} />
+              ) : null}
               <Separator className="my-1" />
               <PreviewRow label="Taxable value" value={preview.taxable} />
               <PreviewRow

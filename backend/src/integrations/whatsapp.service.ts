@@ -145,10 +145,85 @@ export class WhatsAppService {
     );
   }
 
+  /**
+   * Send a document (a quote PDF) as a WhatsApp document message.
+   *
+   * The bytes are uploaded to the provider's own media store first and the
+   * message refers to the returned media id. Nothing is handed to Meta as a
+   * link, so no public or long-lived URL to the file ever has to exist.
+   *
+   * With a template, the document rides in the template's DOCUMENT header —
+   * the only way a document can open a conversation outside the 24-hour
+   * window. The template must actually have such a header; if it does not,
+   * the provider refuses and that refusal is what gets reported.
+   */
+  async sendDocument(
+    organisationId: string,
+    to: string,
+    document: { buffer: Buffer; filename: string; mimeType: string; caption?: string },
+    route?: SenderRoute,
+    template?: { name: string; languageCode: string; components?: unknown[] },
+  ): Promise<WhatsAppSendResult> {
+    return this.send(
+      organisationId,
+      to,
+      async (sender) => {
+        const form = new FormData();
+        form.append('messaging_product', 'whatsapp');
+        form.append('type', document.mimeType);
+        form.append(
+          'file',
+          new Blob([new Uint8Array(document.buffer)], { type: document.mimeType }),
+          document.filename,
+        );
+        const res = await fetch(
+          `${this.graphBase}/${this.apiVersion}/${sender.phoneNumberId}/media`,
+          {
+            method: 'POST',
+            headers: { authorization: `Bearer ${sender.accessToken}` },
+            body: form,
+            signal: AbortSignal.timeout(30_000),
+          },
+        );
+        const uploaded = (await res.json().catch(() => null)) as
+          | { id?: string; error?: { message?: string } }
+          | null;
+        if (!res.ok || !uploaded?.id) {
+          throw new Error(
+            `HTTP ${res.status}: media upload refused${uploaded?.error?.message ? ` — ${uploaded.error.message}` : ''}`,
+          );
+        }
+        const media = { id: uploaded.id, filename: document.filename };
+        if (template) {
+          return {
+            type: 'template',
+            template: {
+              name: template.name,
+              language: { code: template.languageCode },
+              components: [
+                { type: 'header', parameters: [{ type: 'document', document: media }] },
+                ...((template.components ?? []) as { type?: string }[]).filter(
+                  (component) => component?.type !== 'header',
+                ),
+              ],
+            },
+          };
+        }
+        return {
+          type: 'document',
+          document: { ...media, ...(document.caption ? { caption: document.caption } : {}) },
+        };
+      },
+      route,
+    );
+  }
+
   private async send(
     organisationId: string,
     to: string,
-    payload: Record<string, unknown>,
+    payload:
+      | Record<string, unknown>
+      | ((sender: { phoneNumberId: string; accessToken: string }) => Promise<Record<string, unknown>>),
     route?: SenderRoute,
   ): Promise<WhatsAppSendResult> {
     const recipient = this.normalise(to);
@@ -194,6 +269,12 @@ export class WhatsAppService {
       };
     }
     try {
+      // A builder runs only past the allowlist and credential checks above, so
+      // a media upload is never attempted for a send that would not happen.
+      const body =
+        typeof payload === 'function'
+          ? await payload({ phoneNumberId: sender.phoneNumberId, accessToken: sender.accessToken })
+          : payload;
       const res = await fetchJson(
         `${this.graphBase}/${this.apiVersion}/${sender.phoneNumberId}/messages`,
         {
@@ -202,7 +283,7 @@ export class WhatsAppService {
             authorization: `Bearer ${sender.accessToken}`,
             'content-type': 'application/json',
           },
-          body: JSON.stringify({ messaging_product: 'whatsapp', to: recipient, ...payload }),
+          body: JSON.stringify({ messaging_product: 'whatsapp', to: recipient, ...body }),
         },
       );
       const messageId = res?.messages?.[0]?.id as string | undefined;

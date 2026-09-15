@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
+  IsInt,
   IsNumber,
   IsOptional,
   IsString,
@@ -43,4 +44,14 @@ export class DecideQuoteDto {
   @IsString()
   @MaxLength(500)
   reason?: string;
+
+  /**
+   * The quote revision the manager was looking at. When given and the quote has
+   * moved on, the decision is refused rather than applied to content nobody saw.
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  revision?: number;
 }

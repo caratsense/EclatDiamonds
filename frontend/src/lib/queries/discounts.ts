@@ -43,6 +43,8 @@ export interface DiscountLimit {
   diamondPercent: number | null;
   /** Max making discount (%) this role may self-approve. Null until configured. */
   makingPercent: number | null;
+  /** Max single discount (%) on a QUOTE (making + diamonds) before approval. */
+  quotePercent: number | null;
 }
 
 /** GET /discounts — store-scoped, role-aware list of discount requests. */
@@ -137,6 +139,7 @@ export function useDiscountLimits() {
           role: l.role as Role,
           diamondPercent: (l.maxDiamondPercent ?? l.maxPercent ?? null) as number | null,
           makingPercent: (l.maxMakingPercent ?? l.maxPercent ?? null) as number | null,
+          quotePercent: (l.maxPercent ?? null) as number | null,
         }),
       );
     },

@@ -10,6 +10,7 @@ import {
   IsOptional,
   IsString,
   Matches,
+  Max,
   MaxLength,
   Min,
   ValidateNested,
@@ -122,11 +123,73 @@ export class CreateQuoteDto {
   @IsString({ each: true })
   redeemableStoreIds?: string[];
 
+  /**
+   * One discount percentage off making + diamond/stone charges. Gold is never
+   * discounted. Above the pricer's DiscountLimit cap, the quote cannot leave
+   * without approval.
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  discountPercent?: number;
+
   @IsArray()
   @ArrayNotEmpty()
   @ValidateNested({ each: true })
   @Type(() => QuoteLineDto)
   lines!: QuoteLineDto[];
+}
+
+/**
+ * Body for PATCH /quotes/:id — re-price a quote. Every accepted edit bumps the
+ * revision and throws away any approval, so the fields are limited to what a
+ * price is made of plus its validity. Who it is for and where it was raised
+ * are not editable here.
+ */
+export class UpdateQuoteDto {
+  @IsOptional()
+  @IsArray()
+  @ArrayNotEmpty()
+  @ValidateNested({ each: true })
+  @Type(() => QuoteLineDto)
+  lines?: QuoteLineDto[];
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  discountPercent?: number;
+
+  /** yyyy-mm-dd, or empty to clear. */
+  @IsOptional()
+  @Matches(/^(\d{4}-\d{2}-\d{2})?$/)
+  validUntil?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  remarks?: string;
+}
+
+/**
+ * Body for POST /quotes/:id/send-pdf. Both optional: without a template the
+ * PDF goes as a plain document, which WhatsApp only allows inside the 24-hour
+ * customer-care window. Outside it, name an approved template whose header is a
+ * DOCUMENT and the PDF rides in that header.
+ */
+export class SendQuotePdfDto {
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9_]{1,512}$/)
+  templateName?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z]{2,3}(?:_[A-Z]{2})?$/)
+  languageCode?: string;
 }
 
 /** Optional label carried alongside a quote photo upload (multipart body). */

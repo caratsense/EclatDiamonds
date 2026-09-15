@@ -76,6 +76,7 @@
     "mammoth": "^1.11.0",
     "mssql": "^12.5.5",
     "nodemailer": "^10.0.1",
+    "pdf-lib": "1.17.1",
     "pdf-parse": "^1.1.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2"

@@ -105,6 +105,10 @@ export interface Quote {
   validUntil: string;
   assignedRep: string;
   lines: QuoteLine[];
+  /** One % off making + diamonds (never gold). Absent on mock rows. */
+  discountPercent?: number;
+  /** Content revision; every edit bumps it and withdraws approval. */
+  revision?: number;
 }
 
 /** Per-line gold metal value. */
@@ -121,6 +125,7 @@ export interface QuoteTotals {
   metalValue: number;
   makingCharges: number;
   stoneCharges: number;
+  discount: number;
   taxable: number;
   gst: number;
   grandTotal: number;
@@ -134,12 +139,16 @@ export function computeQuoteTotals(quote: Quote): QuoteTotals {
   const metalValue = lines.reduce((s, l) => s + lineMetalValue(l), 0);
   const makingCharges = lines.reduce((s, l) => s + l.makingCharges, 0);
   const stoneCharges = lines.reduce((s, l) => s + l.stoneCharges, 0);
-  const taxable = metalValue + makingCharges + stoneCharges;
+  // Mirrors the server: the discount comes off making + stones, never gold.
+  const discount =
+    Math.round((makingCharges + stoneCharges) * (quote.discountPercent ?? 0)) / 100;
+  const taxable = metalValue + makingCharges + stoneCharges - discount;
   const gst = taxable * GST_RATE;
   return {
     metalValue,
     makingCharges,
     stoneCharges,
+    discount,
     taxable,
     gst,
     grandTotal: taxable + gst,

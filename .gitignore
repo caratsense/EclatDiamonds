@@ -29,6 +29,8 @@ data_sync/EclatSync/*.log
 # ── Runtime uploads ───────────────────────────────────────────
 backend/uploads/
 uploads/
+backend/uploads-private/
+uploads-private/
 
 # ── Logs ──────────────────────────────────────────────────────
 *.log

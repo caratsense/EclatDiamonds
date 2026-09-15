@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { createHash } from 'crypto';
 import { createReadStream } from 'fs';
 import { mkdir, readFile, stat, writeFile } from 'fs/promises';
-import { isAbsolute, join, normalize, sep } from 'path';
+import { dirname, isAbsolute, join, normalize, sep } from 'path';
 import { Readable } from 'stream';
 import { encodeKey, signRequest } from './sigv4';
 
@@ -385,6 +385,77 @@ export class StorageService {
     } catch {
       return null;
     }
+  }
+
+  /* ------------------------------------------------ private documents */
+
+  /**
+   * Root for documents that must never have a public address.
+   *
+   * Deliberately NOT under `baseDir`: main.ts mounts `baseDir` at `/uploads`
+   * for anyone holding a path, and a customer's priced quote is not a catalogue
+   * image. Nor does this go to R2 — that bucket is public-read in this
+   * deployment (see `mediaUrl`), so an object there has a permanent public URL
+   * whether or not we hand it out. Bytes stored here leave the server only
+   * through an authorised route, or as an upload straight to a provider.
+   *
+   * ponytail: server-local disk. Fine for one backend instance, and every
+   * document stored here today is regenerable from its database record. Add a
+   * private bucket (signed PUT/GET, as KnowledgeStorageService does) when there
+   * is more than one instance or the disk does not survive deploys.
+   */
+  get privateDir(): string {
+    const configured = this.config.get<string>('PRIVATE_UPLOAD_DIR');
+    if (configured) return isAbsolute(configured) ? configured : join(process.cwd(), configured);
+    return join(process.cwd(), 'uploads-private', 'documents');
+  }
+
+  /** Store a private document. Returns its key, never a URL. */
+  async savePrivate(
+    organisationId: string,
+    folder: string,
+    filename: string,
+    buffer: Buffer,
+  ): Promise<string> {
+    if (!organisationId) {
+      throw new Error('StorageService.savePrivate requires an organisationId to namespace the key');
+    }
+    const key = `org/${organisationId}/${folder}/${filename}`.replace(/[^a-zA-Z0-9._/-]/g, '_');
+    const target = this.privatePath(key);
+    if (!target) {
+      throw new Error('Refusing to store a private document outside a private, non-public root.');
+    }
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, buffer);
+    return key;
+  }
+
+  /**
+   * Read a private document back, for its own organisation only. Null for a key
+   * that belongs to another tenant, escapes the root, or no longer exists.
+   */
+  async readPrivate(organisationId: string, key: string): Promise<Buffer | null> {
+    if (!organisationId || !key.startsWith(`org/${organisationId}/`)) return null;
+    const target = this.privatePath(key);
+    if (!target) return null;
+    try {
+      return await readFile(target);
+    } catch {
+      return null;
+    }
+  }
+
+  private privatePath(key: string): string | null {
+    const root = normalize(this.privateDir);
+    // A private root inside the public one would be served at /uploads to
+    // anyone with the path — refuse to use it rather than store in the open.
+    const publicRoot = normalize(this.baseDir);
+    if (root === publicRoot || root.startsWith(publicRoot + sep)) {
+      this.logger.error('PRIVATE_UPLOAD_DIR is inside UPLOAD_DIR, which is served publicly; refusing it.');
+      return null;
+    }
+    const target = normalize(join(root, key));
+    return target.startsWith(root + sep) ? target : null;
   }
 
   /**

@@ -18,7 +18,8 @@ import {
   SetDiscountLimitDto,
 } from './dto/discount.dto';
 
-type Caps = { diamond: number; making: number };
+/** Per-role caps. `overall` is DiscountLimit.maxPercent, the cap on a quote discount. */
+type Caps = { diamond: number; making: number; overall: number };
 
 /**
  * Module 15 role-aware serializer. Cost price and margin are surfaced ONLY to
@@ -266,6 +267,34 @@ export class DiscountsService {
     return { withinOwn, requiredRole };
   }
 
+  /**
+   * The cap on a single overall discount percentage — what a quote carries.
+   *
+   * Reads the same DiscountLimit rows, per role with a store row overriding the
+   * global one, and escalates the same way; it answers from `maxPercent` rather
+   * than the diamond/making split, because a quote discount is one figure taken
+   * off making and diamond together (never gold).
+   *
+   * Takes the role explicitly: a quote is judged against whoever PRICED it,
+   * not whoever is asking. `configured` is false when this tenant has no
+   * DiscountLimit rows at all — a tenant that never set caps has no discount
+   * rule for a quote to break.
+   */
+  async evaluateOverall(
+    organisationId: string,
+    storeId: string,
+    role: Role,
+    percent: number,
+  ): Promise<{ configured: boolean; withinOwn: boolean; requiredRole: Role; cap: number }> {
+    const { caps, configured } = await this.loadCapsWithState(organisationId, storeId);
+    const cap = caps[role]?.overall ?? 0;
+    const withinOwn = percent <= cap;
+    const requiredRole = withinOwn
+      ? role
+      : this.firstApprover(role, caps, (c) => percent <= c.overall);
+    return { configured, withinOwn, requiredRole, cap };
+  }
+
   /** Approve a pending/escalated request. Only a role ranked >= requiredRole may act. */
   async approve(user: AuthUser, id: string, reason?: string, note?: string) {
     return this.decide(user, id, 'approved', reason, note);
@@ -428,6 +457,13 @@ export class DiscountsService {
    * global storeId=null default). Falls back to maxPercent when a split cap is null.
    */
   private async loadCaps(organisationId: string, storeId: string): Promise<Record<Role, Caps>> {
+    return (await this.loadCapsWithState(organisationId, storeId)).caps;
+  }
+
+  private async loadCapsWithState(
+    organisationId: string,
+    storeId: string,
+  ): Promise<{ caps: Record<Role, Caps>; configured: boolean }> {
     const rows = await this.prisma.discountLimit.findMany({
       where: { organisationId, OR: [{ storeId }, { storeId: null }] },
     });
@@ -443,27 +479,40 @@ export class DiscountsService {
       const row = byRole[role];
       if (!row) {
         // Safety net: head_office always has full authority even if unseeded.
-        caps[role] = role === 'head_office' ? { diamond: 100, making: 100 } : { diamond: 0, making: 0 };
+        caps[role] =
+          role === 'head_office'
+            ? { diamond: 100, making: 100, overall: 100 }
+            : { diamond: 0, making: 0, overall: 0 };
         continue;
       }
       const overall = Number(row.maxPercent);
       caps[role] = {
         diamond: row.maxDiamondPercent != null ? Number(row.maxDiamondPercent) : overall,
         making: row.maxMakingPercent != null ? Number(row.maxMakingPercent) : overall,
+        overall,
       };
     }
-    return caps;
+    return { caps, configured: rows.length > 0 };
   }
 
   /** Lowest role ranked above the requester whose caps cover BOTH percentages; else head_office. */
   private findApprover(requester: Role, diamondPercent: number, makingPercent: number, caps: Record<Role, Caps>): Role {
+    return this.firstApprover(
+      requester,
+      caps,
+      (c) => diamondPercent <= c.diamond && makingPercent <= c.making,
+    );
+  }
+
+  /** Lowest role ranked above the requester whose caps satisfy `covers`; else head_office. */
+  private firstApprover(requester: Role, caps: Record<Role, Caps>, covers: (c: Caps) => boolean): Role {
     const ordered = (Object.keys(ROLE_RANK) as Role[]).sort((a, b) => ROLE_RANK[a] - ROLE_RANK[b]);
     for (const role of ordered) {
       if (ROLE_RANK[role] <= ROLE_RANK[requester]) continue;
       // area_manager was collapsed into store_manager — it is a dead approver tier
       if (role === 'area_manager') continue;
       const c = caps[role];
-      if (c && diamondPercent <= c.diamond && makingPercent <= c.making) return role;
+      if (c && covers(c)) return role;
     }
     return 'head_office';
   }

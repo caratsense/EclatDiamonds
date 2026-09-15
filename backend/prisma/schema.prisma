@@ -1089,7 +1089,8 @@ model DiscountLimit {
   id                String       @id @default(cuid())
   role              Role
   storeId           String?
-  /// Legacy single overall cap (kept for back-compat). Module 15 uses the split caps below.
+  /// Single overall cap. Discount requests and direct sales use the split caps
+  /// below; a QUOTE discount (one % off making + diamond) is judged against this.
   maxPercent        Decimal      @db.Decimal(5, 2)
   /// Module 15: max self-approvable DIAMOND discount for this role (e.g. 5.00 = 5%). Gold is never discounted.
   maxDiamondPercent Decimal?     @db.Decimal(5, 2)
@@ -1647,6 +1648,25 @@ model Quote {
   decidedAt      DateTime?
   decisionReason String?
   approvedTotal  Decimal?  @db.Decimal(14, 2)
+
+  /*
+   * Discount: one percentage off making + diamond/stone charges together. Gold
+   * is never discounted. Judged against DiscountLimit.maxPercent for the role of
+   * whoever last PRICED the quote (`pricedByRole`), not whoever presses send.
+   */
+  discountPercent Decimal @default(0) @db.Decimal(5, 2)
+  discountAmount  Decimal @default(0) @db.Decimal(14, 2)
+  pricedById      String?
+  pricedByRole    Role?
+
+  /// Content revision, bumped by every edit to lines, price, discount or
+  /// validity. An approval is for one revision (`approvedRevision`).
+  revision         Int   @default(1)
+  approvedRevision Int?
+  /// Why approval was needed, recorded when it was requested.
+  approvalReasons  Json?
+  /// What was approved: total, discount, revision and reasons at decision time.
+  approvalSnapshot Json?
 
   requestedBy User? @relation("QuoteApprovalRequestedBy", fields: [requestedById], references: [id])
   decidedBy   User? @relation("QuoteApprovalDecidedBy", fields: [decidedById], references: [id])

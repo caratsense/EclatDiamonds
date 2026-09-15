@@ -1,8 +1,17 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { OrderStatus, Prisma, QuoteKind } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
-import { QuoteApprovalService } from './quote-approval.service';
+import { AuditService } from '../common/audit.service';
+import { OmnichannelService } from '../omnichannel/omnichannel.service';
+import { ApprovalGate, approvalResetFor, QuoteApprovalService } from './quote-approval.service';
+import { renderQuotePdf } from './quote-pdf';
 import { StoreScopeService } from '../common/store-scope.service';
 import { isAllStoreRole } from '../common/role.util';
 import { SequenceService } from '../common/sequence.service';
@@ -10,7 +19,13 @@ import { StorageService } from '../storage/storage.service';
 import { WhatsAppService } from '../integrations/whatsapp.service';
 import { ActivityService } from '../crm/activity.service';
 import { IdentityService } from '../crm/identity.service';
-import { ConvertToOrderDto, CreateQuoteDto, QuoteLineDto } from './dto/quote.dto';
+import {
+  ConvertToOrderDto,
+  CreateQuoteDto,
+  QuoteLineDto,
+  SendQuotePdfDto,
+  UpdateQuoteDto,
+} from './dto/quote.dto';
 
 const GST_RATE = 0.03;
 
@@ -23,6 +38,8 @@ function toView(q: any) {
     originStoreId: q.storeId,
     redeemableStoreIds: (q.redeemableStores ?? []).map((r: any) => r.storeId),
     status: q.status,
+    revision: q.revision ?? 1,
+    discountPercent: Number(q.discountPercent ?? 0),
     kind: q.kind,
     isKaccha: q.isKaccha ?? false,
     remarks: q.remarks ?? '',
@@ -51,6 +68,7 @@ function toView(q: any) {
       metalValue: Number(q.metalValue),
       makingCharges: Number(q.makingCharges),
       stoneCharges: Number(q.stoneCharges),
+      discount: Number(q.discountAmount ?? 0),
       taxable: Number(q.taxableAmount),
       gst: Number(q.gstAmount),
       grandTotal: Number(q.grandTotal),
@@ -64,8 +82,15 @@ function toView(q: any) {
  * For a `sale` quote: taxable = metal + making + stone, GST 3% on the whole.
  * For a `repair` quote: making-ONLY — metal & stone are zeroed, taxable = sum of
  * line making charges, GST 3% on making, grandTotal = making + GST.
+ *
+ * Discount comes off BEFORE tax: one percentage of making + stone charges.
+ * Gold is never discounted, so no percentage can reach the metal value.
  */
-function computeTotals(lines: QuoteLineDto[], kind: QuoteKind = QuoteKind.sale) {
+function computeTotals(
+  lines: QuoteLineDto[],
+  kind: QuoteKind = QuoteKind.sale,
+  discountPercent = 0,
+) {
   const repair = kind === QuoteKind.repair;
   let metalValue = 0;
   let makingCharges = 0;
@@ -80,9 +105,57 @@ function computeTotals(lines: QuoteLineDto[], kind: QuoteKind = QuoteKind.sale) 
       stoneCharges += computedStone;
     }
   }
-  const taxable = metalValue + makingCharges + stoneCharges;
+  const discountAmount = new Prisma.Decimal(makingCharges)
+    .plus(stoneCharges)
+    .times(discountPercent)
+    .dividedBy(100)
+    .toDecimalPlaces(2)
+    .toNumber();
+  const taxable = metalValue + makingCharges + stoneCharges - discountAmount;
   const gst = taxable * GST_RATE;
-  return { metalValue, makingCharges, stoneCharges, taxable, gst, grandTotal: taxable + gst };
+  return {
+    metalValue, makingCharges, stoneCharges, discountAmount, taxable, gst,
+    grandTotal: taxable + gst,
+  };
+}
+
+/** A line as stored. Stone value is per-carat rate x carats when both are given. */
+function lineData(l: QuoteLineDto) {
+  const stoneCharges = (l.perCaratRate != null && l.caratWeight != null)
+    ? l.perCaratRate * l.caratWeight
+    : (l.stoneCharges ?? 0);
+  return {
+    productId: l.productId,
+    description: l.description,
+    karat: l.karat,
+    weightGrams: new Prisma.Decimal(l.weightGrams),
+    goldRatePerGram: new Prisma.Decimal(l.goldRatePerGram),
+    makingCharges: new Prisma.Decimal(l.makingCharges ?? 0),
+    stoneCharges: new Prisma.Decimal(stoneCharges),
+    caratWeight: new Prisma.Decimal(l.caratWeight ?? 0),
+    perCaratRate: l.perCaratRate != null ? new Prisma.Decimal(l.perCaratRate) : null,
+  };
+}
+
+/** The money columns a priced quote writes, from one rollup. */
+function totalsData(t: ReturnType<typeof computeTotals>) {
+  return {
+    metalValue: new Prisma.Decimal(t.metalValue),
+    makingCharges: new Prisma.Decimal(t.makingCharges),
+    stoneCharges: new Prisma.Decimal(t.stoneCharges),
+    discountAmount: new Prisma.Decimal(t.discountAmount),
+    taxableAmount: new Prisma.Decimal(t.taxable),
+    gstAmount: new Prisma.Decimal(t.gst),
+    grandTotal: new Prisma.Decimal(t.grandTotal),
+  };
+}
+
+function inr(amount: number): string {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0,
+  }).format(amount);
 }
 
 @Injectable()
@@ -98,6 +171,8 @@ export class QuotesService {
     private readonly identity: IdentityService,
     private readonly activity: ActivityService,
     private readonly approval: QuoteApprovalService,
+    private readonly omnichannel: OmnichannelService,
+    private readonly audit: AuditService,
   ) {}
 
   /**
@@ -122,15 +197,13 @@ export class QuotesService {
     /*
      * The approval gate, checked BEFORE anything is composed or sent.
      *
-     * This is the only door out to a customer, so it is the only place the check
-     * has to exist — and the only place it must not be possible to skip. A
-     * tenant with no threshold configured passes straight through, which is why
-     * this is safe to ship ahead of anybody choosing their number.
+     * Every door out to a customer — this text, the PDF download and the PDF on
+     * WhatsApp — calls the same `assertCleared`, so no door can be more lenient
+     * than another. A tenant with no threshold and no discount caps passes
+     * straight through, which is why this is safe to ship ahead of anybody
+     * choosing their numbers.
      */
-    const gate = await this.approval.gate(user.organisationId, id);
-    if (!gate.cleared) {
-      throw new ForbiddenException(gate.reason ?? 'This quote cannot be sent yet.');
-    }
+    await this.approval.assertCleared(user.organisationId, id);
 
     const store = await this.prisma.store.findUnique({
       where: { id: quote.originStoreId },
@@ -142,11 +215,7 @@ export class QuotesService {
       `Quote ${quote.ref}`,
       quote.customer,
       '',
-      `Total: ${new Intl.NumberFormat('en-IN', {
-        style: 'currency',
-        currency: 'INR',
-        maximumFractionDigits: 0,
-      }).format(quote.totals.grandTotal)}${quote.isKaccha ? ' (estimate, excl. GST)' : ''}`,
+      `Total: ${inr(quote.totals.grandTotal)}${quote.isKaccha ? ' (estimate, excl. GST)' : ''}`,
       quote.validUntil ? `Valid until ${quote.validUntil}` : '',
       '',
       'Thank you for visiting us.',
@@ -167,6 +236,254 @@ export class QuotesService {
       to: result.to,
       ...(result.error ? { error: result.error } : {}),
     };
+  }
+
+  /**
+   * GET /quotes/:id/pdf — the detailed quote, for the customer.
+   *
+   * Resolved through `get()`, the same lookup as the quote screen, so whoever
+   * cannot open the quote cannot download it — including any narrower
+   * salesperson scope added there later. Refused until approval exists, like
+   * every other door out.
+   */
+  async pdf(user: AuthUser, id: string) {
+    await this.get(user, id);
+    const gate = await this.approval.assertCleared(user.organisationId, id);
+    return this.issuePdf(user, id, gate);
+  }
+
+  /**
+   * POST /quotes/:id/send-pdf — the detailed quote as a WhatsApp document.
+   *
+   * Queued through the omnichannel outbox rather than sent from here, so it is
+   * held to the same consent, STOP, 24-hour window and template rules as any
+   * other outbound message, and its delivery state is the provider's answer.
+   * With WhatsApp not connected the message is still queued and its job fails
+   * with the reason; `dryRun` in the response says so up front.
+   */
+  async sendPdf(user: AuthUser, id: string, dto: SendQuotePdfDto) {
+    const quote = await this.get(user, id);
+    if (!quote.phone) {
+      throw new BadRequestException('This quote has no phone number to send to');
+    }
+    const gate = await this.approval.assertCleared(user.organisationId, id);
+    const doc = await this.issuePdf(user, id, gate);
+
+    const store = await this.prisma.store.findFirst({
+      where: { id: quote.originStoreId, organisationId: user.organisationId },
+      select: { name: true },
+    });
+    const caption = [
+      `Quote ${quote.ref}${store?.name ? ` from ${store.name}` : ''}`,
+      `Total: ${inr(doc.grandTotal)}${quote.isKaccha ? ' (estimate, excl. GST)' : ''}`,
+      quote.validUntil ? `Valid until ${quote.validUntil}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    const queued = await this.omnichannel.queueToContact(
+      user,
+      {
+        to: quote.phone,
+        purpose: 'service',
+        body: caption,
+        templateName: dto.templateName,
+        languageCode: dto.languageCode,
+      },
+      { storageKey: doc.storageKey, filename: doc.filename, mimeType: 'application/pdf' },
+    );
+
+    await this.audit.record(user, {
+      action: 'quotes.pdf_queued',
+      entityType: 'Quote',
+      entityId: id,
+      storeId: quote.originStoreId,
+      summary: `Quote ${quote.ref} PDF queued for WhatsApp`,
+      metadata: { revision: doc.revision, messageId: queued.message.id },
+    });
+
+    return {
+      queued: true,
+      ref: quote.ref,
+      revision: doc.revision,
+      messageId: queued.message.id,
+      status: queued.message.status,
+      deduplicated: queued.deduplicated,
+      policy: queued.policy,
+      // Not connected means the job will fail and say why — never "sent".
+      dryRun: !(await this.whatsapp.enabledFor(user.organisationId)),
+    };
+  }
+
+  /**
+   * Render the PDF for the revision the gate just cleared, and keep a private
+   * copy. The quote is re-read here; if it moved on since the gate looked, the
+   * PDF is refused rather than printed for a revision nobody cleared.
+   */
+  private async issuePdf(user: AuthUser, id: string, gate: ApprovalGate) {
+    const organisationId = user.organisationId;
+    const q = await this.prisma.quote.findFirst({
+      where: { id, organisationId },
+      include: { lines: true },
+    });
+    if (!q) throw new NotFoundException('Quote not found');
+    if (q.revision !== gate.revision) {
+      throw new ConflictException('This quote changed a moment ago. Open it again.');
+    }
+    const [store, org] = await Promise.all([
+      this.prisma.store.findFirst({
+        where: { id: q.storeId, organisationId },
+        select: {
+          name: true, city: true, addressLine1: true, addressLine2: true, state: true,
+          pincode: true, phone: true, gstin: true,
+        },
+      }),
+      this.prisma.organisation.findUnique({
+        where: { id: organisationId },
+        select: { name: true, legalName: true, gstin: true },
+      }),
+    ]);
+    const view = toView(q);
+    const buffer = await renderQuotePdf({
+      business: {
+        name: org?.legalName || org?.name || 'Quotation',
+        branch: store?.name ?? '',
+        address: [
+          store?.addressLine1,
+          store?.addressLine2,
+          [store?.city, store?.state, store?.pincode].filter(Boolean).join(', '),
+        ].filter((line): line is string => !!line),
+        phone: store?.phone ?? null,
+        gstin: store?.gstin || org?.gstin || null,
+      },
+      ref: q.ref,
+      revision: q.revision,
+      createdAt: view.createdAt,
+      validUntil: view.validUntil || null,
+      customer: { name: q.customerName, phone: q.phone ?? '' },
+      kind: q.kind,
+      isKaccha: q.isKaccha,
+      remarks: q.remarks ?? '',
+      lines: view.lines,
+      discountPercent: view.discountPercent,
+      totals: view.totals,
+      // Printed only when a decision was actually needed and given for this
+      // revision; a quote that never needed one is not "approved".
+      approval:
+        gate.required && gate.cleared && q.approvedTotal != null
+          ? {
+              approvedTotal: Number(q.approvedTotal),
+              decidedAt: q.decidedAt ? q.decidedAt.toISOString().slice(0, 10) : null,
+            }
+          : null,
+      generatedAt: new Date(),
+    });
+
+    const storageKey = await this.storage.savePrivate(
+      organisationId,
+      'quote-pdfs',
+      `${q.id}-r${q.revision}.pdf`,
+      buffer,
+    );
+    return {
+      buffer,
+      storageKey,
+      filename: `${q.ref}-r${q.revision}.pdf`,
+      revision: q.revision,
+      grandTotal: Number(q.grandTotal),
+    };
+  }
+
+  /**
+   * PATCH /quotes/:id — re-price a quote.
+   *
+   * Any accepted edit bumps the revision and, for a quote that was in the
+   * approval flow, sends it back to draft. The gate would refuse the new
+   * revision anyway; resetting the status keeps the screen from calling a
+   * quote "Approved" that nobody approved in this form.
+   */
+  async update(user: AuthUser, id: string, dto: UpdateQuoteDto) {
+    const view = await this.get(user, id); // same visibility as the quote screen
+    this.scope.assertStoreAllowed(user, view.originStoreId);
+    if (view.status === 'accepted') {
+      throw new BadRequestException('This quote has become an order and can no longer be edited.');
+    }
+
+    const current = await this.prisma.quote.findFirstOrThrow({
+      where: { id, organisationId: user.organisationId },
+      include: { lines: true },
+    });
+    const lines: QuoteLineDto[] =
+      dto.lines ??
+      current.lines.map((l) => ({
+        productId: l.productId ?? undefined,
+        description: l.description,
+        karat: l.karat,
+        weightGrams: Number(l.weightGrams),
+        goldRatePerGram: Number(l.goldRatePerGram),
+        makingCharges: Number(l.makingCharges),
+        stoneCharges: Number(l.stoneCharges),
+        caratWeight: Number(l.caratWeight),
+        perCaratRate: l.perCaratRate != null ? Number(l.perCaratRate) : undefined,
+      }));
+    const discountPercent = dto.discountPercent ?? Number(current.discountPercent);
+    const t = computeTotals(lines, current.kind, discountPercent);
+    if (current.isKaccha) {
+      t.gst = 0;
+      t.grandTotal = t.taxable;
+    }
+    // Touching the price makes it this person's price, judged against their caps.
+    const repriced = dto.lines !== undefined || dto.discountPercent !== undefined;
+    const reset = approvalResetFor(current.status);
+
+    let updated;
+    try {
+      updated = await this.prisma.quote.update({
+        // Conditional on the revision read above, so two edits cannot both
+        // claim to be the next revision.
+        where: { id, revision: current.revision },
+        data: {
+          ...reset,
+          ...totalsData(t),
+          revision: { increment: 1 },
+          discountPercent: new Prisma.Decimal(discountPercent),
+          ...(repriced ? { pricedById: user.id, pricedByRole: user.role } : {}),
+          ...(dto.validUntil !== undefined
+            ? { validUntil: dto.validUntil ? new Date(dto.validUntil) : null }
+            : {}),
+          ...(dto.remarks !== undefined ? { remarks: dto.remarks } : {}),
+          ...(dto.lines ? { lines: { deleteMany: {}, create: dto.lines.map(lineData) } } : {}),
+        },
+        include: { assignedRep: true, lines: true, redeemableStores: true, photos: true },
+      });
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
+        throw new ConflictException('Someone else edited this quote just now. Open it again.');
+      }
+      throw e;
+    }
+
+    const invalidated = Object.keys(reset).length > 0;
+    await this.audit.record(user, {
+      action: invalidated ? 'quotes.approval_invalidated' : 'quotes.edited',
+      entityType: 'Quote',
+      entityId: id,
+      storeId: current.storeId,
+      summary: invalidated
+        ? `Quote ${current.ref} edited after ${current.status.replace('_', ' ')}; approval withdrawn`
+        : `Quote ${current.ref} edited`,
+      metadata: {
+        fromRevision: current.revision,
+        toRevision: updated.revision,
+        previousStatus: current.status,
+        previousTotal: current.grandTotal.toString(),
+        total: updated.grandTotal.toString(),
+        discountPercent,
+        previousApproval: invalidated ? current.approvalSnapshot : null,
+      },
+    });
+
+    return toView(updated);
   }
 
   async list(user: AuthUser, headerStore?: string, includeKaccha = false) {
@@ -201,7 +518,7 @@ export class QuotesService {
     this.scope.assertStoreAllowed(user, dto.storeId);
     const kind = dto.kind ?? QuoteKind.sale;
     const isKaccha = dto.isKaccha ?? false;
-    const t = computeTotals(dto.lines, kind);
+    const t = computeTotals(dto.lines, kind, dto.discountPercent ?? 0);
     // "@" kaccha provision: a rough estimate carries NO GST. Taxable (making +
     // metal + stones, per the sale/repair rule above) stays as computed; we just
     // force the tax to zero and make the grand total equal the taxable amount.
@@ -229,30 +546,12 @@ export class QuotesService {
         grossWeightG:
           dto.grossWeightG != null ? new Prisma.Decimal(dto.grossWeightG) : null,
         validUntil: dto.validUntil ? new Date(dto.validUntil) : null,
-        metalValue: new Prisma.Decimal(t.metalValue),
-        makingCharges: new Prisma.Decimal(t.makingCharges),
-        stoneCharges: new Prisma.Decimal(t.stoneCharges),
-        taxableAmount: new Prisma.Decimal(t.taxable),
-        gstAmount: new Prisma.Decimal(t.gst),
-        grandTotal: new Prisma.Decimal(t.grandTotal),
-        lines: {
-          create: dto.lines.map((l) => {
-            const stoneCharges = (l.perCaratRate != null && l.caratWeight != null)
-              ? l.perCaratRate * l.caratWeight
-              : (l.stoneCharges ?? 0);
-            return {
-              productId: l.productId,
-              description: l.description,
-              karat: l.karat,
-              weightGrams: new Prisma.Decimal(l.weightGrams),
-              goldRatePerGram: new Prisma.Decimal(l.goldRatePerGram),
-              makingCharges: new Prisma.Decimal(l.makingCharges ?? 0),
-              stoneCharges: new Prisma.Decimal(stoneCharges),
-              caratWeight: new Prisma.Decimal(l.caratWeight ?? 0),
-              perCaratRate: l.perCaratRate != null ? new Prisma.Decimal(l.perCaratRate) : null,
-            };
-          }),
-        },
+        ...totalsData(t),
+        discountPercent: new Prisma.Decimal(dto.discountPercent ?? 0),
+        // The discount is judged against THIS person's cap.
+        pricedById: user.id,
+        pricedByRole: user.role,
+        lines: { create: dto.lines.map(lineData) },
         redeemableStores: { create: redeemable.map((storeId) => ({ storeId })) },
       },
       include: { assignedRep: true, lines: true, redeemableStores: true, photos: true },
