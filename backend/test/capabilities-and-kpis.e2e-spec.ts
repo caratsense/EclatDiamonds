@@ -82,6 +82,8 @@ async function teardown(prisma: PrismaService) {
     await prisma.leadTag.deleteMany({ where: { organisationId: org } });
     await prisma.attributionTouch.deleteMany({ where: { organisationId: org } });
     await prisma.task.deleteMany({ where: { organisationId: org } });
+    await prisma.quote.deleteMany({ where: { organisationId: org } });
+    await prisma.conversation.deleteMany({ where: { organisationId: org } });
     await prisma.lead.deleteMany({ where: { organisationId: org } });
     await prisma.checkIn.deleteMany({ where: { organisationId: org } });
     await prisma.feedbackRequest.deleteMany({ where: { organisationId: org } });
@@ -491,17 +493,15 @@ describe('Tenant module switches and the management view (e2e)', () => {
         .expect(403);
     });
 
-    it('pins a salesperson to their own figures whatever they ask for', async () => {
-      const res = await request(server())
+    it('keeps a salesperson out of the management view entirely', async () => {
+      // Branch comparisons are management information. Refused on the server,
+      // with or without a filter, not merely absent from the menu.
+      await request(server()).get('/management/kpis').set(auth(repT)).expect(403);
+      await request(server())
         .get('/management/kpis')
-        .query({ ownerId: 'u_cap_mgr' })
+        .query({ ownerId: 'u_cap_rep' })
         .set(auth(repT))
         .expect(403);
-      expect(String(res.body.message)).toContain('your own');
-
-      const own = await request(server()).get('/management/kpis').set(auth(repT)).expect(200);
-      // Pinned on the server, not hidden in the UI.
-      expect(own.body.scope.ownerId).toBe('u_cap_rep');
     });
   });
 
@@ -555,6 +555,67 @@ describe('Tenant module switches and the management view (e2e)', () => {
       // 1,200 — not 100, not 1,000. A figure derived from a paginated list
       // stops moving at exactly the point the business is big enough to care.
       expect(res.body.leads.total).toBe(BULK_LEADS);
+    });
+
+    it('measures approval turnaround over every decision, not the latest 1,000', async () => {
+      const now = new Date();
+      const HOURS = [1, 2, 3, 4];
+      await prisma.quote.createMany({
+        data: Array.from({ length: 1200 }, (_, i) => ({
+          organisationId: A.org,
+          ref: `QT-CAP-${i}`,
+          storeId: i % 2 === 0 ? A.east : A.west,
+          customerName: `Quote ${i}`,
+          createdAt: now,
+          requestedAt: now,
+          decidedAt: new Date(now.getTime() + HOURS[i % 4] * 3_600_000),
+        })),
+      });
+
+      const res = await request(server()).get('/management/kpis').set(auth(hoT)).expect(200);
+      const t = res.body.quotes.approvalTurnaroundHours;
+      // 300 each of 1, 2, 3 and 4 hours. A 1,000-row sample could not see all
+      // 1,200, and would say so only if somebody read the small print.
+      expect(t.decisions).toBe(1200);
+      expect(t.average).toBe(2.5);
+      expect(t.median).toBe(2.5);
+      expect(t.totalHours).toBe(3000);
+      expect(t.sampled).toBe(false);
+      expect(t).not.toHaveProperty('sampleCapped');
+
+      // A branch manager's turnaround is their branch's decisions only.
+      const mgr = await request(server()).get('/management/kpis').set(auth(mgrT)).expect(200);
+      expect(mgr.body.quotes.approvalTurnaroundHours.decisions).toBe(600);
+    });
+
+    it('counts unrouted threads and organisation plumbing only in the organisation-wide view', async () => {
+      await prisma.conversation.create({
+        data: {
+          organisationId: A.org,
+          channel: 'instagram',
+          externalThreadId: 'cap-unrouted-thread',
+          storeId: null,
+        },
+      });
+
+      const ho = await request(server()).get('/management/kpis').set(auth(hoT)).expect(200);
+      const hoInstagram = ho.body.engagement.byChannel.find((r: { key: string }) => r.key === 'instagram');
+      expect(hoInstagram?.count).toBe(1);
+      expect(ho.body.operations).toBeDefined();
+
+      // The East manager does not own a thread no branch owns, nor the
+      // organisation's imports and dead jobs.
+      const mgr = await request(server()).get('/management/kpis').set(auth(mgrT)).expect(200);
+      expect(mgr.body.engagement.byChannel.find((r: { key: string }) => r.key === 'instagram')).toBeUndefined();
+      expect(mgr.body.operations).toBeUndefined();
+
+      // Head office narrowed to one branch is a branch view too.
+      const hoEast = await request(server())
+        .get('/management/kpis')
+        .query({ storeId: A.east })
+        .set(auth(hoT))
+        .expect(200);
+      expect(hoEast.body.engagement.byChannel.find((r: { key: string }) => r.key === 'instagram')).toBeUndefined();
     });
 
     it('does not count an archived customer as an active prospect', async () => {
@@ -693,7 +754,7 @@ describe('Tenant module switches and the management view (e2e)', () => {
           id: 'u_cap_orphan',
           email: 'orphan.cap@cap-a.local',
           name: 'orphan',
-          role: 'salesperson' as never,
+          role: 'store_manager' as never,
           passwordHash: await bcrypt.hash(PASSWORD, 10),
           isActive: true,
           approvalStatus: 'approved',
@@ -743,27 +804,13 @@ describe('Tenant module switches and the management view (e2e)', () => {
       expect(log?.summary).toContain('lead row(s)');
     });
 
-    it('gives a salesperson only their own rows, and says so in the audit line', async () => {
-      await request(server())
-        .get('/management/export/leads')
-        .set(auth(rep2T))
-        .buffer(true)
-        .parse((response, callback) => {
-          const chunks: Buffer[] = [];
-          response.on('data', (c: Buffer) => chunks.push(c));
-          response.on('end', () => callback(null, Buffer.concat(chunks)));
-        })
-        .expect(200);
+    it('refuses a salesperson the customer export, and writes no export row', async () => {
+      await request(server()).get('/management/export/leads').set(auth(rep2T)).expect(403);
 
       const log = await prisma.auditLog.findFirst({
         where: { organisationId: A.org, action: 'management.kpi_export', actorId: 'u_cap_rep2' },
-        orderBy: { createdAt: 'desc' },
       });
-      const meta = log?.metadata as { ownerScoped: string | null; rows: number };
-      expect(meta.ownerScoped).toBe('u_cap_rep2');
-      // rep2 owns none of the bulk leads, so the export is empty rather than
-      // quietly containing somebody else's customers.
-      expect(meta.rows).toBe(0);
+      expect(log).toBeNull();
     });
   });
 });

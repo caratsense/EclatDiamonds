@@ -4,6 +4,7 @@ import * as ExcelJS from 'exceljs';
 import type { Response } from 'express';
 
 import { HumansOnly } from '../auth/machine.decorator';
+import { Roles } from '../auth/roles.decorator';
 import { AuthUser, CurrentUser } from '../common/auth-user';
 import { RateLimit } from '../common/rate-limit';
 import { ManagementService } from './management.service';
@@ -72,12 +73,15 @@ export class KpiQueryDto {
  *
  * ## Scope is enforced here, not hidden in the UI
  *
- * A salesperson may open this and sees their own work: the service overrides the
- * owner filter with their own id rather than trusting the query string. A
- * dashboard is a read of the whole database with a filter on it, which makes it
- * the easiest screen in any product to leak a colleague's pipeline from.
+ * Store manager and above. Branch comparisons and the customer rows behind them
+ * are management information, and a salesperson's own pipeline already lives on
+ * the CRM board. The service still pins any non-manager to their own id, as a
+ * second line should this gate ever be loosened: a dashboard is a read of the
+ * whole database with a filter on it, the easiest screen in any product to leak
+ * a colleague's pipeline from.
  */
 @HumansOnly()
+@Roles('store_manager')
 // The aggregates are real work across several tables. Metered as expensive so a
 // dashboard left open on a wallboard cannot consume the tenant's whole
 // allowance, and so one person refreshing cannot slow the shop floor down.

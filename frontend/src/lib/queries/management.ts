@@ -100,10 +100,13 @@ export interface KpiReport {
     total: number;
     byStatus: Record<string, number>;
     averageApprovedAmount: number | null;
+    /** Over every decided quote in scope — never a sample. */
     approvalTurnaroundHours: {
-      average: number;
-      sampled: number;
-      sampleCapped: boolean;
+      average: number | null;
+      median: number | null;
+      totalHours: number | null;
+      decisions: number;
+      sampled: false;
     } | null;
   };
   feedback?: {

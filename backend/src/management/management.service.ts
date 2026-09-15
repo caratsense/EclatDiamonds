@@ -132,7 +132,22 @@ export class ManagementService {
       ownerId,
       organisationId: user.organisationId,
       management: isManagement(user),
+      /*
+       * Rows with no branch (an unrouted WhatsApp thread, an organisation-level
+       * task) belong to nobody's branch, so only somebody looking at the whole
+       * organisation sees them. A branch manager, or head office narrowed to one
+       * branch, would otherwise count the whole organisation's unrouted work as
+       * their own.
+       */
+      organisationWide: user.allStores && !filters.storeId,
     };
+  }
+
+  /** The caller's branches, plus unrouted rows when the view is organisation-wide. */
+  private branchClause(ctx: Ctx) {
+    return ctx.organisationWide
+      ? { OR: [{ storeId: { in: ctx.storeIds } }, { storeId: null }] }
+      : { storeId: { in: ctx.storeIds } };
   }
 
   /** The store clause every query shares. */
@@ -161,7 +176,9 @@ export class ManagementService {
         this.floorSection(ctx),
         this.quoteSection(ctx),
         this.feedbackSection(ctx),
-        this.operationsSection(ctx),
+        // Imports, dead jobs and month-end runs are organisation-level plumbing;
+        // a branch-scoped view has no branch share of them to report.
+        ctx.organisationWide ? this.operationsSection(ctx) : Promise.resolve(undefined),
       ]);
 
     return {
@@ -255,7 +272,9 @@ export class ManagementService {
     const conversationWhere: Prisma.ConversationWhereInput = {
       organisationId: ctx.organisationId,
       createdAt: { gte: ctx.window.from, lt: ctx.window.to },
-      OR: [{ storeId: this.storeClause(ctx.storeIds) }, { storeId: null }],
+      // AND, not a top-level OR: the unanswered count below adds an OR of its
+      // own, and a second OR key would silently replace the scope.
+      AND: [this.branchClause(ctx)],
       ...(filters.channel ? { channel: filters.channel } : {}),
     };
 
@@ -284,7 +303,7 @@ export class ManagementService {
           // Scoped like everything else. An unrouted thread has no branch, and
           // is included for anyone who can see the whole organisation rather
           // than being invisible to everybody.
-          OR: [{ storeId: { in: ctx.storeIds } }, { storeId: null }],
+          ...this.branchClause(ctx),
           startedAt: { gte: ctx.window.from, lt: ctx.window.to },
           respondedAt: { not: null },
         },
@@ -297,7 +316,7 @@ export class ManagementService {
           // Scoped like everything else. An unrouted thread has no branch, and
           // is included for anyone who can see the whole organisation rather
           // than being invisible to everybody.
-          OR: [{ storeId: { in: ctx.storeIds } }, { storeId: null }],
+          ...this.branchClause(ctx),
           startedAt: { gte: ctx.window.from, lt: ctx.window.to },
           breachedAt: { not: null },
         },
@@ -308,7 +327,7 @@ export class ManagementService {
           // Scoped like everything else. An unrouted thread has no branch, and
           // is included for anyone who can see the whole organisation rather
           // than being invisible to everybody.
-          OR: [{ storeId: { in: ctx.storeIds } }, { storeId: null }],
+          ...this.branchClause(ctx),
           startedAt: { gte: ctx.window.from, lt: ctx.window.to },
           escalatedAt: { not: null },
         },
@@ -325,7 +344,7 @@ export class ManagementService {
           // Scoped like everything else. An unrouted thread has no branch, and
           // is included for anyone who can see the whole organisation rather
           // than being invisible to everybody.
-          OR: [{ storeId: { in: ctx.storeIds } }, { storeId: null }],
+          ...this.branchClause(ctx),
           startedAt: { gte: ctx.window.from, lt: ctx.window.to },
           responderType: 'agent',
         },
@@ -336,7 +355,7 @@ export class ManagementService {
           // Scoped like everything else. An unrouted thread has no branch, and
           // is included for anyone who can see the whole organisation rather
           // than being invisible to everybody.
-          OR: [{ storeId: { in: ctx.storeIds } }, { storeId: null }],
+          ...this.branchClause(ctx),
           startedAt: { gte: ctx.window.from, lt: ctx.window.to },
           responderType: 'ai',
         },
@@ -365,7 +384,7 @@ export class ManagementService {
   private async followUpSection(ctx: Ctx) {
     const taskWhere: Prisma.TaskWhereInput = {
       organisationId: ctx.organisationId,
-      OR: [{ storeId: this.storeClause(ctx.storeIds) }, { storeId: null }],
+      ...this.branchClause(ctx),
       createdAt: { gte: ctx.window.from, lt: ctx.window.to },
       ...(ctx.ownerId ? { assigneeId: ctx.ownerId } : {}),
     };
@@ -381,7 +400,7 @@ export class ManagementService {
         by: ['whatsappStatus'],
         where: {
           organisationId: ctx.organisationId,
-          OR: [{ storeId: { in: ctx.storeIds } }, { storeId: null }],
+          ...this.branchClause(ctx),
           createdAt: { gte: ctx.window.from, lt: ctx.window.to },
           ...(ctx.ownerId ? { userId: ctx.ownerId } : {}),
         },
@@ -391,7 +410,7 @@ export class ManagementService {
         by: ['disposition'],
         where: {
           organisationId: ctx.organisationId,
-          OR: [{ storeId: this.storeClause(ctx.storeIds) }, { storeId: null }],
+          ...this.branchClause(ctx),
           startedAt: { gte: ctx.window.from, lt: ctx.window.to },
           ...(ctx.ownerId ? { agentUserId: ctx.ownerId } : {}),
         },
@@ -421,7 +440,9 @@ export class ManagementService {
         manual: await this.prisma.callLog.count({
           where: {
             organisationId: ctx.organisationId,
+            ...this.branchClause(ctx),
             startedAt: { gte: ctx.window.from, lt: ctx.window.to },
+            ...(ctx.ownerId ? { agentUserId: ctx.ownerId } : {}),
             provider: 'manual',
           },
         }),
@@ -487,7 +508,7 @@ export class ManagementService {
       ...(ctx.ownerId ? { assignedRepId: ctx.ownerId } : {}),
     };
 
-    const [byStatus, total, approved, decided] = await Promise.all([
+    const [byStatus, total, approved, turnaround] = await Promise.all([
       this.prisma.quote.groupBy({ by: ['status'], where, _count: { _all: true } }),
       this.prisma.quote.count({ where }),
       this.prisma.quote.aggregate({
@@ -495,22 +516,10 @@ export class ManagementService {
         _avg: { approvedTotal: true },
         _count: { _all: true },
       }),
-      this.prisma.quote.findMany({
-        where: { ...where, requestedAt: { not: null }, decidedAt: { not: null } },
-        select: { requestedAt: true, decidedAt: true },
-        // Bounded deliberately: this is the ONE figure that needs row-level
-        // arithmetic Postgres cannot give us through Prisma's aggregate, and a
-        // mean over the most recent 1,000 decisions is an honest sample. Every
-        // other number on this screen is uncapped; this one says what it is.
-        take: 1000,
-        orderBy: { decidedAt: 'desc' },
-      }),
+      this.approvalTurnaround(ctx),
     ]);
 
     const counts = Object.fromEntries(byStatus.map((r) => [r.status, r._count._all]));
-    const turnaroundMs = decided.map(
-      (q) => q.decidedAt!.getTime() - q.requestedAt!.getTime(),
-    );
 
     return {
       total,
@@ -519,17 +528,50 @@ export class ManagementService {
         approved._count._all > 0 && approved._avg.approvedTotal != null
           ? Number(approved._avg.approvedTotal)
           : null,
-      approvalTurnaroundHours: turnaroundMs.length
-        ? {
-            average:
-              Math.round(
-                (turnaroundMs.reduce((a, b) => a + b, 0) / turnaroundMs.length / 3_600_000) *
-                  10,
-              ) / 10,
-            sampled: turnaroundMs.length,
-            sampleCapped: turnaroundMs.length === 1000,
-          }
-        : null,
+      approvalTurnaroundHours: turnaround,
+    };
+  }
+
+  /**
+   * Request-to-decision time over EVERY decided quote in scope.
+   *
+   * This used to read the latest 1,000 decisions into the process and average
+   * them, because Prisma's aggregate cannot subtract two columns. That is a
+   * sample, and a sample that silently stops at a round number is the failure
+   * this whole service exists to avoid. Postgres does the arithmetic instead:
+   * count, total, mean and median in one pass, at any size.
+   */
+  private async approvalTurnaround(ctx: Ctx) {
+    const [row] = await this.prisma.$queryRaw<
+      { decisions: bigint; total_ms: number | null; mean_ms: number | null; median_ms: number | null }[]
+    >(Prisma.sql`
+      SELECT
+        COUNT(*)::bigint AS decisions,
+        SUM(EXTRACT(EPOCH FROM ("decidedAt" - "requestedAt")) * 1000)::float8 AS total_ms,
+        AVG(EXTRACT(EPOCH FROM ("decidedAt" - "requestedAt")) * 1000)::float8 AS mean_ms,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (
+          ORDER BY EXTRACT(EPOCH FROM ("decidedAt" - "requestedAt"))
+        )::float8 * 1000 AS median_ms
+      FROM "Quote"
+      WHERE "organisationId" = ${ctx.organisationId}
+        AND "storeId" IN (${Prisma.join(ctx.storeIds)})
+        AND "createdAt" >= ${ctx.window.from}
+        AND "createdAt" < ${ctx.window.to}
+        AND "requestedAt" IS NOT NULL
+        AND "decidedAt" IS NOT NULL
+        ${ctx.ownerId ? Prisma.sql`AND "assignedRepId" = ${ctx.ownerId}` : Prisma.empty}
+    `);
+
+    const decisions = Number(row?.decisions ?? 0);
+    if (!decisions) return null;
+    const hours = (ms: number | null) => (ms == null ? null : Math.round((ms / 3_600_000) * 10) / 10);
+    return {
+      average: hours(row.mean_ms),
+      median: hours(row.median_ms),
+      totalHours: hours(row.total_ms),
+      decisions,
+      /** Every decision in scope was measured. Never a sample. */
+      sampled: false as const,
     };
   }
 
@@ -538,7 +580,7 @@ export class ManagementService {
   private async feedbackSection(ctx: Ctx) {
     const where: Prisma.FeedbackRequestWhereInput = {
       organisationId: ctx.organisationId,
-      OR: [{ storeId: this.storeClause(ctx.storeIds) }, { storeId: null }],
+      ...this.branchClause(ctx),
       createdAt: { gte: ctx.window.from, lt: ctx.window.to },
     };
 
@@ -758,6 +800,7 @@ export class ManagementService {
 }
 
 interface Ctx {
+  organisationWide: boolean;
   storeIds: string[];
   stores: { id: string; name: string; timezone: string | null; isAggregate: boolean }[];
   window: KpiWindow;

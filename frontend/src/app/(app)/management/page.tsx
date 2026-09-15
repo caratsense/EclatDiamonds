@@ -293,13 +293,13 @@ export default function ManagementPage() {
               <Tile
                 label="Approval turnaround"
                 value={
-                  data.quotes?.approvalTurnaroundHours
+                  data.quotes?.approvalTurnaroundHours?.average != null
                     ? `${data.quotes.approvalTurnaroundHours.average} h`
                     : "—"
                 }
                 hint={
-                  data.quotes?.approvalTurnaroundHours?.sampleCapped
-                    ? "Mean of the most recent 1,000 decisions."
+                  data.quotes?.approvalTurnaroundHours
+                    ? `Mean over all ${formatNumber(data.quotes.approvalTurnaroundHours.decisions)} decisions · median ${data.quotes.approvalTurnaroundHours.median ?? "—"} h`
                     : undefined
                 }
               />
@@ -332,7 +332,11 @@ export default function ManagementPage() {
             </Tiles>
           </Section>
 
-          {/* ------------------------------------------------- operations */}
+          {/* ------------------------------------------------- operations
+              Organisation-level plumbing: the API sends it only for the
+              organisation-wide view, so a branch view shows nothing rather
+              than a row of zeroes that reads as "all clear". */}
+          {data.operations ? (
           <Section title="Reporting and operations" icon={Clock}>
             <Tiles>
               <Tile
@@ -365,6 +369,7 @@ export default function ManagementPage() {
               />
             </Tiles>
           </Section>
+          ) : null}
 
           {/* ------------------------------------------------- conversion */}
           <Section title="Conversion" icon={TrendingUp}>
