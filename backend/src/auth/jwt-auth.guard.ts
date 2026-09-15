@@ -111,6 +111,7 @@ export class JwtAuthGuard implements CanActivate {
         email: true,
         role: true,
         isActive: true,
+        approvalStatus: true,
         organisationId: true,
         // industryPackCode and the tenant's own module switches ride along on a
         // select that already runs, so the entitlement guard needs no query of
@@ -123,7 +124,9 @@ export class JwtAuthGuard implements CanActivate {
         },
       },
     });
-    if (!dbUser || !dbUser.isActive) {
+    // approvalStatus as well as isActive: a pending or rejected signup is
+    // powerless even if something flips its active flag.
+    if (!dbUser || !dbUser.isActive || dbUser.approvalStatus !== 'approved') {
       throw new UnauthorizedException('Account is inactive or no longer exists');
     }
     // Organisation comes from the authoritative DB user, never the token/frontend.

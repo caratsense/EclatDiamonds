@@ -803,9 +803,9 @@ model User {
   organisation   Organisation @relation(fields: [organisationId], references: [id])
   id             String       @id @default(cuid())
   name           String
-  /// The LOGIN identifier and unique handle. For self-signups this is generated
-  /// as `firstname.storeslug@eclatdiamonds.in` (see users.util.uniqueEmailHandle)
-  /// so it is unique even when two people share a personal inbox or a first name.
+  /// The LOGIN ID — an identifier, not a mailbox. Generated for new staff from
+  /// the tenant's template or the default `firstname.storeslug@<tenant domain>`
+  /// (see users.util.renderLoginId); stored values are never rewritten.
   email          String       @unique
   /// The personal/contact email the person actually gave. NOT unique � two people
   /// may legitimately share one (a family inbox, a store address) � and never used
@@ -832,6 +832,12 @@ model User {
   requestedStoreId String?
   approvedById     String?
   approvedAt       DateTime?
+  /// Who declined a self-signup, when, and why. A rejection is terminal for
+  /// that request: the row never becomes approvable or activatable again, and
+  /// the person re-applies as a fresh request (see users.util REAPPLICATION).
+  rejectedById     String?
+  rejectedAt       DateTime?
+  rejectionReason  String?
 
   /// Google's `sub`, set on first Google sign-in. Matched on instead of email
   /// because emails get recycled. Null for OTP/password-only users.

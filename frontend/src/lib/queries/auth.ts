@@ -68,13 +68,52 @@ export function useGoogleLogin() {
   });
 }
 
+/** Roles a self-signup can name; store_manager only where the tenant allows it. */
+export type SignupRole = "salesperson" | "storeperson" | "store_manager";
+
 export interface SignupInput {
   name: string;
-  email: string;
+  /** Optional contact address. Never the sign-in identity. */
+  contactEmail?: string;
   password: string;
   phone?: string;
-  requestedRole: "salesperson" | "store_manager";
+  requestedRole: SignupRole;
   requestedStoreId: string;
+  organisationCode: string;
+}
+
+export interface SignupPreview {
+  requestableRoles: SignupRole[];
+  /** What the Login ID will look like; the server assigns the final one. */
+  loginIdPreview: string | null;
+  /** The same with a collision suffix, to show what a namesake gets. */
+  loginIdSuffixExample: string | null;
+}
+
+/**
+ * useSignupPreview — the requestable roles and a Login ID preview, rendered on
+ * the server from the tenant's template alone (it never looks up users, so it
+ * cannot reveal whether an ID is taken). Pass an already-debounced name.
+ */
+export function useSignupPreview(input: {
+  organisationCode: string;
+  requestedStoreId: string;
+  name: string;
+}) {
+  const org = input.organisationCode.trim();
+  return useQuery({
+    queryKey: ["signup-preview", org, input.requestedStoreId, input.name.trim()],
+    queryFn: async () => {
+      const { data } = await api.post<SignupPreview>("/auth/signup/preview", {
+        organisationCode: org,
+        requestedStoreId: input.requestedStoreId || undefined,
+        name: input.name.trim() || undefined,
+      });
+      return data;
+    },
+    enabled: org.length >= 2,
+    placeholderData: (previous) => previous,
+  });
 }
 
 export interface SignupStore {
@@ -129,7 +168,7 @@ export function useSignup() {
       const { data } = await api.post<{
         pending: boolean;
         message: string;
-        loginEmail: string;
+        loginId: string;
       }>("/auth/signup", input);
       return data;
     },

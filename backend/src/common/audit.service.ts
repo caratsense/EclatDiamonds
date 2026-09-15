@@ -36,6 +36,8 @@ export const SYSTEM_ACTORS = {
   visit_feedback: 'Visit feedback request',
   /** The month-end sweep drafting a branch's payslips once its month has closed. */
   payroll_month_end: 'Month-end payroll',
+  /** A member of the public asking to join a tenant through staff self-signup. */
+  self_signup: 'Staff self-signup',
 } as const;
 
 export type SystemActor = keyof typeof SYSTEM_ACTORS;

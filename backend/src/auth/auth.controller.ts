@@ -3,7 +3,7 @@ import { Permit } from './permissions';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
-import { SignupDto } from './dto/signup.dto';
+import { SignupDto, SignupPreviewDto } from './dto/signup.dto';
 import { CreateOrganisationDto } from './dto/create-organisation.dto';
 import { GoogleLoginDto } from './dto/google-login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -53,6 +53,19 @@ export class AuthController {
   @Post('signup')
   signup(@Body() dto: SignupDto) {
     return this.auth.signup(dto);
+  }
+
+  /**
+   * The signup form's live Login ID preview. On the wider `public` bucket, not
+   * `auth`: it fires as the applicant types, and sharing the 10/min credential
+   * bucket would throttle the submit that follows. It reads no user rows.
+   */
+  @Public()
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  @RateLimit('public')
+  @Post('signup/preview')
+  signupPreview(@Body() dto: SignupPreviewDto) {
+    return this.auth.signupPreview(dto);
   }
 
   /** Public industry catalogue for the new-organisation onboarding screen. */

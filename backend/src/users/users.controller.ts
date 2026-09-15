@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { UsersService } from './users.service';
 import {
   ApproveUserDto,
@@ -6,6 +6,7 @@ import {
   DeactivateUserDto,
   RejectUserDto,
   SetLeaveAllocationDto,
+  UpdateSignupPolicyDto,
   UpdateUserRoleDto,
   UpdateUserStoreDto,
 } from './dto/users.dto';
@@ -50,6 +51,20 @@ export class UsersController {
   @Get('pending')
   listPending(@CurrentUser() user: AuthUser) {
     return this.users.listPending(user);
+  }
+
+  /** GET /users/signup-policy — Login ID template + manager self-request switch (head office). */
+  @Roles('head_office')
+  @Get('signup-policy')
+  signupPolicy(@CurrentUser() user: AuthUser) {
+    return this.users.signupPolicy(user);
+  }
+
+  /** PUT /users/signup-policy — change them; applies to users created from now on. */
+  @Roles('head_office')
+  @Put('signup-policy')
+  saveSignupPolicy(@CurrentUser() user: AuthUser, @Body() dto: UpdateSignupPolicyDto) {
+    return this.users.saveSignupPolicy(user, dto);
   }
 
   /** POST /users/:id/approve — grant a pending signup (delegation-gated). */

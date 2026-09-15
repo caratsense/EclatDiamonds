@@ -1,24 +1,40 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Role } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
 import { StoreScopeService } from '../common/store-scope.service';
-import { ROLE_RANK } from '../common/role.util';
+import { ROLE_LABELS, ROLE_RANK } from '../common/role.util';
+import { updateOrgSettings } from '../config/org-settings';
+import { EmailService } from '../integrations/email.service';
 import { WhatsAppIdentityService } from '../whatsapp-bot/whatsapp-identity.service';
-import { canApproveSignup, uniqueEmailHandle } from './users.util';
+import {
+  LOGIN_ID_TOKENS,
+  SIGNUP_POLICY_KEY,
+  allocateLoginId,
+  canApproveSignup,
+  loginIdTemplateError,
+  loginIdUsesStore,
+  readSignupPolicy,
+  renderLoginId,
+  requestableRoles,
+  withSavepoint,
+  type SignupPolicy,
+} from './users.util';
 import {
   ApproveUserDto,
   CreateUserDto,
   DeactivateUserDto,
   SetLeaveAllocationDto,
+  UpdateSignupPolicyDto,
   UpdateUserRoleDto,
   UpdateUserStoreDto,
 } from './dto/users.dto';
@@ -55,6 +71,7 @@ export class UsersService {
     private readonly audit: AuditService,
     private readonly scope: StoreScopeService,
     private readonly whatsappIdentity: WhatsAppIdentityService,
+    private readonly email: EmailService,
   ) {}
 
   // ── Delegation / privilege-escalation guards ───────────────────────────────
@@ -195,47 +212,46 @@ export class UsersService {
 
     const store = await this.prisma.store.findUnique({
       where: { id: dto.storeId },
-      include: { organisation: { select: { slug: true } } },
+      include: { organisation: { select: { slug: true, settings: true } } },
     });
     if (!store) throw new NotFoundException('Store not found');
     if (store.isAggregate) {
       throw new BadRequestException('Cannot assign a user to the aggregate "All Stores" view');
     }
 
-    // Login identity: a generated, unique handle — the same generator self-signup
-    // uses, so every account, however created, is `firstname.storeslug@<this
-    // tenant's domain>`. The person signs in with a phone OTP or, after a manager
-    // sets one, this + a password.
-    const email = await uniqueEmailHandle(
-      dto.name,
-      store.name,
-      store.organisation?.slug,
-      async (candidate) =>
-        !!(await this.prisma.user.findUnique({ where: { email: candidate }, select: { id: true } })),
-    );
+    // Login ID: generated and unique, by the same renderer self-signup uses, so
+    // every account however created follows this tenant's template (or the
+    // default `firstname.storeslug@<tenant domain>`). The person signs in with a
+    // phone OTP or, after a manager sets one, this + a password.
+    const policy = readSignupPolicy(store.organisation.settings);
+    const subject = { name: dto.name, storeName: store.name, organisationSlug: store.organisation.slug };
 
     // Random password — the user logs in via OTP, or a manager resets it to share one.
     const passwordHash = await bcrypt.hash(randomBytes(24).toString('hex'), 10);
 
-    const user = await this.prisma.user.create({
-      data: {
-        name: dto.name,
-        email,
-        contactEmail,
-        phone,
-        initials: initialsOf(dto.name),
-        role,
-        passwordHash,
-        isActive: true,
-        // The new staff member belongs to the actor's organisation. dto.storeId is
-        // already scope-checked above, so it is a store within this same org.
-        organisationId: actor.organisationId,
-        userStores: {
-          create: { storeId: dto.storeId, isPrimary: true },
-        },
-      },
-      include: USER_INCLUDE,
-    });
+    const user = await allocateLoginId(
+      (n) => renderLoginId(policy.loginIdTemplate, subject, n),
+      (email) =>
+        this.prisma.user.create({
+          data: {
+            name: dto.name,
+            email,
+            contactEmail,
+            phone,
+            initials: initialsOf(dto.name),
+            role,
+            passwordHash,
+            isActive: true,
+            // The new staff member belongs to the actor's organisation. dto.storeId is
+            // already scope-checked above, so it is a store within this same org.
+            organisationId: actor.organisationId,
+            userStores: {
+              create: { storeId: dto.storeId, isPrimary: true },
+            },
+          },
+          include: USER_INCLUDE,
+        }),
+    );
 
     await this.audit.record(actor, {
       action: 'user.create',
@@ -458,27 +474,51 @@ export class UsersService {
 
   /** Public shape for a pending signup (adds requested role/store to the view). */
   private async toPendingView(user: any) {
-    const store = user.requestedStoreId
-      ? await this.prisma.store.findUnique({
-          where: { id: user.requestedStoreId },
-          select: { id: true, name: true },
-        })
-      : null;
+    const [store, priorRejection] = await Promise.all([
+      user.requestedStoreId
+        ? this.prisma.store.findUnique({
+            where: { id: user.requestedStoreId },
+            select: { id: true, name: true, status: true, isActive: true },
+          })
+        : null,
+      // Reapplication context (users.util REAPPLICATION POLICY): the latest
+      // earlier decline for this phone in this organisation, if any.
+      user.phone
+        ? this.prisma.user.findFirst({
+            where: {
+              organisationId: user.organisationId,
+              phone: user.phone,
+              approvalStatus: 'rejected',
+              id: { not: user.id },
+            },
+            orderBy: { rejectedAt: { sort: 'desc', nulls: 'last' } },
+            select: { rejectedAt: true, rejectionReason: true },
+          })
+        : null,
+    ]);
     return {
       id: user.id,
       name: user.name,
+      /** The Login ID reserved for them. An identifier, not a mailbox. */
+      loginId: user.email,
       email: user.email,
+      contactEmail: user.contactEmail ?? null,
       phone: user.phone ?? null,
       requestedRole: (user.requestedRole ?? 'salesperson') as Role,
-      requestedStore: store,
+      requestedStore: store
+        ? { id: store.id, name: store.name, isOpen: store.status !== 'closed' && store.isActive }
+        : null,
       createdAt: user.createdAt,
+      priorRejection: priorRejection
+        ? { at: priorRejection.rejectedAt, reason: priorRejection.rejectionReason }
+        : null,
     };
   }
 
   /**
    * GET /users/pending — the approval queue. An approver only sees requests they
-   * are entitled to act on: requested role strictly BELOW their own rank AND (for
-   * scoped managers) requested store inside their scope. head_office sees all.
+   * are entitled to act on (canApproveSignup): a store manager sees salesperson
+   * and storeperson requests for their own stores; head office sees the rest.
    */
   async listPending(actor: AuthUser) {
     const pending = await this.prisma.user.findMany({
@@ -492,111 +532,291 @@ export class UsersService {
   }
 
   /**
-   * POST /users/:id/approve — grant a pending signup. The approver may override
-   * the requested role/store; either way the strictly-below-rank + in-scope rules
-   * decide what is allowed, so this can never mint a peer/superior or place a user
-   * in a store the approver does not own.
+   * The approver as the database knows them NOW — role re-read, store scope
+   * re-resolved — not as their token or the page they loaded remembers them. A
+   * manager demoted, deactivated or taken off a branch between opening the queue
+   * and pressing Approve is judged on what they are at the moment of decision.
    */
-  async approve(actor: AuthUser, id: string, dto: ApproveUserDto) {
-    const target = await this.getOrThrow(actor, id);
-    if (target.approvalStatus !== 'pending') {
-      throw new BadRequestException('This account is not awaiting approval');
-    }
-
-    const role: Role = dto.role ?? (target.requestedRole as Role) ?? 'salesperson';
-    const storeId = dto.storeId ?? target.requestedStoreId ?? null;
-    if (!storeId) throw new BadRequestException('A store is required to approve this account');
-
-    // Escalation + scope gate (same guards as manual provisioning).
-    this.assertAssignableRole(actor, role);
-    const store = await this.prisma.store.findUnique({
-      where: { id: storeId },
-      include: { organisation: { select: { slug: true } } },
-    });
-    if (!store) throw new NotFoundException('Store not found');
-    if (store.isAggregate) {
-      throw new BadRequestException('Cannot assign a user to the aggregate "All Stores" view');
-    }
-    this.scope.assertStoreAllowed(actor, storeId);
-
-    // If the approver moved them to a DIFFERENT store than they signed up for,
-    // regenerate the login handle so it matches the real store (e.g. a
-    // "…mumbaibandra" handle must not survive a reassignment to Udaipur).
-    let email: string | undefined;
-    if (target.requestedStoreId && storeId !== target.requestedStoreId) {
-      email = await uniqueEmailHandle(
-        target.name,
-        store.name,
-        store.organisation?.slug,
-        async (candidate) =>
-          !!(await this.prisma.user.findFirst({
-            where: { email: candidate, id: { not: id } },
-            select: { id: true },
-          })),
-      );
-    }
-
-    const user = await this.prisma.user.update({
-      where: { id },
-      data: {
-        role,
-        isActive: true,
-        approvalStatus: 'approved',
-        approvedById: actor.id,
-        approvedAt: new Date(),
-        ...(email ? { email } : {}),
-        userStores: {
-          upsert: {
-            where: { userId_storeId: { userId: id, storeId } },
-            update: { isPrimary: true },
-            create: { storeId, isPrimary: true },
+  private async currentApprover(tx: Prisma.TransactionClient, actor: AuthUser): Promise<AuthUser> {
+    const row = actor.isMachine
+      ? null
+      : await tx.user.findFirst({
+          where: {
+            id: actor.id,
+            organisationId: actor.organisationId,
+            isActive: true,
+            approvalStatus: 'approved',
           },
-        },
-      },
-      include: USER_INCLUDE,
-    });
-
-    await this.audit.record(actor, {
-      action: 'user.approve',
-      entityType: 'User',
-      entityId: id,
-      storeId,
-      summary: `Approved ${user.name} as ${role}`,
-      metadata: { role, storeId },
-    });
-    return this.toView(user);
+          select: { role: true },
+        });
+    if (!row) throw new ForbiddenException('Your access has changed. Reload and try again.');
+    const { storeIds, allStores } = await this.scope.resolveScope(
+      actor.id,
+      row.role,
+      actor.organisationId,
+    );
+    return { ...actor, role: row.role, storeIds, allStores };
   }
 
   /**
-   * POST /users/:id/reject — decline a pending signup. Gated exactly like approve
-   * (you can only reject a request you could have approved), so a store manager
-   * cannot reject a manager-level request — only head office can.
+   * POST /users/:id/approve — grant a pending signup, as ONE transaction:
+   *
+   *  1. re-read the approver's current role and scope (currentApprover);
+   *  2. the approver must be entitled to the REQUEST as made — a store manager
+   *     cannot take a manager-level or another store's request by approving it
+   *     as something smaller — and to what is actually GRANTED after any
+   *     role/store override;
+   *  3. the store must still be open;
+   *  4. a conditional update claims the row only while it is still pending, so a
+   *     replayed or concurrent approval (or a racing rejection) changes nothing
+   *     and gets 409 — never a second store binding;
+   *  5. store binding, a re-issued Login ID when the store (part of the ID)
+   *     changed, the audit row and the applicant's notification commit with it.
+   *
+   * The optional email to the applicant's contact address is sent after commit
+   * and reported as it actually went: sent, dry_run, failed or no_contact_email.
+   */
+  async approve(actor: AuthUser, id: string, dto: ApproveUserDto) {
+    const decided = await this.prisma.$transaction(async (tx) => {
+      const approver = await this.currentApprover(tx, actor);
+      const target = await tx.user.findFirst({
+        where: { id, organisationId: actor.organisationId },
+        include: { organisation: { select: { slug: true, settings: true } } },
+      });
+      if (!target) throw new NotFoundException('User not found');
+      if (target.approvalStatus !== 'pending') {
+        throw new ConflictException('This request has already been decided');
+      }
+
+      const requestedRole = (target.requestedRole ?? 'salesperson') as Role;
+      if (!canApproveSignup(approver, requestedRole, target.requestedStoreId)) {
+        throw new ForbiddenException('You cannot decide this request');
+      }
+      const role: Role = dto.role ?? requestedRole;
+      const storeId = dto.storeId ?? target.requestedStoreId;
+      if (!storeId) throw new BadRequestException('A store is required to approve this account');
+      // Scope before lookup, so another tenant's store id is refused exactly like
+      // any store outside the approver's reach.
+      if (!canApproveSignup(approver, role, storeId)) {
+        throw new ForbiddenException('You can only grant roles below your own, in your own stores');
+      }
+      const store = await tx.store.findFirst({
+        where: { id: storeId, organisationId: actor.organisationId, isAggregate: false },
+      });
+      if (!store) throw new BadRequestException('Choose a valid store');
+      if (store.status === 'closed' || !store.isActive) {
+        throw new ConflictException(
+          `${store.name} is not open. Activate it, or approve into another store.`,
+        );
+      }
+
+      const claimed = await tx.user.updateMany({
+        where: { id, organisationId: actor.organisationId, approvalStatus: 'pending' },
+        data: {
+          role,
+          isActive: true,
+          approvalStatus: 'approved',
+          approvedById: approver.id,
+          approvedAt: new Date(),
+        },
+      });
+      if (claimed.count !== 1) throw new ConflictException('This request has already been decided');
+
+      // A pending row has no store link by construction; create, never upsert,
+      // so a second binding is an error rather than a silent merge.
+      await tx.userStore.create({ data: { userId: id, storeId, isPrimary: true } });
+
+      // Moved to a DIFFERENT store than requested: when the store is part of the
+      // ID, re-issue it (a "…andheri" ID must not survive a move to Bandra).
+      const policy = readSignupPolicy(target.organisation.settings);
+      let loginId = target.email;
+      if (
+        target.requestedStoreId &&
+        storeId !== target.requestedStoreId &&
+        loginIdUsesStore(policy.loginIdTemplate)
+      ) {
+        const subject = {
+          name: target.name,
+          storeName: store.name,
+          organisationSlug: target.organisation.slug,
+        };
+        loginId = await allocateLoginId(
+          (n) => renderLoginId(policy.loginIdTemplate, subject, n),
+          async (email) => {
+            await withSavepoint(tx, () => tx.user.update({ where: { id }, data: { email } }));
+            return email;
+          },
+        );
+      }
+
+      await this.audit.record(
+        approver,
+        {
+          action: 'user.approve',
+          entityType: 'User',
+          entityId: id,
+          storeId,
+          summary: `Approved ${target.name} as ${role}`,
+          metadata: {
+            role,
+            storeId,
+            requestedRole,
+            requestedStoreId: target.requestedStoreId,
+            loginId,
+          },
+        },
+        tx,
+      );
+      await tx.notification.create({
+        data: {
+          userId: id,
+          kind: 'system',
+          title: 'Your account is approved',
+          body: `Welcome to ${store.name}. Your Login ID is ${loginId}.`,
+          storeId,
+          entityType: 'User',
+          entityId: id,
+          actorId: approver.id,
+          actorName: approver.name,
+          dedupeKey: 'signup-approved',
+        },
+      });
+      return { loginId, contactEmail: target.contactEmail, name: target.name, role, storeName: store.name };
+    });
+
+    const contactEmailDelivery = await this.sendApprovalEmail(decided);
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id }, include: USER_INCLUDE });
+    return { ...this.toView(user), loginId: decided.loginId, contactEmailDelivery };
+  }
+
+  /** Tell the applicant, at the contact address they gave, that they can sign in. */
+  private async sendApprovalEmail(d: {
+    loginId: string;
+    contactEmail: string | null;
+    name: string;
+    role: Role;
+    storeName: string;
+  }): Promise<'sent' | 'dry_run' | 'failed' | 'no_contact_email'> {
+    if (!d.contactEmail) return 'no_contact_email';
+    const result = await this.email.send(
+      d.contactEmail,
+      'Your account is approved',
+      [
+        `Hello ${d.name},`,
+        '',
+        `Your account has been approved as ${ROLE_LABELS[d.role]} at ${d.storeName}.`,
+        '',
+        `Login ID: ${d.loginId}`,
+        'This is your sign-in ID, not an email inbox. Nothing is delivered to it.',
+        'Sign in with it and the password you chose when you signed up.',
+      ].join('\n'),
+    );
+    return result.sent ? 'sent' : result.dryRun ? 'dry_run' : 'failed';
+  }
+
+  /**
+   * POST /users/:id/reject — decline a pending signup, with a reason. Gated
+   * exactly like approve (you can only reject a request you could have
+   * approved) and claimed the same conditional way, so it cannot overwrite an
+   * approval that landed first. Terminal for this request; see the
+   * reapplication policy in users.util.
    */
   async reject(actor: AuthUser, id: string, reason?: string) {
-    const target = await this.getOrThrow(actor, id);
-    if (target.approvalStatus !== 'pending') {
-      throw new BadRequestException('This account is not awaiting approval');
-    }
-    const role: Role = (target.requestedRole as Role) ?? 'salesperson';
-    this.assertAssignableRole(actor, role);
-    if (!actor.allStores && target.requestedStoreId) {
-      this.scope.assertStoreAllowed(actor, target.requestedStoreId);
-    }
+    const rejectionReason = reason?.trim() || null;
+    await this.prisma.$transaction(async (tx) => {
+      const approver = await this.currentApprover(tx, actor);
+      const target = await tx.user.findFirst({ where: { id, organisationId: actor.organisationId } });
+      if (!target) throw new NotFoundException('User not found');
+      if (target.approvalStatus !== 'pending') {
+        throw new ConflictException('This request has already been decided');
+      }
+      const requestedRole = (target.requestedRole ?? 'salesperson') as Role;
+      if (!canApproveSignup(approver, requestedRole, target.requestedStoreId)) {
+        throw new ForbiddenException('You cannot decide this request');
+      }
+      const claimed = await tx.user.updateMany({
+        where: { id, organisationId: actor.organisationId, approvalStatus: 'pending' },
+        data: {
+          approvalStatus: 'rejected',
+          isActive: false,
+          rejectedById: approver.id,
+          rejectedAt: new Date(),
+          rejectionReason,
+        },
+      });
+      if (claimed.count !== 1) throw new ConflictException('This request has already been decided');
+      await this.audit.record(
+        approver,
+        {
+          action: 'user.reject',
+          entityType: 'User',
+          entityId: id,
+          storeId: target.requestedStoreId,
+          summary: `Rejected signup for ${target.name}`,
+          metadata: { reason: rejectionReason, requestedRole },
+        },
+        tx,
+      );
+    });
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id }, include: USER_INCLUDE });
+    return this.toView(user);
+  }
 
-    const user = await this.prisma.user.update({
-      where: { id },
-      data: { approvalStatus: 'rejected', isActive: false },
-      include: USER_INCLUDE,
+  // ── Signup policy (head office) ─────────────────────────────────────────────
+
+  /** GET /users/signup-policy — the tenant's Login ID template and manager self-request switch. */
+  async signupPolicy(actor: AuthUser) {
+    const org = await this.prisma.organisation.findUniqueOrThrow({
+      where: { id: actor.organisationId },
+      select: { slug: true, settings: true },
+    });
+    const policy = readSignupPolicy(org.settings);
+    const sample = { name: 'Priya Sharma', storeName: 'Main Store', organisationSlug: org.slug };
+    return {
+      ...policy,
+      organisationCode: org.slug,
+      tokens: LOGIN_ID_TOKENS.map((t) => `{${t}}`),
+      requestableRoles: requestableRoles(policy),
+      example: renderLoginId(policy.loginIdTemplate, sample, 1),
+      defaultExample: renderLoginId(null, sample, 1),
+    };
+  }
+
+  /**
+   * PUT /users/signup-policy — head office only (route-gated). Applies to users
+   * created from now on; a stored Login ID is never rewritten by a template change.
+   */
+  async saveSignupPolicy(actor: AuthUser, dto: UpdateSignupPolicyDto) {
+    const org = await this.prisma.organisation.findUniqueOrThrow({
+      where: { id: actor.organisationId },
+      select: { slug: true },
+    });
+    // Only fields that were sent; a validated DTO carries the others as undefined.
+    const sent: Partial<SignupPolicy> = {};
+    if (dto.allowManagerSelfRequest !== undefined) {
+      sent.allowManagerSelfRequest = dto.allowManagerSelfRequest;
+    }
+    if (dto.loginIdTemplate !== undefined) {
+      const template = dto.loginIdTemplate?.trim().toLowerCase() || null;
+      const error = template ? loginIdTemplateError(template, org.slug) : null;
+      if (error) throw new BadRequestException(error);
+      sent.loginIdTemplate = template;
+    }
+    let next = readSignupPolicy(null);
+    await updateOrgSettings(this.prisma, actor.organisationId, (settings) => {
+      next = { ...readSignupPolicy(settings), ...sent };
+      return { ...settings, [SIGNUP_POLICY_KEY]: next };
     });
     await this.audit.record(actor, {
-      action: 'user.reject',
-      entityType: 'User',
-      entityId: id,
-      storeId: target.requestedStoreId,
-      summary: `Rejected signup for ${user.name}`,
-      metadata: { reason: reason ?? null },
+      action: 'organisation.signup_policy_changed',
+      entityType: 'Organisation',
+      entityId: actor.organisationId,
+      summary: `Signup policy: Login ID template ${next.loginIdTemplate ?? 'default'}, manager self-request ${
+        next.allowManagerSelfRequest ? 'on' : 'off'
+      }`,
+      metadata: { ...next },
     });
-    return this.toView(user);
+    return this.signupPolicy(actor);
   }
 
   /**
@@ -643,6 +863,14 @@ export class UsersService {
       where: { id, organisationId: actor.organisationId },
     });
     if (!user) throw new NotFoundException('User not found');
+    // A pending or declined signup is decided through approve/reject only.
+    // Activating, re-roling or store-linking it here would hand a request
+    // access that no approver granted.
+    if (user.approvalStatus !== 'approved') {
+      throw new ConflictException(
+        'This account is an account request. Approve or reject it instead.',
+      );
+    }
     return user;
   }
 }

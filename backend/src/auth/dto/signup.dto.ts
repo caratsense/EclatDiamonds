@@ -11,12 +11,12 @@ import { Role } from '@prisma/client';
 import { IsIndianMobile, IsRealName } from '../../common/contact.util';
 
 /**
- * Roles a self-signup may REQUEST. Never `head_office` — that is not grantable by
- * anyone, least of all the applicant themselves. `area_manager` was removed too:
- * the tier was folded into `store_manager` (2026-08), so it is no longer a role
- * anyone signs up as.
+ * Every role a self-signup can NAME. Never `head_office`, and `area_manager` was
+ * folded into `store_manager` (2026-08). `store_manager` stays in the list only
+ * so the API shape is stable: AuthService refuses it unless the tenant's signup
+ * policy allows manager self-requests (users.util.requestableRoles).
  */
-export const REQUESTABLE_ROLES: Role[] = ['salesperson', 'store_manager'];
+export const REQUESTABLE_ROLES: Role[] = ['salesperson', 'storeperson', 'store_manager'];
 
 /**
  * POST /auth/signup — a person registers themselves. This creates a POWERLESS
@@ -34,12 +34,16 @@ export class SignupDto {
 
   /**
    * Personal/contact email — OPTIONAL and not unique (two people may share one).
-   * It is NOT the login: the sign-in identity is a generated
-   * `firstname.storeslug@eclatdiamonds.in` handle returned by signup.
+   * It is NOT the login: the sign-in identity is a generated Login ID returned by
+   * signup. `email` is the original field name; `contactEmail` says what it is.
    */
   @IsOptional()
   @IsEmail()
   email?: string;
+
+  @IsOptional()
+  @IsEmail()
+  contactEmail?: string;
 
   @IsString()
   @MinLength(8)
@@ -50,7 +54,7 @@ export class SignupDto {
   @IsIndianMobile()
   phone?: string;
 
-  /** The role the applicant is asking for (default salesperson). Never head_office. */
+  /** The role the applicant is asking for. Never head_office. */
   @IsIn(REQUESTABLE_ROLES)
   requestedRole!: Role;
 
@@ -58,4 +62,31 @@ export class SignupDto {
   @IsString()
   @IsNotEmpty()
   requestedStoreId!: string;
+
+  /**
+   * The organisation code (slug) the applicant typed. When sent, the store must
+   * belong to it — a store id from another tenant is refused exactly like one
+   * that does not exist.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  organisationCode?: string;
+}
+
+/** POST /auth/signup/preview — the Login ID format, computed from the template only. */
+export class SignupPreviewDto {
+  @IsString()
+  @MaxLength(80)
+  organisationCode!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  requestedStoreId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  name?: string;
 }

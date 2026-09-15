@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsEmail,
   IsIn,
   IsInt,
@@ -75,8 +76,8 @@ export class DeactivateUserDto {
  * POST /users/:id/approve — grant a pending self-signup. Both fields optional:
  * the approver may correct the requested role/store, otherwise the request's own
  * values are used. The strictly-below-rank + in-scope rules still apply, so a
- * store manager can only ever approve a salesperson into a store they own, and
- * only head office can approve a store/area manager.
+ * store manager can only ever approve a salesperson or storeperson into a store
+ * they own, and only head office can approve a store manager.
  */
 export class ApproveUserDto {
   @IsOptional()
@@ -92,7 +93,24 @@ export class ApproveUserDto {
 export class RejectUserDto {
   @IsOptional()
   @IsString()
+  @MaxLength(500)
   reason?: string;
+}
+
+/**
+ * PUT /users/signup-policy — head office sets how new Login IDs look and whether
+ * applicants may ask to be a store manager. Omitted fields are left unchanged;
+ * an empty or null template restores the default format.
+ */
+export class UpdateSignupPolicyDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  loginIdTemplate?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  allowManagerSelfRequest?: boolean;
 }
 
 /**

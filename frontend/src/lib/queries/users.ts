@@ -35,7 +35,7 @@ import { api } from "@/lib/api";
 
 /** Roles that can be assigned from the Team page (a subset of the full Role
  *  union; head_office itself is provisioned separately, not granted here). */
-export type StaffRole = "salesperson" | "store_manager" | "area_manager";
+export type StaffRole = "salesperson" | "storeperson" | "store_manager" | "area_manager";
 
 export interface StaffUserStore {
   id: string;
@@ -75,11 +75,53 @@ function invalidateUsers(qc: ReturnType<typeof useQueryClient>) {
 export interface PendingSignup {
   id: string;
   name: string;
+  /** The Login ID reserved for them — a sign-in identifier, not a mailbox. */
+  loginId: string;
   email: string;
+  contactEmail: string | null;
   phone: string | null;
   requestedRole: StaffRole;
-  requestedStore: { id: string; name: string } | null;
+  requestedStore: { id: string; name: string; isOpen: boolean } | null;
   createdAt: string;
+  /** The latest earlier decline for the same phone, if they have re-applied. */
+  priorRejection: { at: string | null; reason: string | null } | null;
+}
+
+/** How the approval email to the applicant's contact address actually went. */
+export type ApprovalEmailDelivery = "sent" | "dry_run" | "failed" | "no_contact_email";
+
+/** Head office's signup policy (GET/PUT /users/signup-policy). */
+export interface SignupPolicy {
+  loginIdTemplate: string | null;
+  allowManagerSelfRequest: boolean;
+  organisationCode: string;
+  tokens: string[];
+  requestableRoles: StaffRole[];
+  example: string;
+  defaultExample: string;
+}
+
+const SIGNUP_POLICY_KEY = ["users", "signup-policy"] as const;
+
+/** GET /users/signup-policy — head office only. */
+export function useSignupPolicy(enabled: boolean) {
+  return useQuery({
+    queryKey: SIGNUP_POLICY_KEY,
+    enabled,
+    queryFn: async () => (await api.get<SignupPolicy>("/users/signup-policy")).data,
+  });
+}
+
+/** PUT /users/signup-policy — applies to users created from now on. */
+export function useSaveSignupPolicy() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      loginIdTemplate?: string | null;
+      allowManagerSelfRequest?: boolean;
+    }) => (await api.put<SignupPolicy>("/users/signup-policy", input)).data,
+    onSuccess: (data) => qc.setQueryData(SIGNUP_POLICY_KEY, data),
+  });
 }
 
 /** GET /users/pending — the self-signup approval queue (scoped server-side). */
@@ -106,7 +148,9 @@ export function useApproveSignup() {
       role?: StaffRole;
       storeId?: string;
     }) => {
-      const { data } = await api.post<StaffUser>(`/users/${id}/approve`, {
+      const { data } = await api.post<
+        StaffUser & { loginId: string; contactEmailDelivery: ApprovalEmailDelivery }
+      >(`/users/${id}/approve`, {
         role,
         storeId,
       });
