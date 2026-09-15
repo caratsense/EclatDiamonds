@@ -148,6 +148,23 @@ INSERT INTO "Lead" (id, "organisationId", ref, "storeId", "partyId", "customerNa
 VALUES
   ('reh_lead_1','reh_org_a','REH-1','reh_store_a1','reh_party_1','Live Customer','walk_in','inquiry','open',now(),now()),
   ('reh_lead_2','reh_org_a','REH-2','reh_store_a2',NULL,'Anonymous','whatsapp','inquiry','open',now(),now());
+
+-- Rows the 2026-09-15 migrations alter: a customer thread, a salesperson, a
+-- priced quote, a follow-up and a manual feedback ask, all written before them.
+INSERT INTO "Conversation" (id, "organisationId", channel, "externalThreadId", "storeId", "partyId", "updatedAt")
+VALUES ('reh_conv_1','reh_org_a','whatsapp','919876500001','reh_store_a1','reh_party_1',now());
+
+INSERT INTO "User" (id, "organisationId", email, name, role, "passwordHash", "updatedAt")
+VALUES ('reh_user_rep','reh_org_a','rep@rehearsal-a.local','Rehearsal Rep','salesperson','x',now());
+
+INSERT INTO "Quote" (id, "organisationId", ref, "storeId", "customerName", "updatedAt")
+VALUES ('reh_quote_1','reh_org_a','QT-REH-1','reh_store_a1','Live Customer',now());
+
+INSERT INTO "LeadFollowUp" (id, "leadId", "storeId", seq, "dueDate", "updatedAt")
+VALUES ('reh_fu_1','reh_lead_1','reh_store_a1',1,current_date + 7,now());
+
+INSERT INTO "FeedbackRequest" (id, "organisationId", "partyId", "storeId", "publicKey", "updatedAt")
+VALUES ('reh_fb_1','reh_org_a','reh_party_1','reh_store_a1','reh-public-key-1',now());
 `;
 
 writeFileSync(join(stage, 'seed.sql'), seed);
@@ -182,6 +199,18 @@ const checks = [
   [`SELECT to_regclass('public."StoreMessagingRoute"') IS NOT NULL`, 't'],
   [`SELECT to_regclass('public."Payslip"') IS NOT NULL`, 't'],
   [`SELECT to_regclass('public."ScheduledReport"') IS NOT NULL`, 't'],
+  // An existing thread must stay a customer thread, or it leaves the inbox.
+  [`SELECT count(*) FROM "Conversation" WHERE audience <> 'customer'`, '0'],
+  // An existing quote is revision 1 with no discount, and needs no approval.
+  [`SELECT count(*) FROM "Quote" WHERE revision <> 1 OR "discountPercent" <> 0 OR "approvalReasons" IS NOT NULL`, '0'],
+  // An existing ask stays a manual one, and an existing follow-up has no reminder.
+  [`SELECT count(*) FROM "FeedbackRequest" WHERE origin <> 'manual'`, '0'],
+  [`SELECT count(*) FROM "LeadFollowUp" WHERE "reminderAt" IS NOT NULL OR "assigneeId" IS NOT NULL`, '0'],
+  // Existing staff keep their role and approval; nobody is marked rejected.
+  [`SELECT count(*) FROM "User" WHERE role = 'salesperson' AND "approvalStatus" = 'approved' AND "rejectedAt" IS NULL`, '1'],
+  [`SELECT 'storeperson' = ANY(enum_range(NULL::"Role")::text[])`, 't'],
+  [`SELECT to_regclass('public."PayrollRun"') IS NOT NULL`, 't'],
+  [`SELECT to_regclass('public."LoyaltyWebhookDelivery"') IS NOT NULL`, 't'],
 ];
 for (const [sql, expected] of checks) {
   const value = psql(dbUrl, sql);
