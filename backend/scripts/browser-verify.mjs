@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// Callbacks passed to page.evaluate run in the browser, not in Node.
+/* global document, localStorage, sessionStorage */
 /**
  * Browser verification: three roles, three industries, three viewports.
  *
@@ -117,7 +119,7 @@ try {
   const src = (await import('node:fs'))
     .readFileSync(NAV_SOURCE, 'utf8')
     .replace(/\r\n/g, '\n');
-  for (const block of src.split(/\n  \{\n/)) {
+  for (const block of src.split(/\n {2}\{\n/)) {
     const slug = /slug: "([^"]+)"/.exec(block)?.[1];
     if (!slug) continue;
     const roles = /roles: \[([^\]]*)\]/.exec(block)?.[1];
@@ -333,7 +335,7 @@ try {
           if (tenant.industry !== 'jewellery' && !VOCABULARY_EXEMPT_ROUTES.has(slug)) {
             const scrubbed = text.replace(BRAND, ' ');
             const leaked = JEWELLERY_WORDS.filter((w) => w.test(scrubbed)).map((w) =>
-              String(w).replace(/[\/^$\b()?:i]|\\/g, '').trim(),
+              String(w).replace(/[/^$\b()?:i]|\\/g, '').trim(),
             );
             if (leaked.length) {
               record({

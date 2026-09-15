@@ -12,7 +12,7 @@ const prisma = new PrismaClient();
 
 async function main() {
   // Detach users from any demo party so demo parties can be removed.
-  try { await prisma.user.updateMany({ data: { partyId: null } }); } catch {}
+  try { await prisma.user.updateMany({ data: { partyId: null } }); } catch { /* best effort: the party deletes below report anything still linked */ }
 
   // Net-new demo-only tables (sync never populates) — wipe entirely (children first).
   const wipe = [

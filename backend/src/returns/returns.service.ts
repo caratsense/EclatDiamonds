@@ -223,8 +223,8 @@ export class ReturnsService {
     const goldValueTodayD = goldWt.mul(goldRate).mul(GOLD_PCT).div(100);
     const diaValueTodayD = diaCt.mul(diaRate); // 100% diamond base value
 
-    let rawExchange = goldValueTodayD.add(diaValueTodayD.mul(EXCHANGE_DIA_PCT).div(100));
-    let rawBuyback = goldValueTodayD.add(diaValueTodayD.mul(BUYBACK_DIA_PCT).div(100));
+    const rawExchange = goldValueTodayD.add(diaValueTodayD.mul(EXCHANGE_DIA_PCT).div(100));
+    const rawBuyback = goldValueTodayD.add(diaValueTodayD.mul(BUYBACK_DIA_PCT).div(100));
 
     // Deduct purchase discount if specified (e.g. client voice note rule)
     let discountAmount = new Prisma.Decimal(0);

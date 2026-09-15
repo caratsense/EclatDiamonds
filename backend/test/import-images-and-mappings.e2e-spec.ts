@@ -399,7 +399,7 @@ describe('Image ZIP import + saved column mappings (e2e)', () => {
      */
     const zip = await zipOf({
       '../../../../etc/passwd.jpg': Buffer.from('not really a jpg'),
-      '..\..\windows\system32\evil.png': Buffer.from('nor this'),
+      '..\\..\\windows\\system32\\evil.png': Buffer.from('nor this'),
       'C:/Windows/Temp/pwned.jpg': Buffer.from('nor this either'),
     });
     const res = await post('/import-images/preview', mgrT, zip, { matchBy: 'sku' }).expect(201);
