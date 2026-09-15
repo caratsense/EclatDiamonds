@@ -501,6 +501,8 @@ describe('quote PDF delivery (worker + provider shape)', () => {
       },
       activityEvent: { findMany: jest.fn(async () => []) },
       conversation: { updateMany: jest.fn(async () => ({ count: 1 })) },
+      // A sent message settles any feedback ask that was waiting on it.
+      feedbackRequest: { updateMany: jest.fn(async () => ({ count: 0 })) },
     };
     const whatsapp = {
       sendText: jest.fn(),

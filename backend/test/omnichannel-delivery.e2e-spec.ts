@@ -122,6 +122,8 @@ describe('omnichannel durable worker', () => {
         }),
       },
       activityEvent: { findMany: jest.fn(async () => []) },
+      // A sent message settles any feedback ask that was waiting on it.
+      feedbackRequest: { updateMany: jest.fn(async () => ({ count: 0 })) },
     };
     const jobs = {
       register: jest.fn((kind, fn) => {
