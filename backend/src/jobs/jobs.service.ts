@@ -147,17 +147,26 @@ export class JobsService {
    * taking the same one, and neither blocks waiting for the other.
    */
   private async claim(): Promise<ClaimedJob | null> {
+    /*
+     * UTC, stated. Prisma stores DateTime as `timestamp` WITHOUT a zone, holding
+     * UTC. Bare NOW() is a timestamptz, and comparing or assigning it to such a
+     * column converts through the SESSION timezone: on a database whose default
+     * zone is Asia/Kolkata every retry looked 5h30m overdue (backoff ignored, all
+     * attempts burnt in one drain) and every lease looked 5h30m fresh (a dead
+     * worker's job not reclaimed). The row's clock and this query's clock must
+     * be the same clock.
+     */
     const rows = await this.prisma.$queryRaw<ClaimedJob[]>`
       UPDATE "JobTask" SET
         status = 'running',
         "lockedBy" = ${this.workerId},
-        "lockedAt" = NOW(),
-        "startedAt" = COALESCE("startedAt", NOW()),
+        "lockedAt" = (NOW() AT TIME ZONE 'UTC'),
+        "startedAt" = COALESCE("startedAt", (NOW() AT TIME ZONE 'UTC')),
         attempts = attempts + 1,
-        "updatedAt" = NOW()
+        "updatedAt" = (NOW() AT TIME ZONE 'UTC')
       WHERE id = (
         SELECT id FROM "JobTask"
-        WHERE status = 'pending' AND "runAt" <= NOW()
+        WHERE status = 'pending' AND "runAt" <= (NOW() AT TIME ZONE 'UTC')
         ORDER BY priority DESC, "runAt" ASC
         FOR UPDATE SKIP LOCKED
         LIMIT 1
