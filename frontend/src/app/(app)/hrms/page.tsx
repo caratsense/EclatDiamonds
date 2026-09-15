@@ -84,7 +84,8 @@ export default function HrmsPage() {
   const holidaysQuery = useHolidays();
   // Current month key (YYYY-MM) for the late-flag roll-up.
   const month = useMemo(() => new Date().toISOString().slice(0, 7), []);
-  const lateFlagsQuery = useLateFlags(month);
+  // The team lateness tab is a manager view; nobody else fetches it.
+  const lateFlagsQuery = useLateFlags(month, { enabled: isManager });
   const { data: attendance = [], isLoading: attLoading } = attendanceQuery;
   const { data: leave = [], isLoading: leaveLoading } = leaveQuery;
   const { data: shifts = [] } = shiftsQuery;

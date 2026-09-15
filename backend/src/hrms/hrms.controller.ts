@@ -9,6 +9,7 @@ import {
   Query,
   Res,
 } from '@nestjs/common';
+import { Permit } from '../auth/permissions';
 import type { Response } from 'express';
 import { HrmsService } from './hrms.service';
 import { AttendancePhotoService } from './attendance-photo.service';
@@ -43,6 +44,7 @@ export class HrmsController {
   // --- Attendance -----------------------------------------------------------
   // Static sub-routes are declared BEFORE any `:id` route so they aren't shadowed.
 
+  @Permit('self.attendance')
   @Get('attendance')
   attendance(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.hrms.attendance(user, store);
@@ -52,6 +54,7 @@ export class HrmsController {
    * The caller's resolved store geofence for LIVE client-side auto check-in — any
    * authenticated role. Static route, declared before any `:id`/dynamic route.
    */
+  @Permit('self.attendance')
   @Get('geofence')
   geofence(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.hrms.geofence(user, store);
@@ -65,6 +68,7 @@ export class HrmsController {
    * that could shadow it, and gated per-record inside the service — the staffer
    * themselves, or a manager at that branch. See `AttendancePhotoService`.
    */
+  @Permit('self.attendance')
   @Get('attendance/:id/photo/:which')
   @Header('Cache-Control', 'private, max-age=300')
   async attendancePhoto(
@@ -83,6 +87,7 @@ export class HrmsController {
   }
 
   /** Self-service geo check-in — the puncher is the current user. */
+  @Permit('self.attendance')
   @Post('attendance/check-in')
   checkIn(
     @CurrentUser() user: AuthUser,
@@ -93,6 +98,7 @@ export class HrmsController {
   }
 
   /** Self-service geo check-out — the puncher is the current user. */
+  @Permit('self.attendance')
   @Post('attendance/check-out')
   checkOut(
     @CurrentUser() user: AuthUser,
@@ -103,6 +109,7 @@ export class HrmsController {
   }
 
   /** The current user's own punches for a month (+ today's state). */
+  @Permit('self.attendance')
   @Get('attendance/me')
   myAttendance(
     @CurrentUser() user: AuthUser,
@@ -162,12 +169,14 @@ export class HrmsController {
 
   // --- Leave ----------------------------------------------------------------
 
+  @Permit('self.leave')
   @Get('leave')
   leave(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.hrms.leave(user, store);
   }
 
   /** Leave balances — self by default; a manager+ may pass ?staffId within scope. */
+  @Permit('self.leave')
   @Get('leave/balances')
   leaveBalances(
     @CurrentUser() user: AuthUser,
@@ -178,6 +187,7 @@ export class HrmsController {
   }
 
   /** Apply for leave (self, or a manager+ on behalf of team staff). */
+  @Permit('self.leave')
   @Post('leave')
   applyLeave(
     @CurrentUser() user: AuthUser,
@@ -192,6 +202,7 @@ export class HrmsController {
    * pending; a manager+ may also revoke one already approved, which releases the
    * days back to the balance. Declared BEFORE `leave/:id` so it isn't shadowed.
    */
+  @Permit('self.leave')
   @Patch('leave/:id/cancel')
   cancelLeave(
     @CurrentUser() user: AuthUser,
@@ -215,6 +226,7 @@ export class HrmsController {
   // --- Regularization -------------------------------------------------------
 
   /** Request a fix for a missed/wrong punch (current user). */
+  @Permit('self.attendance')
   @Post('regularize')
   createRegularization(
     @CurrentUser() user: AuthUser,
@@ -225,6 +237,7 @@ export class HrmsController {
   }
 
   /** Store-scoped regularizations — managers see the team, staff see their own. */
+  @Permit('self.attendance')
   @Get('regularize')
   listRegularizations(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.hrms.listRegularizations(user, store);
@@ -243,6 +256,7 @@ export class HrmsController {
 
   // --- Shifts / holidays / week-off -----------------------------------------
 
+  @Permit('self.attendance')
   @Get('shifts')
   shifts(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.hrms.shifts(user, store);
@@ -255,6 +269,7 @@ export class HrmsController {
     return this.hrms.createShift(user, dto);
   }
 
+  @Permit('self.attendance')
   @Get('holidays')
   holidays(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.hrms.holidays(user, store);

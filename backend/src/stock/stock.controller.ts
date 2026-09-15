@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Permit } from '../auth/permissions';
 import { StockService } from './stock.service';
 import {
   BulkAdjustStockDto,
@@ -20,6 +21,7 @@ export class StockController {
    * List stock items. Without `page`/`pageSize` returns the plain array
    * (legacy shape); with either param returns { items, total, page, pageSize }.
    */
+  @Permit('inventory.read')
   @Get()
   list(
     @CurrentUser() user: AuthUser,
@@ -34,12 +36,14 @@ export class StockController {
    * Store-scoped aging distribution + dead-stock count over the whole set,
    * so the aging chart and the dead-stock KPI stay consistent (not per-page).
    */
+  @Permit('inventory.read')
   @Get('summary')
   summary(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.stock.summary(user, store);
   }
 
   @Roles('store_manager', 'head_office')
+  @Permit('inventory.write')
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateStockDto) {
     return this.stock.create(user, dto);

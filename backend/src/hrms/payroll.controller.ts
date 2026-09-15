@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Post, Put, Query } from '@nestjs/common';
+import { Permit } from '../auth/permissions';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -158,6 +159,7 @@ export class PayrollController {
   }
 
   /** An employee asking with no filters gets their own, whatever their role. */
+  @Permit('self.payslip')
   @Get('payslips')
   list(
     @CurrentUser() user: AuthUser,
@@ -173,6 +175,7 @@ export class PayrollController {
   }
 
   /** One slip, with the day-by-day breakdown behind its totals. */
+  @Permit('self.payslip')
   @Get('payslips/:id')
   one(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.payroll.one(user, id);

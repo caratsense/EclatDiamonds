@@ -6,7 +6,8 @@ import { Lock } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CORE_NAVIGATION, NAV_ITEMS, homeForRole } from "@/lib/navigation";
+import { CORE_NAVIGATION, NAV_ITEMS, canSeeNavItem, getNavItem, homeForRole } from "@/lib/navigation";
+import type { Role } from "@/lib/types";
 import { useEnabledNavigation } from "@/lib/queries/tenant-config";
 import { useSession } from "@/store/use-session";
 
@@ -43,6 +44,13 @@ export function ModuleGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const role = useSession((s) => s.role);
   const enabled = useEnabledNavigation();
+
+  // Role first: a screen this role cannot use is not shown, whatever the
+  // tenant's plan. The server refuses the data either way; this is what stops a
+  // typed URL rendering a shell whose every panel then fails.
+  if (roleDecision(pathname, role) === "refuse") {
+    return <NotForYourRole home={homeForRole(role, enabled)} />;
+  }
 
   switch (gateDecision(pathname, enabled)) {
     case "render":
@@ -118,6 +126,46 @@ export function gateDecision(
     return CORE_NAVIGATION.includes(slug) ? "render" : "hold";
   }
   return enabled.includes(slug) ? "render" : "refuse";
+}
+
+/** Paths outside the navigation a storeperson still needs. */
+const STOREPERSON_OPEN_PATHS = ["check-in"];
+
+/**
+ * Whether this role may open this path at all.
+ *
+ * Ladder roles: refused only on a module whose navigation entry excludes them.
+ * A storeperson: refused everywhere except their listed modules and the few
+ * pages they need outside the navigation — closed by default, like the server.
+ */
+export function roleDecision(pathname: string | null, role: Role): "render" | "refuse" {
+  const slug = navSlugForPath(pathname);
+  if (slug) {
+    const item = getNavItem(slug);
+    return item && canSeeNavItem(item, role) ? "render" : "refuse";
+  }
+  if (role !== "storeperson") return "render";
+  const path = (pathname ?? "/").replace(/^\/+|\/+$/g, "");
+  return STOREPERSON_OPEN_PATHS.some((p) => path === p || path.startsWith(`${p}/`)) ? "render" : "refuse";
+}
+
+function NotForYourRole({ home }: { home: string }) {
+  return (
+    <div className="mx-auto flex max-w-md flex-col items-center px-6 py-24 text-center">
+      <span className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+        <Lock className="h-5 w-5" />
+      </span>
+      <h1 className="font-display text-2xl font-bold tracking-tight">
+        This section is not part of your role
+      </h1>
+      <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+        Your role decides which sections you can open. Ask your store manager if you need access.
+      </p>
+      <Button asChild className="mt-6">
+        <Link href={home}>Back to your workspace</Link>
+      </Button>
+    </div>
+  );
 }
 
 function NotInYourPlan({ home }: { home: string }) {

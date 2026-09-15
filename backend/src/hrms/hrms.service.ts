@@ -12,7 +12,7 @@ import { AuditService } from '../common/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { StorageService } from '../storage/storage.service';
 import { saveCapturedPhoto } from '../storage/capture-photo';
-import { ROLE_LABELS, ROLE_RANK } from '../common/role.util';
+import { ROLE_LABELS, ROLE_RANK, isFrontLine } from '../common/role.util';
 import { PayrollService } from './payroll.service';
 import {
   assertNotSelfApproval,
@@ -339,8 +339,9 @@ export class HrmsService {
     const where: Prisma.AttendanceRecordWhereInput = {
       ...this.scope.storeFilter(user, headerStore),
     };
-    // A salesperson only sees their OWN attendance; store_manager+ see the team.
-    if (user.role === 'salesperson') where.staffId = user.id;
+    // Front-line staff (salesperson, storeperson) see only their OWN attendance;
+    // store_manager+ see the team.
+    if (isFrontLine(user.role)) where.staffId = user.id;
     const rows = await this.prisma.attendanceRecord.findMany({
       where,
       include: { store: true },
@@ -873,7 +874,7 @@ export class HrmsService {
         // day close must not mark them absent at every branch they can see.
         where: {
           storeId,
-          user: { isActive: true, role: { in: [Role.salesperson, Role.store_manager] } },
+          user: { isActive: true, role: { in: [Role.salesperson, Role.storeperson, Role.store_manager] } },
         },
         include: { user: { select: { id: true, name: true } } },
       }),
@@ -2011,7 +2012,7 @@ export class HrmsService {
         where: {
           userStores: { some: { storeId: { in: storeIds } } },
           // OP-5: a salesperson only ever sees their own leaderboard row.
-          ...(user.role === 'salesperson' ? { id: user.id } : {}),
+          ...(isFrontLine(user.role) ? { id: user.id } : {}),
         },
         include: { userStores: true },
       }),
@@ -2061,7 +2062,7 @@ export class HrmsService {
       where: {
         storeId: { in: storeIds },
         // OP-5: a salesperson only ever sees their own incentive numbers.
-        ...(user.role === 'salesperson' ? { userId: user.id } : {}),
+        ...(isFrontLine(user.role) ? { userId: user.id } : {}),
       },
       include: { user: { include: { userStores: true } } },
       orderBy: { amount: 'desc' },

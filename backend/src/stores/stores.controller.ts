@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Permit } from '../auth/permissions';
 import { StoresService } from './stores.service';
 import { CreateManagerDto, CreateStoreDto, UpdateStoreDto } from './dto/stores.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
@@ -26,6 +27,7 @@ export class StoresController {
    * GET /stores — the stores in the caller's scope (store-scoped, all roles),
    * each enriched with its assigned store-manager(s). Doubles as the admin list.
    */
+  @Permit('session')
   @Get()
   list(@CurrentUser() user: AuthUser) {
     return this.stores.list(user);

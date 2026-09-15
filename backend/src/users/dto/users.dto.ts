@@ -14,7 +14,7 @@ import { LeaveType, Role } from '@prisma/client';
 import { IsIndianMobile, IsRealName } from '../../common/contact.util';
 
 /** Roles a head-office admin may assign here — never `head_office` (HO cannot mint another HO). */
-export const ASSIGNABLE_ROLES: Role[] = ['salesperson', 'store_manager'];
+export const ASSIGNABLE_ROLES: Role[] = ['salesperson', 'storeperson', 'store_manager'];
 
 /**
  * POST /users — a manager onboards a staff member (defaults to salesperson).

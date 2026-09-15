@@ -745,8 +745,23 @@ export function getNavItem(slug: string): NavItem | undefined {
   return NAV_ITEMS.find((i) => i.slug === slug);
 }
 
-/** Whether a role may see a nav item (undefined roles = everyone). */
+/**
+ * Everything a storeperson sees: the branch's catalogue, stock, dead stock,
+ * product photos and their own attendance and leave. Listed, not ranked — a
+ * nav item with no `roles` means "every ladder role", and a storeperson is not
+ * on the ladder, so they get nothing by omission.
+ */
+export const STOREPERSON_NAVIGATION: ReadonlySet<string> = new Set([
+  "catalogue",
+  "inventory",
+  "inventory/dead-stock",
+  "data/images",
+  "hrms",
+]);
+
+/** Whether a role may see a nav item (undefined roles = every ladder role). */
 export function canSeeNavItem(item: NavItem, role: Role): boolean {
+  if (role === "storeperson") return STOREPERSON_NAVIGATION.has(item.slug);
   return !item.roles || item.roles.includes(role);
 }
 
@@ -790,6 +805,7 @@ export function navigationFromSettings(
  * Also used by the sidebar logo so "home" always points somewhere visible.
  */
 export function homeForRole(role: Role, enabledNavigation?: readonly string[] | null): string {
+  if (role === "storeperson") return "/inventory";
   if (role === "salesperson") return "/crm";
   return enabledNavigation?.length && !enabledNavigation.includes("dashboards")
     ? "/crm"

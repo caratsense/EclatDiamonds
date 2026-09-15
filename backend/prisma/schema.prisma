@@ -43,6 +43,11 @@ enum Role {
   store_manager
   area_manager
   head_office
+  /// APPENDED. The store's inventory job: catalogue, stock inward, VIN lookup,
+  /// dead stock and product photos at their own branch — and nothing about
+  /// customers, money or the team. Not a rung on the ladder above: its access is
+  /// an explicit permission list (auth/permissions.ts), never a rank comparison.
+  storeperson
 }
 
 /// Self-signup approval lifecycle. `approved` is the default so every existing

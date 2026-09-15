@@ -10,6 +10,7 @@ import {
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
+import { Permit } from '../../auth/permissions';
 import { FileInterceptor } from '@nestjs/platform-express';
 
 import { AllowMachine } from '../../auth/machine.decorator';
@@ -145,6 +146,7 @@ export class ImportImagesController {
   constructor(private readonly images: ImageZipService) {}
 
   /** Dry run: every entry's fate, nothing written. */
+  @Permit('catalogue.images')
   @Post('preview')
   @AllowMachine()
   @UseInterceptors(FileInterceptor('file', ZIP_UPLOAD_OPTIONS))
@@ -156,6 +158,7 @@ export class ImportImagesController {
     return this.images.preview(user, file, parseOptions(body));
   }
 
+  @Permit('catalogue.images')
   @Post('run')
   @AllowMachine()
   @UseInterceptors(FileInterceptor('file', ZIP_UPLOAD_OPTIONS))

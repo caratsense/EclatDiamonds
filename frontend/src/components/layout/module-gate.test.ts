@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { gateDecision, navSlugForPath } from "./module-gate";
+import { gateDecision, navSlugForPath, roleDecision } from "./module-gate";
 import { CORE_NAVIGATION, NAV_ITEMS } from "@/lib/navigation";
 
 /**
@@ -194,5 +194,33 @@ describe("gateDecision — the fail-open branch is gone", () => {
     for (const slug of VERTICAL) {
       expect(gateDecision(`/${slug}`, [...CORE_NAVIGATION, slug])).toBe("render");
     }
+  });
+});
+
+/**
+ * The role half of the gate: a typed URL for a screen this role cannot use shows
+ * "not part of your role" instead of a shell whose panels all fail. A storeperson
+ * is closed by default — only their inventory screens and the check-in page.
+ */
+describe("roleDecision", () => {
+  it("keeps a storeperson to the inventory job", () => {
+    for (const path of ["/inventory", "/inventory/dead-stock", "/catalogue", "/data/images", "/hrms", "/check-in"]) {
+      expect({ path, d: roleDecision(path, "storeperson") }).toEqual({ path, d: "render" });
+    }
+    for (const path of ["/crm", "/conversations", "/customers/p1", "/checkins", "/quotation", "/hrms/payroll", "/reporting", "/settings", "/timelines", "/find-similar", "/data"]) {
+      expect({ path, d: roleDecision(path, "storeperson") }).toEqual({ path, d: "refuse" });
+    }
+  });
+
+  it("refuses a salesperson the manager screens and leaves theirs open", () => {
+    expect(roleDecision("/reporting", "salesperson")).toBe("refuse");
+    expect(roleDecision("/management", "salesperson")).toBe("refuse");
+    expect(roleDecision("/crm", "salesperson")).toBe("render");
+    expect(roleDecision("/check-in", "salesperson")).toBe("render");
+  });
+
+  it("lets a store manager into management screens", () => {
+    expect(roleDecision("/reporting", "store_manager")).toBe("render");
+    expect(roleDecision("/inventory/dead-stock", "store_manager")).toBe("render");
   });
 });

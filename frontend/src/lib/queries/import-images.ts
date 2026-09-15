@@ -138,8 +138,9 @@ export interface ProfileFit {
 
 const PROFILE_KEY = ["import-mappings"] as const;
 
-export function useMappingProfiles(entity?: string) {
+export function useMappingProfiles(entity?: string, options: { enabled?: boolean } = {}) {
   return useQuery({
+    enabled: options.enabled ?? true,
     queryKey: [...PROFILE_KEY, entity ?? "all"],
     queryFn: async () => {
       const { data } = await api.get<MappingProfile[]>("/import-mappings", {

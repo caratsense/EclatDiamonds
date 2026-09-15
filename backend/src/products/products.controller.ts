@@ -8,6 +8,7 @@ import {
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
+import { Permit } from '../auth/permissions';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Availability, MetalKind, ProductCategory } from '@prisma/client';
 import { ProductsService } from './products.service';
@@ -34,6 +35,7 @@ export class ProductsController {
    * dual DINOv3 + SigLIP 2 embeddings. Sales tool — salesperson and above.
    */
   @RateLimit('expensive')
+  @Permit('catalogue.read')
   @Post('jewelry/similarity-search')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 12 * 1024 * 1024 } }))
   similaritySearch(
@@ -46,6 +48,7 @@ export class ProductsController {
   }
 
   /** Record relevance feedback on a similarity-search hit (M5 training signal). */
+  @Permit('catalogue.read')
   @Post('jewelry/similarity-feedback')
   similarityFeedback(
     @CurrentUser() user: AuthUser,
@@ -57,6 +60,7 @@ export class ProductsController {
 
   /** AI image search (M5): upload a design photo → ranked catalogue matches. */
   @RateLimit('expensive')
+  @Permit('catalogue.read')
   @Post('image-search')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 12 * 1024 * 1024 } }))
   imageSearch(
@@ -92,6 +96,7 @@ export class ProductsController {
    * List catalogue products. Without `page`/`pageSize` returns the plain array
    * (legacy shape); with either param returns { items, total, page, pageSize }.
    */
+  @Permit('catalogue.read')
   @Get()
   list(
     @CurrentUser() user: AuthUser,
@@ -119,6 +124,7 @@ export class ProductsController {
   }
 
   /** The physical pieces of this design on hand, with real tag price + tracking. */
+  @Permit('catalogue.read')
   @Get(':id/pieces')
   pieces(
     @CurrentUser() user: AuthUser,
@@ -128,6 +134,7 @@ export class ProductsController {
     return this.products.pieces(user, id, store);
   }
 
+  @Permit('catalogue.read')
   @Get(':id')
   get(
     @CurrentUser() user: AuthUser,
@@ -139,6 +146,7 @@ export class ProductsController {
 
   /** Upload/replace a product photo (multipart field `file`). Managers and above. */
   @Roles('store_manager', 'head_office')
+  @Permit('catalogue.images')
   @Post(':id/image')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 8 * 1024 * 1024 } }))
   uploadImage(

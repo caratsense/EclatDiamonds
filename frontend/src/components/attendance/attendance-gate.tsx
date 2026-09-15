@@ -29,7 +29,8 @@ export function AttendanceGate() {
   const role = useSession((s) => s.role);
   const authenticated = useSession((s) => s.authenticated);
 
-  const isSalesperson = role === "salesperson";
+  // Front-line staff punch in: salespeople and storepeople alike.
+  const isSalesperson = role === "salesperson" || role === "storeperson";
   const onCheckIn = pathname === "/check-in";
 
   // Only fetch when the gate could actually act — avoids extra load for managers.

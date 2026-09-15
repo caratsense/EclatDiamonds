@@ -16,6 +16,7 @@ import { useSession } from "@/store/use-session";
 
 const ROLES: Role[] = [
   "salesperson",
+  "storeperson",
   "store_manager",
   "area_manager",
   "head_office",

@@ -9,6 +9,7 @@ import {
   Query,
   Sse,
 } from '@nestjs/common';
+import { Permit } from '../auth/permissions';
 import { SkipThrottle } from '@nestjs/throttler';
 import { Observable, interval, map, merge } from 'rxjs';
 import { NotificationsService } from './notifications.service';
@@ -31,6 +32,7 @@ export class NotificationsController {
   constructor(private readonly notifications: NotificationsService) {}
 
   /** GET /notifications/summary — actionable counts for the current user/store. */
+  @Permit('session')
   @Get('summary')
   summary(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.notifications.summary(user, store);
@@ -70,18 +72,21 @@ export class NotificationsController {
   }
 
   /** GET /notifications — the caller's own feed (newest first). */
+  @Permit('session')
   @Get()
   feed(@CurrentUser() user: AuthUser, @Query() query: FeedQueryDto) {
     return this.notifications.feed(user, query);
   }
 
   /** POST /notifications/read-all — mark every unread notification read. */
+  @Permit('session')
   @Post('read-all')
   markAllRead(@CurrentUser() user: AuthUser) {
     return this.notifications.markAllRead(user);
   }
 
   /** PATCH /notifications/:id/read — mark one read (or back to unread). */
+  @Permit('session')
   @Patch(':id/read')
   markRead(
     @CurrentUser() user: AuthUser,
@@ -97,12 +102,14 @@ export class NotificationsController {
    * Pass `?onlyRead=true` to clear just what has been seen. Cleared rows are
    * soft-dismissed, not deleted, so the history view can still show them.
    */
+  @Permit('session')
   @Delete()
   dismissAll(@CurrentUser() user: AuthUser, @Query() query: DismissAllQueryDto) {
     return this.notifications.dismissAll(user, query?.onlyRead ?? false);
   }
 
   /** DELETE /notifications/:id — clear one notification. */
+  @Permit('session')
   @Delete(':id')
   dismiss(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.notifications.dismiss(user, id);

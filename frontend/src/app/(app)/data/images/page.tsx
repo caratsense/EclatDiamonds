@@ -59,7 +59,10 @@ export default function ImageImportPage() {
 
   const preview = usePreviewImageZip();
   const run = useRunImageZip();
-  const profiles = useMappingProfiles();
+  // Saved spreadsheet mappings are a manager's import tool; a storeperson
+  // imports photographs only.
+  const canMap = useSession((s) => s.role) !== "storeperson";
+  const profiles = useMappingProfiles(undefined, { enabled: canMap });
   const deleteProfile = useDeleteMappingProfile();
 
   const options = {
@@ -325,6 +328,7 @@ export default function ImageImportPage() {
       {isHo ? <CatalogueExportCard /> : null}
 
       {/* ---------------------------------------------------------------- */}
+      {canMap ? (
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Saved column mappings</CardTitle>
@@ -382,6 +386,7 @@ export default function ImageImportPage() {
           )}
         </CardContent>
       </Card>
+      ) : null}
     </div>
   );
 }

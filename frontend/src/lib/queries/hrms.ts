@@ -682,9 +682,10 @@ export function useSetWeekOff() {
  * `flagged` is true at ≥3 lates. This is a FLAG only; salary / half-day
  * automation is deferred (see the UI caption).
  */
-export function useLateFlags(month: string) {
+export function useLateFlags(month: string, options: { enabled?: boolean } = {}) {
   const storeId = useStoreKey();
   return useQuery({
+    enabled: options.enabled ?? true,
     queryKey: [HRMS_KEY, "late-flags", storeId, month],
     queryFn: async () => {
       // Server wraps the rows: { month, note, staff: LateFlag[] } — unwrap to

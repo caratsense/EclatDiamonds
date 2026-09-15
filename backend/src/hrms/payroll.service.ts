@@ -98,7 +98,7 @@ export class PayrollService {
       where: {
         organisationId: user.organisationId,
         isActive: true,
-        role: { in: [Role.salesperson, Role.store_manager] },
+        role: { in: [Role.salesperson, Role.storeperson, Role.store_manager] },
         userStores: { some: { storeId: { in: storeIds } } },
       },
       orderBy: { name: 'asc' },
@@ -962,7 +962,7 @@ export class PayrollService {
         where: {
           organisationId: store.organisationId,
           isActive: true,
-          role: { in: [Role.salesperson, Role.store_manager] },
+          role: { in: [Role.salesperson, Role.storeperson, Role.store_manager] },
           userStores: { some: { storeId: store.id } },
         },
         orderBy: { name: 'asc' },

@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Permit } from './permissions';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
@@ -119,12 +120,14 @@ export class AuthController {
    * the frontend issues on every page load, so it falls to the default bucket
    * (300/min, keyed on the organisation) rather than the 10/min credential one.
    */
+  @Permit('session')
   @Get('me')
   me(@CurrentUser() user: AuthUser) {
     return this.auth.me(user);
   }
 
   /** Authenticated, and rank-gated in the service — not a credential-guessing surface. */
+  @Permit('session')
   @Post('change-password')
   changePassword(@CurrentUser() user: AuthUser, @Body() dto: ChangePasswordDto) {
     return this.auth.changePassword(user, dto.currentPassword, dto.newPassword);

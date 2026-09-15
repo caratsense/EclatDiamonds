@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
+import { Permit } from '../auth/permissions';
 
 import { AuthUser, CurrentUser } from '../common/auth-user';
 import { Roles } from '../auth/roles.decorator';
@@ -30,6 +31,7 @@ export class TenantConfigController {
    * GET /config/bootstrap — the single call a client makes on load to learn what
    * this tenant is, what it calls things, and which fields to show.
    */
+  @Permit('session')
   @Get('bootstrap')
   bootstrap(@CurrentUser() user: AuthUser) {
     return this.config.bootstrap(user);
@@ -54,6 +56,7 @@ export class TenantConfigController {
    * Readable by any signed-in user, like the rest of the configuration reads: a
    * salesperson's client needs to know the same thing the sidebar does.
    */
+  @Permit('session')
   @Get('capabilities')
   capabilities(@CurrentUser() user: AuthUser) {
     return this.config.capabilities(user);
@@ -72,6 +75,7 @@ export class TenantConfigController {
     return this.config.setCapabilities(user, { disabled: body.disabled });
   }
 
+  @Permit('session')
   @Get('taxonomy')
   listTerms(
     @CurrentUser() user: AuthUser,

@@ -165,8 +165,10 @@ export class NotificationsService {
     organisationId?: string | null,
   ): Promise<string[]> {
     const minRank = ROLE_RANK[requiredRole];
+    // A storeperson shares the front-line rank for delegation only; they are
+    // told about something only when it is addressed to storepeople.
     const eligibleRoles = (Object.keys(ROLE_RANK) as Role[]).filter(
-      (r) => ROLE_RANK[r] >= minRank,
+      (r) => ROLE_RANK[r] >= minRank && (r !== Role.storeperson || requiredRole === Role.storeperson),
     );
 
     // Resolve the tenant this notification belongs to. A store's organisation is

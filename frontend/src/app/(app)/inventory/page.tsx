@@ -259,7 +259,7 @@ export default function InventoryPage() {
         // No single store to write to on the "All Stores" aggregate — hide the
         // add button there (read-only view); it works on a concrete store.
         primaryAction={
-          currentStore.isAggregate || !canManage ? undefined : "Stock Entry"
+          currentStore.isAggregate || !(canManage || role === "storeperson") ? undefined : "Stock Entry"
         }
         onPrimaryAction={() => setAddOpen(true)}
       />

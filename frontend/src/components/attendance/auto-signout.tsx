@@ -88,7 +88,8 @@ export function AutoSignOut() {
   const role = useSession((s) => s.role);
   const checkOut = useCheckOut();
 
-  const isSalesperson = role === "salesperson";
+  // Front-line staff only: salespeople and storepeople.
+  const isSalesperson = role === "salesperson" || role === "storeperson";
 
   const [warnOpen, setWarnOpen] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(WARN_SECONDS);

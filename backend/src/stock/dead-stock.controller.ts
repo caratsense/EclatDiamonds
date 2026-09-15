@@ -12,6 +12,7 @@ import {
   Res,
   StreamableFile,
 } from '@nestjs/common';
+import { Permit } from '../auth/permissions';
 import { Type } from 'class-transformer';
 import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, Min, ValidateIf } from 'class-validator';
 import type { Response } from 'express';
@@ -74,6 +75,7 @@ export class ClassifyProductDto {
 export class DeadStockController {
   constructor(private readonly dead: DeadStockService) {}
 
+  @Permit('inventory.read')
   @Get('policy')
   policy(@CurrentUser() user: AuthUser) {
     return this.dead.policyFor(user.organisationId);
@@ -92,6 +94,7 @@ export class DeadStockController {
     return this.dead.clearRule(user, category);
   }
 
+  @Permit('inventory.read')
   @Get()
   list(
     @CurrentUser() user: AuthUser,
@@ -185,6 +188,7 @@ function listOptions(q: {
 export class StockVinController {
   constructor(private readonly dead: DeadStockService) {}
 
+  @Permit('inventory.read')
   @Get(':vin')
   lookup(@CurrentUser() user: AuthUser, @Param('vin') vin: string) {
     return this.dead.lookup(user, vin);
