@@ -21,9 +21,10 @@ import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
 import { ROLE_RANK } from '../common/role.util';
 import { WhatsAppService } from '../integrations/whatsapp.service';
-import { SignupDto } from './dto/signup.dto';
+import { SignupDto, SignupPreviewDto } from './dto/signup.dto';
 import { CreateOrganisationDto } from './dto/create-organisation.dto';
-import { uniqueEmailHandle } from '../users/users.util';
+import { allocateLoginId, readSignupPolicy, renderLoginId, requestableRoles } from '../users/users.util';
+import { NotificationsService } from '../notifications/notifications.service';
 import { LoginLockout } from './login-lockout';
 import { DEFAULT_PACK_CODE, getPack, listPacks } from '../config/industry-packs/packs';
 import { enabledCapabilitiesFor } from '../config/entitlements';
@@ -88,6 +89,7 @@ export class AuthService {
     private readonly config: ConfigService,
     private readonly whatsapp: WhatsAppService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -179,7 +181,7 @@ export class AuthService {
     if (!user) {
       // First sign-in — link this account to the sub.
       const byEmail = await this.prisma.user.findUnique({ where: { email } });
-      if (!byEmail || !byEmail.isActive) throw rejected;
+      if (!byEmail || !byEmail.isActive || byEmail.approvalStatus !== 'approved') throw rejected;
 
       if (byEmail.googleSub && byEmail.googleSub !== sub) {
         // Address was recycled or is being impersonated — needs a manager to sort out.
@@ -194,7 +196,7 @@ export class AuthService {
       linked = true;
     }
 
-    if (!user.isActive) throw rejected;
+    if (!user.isActive || user.approvalStatus !== 'approved') throw rejected;
 
     const token = await this.jwt.signAsync({
       sub: user.id,
@@ -241,63 +243,138 @@ export class AuthService {
    * is preserved; a pending row can do nothing until approved.
    */
   async signup(dto: SignupDto) {
-    const contactEmail = dto.email?.trim().toLowerCase() || null;
+    const contactEmail = (dto.contactEmail ?? dto.email)?.trim().toLowerCase() || null;
     const phone = dto.phone?.trim() || null;
+    const name = dto.name.trim();
 
-    const store = await this.prisma.store.findUnique({
-      where: { id: dto.requestedStoreId },
-      // The organisation's slug scopes the generated login handle to this tenant.
-      include: { organisation: { select: { slug: true } } },
-    });
-    if (!store || store.isAggregate) {
-      throw new BadRequestException('Choose a valid store');
-    }
     // Organisation is resolved from the EXPLICITLY chosen store — a trusted signal,
-    // never a first-store/alphabetical/Surat fallback. A store with no organisation
-    // cannot attribute a signup, so refuse rather than guess.
-    if (!store.organisationId) {
-      throw new BadRequestException('That store is not available for signup');
+    // never a first-store/alphabetical/Surat fallback — and, when the applicant
+    // typed an organisation code, the store must belong to it.
+    const store = await this.signupStore(dto.requestedStoreId, dto.organisationCode);
+    if (!store) throw new BadRequestException('Choose a valid store');
+
+    const policy = readSignupPolicy(store.organisation.settings);
+    if (!requestableRoles(policy).includes(dto.requestedRole)) {
+      throw new BadRequestException(
+        'That role cannot be requested here. Ask head office to add you instead.',
+      );
     }
 
-    // The LOGIN identity is a generated, unique handle — never the personal email
-    // (which is optional and may be shared) — and it is scoped to the tenant that
-    // owns the chosen store: "priya.andheri@sunrise-clinic.accounts.caratos.invalid".
-    const email = await uniqueEmailHandle(
-      dto.name,
-      store.name,
-      store.organisation?.slug,
-      async (candidate) =>
-        !!(await this.prisma.user.findUnique({ where: { email: candidate }, select: { id: true } })),
+    // The LOGIN ID is generated and unique — never the personal email (optional,
+    // may be shared) — and scoped to the tenant that owns the chosen store. The
+    // unique index assigns it: concurrent namesakes get different suffixes.
+    const passwordHash = await bcrypt.hash(dto.password, 10);
+    const subject = { name, storeName: store.name, organisationSlug: store.organisation.slug };
+    const created = await allocateLoginId(
+      (n) => renderLoginId(policy.loginIdTemplate, subject, n),
+      (email) =>
+        this.prisma.user.create({
+          data: {
+            name,
+            email,
+            contactEmail,
+            phone,
+            initials: name.slice(0, 2).toUpperCase(),
+            // NEVER the requested role — a pending row is powerless until approved.
+            role: 'salesperson',
+            passwordHash,
+            isActive: false,
+            approvalStatus: 'pending',
+            // The pending user belongs to that tenant from the moment they sign up
+            // (approval never crosses orgs).
+            organisationId: store.organisationId,
+            requestedRole: dto.requestedRole,
+            requestedStoreId: store.id,
+          },
+          select: { id: true, email: true },
+        }),
     );
 
-    const passwordHash = await bcrypt.hash(dto.password, 10);
-    await this.prisma.user.create({
-      data: {
-        name: dto.name.trim(),
-        email,
-        contactEmail,
-        phone,
-        initials: dto.name.trim().slice(0, 2).toUpperCase(),
-        // NEVER the requested role — a pending row is powerless until approved.
-        role: 'salesperson',
-        passwordHash,
-        isActive: false,
-        approvalStatus: 'pending',
-        // Organisation of the explicitly chosen store — the pending user belongs to
-        // that tenant from the moment they sign up (approval never crosses orgs).
-        organisationId: store.organisationId,
-        requestedRole: dto.requestedRole,
-        requestedStoreId: dto.requestedStoreId,
-      },
+    const approverRole = dto.requestedRole === 'store_manager' ? 'head_office' : 'store_manager';
+    await this.audit.recordSystem(store.organisationId, 'self_signup', {
+      action: 'user.signup_requested',
+      entityType: 'User',
+      entityId: created.id,
+      storeId: store.id,
+      summary: `${name} asked to join ${store.name} as ${dto.requestedRole}`,
+      metadata: { requestedRole: dto.requestedRole, requestedStoreId: store.id },
     });
+    await this.notifications.emitToApprovers(
+      store.id,
+      approverRole,
+      {
+        kind: 'system',
+        title: 'New account request',
+        body: `${name} asked to join ${store.name}.`,
+        href: '/settings/team',
+        storeId: store.id,
+        entityType: 'User',
+        entityId: created.id,
+        dedupeKey: `signup-request:${created.id}`,
+      },
+      undefined,
+      store.organisationId,
+    );
 
     return {
       pending: true,
-      loginEmail: email,
+      loginId: created.email,
+      /** @deprecated the same value as `loginId`; kept for older clients. */
+      loginEmail: created.email,
       message:
-        dto.requestedRole === 'salesperson'
+        approverRole === 'store_manager'
           ? 'Request sent. Your store manager will approve your account.'
           : 'Request sent. Head office will approve your account.',
+    };
+  }
+
+  /**
+   * The store a signup (or its preview) names, with its tenant — or null when it
+   * cannot be joined. Another tenant's store, a closed one, the aggregate and a
+   * made-up id all come back the same null, so the answer never tells an
+   * applicant that some other organisation's store exists.
+   */
+  private async signupStore(storeId: string, organisationCode?: string) {
+    const code = organisationCode?.trim().toLowerCase();
+    const store = await this.prisma.store.findFirst({
+      where: {
+        id: storeId,
+        isAggregate: false,
+        status: { not: 'closed' },
+        ...(code ? { organisation: { OR: [{ slug: code }, { id: code }] } } : {}),
+      },
+      include: { organisation: { select: { slug: true, settings: true } } },
+    });
+    return store;
+  }
+
+  /**
+   * POST /auth/signup/preview — which roles may be requested, and what the Login
+   * ID will look like. Rendered from the tenant's template alone: no user row is
+   * read, so two applicants typing the same name see the same preview whether or
+   * not that ID is already held. The final ID is assigned by signup.
+   */
+  async signupPreview(dto: SignupPreviewDto) {
+    const code = dto.organisationCode.trim().toLowerCase();
+    const organisation = code
+      ? await this.prisma.organisation.findFirst({
+          where: { OR: [{ slug: code }, { id: code }] },
+          select: { slug: true, settings: true },
+        })
+      : null;
+    const policy = readSignupPolicy(organisation?.settings);
+    const store =
+      organisation && dto.requestedStoreId
+        ? await this.signupStore(dto.requestedStoreId, code)
+        : null;
+    const name = dto.name?.trim();
+    const subject = store && name
+      ? { name, storeName: store.name, organisationSlug: store.organisation.slug }
+      : null;
+    return {
+      requestableRoles: requestableRoles(policy),
+      loginIdPreview: subject ? renderLoginId(policy.loginIdTemplate, subject, 1) : null,
+      loginIdSuffixExample: subject ? renderLoginId(policy.loginIdTemplate, subject, 2) : null,
     };
   }
 
@@ -609,7 +686,8 @@ export class AuthService {
    */
   private async findUserByPhone(last10: string) {
     const candidates = await this.prisma.user.findMany({
-      where: { isActive: true, phone: { not: null } },
+      // approvalStatus too: a pending or rejected signup never gets a code.
+      where: { isActive: true, approvalStatus: 'approved', phone: { not: null } },
     });
     const matches = candidates.filter((u) => {
       const digits = (u.phone ?? '').replace(/\D/g, '');

@@ -21,8 +21,9 @@ describe('signup approval — who may approve whom', () => {
     expect(canApproveSignup(HO, 'salesperson', 's-anything')).toBe(true); // HO ignores store scope
   });
 
-  it('a store manager approves ONLY salespeople, and ONLY in their own store', () => {
+  it('a store manager approves ONLY front-line staff, and ONLY in their own store', () => {
     expect(canApproveSignup(SM, 'salesperson', 's-bandra')).toBe(true);
+    expect(canApproveSignup(SM, 'storeperson', 's-bandra')).toBe(true);
     // out-of-scope store → not theirs to approve
     expect(canApproveSignup(SM, 'salesperson', 's-borivali')).toBe(false);
     // cannot approve a peer or a superior — the whole point of the tiered flow
@@ -30,9 +31,12 @@ describe('signup approval — who may approve whom', () => {
     expect(canApproveSignup(SM, 'area_manager', 's-bandra')).toBe(false);
   });
 
-  it('an area manager may approve store managers + salespeople inside their region stores', () => {
-    expect(canApproveSignup(AREA, 'store_manager', 's-bandra')).toBe(true);
+  it('an area manager approves front-line staff in their stores, but a manager request is head office’s', () => {
+    // The area tier was folded into store_manager (2026-08); manager-level access
+    // is granted by head office alone, so the dead tier cannot mint managers.
+    expect(canApproveSignup(AREA, 'store_manager', 's-bandra')).toBe(false);
     expect(canApproveSignup(AREA, 'salesperson', 's-borivali')).toBe(true);
+    expect(canApproveSignup(AREA, 'storeperson', 's-borivali')).toBe(true);
     expect(canApproveSignup(AREA, 'store_manager', 's-elsewhere')).toBe(false); // not in scope
     expect(canApproveSignup(AREA, 'area_manager', 's-bandra')).toBe(false); // never a peer
   });
