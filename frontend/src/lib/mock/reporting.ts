@@ -36,11 +36,28 @@ export const PAYMENT_SOURCES: PaymentSource[] = [
 
 /** Store-wise revenue table. */
 export interface StoreRevenue {
+  storeId?: string;
   store: string;
   walkins: number;
   bills: number;
   revenue: number;
   goldGrams: number;
+  /** Beside revenue, never netted off it. */
+  cancelled?: { count: number; amount: number };
+  returns?: { count: number; amount: number };
+  leads?: number;
+  quotes?: number;
+  /** Visits today whose customer was billed today, of all visits today. */
+  visitToSale?: { numerator: number; denominator: number; value: number | null };
+}
+
+/** What the DSR figures were measured against, sent with them. */
+export interface DsrBasis {
+  date: string;
+  timezone: string;
+  zonesInScope: string[];
+  currency: string;
+  definitions: Record<string, string>;
 }
 
 export const STORE_REVENUE: StoreRevenue[] = [

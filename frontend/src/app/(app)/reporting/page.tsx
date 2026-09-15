@@ -181,6 +181,7 @@ export default function ReportingPage() {
             <div className="lg:col-span-2">
               <StoreRevenueTable
                 data={storeRevenue}
+                basis={dsrQuery.data?.basis}
                 isLoading={dsrQuery.isLoading}
               />
             </div>

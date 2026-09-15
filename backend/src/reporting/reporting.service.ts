@@ -14,6 +14,7 @@ import {
   startOfDayAgoInTz,
   startOfDayInTz,
 } from '../common/tz.util';
+import { ratio } from '../management/kpi-window';
 import { WhatsAppService } from '../integrations/whatsapp.service';
 import { EmailService } from '../integrations/email.service';
 import {
@@ -183,6 +184,17 @@ export interface ReportSummary {
   payments: { count: number; total: number; byMode: Record<string, number> };
 }
 
+/** What each DSR comparison column means, sent with the figures. */
+const DSR_DEFINITIONS = {
+  revenue: 'Bills dated today that are not cancelled, excluding returns.',
+  cancelled: 'Bills dated today and marked cancelled. Not included in revenue.',
+  returns: 'Sale-return documents dated today. Reported beside revenue, never netted off it.',
+  walkins: 'Customer check-ins that started today.',
+  leads: 'Enquiries opened today, excluding archived customers.',
+  quotes: 'Quotations created today.',
+  visitToSale: 'Check-ins today whose customer was billed today, divided by all check-ins today.',
+} as const;
+
 @Injectable()
 export class ReportingService {
   constructor(
@@ -237,7 +249,10 @@ export class ReportingService {
         where: { ...storeWhere, paidAt: { gte: todayStart } },
         _sum: { amount: true },
       }),
-      this.prisma.store.findMany({ where: { id: { in: storeIds } }, select: { id: true, name: true } }),
+      this.prisma.store.findMany({
+        where: { id: { in: storeIds } },
+        select: { id: true, name: true, timezone: true },
+      }),
     ]);
 
     const sales = num(salesToday._sum.totalAmount);
@@ -262,41 +277,142 @@ export class ReportingService {
       .map((p) => ({ source: paymentModeLabel(p.mode), amount: num(p._sum.amount) }))
       .filter((p) => p.amount > 0);
 
-    const storeRevenue = await Promise.all(
+    const storeRevenue = await this.storeComparison(user, stores, todayStart);
+
+    return {
+      headline,
+      paymentSources,
+      storeRevenue,
+      /*
+       * Stated with the figures, because a comparison nobody can reconcile is a
+       * comparison nobody trusts. One currency per tenant (stores carry none of
+       * their own), so rupees are never added to anything else; and one clock
+       * decides where "today" began, named here with any other zones in scope.
+       */
+      basis: {
+        date: dateOnly(businessDate(now, tz)),
+        timezone: tz,
+        zonesInScope: [...new Set(stores.map((s) => resolveTz(s.timezone)))],
+        currency: await this.tenantCurrency(user),
+        definitions: DSR_DEFINITIONS,
+      },
+    };
+  }
+
+  private async tenantCurrency(user: AuthUser): Promise<string> {
+    const org = await this.prisma.organisation.findUnique({
+      where: { id: user.organisationId },
+      select: { currency: true },
+    });
+    return org?.currency ?? 'INR';
+  }
+
+  /**
+   * Today, branch against branch.
+   *
+   * Grouped aggregates rather than a query per branch per figure, so the number
+   * of round trips does not grow with the size of the chain. Gold weight is the
+   * one per-branch query left: it filters sale LINES by a property of their
+   * parent sale, which a groupBy cannot key on.
+   */
+  private async storeComparison(
+    user: AuthUser,
+    stores: { id: string; name: string }[],
+    todayStart: Date,
+  ) {
+    const storeIds = stores.map((s) => s.id);
+    const today = { gte: todayStart };
+    const inStores = { storeId: { in: storeIds } };
+    const [billed, cancelled, returned, walkins, converted, leads, quotes] = await Promise.all([
+      this.prisma.sale.groupBy({
+        by: ['storeId'],
+        where: { ...inStores, isCancelled: false, docType: 'sale', docDate: today },
+        _sum: { totalAmount: true },
+        _count: { _all: true },
+      }),
+      this.prisma.sale.groupBy({
+        by: ['storeId'],
+        where: { ...inStores, isCancelled: true, docType: 'sale', docDate: today },
+        _sum: { totalAmount: true },
+        _count: { _all: true },
+      }),
+      this.prisma.sale.groupBy({
+        by: ['storeId'],
+        where: { ...inStores, isCancelled: false, docType: 'sale_return', docDate: today },
+        _sum: { totalAmount: true },
+        _count: { _all: true },
+      }),
+      this.prisma.checkIn.groupBy({
+        by: ['storeId'],
+        where: { ...inStores, timeIn: today },
+        _count: { _all: true },
+      }),
+      // A visit whose customer was billed today. The till does not know about
+      // the check-in, so the link is the customer, not the visit.
+      this.prisma.checkIn.groupBy({
+        by: ['storeId'],
+        where: {
+          ...inStores,
+          timeIn: today,
+          party: { sales: { some: { isCancelled: false, docType: 'sale', docDate: today } } },
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.lead.groupBy({
+        by: ['storeId'],
+        where: {
+          ...inStores,
+          organisationId: user.organisationId,
+          createdAt: today,
+          OR: [{ partyId: null }, { party: { archivedAt: null } }],
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.quote.groupBy({
+        by: ['storeId'],
+        where: { ...inStores, organisationId: user.organisationId, createdAt: today },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const countOf = (rows: { storeId: string; _count: { _all: number } }[], id: string) =>
+      rows.find((r) => r.storeId === id)?._count._all ?? 0;
+    const sumOf = (
+      rows: { storeId: string; _sum: { totalAmount: Prisma.Decimal | null } }[],
+      id: string,
+    ) => num(rows.find((r) => r.storeId === id)?._sum.totalAmount);
+
+    return Promise.all(
       stores.map(async (st) => {
-        const [rev, bills, walkins, goldLines] = await Promise.all([
-          this.prisma.sale.aggregate({
-            _sum: { totalAmount: true },
-            where: { storeId: st.id, isCancelled: false, docType: 'sale', docDate: { gte: todayStart } },
-          }),
-          this.prisma.sale.count({
-            where: { storeId: st.id, isCancelled: false, docType: 'sale', docDate: { gte: todayStart } },
-          }),
-          this.prisma.checkIn.count({ where: { storeId: st.id, timeIn: { gte: todayStart } } }),
-          this.prisma.saleLine.aggregate({
-            _sum: { netWeight: true },
-            // Only gold pieces count toward goldGrams. SaleLine has no metal of its
-            // own, so read it off the physical piece or, failing that, the design.
-            where: {
-              sale: { storeId: st.id, isCancelled: false, docType: 'sale', docDate: { gte: todayStart } },
-              OR: [
-                { stockItem: { metal: { in: GOLD_METALS } } },
-                { product: { metal: { in: GOLD_METALS } } },
-              ],
-            },
-          }),
-        ]);
+        const goldLines = await this.prisma.saleLine.aggregate({
+          _sum: { netWeight: true },
+          // Only gold pieces count toward goldGrams. SaleLine has no metal of its
+          // own, so read it off the physical piece or, failing that, the design.
+          where: {
+            sale: { storeId: st.id, isCancelled: false, docType: 'sale', docDate: { gte: todayStart } },
+            OR: [
+              { stockItem: { metal: { in: GOLD_METALS } } },
+              { product: { metal: { in: GOLD_METALS } } },
+            ],
+          },
+        });
+        const walkinCount = countOf(walkins, st.id);
         return {
+          storeId: st.id,
           store: st.name,
-          walkins,
-          bills,
-          revenue: num(rev._sum.totalAmount),
+          walkins: walkinCount,
+          bills: countOf(billed, st.id),
+          revenue: sumOf(billed, st.id),
           goldGrams: Math.round(num(goldLines._sum.netWeight)),
+          cancelled: { count: countOf(cancelled, st.id), amount: sumOf(cancelled, st.id) },
+          returns: { count: countOf(returned, st.id), amount: sumOf(returned, st.id) },
+          leads: countOf(leads, st.id),
+          quotes: countOf(quotes, st.id),
+          /** Visits today whose customer was billed today, of all visits today. */
+          visitToSale: ratio(countOf(converted, st.id), walkinCount),
         };
       }),
     );
-
-    return { headline, paymentSources, storeRevenue };
   }
 
   /** GET /reporting/movers — fast/slow movers by category from sold sale lines + aging stock. */

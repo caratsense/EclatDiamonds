@@ -16,11 +16,18 @@ import {
 export class ReportingController {
   constructor(private readonly reporting: ReportingService) {}
 
+  /*
+   * The DSR, the movers and the period roll-up are a branch's takings, stock
+   * and cash — and, for head office, branch against branch. Store manager and
+   * above; a salesperson's day lives on their own screens.
+   */
+  @Roles('store_manager', 'head_office')
   @Get('dsr')
   dsr(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.reporting.dsr(user, store);
   }
 
+  @Roles('store_manager', 'head_office')
   @Get('movers')
   movers(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.reporting.movers(user, store);
@@ -30,6 +37,7 @@ export class ReportingController {
    * GET /reporting/summary?period=daily|weekly|monthly&date=YYYY-MM-DD
    * Store-scoped roll-up of sales / orders / payments for the period containing `date`.
    */
+  @Roles('store_manager', 'head_office')
   @Get('summary')
   summary(
     @CurrentUser() user: AuthUser,

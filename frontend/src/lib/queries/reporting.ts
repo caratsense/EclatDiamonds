@@ -11,6 +11,7 @@ import { useStoreKey } from "@/lib/queries/keys";
 import type {
   DailyReport,
   DailyReportInput,
+  DsrBasis,
   DsrHeadline,
   MoverRow,
   PaymentSource,
@@ -37,6 +38,7 @@ export interface DsrResponse {
   headline: DsrHeadline[];
   paymentSources: PaymentSource[];
   storeRevenue: StoreRevenue[];
+  basis?: DsrBasis;
 }
 
 /** GET /reporting/dsr — Daily Sales Report (headline KPIs, payment mix, store rows). */
