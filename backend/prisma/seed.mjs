@@ -138,8 +138,12 @@ async function main() {
   //   store_manager -> diamond 5%  / making 10%
   //   head_office   -> diamond 100%/ making 100%
   // (area_manager was collapsed into store_manager — no cap tier for it.)
+  // maxPercent is the cap on a QUOTE discount (one % off making + diamond). Eclat's
+  // rule: a salesperson's quote discount above 5% needs a manager. Demo data for
+  // this org only — no other tenant gets it; production sets it through
+  // POST /discounts/limits.
   const limits = [
-    { role: "salesperson", maxPercent: "2.00", maxDiamondPercent: "2.00", maxMakingPercent: "5.00" },
+    { role: "salesperson", maxPercent: "5.00", maxDiamondPercent: "2.00", maxMakingPercent: "5.00" },
     { role: "store_manager", maxPercent: "10.00", maxDiamondPercent: "5.00", maxMakingPercent: "10.00" },
     { role: "head_office", maxPercent: "100.00", maxDiamondPercent: "100.00", maxMakingPercent: "100.00" },
   ];
