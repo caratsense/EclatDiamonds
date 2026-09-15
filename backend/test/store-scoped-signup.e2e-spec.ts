@@ -7,6 +7,7 @@ import * as bcrypt from 'bcryptjs';
 import { Prisma } from '@prisma/client';
 
 import { AppModule } from '../src/app.module';
+import { AuthService } from '../src/auth/auth.service';
 import { AuthUser } from '../src/common/auth-user';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { UsersService } from '../src/users/users.service';
@@ -16,7 +17,7 @@ import { PLATFORM_HANDLE_DOMAIN, loginIdTemplateError, renderLoginId } from '../
  * Store-scoped self-signup: who may ask for what, who may grant it, and the
  * Login ID they are given.
  *
- *  - A pending request is powerless whatever door it tries (password, a forged
+ *  - A pending request is powerless whatever door it tries (password, Google, a forged
  *    session, OTP, a manager's "activate").
  *  - A store manager decides front-line requests for their own stores only;
  *    manager requests are head office's, and only when the tenant allows them.
@@ -90,6 +91,11 @@ describe('Store-scoped self-signup (e2e)', () => {
     request(server()).post(`/users/${id}/approve`).set(as(token)).send(dto);
 
   beforeAll(async () => {
+    // Deterministic outside world: email is never really sent from this suite,
+    // and Google sign-in is "configured" so its account checks can be reached.
+    process.env.SMTP_HOST = '';
+    process.env.GOOGLE_CLIENT_ID = 'store-scoped-signup-test';
+    process.env.GOOGLE_ALLOWED_DOMAINS = '';
     const mod = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = mod.createNestApplication();
     app.useGlobalPipes(
@@ -181,6 +187,23 @@ describe('Store-scoped self-signup (e2e)', () => {
     it('cannot use a session token, even a validly signed one', async () => {
       const token = await app.get(JwtService).signAsync({ sub: id, email: loginId, name: 'x', role: 'salesperson' });
       await request(server()).get('/auth/me').set(as(token)).expect(401);
+    });
+
+    it('cannot sign in with Google, while an approved account can', async () => {
+      const auth = app.get(AuthService);
+      const asGoogle = (email: string, sub: string) =>
+        jest.spyOn(auth as unknown as { verifyGoogleToken: () => Promise<object> }, 'verifyGoogleToken')
+          .mockResolvedValueOnce({ iss: 'accounts.google.com', email_verified: true, email, sub });
+      const google = () => request(server()).post('/auth/google').send({ credential: 'google-id-token-stub' });
+
+      asGoogle(loginId, 'g-sub-pending');
+      clearThrottle();
+      await google().expect(401);
+      expect((await prisma.user.findUniqueOrThrow({ where: { id } })).googleSub).toBeNull();
+
+      asGoogle(T.mgrB, 'g-sub-approved'); // positive control: the same path admits a real account
+      clearThrottle();
+      await google().expect(201);
     });
 
     it('is never sent an OTP', async () => {
@@ -359,6 +382,15 @@ describe('Store-scoped self-signup (e2e)', () => {
       await request(server()).post(`/users/${id}/reject`).set(as(tokens.ho)).send({ reason: 'late' }).expect(409);
       expect(await prisma.userStore.count({ where: { userId: id } })).toBe(1);
       expect(await prisma.auditLog.count({ where: { action: 'user.approve', entityId: id } })).toBe(1);
+    });
+
+    it('reports the approval email as it actually went — a dry run when email is not set up', async () => {
+      const res = await signup({ name: 'Gita Kaul', contactEmail: 'gita.kaul@example.com' }).expect(201);
+      const approved = await approve(tokens.ho, await pendingId(res.body.loginId)).expect(201);
+      expect(approved.body.contactEmailDelivery).toBe('dry_run');
+      const row = await prisma.user.findUniqueOrThrow({ where: { email: res.body.loginId } });
+      expect(row.contactEmail).toBe('gita.kaul@example.com');
+      expect(row.email).not.toBe(row.contactEmail);
     });
 
     it('two approvals racing each other: exactly one wins', async () => {
