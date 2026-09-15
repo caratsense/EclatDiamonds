@@ -41,6 +41,25 @@ export interface DeadStockPolicy {
   usingPlatformDefault: boolean;
 }
 
+/** Block 9 — what kind of stock a design or piece is. */
+export type StockClass = "standard" | "customised" | "non_stock";
+
+export const STOCK_CLASS_OPTIONS: { value: StockClass; label: string }[] = [
+  { value: "standard", label: "Standard stock" },
+  { value: "customised", label: "Customised / made to order" },
+  { value: "non_stock", label: "Non-stock (display / sample)" },
+];
+
+export type DeadStockView = "stock" | "customised" | "remake" | "excluded" | "all";
+export type DeadStockState = "dead" | "ageing" | "all";
+export type DeadStockSuggestion = "sell" | "remake" | "contact_customer";
+
+export const SUGGESTION_LABEL: Record<DeadStockSuggestion, string> = {
+  sell: "Sell / promote",
+  remake: "Remake or customise",
+  contact_customer: "Contact the customer",
+};
+
 export interface DeadStockItem {
   id: string;
   sku: string;
@@ -57,15 +76,26 @@ export interface DeadStockItem {
   daysOver: number;
   state: "dead" | "ageing" | "fresh";
   tagPrice: number;
+  stockClass: StockClass;
+  /** "design" when the piece has no classification of its own and inherits one. */
+  stockClassSource: "piece" | "design";
+  remakeSuitable: boolean;
+  /** Null for display pieces and fresh ones. Never "sell" for a customised piece. */
+  suggestion: DeadStockSuggestion | null;
 }
 
 export interface DeadStockList {
+  view: DeadStockView;
   items: DeadStockItem[];
   dead: number;
   ageing: number;
   value: number;
+  /** Rows in the whole view, of which `items` is the worst-first page. */
+  total: number;
   /** True when the cap was hit: there are more than this list is showing. */
   truncated: boolean;
+  /** Dead pieces per view, returned whichever view is open. */
+  buckets: { stock: number; customised: number; remake: number; excluded: number };
 }
 
 const KEY = ["dead-stock"] as const;
@@ -117,12 +147,15 @@ export function useClearDeadStockRule() {
   });
 }
 
-export function useDeadStock(filters: {
+export interface DeadStockFilters {
   storeId?: string;
   category?: string;
-  includeWarning?: boolean;
+  state?: DeadStockState;
+  view?: DeadStockView;
   limit?: number;
-} = {}) {
+}
+
+export function useDeadStock(filters: DeadStockFilters = {}) {
   return useQuery({
     queryKey: [...KEY, "list", filters],
     queryFn: async () => {
@@ -130,6 +163,65 @@ export function useDeadStock(filters: {
       return data;
     },
     staleTime: 60_000,
+  });
+}
+
+/** Classify one piece, or mark it worth remaking. `stockClass: null` = follow its design. */
+export function useClassifyPiece() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      ...body
+    }: {
+      id: string;
+      stockClass?: StockClass | null;
+      remakeSuitable?: boolean;
+    }) => {
+      const { data } = await api.patch<{
+        id: string;
+        stockClass: StockClass;
+        stockClassSource: "piece" | "design";
+        remakeSuitable: boolean;
+      }>(`/stock/dead/classification/piece/${id}`, body);
+      return data;
+    },
+    onSuccess: () => {
+      // Classification moves a piece between views AND in or out of the
+      // summary's dead figure and the catalogue's "on the shelf" count.
+      void qc.invalidateQueries({ queryKey: KEY });
+      void qc.invalidateQueries({ queryKey: ["stock"] });
+      void qc.invalidateQueries({ queryKey: ["products"] });
+    },
+  });
+}
+
+/**
+ * The current view as a workbook. `responseType: "blob"` or the bytes are read
+ * as text and the file will not open.
+ */
+export function useDownloadDeadStockExport() {
+  return useMutation({
+    mutationFn: async (filters: Omit<DeadStockFilters, "limit">) => {
+      const res = await api.get<Blob>("/stock/dead/export.xlsx", {
+        params: filters,
+        responseType: "blob",
+        timeout: 120_000,
+      });
+      const disposition = String(res.headers?.["content-disposition"] ?? "");
+      const filename = /filename="?([^";]+)"?/i.exec(disposition)?.[1] ?? "dead-stock.xlsx";
+      const url = URL.createObjectURL(res.data);
+      try {
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        a.click();
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+      const rows = res.headers?.["x-export-rows"];
+      return { filename, rows: rows == null ? null : Number(rows) };
+    },
   });
 }
 

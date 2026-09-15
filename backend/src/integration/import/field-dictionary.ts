@@ -61,6 +61,10 @@ export const FIELD_DICTIONARY: Record<ImportEntity, CanonicalFieldSpec[]> = {
     { field: 'weightGrams', label: 'Weight (g)', required: false, recommended: true, aliases: ['weight', 'wt', 'grossweight', 'gwt', 'weightgrams', 'grams', 'gms'] },
     { field: 'price', label: 'Price (₹)', required: false, aliases: ['price', 'mrp', 'rate', 'sellingprice', 'retailprice', 'amount'] },
     { field: 'unitOfMeasure', label: 'Unit of Measure', required: false, aliases: ['unit', 'uom', 'unitofmeasure', 'baseunit', 'stockunit'] },
+    // Block 9. Standard / customised (made to order) / non-stock (display,
+    // sample). Values are normalised in the importer; an unrecognised one is a
+    // warning and leaves the design as it was, never a guess.
+    { field: 'stockClass', label: 'Stock classification', required: false, aliases: ['stockclass', 'stockclassification', 'classification', 'stocktype', 'itemclass', 'ordertype', 'madetoorder', 'mto', 'customised', 'customized'] },
   ],
 };
 

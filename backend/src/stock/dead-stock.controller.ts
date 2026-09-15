@@ -1,11 +1,26 @@
-import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Header,
+  Param,
+  Patch,
+  Post,
+  Put,
+  Query,
+  Res,
+  StreamableFile,
+} from '@nestjs/common';
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Max, Min, ValidateIf } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, Min, ValidateIf } from 'class-validator';
+import type { Response } from 'express';
 
 import { HumansOnly } from '../auth/machine.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { AuthUser, CurrentUser } from '../common/auth-user';
-import { DeadStockService } from './dead-stock.service';
+import { DeadStockService, type DeadStockListOptions } from './dead-stock.service';
+import { STOCK_CLASSES } from './stock-class';
 
 export class DeadStockRuleDto {
   /** Omitted or 'default' sets the tenant-wide rule. */
@@ -27,6 +42,23 @@ export class DeadStockRuleDto {
   @Min(1)
   @Max(3650)
   warnAfterDays?: number | null;
+}
+
+export class ClassifyPieceDto {
+  /** Null returns the piece to its design's classification. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsIn(STOCK_CLASSES)
+  stockClass?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  remakeSuitable?: boolean;
+}
+
+export class ClassifyProductDto {
+  @IsIn(STOCK_CLASSES)
+  stockClass!: string;
 }
 
 /**
@@ -67,14 +99,78 @@ export class DeadStockController {
     @Query('category') category?: string,
     @Query('limit') limit?: string,
     @Query('includeWarning') includeWarning?: string,
+    @Query('state') state?: string,
+    @Query('view') view?: string,
   ) {
-    return this.dead.list(user, {
-      storeId: storeId || undefined,
-      category: category || undefined,
-      limit: limit ? Number(limit) : undefined,
-      includeWarning: includeWarning === 'true' || includeWarning === '1',
-    });
+    return this.dead.list(user, listOptions({ storeId, category, limit, includeWarning, state, view }));
   }
+
+  /**
+   * The same list as a workbook, classification included. Manager-level, like
+   * every other export: a file of tag prices leaves the system.
+   */
+  @Roles('store_manager', 'head_office')
+  @Get('export.xlsx')
+  @Header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  async export(
+    @CurrentUser() user: AuthUser,
+    @Res({ passthrough: true }) res: Response,
+    @Query('storeId') storeId?: string,
+    @Query('category') category?: string,
+    @Query('includeWarning') includeWarning?: string,
+    @Query('state') state?: string,
+    @Query('view') view?: string,
+  ): Promise<StreamableFile> {
+    const out = await this.dead.exportWorkbook(
+      user,
+      listOptions({ storeId, category, includeWarning, state, view }),
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${out.filename}"`);
+    res.setHeader('X-Export-Rows', String(out.rows));
+    return new StreamableFile(out.buffer);
+  }
+
+  /** Classify one piece, or mark it worth remaking. Store-scoped. */
+  @Roles('store_manager', 'head_office')
+  @Patch('classification/piece/:stockItemId')
+  classifyPiece(
+    @CurrentUser() user: AuthUser,
+    @Param('stockItemId') stockItemId: string,
+    @Body() dto: ClassifyPieceDto,
+  ) {
+    return this.dead.classifyPiece(user, stockItemId, dto);
+  }
+
+  /** Classify a design — every piece without its own classification follows. */
+  @Roles('head_office')
+  @Patch('classification/product/:productId')
+  classifyProduct(
+    @CurrentUser() user: AuthUser,
+    @Param('productId') productId: string,
+    @Body() dto: ClassifyProductDto,
+  ) {
+    return this.dead.classifyProduct(user, productId, dto.stockClass);
+  }
+}
+
+function listOptions(q: {
+  storeId?: string;
+  category?: string;
+  limit?: string;
+  includeWarning?: string;
+  state?: string;
+  view?: string;
+}): DeadStockListOptions {
+  return {
+    storeId: q.storeId || undefined,
+    category: q.category || undefined,
+    limit: q.limit ? Number(q.limit) : undefined,
+    includeWarning: q.includeWarning === 'true' || q.includeWarning === '1',
+    // Validated in the service against the closed lists, so a typo is a 400
+    // naming the choices rather than a silently empty screen.
+    state: (q.state || undefined) as DeadStockListOptions['state'],
+    view: (q.view || undefined) as DeadStockListOptions['view'],
+  };
 }
 
 /**

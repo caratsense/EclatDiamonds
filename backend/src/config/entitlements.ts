@@ -100,6 +100,14 @@ export const ROUTE_FAMILIES: readonly RouteFamily[] = Object.freeze([
   { prefix: '/knowledge', capability: null, why: 'Tenant knowledge base feeding the assistant.' },
   { prefix: '/omnichannel', capability: null, why: 'Consent, templates and outbound delivery are part of the universal CRM.' },
   { prefix: '/products', capability: null, why: 'Cataloguing is sold to every industry.' },
+  {
+    prefix: '/catalogue-exports',
+    capability: null,
+    why:
+      'Head office taking the catalogue’s photographs away as one ZIP. Universal ' +
+      'for the same reason /products is; its own prefix so /products/:id cannot ' +
+      'swallow the routes.',
+  },
   { prefix: '/checkins', capability: null, why: 'Customer visits are universal; every pack seeds visit purposes.' },
   { prefix: '/hrms', capability: null, why: 'Attendance is sold to every industry.' },
   { prefix: '/imports', capability: null, why: 'Bringing your own data in is universal.' },

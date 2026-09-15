@@ -1,8 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'crypto';
-import { mkdir, readFile, writeFile } from 'fs/promises';
+import { createReadStream } from 'fs';
+import { mkdir, readFile, stat, writeFile } from 'fs/promises';
 import { isAbsolute, join, normalize, sep } from 'path';
+import { Readable } from 'stream';
 import { encodeKey, signRequest } from './sigv4';
 
 /**
@@ -376,25 +378,100 @@ export class StorageService {
       }
     }
 
-    // Local disk. The path is server-generated, but it is read back from a
-    // database column, so it is treated as untrusted: resolve it and refuse
-    // anything that lands outside the upload root. Without this a row carrying
-    // `../../etc/passwd` would be a file-read primitive.
-    const relative = storedPath.startsWith(`${this.publicPrefix}/`)
-      ? storedPath.slice(this.publicPrefix.length + 1)
-      : storedPath.replace(/^\/+/, '');
-    const root = normalize(this.baseDir);
-    const target = normalize(join(root, relative));
-    if (target !== root && !target.startsWith(root + sep)) {
-      this.logger.error('Refusing to read a stored path that escapes the upload root.');
-      return null;
-    }
-
+    const target = this.localTarget(storedPath);
+    if (!target) return null;
     try {
       return { buffer: await readFile(target), contentType: this.contentTypeOf(target) };
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Local disk. The path is server-generated, but it is read back from a
+   * database column, so it is treated as untrusted: resolve it and refuse
+   * anything that lands outside the upload root. Without this a row carrying
+   * `../../etc/passwd` would be a file-read primitive.
+   */
+  private localTarget(storedPath: string): string | null {
+    const relative = storedPath.startsWith(`${this.publicPrefix}/`)
+      ? storedPath.slice(this.publicPrefix.length + 1)
+      : storedPath.replace(/^\/+/, '');
+    const root = normalize(this.baseDir);
+    const target = normalize(join(root, relative));
+    if (target === root || !target.startsWith(root + sep)) {
+      this.logger.error('Refusing to read a stored path that escapes the upload root.');
+      return null;
+    }
+    return target;
+  }
+
+  /**
+   * Is this stored path one of OUR objects?
+   *
+   * `Product.imageUrl` is not only written by our own uploads: a website feed
+   * can put any URL there. Reading an object on the server's behalf — which a
+   * bulk export does thousands of times — must not become a way to make this
+   * service fetch arbitrary addresses, so only three shapes qualify: a local
+   * `/uploads/` path, or a URL under the configured R2 public base or Cloudinary
+   * cloud. The trailing slash in each prefix is what stops
+   * `https://pub-x.r2.dev.attacker.example` from passing as ours.
+   */
+  isManagedMedia(storedPath: string | null | undefined): boolean {
+    if (!storedPath) return false;
+    if (!/^https?:\/\//i.test(storedPath)) return storedPath.startsWith(`${this.publicPrefix}/`);
+    const bases = [
+      this.r2.publicBaseUrl ? `${this.r2.publicBaseUrl}/` : '',
+      this.cloudName ? `https://res.cloudinary.com/${this.cloudName}/` : '',
+    ].filter(Boolean);
+    return bases.some((b) => storedPath.startsWith(b));
+  }
+
+  /**
+   * How big a stored object is, without reading it. Null when it is not there.
+   * `size` is null when the host did not say — the caller must then count bytes
+   * as they arrive instead of trusting a number it does not have.
+   */
+  async probeObject(storedPath: string): Promise<{ size: number | null } | null> {
+    if (/^https?:\/\//i.test(storedPath)) {
+      try {
+        // No redirects: a managed URL that answers with one is pointing somewhere else.
+        const res = await fetch(storedPath, { method: 'HEAD', redirect: 'error' });
+        if (!res.ok) return null;
+        const length = Number(res.headers.get('content-length'));
+        return { size: Number.isFinite(length) && length >= 0 ? length : null };
+      } catch {
+        return null;
+      }
+    }
+    const target = this.localTarget(storedPath);
+    if (!target) return null;
+    try {
+      const s = await stat(target);
+      return s.isFile() ? { size: s.size } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * A stored object as a stream of chunks, opened only when the first chunk is
+   * asked for.
+   *
+   * An async generator on purpose: nothing is fetched or opened until iteration
+   * begins, so a caller can line up thousands of these and only the one being
+   * read holds a socket or a file handle.
+   */
+  async *objectChunks(storedPath: string): AsyncGenerator<Buffer> {
+    if (/^https?:\/\//i.test(storedPath)) {
+      const res = await fetch(storedPath, { redirect: 'error' });
+      if (!res.ok || !res.body) throw new Error(`Object fetch returned ${res.status}.`);
+      for await (const chunk of Readable.fromWeb(res.body as never)) yield chunk as Buffer;
+      return;
+    }
+    const target = this.localTarget(storedPath);
+    if (!target) throw new Error('Refusing a stored path outside the upload root.');
+    for await (const chunk of createReadStream(target)) yield chunk as Buffer;
   }
 
   /**

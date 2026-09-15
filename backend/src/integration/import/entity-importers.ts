@@ -9,8 +9,9 @@
  * makes the row a reported error, never a guess.
  */
 
-import { MetalKind, Prisma } from '@prisma/client';
+import { MetalKind, Prisma, StockClass } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { parseStockClass } from '../../stock/stock-class';
 import { ImportEntity } from './field-dictionary';
 import { mapCustomerRow } from './customer-mapper';
 
@@ -287,6 +288,15 @@ const products: EntityImporter = {
     // style number that is secretly the SKU makes every "how is this design
     // selling" answer a per-piece answer wearing a design's label.
     const styleNumber = clean(mapped.styleNumber);
+    const stockClassRaw = clean(mapped.stockClass);
+    const stockClass = parseStockClass(stockClassRaw);
+    if (stockClassRaw && !stockClass) {
+      warnings.push({
+        field: 'stockClass',
+        code: 'invalid_stock_class',
+        message: `"${stockClassRaw}" is not a recognised classification (standard, customised/made to order, non-stock/display/sample) — left as it was`,
+      });
+    }
     return {
       ok: true,
       issues: [],
@@ -296,6 +306,7 @@ const products: EntityImporter = {
         name,
         styleNumber: styleNumber || null,
         styleNumberSupplied: Boolean(styleNumber),
+        stockClass,
         metal: toMetal(metalRaw, karat, neutralDefault),
         materialLabel: metalRaw || null,
         karat: karat ?? 0,
@@ -322,6 +333,8 @@ const products: EntityImporter = {
       unitOfMeasure: string | null;
       styleNumber: string | null;
       styleNumberSupplied: boolean;
+      /** Null when the file did not carry a recognisable one — never a default. */
+      stockClass: StockClass | null;
       materialSupplied: boolean;
       categorySupplied: boolean;
       unitOfMeasureSupplied: boolean;
@@ -345,6 +358,9 @@ const products: EntityImporter = {
       // Only when the file carried the column. A source that does not send style
       // numbers must not blank the ones a person typed in by hand.
       ...(v.styleNumberSupplied ? { styleNumber: v.styleNumber } : {}),
+      // Same rule: a file without the column, or with a word we could not read,
+      // must not turn a made-to-order design back into ordinary stock.
+      ...(v.stockClass ? { stockClass: v.stockClass } : {}),
       ...(v.price != null ? { price: new Prisma.Decimal(v.price) } : {}),
       ...(v.weight != null ? { weightGrams: new Prisma.Decimal(v.weight) } : {}),
       ...(v.price != null ? { priceKnown: true } : {}),
@@ -379,6 +395,7 @@ const products: EntityImporter = {
         materialLabel: v.materialLabel,
         unitOfMeasure: v.unitOfMeasure,
         styleNumber: v.styleNumber,
+        ...(v.stockClass ? { stockClass: v.stockClass } : {}),
         ...(v.price != null ? { price: new Prisma.Decimal(v.price) } : {}),
         ...(v.weight != null ? { weightGrams: new Prisma.Decimal(v.weight) } : {}),
       },
