@@ -554,6 +554,7 @@ model Organisation {
   staffWeekOffs                StaffWeekOff[]
   staffCompensations           StaffCompensation[]
   payslips                     Payslip[]
+  payrollRuns                  PayrollRun[]
   loyaltyAccounts              LoyaltyAccount[]
   loyaltyLedgerEntries         LoyaltyLedgerEntry[]
   storeMessagingRoutes         StoreMessagingRoute[]
@@ -5563,11 +5564,64 @@ model Payslip {
   /// argued about from a single total.
   breakdown Json?
 
+  /// Set when the register, counted again AFTER this slip was issued, no longer
+  /// agrees with it — a correction that arrived late. The issued figures above
+  /// are never rewritten; this is the flag beside them, naming the days that
+  /// changed, for a person to settle. Cleared if the register comes back into
+  /// agreement.
+  difference           Json?
+  differenceDetectedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([userId, periodKey])
   @@index([organisationId, periodKey])
+  @@index([organisationId, storeId, periodKey])
+}
+
+/// One payroll run for one branch and one month: the month-end scheduler's, or
+/// a person re-running it.
+///
+/// This is the answer to "did August's payroll actually get drafted?", which
+/// nothing recorded before. It only ever produces DRAFTS — issuing stays a
+/// person's act.
+model PayrollRun {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  storeId   String
+  /// '2026-08'. The month the run drafted.
+  periodKey String
+
+  /// 'scheduler' | 'user'
+  trigger         String
+  triggeredById   String?
+  triggeredByName String?
+
+  /// 'started' | 'completed' | 'failed'. A 'started' row that never finished is
+  /// a process that died mid-run; a re-run recovers it.
+  status String @default("started")
+
+  /// Drafts written, employees that could not be drafted (named in
+  /// `skippedDetail`), issued slips left alone, and how many of those the
+  /// register now disagrees with.
+  generated     Int     @default(0)
+  skipped       Int     @default(0)
+  issued        Int     @default(0)
+  differences   Int     @default(0)
+  skippedDetail Json?
+  error         String?
+
+  /// The scheduler's claim, "<storeId>:<periodKey>", on its run only. Unique, so
+  /// a retried tick, a restart or a second replica cannot draft a month twice.
+  /// NULL on a person's re-run, which may happen as often as they need.
+  schedulerKey String? @unique
+
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+
   @@index([organisationId, storeId, periodKey])
 }
 

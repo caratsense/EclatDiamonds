@@ -13,6 +13,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { StorageService } from '../storage/storage.service';
 import { saveCapturedPhoto } from '../storage/capture-photo';
 import { ROLE_LABELS, ROLE_RANK } from '../common/role.util';
+import { PayrollService } from './payroll.service';
 import {
   assertNotSelfApproval,
   assertUndecided,
@@ -199,6 +200,7 @@ export class HrmsService {
     private readonly audit: AuditService,
     private readonly notifications: NotificationsService,
     private readonly storage: StorageService,
+    private readonly payroll: PayrollService,
   ) {}
 
   /**
@@ -519,6 +521,9 @@ export class HrmsService {
       summary: `Marked ${target.name} as ${status} on ${dateOnly(date)}`,
       metadata: { staffId: target.id, status, shiftId, source: 'manager' },
     });
+    // A mark on a day whose payslip was already issued is a late correction:
+    // the slip is flagged, never rewritten.
+    await this.payroll.recheckIssued(target.id, date);
 
     const shiftById = new Map(shift && shiftId ? [[shiftId, shift] as [string, any]] : []);
     return this.toAttendanceView(row, shiftById, new Map([[target.id, target.role]]));
@@ -1916,6 +1921,8 @@ export class HrmsService {
           source: 'regularization',
         },
       });
+      // Same as a manager's mark: an issued slip is flagged, never rewritten.
+      await this.payroll.recheckIssued(staffId, date);
     }
 
     const row = await this.prisma.attendanceRegularization.update({
