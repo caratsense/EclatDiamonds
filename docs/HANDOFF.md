@@ -7,9 +7,116 @@
 >
 > **New machine / new Claude session? Read this file first, then `CLAUDE.md`.**
 > This captures the full project state so work can continue exactly where it stopped.
-> **Last updated: 2026-09-10.**
+> **Last updated: 2026-09-15.**
 
-## 2026-09-10 — CURRENT STATE (read this first)
+## 2026-09-15 — CURRENT STATE (read this first)
+
+Feature coding for the parity programme is closed. What remains is credentials,
+client inputs, staging UAT and a deploy decision — not code. The 2026-09-10 section
+below is history: its "Blocks 3–10 of the parity brief are untouched" line is no
+longer true, and neither is PR #4's earlier description of Blocks 1–15 as complete
+before the acceptance gaps listed here were closed.
+
+### Where the code is
+
+| | |
+|---|---|
+| Branch | `phase-6-meta-integrations`, pushed |
+| Pull request | https://github.com/caratsense/EclatDiamonds/pull/4 — open, **not merged** |
+| `main` / production | `91a5d79`, deployed 2026-09-11. Nothing from this branch is on staging or production |
+| Migrations not yet on production | 21, all additive (`20260912120000` … `20260915160000`) |
+
+### Closed on 2026-09-15
+
+| Gap | Screen | API |
+|---|---|---|
+| Lead board tag filter + search, carried into the export | `/crm?tags=…&q=…` | `GET /leads?tagIds=&q=`, export same filter |
+| Follow-up reminder at a chosen time | check-in dialog, lead timeline, `/reminders` | `GET/PUT /crm/follow-up-reminders/settings` |
+| Automatic feedback ask after a visit (default 7 days) | `/feedback` (after-visit card) | `GET/PATCH /feedback/settings` |
+| Staff digest through the omnichannel outbox | `/settings/staff-digest` | `/staff-digest` |
+| Quote discount cap + approval bound to the revision, detailed PDF | quote builder | `PATCH /quotes/:id`, `GET /quotes/:id/pdf`, `POST /quotes/:id/send-pdf`, `GET /quotes/:id/approval`, `POST /discounts/limits` |
+| Stock classes and dead-stock views | `/inventory/dead-stock` | `/stock/dead`, `/stock/dead/policy`, `/stock/dead/export.xlsx`, `/stock/dead/classification/*` |
+| Month-end payslip drafts and run log | `/hrms/payroll` | `/hrms/payroll/payslips`, `/hrms/payroll/week-offs`, `/hrms/payroll/runs` |
+| Loyalty website announcements with a delivery log | `/loyalty/programme` | `/loyalty/programme/webhooks`, `…/webhooks/:id/retry` |
+| Management KPIs uncapped (approval turnaround over every decision) | `/management` | `GET /management/kpis` |
+| Multi-store DSR on every figure, with its basis | `/reporting` | `GET /reporting/dsr` |
+| Head-office catalogue photo ZIP export | `/data/images` | `/catalogue-exports` |
+| Strict salesperson scope | every CRM/sales screen | enforced in services — see below |
+| Storeperson role | `/inventory`, `/catalogue`, `/hrms` | `@Permit` permissions in `auth/permissions.ts` |
+| Store-scoped self-signup, atomic approval, Login ID template | `/login`, `/settings/team` | `POST /auth/signup`, `POST /auth/signup/preview`, `POST /users/:id/approve`, `POST /users/:id/reject`, `GET/PUT /users/signup-policy` |
+| Attendance with no or imprecise GPS fix | `/check-in` | `POST /hrms/attendance` (`accuracyM`) |
+| Messaging routes and integrations | `/settings/messaging-routes`, `/settings/integrations` | `/messaging-routes`, `/integrations` |
+
+Also fixed on the way: the job queue claimed jobs on the database session's clock
+rather than UTC; a hand-off accepted another tenant's user as assignee; manual bills
+never recorded who rang them up; payments accepted a customer or bill id from
+another tenant.
+
+### Roles
+
+- **Salesperson** — their own leads, assigned conversations, visits they attended,
+  quotes assigned to them, their tasks, bills and returns, and customers reached
+  through those. A record id typed into a URL is refused like one missing from the
+  list. No management surfaces. Cannot reassign a lead.
+- **Storeperson** — not on the ladder; admitted only where a route names a
+  permission it holds: catalogue, inventory at its branch, its own attendance,
+  leave and payslips. No customers, money, team or settings.
+- **Store manager / head office** — unchanged: the branch, or every branch.
+
+### Production configuration after a deploy (none of it is applied)
+
+- Éclat's salesperson quote cap: `POST /discounts/limits {"role":"salesperson","maxPercent":5}` (head office).
+- Éclat's 90-day dead stock: `PUT /stock/dead/policy {"thresholdDays":90}` (the seed sets it locally).
+- `PRIVATE_UPLOAD_DIR` on a mounted volume (quote PDFs); `PUBLIC_APP_URL` for feedback links.
+- After-visit feedback: turn it on in `/feedback` and approve its WhatsApp template.
+- Reminder defaults in `/reminders`; optional Login ID template in `/settings/team`.
+- Approval emails stay dry runs until `SMTP_*` is set.
+
+### Verification (2026-09-15)
+
+- **Clean worktree at the pushed HEAD:** Prisma validate, both typechecks,
+  lints and builds, frontend unit tests and the full isolated e2e suite. The
+  exact totals are in PR #4's description.
+- **Browser matrix, `backend/scripts/browser-verify.mjs`:** 778 of 778 against a
+  production build and a local API. Jewellery, healthcare and textile × salesperson,
+  storeperson, store manager and head office × 1440×900, 420×900 and 390×844. That
+  is 705 route renders, 64 screens outside the role opened by URL and refused, and
+  9 checks that the CRM board shows each role exactly the leads it may see. No
+  jewellery word reaches the other two industries.
+  Two harness defects were fixed first. The vocabulary patterns had held backspace
+  bytes and matched nothing, and the seeded tenants had no industry pack. Runs
+  before 2026-09-15 did not really test vocabulary.
+- **Migration rehearsal, `backend/scripts/migration-rehearsal.mjs`:** production's
+  87 migrations, then rows including a customer thread, a quote, a follow-up, a
+  feedback ask and a salesperson, then this branch's 21. Existing rows keep safe
+  defaults. The remaining schema drift comes from migrations already on
+  production: an AuditLog FK, three indexes, an ImportBatch default and one index
+  name.
+- **Negative controls, each an e2e test:**
+  - cross-tenant tag filter
+  - archived STOP contact at every send door
+  - digest only through the outbox
+  - duplicate feedback sweep
+  - quote over cap, edited-after-approval and unauthorised PDF
+  - storeperson and salesperson scope
+  - cross-store approval, pending login and concurrent Login ID
+  - duplicate payslip run
+  - loyalty retry and replay
+  - over 1,000 approvals in the KPI
+  - wrong-branch sender
+  - cross-tenant catalogue ZIP
+
+### External, and only external
+
+Meta Business verification and App Review · real Meta Page/Form/Ad Account/Instagram/WABA
+assets · the client's eight-number-to-branch mapping · approved WhatsApp templates ·
+live signed webhook verification · AI provider credentials and billing · a telephony
+account · SMTP and a verified sending domain · Google Business Profile approval · a
+live object-storage endpoint · Ayushi's Gati workbook and images · the client website
+consuming the loyalty API · statutory payroll and tax policy · staging and production
+deployment authorisation.
+
+## 2026-09-10 — STATE AT THAT DATE (history)
 
 Everything described below is now **committed and pushed**, on branch
 `phase-6-meta-integrations`, and there is a **staging environment** to test it against.
