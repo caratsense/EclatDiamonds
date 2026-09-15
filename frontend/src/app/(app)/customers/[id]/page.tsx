@@ -35,6 +35,7 @@ import {
   useTermLabel,
 } from "@/lib/queries/tenant-config";
 import { AttributionPanel } from "@/components/crm/attribution-panel";
+import { ArchiveContactButton } from "@/components/crm/archive-contact-button";
 import { QualificationPanel } from "@/components/crm/qualification-panel";
 import { formatINR } from "@/lib/format";
 
@@ -187,6 +188,7 @@ export default function Customer360Page({
               </Button>
             </div>
           )}
+          <ArchiveContactButton partyId={customer.id} name={customer.name} />
         </div>
       </div>
 
