@@ -3,6 +3,9 @@ import { Test } from '@nestjs/testing';
 import request = require('supertest');
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { StorageService } from '../src/storage/storage.service';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { MlInferenceService } from '../src/products/ml-inference.service';
 import {
   rankCandidates,
@@ -182,6 +185,10 @@ describe('Jewelry similarity search (e2e)', () => {
   const EMB_A = 'p-001';
   const EMB_B = 'p-002';
   const REINDEX_PRODUCT = 'test-sim-reindex';
+  /** Written by the test itself: uploads/ is gitignored, so a clean checkout has no catalogue images. */
+  const REINDEX_IMAGE = 'catalogue/test-sim-reindex.png';
+  const ONE_PIXEL_PNG =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
   async function login(email: string) {
     const res = await request(app.getHttpServer()).post('/auth/login').send({ email, password: PASSWORD });
@@ -244,6 +251,7 @@ describe('Jewelry similarity search (e2e)', () => {
     await prisma.similaritySearchFeedback.deleteMany({});
     await prisma.productEmbedding.deleteMany({});
     await prisma.product.deleteMany({ where: { id: REINDEX_PRODUCT } });
+    if (app) rmSync(join(app.get(StorageService).baseDir, REINDEX_IMAGE), { force: true });
     await app?.close();
   });
 
@@ -380,6 +388,9 @@ describe('Jewelry similarity search (e2e)', () => {
 
   it('reindex (HO) is idempotent: embeds once, skips on unchanged hash', async () => {
     // A test product whose image is a real local file under uploads/.
+    const imagePath = join(app.get(StorageService).baseDir, REINDEX_IMAGE);
+    mkdirSync(join(imagePath, '..'), { recursive: true });
+    writeFileSync(imagePath, Buffer.from(ONE_PIXEL_PNG, 'base64'));
     await prisma.product.upsert({
       where: { id: REINDEX_PRODUCT },
       create: {
@@ -389,9 +400,9 @@ describe('Jewelry similarity search (e2e)', () => {
         metal: 'gold_22k',
         storeId: SURAT,
         organisationId: 'org_eclat',
-        imageUrl: '/uploads/catalogue/1.jpg',
+        imageUrl: `/uploads/${REINDEX_IMAGE}`,
       },
-      update: { imageUrl: '/uploads/catalogue/1.jpg' },
+      update: { imageUrl: `/uploads/${REINDEX_IMAGE}` },
     });
 
     const first = await post(`/products/embeddings/reindex?force=1&productId=${REINDEX_PRODUCT}`, tokens.ho);
