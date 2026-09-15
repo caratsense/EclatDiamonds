@@ -1,6 +1,7 @@
 "use client";
 
 import { MetaFormAnswers } from "@/components/crm/meta-form-answers";
+import { LeadTagsField } from "@/components/crm/lead-tags-field";
 import { useState } from "react";
 import {
   Bell,
@@ -307,6 +308,8 @@ function LeadDetailBody({
           <p className="text-xs text-muted-foreground">Interested in</p>
           <p className="font-medium">{lead.interest}</p>
         </div>
+
+        <LeadTagsField leadId={lead.id} />
 
         {/* Renders itself only for a Meta Lead Ads lead; every other source has
             no questionnaire to show. */}
