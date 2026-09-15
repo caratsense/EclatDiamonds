@@ -49,12 +49,14 @@ const VIEWPORTS = [
  * anyway.
  */
 const JEWELLERY_WORDS = [
-  /karats?/i,
-  /carats?/i,
-  /gold rate/i,
-  /making charges?/i,
-  /hallmark/i,
-  /bullion/i,
+  /\bkarats?\b/i,
+  /\bcarats?\b/i,
+  /\bgold rate\b/i,
+  /\bmaking charges?\b/i,
+  /\bhallmark/i,
+  /\bbullion\b/i,
+  // A clinic's or a mill's catalogue offered "All metals" until 2026-09-15.
+  /\bmetals?\b/i,
 ];
 
 /**
@@ -344,7 +346,7 @@ try {
           if (tenant.industry !== 'jewellery' && !VOCABULARY_EXEMPT_ROUTES.has(slug)) {
             const scrubbed = text.replace(BRAND, ' ');
             const leaked = JEWELLERY_WORDS.filter((w) => w.test(scrubbed)).map((w) =>
-              String(w).replace(/[/^$\b()?:i]|\\/g, '').trim(),
+              w.source.replace(/\\b|\?/g, '').replace(/s$/, ''),
             );
             if (leaked.length) {
               record({
@@ -366,6 +368,34 @@ try {
             check: `route /${slug}`,
             status: 'PASS',
           });
+
+          /*
+           * DATA THROUGH THE REAL API. The seed names records this role must and
+           * must not see; the page has to show them after its own requests, so
+           * this proves scope end to end rather than that a heading rendered.
+           */
+          const expected = (tenant.expectations ?? []).find((x) => x.role === role && x.route === slug);
+          if (expected && viewport.name === 'desktop') {
+            let detail = '';
+            try {
+              for (const name of expected.contains) {
+                await page.getByText(name, { exact: false }).first().waitFor({ state: 'visible', timeout: 15_000 });
+              }
+              const shown = (await page.locator('body').innerText().catch(() => '')) || '';
+              const leaked = expected.absent.filter((name) => shown.includes(name));
+              if (leaked.length) detail = `shows what this role must not see: ${leaked.join(', ')}`;
+            } catch (e) {
+              detail = `expected record not shown: ${String(e.message).replace(/\s+/g, ' ').slice(0, 120)}`;
+            }
+            record({
+              tenant: tenant.label,
+              role,
+              viewport: viewport.name,
+              check: `data /${slug}`,
+              status: detail ? 'FAIL' : 'PASS',
+              detail,
+            });
+          }
         }
 
         /*
