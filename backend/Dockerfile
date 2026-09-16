@@ -45,6 +45,11 @@ COPY package.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma
+# The demo-thread seeder, so a staging environment can be filled with the same
+# five WhatsApp threads a laptop has. It refuses any database that does not
+# prove it is staging, so shipping it costs nothing and running it needs an
+# explicit SEED_DEMO_TARGET=staging.
+COPY scripts/seed-conversations.mjs ./scripts/seed-conversations.mjs
 
 # NOTE: intentionally NOT dropping to the unprivileged 'node' user. The Railway
 # persistent volume mounted at /app/uploads is root-owned at mount time, and a
