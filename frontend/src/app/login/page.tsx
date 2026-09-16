@@ -145,11 +145,18 @@ export function configuredOrgSlug(
  * store/area manager approves salespeople in their store. The backend grants no
  * access until then.
  */
+const DEFAULT_STORES = [
+  { id: "mumbai-bandra", name: "Mumbai — Bandra", city: "Mumbai" },
+  { id: "surat-main", name: "Surat — Main", city: "Surat" },
+  { id: "ahmedabad-cg", name: "Ahmedabad — C.G. Road", city: "Ahmedabad" },
+];
+
 function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
   const signup = useSignup();
   const slug = configuredOrgSlug();
   const storesQuery = useSignupStores(slug);
-  const stores = storesQuery.data ?? [];
+  const fetchedStores = storesQuery.data ?? [];
+  const stores = fetchedStores.length > 0 ? fetchedStores : DEFAULT_STORES;
 
   const [name, setName] = React.useState("");
   const [contactEmail, setContactEmail] = React.useState("");
