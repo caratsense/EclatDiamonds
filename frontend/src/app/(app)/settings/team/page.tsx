@@ -92,7 +92,7 @@ import { useSession } from "@/store/use-session";
 const nav = getNavItem("settings/team")!;
 
 /** Roles assignable from this page, in rank order (salesperson is the default). */
-const STAFF_ROLES: StaffRole[] = ["salesperson", "storeperson", "store_manager"];
+const STAFF_ROLES: StaffRole[] = ["salesperson", "store_manager"];
 
 /**
  * The roles a given viewer may grant — strictly below their own rank, mirroring

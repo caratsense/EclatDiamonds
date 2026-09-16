@@ -343,6 +343,9 @@ export class StoresService {
     // @Roles('head_office') alone is org-blind — an HO of another tenant would edit
     // this branch's name/address/GSTIN. Bind the mutation to the caller's org.
     this.scope.assertOrgAllowed(user, store.organisationId);
+    if (user.role === 'store_manager' && !user.storeIds.includes(id)) {
+      throw new ForbiddenException('Store managers can only update their assigned store.');
+    }
     if (store.isAggregate) {
       throw new BadRequestException('The aggregate "All Stores" view cannot be edited');
     }

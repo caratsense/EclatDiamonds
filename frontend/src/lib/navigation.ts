@@ -471,7 +471,7 @@ export const NAV_ITEMS: NavItem[] = [
     primaryAction: "Add Store",
     icon: Store,
     group: "Administration",
-    roles: ["head_office"],
+    roles: ["store_manager", "area_manager", "head_office"],
   },
   {
     /*
@@ -657,6 +657,7 @@ export const NAV_ITEMS: NavItem[] = [
     primaryAction: "",
     icon: BellRing,
     group: "Administration",
+    roles: ["store_manager", "area_manager", "head_office"],
   },
   {
     module: 1,
@@ -699,6 +700,7 @@ export const NAV_ITEMS: NavItem[] = [
     primaryAction: "",
     icon: Radio,
     group: "Administration",
+    roles: ["store_manager", "area_manager", "head_office"],
   },
 ];
 

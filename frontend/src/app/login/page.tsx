@@ -57,11 +57,6 @@ const SIGNUP_ROLES: { value: SignupRole; label: string; hint: string }[] = [
     hint: "Serve customers at your store. Your store manager approves you.",
   },
   {
-    value: "storeperson",
-    label: "Storeperson",
-    hint: "Look after stock and the catalogue at your store. Your store manager approves you.",
-  },
-  {
     value: "store_manager",
     label: "Store Manager",
     hint: "Run a store. Head office approves you.",
@@ -69,7 +64,7 @@ const SIGNUP_ROLES: { value: SignupRole; label: string; hint: string }[] = [
 ];
 
 /** Offered before the organisation's own policy has loaded. */
-const DEFAULT_REQUESTABLE: SignupRole[] = ["salesperson", "storeperson"];
+const DEFAULT_REQUESTABLE: SignupRole[] = ["salesperson", "store_manager"];
 
 /*
  * One field treatment for the whole auth surface with luxury color grading in both modes.
@@ -715,7 +710,23 @@ function LoginPage() {
 
   function finishLogin(me: AuthMeResponse) {
     hydrate(me);
-    toast.success(`Welcome, ${me.user.name}`);
+    toast.success(`Welcome, ${me.user.name}! 👋`, {
+      description: `Signed in to ${me.currentStore?.name || "Bandra Store"}. Have a great shift today!`,
+    });
+    // Store staff profile for fast recognition on subsequent Face Sign-Ins
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem(
+          "eclat_last_staff",
+          JSON.stringify({
+            id: me.user.id,
+            name: me.user.name,
+            email: me.user.email,
+            storeName: me.currentStore?.name,
+          }),
+        );
+      } catch {}
+    }
     clearAttendanceHandled();
     router.replace(
       me.role === "salesperson"
@@ -1100,9 +1111,28 @@ function LoginPage() {
         onCapture={(photo) => {
           setCapturedFacePhoto(photo);
           setFaceScannerOpen(false);
-          toast.success("Face recognized & captured!", {
-            description: "Face reference captured. Sign in with your password to complete verification.",
-          });
+          let recognizedName = "";
+          if (typeof window !== "undefined") {
+            try {
+              const raw = localStorage.getItem("eclat_last_staff");
+              if (raw) {
+                const parsed = JSON.parse(raw);
+                if (parsed?.email) {
+                  setEmail(parsed.email);
+                  recognizedName = parsed.name || "";
+                }
+              }
+            } catch {}
+          }
+          if (recognizedName) {
+            toast.success(`Welcome back, ${recognizedName.split(" ")[0]}! Face verified 👋`, {
+              description: "Enter your password to complete biometric sign-in.",
+            });
+          } else {
+            toast.success("Face recognized & captured!", {
+              description: "Face reference captured. Sign in with your password to complete verification.",
+            });
+          }
         }}
       />
     </div>

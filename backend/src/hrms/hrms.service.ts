@@ -336,20 +336,11 @@ export class HrmsService {
     }
     const withinFence = dist <= store.geofenceRadiusM;
     if (!withinFence) {
-      if (kind === 'check-in') {
-        // Blocked outright: an out-of-fence check-in is not recorded at all, so
-        // it can never surface as an on-time punch from outside the store.
+      if (!note?.trim()) {
         throw new BadRequestException(
           `You're ${Math.round(dist)} m from ${store.name} (allowed: ${
             store.geofenceRadiusM
-          } m). You must be at the store to check in.`,
-        );
-      }
-      if (!note?.trim()) {
-        throw new BadRequestException(
-          `This check-out is ${Math.round(dist)} m from ${store.name} (allowed: ${
-            store.geofenceRadiusM
-          } m). Add a reason to record it — your manager will review it.`,
+          } m). Add a reason or grace note to record it — your manager will review it.`,
         );
       }
     }

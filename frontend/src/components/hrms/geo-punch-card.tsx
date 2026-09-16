@@ -302,11 +302,24 @@ export function GeoPunchCard() {
     }
     const away = offsiteDistance(pos);
     if (away != null) {
-      // A check-in from outside the store geofence is not allowed (the backend
-      // rejects it too) — block it here with a clear message rather than
-      // prompting for a reason. Check-OUT stays lenient (see handleCheckOut).
-      toast.error("You're outside the store's range", {
-        description: `You're ${away} m away (allowed: ${fence?.geofenceRadiusM ?? 0} m). You must be at the store to check in.`,
+      // Out of radius grace check: allow up to 3 times per employee
+      const storageKey = `eclat_out_radius_count_${user.id}`;
+      const count = Number(typeof window !== "undefined" ? localStorage.getItem(storageKey) : 0) || 0;
+      if (count < 3) {
+        const nextCount = count + 1;
+        if (typeof window !== "undefined") {
+          localStorage.setItem(storageKey, String(nextCount));
+        }
+        const graceNote = `Outside store geofence (${away}m away, Grace ${nextCount}/3) - Store Manager notified`;
+        toast.warning(`Outside store range (${away}m)`, {
+          description: `Punch allowed under grace allowance (${nextCount} of 3 used). Your Store Manager has been notified.`,
+        });
+        submitCheckIn(pos, graceNote);
+        return;
+      }
+
+      toast.error("Outside store range — grace limit reached", {
+        description: `You're ${away} m away (allowed: ${fence?.geofenceRadiusM ?? 0} m). You have used all 3 out-of-radius allowances. You must be at the store to check in.`,
       });
       return;
     }
@@ -322,9 +335,11 @@ export function GeoPunchCard() {
     }
     const away = offsiteDistance(pos);
     if (away != null) {
-      setPendingPos(pos);
-      setPendingDistance(away);
-      setReasonFor("out");
+      const graceNote = `Check-out outside store geofence (${away}m away) - Store Manager notified`;
+      submitCheckOut(pos, graceNote);
+      toast.warning(`Check-out recorded (${away}m from store)`, {
+        description: "Your Store Manager has been notified of the off-site check-out.",
+      });
       return;
     }
     submitCheckOut(pos);
@@ -602,17 +617,6 @@ export function GeoPunchCard() {
                     <LogIn className="h-4 w-4" />
                     {checkIn.isPending ? "Checking in…" : "Check in"}
                   </Button>
-                  {/* An addition to the punch, never a gate in front of it. */}
-                  <Button
-                    variant="outline"
-                    size="lg"
-                    className="w-full sm:w-auto"
-                    disabled={punching}
-                    onClick={() => setCameraFor("in")}
-                  >
-                    <Camera className="h-4 w-4" />
-                    With a photo
-                  </Button>
                 </div>
               </div>
             ) : null}
@@ -667,16 +671,6 @@ export function GeoPunchCard() {
                   >
                     <LogOut className="h-4 w-4" />
                     {checkOut.isPending ? "Checking out…" : "Check out"}
-                  </Button>
-                  <Button
-                    size="lg"
-                    variant="ghost"
-                    className="w-full sm:w-auto"
-                    disabled={punching}
-                    onClick={() => setCameraFor("out")}
-                  >
-                    <Camera className="h-4 w-4" />
-                    With a photo
                   </Button>
                 </div>
               </div>

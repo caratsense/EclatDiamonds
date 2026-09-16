@@ -61,8 +61,8 @@ export class StoresController {
     return this.stores.close(user, id);
   }
 
-  /** PATCH /stores/:id — edit a branch (head office only; aggregate is immutable). */
-  @Roles('head_office')
+  /** PATCH /stores/:id — edit branch geofence/details (head office, area manager, or assigned store manager). */
+  @Roles('head_office', 'area_manager', 'store_manager')
   @Patch(':id')
   update(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateStoreDto) {
     return this.stores.update(user, id, dto);

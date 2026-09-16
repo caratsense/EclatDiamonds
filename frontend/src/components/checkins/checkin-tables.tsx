@@ -190,18 +190,6 @@ export function LiveInStore({
                       Follow up
                     </Button>
                   ) : null}
-                  {onCheckout ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="flex-1"
-                      disabled={checkingOutId === c.id}
-                      onClick={() => onCheckout(c.id)}
-                    >
-                      <LogOut className="h-3.5 w-3.5" />
-                      Close visit
-                    </Button>
-                  ) : null}
                 </div>
               </div>
             ))}

@@ -20,6 +20,7 @@ import { usePwaInstall } from "@/components/pwa/use-pwa-install";
 import { setStoredToken, setStoredStoreId } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { useSession } from "@/store/use-session";
+import { LogoutDialog } from "@/components/layout/logout-dialog";
 
 export function UserMenu() {
   const { user, clear } = useSession();
@@ -28,14 +29,7 @@ export function UserMenu() {
   const queryClient = useQueryClient();
   const { status: pwaStatus, promptNative } = usePwaInstall();
   const [iosOpen, setIosOpen] = React.useState(false);
-
-  function signOut() {
-    setStoredToken(null);
-    setStoredStoreId(null);
-    clear();
-    queryClient.clear();
-    router.replace("/login");
-  }
+  const [logoutOpen, setLogoutOpen] = React.useState(false);
 
   return (
     <>
@@ -82,12 +76,13 @@ export function UserMenu() {
           </DropdownMenuItem>
         ) : null}
         <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={signOut}>
+        <DropdownMenuItem onSelect={() => setLogoutOpen(true)}>
           <LogOut className="h-4 w-4" /> {t("action.signOut", "Sign out")}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
     <IosInstallDialog open={iosOpen} onOpenChange={setIosOpen} />
+    <LogoutDialog open={logoutOpen} onOpenChange={setLogoutOpen} />
     </>
   );
 }
