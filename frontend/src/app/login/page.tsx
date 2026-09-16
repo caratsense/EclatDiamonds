@@ -135,7 +135,7 @@ export function configuredOrgSlug(
   raw: string | undefined = process.env.NEXT_PUBLIC_DEFAULT_ORG_SLUG,
 ): string {
   const slug = normaliseOrgSlug(raw);
-  return isUsableOrgSlug(slug) ? slug : "";
+  return isUsableOrgSlug(slug) ? slug : "eclat";
 }
 
 /**
@@ -147,16 +147,9 @@ export function configuredOrgSlug(
  */
 function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
   const signup = useSignup();
-  const [organisationCode, setOrganisationCode] = React.useState(configuredOrgSlug());
-
-  // The slug is normalised before it is used for anything, and the directory is
-  // requested only once it could name a real tenant. Passing "" keeps the query
-  // disabled, so an empty or half-typed code makes no request at all — there is
-  // no tenant to guess at, and guessing is what this screen used to do.
-  const slug = normaliseOrgSlug(organisationCode);
-  const slugUsable = isUsableOrgSlug(slug);
-  const storesQuery = useSignupStores(slugUsable ? slug : "");
-  const stores = slugUsable ? storesQuery.data ?? [] : [];
+  const slug = configuredOrgSlug();
+  const storesQuery = useSignupStores(slug);
+  const stores = storesQuery.data ?? [];
 
   const [name, setName] = React.useState("");
   const [contactEmail, setContactEmail] = React.useState("");
@@ -174,7 +167,7 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
   // whether someone already holds that ID.
   const debouncedName = useDebouncedValue(name, 400);
   const preview = useSignupPreview({
-    organisationCode: slugUsable ? slug : "",
+    organisationCode: slug,
     requestedStoreId,
     name: debouncedName,
   });
@@ -185,10 +178,6 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    // Checked before the store, because with no usable code the store list was
-    // never fetched and "Choose your store" would be the wrong thing to say.
-    if (!slugUsable)
-      return toast.error("Enter your organisation code — ask your administrator.");
     if (name.trim().length < 2) return toast.error("Enter your full name.");
     if (!phone || phone.trim().length < 10)
       return toast.error("Enter your 10-digit mobile phone number.");
@@ -254,22 +243,6 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
       onSubmit={submit}
       className="glass facet-top relative space-y-3.5 rounded-2xl p-5"
     >
-      <div className="space-y-1.5">
-        <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">Organisation code</Label>
-        <input
-          className={inputCls}
-          value={organisationCode}
-          onChange={(e) => {
-            setOrganisationCode(e.target.value);
-            setRequestedStoreId("");
-          }}
-          placeholder="e.g. your-company"
-          required
-        />
-        <p className="text-[11px] text-slate-500 dark:text-[#f8fafc]/45">
-          Ask your administrator for your organisation code.
-        </p>
-      </div>
       <div className="space-y-1.5">
         <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">Full name</Label>
         <input
@@ -359,11 +332,9 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
           required
         >
           <option value="" className="bg-white text-slate-900 dark:bg-[#090b10] dark:text-[#f8fafc]">
-            {!slugUsable
-              ? "Enter your organisation code first"
-              : storesQuery.isLoading
-                ? "Loading stores…"
-                : "Select your store"}
+            {storesQuery.isLoading
+              ? "Loading stores from database…"
+              : "Select your store"}
           </option>
           {stores.map((s) => (
             <option key={s.id} value={s.id} className="bg-white text-slate-900 dark:bg-[#090b10] dark:text-[#f8fafc]">
