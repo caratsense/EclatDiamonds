@@ -61,23 +61,71 @@ if (!url) {
   console.error('DATABASE_URL is not set. Run this from backend/ with a local .env.');
   process.exit(2);
 }
-if (process.env.NODE_ENV === 'production') {
-  console.error('Refusing to seed demo conversations with NODE_ENV=production.');
-  process.exit(2);
-}
-const host = (() => {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return '';
+
+/*
+ * ── The one way out of "local only" ─────────────────────────────────────────
+ *
+ * `SEED_DEMO_TARGET=staging` allows a remote database, because a demo of the
+ * inbox has to be reachable by somebody who is not sitting at this laptop.
+ *
+ * Asking for it is not enough. The database itself must PROVE it is staging,
+ * in `assertStaging()` below: it holds the staging bootstrap account, and it
+ * holds a demo-sized customer book. Éclat's production database has neither —
+ * no staging account, and hundreds of real customers — so the same variable
+ * pointed at production refuses and writes nothing.
+ *
+ * NODE_ENV is production on a deployed environment, which is exactly why it
+ * cannot be the test here.
+ */
+const REMOTE_STAGING = process.env.SEED_DEMO_TARGET === 'staging';
+
+if (!REMOTE_STAGING) {
+  if (process.env.NODE_ENV === 'production') {
+    console.error('Refusing to seed demo conversations with NODE_ENV=production.');
+    process.exit(2);
   }
-})();
-if (!['localhost', '127.0.0.1', '::1', ''].includes(host)) {
-  console.error(
-    `Refusing to seed demo conversations into a database on "${host}". ` +
-      'This script is for a local machine only — it writes customers, enquiries and messages.',
-  );
-  process.exit(2);
+  const host = (() => {
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return '';
+    }
+  })();
+  if (!['localhost', '127.0.0.1', '::1', ''].includes(host)) {
+    console.error(
+      `Refusing to seed demo conversations into a database on "${host}". ` +
+        'This script is for a local machine only — it writes customers, enquiries and messages. ' +
+        'Set SEED_DEMO_TARGET=staging to seed a staging database that proves it is one.',
+    );
+    process.exit(2);
+  }
+}
+
+/** The staging proof. Production cannot satisfy either half of it. */
+const STAGING_ADMIN = 'staging.admin@caratsense.in';
+const STAGING_MAX_CUSTOMERS = 200;
+
+async function assertStaging(prisma) {
+  const marker = await prisma.user.findFirst({
+    where: { email: STAGING_ADMIN },
+    select: { id: true, organisationId: true },
+  });
+  const customers = await prisma.party.count();
+  if (!marker) {
+    console.error(
+      `Refusing: this database has no ${STAGING_ADMIN}, so it is not the staging environment.`,
+    );
+    process.exit(2);
+  }
+  if (customers >= STAGING_MAX_CUSTOMERS) {
+    console.error(
+      `Refusing: this database holds ${customers} customers, more than a staging environment should. ` +
+        'A real customer book is not somewhere to write demo people.',
+    );
+    process.exit(2);
+  }
+  console.log(`Staging confirmed: ${STAGING_ADMIN} present, ${customers} customer(s) on record.`);
+  return marker;
 }
 
 const prisma = new PrismaClient();
@@ -219,12 +267,15 @@ const THREADS = [
 /* ---------------------------------------------------------------------- run */
 
 async function main() {
+  const stagingMarker = REMOTE_STAGING ? await assertStaging(prisma) : null;
   const org = await prisma.organisation.findFirst({ where: { slug: 'eclat' } });
-  if (!org) {
+  // On staging the tenant may carry any slug, so fall back to the one the
+  // staging account belongs to rather than insisting on the local demo's name.
+  const organisationId = org?.id ?? stagingMarker?.organisationId;
+  if (!organisationId) {
     console.error('The demo tenant is missing. Run `npm run db:seed` first.');
     process.exit(2);
   }
-  const organisationId = org.id;
 
   const users = await prisma.user.findMany({
     where: { organisationId },
