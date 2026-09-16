@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 64" fill="none" role="img" aria-label="CaratOS">
+  <defs>
+    <linearGradient id="gemGrad1" x1="6" y1="8" x2="48" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#818cf8"/>
+      <stop offset="50%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#38bdf8"/>
+    </linearGradient>
+    <linearGradient id="gemGrad2" x1="27" y1="8" x2="27" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#c084fc"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+    <linearGradient id="textGrad" x1="170" y1="20" x2="240" y2="50" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="50%" stop-color="#818cf8"/>
+      <stop offset="100%" stop-color="#38bdf8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Faceted Prism Diamond Icon -->
+  <g transform="translate(6, 6) scale(1.6)">
+    <path d="M9 5L23 5L28 12L16 28L4 12L9 5Z" fill="url(#gemGrad1)" fill-opacity="0.25" stroke="url(#gemGrad1)" stroke-width="1.8" stroke-linejoin="round"/>
+    <path d="M9 5L16 12L23 5" stroke="url(#gemGrad2)" stroke-width="1.6" stroke-linejoin="round"/>
+    <path d="M4 12L28 12" stroke="url(#gemGrad1)" stroke-width="1.6" stroke-linejoin="round"/>
+    <path d="M16 12L16 28" stroke="url(#gemGrad1)" stroke-width="1.6" stroke-linejoin="round"/>
+    <path d="M9 5L4 12L16 28L28 12L23 5" stroke="url(#gemGrad2)" stroke-width="1.4" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Brand Typography -->
+  <text x="68" y="44" font-family="-apple-system, BlinkMacSystemFont, 'Plus Jakarta Sans', 'Inter', sans-serif" font-size="34" font-weight="800" fill="#ffffff" letter-spacing="-0.8">
+    Carat<tspan fill="url(#textGrad)" font-weight="900">OS</tspan>
+  </text>
+</svg>
