@@ -100,17 +100,17 @@ export function Logo({
       )}
       {isDefaultBrand ? (
         <span className="flex items-center text-xl font-extrabold tracking-tight text-inherit">
-          <span className="text-white">Carat</span>
-          <span className="ml-1 bg-gradient-to-r from-indigo-400 via-indigo-300 to-cyan-400 bg-clip-text font-black text-transparent">
+          <span className="text-slate-900 dark:text-white">Carat</span>
+          <span className="ml-1 bg-gradient-to-r from-indigo-500 via-indigo-400 to-cyan-500 dark:from-indigo-400 dark:via-indigo-300 dark:to-cyan-400 bg-clip-text font-black text-transparent">
             OS
           </span>
         </span>
       ) : (
         <div className="flex flex-col min-w-0 leading-tight">
-          <span className="truncate text-base font-bold tracking-tight text-white">
+          <span className="truncate text-base font-bold tracking-tight text-slate-900 dark:text-white">
             {displayName}
           </span>
-          <span className="text-[9.5px] font-semibold tracking-wider uppercase text-slate-400">
+          <span className="text-[9.5px] font-semibold tracking-wider uppercase text-slate-500 dark:text-slate-400">
             CaratOS
           </span>
         </div>

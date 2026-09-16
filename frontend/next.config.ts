@@ -5,7 +5,10 @@ import type { NextConfig } from "next";
  * shipped to the browser; see the rewrite below for why.
  */
 const BACKEND_ORIGIN =
-  process.env.BACKEND_ORIGIN ?? "https://backend-production-89dd.up.railway.app";
+  process.env.BACKEND_ORIGIN ??
+  (process.env.VERCEL_GIT_COMMIT_REF === "main"
+    ? "https://backend-production-89dd.up.railway.app"
+    : "https://backend-staging-e5cd.up.railway.app");
 
 const nextConfig: NextConfig = {
   /*

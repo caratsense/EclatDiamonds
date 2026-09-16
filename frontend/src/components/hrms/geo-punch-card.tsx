@@ -187,6 +187,15 @@ export function GeoPunchCard() {
    */
   const [cameraFor, setCameraFor] = useState<"in" | "out" | null>(null);
 
+  const [enrolledPhoto, setEnrolledPhoto] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return (
+      localStorage.getItem(`eclat_face_photo_${user.id}`) ||
+      (user.email ? localStorage.getItem(`eclat_face_photo_${user.email}`) : null)
+    );
+  });
+  const [enrollCameraOpen, setEnrollCameraOpen] = useState(false);
+
   const today = lastPunch ?? data?.today ?? null;
   const records = data?.records ?? [];
   const punching = checkIn.isPending || checkOut.isPending;
@@ -395,17 +404,98 @@ export function GeoPunchCard() {
       <CardContent className="space-y-4">
         {/* Logged-in employee identity — name + id/email, like the
             EzAttendancePro dashboard header. */}
-        <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-3 py-2">
-          <Avatar className="h-9 w-9">
-            <AvatarFallback className="text-xs">{user.initials}</AvatarFallback>
-          </Avatar>
-          <div className="min-w-0 leading-tight">
-            <p className="truncate text-sm font-medium">{user.name}</p>
-            <p className="num truncate text-xs text-muted-foreground">
-              {user.email || `ID ${user.id.slice(0, 8)}`}
-            </p>
+        <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2">
+          <div className="flex items-center gap-3">
+            <Avatar className="h-9 w-9 border border-border">
+              {enrolledPhoto ? (
+                <img
+                  src={enrolledPhoto}
+                  alt={user.name}
+                  className="h-full w-full object-cover rounded-full"
+                />
+              ) : (
+                <AvatarFallback className="text-xs font-semibold">{user.initials}</AvatarFallback>
+              )}
+            </Avatar>
+            <div className="min-w-0 leading-tight">
+              <p className="truncate text-sm font-medium">{user.name}</p>
+              <p className="num truncate text-xs text-muted-foreground">
+                {user.email || `ID ${user.id.slice(0, 8)}`}
+              </p>
+            </div>
           </div>
+          {enrolledPhoto ? (
+            <Badge variant="outline" className="text-[10px] text-emerald-600 dark:text-emerald-400 border-emerald-500/30 gap-1">
+              <CheckCircle2 className="h-3 w-3" /> Face Enrolled
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400 border-amber-500/40 gap-1">
+              <AlertTriangle className="h-3 w-3" /> Face Pending
+            </Badge>
+          )}
         </div>
+
+        {/* Profile Incomplete / Face Enrollment Banner */}
+        {!enrolledPhoto ? (
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-amber-900 dark:text-amber-200 shadow-xs">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-500/20 text-amber-600 dark:text-amber-400">
+                  <AlertTriangle className="h-5 w-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center rounded-md bg-amber-500/20 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">
+                      Profile Incomplete
+                    </span>
+                    <span className="text-sm font-semibold text-amber-950 dark:text-amber-100">
+                      Face Reference Photo Required
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-amber-800/90 dark:text-amber-200/80 leading-relaxed">
+                    Capture your face reference photo once so managers can verify your daily punch-in and punch-out (login / logout) records.
+                  </p>
+                </div>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => setEnrollCameraOpen(true)}
+                className="self-start sm:self-center shrink-0 bg-amber-600 hover:bg-amber-700 text-white font-medium text-xs rounded-lg px-3.5 py-2 gap-1.5 shadow-xs"
+              >
+                <Camera className="h-3.5 w-3.5" />
+                Enrol Face Photo
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-2 text-xs text-emerald-800 dark:text-emerald-200">
+            <div className="flex items-center gap-2.5">
+              <img
+                src={enrolledPhoto}
+                alt="Enrolled Face"
+                className="h-7 w-7 rounded-full object-cover border border-emerald-500/40"
+              />
+              <div>
+                <span className="font-semibold text-emerald-950 dark:text-emerald-100">
+                  Profile Complete
+                </span>
+                <span className="ml-2 text-emerald-700 dark:text-emerald-300/80 text-[11px]">
+                  Face reference photo enrolled for login/logout verification
+                </span>
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setEnrollCameraOpen(true)}
+              className="h-7 text-[11px] text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20"
+            >
+              Update photo
+            </Button>
+          </div>
+        )}
 
         {isLoading ? (
           <Skeleton className="h-28 rounded-xl" />
@@ -739,6 +829,32 @@ export function GeoPunchCard() {
           staffName,
           storeName,
           action: cameraFor === "out" ? "Check out" : "Check in",
+        }}
+      />
+
+      {/* Profile Face Enrollment Dialog */}
+      <FaceScannerDialog
+        open={enrollCameraOpen}
+        onOpenChange={setEnrollCameraOpen}
+        title="Enrol Face Photo"
+        confirmLabel="Save Profile Photo"
+        context={{
+          staffName: user.name,
+          storeName,
+          action: "Profile Face Enrollment",
+        }}
+        onCapture={(photo) => {
+          if (typeof window !== "undefined") {
+            localStorage.setItem(`eclat_face_photo_${user.id}`, photo);
+            if (user.email) {
+              localStorage.setItem(`eclat_face_photo_${user.email}`, photo);
+            }
+          }
+          setEnrolledPhoto(photo);
+          setEnrollCameraOpen(false);
+          toast.success("Profile photo enrolled!", {
+            description: "Your reference face photo is saved for attendance verification.",
+          });
         }}
       />
     </>

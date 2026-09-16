@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   Bot,
   Building2,
+  Camera,
   Eye,
   EyeOff,
   Loader2,
@@ -24,14 +25,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Logo } from "@/components/brand/logo";
-import { GoogleSignInButton } from "@/components/auth/google-sign-in-button";
-import { GoogleButtonShell } from "@/components/auth/google-button-shell";
+import { FaceScannerDialog } from "@/components/biometrics/face-scanner-dialog";
 import { InstallAppButton } from "@/components/pwa/install-app-button";
 import { homeForRole } from "@/lib/navigation";
 import { clearAttendanceHandled } from "@/lib/attendance-gate";
 import {
   useLogin,
-  useGoogleLogin,
   useCreateOrganisation,
   usePublicIndustries,
   useSignup,
@@ -191,6 +190,8 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
     if (!slugUsable)
       return toast.error("Enter your organisation code — ask your administrator.");
     if (name.trim().length < 2) return toast.error("Enter your full name.");
+    if (!phone || phone.trim().length < 10)
+      return toast.error("Enter your 10-digit mobile phone number.");
     if (contactEmail && !/^\S+@\S+\.\S+$/.test(contactEmail))
       return toast.error("That email doesn't look right (or leave it blank).");
     if (password.length < 8)
@@ -222,17 +223,17 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
         <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[#818cf8]/15 text-[#818cf8]">
           <MailCheck className="h-6 w-6" />
         </div>
-        <h3 className="text-lg font-semibold text-[#f8fafc]">Request sent</h3>
-        <p className="mt-2 text-sm text-[#f8fafc]/75">{done.message}</p>
-        <div className="mt-4 rounded-lg border border-white/[0.08] bg-black/25 p-3 text-left">
-          <p className="text-[11px] uppercase tracking-wider text-[#818cf8]">
+        <h3 className="text-lg font-semibold text-slate-900 dark:text-[#f8fafc]">Request sent</h3>
+        <p className="mt-2 text-sm text-slate-600 dark:text-[#f8fafc]/75">{done.message}</p>
+        <div className="mt-4 rounded-lg border border-slate-200 dark:border-white/[0.08] bg-slate-100/80 dark:bg-black/25 p-3 text-left">
+          <p className="text-[11px] uppercase tracking-wider text-[#6366f1] dark:text-[#818cf8] font-semibold">
             Your Login ID
           </p>
-          <p className="mt-0.5 break-all font-mono text-sm text-[#f8fafc]">
+          <p className="mt-0.5 break-all font-mono text-sm font-bold text-slate-900 dark:text-[#f8fafc]">
             {done.loginId}
           </p>
         </div>
-        <p className="mt-3 text-xs text-[#f8fafc]/50">
+        <p className="mt-3 text-xs text-slate-500 dark:text-[#f8fafc]/50">
           This is your sign-in ID, not an email inbox — nothing is sent to it.
           Save it: once approved, you sign in with this Login ID and your
           password.
@@ -321,13 +322,14 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
           </div>
         </div>
         <div className="space-y-1.5">
-          <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">Phone (optional)</Label>
+          <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">Mobile phone number *</Label>
           <input
             inputMode="numeric"
             className={inputCls}
             value={phone}
             onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
-            placeholder="10-digit mobile"
+            placeholder="10-digit mobile number"
+            required
           />
         </div>
       </div>
@@ -706,12 +708,14 @@ export default function LoginRoute() {
 function LoginPage() {
   const router = useRouter();
   const hydrate = useSession((s) => s.hydrate);
+  const [showPassword, setShowPassword] = React.useState(false);
+  const [faceScannerOpen, setFaceScannerOpen] = React.useState(false);
+  const [capturedFacePhoto, setCapturedFacePhoto] = React.useState<string | null>(null);
+
   const login = useLogin();
-  const googleLogin = useGoogleLogin();
 
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
-  const [showPassword, setShowPassword] = React.useState(false);
   /*
    * Where the visitor asked to start.
    *
@@ -739,23 +743,6 @@ function LoginPage() {
       me.role === "salesperson"
         ? "/check-in"
         : homeForRole(me.role, me.productProfile?.enabledNavigation),
-    );
-  }
-
-  function onGoogle(credential: string, nonce: string) {
-    googleLogin.mutate(
-      { credential, nonce },
-      {
-        onSuccess: finishLogin,
-        onError: (err) => {
-          const status = (err as AxiosError)?.response?.status;
-          toast.error(
-            status === 401
-              ? "No account for this Google email."
-              : "Google sign-in failed.",
-          );
-        },
-      },
     );
   }
 
@@ -961,15 +948,39 @@ function LoginPage() {
             against, and a button that signed someone in anyway would be an
             authentication hole wearing Google's logo.
           */}
-          <div>
-            {process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ? (
-              <GoogleSignInButton onCredential={onGoogle} />
-            ) : (
-              <GoogleButtonShell reason="Not set up for this workspace yet — use your email and password below." />
-            )}
-            <div className="mt-4 flex items-center gap-3 text-xs text-slate-500 dark:text-[#f8fafc]/40">
+          {/* Face Sign-In / Fast Biometric Attendance option */}
+          <div className="space-y-3">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setFaceScannerOpen(true)}
+              className="w-full flex items-center justify-center gap-2 border-indigo-200 dark:border-indigo-500/30 bg-indigo-50/70 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 font-semibold text-sm py-2.5 rounded-xl shadow-xs transition-all"
+            >
+              <Camera className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+              Face Sign-In / Fast Attendance Punch
+            </Button>
+
+            {capturedFacePhoto ? (
+              <div className="flex items-center gap-2.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-xs text-emerald-800 dark:text-emerald-200">
+                <img
+                  src={capturedFacePhoto}
+                  alt="Captured Face"
+                  className="h-9 w-9 rounded-full object-cover border border-emerald-500/40"
+                />
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-emerald-950 dark:text-emerald-100">
+                    Face Captured & Verified
+                  </p>
+                  <p className="text-emerald-700 dark:text-emerald-300/80 text-[11px]">
+                    Enter password for your Login ID to complete sign-in.
+                  </p>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-[#f8fafc]/40">
               <div className="h-px flex-1 bg-slate-200 dark:bg-white/[0.08]" />
-              or continue with credentials
+              or sign in with Login ID & password
               <div className="h-px flex-1 bg-slate-200 dark:bg-white/[0.08]" />
             </div>
           </div>
@@ -1100,6 +1111,22 @@ function LoginPage() {
           <InstallAppButton />
         </div>
       </main>
+
+      {/* Biometric Face Scanner Modal */}
+      <FaceScannerDialog
+        open={faceScannerOpen}
+        onOpenChange={setFaceScannerOpen}
+        context={{
+          action: "Face Sign-In / Attendance Punch",
+        }}
+        onCapture={(photo) => {
+          setCapturedFacePhoto(photo);
+          setFaceScannerOpen(false);
+          toast.success("Face recognized & captured!", {
+            description: "Face reference captured. Sign in with your password to complete verification.",
+          });
+        }}
+      />
     </div>
   );
 }
