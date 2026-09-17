@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Logger,
   Param,
   Post,
   Query,
@@ -26,11 +27,46 @@ import { RateLimit } from '../common/rate-limit';
 
 @Controller('products')
 export class ProductsController {
+  private readonly logger = new Logger(ProductsController.name);
+
   constructor(
     private readonly products: ProductsService,
     private readonly aiSearch: AiImageSearchService,
     private readonly jewelry: JewelrySimilarityService,
   ) {}
+
+  /**
+   * Re-index one design after its photographs change, without making the
+   * caller wait for it.
+   *
+   * Visual search only ever sees what is in ProductEmbedding, so a photo that
+   * is stored but not embedded is a photo the catalogue cannot be searched by.
+   * Leaving that to a manual head-office call meant the salesperson who took
+   * the picture had no way to make it count, and the feature looked broken to
+   * the only person using it.
+   *
+   * Deliberately not awaited. The inference service is allowed to be asleep and
+   * a cold start runs to three minutes while two vision models load; blocking
+   * an upload at the counter on that would be worse than the wait for search.
+   * The upload is already durable by this point — the worst case is a photo
+   * that is visible but not yet searchable, which the next re-index fixes.
+   * Scoped to the one design, so it costs one embedding call, not a rebuild.
+   */
+  private indexAfterPhotoChange(user: AuthUser, store: string | undefined, productId: string) {
+    void this.jewelry
+      .reindex(user, store, { productId })
+      .then((r) =>
+        this.logger.log(
+          `auto-index ${productId}: ${r.embedded ?? 0} embedded, ${r.skipped ?? 0} skipped, ` +
+            `${r.failed ?? 0} failed, ${(r as { pruned?: number }).pruned ?? 0} pruned`,
+        ),
+      )
+      .catch((err) =>
+        this.logger.warn(
+          `auto-index ${productId} failed: ${err instanceof Error ? err.message : err}`,
+        ),
+      );
+  }
 
   /**
    * Jewelry visual similarity (M5): upload a photo → ranked catalogue matches via
@@ -151,12 +187,15 @@ export class ProductsController {
   @Permit('catalogue.images')
   @Post(':id/image')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 8 * 1024 * 1024 } }))
-  uploadImage(
+  async uploadImage(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
+    @StoreHeader() store: string | undefined,
     @UploadedFile() file: any,
   ) {
-    return this.products.setImage(user, id, file);
+    const updated = await this.products.setImage(user, id, file);
+    this.indexAfterPhotoChange(user, store, id);
+    return updated;
   }
 
   /** Every photograph of a design, cover first. */
@@ -177,15 +216,18 @@ export class ProductsController {
   @Permit('catalogue.images')
   @Post(':id/images')
   @UseInterceptors(FilesInterceptor('files', 10, { limits: { fileSize: 12 * 1024 * 1024 } }))
-  addImages(
+  async addImages(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
+    @StoreHeader() store: string | undefined,
     @UploadedFiles() files: any[],
     @Body('angles') angles?: string | string[],
   ) {
     // One repeated multipart field arrives as a string, several as an array.
     const list = angles == null ? undefined : Array.isArray(angles) ? angles : [angles];
-    return this.products.addImages(user, id, files, list);
+    const gallery = await this.products.addImages(user, id, files, list);
+    this.indexAfterPhotoChange(user, store, id);
+    return gallery;
   }
 
   /** Make one photo the design’s cover. */
@@ -204,11 +246,16 @@ export class ProductsController {
   @Roles('store_manager', 'head_office')
   @Permit('catalogue.images')
   @Delete(':id/images/:imageId')
-  deleteImage(
+  async deleteImage(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Param('imageId') imageId: string,
+    @StoreHeader() store?: string,
   ) {
-    return this.products.deleteImage(user, id, imageId);
+    const gallery = await this.products.deleteImage(user, id, imageId);
+    // Prunes the deleted photo’s vector. A stale one is worse than a missing
+    // one: the design keeps matching searches for a picture that is gone.
+    this.indexAfterPhotoChange(user, store, id);
+    return gallery;
   }
 }

@@ -286,7 +286,9 @@ export function ProductGallery({
 
       {canEdit && rows.length > 0 ? (
         <p className="text-[11px] text-muted-foreground">
-          New photos are searchable after the next visual indexing run.
+          Indexing starts on its own when photos change — a new angle usually
+          becomes searchable within a minute or two, and the upload itself never
+          waits for it.
         </p>
       ) : null}
     </div>
