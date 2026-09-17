@@ -53,6 +53,8 @@ export interface SyncResult {
   /** Website import only — designs newly added vs. existing ones given a photo/price. */
   created?: number;
   enriched?: number;
+  /** Website import only — published photographs filed into product galleries. */
+  photos?: number;
   /**
    * Stock only — `Inward.Status` letters this build does not recognise, with
    * counts. Their pieces are deliberately withheld from the available set, and
@@ -2693,6 +2695,7 @@ export class SyncService {
     let skipped = 0;
     let created = 0;
     let enriched = 0;
+    let photos = 0;
 
     for (const r of records) {
       const code = str(r.productCode);
@@ -2701,6 +2704,21 @@ export class SyncService {
         continue;
       }
       const imageUrl = str(r.imageUrl) || null;
+      // Every published photograph of the design, cover first.
+      //
+      // The feed is shaped variantType[] -> shapes[] -> images[] and always
+      // carried several; the agent's first_image() took one and dropped the
+      // rest, so a design the client had photographed from four sides reached
+      // the catalogue as a single view — and visual search could only ever
+      // find it from that one. These are the retouched shots already on the
+      // website's CDN, so this stores links and uploads nothing.
+      const imageUrls = Array.isArray(r.imageUrls)
+        ? (r.imageUrls as unknown[])
+            .map((u) => str(u))
+            .filter((u): u is string => !!u && /^https?:\/\//i.test(u))
+        : [];
+      // The cover belongs in the gallery too, and first without duplicating.
+      const allImages = [...new Set([...(imageUrl ? [imageUrl] : []), ...imageUrls])];
       const price = dec(r.price);
       const karat = int(r.karat) ?? 0;
 
@@ -2743,10 +2761,11 @@ export class SyncService {
         } else {
           skipped++;
         }
+        photos += await this.addWebsiteImages(organisationId, existing.id, allImages);
         continue;
       }
 
-      await this.prisma.product.create({
+      const fresh = await this.prisma.product.create({
         data: {
           organisationId,
           // Provenance, and it has to be set. `purgeDemo` decides what is seeded
@@ -2773,14 +2792,65 @@ export class SyncService {
       });
       created++;
       upserted++;
+      photos += await this.addWebsiteImages(organisationId, fresh.id, allImages);
     }
 
-    this.logger.log(`sync website-products: created=${created} enriched=${enriched} skipped=${skipped}`);
+    this.logger.log(
+      `sync website-products: created=${created} enriched=${enriched} skipped=${skipped} photos=${photos}`,
+    );
     return {
       ...this.result('website-products', records, upserted, skipped),
       created,
       enriched,
+      photos,
     };
+  }
+
+  /**
+   * File a website design's published photographs in its gallery.
+   *
+   * Idempotent on the URL, so re-running the import adds nothing and a photo
+   * the client later removes from the site is simply not re-added — it is not
+   * deleted either, because the site dropping a shot is not the shop saying the
+   * piece was never photographed that way.
+   *
+   * Never touches a photo somebody uploaded at the counter: those have no
+   * matching URL, so they are invisible to this. The cover is left exactly as
+   * the caller set it; ordering here only decides display order.
+   */
+  private async addWebsiteImages(
+    organisationId: string,
+    productId: string,
+    urls: string[],
+  ): Promise<number> {
+    if (!urls.length) return 0;
+    const existing = new Set(
+      (
+        await this.prisma.productImage.findMany({
+          where: { productId },
+          select: { url: true },
+        })
+      ).map((i) => i.url),
+    );
+    const fresh = urls.filter((u) => !existing.has(u));
+    if (!fresh.length) return 0;
+
+    // The design has no cover in the gallery yet only when it had no photos at
+    // all, in which case the first one published becomes it.
+    const hasPrimary =
+      existing.size > 0 &&
+      (await this.prisma.productImage.count({ where: { productId, isPrimary: true } })) > 0;
+
+    await this.prisma.productImage.createMany({
+      data: fresh.map((url, i) => ({
+        organisationId,
+        productId,
+        url,
+        isPrimary: !hasPrimary && i === 0,
+        sortOrder: existing.size + i,
+      })),
+    });
+    return fresh.length;
   }
 
   // ── Journal -> LedgerEntry ───────────────────────────────────────────────────

@@ -93,22 +93,42 @@ def fetch_products():
     return d if isinstance(d, list) else []
 
 
-def first_image(p):
-    """The first real photograph on any colour variant.
+def all_images(p, limit=8):
+    """Every real photograph on the product, in feed order, without repeats.
 
     Products are shaped variantType[] -> shapes[] -> images[], and a shape can
-    carry an empty list, so this walks until it finds something rather than
-    trusting position 0.
+    carry an empty list, so this walks the whole structure rather than trusting
+    position 0.
+
+    This used to return the FIRST one and stop. That quietly threw away most of
+    what the client had already photographed: a ring shot from four sides
+    reached the catalogue as a single view, and because visual search matches
+    against indexed pictures, it could only ever be found from that one view.
+    The rest were sitting on the website CDN the whole time, costing nothing.
+
+    Capped because a feed with dozens of near-identical colourway shots would
+    otherwise fill the index with duplicates of one design and crowd out other
+    designs in a result set.
     """
+    out = []
+
+    def take(img):
+        if isinstance(img, str) and img.startswith("http") and img not in out:
+            out.append(img)
+
     for v in p.get("variantType") or []:
         for s in v.get("shapes") or []:
             for img in s.get("images") or []:
-                if isinstance(img, str) and img.startswith("http"):
-                    return img
+                take(img)
         for img in v.get("images") or []:
-            if isinstance(img, str) and img.startswith("http"):
-                return img
-    return None
+            take(img)
+    return out[:limit]
+
+
+def first_image(p):
+    """The cover: the first real photograph, or None when there is none."""
+    imgs = all_images(p, limit=1)
+    return imgs[0] if imgs else None
 
 
 def names(v):
@@ -148,6 +168,9 @@ def to_record(p):
         "caratWeight": carat_of(p),
         "description": (p.get("description") or "").strip() or None,
         "imageUrl": first_image(p),
+        # Every published shot, so the design is searchable from more than the
+        # one angle that happened to be first in the feed.
+        "imageUrls": all_images(p),
     }
 
 
@@ -256,9 +279,11 @@ def _main():
     records = [to_record(p) for p in products]
     records = [r for r in records if r["productCode"]]
     with_img = sum(1 for r in records if r["imageUrl"])
+    total_img = sum(len(r.get("imageUrls") or []) for r in records)
     with_price = sum(1 for r in records if r["price"])
     print(f"  usable (have a code)   : {len(records):,}")
     print(f"  with a photograph      : {with_img:,}")
+    print(f"  photographs in total   : {total_img:,}  (every angle, not just the cover)")
     print(f"  with a price           : {with_price:,}")
 
     if not records:
