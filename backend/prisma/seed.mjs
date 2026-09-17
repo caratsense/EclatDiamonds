@@ -551,12 +551,17 @@ async function main() {
     { id: "att-10", storeId: "ahmedabad-cg", staffId: "s-301", staffName: "Meera Trivedi", status: "present", checkInAt: at(10, 12), checkInLat: "23.0299000", checkInLng: "72.5617000", geoVerified: true },
     { id: "att-11", storeId: "ahmedabad-cg", staffId: "s-302", staffName: "Harsh Solanki", status: "present", checkInAt: at(10, 25), checkInLat: "23.0297000", checkInLng: "72.5615000", geoVerified: true },
   ];
+  // The id carries the date it belongs to. Without that this upsert is only
+  // idempotent on the day it first ran: `where` matches on (store, staff, date)
+  // and the date moves every midnight, so the next day misses, falls to
+  // `create`, and collides on the pinned id — P2002, and a failed deployment.
+  // The composite key is the real identity; the id only has to not repeat.
   for (const a of attendance) {
     const { id, ...rest } = a;
     await prisma.attendanceRecord.upsert({
       where: { storeId_staffId_date: { storeId: a.storeId, staffId: a.staffId, date: todayDate } },
       update: rest,
-      create: { id, ...rest, date: todayDate },
+      create: { id: `${id}-${todayDate.toISOString().slice(0, 10)}`, ...rest, date: todayDate },
     });
   }
 
@@ -582,7 +587,9 @@ async function main() {
     await prisma.storeHoliday.upsert({
       where: { storeId_date: { storeId: h.storeId, date: h.date } },
       update: { label: h.label },
-      create: { id, ...rest },
+      // Same reason as attendance above, on a yearly clock: these dates are
+      // pinned to today's year, so the id would collide next January.
+      create: { id: `${id}-${h.date.getUTCFullYear()}`, ...rest },
     });
   }
 
@@ -605,7 +612,9 @@ async function main() {
     await prisma.attendanceRecord.upsert({
       where: { storeId_staffId_date: { storeId: "mumbai-bandra", staffId: a.staffId, date } },
       update: { ...base, ...rest },
-      create: { id, date, ...base, ...rest },
+      // Same reason again, monthly: utcDay() builds these from the current
+      // month, so the id would collide on the first seed run of the next one.
+      create: { id: `${id}-${date.toISOString().slice(0, 10)}`, date, ...base, ...rest },
     });
   }
 
