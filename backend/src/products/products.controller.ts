@@ -1,15 +1,17 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Post,
   Query,
   UploadedFile,
+  UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
 import { Permit } from '../auth/permissions';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { Availability, MetalKind, ProductCategory } from '@prisma/client';
 import { ProductsService } from './products.service';
 import { AiImageSearchService } from './ai-image-search.service';
@@ -155,5 +157,58 @@ export class ProductsController {
     @UploadedFile() file: any,
   ) {
     return this.products.setImage(user, id, file);
+  }
+
+  /** Every photograph of a design, cover first. */
+  @Permit('catalogue.read')
+  @Get(':id/images')
+  listImages(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.products.listImages(user, id);
+  }
+
+  /**
+   * Add photographs of a design (multipart field `files`, up to 10).
+   *
+   * Ten at a time because the pictures are taken in one go at the counter, and
+   * a round trip per angle over a shop’s wifi is how people give up and upload
+   * one. Optional `angles` (repeated field, positional) labels each view.
+   */
+  @Roles('store_manager', 'head_office')
+  @Permit('catalogue.images')
+  @Post(':id/images')
+  @UseInterceptors(FilesInterceptor('files', 10, { limits: { fileSize: 12 * 1024 * 1024 } }))
+  addImages(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @UploadedFiles() files: any[],
+    @Body('angles') angles?: string | string[],
+  ) {
+    // One repeated multipart field arrives as a string, several as an array.
+    const list = angles == null ? undefined : Array.isArray(angles) ? angles : [angles];
+    return this.products.addImages(user, id, files, list);
+  }
+
+  /** Make one photo the design’s cover. */
+  @Roles('store_manager', 'head_office')
+  @Permit('catalogue.images')
+  @Post(':id/images/:imageId/primary')
+  setPrimaryImage(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Param('imageId') imageId: string,
+  ) {
+    return this.products.setPrimaryImage(user, id, imageId);
+  }
+
+  /** Remove one photo; the cover is re-elected if it was the one removed. */
+  @Roles('store_manager', 'head_office')
+  @Permit('catalogue.images')
+  @Delete(':id/images/:imageId')
+  deleteImage(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Param('imageId') imageId: string,
+  ) {
+    return this.products.deleteImage(user, id, imageId);
   }
 }

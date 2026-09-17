@@ -40,6 +40,11 @@ export interface MatchThresholds {
   minMargin: number;
 }
 
+/**
+ * One indexed PHOTOGRAPH. A design shot from several angles contributes one
+ * candidate per angle, all carrying the same `productId`; {@link rankCandidates}
+ * scores each view independently and then keeps the design’s best one.
+ */
 export interface RankCandidate {
   productId: string;
   dino: number[];
@@ -163,8 +168,23 @@ export function rankCandidates(
   // 4. sort by fused (ranking), tie-break by closeness.
   scored.sort((a, b) => b.fused - a.fused || b.closeness - a.closeness);
 
-  const best = scored[0];
-  const second = scored[1];
+  // 4b. one hit per DESIGN, on its best-matching angle.
+  //
+  // The index holds a row per photograph, so a ring shot front/side/on-hand
+  // appears three times. Left alone, a top-10 of three well-photographed
+  // designs would show the same three rings over and over, and the
+  // no-match margin below would compare an angle against another angle of the
+  // same piece and read a near-zero gap as "ambiguous". The list is already
+  // sorted best-first, so the first row of each design is the one to keep.
+  const seen = new Set<string>();
+  const byDesign = scored.filter((x) => {
+    if (seen.has(x.productId)) return false;
+    seen.add(x.productId);
+    return true;
+  });
+
+  const best = byDesign[0];
+  const second = byDesign[1];
   const margin = best.closeness - (second?.closeness ?? 0);
 
   // No-match: absolute floor OR ambiguous (not clearly close AND no standout).
@@ -180,7 +200,7 @@ export function rankCandidates(
   }
 
   // Only return actual matches (>= WEAK floor); a closeness-0 tail is not a "match".
-  const results: RankedHit[] = scored
+  const results: RankedHit[] = byDesign
     .filter((s) => s.closeness >= t.weak)
     .slice(0, opts.limit)
     .map((s, i) => ({

@@ -9,6 +9,7 @@ import type {
   Metal,
   Product,
   ProductCategory,
+  ProductImage,
 } from "@/lib/mock/catalogue";
 
 export interface CreateProductInput {
@@ -144,4 +145,84 @@ export function useUploadProductImage() {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
   });
+}
+
+/** Every mutation below returns the design’s full gallery, so they share this. */
+function useGalleryMutation<V>(
+  call: (vars: V) => Promise<ProductImage[]>,
+  productIdOf: (vars: V) => string,
+) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: call,
+    onSuccess: (images, vars) => {
+      // Seed the cache from the response instead of refetching: the server just
+      // told us the new state, and a round trip here is a visible flicker on a
+      // shop iPad.
+      qc.setQueryData(["product-images", productIdOf(vars)], images);
+      qc.invalidateQueries({ queryKey: ["products"] });
+    },
+  });
+}
+
+/** GET /products/:id/images — every angle of a design, cover first. */
+export function useProductImages(productId: string | null) {
+  return useQuery({
+    queryKey: ["product-images", productId],
+    enabled: !!productId,
+    queryFn: async () => {
+      const { data } = await api.get<ProductImage[]>(`/products/${productId}/images`);
+      return data;
+    },
+  });
+}
+
+/**
+ * POST /products/:id/images — add photographs, several at once.
+ *
+ * One request for the whole set rather than one per angle: they are taken back
+ * to back at the counter, and a round trip each over shop wifi is how somebody
+ * ends up uploading only the front.
+ */
+export function useAddProductImages() {
+  return useGalleryMutation(
+    async ({ id, files, angles }: { id: string; files: File[]; angles?: string[] }) => {
+      const form = new FormData();
+      for (const f of files) form.append("files", f);
+      // Positional, one per file, so the server can pair them up.
+      if (angles) for (const a of angles) form.append("angles", a ?? "");
+      const { data } = await api.post<ProductImage[]>(`/products/${id}/images`, form, {
+        headers: { "Content-Type": "multipart/form-data" },
+        // Several full-resolution iPad photos on shop wifi outlast the shared
+        // 15s default, and a timeout here looks exactly like a rejected upload.
+        timeout: 120_000,
+      });
+      return data;
+    },
+    (v) => v.id,
+  );
+}
+
+/** Make one photo the design’s cover. */
+export function useSetPrimaryProductImage() {
+  return useGalleryMutation(
+    async ({ id, imageId }: { id: string; imageId: string }) => {
+      const { data } = await api.post<ProductImage[]>(
+        `/products/${id}/images/${imageId}/primary`,
+      );
+      return data;
+    },
+    (v) => v.id,
+  );
+}
+
+/** Remove one photo; the server re-elects a cover if it was the one removed. */
+export function useDeleteProductImage() {
+  return useGalleryMutation(
+    async ({ id, imageId }: { id: string; imageId: string }) => {
+      const { data } = await api.delete<ProductImage[]>(`/products/${id}/images/${imageId}`);
+      return data;
+    },
+    (v) => v.id,
+  );
 }

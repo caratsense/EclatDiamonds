@@ -11,6 +11,14 @@ import { JewelryRankingService, RankCandidate, RANKING_VERSION } from './jewelry
 
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 const BATCH_SIZE = 16;
+/**
+ * Ceiling on rows pulled into one ranking pass. Since the index became one row
+ * per PHOTOGRAPH, this counts photographs, not designs — a catalogue of 1,500
+ * designs shot from three angles fits, one of 5,000 shot from three does not.
+ * ponytail: in-process scan; the pgvector ANN index (see
+ * prisma/manual/20260819_pgvector_dual_embeddings.sql) is the upgrade when a
+ * catalogue outgrows it.
+ */
 const CANDIDATE_CAP = 5000;
 /** One result set is the TOP 10 closest genuine matches (fewer if fewer qualify). */
 const DEFAULT_TOP_N = 10;
@@ -174,6 +182,9 @@ export class JewelrySimilarityService {
       };
     }
 
+    // One candidate per PHOTOGRAPH. A design shot from three angles competes
+    // three times and is ranked on its best view; the ranker collapses the
+    // duplicates so the result list is still ten designs, not ten pictures.
     const candidates: RankCandidate[] = rows.map((r) => ({
       productId: r.productId,
       dino: r.dinoEmbedding,
@@ -301,19 +312,30 @@ export class JewelrySimilarityService {
       // another tenant's products (scopeWhere alone is empty for head_office).
       organisationId: user.organisationId,
       ...(this.scopeWhere(user, headerStore) as Prisma.ProductWhereInput),
-      imageUrl: { not: null },
+      // A design qualifies on either kind of picture: a gallery photo, or the
+      // legacy single cover that an ERP import still writes straight to the row.
+      OR: [{ imageUrl: { not: null } }, { images: { some: {} } }],
       ...(opts.productId ? { id: opts.productId } : {}),
     };
     const products = await this.prisma.product.findMany({
       where,
       take: CANDIDATE_CAP,
-      select: { id: true, storeId: true, imageUrl: true, organisationId: true },
+      select: {
+        id: true,
+        storeId: true,
+        imageUrl: true,
+        organisationId: true,
+        images: { select: { id: true, url: true } },
+      },
     });
 
     // Current served versions — lets a model/pipeline bump auto-invalidate rows.
     const versions = await this.inference.currentVersions();
     const preproc = versions.preprocessing ?? 'unknown';
 
+    // Keyed by design AND image hash: a design now has as many rows as it has
+    // photographs, so "have I already embedded this?" is a question about a
+    // picture, not about a product.
     const existing = new Map(
       (
         await this.prisma.productEmbedding.findMany({
@@ -326,32 +348,68 @@ export class JewelrySimilarityService {
             preprocessingVersion: true,
           },
         })
-      ).map((e) => [e.productId, e]),
+      ).map((e) => [`${e.productId}:${e.imageHash}`, e] as const),
     );
 
     let embedded = 0;
     let skipped = 0;
     let failed = 0;
-    const pending: { item: BatchItem; product: (typeof products)[number] }[] = [];
 
+    /** One unit of indexing work: a single photograph of a single design. */
+    type Shot = {
+      product: (typeof products)[number];
+      productImageId: string | null;
+      url: string;
+    };
+
+    // A design with a gallery is indexed from every angle in it. One with only
+    // the legacy cover is indexed from that, so an ERP import that writes
+    // imageUrl directly is never left out of visual search.
+    const shots: Shot[] = [];
     for (const p of products) {
-      const img = await readImageBytes(this.storage, p.imageUrl!);
+      if (p.images.length) {
+        for (const im of p.images) shots.push({ product: p, productImageId: im.id, url: im.url });
+      } else if (p.imageUrl) {
+        shots.push({ product: p, productImageId: null, url: p.imageUrl });
+      }
+    }
+
+    const pending: { item: BatchItem; shot: Shot; imageHash: string }[] = [];
+    /** Hashes seen this run, per design — the basis for pruning below. */
+    const seenHashes = new Map<string, Set<string>>();
+    /** Designs where a photo could not be read; never pruned on a partial view. */
+    const incomplete = new Set<string>();
+
+    for (const [i, shot] of shots.entries()) {
+      const p = shot.product;
+      const img = await readImageBytes(this.storage, shot.url);
       if (!img) {
         failed++;
+        incomplete.add(p.id);
         continue;
       }
       const imageHash = createHash('sha256').update(img.buffer).digest('hex');
-      const prev = existing.get(p.id);
+      if (!seenHashes.has(p.id)) seenHashes.set(p.id, new Set());
+      seenHashes.get(p.id)!.add(imageHash);
+
+      const prev = existing.get(`${p.id}:${imageHash}`);
       const versionsMatch =
         prev &&
         (!versions.dino || prev.dinoModelVersion === versions.dino) &&
         (!versions.siglip || prev.siglipModelVersion === versions.siglip) &&
         prev.preprocessingVersion === preproc;
-      if (!opts.force && prev && prev.imageHash === imageHash && versionsMatch) {
+      if (!opts.force && prev && versionsMatch) {
         skipped++;
         continue;
       }
-      pending.push({ item: { id: p.id, bytes: img.buffer, mime: img.mime }, product: p });
+      // The batch id identifies the SHOT, not the design: two angles of one ring
+      // are two rows, and keying by product id would make the second overwrite
+      // the first on the way back out of the inference service.
+      pending.push({
+        item: { id: `${i}`, bytes: img.buffer, mime: img.mime },
+        shot,
+        imageHash,
+      });
     }
 
     for (let i = 0; i < pending.length; i += BATCH_SIZE) {
@@ -369,41 +427,75 @@ export class JewelrySimilarityService {
       }
       const ok = new Set(results.map((r) => r.id));
       failed += chunk.filter((c) => !ok.has(c.item.id)).length;
+      for (const c of chunk) if (!ok.has(c.item.id)) incomplete.add(c.shot.product.id);
 
-      // Upsert successful rows (hash the exact buffer we sent, our idempotency key).
+      // Upsert successful rows (the hash of the exact bytes sent is the key).
       for (const c of chunk) {
         const r = results.find((x) => x.id === c.item.id);
         if (!r) continue;
-        const imageHash = createHash('sha256').update(c.item.bytes).digest('hex');
+        const p = c.shot.product;
         await this.prisma.productEmbedding.upsert({
-          where: { productId_preprocessingVersion: { productId: c.product.id, preprocessingVersion: preproc } },
+          where: {
+            productId_imageHash_preprocessingVersion: {
+              productId: p.id,
+              imageHash: c.imageHash,
+              preprocessingVersion: preproc,
+            },
+          },
           create: {
-            organisationId: c.product.organisationId,
-            productId: c.product.id,
-            storeId: c.product.storeId,
+            organisationId: p.organisationId,
+            productId: p.id,
+            productImageId: c.shot.productImageId,
+            storeId: p.storeId,
             dinoEmbedding: r.dino,
             siglipEmbedding: r.siglip,
             dinoModelVersion: versions.dino ?? 'unknown',
             siglipModelVersion: versions.siglip ?? 'unknown',
             preprocessingVersion: preproc,
-            imageHash,
+            imageHash: c.imageHash,
           },
           update: {
-            storeId: c.product.storeId,
+            productImageId: c.shot.productImageId,
+            storeId: p.storeId,
             dinoEmbedding: r.dino,
             siglipEmbedding: r.siglip,
             dinoModelVersion: versions.dino ?? 'unknown',
             siglipModelVersion: versions.siglip ?? 'unknown',
-            imageHash,
           },
         });
         embedded++;
       }
     }
 
+    // Prune vectors whose photograph is gone.
+    //
+    // A deleted or replaced angle leaves its embedding behind, and a stale
+    // vector is worse than a missing one: the design keeps matching searches
+    // for a picture that is no longer in the catalogue. Only designs whose
+    // every photo was read successfully are pruned — a network blip must not
+    // be read as "this design has no pictures any more".
+    let pruned = 0;
+    for (const [productId, hashes] of seenHashes) {
+      if (incomplete.has(productId)) continue;
+      const res = await this.prisma.productEmbedding.deleteMany({
+        where: { productId, imageHash: { notIn: [...hashes] } },
+      });
+      pruned += res.count;
+    }
+
     this.logger.log(
-      `dual-reindex: ${embedded} embedded, ${skipped} skipped, ${failed} failed of ${products.length}`,
+      `dual-reindex: ${embedded} embedded, ${skipped} skipped, ${failed} failed, ${pruned} pruned of ${shots.length} photo(s) across ${products.length} design(s)`,
     );
-    return { available: true, total: products.length, embedded, skipped, failed };
+    // `total` counts photographs now, because that is the unit of work. The
+    // design count is reported alongside so a caller can still see both.
+    return {
+      available: true,
+      total: shots.length,
+      designs: products.length,
+      embedded,
+      skipped,
+      failed,
+      pruned,
+    };
   }
 }

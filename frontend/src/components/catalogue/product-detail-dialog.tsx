@@ -1,8 +1,6 @@
 "use client";
 
-import { useRef } from "react";
-import { Gem, Tag, Upload } from "lucide-react";
-import { toast } from "sonner";
+import { Gem, Tag } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { CustomAttributeList } from "@/components/common/custom-attributes";
@@ -10,7 +8,6 @@ import {
   useConfigBootstrap,
   useFieldVisible,
 } from "@/lib/queries/tenant-config";
-import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -30,10 +27,10 @@ import {
   METAL_LABELS,
   type Product,
 } from "@/lib/mock/catalogue";
-import { useProductPieces, useUploadProductImage } from "@/lib/queries/products";
+import { ProductGallery } from "@/components/catalogue/product-gallery";
+import { useProductPieces } from "@/lib/queries/products";
 import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
-import { apiErrorMessage } from "@/lib/utils";
 
 interface ProductDetailDialogProps {
   product: Product | null;
@@ -47,8 +44,6 @@ export function ProductDetailDialog({
   onOpenChange,
 }: ProductDetailDialogProps) {
   const { stores, role } = useSession();
-  const fileRef = useRef<HTMLInputElement>(null);
-  const upload = useUploadProductImage();
   /*
    * The same industry policy the create form obeys.
    *
@@ -82,18 +77,6 @@ export function ProductDetailDialog({
   const src = assetUrl(product.imageUrl);
   const canEdit = ROLE_RANK[role] >= ROLE_RANK.store_manager;
 
-  function onPick(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file || !product) return;
-    upload.mutate(
-      { id: product.id, file },
-      {
-        onSuccess: () => toast.success("Photo uploaded"),
-        onError: (err) => toast.error(apiErrorMessage(err, "Upload failed — managers only, image ≤ 8MB")),
-      },
-    );
-    e.target.value = "";
-  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -105,36 +88,21 @@ export function ProductDetailDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="group relative flex aspect-[16/9] items-center justify-center overflow-hidden rounded-lg bg-muted">
+        {/* The cover. Every other angle lives in the gallery below it. */}
+        <div className="relative flex aspect-[16/9] items-center justify-center overflow-hidden rounded-lg bg-muted">
           {src ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={src} alt={product.name} className="h-full w-full object-cover" />
           ) : (
             <Gem className="h-12 w-12 text-muted-foreground/40" />
           )}
-          {canEdit ? (
-            <>
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={onPick}
-              />
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                disabled={upload.isPending}
-                onClick={() => fileRef.current?.click()}
-                className="absolute bottom-2 right-2 shadow-sm"
-              >
-                <Upload className="h-3.5 w-3.5" />
-                {upload.isPending ? "Uploading…" : src ? "Replace" : "Upload photo"}
-              </Button>
-            </>
-          ) : null}
         </div>
+
+        <ProductGallery
+          productId={product.id}
+          productName={product.name}
+          canEdit={canEdit}
+        />
 
         <div className="flex items-center justify-between">
           {/* Actual tagged price of the pieces on hand — falls back to the

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { ImagePlus, Loader2, Sparkles, X } from "lucide-react";
+import { Camera, ImagePlus, Loader2, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { SimilarityResults } from "@/components/catalogue/similarity-results";
@@ -24,6 +24,7 @@ const MAX_BYTES = 8 * 1024 * 1024; // ~8 MB
  */
 export function ImageSearch() {
   const inputRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [lastFile, setLastFile] = useState<File | null>(null);
@@ -79,6 +80,7 @@ export function ImageSearch() {
     });
     setResult(null);
     if (inputRef.current) inputRef.current.value = "";
+    if (cameraRef.current) cameraRef.current.value = "";
   }
 
   return (
@@ -135,7 +137,7 @@ export function ImageSearch() {
               : fileName ?? "Drop an image here or click to upload"}
           </p>
           <p className="text-xs text-muted-foreground">
-            JPG / PNG · Pinterest screenshots, phone photos and hand sketches welcome
+            Any image · Pinterest screenshots, phone photos and hand sketches welcome
           </p>
           <input
             ref={inputRef}
@@ -145,6 +147,36 @@ export function ImageSearch() {
             onChange={(e) => onFiles(e.target.files)}
           />
         </div>
+
+        {/*
+          Photograph the piece in front of you rather than finding it in a photo
+          roll. `capture` opens the iPad’s rear camera directly; a desktop
+          browser ignores the hint and shows an ordinary file chooser, so this
+          is one control everywhere. stopPropagation keeps the click off the drop
+          zone wrapping it, which would open the picker as well.
+        */}
+        <input
+          ref={cameraRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="hidden"
+          onChange={(e) => onFiles(e.target.files)}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="w-full"
+          disabled={search.isPending}
+          onClick={(e) => {
+            e.stopPropagation();
+            cameraRef.current?.click();
+          }}
+        >
+          <Camera className="h-4 w-4" />
+          Take a photo
+        </Button>
 
         {result ? (
           <div className="space-y-3 pt-2">

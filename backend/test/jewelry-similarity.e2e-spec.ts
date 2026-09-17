@@ -104,6 +104,46 @@ describe('rankCandidates — fusion & ranking', () => {
   });
 });
 
+describe('rankCandidates — several angles of one design', () => {
+  // The index holds a row per PHOTOGRAPH, so the same design arrives several
+  // times. What must come back is one hit per design, scored on its best view.
+  const threeAngles: RankCandidate[] = [
+    { productId: 'pendant', dino: [1, 0, 0], siglip: [1, 0, 0], category: 'pendant' }, // front
+    { productId: 'pendant', dino: [0.9, 0.1, 0], siglip: [0.9, 0.1, 0], category: 'pendant' }, // side
+    { productId: 'pendant', dino: [0.7, 0.7, 0], siglip: [0.7, 0.7, 0], category: 'pendant' }, // on hand
+    { productId: 'other', dino: [0, 0, 1], siglip: [0, 0, 1], category: 'ring' },
+  ];
+
+  it('collapses angles into one result, keeping the best-matching view', () => {
+    const out = rankCandidates([1, 0, 0], [1, 0, 0], threeAngles, opts());
+    expect(out.status).toBe('MATCHES_FOUND');
+    expect(out.results.filter((r) => r.productId === 'pendant')).toHaveLength(1);
+    // Ranked on the front view (an exact match), not dragged down by the others.
+    expect(out.results[0].productId).toBe('pendant');
+    expect(out.results[0].matchLevel).toBe('VERY_CLOSE');
+  });
+
+  it('ranks are contiguous from 1 after the collapse', () => {
+    const out = rankCandidates([1, 0, 0], [1, 0, 0], threeAngles, opts());
+    expect(out.results.map((r) => r.rank)).toEqual(
+      out.results.map((_, i) => i + 1),
+    );
+  });
+
+  it('the no-match margin compares designs, never two angles of one design', () => {
+    // Two near-identical views of the SAME piece, both middling. Before the
+    // collapse the top two rows were the same design, the gap between them was
+    // ~0, and a genuine single match was thrown away as "ambiguous".
+    const twoViews: RankCandidate[] = [
+      { productId: 'only', dino: [0.8, 0.6, 0], siglip: [0.8, 0.6, 0], category: 'ring' },
+      { productId: 'only', dino: [0.81, 0.59, 0], siglip: [0.81, 0.59, 0], category: 'ring' },
+    ];
+    const out = rankCandidates([1, 0, 0], [1, 0, 0], twoViews, opts());
+    expect(out.status).toBe('MATCHES_FOUND');
+    expect(out.results).toHaveLength(1);
+  });
+});
+
 describe('rankCandidates — category is a SIGNAL, not a filter', () => {
   it('a wrong category guess never drops the true visual match', () => {
     const cands: RankCandidate[] = [

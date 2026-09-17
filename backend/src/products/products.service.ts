@@ -87,6 +87,19 @@ function toView(p: any, presence?: StockPresence) {
     storeId: p.storeId ?? '',
     description: p.description ?? '',
     imageUrl: p.imageUrl ?? undefined,
+    // The whole gallery when it was joined in; absent (not empty) when it was
+    // not, so a caller can tell "no photos" from "did not ask".
+    ...(p.images
+      ? {
+          images: (p.images as any[]).map((i) => ({
+            id: i.id,
+            url: i.url,
+            angle: i.angle ?? undefined,
+            isPrimary: i.isPrimary,
+            sortOrder: i.sortOrder,
+          })),
+        }
+      : {}),
     bestSeller: p.bestSeller,
     // Tenant-defined attributes. Previously dropped here, which made every
     // configured custom field invisible in the app no matter what an admin set
@@ -247,7 +260,15 @@ export class ProductsService {
   }
 
   async get(user: AuthUser, id: string, headerStore?: string) {
-    const p = await this.prisma.product.findUnique({ where: { id } });
+    const p = await this.prisma.product.findUnique({
+      where: { id },
+      // The detail view is where every angle of a design is looked at, so the
+      // gallery is joined here and nowhere else — the grid needs one cover, not
+      // N photos per tile.
+      include: {
+        images: { orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }, { createdAt: 'asc' }] },
+      },
+    });
     if (!p) throw new NotFoundException('Product not found');
     // Organisation boundary: a product from another org is Not Found to this user.
     if (p.organisationId !== user.organisationId) throw new NotFoundException('Product not found');
@@ -379,6 +400,155 @@ export class ProductsService {
     const ext = (file.originalname?.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '');
     const imageUrl = await this.storage.save(user.organisationId, 'products', `${id}.${ext}`, file.buffer);
     const updated = await this.prisma.product.update({ where: { id }, data: { imageUrl } });
+    // Keep the gallery in step: replacing the cover through the old
+    // single-photo route must not leave the gallery showing the picture that
+    // is no longer the cover.
+    await this.prisma.$transaction([
+      this.prisma.productImage.updateMany({
+        where: { productId: id, isPrimary: true },
+        data: { isPrimary: false },
+      }),
+      this.prisma.productImage.create({
+        data: {
+          organisationId: p.organisationId,
+          productId: id,
+          url: imageUrl,
+          isPrimary: true,
+          sortOrder: 0,
+        },
+      }),
+    ]);
     return toView(updated);
+  }
+
+  /** The product, with the caller proven to be allowed to change its photos. */
+  private async assertEditableProduct(user: AuthUser, id: string) {
+    const p = await this.prisma.product.findUnique({ where: { id } });
+    if (!p || p.organisationId !== user.organisationId) throw new NotFoundException('Product not found');
+    if (p.storeId) this.scope.assertStoreAllowed(user, p.storeId);
+    return p;
+  }
+
+  /**
+   * Add one or more photographs of a design (multipart field `files`).
+   *
+   * Several at once because that is how the pictures arrive: a salesperson
+   * stands at the counter with an iPad and takes the front, the side and one on
+   * the hand in the same half minute. `angles` is positional and optional — an
+   * unlabelled photo is still worth having and still gets indexed.
+   *
+   * The first photo of a design with no cover becomes the cover, so a design
+   * never ends up with a gallery and an empty grid tile.
+   */
+  async addImages(
+    user: AuthUser,
+    id: string,
+    files: { buffer?: Buffer; originalname?: string; mimetype?: string }[] | undefined,
+    angles?: string[],
+  ) {
+    if (!files?.length) throw new BadRequestException('No image files uploaded');
+    const p = await this.assertEditableProduct(user, id);
+
+    for (const file of files) {
+      if (!file?.buffer?.length) throw new BadRequestException('One of the uploads was empty');
+      if (file.mimetype && !file.mimetype.startsWith('image/')) {
+        throw new BadRequestException('One of the uploads is not an image');
+      }
+    }
+
+    const existing = await this.prisma.productImage.count({ where: { productId: id } });
+    const hasCover = Boolean(p.imageUrl) || existing > 0;
+
+    const created: { url: string; isPrimary: boolean }[] = [];
+    for (const [i, file] of files.entries()) {
+      const ext = (file.originalname?.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '');
+      // A unique name per photo: `${id}.${ext}` would have each angle overwrite
+      // the last, which is precisely the bug this whole table exists to end.
+      const url = await this.storage.save(
+        user.organisationId,
+        'products',
+        `${id}-${Date.now()}-${i}.${ext}`,
+        file.buffer!,
+      );
+      const isPrimary = !hasCover && i === 0;
+      await this.prisma.productImage.create({
+        data: {
+          organisationId: p.organisationId,
+          productId: id,
+          url,
+          angle: angles?.[i]?.trim() || null,
+          isPrimary,
+          sortOrder: existing + i,
+        },
+      });
+      created.push({ url, isPrimary });
+    }
+
+    const cover = created.find((c) => c.isPrimary);
+    if (cover) {
+      await this.prisma.product.update({ where: { id }, data: { imageUrl: cover.url } });
+    }
+    return this.listImages(user, id);
+  }
+
+  /** Every photograph of a design, cover first then in display order. */
+  async listImages(user: AuthUser, id: string) {
+    await this.assertEditableProduct(user, id);
+    const rows = await this.prisma.productImage.findMany({
+      where: { productId: id },
+      orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }, { createdAt: 'asc' }],
+    });
+    return rows.map((i) => ({
+      id: i.id,
+      url: i.url,
+      angle: i.angle ?? undefined,
+      isPrimary: i.isPrimary,
+      sortOrder: i.sortOrder,
+    }));
+  }
+
+  /** Promote one photo to the cover, demoting whichever held it. */
+  async setPrimaryImage(user: AuthUser, id: string, imageId: string) {
+    await this.assertEditableProduct(user, id);
+    const img = await this.prisma.productImage.findFirst({ where: { id: imageId, productId: id } });
+    if (!img) throw new NotFoundException('Photo not found on this design');
+
+    await this.prisma.$transaction([
+      this.prisma.productImage.updateMany({
+        where: { productId: id, isPrimary: true },
+        data: { isPrimary: false },
+      }),
+      this.prisma.productImage.update({ where: { id: imageId }, data: { isPrimary: true } }),
+      this.prisma.product.update({ where: { id }, data: { imageUrl: img.url } }),
+    ]);
+    return this.listImages(user, id);
+  }
+
+  /**
+   * Remove a photograph. Deleting the cover promotes the next one rather than
+   * leaving the design with a gallery and a blank tile; deleting the last photo
+   * clears the cover honestly.
+   */
+  async deleteImage(user: AuthUser, id: string, imageId: string) {
+    await this.assertEditableProduct(user, id);
+    const img = await this.prisma.productImage.findFirst({ where: { id: imageId, productId: id } });
+    if (!img) throw new NotFoundException('Photo not found on this design');
+
+    await this.prisma.productImage.delete({ where: { id: imageId } });
+    if (img.isPrimary) {
+      const next = await this.prisma.productImage.findFirst({
+        where: { productId: id },
+        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+      });
+      if (next) {
+        await this.prisma.$transaction([
+          this.prisma.productImage.update({ where: { id: next.id }, data: { isPrimary: true } }),
+          this.prisma.product.update({ where: { id }, data: { imageUrl: next.url } }),
+        ]);
+      } else {
+        await this.prisma.product.update({ where: { id }, data: { imageUrl: null } });
+      }
+    }
+    return this.listImages(user, id);
   }
 }

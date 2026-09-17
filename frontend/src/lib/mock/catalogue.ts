@@ -38,6 +38,21 @@ export type Metal =
    */
   | "unspecified";
 
+/**
+ * One photograph of a design. A piece is shown from several angles — front,
+ * side, on the hand — and visual search matches against all of them, so a
+ * customer’s phone photo finds the design whichever way they held the camera.
+ */
+export interface ProductImage {
+  id: string;
+  url: string;
+  /** "front", "side", "on model", "CAD"… free text; absent means unlabelled. */
+  angle?: string;
+  /** The one shown in the grid. Exactly one per design. */
+  isPrimary: boolean;
+  sortOrder: number;
+}
+
 export interface Product {
   id: string;
   sku: string;
@@ -60,6 +75,12 @@ export interface Product {
   description: string;
   /** Photo URL/path from the API (object storage). Card falls back to a gem glyph. */
   imageUrl?: string;
+  /**
+   * Every photograph of this design, cover first. Only present on the detail
+   * view — absent (not empty) in a list, where one cover per tile is all the
+   * grid asks for.
+   */
+  images?: ProductImage[];
   /**
    * What a non-jewellery tenant actually sells, in their own words. The typed
    * `category` / `metal` columns hold the neutral enum members for these rows,
