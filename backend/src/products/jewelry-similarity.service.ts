@@ -6,8 +6,13 @@ import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
 import { StorageService } from '../storage/storage.service';
 import { readImageBytes } from './image-fetch.util';
-import { MlInferenceService, BatchItem } from './ml-inference.service';
-import { JewelryRankingService, RankCandidate, RANKING_VERSION } from './jewelry-ranking.service';
+import { MlInferenceService, BatchItem, DualEmbedding } from './ml-inference.service';
+import {
+  JewelryRankingService,
+  MatchLevel,
+  RankCandidate,
+  RANKING_VERSION,
+} from './jewelry-ranking.service';
 
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 const BATCH_SIZE = 16;
@@ -20,6 +25,16 @@ const BATCH_SIZE = 16;
  * catalogue outgrows it.
  */
 const CANDIDATE_CAP = 5000;
+/**
+ * How many photographs one search may carry.
+ *
+ * A piece held in the hand looks different from three sides, and so does the
+ * same piece in the catalogue; one photo of each is a single guess at which
+ * pair happens to line up. Three is where the returns flatten and the wait at
+ * the counter starts to be felt — each one is its own embedding call.
+ */
+const MAX_QUERY_IMAGES = 3;
+
 /** One result set is the TOP 10 closest genuine matches (fewer if fewer qualify). */
 const DEFAULT_TOP_N = 10;
 
@@ -91,14 +106,26 @@ export class JewelrySimilarityService {
   }
 
   // ------------------------------------------------------------------ search
+  /**
+   * Find the catalogue designs closest to one or more photographs of a piece.
+   *
+   * Several photos are not several searches. They are several views of the SAME
+   * object, so a design is scored on its best view against the customer’s best
+   * view and the results stay one list of designs — which is what a salesperson
+   * holding a ring and an iPad actually wants.
+   */
   async search(
     user: AuthUser,
-    file: { buffer?: Buffer; mimetype?: string } | undefined,
+    files: { buffer?: Buffer; mimetype?: string } | ({ buffer?: Buffer; mimetype?: string } | undefined)[] | undefined,
     opts: { category?: ProductCategory; limit?: number } = {},
     headerStore?: string,
   ) {
     const queryId = randomUUID();
-    const { buffer, mime } = this.validateUpload(file);
+    const uploads = (Array.isArray(files) ? files : [files]).filter(Boolean).slice(0, MAX_QUERY_IMAGES);
+    if (!uploads.length) throw new BadRequestException('No image uploaded');
+    // Validate every one before embedding any: a rejected third photo should
+    // fail the request outright, not after two embedding calls have been paid for.
+    const shots = uploads.map((u) => this.validateUpload(u));
     const limit = Math.min(Math.max(opts.limit ?? DEFAULT_TOP_N, 1), 50);
     this.bump('search_count');
 
@@ -115,9 +142,17 @@ export class JewelrySimilarityService {
     }
 
     const t0 = Date.now();
-    const query = await this.inference.embed(buffer, mime);
+    // Sequential, not parallel: the inference service is a single container
+    // that may still be waking up, and three simultaneous cold requests are how
+    // you turn one slow search into three timed-out ones.
+    const queries: DualEmbedding[] = [];
+    for (const shot of shots) {
+      const q = await this.inference.embed(shot.buffer, shot.mime);
+      if (q) queries.push(q);
+    }
     const embedMs = Date.now() - t0;
-    if (!query) {
+    // One photo failing among several is survivable; all of them failing is not.
+    if (!queries.length) {
       this.bump('search_failure');
       this.bump('embedding_failure');
       return {
@@ -194,14 +229,52 @@ export class JewelrySimilarityService {
     const byId = new Map(rows.map((r) => [r.productId, r.product]));
 
     const t2 = Date.now();
-    const outcome = this.ranking.rank(query.dino, query.siglip, candidates, {
-      limit,
-      queryCategory: opts.category ?? null,
-    });
+    // Rank each photograph against the same candidate set, then merge.
+    //
+    // Merging on closenessScore rather than on the fused ranking score is
+    // deliberate: closeness is calibrated from the ABSOLUTE similarity and is
+    // therefore comparable between runs, while the fused score is min-max
+    // normalised within its own candidate pool and means nothing across two.
+    //
+    // A design keeps its single best view against the customer’s single best
+    // view. Averaging instead would punish a design for the angles that happen
+    // not to correspond — photograph a ring front-on and the catalogue’s side
+    // view drags down a match the front view found perfectly.
+    const outcomes = queries.map((q) =>
+      this.ranking.rank(q.dino, q.siglip, candidates, {
+        limit: Math.max(limit, DEFAULT_TOP_N),
+        queryCategory: opts.category ?? null,
+      }),
+    );
+
+    const best = new Map<string, { closenessScore: number; matchLevel: MatchLevel }>();
+    for (const o of outcomes) {
+      for (const hit of o.results) {
+        const prev = best.get(hit.productId);
+        if (!prev || hit.closenessScore > prev.closenessScore) {
+          best.set(hit.productId, { closenessScore: hit.closenessScore, matchLevel: hit.matchLevel });
+        }
+      }
+    }
+    const merged = [...best.entries()]
+      .map(([productId, v]) => ({ productId, ...v }))
+      .sort((a, b) => b.closenessScore - a.closenessScore)
+      .slice(0, limit)
+      .map((h, i) => ({ ...h, rank: i + 1 }));
+
+    const outcome = {
+      status: (merged.length ? 'MATCHES_FOUND' : 'NO_CLOSE_MATCH') as 'MATCHES_FOUND' | 'NO_CLOSE_MATCH',
+      // With nothing merged, report the closest any photo came, so the caller
+      // can tell “nothing is remotely like this” from “just under the bar”.
+      matchLevel: merged[0]?.matchLevel ?? outcomes[0]?.matchLevel ?? ("NO_CLOSE_MATCH" as MatchLevel),
+      closenessScore: merged[0]?.closenessScore ?? Math.max(0, ...outcomes.map((o) => o.closenessScore)),
+      results: merged,
+    };
     const rankMs = Date.now() - t2;
 
     this.logger.log(
-      `similarity queryId=${queryId} status=${outcome.status} candidates=${candidates.length} ` +
+      `similarity queryId=${queryId} status=${outcome.status} photos=${queries.length}/${shots.length} ` +
+        `candidates=${candidates.length} ` +
         `latency_ms={embed:${embedMs},retrieval:${retrievalMs},rank:${rankMs}}`,
     );
 
@@ -223,6 +296,8 @@ export class JewelrySimilarityService {
       queryId,
       available: true,
       status: 'MATCHES_FOUND' as const,
+      /** How many of the submitted photographs produced a usable vector. */
+      photosUsed: queries.length,
       matchLevel: outcome.matchLevel,
       closenessScore: outcome.closenessScore,
       results: outcome.results.map((h) => {

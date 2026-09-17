@@ -12,7 +12,11 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { Permit } from '../auth/permissions';
-import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
+import {
+  FileFieldsInterceptor,
+  FileInterceptor,
+  FilesInterceptor,
+} from '@nestjs/platform-express';
 import { Availability, MetalKind, ProductCategory } from '@prisma/client';
 import { ProductsService } from './products.service';
 import { AiImageSearchService } from './ai-image-search.service';
@@ -69,20 +73,37 @@ export class ProductsController {
   }
 
   /**
-   * Jewelry visual similarity (M5): upload a photo → ranked catalogue matches via
-   * dual DINOv3 + SigLIP 2 embeddings. Sales tool — salesperson and above.
+   * Jewelry visual similarity (M5): photograph a piece → ranked catalogue
+   * matches via dual DINOv3 + SigLIP 2 embeddings. Salesperson and above.
+   *
+   * Takes one photo as `file`, or up to three as repeated `files` — the same
+   * piece from several sides. A ring in the hand and a ring in the catalogue
+   * are each only ever photographed from somewhere, and one of each is a single
+   * guess at which two views happen to correspond. Both field names are
+   * accepted so existing callers keep working unchanged.
    */
   @RateLimit('expensive')
   @Permit('catalogue.read')
   @Post('jewelry/similarity-search')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 12 * 1024 * 1024 } }))
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [{ name: 'file', maxCount: 1 }, { name: 'files', maxCount: 3 }],
+      { limits: { fileSize: 12 * 1024 * 1024 } },
+    ),
+  )
   similaritySearch(
     @CurrentUser() user: AuthUser,
     @StoreHeader() store: string | undefined,
-    @UploadedFile() file: any,
+    @UploadedFiles() uploaded: { file?: any[]; files?: any[] },
     @Query() query: SimilaritySearchQueryDto,
   ) {
-    return this.jewelry.search(user, file, { category: query.category, limit: query.limit }, store);
+    const shots = [...(uploaded?.file ?? []), ...(uploaded?.files ?? [])];
+    return this.jewelry.search(
+      user,
+      shots,
+      { category: query.category, limit: query.limit },
+      store,
+    );
   }
 
   /** Record relevance feedback on a similarity-search hit (M5 training signal). */

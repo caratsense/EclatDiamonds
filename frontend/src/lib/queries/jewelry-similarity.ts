@@ -56,29 +56,42 @@ export interface SimilaritySearchResult {
   reason?: string;
 }
 
+/** A search may carry up to this many views of the same piece. */
+export const MAX_QUERY_IMAGES = 3;
+
 export interface SimilaritySearchInput {
-  file: File;
+  /**
+   * One to three photographs of the SAME piece, from different sides.
+   *
+   * Not several searches: the server scores each catalogue design on its best
+   * view against your best view, and returns one list of designs.
+   */
+  files: File[];
   category?: ProductCategory;
   limit?: number;
 }
 
 /**
- * POST /products/jewelry/similarity-search — upload a reference photo, get
- * visually ranked catalogue matches (DINO/SigLIP embeddings, server-side).
- * Auth: salesperson and up. The image goes as multipart `file`; category /
- * limit ride as query params.
+ * POST /products/jewelry/similarity-search — photograph a piece, get visually
+ * ranked catalogue matches (DINO/SigLIP embeddings, server-side).
+ * Auth: salesperson and up. Photos go as multipart `files`; category / limit
+ * ride as query params.
  */
 export function useSimilaritySearch() {
   return useMutation({
-    mutationFn: async ({ file, category, limit }: SimilaritySearchInput) => {
+    mutationFn: async ({ files, category, limit }: SimilaritySearchInput) => {
       const form = new FormData();
-      form.append("file", file);
+      for (const f of files.slice(0, MAX_QUERY_IMAGES)) form.append("files", f);
       const { data } = await api.post<SimilaritySearchResult>(
         "/products/jewelry/similarity-search",
         form,
         {
           headers: { "Content-Type": "multipart/form-data" },
           params: { category, limit },
+          // Three photos mean three embedding calls, and the inference service
+          // is allowed to be cold. The shared 15s default turns a slow search
+          // into what looks like a broken one.
+          timeout: 120_000,
         },
       );
       return data;
