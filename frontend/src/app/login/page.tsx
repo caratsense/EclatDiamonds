@@ -958,7 +958,7 @@ function LoginPage() {
                 />
                 <div className="flex-1 min-w-0">
                   <p className="font-semibold text-emerald-950 dark:text-emerald-100">
-                    Face Captured & Verified
+                    Photo captured
                   </p>
                   <p className="text-emerald-700 dark:text-emerald-300/80 text-[11px]">
                     Enter password for your Login ID to complete sign-in.
@@ -1124,13 +1124,20 @@ function LoginPage() {
               }
             } catch {}
           }
+          // Say only what happened. Nothing here, and nothing on the server,
+          // compares this photo to an enrolled template — see the header of
+          // face-scanner-dialog.tsx, which refuses to fake a match precisely so
+          // a buddy punch cannot look verified. "Face verified" claimed the one
+          // thing the feature does not do, which is why signing in appeared to
+          // succeed and then stop. The photo is a record for a human to review;
+          // the password is still what authenticates.
           if (recognizedName) {
-            toast.success(`Welcome back, ${recognizedName.split(" ")[0]}! Face verified 👋`, {
-              description: "Enter your password to complete biometric sign-in.",
+            toast.success(`Welcome back, ${recognizedName.split(" ")[0]} 👋`, {
+              description: "Photo captured and your Login ID filled in. Enter your password to sign in.",
             });
           } else {
-            toast.success("Face recognized & captured!", {
-              description: "Face reference captured. Sign in with your password to complete verification.",
+            toast.success("Photo captured", {
+              description: "Enter your Login ID and password to sign in.",
             });
           }
         }}
