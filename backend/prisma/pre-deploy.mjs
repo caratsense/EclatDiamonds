@@ -18,6 +18,12 @@
  * ONLY when SEED_DEMO_TARGET=staging:
  *   3. the demo dataset, so a staging environment has something to show
  *   4. the five demo WhatsApp threads
+ *   5. catalogue cover images, so the catalogue is not a wall of grey boxes
+ *
+ * Step 5 writes to the container's own upload dir, which does not survive a
+ * redeploy — which is exactly why it belongs here rather than being run once
+ * by hand: every deploy regenerates it. It fills `imageUrl` only where empty,
+ * so a real photograph from the media sync is never overwritten.
  *
  * Both of those write invented customers, so they are gated on the variable AND
  * on the seeders' own guards — `seed-conversations.mjs` refuses any database
@@ -36,6 +42,7 @@ const steps = [
     ? [
         ['demo dataset (staging only)', ['prisma/seed.mjs']],
         ['demo WhatsApp threads (staging only)', ['scripts/seed-conversations.mjs']],
+        ['catalogue cover images (staging only)', ['scripts/seed-cover-images.mjs']],
       ]
     : []),
 ];
