@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Banknote, CreditCard, MessageCircle, Smartphone } from "lucide-react";
+import { MessageCircle } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/select";
 import { formatINR } from "@/lib/format";
 import {
+  closingBooking,
   composeDailyReportText,
   type DailyReportInput,
 } from "@/lib/mock/reporting";
@@ -113,12 +114,129 @@ function GroupLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** The five money/weight fields every mode-of-payment block on the sheet has. */
+interface PaymentSplit {
+  cash: string;
+  card: string;
+  upi: string;
+  goldWt: string;
+  goldValue: string;
+}
+
+const EMPTY_SPLIT: PaymentSplit = {
+  cash: "",
+  card: "",
+  upi: "",
+  goldWt: "",
+  goldValue: "",
+};
+
 /**
- * Daily Report (DSR) entry form — the store-close report the manager used to
- * type on WhatsApp, grouped exactly like that layout (Traffic · Sales · Payment
- * split · Old gold · Submitted by). The store comes from the active-store
- * context; a live WhatsApp-style `<pre>` preview updates as the user types.
- * Submit → POST /reporting/daily.
+ * One "Mode of Payment" block — cash / card / UPI / gold (weight + value) and
+ * the Total row, exactly as the store's own sheet lays it out.
+ *
+ * `expected` is the figure this block is supposed to add up to (the table's sale
+ * or received value). When the two disagree the difference is shown, but the
+ * report still files: a genuine part-payment, a pending balance, or a figure the
+ * manager has not typed yet are all normal at store close, and a form that
+ * refuses to save until the arithmetic is perfect is a form people stop using.
+ */
+function PaymentSplitFields({
+  idPrefix,
+  split,
+  onChange,
+  expected,
+}: {
+  idPrefix: string;
+  split: PaymentSplit;
+  onChange: (next: PaymentSplit) => void;
+  expected: number;
+}) {
+  const set = (k: keyof PaymentSplit) => (v: string) =>
+    onChange({ ...split, [k]: v });
+
+  const total =
+    (toNumber(split.cash) ?? 0) +
+    (toNumber(split.card) ?? 0) +
+    (toNumber(split.upi) ?? 0) +
+    (toNumber(split.goldValue) ?? 0);
+  const diff = expected - total;
+  // Sub-rupee drift is rounding, not a discrepancy worth a red line.
+  const reconciles = Math.abs(diff) < 1;
+
+  return (
+    <div className="space-y-2.5">
+      <p className="text-[11px] text-muted-foreground">Mode of payment</p>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <NumberField
+          id={`${idPrefix}-cash`}
+          label="Cash"
+          value={split.cash}
+          onChange={set("cash")}
+          prefix="₹"
+        />
+        <NumberField
+          id={`${idPrefix}-card`}
+          label="Card"
+          value={split.card}
+          onChange={set("card")}
+          prefix="₹"
+        />
+        <NumberField
+          id={`${idPrefix}-upi`}
+          label="UPI"
+          value={split.upi}
+          onChange={set("upi")}
+          prefix="₹"
+        />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <NumberField
+          id={`${idPrefix}-gold-wt`}
+          label="Gold — weight"
+          value={split.goldWt}
+          onChange={set("goldWt")}
+          suffix="g"
+          step="0.001"
+          placeholder="—"
+        />
+        <NumberField
+          id={`${idPrefix}-gold-val`}
+          label="Gold — value"
+          value={split.goldValue}
+          onChange={set("goldValue")}
+          prefix="₹"
+          placeholder="—"
+        />
+      </div>
+      <div
+        className={cn(
+          "flex items-center justify-between rounded-md px-3 py-2 text-xs",
+          reconciles ? "bg-muted/40" : "bg-amber-500/10",
+        )}
+      >
+        <span className="text-muted-foreground">Total</span>
+        <span className="flex items-center gap-2">
+          <span className="num font-semibold">{formatINR(total)}</span>
+          {reconciles ? null : (
+            <span className="font-medium text-amber-600 dark:text-amber-500">
+              {diff > 0
+                ? `${formatINR(diff)} unaccounted`
+                : `${formatINR(-diff)} over`}
+            </span>
+          )}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Daily Report (DSR) entry form — the store-close sheet the manager keeps,
+ * field for field: the traffic funnel, TABLE A (counter sale), TABLE B
+ * (customised sale), each with its own mode-of-payment split, and the
+ * customised-order book. A live WhatsApp-style `<pre>` preview updates as the
+ * user types. Submit → POST /reporting/daily.
  */
 export function DailyReportForm() {
   const { currentStore, user, stores } = useSession();
@@ -138,20 +256,20 @@ export function DailyReportForm() {
 
   const [reportDate, setReportDate] = useState(todayLocal());
   const [reportTime, setReportTime] = useState(nowLocalTime());
-  // Traffic
+  // Traffic funnel
   const [walkIns, setWalkIns] = useState("");
   const [seriousEnquiries, setSeriousEnquiries] = useState("");
-  // Sales
-  const [deliveredBilled, setDeliveredBilled] = useState("");
+  const [conversions, setConversions] = useState("");
+  // Table A — counter sale
+  const [counterSale, setCounterSale] = useState("");
+  const [counterSplit, setCounterSplit] = useState<PaymentSplit>(EMPTY_SPLIT);
+  // Table B — customised sale
   const [bookingsNew, setBookingsNew] = useState("");
   const [advanceReceived, setAdvanceReceived] = useState("");
-  // Payment split
-  const [cash, setCash] = useState("");
-  const [card, setCard] = useState("");
-  const [upi, setUpi] = useState("");
-  // Old gold (optional)
-  const [oldGoldWtG, setOldGoldWtG] = useState("");
-  const [oldGoldValue, setOldGoldValue] = useState("");
+  const [customSplit, setCustomSplit] = useState<PaymentSplit>(EMPTY_SPLIT);
+  // The customised-order book
+  const [bookingsOpen, setBookingsOpen] = useState("");
+  const [bookingsClosed, setBookingsClosed] = useState("");
   const [submittedBy, setSubmittedBy] = useState(user.name);
 
   // Build the live input snapshot (numbers default to 0 for the preview).
@@ -162,14 +280,22 @@ export function DailyReportForm() {
       reportTime: reportTime || undefined,
       walkIns: toNumber(walkIns) ?? 0,
       seriousEnquiries: toNumber(seriousEnquiries) ?? 0,
-      deliveredBilled: toNumber(deliveredBilled) ?? 0,
+      conversions: toNumber(conversions) ?? 0,
+      deliveredBilled: toNumber(counterSale) ?? 0,
+      cash: toNumber(counterSplit.cash) ?? 0,
+      card: toNumber(counterSplit.card) ?? 0,
+      upi: toNumber(counterSplit.upi) ?? 0,
+      oldGoldWtG: toNumber(counterSplit.goldWt),
+      oldGoldValue: toNumber(counterSplit.goldValue),
       bookingsNew: toNumber(bookingsNew) ?? 0,
       advanceReceived: toNumber(advanceReceived) ?? 0,
-      cash: toNumber(cash) ?? 0,
-      card: toNumber(card) ?? 0,
-      upi: toNumber(upi) ?? 0,
-      oldGoldWtG: toNumber(oldGoldWtG),
-      oldGoldValue: toNumber(oldGoldValue),
+      customCash: toNumber(customSplit.cash) ?? 0,
+      customCard: toNumber(customSplit.card) ?? 0,
+      customUpi: toNumber(customSplit.upi) ?? 0,
+      customGoldWtG: toNumber(customSplit.goldWt),
+      customGoldValue: toNumber(customSplit.goldValue),
+      bookingsOpen: toNumber(bookingsOpen) ?? 0,
+      bookingsClosed: toNumber(bookingsClosed) ?? 0,
       submittedBy: submittedBy.trim() || undefined,
     }),
     [
@@ -178,14 +304,14 @@ export function DailyReportForm() {
       reportTime,
       walkIns,
       seriousEnquiries,
-      deliveredBilled,
+      conversions,
+      counterSale,
+      counterSplit,
       bookingsNew,
       advanceReceived,
-      cash,
-      card,
-      upi,
-      oldGoldWtG,
-      oldGoldValue,
+      customSplit,
+      bookingsOpen,
+      bookingsClosed,
       submittedBy,
     ],
   );
@@ -194,29 +320,35 @@ export function DailyReportForm() {
   // label, so a second manual memo only gave the compiler a dependency list to
   // disagree with.
   const preview = composeDailyReportText(draft, storeLabel);
+  const closing = closingBooking(draft);
 
-  const collected = draft.cash + draft.card + draft.upi;
-
-  // Footfall funnel: serious enquiries are a subset of walk-ins, so they can't
-  // exceed the walk-in count. Only flagged once both figures are actually
-  // entered (a blank field is undefined, not zero).
-  const enquiriesExceedWalkIns = (() => {
+  // Footfall funnel: each row is a subset of the one above it, so it can only
+  // ever narrow. Only flagged once both figures of a pair are actually entered
+  // (a blank field is undefined, not zero).
+  const funnelError = (() => {
     const w = toNumber(walkIns);
     const se = toNumber(seriousEnquiries);
-    return w != null && se != null && se > w;
+    const c = toNumber(conversions);
+    if (w != null && se != null && se > w)
+      return "Serious enquiries cannot exceed walk-ins.";
+    if (se != null && c != null && c > se)
+      return "Conversions cannot exceed serious enquiries.";
+    return null;
   })();
 
   function resetFigures() {
     setWalkIns("");
     setSeriousEnquiries("");
-    setDeliveredBilled("");
+    setConversions("");
+    setCounterSale("");
+    setCounterSplit(EMPTY_SPLIT);
     setBookingsNew("");
     setAdvanceReceived("");
-    setCash("");
-    setCard("");
-    setUpi("");
-    setOldGoldWtG("");
-    setOldGoldValue("");
+    setCustomSplit(EMPTY_SPLIT);
+    setBookingsClosed("");
+    // Opening is deliberately kept: tomorrow morning's opening book is tonight's
+    // closing, so the manager carries it forward rather than looking it up again.
+    setBookingsOpen(String(closing));
   }
 
   async function submit() {
@@ -232,8 +364,8 @@ export function DailyReportForm() {
       toast.error("Add who is submitting this report.");
       return;
     }
-    if (enquiriesExceedWalkIns) {
-      toast.error("Serious enquiries cannot exceed walk-ins.");
+    if (funnelError) {
+      toast.error(funnelError);
       return;
     }
     try {
@@ -268,7 +400,7 @@ export function DailyReportForm() {
               : `Store-close figures for ${storeLabel}`}
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-5">
+        <CardContent className="space-y-6">
           {/* Store / date / time */}
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="grid gap-1.5">
@@ -338,14 +470,14 @@ export function DailyReportForm() {
             </div>
           </div>
 
-          {/* Traffic */}
+          {/* Traffic funnel */}
           <div className="space-y-2.5">
             <GroupLabel>Traffic</GroupLabel>
             <p className="text-[11px] text-muted-foreground">
-              Total walk-ins, and how many were serious enquiries — a subset of
-              walk-ins, so it can&apos;t exceed the walk-in count.
+              Counts only — a walk-in is logged whether or not the customer left
+              a name or number.
             </p>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-3">
               <NumberField
                 id="dsr-walkins"
                 label="Walk-ins"
@@ -360,101 +492,102 @@ export function DailyReportForm() {
                 onChange={setSeriousEnquiries}
                 step="1"
               />
+              <NumberField
+                id="dsr-conversions"
+                label="Converted"
+                value={conversions}
+                onChange={setConversions}
+                step="1"
+              />
             </div>
-            {enquiriesExceedWalkIns ? (
+            {funnelError ? (
               <p className="text-[11px] font-medium text-destructive">
-                Serious enquiries cannot exceed walk-ins.
+                {funnelError}
               </p>
             ) : null}
           </div>
 
-          {/* Sales */}
-          <div className="space-y-2.5">
-            <GroupLabel>Sales</GroupLabel>
-            <div className="grid gap-3 sm:grid-cols-3">
+          {/* Table A — counter sale */}
+          <div className="space-y-3 rounded-lg border p-3.5">
+            <GroupLabel>Table A · Counter sale</GroupLabel>
+            <div className="grid gap-3 sm:grid-cols-2">
               <NumberField
-                id="dsr-billed"
-                label="Delivered & billed"
-                value={deliveredBilled}
-                onChange={setDeliveredBilled}
+                id="dsr-counter-value"
+                label="Sale value"
+                value={counterSale}
+                onChange={setCounterSale}
                 prefix="₹"
               />
+            </div>
+            <PaymentSplitFields
+              idPrefix="dsr-counter"
+              split={counterSplit}
+              onChange={setCounterSplit}
+              expected={draft.deliveredBilled}
+            />
+          </div>
+
+          {/* Table B — customised sale */}
+          <div className="space-y-3 rounded-lg border p-3.5">
+            <GroupLabel>Table B · Customised sale</GroupLabel>
+            <div className="grid gap-3 sm:grid-cols-2">
               <NumberField
-                id="dsr-bookings"
-                label="Bookings (new)"
+                id="dsr-booking-value"
+                label="Booking value — for the day"
                 value={bookingsNew}
                 onChange={setBookingsNew}
                 prefix="₹"
               />
               <NumberField
                 id="dsr-advance"
-                label="Advance received"
+                label="Amount received"
                 value={advanceReceived}
                 onChange={setAdvanceReceived}
                 prefix="₹"
               />
             </div>
+            <PaymentSplitFields
+              idPrefix="dsr-custom"
+              split={customSplit}
+              onChange={setCustomSplit}
+              expected={draft.advanceReceived}
+            />
           </div>
 
-          {/* Payment split */}
+          {/* The customised-order book */}
           <div className="space-y-2.5">
-            <GroupLabel>Payment split</GroupLabel>
+            <GroupLabel>Customised order book</GroupLabel>
             <div className="grid gap-3 sm:grid-cols-3">
               <NumberField
-                id="dsr-cash"
-                label="Cash"
-                value={cash}
-                onChange={setCash}
+                id="dsr-book-open"
+                label="Open bookings"
+                value={bookingsOpen}
+                onChange={setBookingsOpen}
                 prefix="₹"
               />
               <NumberField
-                id="dsr-card"
-                label="Card"
-                value={card}
-                onChange={setCard}
+                id="dsr-book-closed"
+                label="Closed — sale completed"
+                value={bookingsClosed}
+                onChange={setBookingsClosed}
                 prefix="₹"
               />
-              <NumberField
-                id="dsr-upi"
-                label="UPI"
-                value={upi}
-                onChange={setUpi}
-                prefix="₹"
-              />
+              {/* Derived, never typed: open + booked today − completed today. */}
+              <div className="grid gap-1.5">
+                <Label className="text-xs text-muted-foreground">
+                  Closing booking
+                </Label>
+                <div className="flex h-9 items-center rounded-md border bg-muted/40 px-3">
+                  <span className="num text-sm font-semibold">
+                    {formatINR(closing)}
+                  </span>
+                </div>
+              </div>
             </div>
-            <div className="flex items-center justify-between rounded-md bg-muted/40 px-3 py-2 text-xs">
-              <span className="flex items-center gap-1.5 text-muted-foreground">
-                <Banknote className="h-3.5 w-3.5" />
-                <CreditCard className="h-3.5 w-3.5" />
-                <Smartphone className="h-3.5 w-3.5" />
-                Collected today
-              </span>
-              <span className="num font-semibold">{formatINR(collected)}</span>
-            </div>
-          </div>
-
-          {/* Old gold (optional) */}
-          <div className="space-y-2.5">
-            <GroupLabel>Old gold — trade-in (optional)</GroupLabel>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <NumberField
-                id="dsr-oldgold-wt"
-                label="Weight"
-                value={oldGoldWtG}
-                onChange={setOldGoldWtG}
-                suffix="g"
-                step="0.001"
-                placeholder="—"
-              />
-              <NumberField
-                id="dsr-oldgold-val"
-                label="Value"
-                value={oldGoldValue}
-                onChange={setOldGoldValue}
-                prefix="₹"
-                placeholder="—"
-              />
-            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Closing is calculated — open + booked today − completed today — and
+              becomes tomorrow&apos;s opening automatically when you file.
+            </p>
           </div>
 
           {/* Submitted by */}

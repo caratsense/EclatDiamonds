@@ -138,8 +138,12 @@ export function formatPaymentMode(mode: string): string {
 /* -------------------------------------------------------------------------- */
 
 /**
- * The store-close figures a manager enters. Mirrors the WhatsApp DSR layout:
- * Traffic · Sales · Payment split (cash/card/upi) · Old gold · Submitted by.
+ * The store-close figures a manager enters — the store's own sheet, field for
+ * field: the traffic funnel, TABLE A (counter sale) with its payment split,
+ * TABLE B (customised sale) with its own, and the customised-order book.
+ *
+ * The two payment splits are deliberately not merged. The store reconciles
+ * each table against its own till, and a combined total matches neither.
  */
 export interface DailyReportInput {
   storeId: string;
@@ -147,26 +151,56 @@ export interface DailyReportInput {
   reportDate: string;
   /** HH:mm (24h) — store-close time; optional. */
   reportTime?: string;
-  // Traffic
+
+  // Traffic funnel — each row is a subset of the one above it.
   walkIns: number;
   seriousEnquiries: number;
-  // Sales
+  conversions: number;
+
+  // TABLE A — counter sale.
   deliveredBilled: number;
-  bookingsNew: number;
-  advanceReceived: number;
-  // Payment split
   cash: number;
   card: number;
   upi: number;
-  // Old gold (trade-in) — optional
+  /** Old gold taken as payment at the counter — optional. */
   oldGoldWtG?: number;
   oldGoldValue?: number;
+
+  // TABLE B — customised sale.
+  bookingsNew: number;
+  advanceReceived: number;
+  customCash: number;
+  customCard: number;
+  customUpi: number;
+  /** Old gold taken against a customised order — optional. */
+  customGoldWtG?: number;
+  customGoldValue?: number;
+
+  // The customised-order book. Closing is derived, never entered.
+  bookingsOpen: number;
+  bookingsClosed: number;
+
   submittedBy?: string;
+}
+
+/**
+ * Where the book stands at close: open + booked today − completed today.
+ * The one figure on the sheet nobody types, because typing it is how it stops
+ * agreeing with the three that produce it.
+ */
+export function closingBooking(r: {
+  bookingsOpen: number;
+  bookingsNew: number;
+  bookingsClosed: number;
+}): number {
+  return r.bookingsOpen + r.bookingsNew - r.bookingsClosed;
 }
 
 /** A persisted daily report — the input plus server-composed WhatsApp text. */
 export interface DailyReport extends DailyReportInput {
   id: string;
+  /** Derived server-side from open + new − closed; never stored. */
+  bookingsClosing?: number;
   /** Resolved store label for display (backend joins the store). */
   storeName?: string;
   /** The composed WhatsApp-format report text (source of truth for sends). */
@@ -206,22 +240,32 @@ export function composeDailyReportText(
     `STORE: ${storeName}   DATE: ${ddmmyyyy(r.reportDate)}` +
     (r.reportTime ? `   TIME: ${clock12(r.reportTime)}` : "");
 
-  const hasOldGold = r.oldGoldWtG != null || r.oldGoldValue != null;
-  const oldGold = hasOldGold
-    ? `${r.oldGoldWtG != null ? `${r.oldGoldWtG} gm` : "—"} / ${
-        r.oldGoldValue != null ? inr(r.oldGoldValue) : "₹—"
-      }`
-    : "— gm / ₹—";
+  /** A gold leg reads as dashes on a day no gold changed hands. */
+  const gold = (wt?: number, val?: number) =>
+    `${wt != null ? `${wt} gm` : "— gm"} / ${val != null ? inr(val) : "₹—"}`;
+  const split = (cash: number, card: number, upi: number, wt?: number, val?: number) =>
+    `          → Cash ${inr(cash)}   → Card ${inr(card)}   → UPI ${inr(
+      upi,
+    )}   → Gold (wt/val): ${gold(wt, val)}`;
 
   return [
     header,
-    `TRAFFIC   Walk-ins: ${r.walkIns}   Serious enquiries: ${r.seriousEnquiries}`,
-    `SALES     Delivered & billed: ${inr(r.deliveredBilled)}   Bookings (new): ${inr(
-      r.bookingsNew,
-    )}   Advance received: ${inr(r.advanceReceived)}`,
-    `          → Cash ${inr(r.cash)}   → Card ${inr(r.card)}   → UPI ${inr(
-      r.upi,
-    )}   → Old gold (wt/val): ${oldGold}`,
+    `TRAFFIC   Walk-ins: ${r.walkIns}   Serious enquiries: ${r.seriousEnquiries}   Converted: ${r.conversions}`,
+    `COUNTER   Sale value: ${inr(r.deliveredBilled)}`,
+    split(r.cash, r.card, r.upi, r.oldGoldWtG, r.oldGoldValue),
+    `CUSTOM    Booked today: ${inr(r.bookingsNew)}   Received: ${inr(
+      r.advanceReceived,
+    )}`,
+    split(
+      r.customCash,
+      r.customCard,
+      r.customUpi,
+      r.customGoldWtG,
+      r.customGoldValue,
+    ),
+    `BOOK      Opening: ${inr(r.bookingsOpen)}   Closed: ${inr(
+      r.bookingsClosed,
+    )}   Closing: ${inr(closingBooking(r))}`,
     `Submitted by: ${r.submittedBy?.trim() || "—"}`,
   ].join("\n");
 }
@@ -236,14 +280,22 @@ export const DAILY_REPORTS: DailyReport[] = [
     reportTime: "20:00",
     walkIns: 12,
     seriousEnquiries: 4,
+    conversions: 2,
+    // Table A: 90,000 + 1,33,000 + 62,000 of old gold = the 2,85,000 sale.
     deliveredBilled: 285000,
-    bookingsNew: 120000,
-    advanceReceived: 40000,
     cash: 90000,
-    card: 155000,
-    upi: 80000,
+    card: 133000,
+    upi: 0,
     oldGoldWtG: 8.42,
     oldGoldValue: 62000,
+    // Table B: one advance, taken on UPI.
+    bookingsNew: 120000,
+    advanceReceived: 40000,
+    customCash: 0,
+    customCard: 0,
+    customUpi: 40000,
+    bookingsOpen: 310000,
+    bookingsClosed: 95000,
     submittedBy: "Aarav Mehta",
     text: "",
     createdAt: "2026-07-05T14:32:00.000Z",
@@ -256,12 +308,18 @@ export const DAILY_REPORTS: DailyReport[] = [
     reportTime: "21:30",
     walkIns: 21,
     seriousEnquiries: 7,
+    conversions: 3,
     deliveredBilled: 540000,
-    bookingsNew: 260000,
-    advanceReceived: 85000,
     cash: 120000,
     card: 305000,
-    upi: 200000,
+    upi: 115000,
+    bookingsNew: 260000,
+    advanceReceived: 85000,
+    customCash: 0,
+    customCard: 50000,
+    customUpi: 35000,
+    bookingsOpen: 480000,
+    bookingsClosed: 160000,
     submittedBy: "Rhea Kapoor",
     text: "",
     createdAt: "2026-07-05T16:05:00.000Z",

@@ -99,6 +99,24 @@ export class CreateDailyReportDto {
   @Min(0)
   seriousEnquiries?: number;
 
+  /** How many serious enquiries actually bought. Subset of seriousEnquiries. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  conversions?: number;
+
+  /** Customised-order book open at the start of the day (INR). */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  bookingsOpen?: number;
+
+  /** Bookings closed today — sale completed (INR). */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  bookingsClosed?: number;
+
   @IsOptional()
   @IsNumber()
   @Min(0)
@@ -140,6 +158,34 @@ export class CreateDailyReportDto {
   @IsNumber()
   @Min(0)
   oldGoldValue?: number;
+
+  // --- Table B: how the customised-sale collection was paid -----------------
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  customCash?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  customCard?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  customUpi?: number;
+
+  /** Old-gold weight in grams taken against a customised order. */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  customGoldWtG?: number;
+
+  /** Old-gold value in INR taken against a customised order. */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  customGoldValue?: number;
 
   @IsOptional()
   @IsString()

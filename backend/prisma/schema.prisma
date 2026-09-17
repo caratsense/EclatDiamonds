@@ -489,6 +489,7 @@ model Organisation {
   scheduledJobRuns             ScheduledJobRun[]
   products                     Product[]
   productEmbeddings            ProductEmbedding[]
+  productImages                ProductImage[]
   similaritySearchFeedbacks    SimilaritySearchFeedback[]
   leads                        Lead[]
   quotes                       Quote[]
@@ -1833,6 +1834,9 @@ model Product {
   quoteLines          QuoteLine[]
   saleLines           SaleLine[]
   imageEmbeddings     ProductEmbedding[]
+  /// Every photograph of this design. `imageUrl` above is the cover; this is
+  /// the full set, and visual search matches against all of them.
+  images              ProductImage[]
   // CaratOS Phase A3.
   productInteractions ProductInteraction[]
   /// Phase A7 — the file or Connect import run that created this row. Later
@@ -1865,6 +1869,13 @@ model ProductEmbedding {
   /// Inherited from the product at index time so search can store-scope without a join.
   storeId        String?
 
+  /// Which photograph this vector describes, when it came from the gallery.
+  /// Null for a design whose only picture is the legacy `Product.imageUrl`.
+  /// SET NULL rather than CASCADE so deleting a photo cannot silently take a
+  /// vector with it mid-search; the next re-index prunes the orphan.
+  productImageId String?
+  productImage   ProductImage? @relation(fields: [productImageId], references: [id], onDelete: SetNull)
+
   /// DINOv3 patch/global embedding � structure & shape.
   dinoEmbedding   Float[]
   /// SigLIP 2 embedding � semantic / text-aligned appearance.
@@ -1882,8 +1893,51 @@ model ProductEmbedding {
 
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  @@unique([productId, preprocessingVersion])
+  /// One vector per IMAGE per pipeline version, not one per design.
+  ///
+  /// It used to be [productId, preprocessingVersion], which allowed a design
+  /// exactly one embedding — so a ring photographed from the front, the side
+  /// and on a hand could only ever be searchable from whichever angle was
+  /// indexed last. imageHash is already the idempotency key for re-indexing,
+  /// so it costs nothing to make it part of the identity too.
+  @@unique([productId, imageHash, preprocessingVersion])
   @@index([storeId])
+  @@index([organisationId])
+  @@index([productImageId])
+}
+
+/// One photograph of a design. A jeweller shows a piece from several angles —
+/// front, side, on the hand — and a customer photographs it from wherever they
+/// happen to be standing; a catalogue holding one picture per design can only
+/// ever match the one view somebody chose to upload.
+model ProductImage {
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  id             String       @id @default(cuid())
+  productId      String
+  product        Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  /// Object-storage URL (R2 / Cloudinary), or a local /uploads path.
+  url   String
+
+  /// Which view this is: "front", "side", "on model", "CAD". Free text, not
+  /// an enum — the useful list is the trade’s, not ours, and it differs by
+  /// tenant. Null means nobody said, which is not the same as "front".
+  angle String?
+
+  /// The picture that represents the design in a grid. Not enforced unique in
+  /// the database: two rows briefly both true during a re-order is harmless,
+  /// and a partial unique index that blocks the intermediate state is not.
+  /// The service clears the old cover in the same transaction as setting the
+  /// new one.
+  isPrimary Boolean @default(false)
+  sortOrder Int     @default(0)
+
+  createdAt DateTime @default(now())
+
+  embeddings ProductEmbedding[]
+
+  @@index([productId, sortOrder])
   @@index([organisationId])
 }
 
@@ -3583,14 +3637,49 @@ model DailyReport {
   reportTime       String? // "8:00 PM"
   walkIns          Int          @default(0)
   seriousEnquiries Int          @default(0)
+  /// The third row of the store's own traffic sheet: how many of the serious
+  /// enquiries actually bought. A subset of seriousEnquiries, which is itself a
+  /// subset of walkIns — the service enforces both, so the funnel can never
+  /// widen on the way down.
+  conversions      Int          @default(0)
+
+  /// TABLE A — counter sale. This is its value; cash/card/upi and oldGold*
+  /// below are its payment split.
   deliveredBilled  Decimal      @default(0) @db.Decimal(14, 2)
+
+  /// TABLE B — customised sale. `bookingsNew` is the value booked today and
+  /// `advanceReceived` is what was actually collected against the book; the
+  /// custom* columns below are that collection's payment split.
   bookingsNew      Decimal      @default(0) @db.Decimal(14, 2)
   advanceReceived  Decimal      @default(0) @db.Decimal(14, 2)
+
+  /// The customised-order book as the store already keeps it: what stood open at
+  /// the start of the day, and what closed (sale completed) during it.
+  ///
+  /// Closing booking is deliberately NOT a column: it is open + new - closed,
+  /// and two stored numbers that have to agree is a reconciliation bug waiting
+  /// to happen. The sheet shows it; the database derives it.
+  bookingsOpen     Decimal      @default(0) @db.Decimal(14, 2)
+  bookingsClosed   Decimal      @default(0) @db.Decimal(14, 2)
+
+  /// Payment split for the COUNTER sale (Table A). Gold is a mode of payment on
+  /// the store's sheet, not a separate transaction — a customer settling with
+  /// old gold is paying — so it sits here beside cash/card/UPI.
   cash             Decimal      @default(0) @db.Decimal(14, 2)
   card             Decimal      @default(0) @db.Decimal(14, 2)
   upi              Decimal      @default(0) @db.Decimal(14, 2)
   oldGoldWtG       Decimal?     @db.Decimal(12, 3)
   oldGoldValue     Decimal?     @db.Decimal(14, 2)
+
+  /// Payment split for the CUSTOMISED sale (Table B). Separate columns rather
+  /// than one merged split, because the store reconciles the two tables
+  /// separately and a merged total cannot be checked against either table. The
+  /// short names above keep their meaning for every report already filed.
+  customCash       Decimal      @default(0) @db.Decimal(14, 2)
+  customCard       Decimal      @default(0) @db.Decimal(14, 2)
+  customUpi        Decimal      @default(0) @db.Decimal(14, 2)
+  customGoldWtG    Decimal?     @db.Decimal(12, 3)
+  customGoldValue  Decimal?     @db.Decimal(14, 2)
   submittedBy      String?
   /// Where this came from: "web" (the in-app form) or "whatsapp" (the bot), so
   /// HO can tell the channels apart.

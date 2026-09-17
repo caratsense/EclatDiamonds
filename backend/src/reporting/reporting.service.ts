@@ -34,6 +34,23 @@ function num(v: Prisma.Decimal | number | null | undefined): number {
   return v == null ? 0 : Number(v);
 }
 
+/**
+ * What the customised-order book stands at when the shutter comes down: what
+ * was open this morning, plus what was booked today, less what was completed.
+ *
+ * Derived on read rather than stored. The store writes this figure on its own
+ * sheet and carries it to the next morning’s opening, so holding it as a
+ * column would mean two numbers that must agree — and the day they disagree,
+ * neither one is the answer.
+ */
+function closingBooking(r: {
+  bookingsOpen: Prisma.Decimal | number | null;
+  bookingsNew: Prisma.Decimal | number | null;
+  bookingsClosed: Prisma.Decimal | number | null;
+}): number {
+  return num(r.bookingsOpen) + num(r.bookingsNew) - num(r.bookingsClosed);
+}
+
 /** MetalKind values that count as gold — everything else (platinum, silver) is excluded from goldGrams. */
 const GOLD_METALS: MetalKind[] = [
   'gold_24k',
@@ -800,6 +817,14 @@ export class ReportingService {
     ) {
       throw new BadRequestException('Serious enquiries cannot exceed walk-ins');
     }
+    // ...and a conversion is an enquiry that bought, so the funnel narrows twice.
+    if (
+      dto.seriousEnquiries != null &&
+      dto.conversions != null &&
+      dto.conversions > dto.seriousEnquiries
+    ) {
+      throw new BadRequestException('Conversions cannot exceed serious enquiries');
+    }
 
     // A store-close report is a record of a day that has ended; it cannot be for
     // a future day at the store. Back-dating (late entry) stays allowed.
@@ -813,14 +838,23 @@ export class ReportingService {
       reportTime: dto.reportTime,
       walkIns: dto.walkIns ?? 0,
       seriousEnquiries: dto.seriousEnquiries ?? 0,
+      conversions: dto.conversions ?? 0,
       deliveredBilled: new Prisma.Decimal(dto.deliveredBilled ?? 0),
       bookingsNew: new Prisma.Decimal(dto.bookingsNew ?? 0),
       advanceReceived: new Prisma.Decimal(dto.advanceReceived ?? 0),
+      bookingsOpen: new Prisma.Decimal(dto.bookingsOpen ?? 0),
+      bookingsClosed: new Prisma.Decimal(dto.bookingsClosed ?? 0),
       cash: new Prisma.Decimal(dto.cash ?? 0),
       card: new Prisma.Decimal(dto.card ?? 0),
       upi: new Prisma.Decimal(dto.upi ?? 0),
       oldGoldWtG: dto.oldGoldWtG == null ? null : new Prisma.Decimal(dto.oldGoldWtG),
       oldGoldValue: dto.oldGoldValue == null ? null : new Prisma.Decimal(dto.oldGoldValue),
+      customCash: new Prisma.Decimal(dto.customCash ?? 0),
+      customCard: new Prisma.Decimal(dto.customCard ?? 0),
+      customUpi: new Prisma.Decimal(dto.customUpi ?? 0),
+      customGoldWtG: dto.customGoldWtG == null ? null : new Prisma.Decimal(dto.customGoldWtG),
+      customGoldValue:
+        dto.customGoldValue == null ? null : new Prisma.Decimal(dto.customGoldValue),
       submittedBy: dto.submittedBy,
       source: 'web',
     };
@@ -928,8 +962,18 @@ export class ReportingService {
    */
   composeDsrText(report: DailyReportWithStore): string {
     const storeName = report.store?.name ?? '—';
-    const oldGoldWt = report.oldGoldWtG == null ? '__' : String(Number(report.oldGoldWtG));
-    const oldGoldVal = report.oldGoldValue == null ? '₹__' : inr(Number(report.oldGoldValue));
+    /** A gold leg reads as placeholders when no gold changed hands that day. */
+    type Money = Prisma.Decimal | number | null;
+    const gold = (wt: Money, val: Money) =>
+      `${wt == null ? '__' : String(Number(wt))} gm / ${val == null ? '₹__' : inr(Number(val))}`;
+    const split = (cash: Money, card: Money, upi: Money, wt: Money, val: Money) =>
+      ''.padEnd(10) +
+      [
+        `→ Cash ${inr(num(cash))}`,
+        `→ Card ${inr(num(card))}`,
+        `→ UPI ${inr(num(upi))}`,
+        `→ Gold (wt/val): ${gold(wt, val)}`,
+      ].join('   ');
 
     const header = [`STORE: ${storeName}`, `DATE: ${fmtDMY(report.reportDate)}`];
     if (report.reportTime) header.push(`TIME: ${report.reportTime}`);
@@ -937,19 +981,32 @@ export class ReportingService {
     return [
       header.join('   '),
       'TRAFFIC'.padEnd(10) +
-        [`Walk-ins: ${report.walkIns}`, `Serious enquiries: ${report.seriousEnquiries}`].join('   '),
-      'SALES'.padEnd(10) +
         [
-          `Delivered & billed: ${rupeeRaw(num(report.deliveredBilled))}`,
-          `Bookings (new): ${rupeeRaw(num(report.bookingsNew))} approx`,
-          `Advance received: ${rupeeRaw(num(report.advanceReceived))}`,
+          `Walk-ins: ${report.walkIns}`,
+          `Serious enquiries: ${report.seriousEnquiries}`,
+          `Converted: ${report.conversions}`,
         ].join('   '),
-      ''.padEnd(10) +
+      // Table A and Table B are reported separately because the store
+      // reconciles them separately — a merged total matches neither sheet.
+      'COUNTER'.padEnd(10) + `Sale value: ${rupeeRaw(num(report.deliveredBilled))}`,
+      split(report.cash, report.card, report.upi, report.oldGoldWtG, report.oldGoldValue),
+      'CUSTOM'.padEnd(10) +
         [
-          `→ Cash ${inr(num(report.cash))}`,
-          `→ Card ${inr(num(report.card))}`,
-          `→ UPI ${inr(num(report.upi))}`,
-          `→ Old gold (wt/val): ${oldGoldWt} gm / ${oldGoldVal}`,
+          `Booked today: ${rupeeRaw(num(report.bookingsNew))}`,
+          `Received: ${rupeeRaw(num(report.advanceReceived))}`,
+        ].join('   '),
+      split(
+        report.customCash,
+        report.customCard,
+        report.customUpi,
+        report.customGoldWtG,
+        report.customGoldValue,
+      ),
+      'BOOK'.padEnd(10) +
+        [
+          `Opening: ${rupeeRaw(num(report.bookingsOpen))}`,
+          `Closed: ${rupeeRaw(num(report.bookingsClosed))}`,
+          `Closing: ${rupeeRaw(closingBooking(report))}`,
         ].join('   '),
       `Submitted by: ${report.submittedBy ?? '—'}`,
     ].join('\n');
@@ -965,14 +1022,24 @@ export class ReportingService {
       reportTime: r.reportTime,
       walkIns: r.walkIns,
       seriousEnquiries: r.seriousEnquiries,
+      conversions: r.conversions,
       deliveredBilled: num(r.deliveredBilled),
       bookingsNew: num(r.bookingsNew),
       advanceReceived: num(r.advanceReceived),
+      bookingsOpen: num(r.bookingsOpen),
+      bookingsClosed: num(r.bookingsClosed),
+      // Derived, never stored — see the DailyReport model comment.
+      bookingsClosing: closingBooking(r),
       cash: num(r.cash),
       card: num(r.card),
       upi: num(r.upi),
       oldGoldWtG: r.oldGoldWtG == null ? null : Number(r.oldGoldWtG),
       oldGoldValue: r.oldGoldValue == null ? null : Number(r.oldGoldValue),
+      customCash: num(r.customCash),
+      customCard: num(r.customCard),
+      customUpi: num(r.customUpi),
+      customGoldWtG: r.customGoldWtG == null ? null : Number(r.customGoldWtG),
+      customGoldValue: r.customGoldValue == null ? null : Number(r.customGoldValue),
       submittedBy: r.submittedBy,
       createdAt: r.createdAt.toISOString(),
       text: this.composeDsrText(r),
