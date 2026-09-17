@@ -28,9 +28,9 @@ const MAX_BYTES = 12 * 1024 * 1024;
 /**
  * The views worth labelling, in the order a piece is usually shot.
  *
- * Offered rather than required, because an unlabelled photo is still worth
- * having and still gets indexed — the label helps a person reading the gallery,
- * not the matcher.
+ * Offered rather than required: an unlabelled photo is still worth having and
+ * still gets indexed — the label helps a person reading the gallery, and drives
+ * the checklist below.
  */
 const ANGLES = [
   "Front",
@@ -40,6 +40,23 @@ const ANGLES = [
   "Detail",
   "CAD / design",
 ] as const;
+
+/**
+ * The three views that actually decide whether a design can be found.
+ *
+ * Both sides of a visual match are photographs taken from somewhere. A design
+ * held only as a flat-on shot cannot be matched well by a customer holding the
+ * piece at an angle, however good either photo is — so the front earns the
+ * first shot, the angled view the second, and the profile the third for pieces
+ * whose shape reads differently in depth.
+ *
+ * "CAD / design" is deliberately NOT here. A Gati render is one canvas holding
+ * several small orthographic views plus dimension callouts, and the models
+ * describe the whole canvas — so it reads as a technical drawing rather than
+ * as the piece, and matches a phone photo poorly. Worth keeping, not worth
+ * counting as a view.
+ */
+const SEARCH_ANGLES = ["Front", "Side", "On model"] as const;
 
 /** "Not specified" as a Select value — Radix reserves the empty string. */
 const NO_ANGLE = "__none__";
@@ -109,6 +126,8 @@ export function ProductGallery({
   }
 
   const rows = images ?? [];
+  const have = new Set(rows.map((i) => i.angle).filter(Boolean) as string[]);
+  const missing = SEARCH_ANGLES.filter((a) => !have.has(a));
 
   return (
     <div className="space-y-3">
@@ -285,11 +304,30 @@ export function ProductGallery({
       )}
 
       {canEdit && rows.length > 0 ? (
-        <p className="text-[11px] text-muted-foreground">
-          Indexing starts on its own when photos change — a new angle usually
-          becomes searchable within a minute or two, and the upload itself never
-          waits for it.
-        </p>
+        <div className="space-y-1.5">
+          {missing.length ? (
+            <p className="text-[11px] text-muted-foreground">
+              <span className="font-medium text-foreground">
+                Still worth shooting:
+              </span>{" "}
+              {missing.join(" · ")} — a design found from only one view is a
+              design a customer’s photo has to be lucky to match.
+            </p>
+          ) : (
+            <p className="text-[11px] text-muted-foreground">
+              <span className="font-medium text-foreground">
+                Well covered.
+              </span>{" "}
+              Front, side and on-model are all here, so this design can be found
+              from whichever way a customer holds their camera.
+            </p>
+          )}
+          <p className="text-[11px] text-muted-foreground">
+            Indexing starts on its own when photos change — a new angle usually
+            becomes searchable within a minute or two, and the upload itself
+            never waits for it.
+          </p>
+        </div>
       ) : null}
     </div>
   );

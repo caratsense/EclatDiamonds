@@ -205,10 +205,21 @@ const mockInference = {
   async embed() {
     return this.embedResult;
   },
+  /**
+   * Bytes containing this marker come back as an error instead of a vector —
+   * a stand-in for the real thing's refusal to read, say, an SVG placeholder.
+   */
+  rejectMarker: null as string | null,
   async embedBatch(items: { id: string; bytes: Buffer; mime: string }[]) {
+    const rejected = (i: { bytes: Buffer }) =>
+      !!this.rejectMarker && i.bytes.toString().includes(this.rejectMarker);
     return {
-      results: items.map((i) => ({ id: i.id, dino: [1, 0, 0], siglip: [1, 0, 0], imageHash: 'h' })),
-      errors: [] as { id: string; error: string }[],
+      results: items
+        .filter((i) => !rejected(i))
+        .map((i) => ({ id: i.id, dino: [1, 0, 0], siglip: [1, 0, 0], imageHash: 'h' })),
+      errors: items
+        .filter(rejected)
+        .map((i) => ({ id: i.id, error: 'unsupported image' })),
     };
   },
   async currentVersions() {
@@ -225,6 +236,7 @@ describe('Jewelry similarity search (e2e)', () => {
   const EMB_A = 'p-001';
   const EMB_B = 'p-002';
   const REINDEX_PRODUCT = 'test-sim-reindex';
+  const PRUNE_PRODUCT = 'test-sim-prune';
   /** Written by the test itself: uploads/ is gitignored, so a clean checkout has no catalogue images. */
   const REINDEX_IMAGE = 'catalogue/test-sim-reindex.png';
   const ONE_PIXEL_PNG =
@@ -290,7 +302,8 @@ describe('Jewelry similarity search (e2e)', () => {
   afterAll(async () => {
     await prisma.similaritySearchFeedback.deleteMany({});
     await prisma.productEmbedding.deleteMany({});
-    await prisma.product.deleteMany({ where: { id: REINDEX_PRODUCT } });
+    await prisma.productImage.deleteMany({ where: { productId: PRUNE_PRODUCT } });
+    await prisma.product.deleteMany({ where: { id: { in: [REINDEX_PRODUCT, PRUNE_PRODUCT] } } });
     if (app) rmSync(join(app.get(StorageService).baseDir, REINDEX_IMAGE), { force: true });
     await app?.close();
   });
@@ -459,5 +472,99 @@ describe('Jewelry similarity search (e2e)', () => {
   it('reindex is HO-gated (salesperson forbidden)', async () => {
     const res = await post('/products/embeddings/reindex', tokens.rep);
     expect(res.status).toBe(403);
+  });
+
+  /**
+   * Pruning turns on whether a photo could be READ, not on whether it embedded.
+   *
+   * Conflating the two meant one permanently unembeddable picture kept its
+   * design out of pruning forever, so a deleted angle kept its vector and went
+   * on matching searches for a photograph nobody could see any more. Staging
+   * hits this every time, because every demo design carries a generated SVG
+   * placeholder no vision model will accept.
+   */
+  it('prunes a deleted photo even when a sibling photo will not embed', async () => {
+    const dir = app.get(StorageService).baseDir;
+    const goodRel = 'catalogue/test-prune-good.png';
+    const badRel = 'catalogue/test-prune-bad.png';
+    mkdirSync(join(dir, 'catalogue'), { recursive: true });
+    writeFileSync(join(dir, goodRel), Buffer.from('GOOD-PHOTO-BYTES'));
+    // Readable, but the models refuse it — exactly the placeholder case.
+    writeFileSync(join(dir, badRel), Buffer.from('REJECT-ME-PLACEHOLDER'));
+
+    await prisma.product.upsert({
+      where: { id: PRUNE_PRODUCT },
+      create: {
+        id: PRUNE_PRODUCT,
+        sku: 'TEST-PRUNE',
+        name: 'Prune Test',
+        metal: 'gold_22k',
+        storeId: SURAT,
+        organisationId: 'org_eclat',
+        imageUrl: `/uploads/${goodRel}`,
+      },
+      update: { imageUrl: `/uploads/${goodRel}` },
+    });
+    await prisma.productImage.deleteMany({ where: { productId: PRUNE_PRODUCT } });
+    await prisma.productImage.createMany({
+      data: [
+        {
+          organisationId: 'org_eclat',
+          productId: PRUNE_PRODUCT,
+          url: `/uploads/${goodRel}`,
+          isPrimary: true,
+          sortOrder: 0,
+        },
+        {
+          organisationId: 'org_eclat',
+          productId: PRUNE_PRODUCT,
+          url: `/uploads/${badRel}`,
+          isPrimary: false,
+          sortOrder: 1,
+        },
+      ],
+    });
+
+    // The orphan: a vector for a photograph that has since been deleted, so its
+    // hash matches nothing the re-index will see.
+    await prisma.productEmbedding.create({
+      data: {
+        productId: PRUNE_PRODUCT,
+        storeId: SURAT,
+        organisationId: 'org_eclat',
+        dinoEmbedding: [1, 0, 0],
+        siglipEmbedding: [1, 0, 0],
+        imageHash: 'hash-of-a-photo-that-was-deleted',
+        preprocessingVersion: 'pp1',
+        dinoModelVersion: 'd1',
+        siglipModelVersion: 's1',
+      },
+    });
+
+    mockInference.rejectMarker = 'REJECT-ME';
+    try {
+      const res = await post(
+        `/products/embeddings/reindex?force=1&productId=${PRUNE_PRODUCT}`,
+        tokens.ho,
+      );
+      expect(res.status).toBe(201);
+      // One photo embedded, one refused — and the orphan gone regardless.
+      expect(res.body.embedded).toBe(1);
+      expect(res.body.failed).toBe(1);
+      expect(res.body.pruned).toBe(1);
+    } finally {
+      mockInference.rejectMarker = null;
+    }
+
+    const left = await prisma.productEmbedding.findMany({
+      where: { productId: PRUNE_PRODUCT },
+      select: { imageHash: true },
+    });
+    expect(left.map((e) => e.imageHash)).not.toContain('hash-of-a-photo-that-was-deleted');
+    // The readable photo keeps its vector; the refused one simply has none.
+    expect(left).toHaveLength(1);
+
+    rmSync(join(dir, goodRel), { force: true });
+    rmSync(join(dir, badRel), { force: true });
   });
 });
