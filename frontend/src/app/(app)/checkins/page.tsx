@@ -318,6 +318,11 @@ function UnifiedWalkinDialog({
   // Customer details
   const [customer, setCustomer] = useState("");
   const [phone, setPhone] = useState("");
+  // Plenty of people walk in, look, and leave without giving a name or a
+  // number. Before this they could not be logged at all, so they vanished
+  // from footfall entirely and the DSR walk-in count was quietly short. An
+  // anonymous visit is still a visit.
+  const [anonymous, setAnonymous] = useState(false);
   const [purpose, setPurpose] = useState<CheckinPurposeInput>("browsing");
 
   // Item shown
@@ -352,6 +357,7 @@ function UnifiedWalkinDialog({
   function resetForm() {
     setCustomer("");
     setPhone("");
+    setAnonymous(false);
     setPurpose("browsing");
     setSku("");
     setItemKind("shown");
@@ -370,11 +376,24 @@ function UnifiedWalkinDialog({
       return;
     }
     const next: Record<string, string> = {};
-    if (!customer.trim()) next.customer = "Customer name is required.";
-    else if (!isRealName(customer))
-      next.customer = "Enter a real name — letters, not just a number.";
-    const normalizedPhone = phone.trim() ? normalizeIndianMobile(phone) : null;
-    if (phone.trim() && !normalizedPhone)
+    // An anonymous visit carries a timestamped label instead of a name, so
+    // the row is obviously a walk-in rather than a person somebody failed to
+    // identify — and two of them on the same day never look like the same
+    // customer.
+    const customerName = anonymous
+      ? `Walk-in · ${new Date().toLocaleTimeString([], {
+          hour: "numeric",
+          minute: "2-digit",
+        })}`
+      : customer.trim();
+    if (!anonymous) {
+      if (!customer.trim()) next.customer = "Customer name is required.";
+      else if (!isRealName(customer))
+        next.customer = "Enter a real name — letters, not just a number.";
+    }
+    const normalizedPhone =
+      !anonymous && phone.trim() ? normalizeIndianMobile(phone) : null;
+    if (!anonymous && phone.trim() && !normalizedPhone)
       next.phone = "Enter a valid 10-digit mobile number.";
     if (outcome === "follow_up" && !followUpDate && !reminderAt) {
       next.followUpDate = "Pick the follow-up date or a reminder.";
@@ -393,7 +412,7 @@ function UnifiedWalkinDialog({
       // Step 1: Create check-in
       const row = await createCheckin.mutateAsync({
         storeId: targetStoreId,
-        customerName: customer.trim(),
+        customerName,
         phone: normalizedPhone ?? undefined,
         purpose,
       });
@@ -426,7 +445,7 @@ function UnifiedWalkinDialog({
         });
       }
 
-      toast.success(`Walk-in recorded for ${customer.trim()}`);
+      toast.success(`Walk-in recorded for ${customerName}`);
       resetForm();
       onOpenChange(false);
     } catch (err) {
@@ -457,14 +476,41 @@ function UnifiedWalkinDialog({
             <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               Customer Details
             </h4>
+
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+              <input
+                id="ci-anon"
+                type="checkbox"
+                className="h-4 w-4 accent-[var(--primary)]"
+                checked={anonymous}
+                onChange={(e) => {
+                  setAnonymous(e.target.checked);
+                  clearError("customer");
+                  clearError("phone");
+                }}
+              />
+              Customer didn&apos;t share details
+            </label>
+            {anonymous ? (
+              <p className="text-xs text-muted-foreground">
+                Logged as an anonymous walk-in with the time of the visit. It
+                still counts towards footfall and the DSR; items shown and the
+                outcome can be recorded as usual.
+              </p>
+            ) : null}
+
             <div className="grid gap-1.5">
               <Label htmlFor="ci-cust">
-                Customer name <span className="text-destructive">*</span>
+                Customer name
+                {anonymous ? null : (
+                  <span className="text-destructive"> *</span>
+                )}
               </Label>
               <Input
                 id="ci-cust"
-                placeholder="e.g. Rajesh Agarwal"
-                value={customer}
+                placeholder={anonymous ? "Not provided" : "e.g. Rajesh Agarwal"}
+                disabled={anonymous}
+                value={anonymous ? "" : customer}
                 aria-invalid={!!errors.customer}
                 onChange={(e) => {
                   setCustomer(e.target.value);
@@ -480,9 +526,10 @@ function UnifiedWalkinDialog({
               <Label htmlFor="ci-phone">Phone</Label>
               <Input
                 id="ci-phone"
-                placeholder="+91 ..."
+                placeholder={anonymous ? "Not provided" : "+91 ..."}
                 inputMode="tel"
-                value={phone}
+                disabled={anonymous}
+                value={anonymous ? "" : phone}
                 aria-invalid={!!errors.phone}
                 onChange={(e) => {
                   setPhone(capIndianPhone(e.target.value));
