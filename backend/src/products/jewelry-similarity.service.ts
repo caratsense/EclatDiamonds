@@ -377,7 +377,19 @@ export class JewelrySimilarityService {
     const pending: { item: BatchItem; shot: Shot; imageHash: string }[] = [];
     /** Hashes seen this run, per design — the basis for pruning below. */
     const seenHashes = new Map<string, Set<string>>();
-    /** Designs where a photo could not be read; never pruned on a partial view. */
+    /**
+     * Designs where a photo could not be READ, and whose hash is therefore
+     * unknown. Pruning works by elimination against the hashes seen this run,
+     * so a design missing one is a partial view of itself — eliminate against
+     * it and a vector whose image still exists gets deleted.
+     *
+     * Deliberately not about embedding. Whether the models could describe a
+     * picture says nothing about whether that picture is still in the
+     * catalogue, and treating a failure as uncertainty let one permanently
+     * unembeddable file (a vector placeholder, a corrupt upload) block pruning
+     * for its design forever — so deleted photos kept their vectors and went
+     * on matching searches. Read is what pruning needs; embedded is not.
+     */
     const incomplete = new Set<string>();
 
     for (const [i, shot] of shots.entries()) {
@@ -427,7 +439,6 @@ export class JewelrySimilarityService {
       }
       const ok = new Set(results.map((r) => r.id));
       failed += chunk.filter((c) => !ok.has(c.item.id)).length;
-      for (const c of chunk) if (!ok.has(c.item.id)) incomplete.add(c.shot.product.id);
 
       // Upsert successful rows (the hash of the exact bytes sent is the key).
       for (const c of chunk) {
