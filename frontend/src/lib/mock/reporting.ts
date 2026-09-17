@@ -236,6 +236,15 @@ export function composeDailyReportText(
   storeName: string,
 ): string {
   const inr = (n: number) => formatINR(n);
+  /**
+   * The headline figures go out ungrouped, the payment split grouped.
+   *
+   * That is the owner's own convention, not a slip, and the server composes
+   * the text it actually sends the same way (reporting.service.ts rupeeRaw).
+   * This box is captioned "exactly what gets sent", so it has to match —
+   * grouping them here made the preview a near-miss of the real message.
+   */
+  const raw = (n: number) => `₹${Math.round(n)}`;
   const header =
     `STORE: ${storeName}   DATE: ${ddmmyyyy(r.reportDate)}` +
     (r.reportTime ? `   TIME: ${clock12(r.reportTime)}` : "");
@@ -251,9 +260,9 @@ export function composeDailyReportText(
   return [
     header,
     `TRAFFIC   Walk-ins: ${r.walkIns}   Serious enquiries: ${r.seriousEnquiries}   Converted: ${r.conversions}`,
-    `COUNTER   Sale value: ${inr(r.deliveredBilled)}`,
+    `COUNTER   Sale value: ${raw(r.deliveredBilled)}`,
     split(r.cash, r.card, r.upi, r.oldGoldWtG, r.oldGoldValue),
-    `CUSTOM    Booked today: ${inr(r.bookingsNew)}   Received: ${inr(
+    `CUSTOM    Booked today: ${raw(r.bookingsNew)}   Received: ${raw(
       r.advanceReceived,
     )}`,
     split(
@@ -263,9 +272,9 @@ export function composeDailyReportText(
       r.customGoldWtG,
       r.customGoldValue,
     ),
-    `BOOK      Opening: ${inr(r.bookingsOpen)}   Closed: ${inr(
+    `BOOK      Opening: ${raw(r.bookingsOpen)}   Closed: ${raw(
       r.bookingsClosed,
-    )}   Closing: ${inr(closingBooking(r))}`,
+    )}   Closing: ${raw(closingBooking(r))}`,
     `Submitted by: ${r.submittedBy?.trim() || "—"}`,
   ].join("\n");
 }
