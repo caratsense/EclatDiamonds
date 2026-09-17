@@ -20,10 +20,11 @@
  *   4. the five demo WhatsApp threads
  *   5. catalogue cover images, so the catalogue is not a wall of grey boxes
  *
- * Step 5 writes to the container's own upload dir, which does not survive a
- * redeploy — which is exactly why it belongs here rather than being run once
- * by hand: every deploy regenerates it. It fills `imageUrl` only where empty,
- * so a real photograph from the media sync is never overwritten.
+ * Step 5 writes into the uploads volume, which Railway keeps across deploys,
+ * so this is not regenerating something lost — it runs every deploy because
+ * products seeded later still need a cover, and rewriting the same few SVGs
+ * costs nothing. It fills `imageUrl` only where empty, so a real photograph
+ * from the media sync is never overwritten.
  *
  * Both of those write invented customers, so they are gated on the variable AND
  * on the seeders' own guards — `seed-conversations.mjs` refuses any database
