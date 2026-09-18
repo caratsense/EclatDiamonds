@@ -169,6 +169,7 @@ export class ProductsController {
   list(
     @CurrentUser() user: AuthUser,
     @StoreHeader() store: string | undefined,
+    @Query('q') q?: string,
     @Query('category') category?: ProductCategory,
     @Query('metal') metal?: MetalKind,
     @Query('storeId') storeId?: string,
@@ -178,7 +179,7 @@ export class ProductsController {
   ) {
     return this.products.list(
       user,
-      { category, metal, storeId, availability },
+      { q, category, metal, storeId, availability },
       store,
       parsePagination(page, pageSize),
     );

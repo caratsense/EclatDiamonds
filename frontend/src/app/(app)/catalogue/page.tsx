@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { ImagePlus } from "lucide-react";
+import { ImagePlus, Search, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { ImageSearch } from "@/components/catalogue/image-search";
@@ -48,6 +48,7 @@ import {
   useProducts,
   useUploadProductImage,
 } from "@/lib/queries/products";
+import { useDebouncedValue } from "@/lib/queries/search";
 import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
 import {
@@ -86,6 +87,10 @@ export default function CataloguePage() {
   );
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
+  // Style-number search: a customer asks about "SK-010225-A", the salesperson
+  // types it, and the design (with its CAD sheet) is on screen.
+  const [query, setQuery] = useState("");
+  const q = useDebouncedValue(query.trim(), 300);
 
   // Product index comes live + store-scoped from the API. Filters run
   // server-side so `total` reflects the filtered count; a filter change
@@ -93,6 +98,7 @@ export default function CataloguePage() {
   const { data, isLoading, isError, refetch } = useProducts({
     page,
     pageSize,
+    q: q || undefined,
     category: category === "all" ? undefined : category,
     metal: metal === "all" ? undefined : metal,
     availability: avail === "all" ? undefined : avail,
@@ -130,6 +136,23 @@ export default function CataloguePage() {
     setOpen(true);
   }
 
+  // An exact code opens its design straight away — once per search, so closing
+  // the dialog does not reopen it while the same text is still in the box.
+  // Adjusted during render (React's pattern for state derived from new data),
+  // not in an effect, so there is no extra render with the dialog shut.
+  const [autoOpened, setAutoOpened] = useState("");
+  if (q && autoOpened !== q) {
+    const needle = q.toLowerCase();
+    const hit = products.find((p) =>
+      [p.styleNumber, p.name, p.sku, p.websiteCode].some((v) => v?.toLowerCase() === needle),
+    );
+    if (hit) {
+      setAutoOpened(q);
+      setActive(hit);
+      setOpen(true);
+    }
+  }
+
   const selectStores = stores.filter((s) => !s.isAggregate);
 
   // POST /products requires store_manager+; hide the CTA for salespeople.
@@ -151,6 +174,32 @@ export default function CataloguePage() {
 
       {/* Filters */}
       <div className="mb-4 flex flex-wrap gap-2">
+        <div className="relative min-w-[240px] flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setPage(1);
+            }}
+            placeholder="Style no, SKU or name — e.g. SK-010225-A"
+            aria-label="Search designs by style number, SKU or name"
+            className="pl-9 pr-9"
+          />
+          {query ? (
+            <button
+              type="button"
+              aria-label="Clear search"
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
+              onClick={() => {
+                setQuery("");
+                setPage(1);
+              }}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          ) : null}
+        </div>
         {showsMetalFilters ? (
           <>
             <Select
@@ -273,7 +322,9 @@ export default function CataloguePage() {
 
           {!isLoading && products.length === 0 ? (
             <p className="rounded-xl border border-dashed py-12 text-center text-sm text-muted-foreground">
-              No {productNounPlural.toLowerCase()} match these filters. Adjust them or add one.
+              {q
+                ? `Nothing matches “${q}”. Check the code, or search by part of it.`
+                : `No ${productNounPlural.toLowerCase()} match these filters. Adjust them or add one.`}
             </p>
           ) : null}
 

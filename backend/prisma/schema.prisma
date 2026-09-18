@@ -1804,6 +1804,11 @@ model Product {
   /// ours, and deliberately NOT unique: many products sharing a style number is
   /// the entire point.
   styleNumber    String?
+  /// The design's code on the client's website (its `productCode`), when the
+  /// website carries it. Kept separately because a Gati design matched to a
+  /// website one keeps Gati's id in `legacyId` — without this the website code,
+  /// and the fact that the design is on the website at all, was lost.
+  websiteCode    String?
 
   /// Block 9 — the design's classification. A made-to-order design is
   /// `customised`, and every piece of it inherits that unless the piece says
@@ -1847,6 +1852,7 @@ model Product {
   @@unique([organisationId, sku])
   @@unique([organisationId, legacyId])
   @@index([organisationId, styleNumber])
+  @@index([organisationId, websiteCode])
   @@index([storeId, createdAt])
   @@index([category])
   @@index([sku])

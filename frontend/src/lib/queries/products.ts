@@ -49,6 +49,8 @@ export interface ProductListParams {
   /** 1-based page index — always sent so the API returns the envelope. */
   page: number;
   pageSize: number;
+  /** Style number, SKU, name, Gati id or website code — matched anywhere in them. */
+  q?: string;
   category?: ProductCategory;
   metal?: Metal;
   availability?: Availability;

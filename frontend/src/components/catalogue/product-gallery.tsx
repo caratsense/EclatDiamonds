@@ -74,10 +74,13 @@ export function ProductGallery({
   productId,
   productName,
   canEdit,
+  onOpen,
 }: {
   productId: string;
   productName: string;
   canEdit: boolean;
+  /** Show photo `index` (in gallery order) full screen. */
+  onOpen?: (index: number) => void;
 }) {
   const cameraRef = useRef<HTMLInputElement>(null);
   const libraryRef = useRef<HTMLInputElement>(null);
@@ -225,7 +228,7 @@ export function ProductGallery({
         </div>
       ) : (
         <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-          {rows.map((img) => (
+          {rows.map((img, index) => (
             <figure
               key={img.id}
               className={cn(
@@ -237,7 +240,11 @@ export function ProductGallery({
               <img
                 src={assetUrl(img.url)}
                 alt={`${productName}${img.angle ? ` — ${img.angle}` : ""}`}
-                className="aspect-square w-full object-cover"
+                className={cn(
+                  "aspect-square w-full bg-white object-contain",
+                  onOpen && "cursor-zoom-in",
+                )}
+                onClick={() => onOpen?.(index)}
               />
 
               {img.angle || img.isPrimary ? (

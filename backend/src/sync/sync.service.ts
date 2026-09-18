@@ -2730,15 +2730,15 @@ export class SyncService {
       const existing =
         (await this.prisma.product.findFirst({
           where: { legacyId: `WEB-${code}`, organisationId },
-          select: { id: true, imageUrl: true, price: true, legacyId: true },
+          select: { id: true, imageUrl: true, price: true, legacyId: true, websiteCode: true },
         })) ??
         (await this.prisma.product.findFirst({
           where: { name: code, organisationId },
-          select: { id: true, imageUrl: true, price: true, legacyId: true },
+          select: { id: true, imageUrl: true, price: true, legacyId: true, websiteCode: true },
         })) ??
         (await this.prisma.product.findFirst({
           where: { sku: { startsWith: `${code}-` }, organisationId },
-          select: { id: true, imageUrl: true, price: true, legacyId: true },
+          select: { id: true, imageUrl: true, price: true, legacyId: true, websiteCode: true },
         }));
 
       if (existing) {
@@ -2751,6 +2751,8 @@ export class SyncService {
         // Repairs rows this import created before it stamped provenance. Without
         // it they read as demo data and the go-live purge deletes them.
         if (!existing.legacyId) data.legacyId = `WEB-${code}`;
+        // A Gati design keeps Gati's id; this is where its website code lives.
+        if (existing.websiteCode !== code) data.websiteCode = code;
         if (Object.keys(data).length) {
           await this.prisma.product.update({
             where: { id: existing.id },
@@ -2774,6 +2776,7 @@ export class SyncService {
           // — which is exactly what happened the first time this ran. The `WEB-`
           // prefix keeps it clear of any Gati id and makes the import idempotent.
           legacyId: `WEB-${code}`,
+          websiteCode: code,
           sku: code,
           name: str(r.name) || code,
           category: categoryFromRow(r) as any,

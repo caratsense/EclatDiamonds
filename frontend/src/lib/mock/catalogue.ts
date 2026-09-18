@@ -94,6 +94,34 @@ export interface Product {
    * organisation that has configured none — which is every existing store.
    */
   attributes?: Record<string, unknown> | null;
+  /** The code a customer or salesperson quotes. For Gati designs this is the StyleCode. */
+  styleNumber?: string | null;
+  /** Gati StyleId, when the design came from Gati. */
+  gatiId?: string | null;
+  /** The design's code on the client's website, when it is on the website. */
+  websiteCode?: string | null;
+  source?: ProductSource;
+  /** Where it can be had, from the viewer's counter (computed by the API). */
+  stock?: StockPresence;
+}
+
+export type ProductSource = "gati" | "website" | "gati_website" | "import" | "manual";
+
+export const SOURCE_LABELS: Record<ProductSource, string> = {
+  gati: "Gati (CAD)",
+  website: "Website",
+  gati_website: "Gati (CAD) + Website",
+  import: "Imported",
+  manual: "Added in the app",
+};
+
+export interface StockPresence {
+  /** Pieces in the store the viewer is at. */
+  hereCount: number;
+  /** Pieces in other branches, most first. */
+  elsewhere: { storeId: string; storeName: string; count: number }[];
+  totalCount: number;
+  where: "here" | "elsewhere" | "made";
 }
 
 export const CATEGORY_LABELS: Record<ProductCategory, string> = {

@@ -64,11 +64,38 @@ export interface StockPieceView {
   ageDays: number | null;
 }
 
+/**
+ * Where a design came from, as a salesperson would say it.
+ *
+ * Not stored: it follows from the provenance columns sync already writes —
+ * Gati designs carry their StyleId in `legacyId`, website-only designs a
+ * `WEB-` marker, and a Gati design that is also on the website a `websiteCode`.
+ */
+export type ProductSource = 'gati' | 'website' | 'gati_website' | 'import' | 'manual';
+
+function sourceOf(p: { legacyId?: string | null; websiteCode?: string | null; importBatchId?: string | null }): ProductSource {
+  if (p.legacyId?.startsWith('WEB-')) return 'website';
+  if (p.legacyId) return p.websiteCode ? 'gati_website' : 'gati';
+  if (p.importBatchId) return 'import';
+  return 'manual';
+}
+
 function toView(p: any, presence?: StockPresence) {
+  const source = sourceOf(p);
   return {
     id: p.id,
     sku: p.sku,
     name: p.name,
+    /**
+     * The style number to show and to search by. Gati puts its StyleCode in
+     * `name` and never fills `styleNumber`, so for a Gati design the name IS
+     * the style number.
+     */
+    styleNumber: p.styleNumber ?? (source === 'gati' || source === 'gati_website' ? p.name : null),
+    /** Gati StyleId, or null. The `WEB-` marker is provenance, not an id anyone quotes. */
+    gatiId: p.legacyId && !p.legacyId.startsWith('WEB-') ? p.legacyId : null,
+    websiteCode: p.websiteCode ?? null,
+    source,
     category: p.category,
     categoryLabel: p.categoryLabel ?? undefined,
     metal: p.metal,
@@ -110,6 +137,8 @@ function toView(p: any, presence?: StockPresence) {
 }
 
 export interface ProductFilters {
+  /** Free text: style number, SKU, name, Gati id or website code. */
+  q?: string;
   category?: ProductCategory;
   metal?: MetalKind;
   storeId?: string;
@@ -213,6 +242,25 @@ export class ProductsService {
     if (f.category) where.category = f.category;
     if (f.metal) where.metal = f.metal;
     if (f.availability) where.availability = f.availability;
+    // A salesperson with a customer asking about "SK-010225-A" types the code.
+    // Every identifier a design can be quoted by, because Gati keeps its style
+    // code in `name` and the website its code in `websiteCode` — a search over
+    // `styleNumber` alone would find none of them.
+    const q = f.q?.trim().slice(0, 64);
+    if (q) {
+      const has = { contains: q, mode: 'insensitive' as const };
+      where.AND = [
+        {
+          OR: [
+            { name: has },
+            { sku: has },
+            { styleNumber: has },
+            { legacyId: has },
+            { websiteCode: has },
+          ],
+        },
+      ];
+    }
 
     // Within the org, scope to the user's stores (+ global products with no store).
     const requested = f.storeId ?? headerStore;
@@ -251,6 +299,12 @@ export class ProductsService {
       }),
     ]);
     const presence = await this.stockPresence(rows.map((p) => p.id), viewerStore, visible);
+    // The exact code first: typing "SK-010225-A" should put that design at the
+    // top, ahead of "SK-010225-AB" and every other design that merely contains it.
+    // ponytail: ranks within the page only; exact hits are few enough to land on page 1.
+    const exact = (p: (typeof rows)[number]) =>
+      q ? [p.name, p.sku, p.styleNumber, p.websiteCode].some((v) => v?.toLowerCase() === q.toLowerCase()) : false;
+    if (q) rows.sort((a, b) => Number(exact(b)) - Number(exact(a)));
     return {
       items: rows.map((p) => toView(p, presence.get(p.id))),
       total,
