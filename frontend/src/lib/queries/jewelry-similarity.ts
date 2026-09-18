@@ -127,7 +127,7 @@ export interface ReindexStatus {
   running: boolean;
   startedAt?: string;
   finishedAt?: string;
-  /** Photos embedded so far, out of those that needed it. */
+  /** Photos processed so far (indexed, already current or unreadable), of all. */
   done?: number;
   total?: number;
   result?: { embedded?: number; skipped?: number; failed?: number; pruned?: number; total?: number };
@@ -143,7 +143,7 @@ export function useReindexStatus(enabled: boolean) {
     enabled,
     queryFn: async () =>
       (await api.get<ReindexStatus>("/products/embeddings/reindex")).data,
-    refetchInterval: (q) => (q.state.data?.running ? 10_000 : false),
+    refetchInterval: (q) => (q.state.data?.running ? 5_000 : false),
   });
 }
 

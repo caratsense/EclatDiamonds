@@ -42,7 +42,7 @@ interface IndexedVector extends RankCandidate {
 interface ReindexRun {
   startedAt: Date;
   finishedAt?: Date;
-  /** Photos embedded so far, out of those that needed it. */
+  /** Photos processed so far (indexed, already current or unreadable), of all. */
   done: number;
   total: number;
   result?: Record<string, unknown>;
@@ -505,7 +505,7 @@ export class JewelrySimilarityService {
     opts: {
       force?: boolean;
       productId?: string;
-      /** Photos embedded so far / photos needing it — called after each batch. */
+      /** Photos processed so far / all photos — called after each batch. */
       onProgress?: (done: number, total: number) => void;
     } = {},
   ) {
@@ -587,7 +587,6 @@ export class JewelrySimilarityService {
       }
     }
 
-    const pending: { item: BatchItem; shot: Shot; imageHash: string }[] = [];
     /** Photo hashes seen this run, per design — the basis for pruning below. */
     const seenHashes = new Map<string, Set<string>>();
     /**
@@ -616,104 +615,107 @@ export class JewelrySimilarityService {
      */
     const incomplete = new Set<string>();
 
-    for (const [i, shot] of shots.entries()) {
-      const p = shot.product;
-      const img = await readImageBytes(this.storage, shot.url);
-      if (!img) {
-        failed++;
-        incomplete.add(p.id);
-        continue;
-      }
-      const imageHash = createHash('sha256').update(img.buffer).digest('hex');
-      if (!seenHashes.has(p.id)) seenHashes.set(p.id, new Set());
-      seenHashes.get(p.id)!.add(imageHash);
-
-      const prev = existing.get(`${p.id}:${imageHash}`);
-      const versionsMatch =
-        prev &&
-        (!versions.dino || prev.dinoModelVersion === versions.dino) &&
-        (!versions.siglip || prev.siglipModelVersion === versions.siglip) &&
-        prev.preprocessingVersion === preproc;
-      if (!opts.force && prev && versionsMatch) {
-        skipped++;
-        markCurrent(p.id, imageHash, null);
-        continue;
-      }
-      // The batch id identifies the SHOT, not the design: two angles of one ring
-      // are two rows, and keying by product id would make the second overwrite
-      // the first on the way back out of the inference service.
-      pending.push({
-        item: { id: `${i}`, bytes: img.buffer, mime: img.mime },
-        shot,
-        imageHash,
-      });
-    }
-
-    opts.onProgress?.(0, pending.length);
-    for (let i = 0; i < pending.length; i += BATCH_SIZE) {
-      opts.onProgress?.(i, pending.length);
-      const chunk = pending.slice(i, i + BATCH_SIZE);
-      let results: BatchResult[] = [];
-      const errored = new Set<string>();
-      try {
-        const out = await this.inference.embedBatch(chunk.map((c) => c.item));
-        results = out.results;
-        for (const e of out.errors) errored.add(e.id);
-      } catch (err) {
-        this.logger.warn(`embed/batch chunk failed: ${err instanceof Error ? err.message : err}`);
-        failed += chunk.length; // whole chunk failed; existing rows untouched.
-        continue;
-      }
-      const ok = new Set(results.map((r) => r.id));
-      failed += chunk.filter((c) => !ok.has(c.item.id)).length;
-
-      // Upsert successful rows: the photo itself under the hash of the exact
-      // bytes sent, then each piece detected in it under `<hash>#v<n>`.
-      for (const c of chunk) {
-        const r = results.find((x) => x.id === c.item.id);
-        if (!r) continue;
-        const p = c.shot.product;
-        const rows = [
-          { hash: c.imageHash, vec: r },
-          ...r.views.map((v, n) => ({ hash: `${c.imageHash}#v${n + 1}`, vec: v })),
-        ];
-        for (const { hash, vec } of rows) {
-          await this.prisma.productEmbedding.upsert({
-            where: {
-              productId_imageHash_preprocessingVersion: {
-                productId: p.id,
-                imageHash: hash,
-                preprocessingVersion: preproc,
-              },
-            },
-            create: {
-              organisationId: p.organisationId,
-              productId: p.id,
-              productImageId: c.shot.productImageId,
-              storeId: p.storeId,
-              dinoEmbedding: vec.dino,
-              siglipEmbedding: vec.siglip,
-              dinoModelVersion: versions.dino ?? 'unknown',
-              siglipModelVersion: versions.siglip ?? 'unknown',
-              preprocessingVersion: preproc,
-              imageHash: hash,
-            },
-            update: {
-              productImageId: c.shot.productImageId,
-              storeId: p.storeId,
-              dinoEmbedding: vec.dino,
-              siglipEmbedding: vec.siglip,
-              dinoModelVersion: versions.dino ?? 'unknown',
-              siglipModelVersion: versions.siglip ?? 'unknown',
-            },
-          });
+    // One batch at a time, read and embedded together. Reading every photo
+    // first held all of their bytes at once (~1GB for a 940-photo catalogue)
+    // and reported no progress for the minutes the reading alone took.
+    opts.onProgress?.(0, shots.length);
+    for (let start = 0; start < shots.length; start += BATCH_SIZE) {
+      const pending: { item: BatchItem; shot: Shot; imageHash: string }[] = [];
+      for (let i = start; i < Math.min(start + BATCH_SIZE, shots.length); i++) {
+        const shot = shots[i];
+        const p = shot.product;
+        const img = await readImageBytes(this.storage, shot.url);
+        if (!img) {
+          failed++;
+          incomplete.add(p.id);
+          continue;
         }
-        markCurrent(p.id, c.imageHash, new Set(rows.map((x) => x.hash)));
-        embedded++;
-      }
-    }
+        const imageHash = createHash('sha256').update(img.buffer).digest('hex');
+        if (!seenHashes.has(p.id)) seenHashes.set(p.id, new Set());
+        seenHashes.get(p.id)!.add(imageHash);
 
-    opts.onProgress?.(pending.length, pending.length);
+        const prev = existing.get(`${p.id}:${imageHash}`);
+        const versionsMatch =
+          prev &&
+          (!versions.dino || prev.dinoModelVersion === versions.dino) &&
+          (!versions.siglip || prev.siglipModelVersion === versions.siglip) &&
+          prev.preprocessingVersion === preproc;
+        if (!opts.force && prev && versionsMatch) {
+          skipped++;
+          markCurrent(p.id, imageHash, null);
+          continue;
+        }
+        // The batch id identifies the SHOT, not the design: two angles of one ring
+        // are two rows, and keying by product id would make the second overwrite
+        // the first on the way back out of the inference service.
+        pending.push({
+          item: { id: `${i}`, bytes: img.buffer, mime: img.mime },
+          shot,
+          imageHash,
+        });
+      }
+
+      if (pending.length) {
+        let results: BatchResult[] | null = null;
+        try {
+          results = (await this.inference.embedBatch(pending.map((c) => c.item))).results;
+        } catch (err) {
+          this.logger.warn(`embed/batch chunk failed: ${err instanceof Error ? err.message : err}`);
+        }
+        if (!results) {
+          failed += pending.length; // whole chunk failed; existing rows untouched.
+        } else {
+          const ok = new Set(results.map((r) => r.id));
+          failed += pending.filter((c) => !ok.has(c.item.id)).length;
+
+          // Upsert successful rows: the photo itself under the hash of the exact
+          // bytes sent, then each piece detected in it under `<hash>#v<n>`.
+          for (const c of pending) {
+            const r = results.find((x) => x.id === c.item.id);
+            if (!r) continue;
+            const p = c.shot.product;
+            const rows = [
+              { hash: c.imageHash, vec: r },
+              ...r.views.map((v, n) => ({ hash: `${c.imageHash}#v${n + 1}`, vec: v })),
+            ];
+            for (const { hash, vec } of rows) {
+              await this.prisma.productEmbedding.upsert({
+                where: {
+                  productId_imageHash_preprocessingVersion: {
+                    productId: p.id,
+                    imageHash: hash,
+                    preprocessingVersion: preproc,
+                  },
+                },
+                create: {
+                  organisationId: p.organisationId,
+                  productId: p.id,
+                  productImageId: c.shot.productImageId,
+                  storeId: p.storeId,
+                  dinoEmbedding: vec.dino,
+                  siglipEmbedding: vec.siglip,
+                  dinoModelVersion: versions.dino ?? 'unknown',
+                  siglipModelVersion: versions.siglip ?? 'unknown',
+                  preprocessingVersion: preproc,
+                  imageHash: hash,
+                },
+                update: {
+                  productImageId: c.shot.productImageId,
+                  storeId: p.storeId,
+                  dinoEmbedding: vec.dino,
+                  siglipEmbedding: vec.siglip,
+                  dinoModelVersion: versions.dino ?? 'unknown',
+                  siglipModelVersion: versions.siglip ?? 'unknown',
+                },
+              });
+            }
+            markCurrent(p.id, c.imageHash, new Set(rows.map((x) => x.hash)));
+            embedded++;
+          }
+        }
+      }
+      opts.onProgress?.(Math.min(start + BATCH_SIZE, shots.length), shots.length);
+    }
 
     // Prune vectors whose photograph is gone.
     //
