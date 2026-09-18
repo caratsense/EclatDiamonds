@@ -2,9 +2,10 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 
 import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { MetalKind, Prisma } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
+import { gatiComposition, websiteComposition } from '../products/composition';
 import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
 import { ProvenanceService } from '../common/provenance.service';
@@ -2163,6 +2164,10 @@ export class SyncService {
         price: dec(r.MRP ?? r.TagPrice ?? r.EndClientPrice) ?? '0',
         description: str(r.WebDescription),
         bestSeller: bool(r.BestSeller),
+        // The summary totals the agent merges into every StyleMst row. Left
+        // untouched (undefined) when a row carries none, rather than wiping
+        // what an earlier, fuller sync stored.
+        composition: (gatiComposition(r, metal as MetalKind) ?? undefined) as Prisma.InputJsonValue | undefined,
       };
       const legacyId = String(r.StyleId);
       await this.prisma.product.upsert({
@@ -2727,18 +2732,19 @@ export class SyncService {
       // Every match is org-scoped: an org's website import must never enrich (or
       // adopt the provenance of) another org's product that happens to share a
       // code, name or SKU prefix.
+      const composition = websiteComposition(r.composition);
       const existing =
         (await this.prisma.product.findFirst({
           where: { legacyId: `WEB-${code}`, organisationId },
-          select: { id: true, imageUrl: true, price: true, legacyId: true, websiteCode: true },
+          select: { id: true, imageUrl: true, price: true, legacyId: true, websiteCode: true, composition: true },
         })) ??
         (await this.prisma.product.findFirst({
           where: { name: code, organisationId },
-          select: { id: true, imageUrl: true, price: true, legacyId: true, websiteCode: true },
+          select: { id: true, imageUrl: true, price: true, legacyId: true, websiteCode: true, composition: true },
         })) ??
         (await this.prisma.product.findFirst({
           where: { sku: { startsWith: `${code}-` }, organisationId },
-          select: { id: true, imageUrl: true, price: true, legacyId: true, websiteCode: true },
+          select: { id: true, imageUrl: true, price: true, legacyId: true, websiteCode: true, composition: true },
         }));
 
       if (existing) {
@@ -2753,6 +2759,8 @@ export class SyncService {
         if (!existing.legacyId) data.legacyId = `WEB-${code}`;
         // A Gati design keeps Gati's id; this is where its website code lives.
         if (existing.websiteCode !== code) data.websiteCode = code;
+        // Gati's own breakdown wins; the website's only fills a gap.
+        if (!existing.composition && composition) data.composition = composition;
         if (Object.keys(data).length) {
           await this.prisma.product.update({
             where: { id: existing.id },
@@ -2777,6 +2785,7 @@ export class SyncService {
           // prefix keeps it clear of any Gati id and makes the import idempotent.
           legacyId: `WEB-${code}`,
           websiteCode: code,
+          composition: (composition ?? undefined) as Prisma.InputJsonValue | undefined,
           sku: code,
           name: str(r.name) || code,
           category: categoryFromRow(r) as any,

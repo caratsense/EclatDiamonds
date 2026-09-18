@@ -103,6 +103,23 @@ export interface Product {
   source?: ProductSource;
   /** Where it can be had, from the viewer's counter (computed by the API). */
   stock?: StockPresence;
+  /** What it is made of. Rates and amounts arrive only for store managers and up. */
+  composition?: Composition | null;
+}
+
+export interface CompositionLine {
+  item: string;
+  kind: "metal" | "diamond" | "stone" | "labour" | "other";
+  weight?: number;
+  unit?: "g" | "ct";
+  pieces?: number;
+  rate?: number;
+  amount?: number;
+}
+
+export interface Composition {
+  source: "gati" | "website";
+  lines: CompositionLine[];
 }
 
 export type ProductSource = "gati" | "website" | "gati_website" | "import" | "manual";

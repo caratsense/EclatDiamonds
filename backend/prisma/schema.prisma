@@ -1809,6 +1809,11 @@ model Product {
   /// website one keeps Gati's id in `legacyId` — without this the website code,
   /// and the fact that the design is on the website at all, was lost.
   websiteCode    String?
+  /// What the design is made of — metal, diamonds, stones, making — as
+  /// `{ source: 'gati'|'website', lines: [{ item, kind, weight?, unit?,
+  /// pieces?, rate?, amount? }] }`. See src/products/composition.ts. Amounts
+  /// are stripped from the API for anyone below store manager.
+  composition    Json?
 
   /// Block 9 — the design's classification. A made-to-order design is
   /// `customised`, and every piece of it inherits that unless the piece says

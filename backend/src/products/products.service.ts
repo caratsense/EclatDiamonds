@@ -12,6 +12,8 @@ import { PageRequest, Paginated } from '../common/pagination';
 import { StorageService } from '../storage/storage.service';
 import { stockClassWhere } from '../stock/stock-class';
 import { CreateProductDto } from './dto/product.dto';
+import { forViewer } from './composition';
+import { ROLE_RANK } from '../common/role.util';
 
 /**
  * Where a design can actually be had, from the viewer's counter.
@@ -80,7 +82,7 @@ function sourceOf(p: { legacyId?: string | null; websiteCode?: string | null; im
   return 'manual';
 }
 
-function toView(p: any, presence?: StockPresence) {
+function toView(p: any, presence?: StockPresence, amounts = false) {
   const source = sourceOf(p);
   return {
     id: p.id,
@@ -132,9 +134,14 @@ function toView(p: any, presence?: StockPresence) {
     // configured custom field invisible in the app no matter what an admin set
     // up — the configuration screen wrote definitions nothing ever read.
     attributes: (p.attributes ?? null) as Record<string, unknown> | null,
+    /** Metal, diamonds, stones, making — amounts only for store managers and up. */
+    composition: forViewer(p.composition, amounts),
     ...(presence ? { stock: presence } : {}),
   };
 }
+
+/** Rates, amounts and making charges reveal margin: store managers and up. */
+const seesAmounts = (user: AuthUser) => ROLE_RANK[user.role] >= ROLE_RANK.store_manager;
 
 export interface ProductFilters {
   /** Free text: style number, SKU, name, Gati id or website code. */
@@ -285,7 +292,7 @@ export class ProductsService {
         viewerStore,
         visible,
       );
-      return products.map((p) => toView(p, presence.get(p.id)));
+      return products.map((p) => toView(p, presence.get(p.id), seesAmounts(user)));
     }
 
     const { page, pageSize } = pagination;
@@ -306,7 +313,7 @@ export class ProductsService {
       q ? [p.name, p.sku, p.styleNumber, p.websiteCode].some((v) => v?.toLowerCase() === q.toLowerCase()) : false;
     if (q) rows.sort((a, b) => Number(exact(b)) - Number(exact(a)));
     return {
-      items: rows.map((p) => toView(p, presence.get(p.id))),
+      items: rows.map((p) => toView(p, presence.get(p.id), seesAmounts(user))),
       total,
       page,
       pageSize,
@@ -329,7 +336,7 @@ export class ProductsService {
     const viewerStore = headerStore && headerStore !== 'all' ? headerStore : null;
     if (viewerStore) this.scope.assertStoreAllowed(user, viewerStore);
     const presence = await this.stockPresence([p.id], viewerStore, this.visibleStoreIds(user));
-    return toView(p, presence.get(p.id));
+    return toView(p, presence.get(p.id), seesAmounts(user));
   }
 
   /**

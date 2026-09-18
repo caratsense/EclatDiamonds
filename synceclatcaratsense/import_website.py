@@ -162,6 +162,32 @@ def carat_of(p):
     return 0
 
 
+def bill_of_material(p):
+    """The first variant's materials: what the design is made of, line by line.
+
+    The feed prices each variant (metal, karat, diamond type) from its own
+    billOfMaterial; the first is the one `indicativePrice` describes, so it is
+    the one that matches the price Eclat shows.
+    """
+    for v in p.get("variants") or []:
+        out = []
+        for m in v.get("billOfMaterial") or []:
+            if not isinstance(m, dict) or not m.get("materialName"):
+                continue
+            out.append({
+                "materialName": m.get("materialName"),
+                "weight": m.get("weight"),
+                "unit": m.get("unit"),
+                "quantity": m.get("quantity"),
+                "rate": m.get("rate"),
+                "lineTotal": m.get("_lineTotal"),
+                "isDiamond": bool(m.get("_isDiamond")),
+            })
+        if out:
+            return out
+    return None
+
+
 def to_record(p):
     return {
         "productCode": (p.get("productCode") or "").strip(),
@@ -175,6 +201,9 @@ def to_record(p):
         # Every published shot, so the design is searchable from more than the
         # one angle that happened to be first in the feed.
         "imageUrls": all_images(p),
+        # Metal, diamonds, stones with weights and amounts. Eclat shows the
+        # amounts to store managers and up only.
+        "composition": bill_of_material(p),
     }
 
 

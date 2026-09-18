@@ -96,6 +96,14 @@ export function ProductDetailDialog({
       : [];
   const styleNo = product.styleNumber || product.sku;
   const stock = product.stock;
+  const parts = product.composition?.lines ?? [];
+  const partsHavePieces = parts.some((l) => l.pieces);
+  const partsHaveRates = parts.some((l) => l.rate);
+  const partsHaveAmounts = parts.some((l) => l.amount);
+  const partsTotal = parts.reduce((n, l) => n + (l.amount ?? 0), 0);
+  // Mirrors the API, which already strips amounts below store manager — this
+  // only decides whether to say why they are missing.
+  const seesAmounts = ROLE_RANK[role] >= ROLE_RANK.store_manager;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -215,6 +223,76 @@ export function ProductDetailDialog({
           ) : null}
           {stock ? null : <Spec label="Held at">{heldAt}</Spec>}
         </dl>
+
+        {/* What it is made of. Weights for everyone; rates, amounts and making
+            only reach a store manager's screen (the API strips them). */}
+        {parts.length ? (
+          <div className="rounded-lg border p-3">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <Gem className="h-4 w-4 text-muted-foreground" />
+              <h4 className="text-sm font-semibold">Items used</h4>
+              <span className="text-xs text-muted-foreground">
+                from {product.composition?.source === "gati" ? "Gati" : "the website"}
+              </span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-muted-foreground">
+                    <th className="pb-1 font-normal">Item</th>
+                    <th className="pb-1 text-right font-normal">Weight</th>
+                    {partsHavePieces ? <th className="pb-1 text-right font-normal">Pieces</th> : null}
+                    {partsHaveRates ? <th className="pb-1 text-right font-normal">Rate</th> : null}
+                    {partsHaveAmounts ? <th className="pb-1 text-right font-normal">Amount</th> : null}
+                  </tr>
+                </thead>
+                <tbody>
+                  {parts.map((l, i) => (
+                    <tr key={`${l.item}-${i}`} className="border-t">
+                      <td className="py-1.5">{l.item}</td>
+                      <td className="num py-1.5 text-right">
+                        {l.weight
+                          ? l.unit === "ct"
+                            ? formatCarats(l.weight)
+                            : l.unit === "g"
+                              ? formatGrams(l.weight)
+                              : l.weight
+                          : "—"}
+                      </td>
+                      {partsHavePieces ? (
+                        <td className="num py-1.5 text-right">{l.pieces ?? "—"}</td>
+                      ) : null}
+                      {partsHaveRates ? (
+                        <td className="num py-1.5 text-right">{l.rate ? formatINR(l.rate) : "—"}</td>
+                      ) : null}
+                      {partsHaveAmounts ? (
+                        <td className="num py-1.5 text-right">{l.amount ? formatINR(l.amount) : "—"}</td>
+                      ) : null}
+                    </tr>
+                  ))}
+                </tbody>
+                {partsHaveAmounts ? (
+                  <tfoot>
+                    <tr className="border-t font-semibold">
+                      <td
+                        className="py-1.5"
+                        colSpan={2 + Number(partsHavePieces) + Number(partsHaveRates)}
+                      >
+                        Total
+                      </td>
+                      <td className="num py-1.5 text-right">{formatINR(partsTotal)}</td>
+                    </tr>
+                  </tfoot>
+                ) : null}
+              </table>
+            </div>
+            {!seesAmounts ? (
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                Rates and amounts are shown to store managers and head office.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
         {/* Where it can be had, with counts — "two in Surat, one in Mumbai"
             is what a salesperson says to a customer who wants it today. */}
