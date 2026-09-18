@@ -226,12 +226,18 @@ const mockInference = {
   _available: true,
   embedResult: null as any,
   batchCalls: 0,
+  /** Fail this many calls fast first, like a service still waking up. */
+  failNext: 0,
   versions: { dino: 'd1', siglip: 's1', preprocessing: 'pp1' },
   get available() {
     return this._available;
   },
   async embedBatch(items: { id: string; bytes: Buffer; mime: string }[]) {
     this.batchCalls++;
+    if (this.failNext > 0) {
+      this.failNext--;
+      throw new Error('HTTP 502: inference waking up');
+    }
     if (!this.embedResult) throw new Error('HTTP 502: inference down');
     return {
       results: items.map((i) => ({ id: i.id, views: [], ...this.embedResult })),
@@ -449,6 +455,16 @@ describe('Jewelry similarity search (e2e)', () => {
     expect(res.body.status).toBe('SEARCH_ERROR');
     expect(res.body.available).toBe(true);
     expect(res.body.results).toEqual([]);
+  });
+
+  it('a search that wakes a sleeping inference service is retried once and answers', async () => {
+    mockInference.embedResult = { dino: [1, 0, 0], siglip: [1, 0, 0] };
+    mockInference.failNext = 1;
+    const before = mockInference.batchCalls;
+    const res = await search();
+    expect(res.status).toBe(201);
+    expect(res.body.status).not.toBe('SEARCH_ERROR');
+    expect(mockInference.batchCalls - before).toBe(2);
   });
 
   it('feedback persists', async () => {

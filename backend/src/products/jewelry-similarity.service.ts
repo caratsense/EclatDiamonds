@@ -444,10 +444,22 @@ export class JewelrySimilarityService implements OnModuleInit {
     let failure = '';
     if (miss.length) {
       try {
-        const out = await this.inference.embedBatch(
-          miss.map((i) => ({ id: String(i), bytes: shots[i].buffer, mime: shots[i].mime })),
-          { timeoutMs: Math.max(1_000, deadline - Date.now()) },
-        );
+        const call = () =>
+          this.inference.embedBatch(
+            miss.map((i) => ({ id: String(i), bytes: shots[i].buffer, mime: shots[i].mime })),
+            { timeoutMs: Math.max(1_000, deadline - Date.now()) },
+          );
+        let out;
+        try {
+          out = await call();
+        } catch (err) {
+          // An idle inference service may be asleep: the call that wakes it
+          // fails fast (refused / 502). One retry, and only inside the deadline.
+          if (/abort|timeout/i.test(String(err)) || deadline - Date.now() < 5_000) throw err;
+          this.logger.log(`similarity queryId=${queryId} embed failed fast; retrying once in case inference was asleep`);
+          await new Promise((r) => setTimeout(r, 2_000));
+          out = await call();
+        }
         for (const r of out.results) {
           const i = Number(r.id);
           if (!Number.isInteger(i) || !miss.includes(i)) continue;

@@ -1018,15 +1018,16 @@ export class ProductsService {
 
   /**
    * What to store for an uploaded photo, judged by its bytes rather than the
-   * browser's label: a web format as it is; another raster sharp reads (TIFF,
-   * AVIF) as a JPEG; and what it cannot — an iPhone HEIC picked outside
+   * browser's label: JPEG/PNG/WebP as they are (what the inference service
+   * indexes); another raster sharp reads (GIF's first frame, TIFF, AVIF) as a
+   * JPEG; and what it cannot — an iPhone HEIC picked outside
    * Safari — refused, since stored raw it would show only in Safari. SVG is
    * refused too (a document, not a photo), and decoding is capped at 100 MP so
    * one crafted file cannot take a gigabyte of memory.
    */
   private static async webImage(file: { buffer?: Buffer; originalname?: string }): Promise<{ buffer: Buffer; ext: string }> {
     const buffer = file.buffer!;
-    const web = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' } as Record<string, string>;
+    const web = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' } as Record<string, string>;
     const ext = web[sniffImageMime(buffer) ?? ''];
     if (ext) return { buffer, ext };
     try {

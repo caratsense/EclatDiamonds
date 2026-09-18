@@ -491,6 +491,15 @@ describe('Catalogue product API (e2e)', () => {
     const stored = res.body.filter((i: { source: string }) => i.source === 'manual').pop();
     expect(stored.url).toMatch(/\.jpg$/);
 
+    // A GIF becomes a JPEG too: the inference service indexes only JPEG/PNG/WebP.
+    const gif = await sharp({ create: { width: 20, height: 20, channels: 3, background: '#d4af37' } }).gif().toBuffer();
+    const g = await request(server())
+      .post(`/products/${P1}/images`)
+      .set(as('catapi_ho'))
+      .attach('files', gif, { filename: 'spin.gif', contentType: 'image/gif' })
+      .expect(201);
+    expect(g.body.filter((i: { source: string }) => i.source === 'manual').pop().url).toMatch(/\.jpg$/);
+
     // An iPhone HEIC from a browser that cannot decode it: refused, with what to do.
     const heic = Buffer.concat([Buffer.from('000000186674797068656963', 'hex'), Buffer.alloc(64)]);
     const before = await prisma.productImage.count({ where: { productId: P1 } });

@@ -209,7 +209,14 @@ export class JobsService {
     let failed = 0;
     try {
       await this.reclaimStale();
+      let reclaimedAt = Date.now();
       for (let i = 0; i < max; i++) {
+        // A long drain must not hold back a job orphaned by a restart until it
+        // ends: look for expired leases at least once a minute.
+        if (Date.now() - reclaimedAt > 60_000) {
+          await this.reclaimStale();
+          reclaimedAt = Date.now();
+        }
         const job = await this.claim();
         if (!job) break;
         processed++;

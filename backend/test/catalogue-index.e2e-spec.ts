@@ -93,6 +93,8 @@ const mock = {
   versions: { dino: 'd1', siglip: 's1', preprocessing: 'pp1' },
   indexCalls: 0,
   searchCalls: 0,
+  /** Behave like an older inference build that returns no thumbnail. */
+  noThumb: false,
   searchVec: e(0),
   /** When set, searches wait here — to hold slots open for the 429 test. */
   gate: null as Promise<void> | null,
@@ -114,7 +116,7 @@ const mock = {
             dino: v,
             siglip: v,
             views: [],
-            thumb: { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 5, 6, 7, 8]), mime: 'image/jpeg' },
+            thumb: this.noThumb ? undefined : { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 5, 6, 7, 8]), mime: 'image/jpeg' },
             width: 800,
             height: 600,
           };
@@ -467,5 +469,19 @@ describe('Catalogue index + search (e2e)', () => {
     const meta = await sharp(readFileSync(file)).metadata();
     expect(meta.format).toBe('webp');
     expect([meta.width, meta.height]).toEqual([400, 300]);
+  });
+
+  it('indexing by an inference build that sends no thumbnail keeps the grid thumbnail', async () => {
+    const id = (await addImage(P[4], vecUrl(e(5), 'kept-thumb'), { source: 'website', thumbUrl: '/uploads/org/x/catalogue-thumbs/kept-grid.webp' })).id;
+    mock.noThumb = true;
+    try {
+      await index.enqueue(ORG, [id]);
+      await jobs.drain(50);
+    } finally {
+      mock.noThumb = false;
+    }
+    const m = await image(id);
+    expect(m.embeddingStatus).toBe('indexed');
+    expect(m.thumbUrl).toBe('/uploads/org/x/catalogue-thumbs/kept-grid.webp');
   });
 });

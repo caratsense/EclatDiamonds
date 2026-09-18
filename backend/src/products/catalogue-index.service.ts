@@ -473,7 +473,9 @@ export class CatalogueIndexService implements OnModuleInit {
           where: { id: img.id },
           data: {
             contentHash: hash,
-            thumbUrl,
+            // An inference build that sends no thumbnail must not erase the
+            // grid's; its job has run and would not be queued again.
+            thumbUrl: thumbUrl ?? img.thumbUrl,
             ...(r.width && r.height ? { width: r.width, height: r.height } : {}),
             embeddingStatus: 'indexed',
             embeddingVersion: version,
