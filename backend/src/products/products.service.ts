@@ -278,7 +278,12 @@ export class ProductsService {
       where.OR = [{ storeId: { in: user.storeIds } }, { storeId: null }];
     }
 
-    const orderBy: Prisma.ProductOrderByWithRelationInput = { createdAt: 'desc' };
+    // Designs with a photo first: a page of gem glyphs is what a customer sees
+    // otherwise, since most Gati designs have no picture yet.
+    const orderBy: Prisma.ProductOrderByWithRelationInput[] = [
+      { imageUrl: { sort: 'asc', nulls: 'last' } },
+      { createdAt: 'desc' },
+    ];
 
     // Which counter is this person standing at? "all" means none in particular.
     const viewerStore = requested && requested !== 'all' ? requested : null;

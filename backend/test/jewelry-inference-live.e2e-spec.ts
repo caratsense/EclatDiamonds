@@ -114,7 +114,11 @@ describe('Jewelry similarity — LIVE real DINOv2+SigLIP inference (e2e)', () =>
       expect(r.body.available).toBe(true);
     }
     const rows = await prisma.productEmbedding.findMany({ where: { productId: { in: PIDS } } });
-    expect(rows.length).toBe(PIDS.length);
+    // One whole-photo row per product; each detected piece adds an `<hash>#vN`
+    // view row beside it.
+    const whole = rows.filter((r) => !r.imageHash?.includes('#'));
+    expect(whole.length).toBe(PIDS.length);
+    expect(new Set(rows.map((r) => r.productId)).size).toBe(PIDS.length);
     for (const row of rows) {
       expect(row.dinoEmbedding.length).toBe(768);
       expect(row.siglipEmbedding.length).toBe(768);
