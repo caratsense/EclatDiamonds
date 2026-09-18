@@ -279,6 +279,9 @@ enum LeaveType {
   sick
   earned
   festival
+  /// EzAttendance's "K" leave: a store employee with no fixed weekly off gets
+  /// one day a week (~53 a year) and takes it as leave.
+  week_off_leave
 }
 
 enum LeaveStatus {
@@ -509,6 +512,13 @@ model Organisation {
   attendanceRecords            AttendanceRecord[]
   shifts                       Shift[]
   storeHolidays                StoreHoliday[]
+  departments                  Department[]
+  designations                 Designation[]
+  employeeProfiles             EmployeeProfile[]
+  shiftAssignments             ShiftAssignment[]
+  rawPunchEvents               RawPunchEvent[]
+  attendanceProcessingRuns     AttendanceProcessingRun[]
+  payrollPeriodLocks           PayrollPeriodLock[]
   leaveRequests                LeaveRequest[]
   attendanceRegularizations    AttendanceRegularization[]
   marketingCampaigns           MarketingCampaign[]
@@ -904,6 +914,8 @@ model User {
   slaResponses             ConversationResponseSla[]     @relation("SlaResponder")
   weekOffs                 StaffWeekOff[]
   compensation             StaffCompensation?
+  employeeProfile          EmployeeProfile?  @relation("EmployeeProfileUser")
+  shiftAssignments         ShiftAssignment[]
   payslips                 Payslip[]
   quotesApprovalRequested  Quote[]                       @relation("QuoteApprovalRequestedBy")
   quotesApprovalDecided    Quote[]                       @relation("QuoteApprovalDecidedBy")
@@ -2610,6 +2622,10 @@ model Shift {
   endTime        String
   bufferMins     Int          @default(15)
   isNightBatch   Boolean      @default(false)
+  /// No fixed start: lateness is never computed (EzAttendance's "F" shift).
+  isFlexible     Boolean      @default(false)
+  /// Short code a punch source or import refers to ("S", "G", "F", "6HR").
+  code           String?
   /// Minutes that must be worked to earn a FULL day's credit. Null = the shift's
   /// own scheduled duration (endTime �� startTime, midnight-crossing aware).
   fullDayMins    Int?
@@ -6108,4 +6124,184 @@ model StoreMessagingRoute {
   @@unique([storeId, channel])
   @@index([organisationId, channel])
   @@index([assetId])
+}
+
+
+// ===========================================================================
+// Employee master, roster and the attendance ledger (Module 6).
+//
+// A person is a User; EmployeeProfile is their employment record beside it,
+// never a second person. Departments and designations are masters with stable
+// ids, so "Bandra" and "BANDRA" are one department and renaming one never
+// rewrites history.
+// ===========================================================================
+
+enum EmploymentStatus {
+  active
+  /// On the books but not working (long leave, suspended). Not marked absent.
+  inactive
+  /// Left. Kept for history; never counted from `exitDate` on.
+  separated
+}
+
+model Department {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  name           String
+  /// The branch this department is, when it is one (EzAttendance used
+  /// departments for stores: "BANDRA", "Kala Ghoda"). Null for head office teams.
+  storeId        String?
+  sortOrder      Int          @default(0)
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  employees EmployeeProfile[]
+
+  @@unique([organisationId, name])
+}
+
+model Designation {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  name           String
+  sortOrder      Int          @default(0)
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  employees EmployeeProfile[]
+
+  @@unique([organisationId, name])
+}
+
+model EmployeeProfile {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  userId         String       @unique
+  user           User         @relation("EmployeeProfileUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  /// "ED003". Unique per organisation; what payroll and the biometric device use.
+  employeeCode   String
+  biometricNo    String?
+  departmentId   String?
+  department     Department?  @relation(fields: [departmentId], references: [id])
+  designationId  String?
+  designation    Designation? @relation(fields: [designationId], references: [id])
+  /// EzAttendance "UNIT" (city / legal unit), kept as text.
+  unit           String?
+  reportingManagerId String?
+  gender         String?
+  dateOfBirth    DateTime?    @db.Date
+  dateOfJoining  DateTime?    @db.Date
+  dateOfConfirmation DateTime? @db.Date
+  exitDate       DateTime?    @db.Date
+  exitReason     String?
+  /// full_time | part_time | contract
+  employmentType String       @default("full_time")
+  status         EmploymentStatus @default(active)
+  bloodGroup     String?
+  address        String?
+  personalEmail  String?
+  /// Legacy shift code ("S", "G", "F", "6HR") until a ShiftAssignment exists.
+  shiftCode      String?
+  /// manual | ezattendance
+  source         String       @default("manual")
+  /// The source row exactly as imported, so cleaning never loses evidence.
+  sourceRaw      Json?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([organisationId, employeeCode])
+  @@index([organisationId, status])
+}
+
+/// Which shift an employee works, from a date. History is never rewritten:
+/// a change closes the open row and opens a new one.
+model ShiftAssignment {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shiftId        String
+  effectiveFrom  DateTime     @db.Date
+  /// Inclusive last day; null = open-ended.
+  effectiveTo    DateTime?    @db.Date
+  createdById    String?
+  createdAt      DateTime     @default(now())
+
+  @@index([userId, effectiveFrom])
+  @@index([organisationId])
+}
+
+/// One punch as it happened. Append-only: a correction is a new event with
+/// source "manager"/"regularization", never an edit. The daily register
+/// (AttendanceRecord) is computed from these.
+model RawPunchEvent {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  userId         String
+  storeId        String?
+  /// in | out
+  kind           String
+  eventAt        DateTime
+  receivedAt     DateTime     @default(now())
+  /// self | manager | regularization | import | device | auto
+  source         String
+  externalId     String?
+  /// Replays of the same punch land here and are ignored.
+  idempotencyKey String       @unique
+  lat            Decimal?     @db.Decimal(10, 7)
+  lng            Decimal?     @db.Decimal(10, 7)
+  accuracyM      Int?
+  note           String?
+  createdById    String?
+  /// Set when a manager voids a punch; the row stays as evidence.
+  voidedAt       DateTime?
+  voidedById     String?
+
+  @@index([organisationId, eventAt])
+  @@index([userId, eventAt])
+}
+
+model AttendanceProcessingRun {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  storeId        String?
+  fromDate       DateTime     @db.Date
+  toDate         DateTime     @db.Date
+  /// running | done | failed
+  status         String       @default("running")
+  processed      Int          @default(0)
+  changed        Int          @default(0)
+  skippedLocked  Int          @default(0)
+  errors         Json?
+  startedById    String?
+  startedAt      DateTime     @default(now())
+  finishedAt     DateTime?
+
+  @@index([organisationId, startedAt])
+}
+
+/// A payroll month closed to edits. Attendance, leave and punches dated inside
+/// it are refused until head office reopens it with a reason.
+model PayrollPeriodLock {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  /// "YYYY-MM"
+  month          String
+  lockedAt       DateTime     @default(now())
+  lockedById     String?
+  reopenedAt     DateTime?
+  reopenedById   String?
+  reopenReason   String?
+
+  @@unique([organisationId, month])
 }

@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Header,
   Param,
@@ -13,8 +14,27 @@ import { Permit } from '../auth/permissions';
 import type { Response } from 'express';
 import { HrmsService } from './hrms.service';
 import { AttendancePhotoService } from './attendance-photo.service';
+import { AttendanceOpsService } from './attendance-ops.service';
 import {
   ApplyLeaveDto,
+  ApprovalsQueryDto,
+  CreateLeaveBalanceDto,
+  CreatePunchDto,
+  CreateShiftAssignmentDto,
+  EditLeaveDto,
+  OptionalReasonDto,
+  PayrollLockDto,
+  PunchesQueryDto,
+  ReasonDto,
+  RegisterQueryDto,
+  ShiftAssignmentQueryDto,
+  StartProcessingRunDto,
+  TodayQueryDto,
+  UpdateAttendanceDto,
+  UpdateHolidayDto,
+  UpdateLeaveBalanceDto,
+  UpdateShiftAssignmentDto,
+  UpdateShiftDto,
   AttendanceReportQueryDto,
   CancelLeaveDto,
   CheckInDto,
@@ -39,6 +59,7 @@ export class HrmsController {
   constructor(
     private readonly hrms: HrmsService,
     private readonly photos: AttendancePhotoService,
+    private readonly ops: AttendanceOpsService,
   ) {}
 
   // --- Attendance -----------------------------------------------------------
@@ -58,6 +79,96 @@ export class HrmsController {
   @Get('geofence')
   geofence(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
     return this.hrms.geofence(user, store);
+  }
+
+  /** Today: one primary state per eligible employee; the counts sum to the denominator. */
+  @Roles('store_manager')
+  @Get('attendance/today')
+  today(@CurrentUser() user: AuthUser, @Query() q: TodayQueryDto, @StoreHeader() store?: string) {
+    return this.ops.today(user, q.storeId ?? store);
+  }
+
+  /** The daily register over a date range, paginated `{items,total}`. */
+  @Roles('store_manager')
+  @Get('attendance/register')
+  register(@CurrentUser() user: AuthUser, @Query() q: RegisterQueryDto, @StoreHeader() store?: string) {
+    return this.hrms.register(user, q, store);
+  }
+
+  /** Correct a register row (manager or head office); the note is mandatory. */
+  @Roles('store_manager')
+  @Patch('attendance/:id')
+  updateAttendance(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateAttendanceDto) {
+    return this.hrms.updateAttendance(user, id, dto);
+  }
+
+  /** Delete a register row; the raw punches stay. */
+  @Roles('store_manager')
+  @Delete('attendance/:id')
+  deleteAttendance(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ReasonDto) {
+    return this.hrms.deleteAttendance(user, id, dto.reason);
+  }
+
+  // --- Raw punch ledger -----------------------------------------------------
+
+  @Roles('store_manager')
+  @Get('punches')
+  punches(@CurrentUser() user: AuthUser, @Query() q: PunchesQueryDto, @StoreHeader() store?: string) {
+    return this.ops.punches(user, { ...q, storeId: q.storeId ?? store });
+  }
+
+  @Roles('store_manager')
+  @Post('punches')
+  addPunch(@CurrentUser() user: AuthUser, @Body() dto: CreatePunchDto) {
+    return this.ops.addPunch(user, dto);
+  }
+
+  /** Voids (never deletes) a punch, then recomputes that day. */
+  @Roles('store_manager')
+  @Delete('punches/:id')
+  voidPunch(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: OptionalReasonDto) {
+    return this.ops.voidPunch(user, id, dto?.reason);
+  }
+
+  // --- Processing runs + payroll locks (head office) -------------------------
+
+  @Roles('head_office')
+  @Post('processing-runs')
+  startProcessingRun(@CurrentUser() user: AuthUser, @Body() dto: StartProcessingRunDto) {
+    return this.ops.startProcessingRun(user, dto);
+  }
+
+  @Roles('head_office')
+  @Get('processing-runs')
+  processingRuns(@CurrentUser() user: AuthUser) {
+    return this.ops.processingRuns(user);
+  }
+
+  @Roles('head_office')
+  @Get('payroll-locks')
+  payrollLocks(@CurrentUser() user: AuthUser) {
+    return this.ops.payrollLocks(user);
+  }
+
+  @Roles('head_office')
+  @Post('payroll-locks')
+  lockMonth(@CurrentUser() user: AuthUser, @Body() dto: PayrollLockDto) {
+    return this.ops.lockMonth(user, dto.month);
+  }
+
+  @Roles('head_office')
+  @Post('payroll-locks/:month/reopen')
+  reopenMonth(@CurrentUser() user: AuthUser, @Param('month') month: string, @Body() dto: ReasonDto) {
+    return this.ops.reopenMonth(user, month, dto.reason);
+  }
+
+  // --- Approvals inbox ------------------------------------------------------
+
+  /** Leave + regularization in one list. Decisions reuse PATCH leave/:id and regularize/:id. */
+  @Roles('store_manager')
+  @Get('approvals')
+  approvals(@CurrentUser() user: AuthUser, @Query() q: ApprovalsQueryDto, @StoreHeader() store?: string) {
+    return this.ops.approvals(user, q.status, store);
   }
 
   /**
@@ -188,6 +299,34 @@ export class HrmsController {
     return this.hrms.leaveBalances(user, staffId, store);
   }
 
+  /** Head office grants a balance row (e.g. week-off leave for a store employee). */
+  @Roles('head_office')
+  @Post('leave/balances')
+  createLeaveBalance(@CurrentUser() user: AuthUser, @Body() dto: CreateLeaveBalanceDto) {
+    return this.hrms.createLeaveBalance(user, dto);
+  }
+
+  /** Head office adjusts allocated / used, with a note. */
+  @Roles('head_office')
+  @Patch('leave/balances/:id')
+  updateLeaveBalance(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateLeaveBalanceDto) {
+    return this.hrms.updateLeaveBalance(user, id, dto);
+  }
+
+  /** A manager corrects a pending request. */
+  @Roles('store_manager')
+  @Patch('leave/:id/edit')
+  editLeave(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: EditLeaveDto) {
+    return this.hrms.editLeave(user, id, dto);
+  }
+
+  /** A manager deletes a request; an approved one gives its days back. */
+  @Roles('store_manager')
+  @Delete('leave/:id')
+  deleteLeave(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ReasonDto) {
+    return this.hrms.deleteLeave(user, id, dto.reason);
+  }
+
   /** Apply for leave (self, or a manager+ on behalf of team staff). */
   @Permit('self.leave')
   @Post('leave')
@@ -271,6 +410,47 @@ export class HrmsController {
     return this.hrms.createShift(user, dto);
   }
 
+  @Roles('store_manager')
+  @Patch('shifts/:id')
+  updateShift(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateShiftDto) {
+    return this.ops.updateShift(user, id, dto);
+  }
+
+  /** 409 while assigned or on the register today, unless ?force=1 (which unassigns). */
+  @Roles('store_manager')
+  @Delete('shifts/:id')
+  deleteShift(@CurrentUser() user: AuthUser, @Param('id') id: string, @Query('force') force?: string) {
+    return this.ops.deleteShift(user, id, force === '1' || force === 'true');
+  }
+
+  @Roles('store_manager')
+  @Get('shift-assignments')
+  shiftAssignments(@CurrentUser() user: AuthUser, @Query() q: ShiftAssignmentQueryDto, @StoreHeader() store?: string) {
+    return this.ops.shiftAssignments(user, { ...q, storeId: q.storeId ?? store });
+  }
+
+  @Roles('store_manager')
+  @Post('shift-assignments')
+  createShiftAssignment(@CurrentUser() user: AuthUser, @Body() dto: CreateShiftAssignmentDto) {
+    return this.ops.createShiftAssignment(user, dto);
+  }
+
+  @Roles('store_manager')
+  @Patch('shift-assignments/:id')
+  updateShiftAssignment(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateShiftAssignmentDto,
+  ) {
+    return this.ops.updateShiftAssignment(user, id, dto);
+  }
+
+  @Roles('store_manager')
+  @Delete('shift-assignments/:id')
+  deleteShiftAssignment(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.ops.deleteShiftAssignment(user, id);
+  }
+
   @Permit('self.attendance')
   @Get('holidays')
   holidays(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
@@ -282,6 +462,18 @@ export class HrmsController {
   @Post('holidays')
   createHoliday(@CurrentUser() user: AuthUser, @Body() dto: CreateHolidayDto) {
     return this.hrms.createHoliday(user, dto);
+  }
+
+  @Roles('store_manager')
+  @Patch('holidays/:id')
+  updateHoliday(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateHolidayDto) {
+    return this.ops.updateHoliday(user, id, dto);
+  }
+
+  @Roles('store_manager')
+  @Delete('holidays/:id')
+  deleteHoliday(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.ops.deleteHoliday(user, id);
   }
 
   /** Week-off is set by head office / area management only (client call 2026-07). */

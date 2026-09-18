@@ -55,6 +55,7 @@ async function teardown(prisma: PrismaService) {
   await prisma.staffWeekOff.deleteMany({ where: { organisationId: A.org } });
   await prisma.auditLog.deleteMany({ where: { organisationId: A.org } });
   await prisma.attendanceRecord.deleteMany({ where: { organisationId: A.org } });
+  await prisma.rawPunchEvent.deleteMany({ where: { organisationId: A.org } });
   await prisma.storeHoliday.deleteMany({ where: { organisationId: A.org } });
   await prisma.leaveRequest.deleteMany({ where: { organisationId: A.org } });
   await prisma.shift.deleteMany({ where: { organisationId: A.org } });

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -15,24 +16,37 @@ import { saveCapturedPhoto } from '../storage/capture-photo';
 import { ROLE_LABELS, ROLE_RANK, isFrontLine } from '../common/role.util';
 import { PayrollService } from './payroll.service';
 import {
+  AttendanceOpsService,
+  addDays,
+  assertCanCorrect,
+  assertCanCorrectUser,
+  assertMonthOpen,
+  classifyDay,
+  eligibleStaff,
+  recordPunch,
+  resolveShiftFor,
+  seedLedgerFromRow,
+  shiftDayMaths,
+  shiftEarlyOut,
+  shiftLateness,
+  supersedePunches,
+  toHolidayView,
+  toShiftView,
+} from './attendance-ops.service';
+import {
   assertNotSelfApproval,
   assertUndecided,
   decisionStamp,
 } from '../common/approval.util';
 import {
   businessDate,
-  computeDayFraction,
-  computeEarlyOut,
-  computeLateness,
-  computeOvertime,
   dateOnly,
   formatHHMMInTz,
   instantFromLocalTime,
+  parseHHMM,
   resolveTz,
-  ShiftWindow,
   shiftDurationMins,
   shiftEndMinutesOfDay,
-  weekdayInTz,
 } from '../common/tz.util';
 import {
   ApplyLeaveDto,
@@ -42,9 +56,14 @@ import {
   CreateHolidayDto,
   CreateRegularizationDto,
   CreateShiftDto,
+  CreateLeaveBalanceDto,
   DayCloseDto,
+  EditLeaveDto,
   MarkAttendanceDto,
+  RegisterQueryDto,
   SetWeekOffDto,
+  UpdateAttendanceDto,
+  UpdateLeaveBalanceDto,
 } from './dto/hrms.dto';
 
 /**
@@ -57,10 +76,13 @@ const LEAVE_ALLOCATIONS: Record<LeaveType, number> = {
   sick: 6,
   earned: 15,
   festival: 0,
+  // Granted per person (EzAttendance "K": one day a week for store staff
+  // with no fixed weekly off), never by default.
+  week_off_leave: 0,
 };
 
 /** Balance-tracked (paid) leave types: applied against a per-year LeaveBalance. */
-const PAID_LEAVE_TYPES: LeaveType[] = ['casual', 'sick', 'earned'];
+const PAID_LEAVE_TYPES: LeaveType[] = ['casual', 'sick', 'earned', 'week_off_leave'];
 
 /** Leave states that can no longer be approved/rejected. */
 const LEAVE_TERMINAL: readonly string[] = ['approved', 'rejected', 'cancelled'];
@@ -86,6 +108,7 @@ const LEAVE_TYPE_LABEL: Record<string, string> = {
   sick: 'Sick',
   earned: 'Earned',
   festival: 'Festival',
+  week_off_leave: 'Week-off leave',
 };
 
 /** Resolve a "YYYY-MM" (or current month) to a UTC [start, end) range + normalized label. */
@@ -102,32 +125,6 @@ function monthRange(month?: string): { start: Date; end: Date; label: string } {
   const end = new Date(Date.UTC(year, mon + 1, 1));
   const label = `${year}-${String(mon + 1).padStart(2, '0')}`;
   return { start, end, label };
-}
-
-function toShiftView(s: any) {
-  const scheduledMins = shiftDurationMins(s.startTime, s.endTime);
-  return {
-    id: s.id,
-    storeId: s.storeId,
-    name: s.name,
-    startTime: s.startTime,
-    endTime: s.endTime,
-    bufferMins: s.bufferMins,
-    isNightBatch: s.isNightBatch,
-    scheduledMins,
-    fullDayMins: s.fullDayMins ?? scheduledMins,
-    halfDayMins: s.halfDayMins ?? Math.round((s.fullDayMins ?? scheduledMins) / 2),
-    label: `${s.name} · ${s.startTime}–${s.endTime}`,
-  };
-}
-
-function toHolidayView(h: any) {
-  return {
-    id: h.id,
-    storeId: h.storeId,
-    date: dateOnly(h.date),
-    label: h.label ?? null,
-  };
 }
 
 /** Haversine distance in metres. Callers guard on both coordinate pairs existing. */
@@ -201,6 +198,7 @@ export class HrmsService {
     private readonly notifications: NotificationsService,
     private readonly storage: StorageService,
     private readonly payroll: PayrollService,
+    private readonly ops: AttendanceOpsService,
   ) {}
 
   /**
@@ -335,6 +333,15 @@ export class HrmsService {
       return { distanceM: Math.round(dist), withinFence: false };
     }
     const withinFence = dist <= store.geofenceRadiusM;
+    if (!withinFence && kind === 'check-in') {
+      // A CONFIDENT fix outside the fence: the person is not at the store, and
+      // a typed reason does not change where they are. Refused outright — a
+      // note only rescues the cases GPS cannot decide (no fix, or a fix too
+      // vague to tell), which are handled above and go to the manager.
+      throw new BadRequestException(
+        `You're ${Math.round(dist)} m from ${store.name} (allowed: ${store.geofenceRadiusM} m). You must be at the store to check in.`,
+      );
+    }
     if (!withinFence) {
       if (!note?.trim()) {
         throw new BadRequestException(
@@ -481,12 +488,14 @@ export class HrmsService {
     if (!target.userStores.some((s) => s.storeId === dto.storeId)) {
       throw new BadRequestException('Staff is not assigned to this store');
     }
+    assertCanCorrect(user, target.id, target.role);
 
     const checkInAt = dto.checkInAt ? new Date(dto.checkInAt) : new Date();
     const date = dto.date ? parseDateOnly(dto.date) : businessDate(checkInAt, store.tz);
+    await assertMonthOpen(this.prisma, user.organisationId, date);
 
     let status: AttendanceStatus = dto.status;
-    let shift: ShiftWindow | null = null;
+    let shift: Awaited<ReturnType<typeof resolveShiftFor>> = null;
     let shiftId: string | null = null;
     let isLate = false;
     let lateMinutes: number | null = null;
@@ -494,11 +503,11 @@ export class HrmsService {
     // Lateness only makes sense for a day someone actually attended.
     const attended = status === 'present' || status === 'late' || status === 'half_day';
     if (attended) {
-      const resolved = await this.resolveShift(dto.storeId, dto.shiftId);
+      const resolved = await resolveShiftFor(this.prisma, dto.storeId, target.id, date, dto.shiftId);
       if (resolved) {
         shift = resolved;
         shiftId = resolved.id;
-        const late = computeLateness(checkInAt, resolved, store.tz);
+        const late = shiftLateness(checkInAt, resolved, store.tz);
         isLate = late.isLate;
         lateMinutes = late.lateMinutes;
         if (status !== 'half_day') status = isLate ? 'late' : 'present';
@@ -528,6 +537,30 @@ export class HrmsService {
       },
       include: { store: true },
     });
+
+    // The ledger: the manager's mark replaces the day's in-punch (attended) or
+    // every punch (not attended). Superseded punches are voided, never deleted.
+    await supersedePunches(this.prisma, {
+      userId: target.id,
+      storeId: dto.storeId,
+      date,
+      tz: store.tz,
+      kinds: attended ? ['in'] : ['in', 'out'],
+      actorId: user.id,
+    });
+    if (attended) {
+      await recordPunch(this.prisma, {
+        organisationId: user.organisationId,
+        userId: target.id,
+        storeId: dto.storeId,
+        kind: 'in',
+        eventAt: checkInAt,
+        source: 'manager',
+        idempotencyKey: `manager:${row.id}:in:${checkInAt.toISOString()}`,
+        note: `Marked ${status} by ${user.name}`,
+        createdById: user.id,
+      });
+    }
 
     // Marking someone else's attendance is a payroll-affecting act by a third
     // party — it belongs in the trail even when nothing looks suspicious.
@@ -574,6 +607,7 @@ export class HrmsService {
 
     const now = new Date();
     const date = businessDate(now, store.tz);
+    await assertMonthOpen(this.prisma, user.organisationId, date);
 
     const existing = await this.prisma.attendanceRecord.findUnique({
       where: { storeId_staffId_date: { storeId, staffId: user.id, date } },
@@ -599,13 +633,14 @@ export class HrmsService {
       dto.accuracyM,
     );
 
-    // Lateness vs the assigned shift (or the store's first/default shift if none given).
-    const shift = await this.resolveShift(storeId, dto.shiftId);
+    // Lateness vs the shift given, else the one assigned for today, else the
+    // store's first shift. Never for a flexible shift.
+    const shift = await resolveShiftFor(this.prisma, storeId, user.id, date, dto.shiftId);
     let shiftId: string | null = null;
     let isLate = false;
     let lateMinutes: number | null = null;
     if (shift) {
-      const late = computeLateness(now, shift, store.tz);
+      const late = shiftLateness(now, shift, store.tz);
       isLate = late.isLate;
       lateMinutes = late.lateMinutes;
       shiftId = shift.id;
@@ -641,6 +676,20 @@ export class HrmsService {
         date,
         ...payload,
       },
+    });
+    await recordPunch(this.prisma, {
+      organisationId: user.organisationId,
+      userId: user.id,
+      storeId,
+      kind: 'in',
+      eventAt: now,
+      source: 'self',
+      idempotencyKey: `self:${user.id}:in:${now.toISOString()}`,
+      lat: dto.lat,
+      lng: dto.lng,
+      accuracyM: dto.accuracyM,
+      note: payload.checkInNote,
+      createdById: user.id,
     });
 
     // A punch away from the store, or one from a device reporting a mock GPS
@@ -709,6 +758,7 @@ export class HrmsService {
     if (record.checkOutAt) {
       throw new BadRequestException('You have already checked out for this shift.');
     }
+    await assertMonthOpen(this.prisma, user.organisationId, record.date);
 
     const { distanceM, withinFence } = this.evaluateFence(
       store,
@@ -719,9 +769,11 @@ export class HrmsService {
       dto.accuracyM,
     );
 
-    const shift = record.shiftId ? await this.resolveShift(storeId, record.shiftId) : null;
+    const shift = record.shiftId
+      ? await resolveShiftFor(this.prisma, storeId, null, null, record.shiftId).catch(() => null)
+      : null;
     const workedMins = Math.round((now.getTime() - record.checkInAt.getTime()) / 60000);
-    const dayFraction = computeDayFraction(workedMins, shift);
+    const { dayFraction, overtimeMins } = shiftDayMaths(workedMins, shift);
 
     const outPhotoUrl = await this.savePunchPhoto(user, 'out', dto.photo);
 
@@ -736,13 +788,27 @@ export class HrmsService {
         checkOutVerified: withinFence,
         checkOutNote: dto.note?.trim() || null,
         workedMins,
-        earlyOutMinutes: shift ? computeEarlyOut(now, shift, store.tz) : null,
-        overtimeMins: computeOvertime(workedMins, shift),
+        earlyOutMinutes: shiftEarlyOut(now, shift, store.tz),
+        overtimeMins,
         // A short day is a half day for payroll, but the lateness flag it may
         // also carry is preserved independently on `isLate`.
         status: dayFraction != null && dayFraction < 1 ? 'half_day' : record.status,
         dayFraction,
       },
+    });
+    await recordPunch(this.prisma, {
+      organisationId: user.organisationId,
+      userId: user.id,
+      storeId,
+      kind: 'out',
+      eventAt: now,
+      source: 'self',
+      idempotencyKey: `self:${user.id}:out:${now.toISOString()}`,
+      lat: dto.lat,
+      lng: dto.lng,
+      accuracyM: dto.accuracyM,
+      note: dto.note?.trim() || null,
+      createdById: user.id,
     });
 
     return this.toSelfAttendanceView(row, store.tz);
@@ -811,19 +877,6 @@ export class HrmsService {
     };
   }
 
-  /** The assigned shift (by id, scoped to store) or the store's first/default shift. */
-  private async resolveShift(storeId: string, shiftId?: string | null) {
-    if (shiftId) {
-      const shift = await this.prisma.shift.findFirst({ where: { id: shiftId, storeId } });
-      if (!shift) throw new NotFoundException('Shift not found for this store');
-      return shift;
-    }
-    return this.prisma.shift.findFirst({
-      where: { storeId },
-      orderBy: { startTime: 'asc' },
-    });
-  }
-
   /**
    * GET /hrms/geofence — the caller's resolved store geofence, so the client can do
    * LIVE (client-side) distance checks and auto-punch when in range.
@@ -886,61 +939,20 @@ export class HrmsService {
       date.setUTCDate(date.getUTCDate() - 1);
     }
 
-    const [assignments, records, holiday, approvedLeave, defaultShift] = await Promise.all([
-      this.prisma.userStore.findMany({
-        // Only people who actually work a shift at this store. Area managers and
-        // head office are mapped to stores for VISIBILITY, not to a roster — the
-        // day close must not mark them absent at every branch they can see.
-        where: {
-          storeId,
-          user: { isActive: true, role: { in: [Role.salesperson, Role.storeperson, Role.store_manager] } },
-        },
-        include: { user: { select: { id: true, name: true } } },
-      }),
-      this.prisma.attendanceRecord.findMany({ where: { storeId, date } }),
-      this.prisma.storeHoliday.findFirst({ where: { storeId, date } }),
-      this.prisma.leaveRequest.findMany({
-        where: { storeId, status: 'approved', fromDate: { lte: date }, toDate: { gte: date } },
-        select: { staffId: true },
-      }),
-      this.resolveShift(storeId, null),
-    ]);
-
-    const byStaff = new Map(records.map((r) => [r.staffId, r]));
-    const onLeave = new Set(approvedLeave.map((l) => l.staffId));
-    // `date` is a UTC-midnight stand-in for a local calendar day, so its weekday
-    // is read at local noon to stay clear of the zone offset.
-    const weekday = weekdayInTz(instantFromLocalTime(date, 12 * 60, store.tz), store.tz);
+    await assertMonthOpen(this.prisma, user.organisationId, date);
 
     /*
-     * The weekly off is now PER PERSON, falling back to the branch's day for
-     * anybody without their own roster.
-     *
-     * It used to be the branch's day for everybody, which for a shop that never
-     * closes made the register fiction: half the floor was marked off while they
-     * were serving customers. Resolved once here, for every rostered person, so
-     * this stays one query rather than one per employee.
+     * Who is on the roster that day, with their leave / holiday / weekly-off
+     * facts, comes from the same `eligibleStaff` the Today screen and the
+     * reports use — so "absent" here and "absent" there are the same people.
+     * (Weekly offs are per person, falling back to the branch's day; area
+     * managers and head office are mapped for visibility, not rostered.)
      */
-    const ownOffs = await this.prisma.staffWeekOff.findMany({
-      where: {
-        userId: { in: assignments.map((a) => a.userId) },
-        OR: [{ storeId }, { storeId: null }],
-      },
-      select: { userId: true, dayOfWeek: true },
-    });
-    const offDaysByStaff = new Map<string, Set<number>>();
-    for (const row of ownOffs) {
-      const set = offDaysByStaff.get(row.userId) ?? new Set<number>();
-      set.add(row.dayOfWeek);
-      offDaysByStaff.set(row.userId, set);
-    }
-    const storeIsOff = store.weekOffDay != null && weekday === store.weekOffDay;
-    const isOffFor = (staffId: string) => {
-      const own = offDaysByStaff.get(staffId);
-      // Their own roster REPLACES the branch's, it does not add to it. Somebody
-      // whose day off was moved to Wednesday is not also off on Tuesday.
-      return own ? own.has(weekday) : storeIsOff;
-    };
+    const [assignments, records] = await Promise.all([
+      eligibleStaff(this.prisma, user.organisationId, [storeId], date),
+      this.prisma.attendanceRecord.findMany({ where: { storeId, date } }),
+    ]);
+    const byStaff = new Map(records.map((r) => [r.staffId, r]));
 
     let autoClosedCount = 0;
     let absentCount = 0;
@@ -954,8 +966,8 @@ export class HrmsService {
         if (existing.checkInAt && !existing.checkOutAt) {
           // Close at the shift's scheduled end, in store-local time.
           const shift = existing.shiftId
-            ? await this.resolveShift(storeId, existing.shiftId)
-            : defaultShift;
+            ? await resolveShiftFor(this.prisma, storeId, null, null, existing.shiftId).catch(() => null)
+            : await resolveShiftFor(this.prisma, storeId, a.userId, date);
           const closeAt = shift
             ? instantFromLocalTime(
                 date,
@@ -969,13 +981,13 @@ export class HrmsService {
           const workedMins = Math.round(
             (effective.getTime() - existing.checkInAt.getTime()) / 60000,
           );
-          const dayFraction = computeDayFraction(workedMins, shift);
+          const { dayFraction, overtimeMins } = shiftDayMaths(workedMins, shift);
           await this.prisma.attendanceRecord.update({
             where: { id: existing.id },
             data: {
               checkOutAt: effective,
               workedMins,
-              overtimeMins: computeOvertime(workedMins, shift),
+              overtimeMins,
               dayFraction,
               status: dayFraction != null && dayFraction < 1 ? 'half_day' : existing.status,
               autoClosed: true,
@@ -984,32 +996,33 @@ export class HrmsService {
                 'Auto-closed at shift end — no check-out recorded. Regularize if incorrect.',
             },
           });
+          await recordPunch(this.prisma, {
+            organisationId: user.organisationId,
+            userId: a.userId,
+            storeId,
+            kind: 'out',
+            eventAt: effective,
+            source: 'auto',
+            idempotencyKey: `auto:${existing.id}:out`,
+            note: 'Auto-closed at shift end by the day close.',
+          });
           autoClosedCount++;
         }
         continue; // A row that already exists is never reclassified.
       }
 
-      let status: AttendanceStatus;
-      if (onLeave.has(a.userId)) {
-        status = 'on_leave';
-        leaveCount++;
-      } else if (holiday) {
-        status = 'holiday';
-        nonWorkingCount++;
-      } else if (isOffFor(a.userId)) {
-        status = 'week_off';
-        nonWorkingCount++;
-      } else {
-        status = 'absent';
-        absentCount++;
-      }
+      const state = classifyDay(a, null).state;
+      const status: AttendanceStatus = state === 'not_marked' ? 'absent' : state;
+      if (status === 'absent') absentCount++;
+      else if (status === 'on_leave') leaveCount++;
+      else nonWorkingCount++;
 
       await this.prisma.attendanceRecord.create({
         data: {
           organisationId: user.organisationId,
           storeId,
           staffId: a.userId,
-          staffName: a.user.name,
+          staffName: a.name,
           date,
           status,
           dayFraction: status === 'absent' ? 0 : null,
@@ -1078,6 +1091,8 @@ export class HrmsService {
         isNightBatch: dto.isNightBatch ?? false,
         fullDayMins: dto.fullDayMins ?? null,
         halfDayMins: dto.halfDayMins ?? null,
+        isFlexible: dto.isFlexible ?? false,
+        code: dto.code?.trim() || null,
       },
     });
     return toShiftView(row);
@@ -1097,6 +1112,7 @@ export class HrmsService {
   async createHoliday(user: AuthUser, dto: CreateHolidayDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
     const date = parseDateOnly(dto.date);
+    await assertMonthOpen(this.prisma, user.organisationId, date);
     const row = await this.prisma.storeHoliday.upsert({
       where: { storeId_date: { storeId: dto.storeId, date } },
       update: { label: dto.label ?? null },
@@ -1409,6 +1425,7 @@ export class HrmsService {
 
     assertUndecided(existing.status, LEAVE_TERMINAL, 'leave request');
     assertNotSelfApproval(user, existing.staffId, 'leave request');
+    await assertMonthOpen(this.prisma, user.organisationId, existing.fromDate, existing.toDate);
 
     const days = num(existing.days);
     const paid = PAID_LEAVE_TYPES.includes(existing.type) && days > 0;
@@ -1494,6 +1511,9 @@ export class HrmsService {
       throw new ForbiddenException(
         'An approved leave can only be revoked by a manager — ask your manager to cancel it.',
       );
+    }
+    if (existing.status === 'approved') {
+      await assertMonthOpen(this.prisma, user.organisationId, existing.fromDate, existing.toDate);
     }
 
     const days = num(existing.days);
@@ -1597,6 +1617,7 @@ export class HrmsService {
       const used = num(r.used);
       const reserved = pendingByType.get(r.type) ?? 0;
       return {
+        id: r.id,
         type: r.type,
         label: LEAVE_TYPE_LABEL[r.type] ?? r.type,
         year: r.year,
@@ -1643,6 +1664,7 @@ export class HrmsService {
     if (dto.halfDay && toDate.getTime() !== fromDate.getTime()) {
       throw new BadRequestException('A half-day request must start and end on the same date');
     }
+    await assertMonthOpen(this.prisma, user.organisationId, fromDate, toDate);
 
     // Overlap check: a staffer cannot hold two live requests covering the same
     // day. Without this, the same absence can be booked twice and (once both are
@@ -1789,6 +1811,7 @@ export class HrmsService {
     if (!dto.requestedCheckIn && !dto.requestedCheckOut) {
       throw new BadRequestException('Provide a check-in time, a check-out time, or both');
     }
+    await assertMonthOpen(this.prisma, user.organisationId, date);
 
     const pending = await this.prisma.attendanceRegularization.findFirst({
       where: { storeId, staffId: user.id, date, status: 'pending' },
@@ -1879,6 +1902,7 @@ export class HrmsService {
 
     if (status === 'approved') {
       const { storeId, staffId, staffName, date } = existing;
+      await assertMonthOpen(this.prisma, user.organisationId, date);
       const store = await this.storeCtx(storeId);
       const current = await this.prisma.attendanceRecord.findUnique({
         where: { storeId_staffId_date: { storeId, staffId, date } },
@@ -1891,17 +1915,23 @@ export class HrmsService {
           ? Math.round((checkOutAt.getTime() - checkInAt.getTime()) / 60000)
           : (current?.workedMins ?? null);
 
-      // Respect the record's assigned shift; fall back to the store's default.
-      const shift = await this.resolveShift(storeId, current?.shiftId ?? null).catch(() => null);
+      // Respect the record's shift; else the one assigned that day; else the store's first.
+      const shift = await resolveShiftFor(
+        this.prisma,
+        storeId,
+        staffId,
+        date,
+        current?.shiftId ?? null,
+      ).catch(() => null);
 
       let isLate = current?.isLate ?? false;
       let lateMinutes = current?.lateMinutes ?? null;
       if (checkInAt && shift) {
-        const late = computeLateness(checkInAt, shift, store.tz);
+        const late = shiftLateness(checkInAt, shift, store.tz);
         isLate = late.isLate;
         lateMinutes = late.lateMinutes;
       }
-      const dayFraction = computeDayFraction(workedMins, shift);
+      const { dayFraction, overtimeMins } = shiftDayMaths(workedMins, shift);
 
       // Preserve a non-working classification. A regularized punch on a declared
       // holiday or an approved leave day should not quietly reclassify the day.
@@ -1920,8 +1950,8 @@ export class HrmsService {
           isLate,
           lateMinutes,
           shiftId: shift?.id ?? current?.shiftId ?? null,
-          earlyOutMinutes: checkOutAt && shift ? computeEarlyOut(checkOutAt, shift, store.tz) : null,
-          overtimeMins: computeOvertime(workedMins, shift),
+          earlyOutMinutes: checkOutAt ? shiftEarlyOut(checkOutAt, shift, store.tz) : null,
+          overtimeMins,
           dayFraction,
           status: nextStatus,
           source: 'regularization',
@@ -1941,12 +1971,31 @@ export class HrmsService {
           isLate,
           lateMinutes,
           shiftId: shift?.id ?? null,
-          earlyOutMinutes: checkOutAt && shift ? computeEarlyOut(checkOutAt, shift, store.tz) : null,
-          overtimeMins: computeOvertime(workedMins, shift),
+          earlyOutMinutes: checkOutAt ? shiftEarlyOut(checkOutAt, shift, store.tz) : null,
+          overtimeMins,
           dayFraction,
           source: 'regularization',
         },
       });
+      // The ledger: each requested time replaces that side's punches for the day.
+      const kinds = [
+        existing.requestedCheckIn ? ('in' as const) : null,
+        existing.requestedCheckOut ? ('out' as const) : null,
+      ].filter((k): k is 'in' | 'out' => k !== null);
+      await supersedePunches(this.prisma, { userId: staffId, storeId, date, tz: store.tz, kinds, actorId: user.id });
+      for (const kind of kinds) {
+        await recordPunch(this.prisma, {
+          organisationId: user.organisationId,
+          userId: staffId,
+          storeId,
+          kind,
+          eventAt: (kind === 'in' ? existing.requestedCheckIn : existing.requestedCheckOut)!,
+          source: 'regularization',
+          idempotencyKey: `regularization:${existing.id}:${kind}`,
+          note: existing.reason ?? null,
+          createdById: user.id,
+        });
+      }
       // Same as a manager's mark: an issued slip is flagged, never rewritten.
       await this.payroll.recheckIssued(staffId, date);
     }
@@ -2159,6 +2208,406 @@ export class HrmsService {
     });
 
     return this.toCommissionView(row);
+  }
+
+  // ==========================================================================
+  // Register + corrections (docs/modules/06-attendance.md)
+  // ==========================================================================
+
+  /**
+   * GET /hrms/attendance/register — the daily register over a date range,
+   * paginated. Default: the last 31 days at the selected store.
+   */
+  async register(user: AuthUser, q: RegisterQueryDto, headerStore?: string) {
+    const storeSel = q.storeId ?? headerStore;
+    const tz = await this.scope.resolveTimezone(user, storeSel);
+    const to = q.to ? parseDateOnly(q.to) : businessDate(new Date(), tz);
+    const from = q.from ? parseDateOnly(q.from) : addDays(to, -30);
+    if (to < from) throw new BadRequestException('`to` must be on or after `from`');
+    const page = q.page ?? 1;
+    const pageSize = q.pageSize ?? 50;
+
+    const where: Prisma.AttendanceRecordWhereInput = {
+      ...this.scope.storeFilter(user, storeSel),
+      date: { gte: from, lte: to },
+      ...(q.userId ? { staffId: q.userId } : {}),
+      ...(q.status === 'late'
+        ? { OR: [{ status: 'late' }, { status: 'present', isLate: true }] }
+        : q.status
+          ? { status: q.status }
+          : {}),
+    };
+    if (isFrontLine(user.role)) where.staffId = user.id;
+
+    const [total, rows] = await Promise.all([
+      this.prisma.attendanceRecord.count({ where }),
+      this.prisma.attendanceRecord.findMany({
+        where,
+        include: { store: true },
+        orderBy: [{ date: 'desc' }, { staffName: 'asc' }, { id: 'asc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+    return { items: await this.toRegisterRows(rows), total, page, pageSize };
+  }
+
+  private async toRegisterRows(rows: any[]) {
+    const [shifts, staff] = await Promise.all([
+      this.prisma.shift.findMany({
+        where: { id: { in: [...new Set(rows.map((r) => r.shiftId).filter(Boolean))] as string[] } },
+      }),
+      this.prisma.user.findMany({
+        where: { id: { in: [...new Set(rows.map((r) => r.staffId))] as string[] } },
+        select: { id: true, role: true, employeeProfile: { select: { employeeCode: true } } },
+      }),
+    ]);
+    const shiftById = new Map(shifts.map((s) => [s.id, s]));
+    const roleById = new Map(staff.map((s) => [s.id, s.role]));
+    const codeById = new Map(staff.map((s) => [s.id, s.employeeProfile?.employeeCode ?? null]));
+    return rows.map((r) => ({
+      ...this.toAttendanceView(r, shiftById, roleById),
+      recordId: r.id,
+      source: r.source ?? 'self',
+      employeeCode: codeById.get(r.staffId) ?? null,
+    }));
+  }
+
+  private async registerRow(id: string) {
+    const row = await this.prisma.attendanceRecord.findUniqueOrThrow({ where: { id }, include: { store: true } });
+    return (await this.toRegisterRows([row]))[0];
+  }
+
+  private async recordInScope(user: AuthUser, id: string) {
+    const row = await this.prisma.attendanceRecord.findFirst({
+      where: { id, organisationId: user.organisationId, ...this.scope.storeFilter(user) },
+    });
+    if (!row) throw new NotFoundException('Attendance record not found');
+    await assertCanCorrectUser(this.prisma, user, row.staffId);
+    return row;
+  }
+
+  /**
+   * PATCH /hrms/attendance/:id — a manager's (or head office's) correction.
+   *
+   * Times are store-local "HH:MM" on the record's date (a check-out earlier
+   * than the check-in is the next morning). Each changed time supersedes that
+   * side's punches in the ledger with a `manager` punch, and the row is then
+   * recomputed by the same code a processing run uses — so a later run gives
+   * the same answer. A non-attended status (absent / leave / off / holiday)
+   * voids the day's punches instead.
+   */
+  async updateAttendance(user: AuthUser, id: string, dto: UpdateAttendanceDto) {
+    const before = await this.recordInScope(user, id);
+    await assertMonthOpen(this.prisma, user.organisationId, before.date);
+    const store = await this.storeCtx(before.storeId);
+    const note = dto.note.trim();
+    const nonAttended = !!dto.status && !['present', 'late', 'half_day'].includes(dto.status);
+    if (nonAttended && (dto.checkIn || dto.checkOut)) {
+      throw new BadRequestException(`A day marked ${dto.status} has no punch times`);
+    }
+    if (!dto.status && !dto.checkIn && !dto.checkOut && !dto.shiftId) {
+      throw new BadRequestException('Nothing to change');
+    }
+    if (dto.shiftId) await resolveShiftFor(this.prisma, before.storeId, null, null, dto.shiftId);
+
+    const dayArgs = {
+      userId: before.staffId,
+      storeId: before.storeId,
+      date: before.date,
+      tz: store.tz,
+      actorId: user.id,
+    };
+    if (nonAttended) {
+      await supersedePunches(this.prisma, { ...dayArgs, kinds: ['in', 'out'] });
+      await this.prisma.attendanceRecord.update({
+        where: { id },
+        data: {
+          status: dto.status,
+          checkInAt: null,
+          checkOutAt: null,
+          isLate: false,
+          lateMinutes: null,
+          workedMins: null,
+          earlyOutMinutes: null,
+          overtimeMins: null,
+          dayFraction: dto.status === 'absent' ? 0 : null,
+          shiftId: dto.shiftId ?? before.shiftId,
+          source: 'manager',
+          autoClosed: false,
+        },
+      });
+    } else {
+      const inMins = dto.checkIn
+        ? parseHHMM(dto.checkIn)
+        : before.checkInAt
+          ? parseHHMM(formatHHMMInTz(before.checkInAt, store.tz)!)
+          : null;
+      const inAt = dto.checkIn ? instantFromLocalTime(before.date, inMins!, store.tz) : null;
+      let outAt: Date | null = null;
+      if (dto.checkOut) {
+        const outMins = parseHHMM(dto.checkOut);
+        outAt = instantFromLocalTime(
+          before.date,
+          outMins + (inMins != null && outMins <= inMins ? 1440 : 0),
+          store.tz,
+        );
+      }
+      if (!inAt && !before.checkInAt && !outAt) {
+        throw new BadRequestException('Give a check-in time to mark this day attended');
+      }
+      if (outAt && outAt.getTime() > Date.now() + 5 * 60_000) {
+        throw new BadRequestException('A check-out cannot be in the future');
+      }
+      // Evidence first: a pre-ledger row's own times reach the ledger before
+      // anything supersedes them.
+      await seedLedgerFromRow(this.prisma, user.organisationId, before, store.tz);
+      for (const [kind, at] of [
+        ['in', inAt],
+        ['out', outAt],
+      ] as const) {
+        if (!at) continue;
+        await supersedePunches(this.prisma, { ...dayArgs, kinds: [kind] });
+        await recordPunch(this.prisma, {
+          organisationId: user.organisationId,
+          userId: before.staffId,
+          storeId: before.storeId,
+          kind,
+          eventAt: at,
+          source: 'manager',
+          idempotencyKey: `manager:${id}:${kind}:${at.toISOString()}`,
+          note,
+          createdById: user.id,
+        });
+      }
+      const current = await this.prisma.attendanceRecord.update({
+        where: { id },
+        data: { shiftId: dto.shiftId ?? before.shiftId, source: 'manager', autoClosed: false },
+      });
+      await this.ops.reprocessDay({
+        orgId: user.organisationId,
+        store: { id: store.id, tz: store.tz },
+        userId: before.staffId,
+        staffName: before.staffName,
+        date: before.date,
+        facts: { onLeave: false, isHoliday: false, isWeekOff: false },
+        existing: current,
+      });
+    }
+
+    const after = await this.prisma.attendanceRecord.findUniqueOrThrow({ where: { id } });
+    await this.audit.record(user, {
+      action: 'attendance.update',
+      entityType: 'AttendanceRecord',
+      entityId: id,
+      storeId: before.storeId,
+      summary: `Corrected ${before.staffName ?? before.staffId}'s attendance on ${dateOnly(before.date)}: ${note}`,
+      metadata: { before, after, note },
+    });
+    await this.payroll.recheckIssued(before.staffId, before.date);
+    return this.registerRow(id);
+  }
+
+  /** DELETE /hrms/attendance/:id — removes the register row; the raw punches stay. */
+  async deleteAttendance(user: AuthUser, id: string, reason: string) {
+    const before = await this.recordInScope(user, id);
+    await assertMonthOpen(this.prisma, user.organisationId, before.date);
+    await this.prisma.attendanceRecord.delete({ where: { id } });
+    await this.audit.record(user, {
+      action: 'attendance.delete',
+      entityType: 'AttendanceRecord',
+      entityId: id,
+      storeId: before.storeId,
+      summary: `Deleted ${before.staffName ?? before.staffId}'s attendance row for ${dateOnly(before.date)}: ${reason.trim()}`,
+      metadata: { before, after: null, reason },
+    });
+    await this.payroll.recheckIssued(before.staffId, before.date);
+    return { id, deleted: true };
+  }
+
+  // ==========================================================================
+  // Leave — manager edit / delete, balance maintenance
+  // ==========================================================================
+
+  private async leaveInScope(user: AuthUser, id: string) {
+    const row = await this.prisma.leaveRequest.findFirst({ where: { id, ...this.scope.storeFilter(user) } });
+    if (!row) throw new NotFoundException('Leave request not found');
+    await assertCanCorrectUser(this.prisma, user, row.staffId);
+    return row;
+  }
+
+  /** PATCH /hrms/leave/:id/edit — a manager corrects a PENDING request. */
+  async editLeave(user: AuthUser, id: string, dto: EditLeaveDto) {
+    const before = await this.leaveInScope(user, id);
+    if (before.status !== 'pending') {
+      throw new BadRequestException(`Only a pending request can be edited (this one is ${before.status})`);
+    }
+    const fromDate = parseDateOnly(dto.fromDate);
+    const toDate = parseDateOnly(dto.toDate);
+    const halfDay = dto.halfDay ?? false;
+    if (toDate < fromDate) throw new BadRequestException('toDate is before fromDate');
+    if (halfDay && toDate.getTime() !== fromDate.getTime()) {
+      throw new BadRequestException('A half-day request must start and end on the same date');
+    }
+    await assertMonthOpen(this.prisma, user.organisationId, before.fromDate, before.toDate);
+    await assertMonthOpen(this.prisma, user.organisationId, fromDate, toDate);
+
+    const clash = await this.prisma.leaveRequest.findFirst({
+      where: {
+        id: { not: id },
+        staffId: before.staffId,
+        status: { in: ['pending', 'approved'] },
+        fromDate: { lte: toDate },
+        toDate: { gte: fromDate },
+      },
+    });
+    if (clash) {
+      throw new BadRequestException(
+        `Overlaps an existing ${clash.status} ${clash.type} request (${dateOnly(clash.fromDate)} → ${dateOnly(clash.toDate)})`,
+      );
+    }
+    const days = await this.computeWorkingDays(before.storeId, fromDate, toDate, halfDay);
+    if (days <= 0) {
+      throw new BadRequestException('That range contains no working days (weekly off / holidays only)');
+    }
+
+    if (PAID_LEAVE_TYPES.includes(dto.type)) {
+      const year = financialYear(fromDate);
+      await this.ensureLeaveBalances(before.staffId, year, before.storeId);
+      const [bal, pending] = await Promise.all([
+        this.prisma.leaveBalance.findUnique({
+          where: { userId_type_year: { userId: before.staffId, type: dto.type, year } },
+        }),
+        this.prisma.leaveRequest.aggregate({
+          where: { staffId: before.staffId, type: dto.type, status: 'pending', id: { not: id } },
+          _sum: { days: true },
+        }),
+      ]);
+      const available = num(bal?.allocated) - num(bal?.used) - num(pending._sum.days);
+      if (available < days) {
+        throw new BadRequestException(
+          `Insufficient ${dto.type} balance: ${available} day(s) available, ${days} requested`,
+        );
+      }
+    }
+
+    const row = await this.prisma.leaveRequest.update({
+      where: { id },
+      data: { fromDate, toDate, type: dto.type, halfDay, days, reason: dto.reason ?? before.reason },
+    });
+    await this.audit.record(user, {
+      action: 'leave.edit',
+      entityType: 'LeaveRequest',
+      entityId: id,
+      storeId: row.storeId,
+      summary: `Edited ${row.staffName ?? row.staffId}'s pending leave: ${dateOnly(fromDate)} → ${dateOnly(toDate)} (${days} day(s))`,
+      metadata: { before: this.toLeaveView(before), after: this.toLeaveView(row) },
+    });
+    return this.toLeaveView(row);
+  }
+
+  /** DELETE /hrms/leave/:id — removes a request; an approved one gives its days back. */
+  async deleteLeave(user: AuthUser, id: string, reason: string) {
+    const before = await this.leaveInScope(user, id);
+    await assertMonthOpen(this.prisma, user.organisationId, before.fromDate, before.toDate);
+    const days = num(before.days);
+    const release = before.status === 'approved' && PAID_LEAVE_TYPES.includes(before.type) && days > 0;
+    const year = financialYear(before.fromDate);
+    await this.prisma.$transaction(async (tx) => {
+      if (release) {
+        await tx.leaveBalance.updateMany({
+          where: { userId: before.staffId, type: before.type, year },
+          data: { used: { decrement: days } },
+        });
+      }
+      await tx.leaveRequest.delete({ where: { id } });
+    });
+    await this.audit.record(user, {
+      action: 'leave.delete',
+      entityType: 'LeaveRequest',
+      entityId: id,
+      storeId: before.storeId,
+      summary: `Deleted ${before.status} ${before.type} leave for ${before.staffName ?? before.staffId}: ${reason.trim()}`,
+      metadata: { before: this.toLeaveView(before), after: null, balanceReleased: release, reason },
+    });
+    return { id, deleted: true, balanceReleased: release };
+  }
+
+  private async balanceOwnerInScope(user: AuthUser, userId: string) {
+    const owner = await this.prisma.user.findFirst({
+      where: { id: userId, organisationId: user.organisationId },
+      include: { userStores: true },
+    });
+    if (!owner || !owner.userStores.some((s) => user.storeIds.includes(s.storeId))) {
+      throw new NotFoundException('Staff not found');
+    }
+    return owner;
+  }
+
+  /** PATCH /hrms/leave/balances/:id — head office adjusts allocation / used, with a note. */
+  async updateLeaveBalance(user: AuthUser, id: string, dto: UpdateLeaveBalanceDto) {
+    const before = await this.prisma.leaveBalance.findUnique({ where: { id } });
+    if (!before) throw new NotFoundException('Leave balance not found');
+    const owner = await this.balanceOwnerInScope(user, before.userId);
+    if (dto.allocated == null && dto.used == null) throw new BadRequestException('Nothing to change');
+    const row = await this.prisma.leaveBalance.update({
+      where: { id },
+      data: { allocated: dto.allocated, used: dto.used },
+    });
+    await this.audit.record(user, {
+      action: 'leave.balance_update',
+      entityType: 'LeaveBalance',
+      entityId: id,
+      storeId: before.storeId,
+      summary: `Adjusted ${owner.name}'s ${before.type} balance for ${financialYearLabel(before.year)}: ${dto.note.trim()}`,
+      metadata: {
+        before: { allocated: num(before.allocated), used: num(before.used) },
+        after: { allocated: num(row.allocated), used: num(row.used) },
+        note: dto.note,
+      },
+    });
+    return this.toBalanceView(row);
+  }
+
+  /** POST /hrms/leave/balances — head office grants a type/year row (e.g. week-off leave). */
+  async createLeaveBalance(user: AuthUser, dto: CreateLeaveBalanceDto) {
+    const owner = await this.balanceOwnerInScope(user, dto.userId);
+    const exists = await this.prisma.leaveBalance.findUnique({
+      where: { userId_type_year: { userId: dto.userId, type: dto.type, year: dto.year } },
+    });
+    if (exists) throw new ConflictException('That balance already exists — edit it instead');
+    const row = await this.prisma.leaveBalance.create({
+      data: {
+        userId: dto.userId,
+        storeId: owner.userStores.find((s) => s.isPrimary)?.storeId ?? owner.userStores[0]?.storeId ?? null,
+        type: dto.type,
+        year: dto.year,
+        allocated: dto.allocated,
+      },
+    });
+    await this.audit.record(user, {
+      action: 'leave.balance_create',
+      entityType: 'LeaveBalance',
+      entityId: row.id,
+      storeId: row.storeId,
+      summary: `Granted ${owner.name} ${dto.allocated} ${dto.type} day(s) for ${financialYearLabel(dto.year)}`,
+      metadata: { before: null, after: { type: dto.type, year: dto.year, allocated: dto.allocated } },
+    });
+    return this.toBalanceView(row);
+  }
+
+  private toBalanceView(r: { id: string; userId: string; type: LeaveType; year: number; allocated: Prisma.Decimal; used: Prisma.Decimal }) {
+    return {
+      id: r.id,
+      userId: r.userId,
+      type: r.type,
+      label: LEAVE_TYPE_LABEL[r.type] ?? r.type,
+      year: r.year,
+      financialYearLabel: financialYearLabel(r.year),
+      allocated: num(r.allocated),
+      used: num(r.used),
+      balance: num(r.allocated) - num(r.used),
+    };
   }
 
   // ==========================================================================

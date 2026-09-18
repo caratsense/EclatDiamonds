@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { LogOut } from "lucide-react";
 import { toast } from "sonner";
 
@@ -14,14 +13,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { clearAttendanceHandled } from "@/lib/attendance-gate";
-import { useCheckOut } from "@/lib/queries/hrms";
+import { useSignOut } from "@/components/layout/logout-dialog";
 import { useSession } from "@/store/use-session";
 import { useResetOn } from "@/lib/use-reset-on";
 
 /**
- * Inactivity threshold before we warn about signing the salesperson out for the
- * day. 30 minutes — change this single constant to tune the idle window.
+ * Inactivity threshold before we warn about signing the salesperson out of the
+ * app. 30 minutes — change this single constant to tune the idle window.
  */
 const IDLE_MS = 30 * 60 * 1000;
 
@@ -41,36 +39,9 @@ const ACTIVITY_EVENTS = [
 ] as const;
 
 /**
- * Best-effort one-shot position with a tight (~5s) budget, mirroring the lenient
- * check-in flow: a null just means the check-out records without geo verification.
- */
-function getPositionQuick(): Promise<{ lat: number; lng: number; accuracyM?: number } | null> {
-  return new Promise((resolve) => {
-    if (typeof navigator === "undefined" || !navigator.geolocation) {
-      resolve(null);
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (pos) =>
-        resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracyM: pos.coords.accuracy }),
-      () => resolve(null),
-      { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 },
-    );
-  });
-}
-
-/** HH:mm for the current instant. */
-function nowTime(): string {
-  return new Date().toLocaleTimeString("en-IN", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-/**
- * AutoSignOut — invisible client component that ends a salesperson's ATTENDANCE
- * session for the day after a long stretch of inactivity. Mounted once in the
- * app layout alongside AttendanceGate.
+ * AutoSignOut — invisible client component that ends a salesperson's APP
+ * session after a long stretch of inactivity, so an unattended terminal does
+ * not stay signed in. Mounted once in the app layout alongside AttendanceGate.
  *
  *  - Acts ONLY for role === "salesperson". Managers / area / HO render null and
  *    attach no timers or listeners.
@@ -78,16 +49,13 @@ function nowTime(): string {
  *    RESET_THROTTLE_MS — on any user interaction. When it lapses we open a
  *    dialog with a 60-second countdown the salesperson can cancel.
  *  - "Stay signed in" (or dismissing) resets the timer. "Sign out now" or the
- *    countdown reaching 0 punches the attendance check-out (best-effort geo,
- *    ~5s budget, lenient 0/0 on failure), clears the attendance-handled flag,
- *    notifies, and returns to /check-in.
- *  - The AUTH TOKEN is never touched — this is an attendance sign-out, not an
- *    account logout. Re-entry just re-marks attendance via the geofence gate.
+ *    countdown reaching 0 signs out of the app (token cleared, back to /login).
+ *  - Attendance is NEVER changed here: no check-out, no punch. Being idle is not
+ *    leaving the shop; the person stays checked in and checks out themselves.
  */
 export function AutoSignOut() {
-  const router = useRouter();
   const role = useSession((s) => s.role);
-  const checkOut = useCheckOut();
+  const signOut = useSignOut();
 
   // Front-line staff only: salespeople and storepeople.
   const isSalesperson = role === "salesperson" || role === "storeperson";
@@ -98,7 +66,7 @@ export function AutoSignOut() {
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastResetRef = useRef(0);
-  // Fires the check-out exactly once, guarding the "0s" + "Sign out now" paths.
+  // Signs out exactly once, guarding the "0s" + "Sign out now" paths.
   const signedOutRef = useRef(false);
   // Freshest values for callbacks fired from timers (avoids stale closures).
   //
@@ -107,10 +75,10 @@ export function AutoSignOut() {
   // otherwise have already published its values into the refs, and the timer
   // that fires next would act on a render the user never saw. No dependency
   // array on purpose: every committed render republishes.
-  const checkOutRef = useRef(checkOut);
+  const signOutRef = useRef(signOut);
   const warnOpenRef = useRef(false);
   useEffect(() => {
-    checkOutRef.current = checkOut;
+    signOutRef.current = signOut;
     warnOpenRef.current = warnOpen;
   });
 
@@ -146,36 +114,18 @@ export function AutoSignOut() {
     scheduleIdle();
   }
 
-  /** Punch the attendance check-out and return to the geofence gate. */
-  async function doSignOut() {
+  /** End the app session. Attendance is left exactly as it is. */
+  function doSignOut() {
     if (signedOutRef.current) return;
     signedOutRef.current = true;
     clearCountdown();
     clearIdleTimer();
-
-    const pos = await getPositionQuick();
-    checkOutRef.current.mutate(
-      {
-        // No fix → no coordinates, never 0/0 (Null Island).
-        ...(pos ? { lat: pos.lat, lng: pos.lng, accuracyM: pos.accuracyM } : {}),
-        // Always send a note. It explains the punch on the attendance record,
-        // and it doubles as the justification the API requires when the fix
-        // lands outside the store geofence — without it an off-site idle
-        // timeout would be rejected and the check-out silently lost.
-        note: "Auto sign-out after inactivity",
-      },
-      {
-        // Whether or not the punch API succeeds, end the local attendance
-        // session and go back to /check-in. The AUTH TOKEN is left intact.
-        onSettled: () => {
-          clearAttendanceHandled();
-          toast.info(`You've been signed out for the day at ${nowTime()}`);
-          warnOpenRef.current = false;
-          setWarnOpen(false);
-          router.replace("/check-in");
-        },
-      },
-    );
+    warnOpenRef.current = false;
+    setWarnOpen(false);
+    toast.info("Signed out after inactivity", {
+      description: "Your attendance was not changed.",
+    });
+    signOutRef.current();
   }
 
   /** Dismiss the warning and re-arm the idle timer. */
@@ -214,15 +164,13 @@ export function AutoSignOut() {
   // --- Warning countdown: runs while the dialog is open; 0 → sign out. ---
   useEffect(() => {
     if (!warnOpen) return;
+    // Wall-clock deadline (a throttled background tab still signs out on time),
+    // and the sign-out runs outside any state updater.
+    const deadline = Date.now() + WARN_SECONDS * 1000;
     countdownRef.current = setInterval(() => {
-      setSecondsLeft((s) => {
-        if (s <= 1) {
-          clearCountdown();
-          void doSignOut();
-          return 0;
-        }
-        return s - 1;
-      });
+      const left = Math.ceil((deadline - Date.now()) / 1000);
+      if (left <= 0) doSignOut();
+      else setSecondsLeft(left);
     }, 1000);
     return () => clearCountdown();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -240,10 +188,11 @@ export function AutoSignOut() {
     >
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>You&apos;ll be signed out for the day</DialogTitle>
+          <DialogTitle>You&apos;ll be signed out</DialogTitle>
           <DialogDescription>
-            You&apos;ve been inactive for a while. For security, we&apos;ll sign
-            you out of today&apos;s attendance shortly.
+            You&apos;ve been inactive for a while, so we&apos;ll sign you out of
+            the app shortly. Your attendance stays as it is: you are not
+            checked out.
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col items-center py-2">
@@ -257,7 +206,7 @@ export function AutoSignOut() {
             variant="outline"
             size="lg"
             className="h-12 w-full text-base sm:w-auto"
-            onClick={() => void doSignOut()}
+            onClick={doSignOut}
           >
             <LogOut className="h-5 w-5" />
             Sign out now

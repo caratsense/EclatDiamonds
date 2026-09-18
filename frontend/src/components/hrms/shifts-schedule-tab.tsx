@@ -5,9 +5,12 @@ import {
   CalendarDays,
   Clock,
   Moon,
+  Pencil,
   Plus,
   Sun,
+  Trash2,
 } from "lucide-react";
+import { AxiosError } from "axios";
 import { toast } from "sonner";
 
 import {
@@ -46,6 +49,14 @@ import {
   useCreateShift,
   useSetWeekOff,
 } from "@/lib/queries/hrms";
+import {
+  useDeleteHoliday,
+  useDeleteShift,
+  useUpdateHoliday,
+  useUpdateShift,
+} from "@/lib/queries/hrms-ops";
+import { ReasonDialog } from "@/components/hrms/attendance-edit-dialog";
+import { ShiftAssignments } from "@/components/hrms/shift-assignments";
 import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
 
@@ -78,6 +89,31 @@ export function ShiftsScheduleTab({ shifts, holidays }: ShiftsScheduleTabProps) 
   const canEdit = ROLE_RANK[role] >= ROLE_RANK.store_manager;
 
   const [shiftOpen, setShiftOpen] = useState(false);
+  const [editingShift, setEditingShift] = useState<Shift | null>(null);
+  const [deletingShift, setDeletingShift] = useState<Shift | null>(null);
+  const [forceDelete, setForceDelete] = useState(false);
+  const deleteShift = useDeleteShift();
+
+  function removeShift(shift: Shift, force: boolean) {
+    deleteShift.mutate(
+      { id: shift.id, force },
+      {
+        onSuccess: () => {
+          toast.success(`Shift ${shift.name} deleted`);
+          setDeletingShift(null);
+          setForceDelete(false);
+        },
+        onError: (err) => {
+          // 409 = staff are still on it; offer the explicit unassign-and-delete.
+          if (!force && err instanceof AxiosError && err.response?.status === 409) {
+            setForceDelete(true);
+            return;
+          }
+          toast.error(apiErrorMessage(err, "Could not delete the shift."));
+        },
+      },
+    );
+  }
 
   // Upcoming holidays only (today onward), soonest first.
   const upcoming = useMemo(() => {
@@ -139,7 +175,13 @@ export function ShiftsScheduleTab({ shifts, holidays }: ShiftsScheduleTabProps) 
                   </div>
                   <div className="leading-tight">
                     <div className="flex flex-wrap items-center gap-2">
+                      {s.code ? (
+                        <Badge variant="outline" className="num">
+                          {s.code}
+                        </Badge>
+                      ) : null}
                       <p className="font-medium">{s.name}</p>
+                      {s.isFlexible ? <Badge variant="gold">Flexible</Badge> : null}
                       {s.isNightBatch ? (
                         <Badge variant="secondary" className="gap-1">
                           <Moon className="h-3 w-3" />
@@ -149,13 +191,42 @@ export function ShiftsScheduleTab({ shifts, holidays }: ShiftsScheduleTabProps) 
                     </div>
                     <p className="num text-xs text-muted-foreground">
                       {s.startTime}–{s.endTime}
+                      {s.isFlexible ? " · never marked late" : ""}
                     </p>
                   </div>
                 </div>
-                <Badge variant="outline" className="w-fit shrink-0">
-                  <span className="num">{s.bufferMins}</span>
-                  &nbsp;min grace
-                </Badge>
+                <div className="flex shrink-0 items-center gap-1">
+                  {s.isFlexible ? null : (
+                    <Badge variant="outline" className="w-fit">
+                      <span className="num">{s.bufferMins}</span>
+                      &nbsp;min grace
+                    </Badge>
+                  )}
+                  {canEdit ? (
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Edit shift ${s.name}`}
+                        onClick={() => setEditingShift(s)}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="text-destructive"
+                        aria-label={`Delete shift ${s.name}`}
+                        onClick={() => {
+                          setForceDelete(false);
+                          setDeletingShift(s);
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </>
+                  ) : null}
+                </div>
               </div>
             ))
           )}
@@ -179,12 +250,48 @@ export function ShiftsScheduleTab({ shifts, holidays }: ShiftsScheduleTabProps) 
         />
       </div>
 
-      <AddShiftDialog
-        open={shiftOpen}
-        onOpenChange={setShiftOpen}
+      <ShiftAssignments
         storeId={targetStoreId}
-        storeName={storeLabel}
+        shifts={shifts.filter((s) => s.storeId === targetStoreId)}
+        canEdit={canEdit}
       />
+
+      {shiftOpen ? (
+        <ShiftDialog
+          open
+          onOpenChange={setShiftOpen}
+          storeId={targetStoreId}
+          storeName={storeLabel}
+        />
+      ) : null}
+      {editingShift ? (
+        <ShiftDialog
+          key={editingShift.id}
+          open
+          onOpenChange={(o) => (o ? null : setEditingShift(null))}
+          storeId={editingShift.storeId}
+          storeName={storeLabel}
+          shift={editingShift}
+        />
+      ) : null}
+      {deletingShift ? (
+        <ReasonDialog
+          key={`${deletingShift.id}-${forceDelete}`}
+          open
+          onOpenChange={(o) => (o ? null : setDeletingShift(null))}
+          title={forceDelete ? "Staff are still on this shift" : `Delete shift ${deletingShift.name}?`}
+          description={
+            forceDelete
+              ? "It is assigned to staff or was used today. Deleting it anyway ends those assignments; their days fall back to the store's default shift."
+              : "Attendance already recorded keeps its times."
+          }
+          withReason={false}
+          confirmLabel={forceDelete ? "Unassign and delete" : "Delete shift"}
+          destructive
+          pending={deleteShift.isPending}
+          onConfirm={() => removeShift(deletingShift, forceDelete)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -310,8 +417,11 @@ function HolidaysCard({
   canEdit: boolean;
 }) {
   const addHoliday = useAddHoliday();
+  const deleteHoliday = useDeleteHoliday();
   const [date, setDate] = useState("");
   const [label, setLabel] = useState("");
+  const [editing, setEditing] = useState<Holiday | null>(null);
+  const [deleting, setDeleting] = useState<Holiday | null>(null);
 
   function add() {
     if (!storeId) {
@@ -394,47 +504,148 @@ function HolidaysCard({
                 className="flex items-center justify-between gap-2 rounded-lg border px-3 py-2"
               >
                 <span className="text-sm font-medium">{h.label}</span>
-                <span className="num text-xs text-muted-foreground">
-                  {formatHolidayDate(h.date)}
+                <span className="flex items-center gap-1">
+                  <span className="num text-xs text-muted-foreground">
+                    {formatHolidayDate(h.date)}
+                  </span>
+                  {canEdit ? (
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Edit holiday ${h.label}`}
+                        onClick={() => setEditing(h)}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="text-destructive"
+                        aria-label={`Delete holiday ${h.label}`}
+                        onClick={() => setDeleting(h)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </>
+                  ) : null}
                 </span>
               </div>
             ))
           )}
         </div>
       </CardContent>
+
+      {editing ? (
+        <EditHolidayDialog key={editing.id} holiday={editing} onClose={() => setEditing(null)} />
+      ) : null}
+      {deleting ? (
+        <ReasonDialog
+          key={deleting.id}
+          open
+          onOpenChange={(o) => (o ? null : setDeleting(null))}
+          title={`Delete ${deleting.label}?`}
+          description={`${formatHolidayDate(deleting.date)} becomes a normal working day for ${storeName}.`}
+          withReason={false}
+          confirmLabel="Delete holiday"
+          destructive
+          pending={deleteHoliday.isPending}
+          onConfirm={() =>
+            deleteHoliday.mutate(deleting.id, {
+              onSuccess: () => {
+                toast.success("Holiday deleted");
+                setDeleting(null);
+              },
+              onError: (err) => toast.error(apiErrorMessage(err, "Could not delete the holiday.")),
+            })
+          }
+        />
+      ) : null}
     </Card>
   );
 }
 
+function EditHolidayDialog({ holiday, onClose }: { holiday: Holiday; onClose: () => void }) {
+  const update = useUpdateHoliday();
+  const [date, setDate] = useState(holiday.date);
+  const [label, setLabel] = useState(holiday.label);
+
+  function save() {
+    if (!date) {
+      toast.error("Pick a date for the holiday.");
+      return;
+    }
+    update.mutate(
+      { id: holiday.id, date, label: label.trim() || undefined },
+      {
+        onSuccess: () => {
+          toast.success("Holiday updated");
+          onClose();
+        },
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not update the holiday.")),
+      },
+    );
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => (o ? null : onClose())}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Edit holiday</DialogTitle>
+          <DialogDescription>Changes apply to this store only.</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="grid gap-1.5">
+            <Label htmlFor="eh-date">Date</Label>
+            <Input id="eh-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="eh-label">Label</Label>
+            <Input id="eh-label" value={label} onChange={(e) => setLabel(e.target.value)} />
+          </div>
+        </div>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={update.isPending}>
+            {update.isPending ? "Saving…" : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /* ------------------------------------------------------------------ */
-/* Add-shift dialog                                                    */
+/* Add / edit shift dialog                                             */
 /* ------------------------------------------------------------------ */
 
-function AddShiftDialog({
+/** Mounted per open (and keyed per shift when editing) so it seeds from props. */
+function ShiftDialog({
   open,
   onOpenChange,
   storeId,
   storeName,
+  shift,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   storeId: string;
   storeName: string;
+  /** Present = edit this shift; absent = add a new one. */
+  shift?: Shift;
 }) {
   const createShift = useCreateShift();
-  const [name, setName] = useState("");
-  const [startTime, setStartTime] = useState("");
-  const [endTime, setEndTime] = useState("");
-  const [bufferMins, setBufferMins] = useState("15");
-  const [isNightBatch, setIsNightBatch] = useState(false);
-
-  function reset() {
-    setName("");
-    setStartTime("");
-    setEndTime("");
-    setBufferMins("15");
-    setIsNightBatch(false);
-  }
+  const updateShift = useUpdateShift();
+  const [name, setName] = useState(shift?.name ?? "");
+  const [code, setCode] = useState(shift?.code ?? "");
+  const [startTime, setStartTime] = useState(shift?.startTime ?? "");
+  const [endTime, setEndTime] = useState(shift?.endTime ?? "");
+  const [bufferMins, setBufferMins] = useState(String(shift?.bufferMins ?? 15));
+  const [isNightBatch, setIsNightBatch] = useState(shift?.isNightBatch ?? false);
+  const [isFlexible, setIsFlexible] = useState(shift?.isFlexible ?? false);
+  const pending = createShift.isPending || updateShift.isPending;
 
   function save() {
     if (!storeId) {
@@ -450,47 +661,72 @@ function AddShiftDialog({
       return;
     }
     const buffer = Number(bufferMins);
-    createShift.mutate(
-      {
-        storeId,
-        name: name.trim(),
-        startTime,
-        endTime,
-        bufferMins: Number.isFinite(buffer) ? buffer : undefined,
-        isNightBatch,
+    const fields = {
+      name: name.trim(),
+      startTime,
+      endTime,
+      bufferMins: Number.isFinite(buffer) ? buffer : undefined,
+      isNightBatch,
+    };
+    const done = {
+      onSuccess: () => {
+        toast.success(shift ? "Shift updated" : "Shift added", {
+          description: `${fields.name} · ${startTime}–${endTime} · ${storeName}.`,
+        });
+        onOpenChange(false);
       },
-      {
-        onSuccess: () => {
-          toast.success("Shift added", {
-            description: `${name.trim()} · ${startTime}–${endTime} · ${storeName}.`,
-          });
-          reset();
-          onOpenChange(false);
+      onError: (err: unknown) =>
+        toast.error(
+          apiErrorMessage(err, shift ? "Could not update the shift." : "Could not add the shift."),
+        ),
+    };
+    if (shift) {
+      updateShift.mutate({ id: shift.id, ...fields, code: code.trim() || null, isFlexible }, done);
+    } else {
+      // New fields only when used, so an API that predates them still accepts the add.
+      createShift.mutate(
+        {
+          storeId,
+          ...fields,
+          ...(code.trim() ? { code: code.trim() } : {}),
+          ...(isFlexible ? { isFlexible } : {}),
         },
-        onError: (err) => toast.error(apiErrorMessage(err, "Could not add the shift.")),
-      },
-    );
+        done,
+      );
+    }
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add shift</DialogTitle>
+          <DialogTitle>{shift ? "Edit shift" : "Add shift"}</DialogTitle>
           <DialogDescription>
             Shifts belong to {storeName}. Lateness is scored against this
             shift&apos;s start&nbsp;+&nbsp;buffer.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
-          <div className="grid gap-1.5">
-            <Label htmlFor="shift-name">Shift name</Label>
-            <Input
-              id="shift-name"
-              placeholder="e.g. Morning / Second batch"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
+          <div className="grid grid-cols-[1fr_6rem] gap-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="shift-name">Shift name</Label>
+              <Input
+                id="shift-name"
+                placeholder="e.g. Morning / Second batch"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="shift-code">Code</Label>
+              <Input
+                id="shift-code"
+                placeholder="S"
+                maxLength={8}
+                value={code}
+                onChange={(e) => setCode(e.target.value.toUpperCase())}
+              />
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">
@@ -566,13 +802,27 @@ function AddShiftDialog({
               />
             </span>
           </button>
+          <label className="flex items-start gap-3 rounded-lg border px-3 py-2.5 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4"
+              checked={isFlexible}
+              onChange={(e) => setIsFlexible(e.target.checked)}
+            />
+            <span>
+              <span className="font-medium">Flexible shift</span>
+              <span className="block text-xs text-muted-foreground">
+                No fixed start: never marked late or early-out.
+              </span>
+            </span>
+          </label>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={save} disabled={createShift.isPending}>
-            {createShift.isPending ? "Saving…" : "Add shift"}
+          <Button onClick={save} disabled={pending}>
+            {pending ? "Saving…" : shift ? "Save shift" : "Add shift"}
           </Button>
         </DialogFooter>
       </DialogContent>

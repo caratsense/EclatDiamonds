@@ -57,6 +57,8 @@ async function teardown(prisma: PrismaService) {
   await prisma.staffCompensation.deleteMany({ where: { organisationId: ORG } });
   await prisma.auditLog.deleteMany({ where: { organisationId: ORG } });
   await prisma.attendanceRecord.deleteMany({ where: { organisationId: ORG } });
+  // The day close now appends its auto-close punches to the raw ledger.
+  await prisma.rawPunchEvent.deleteMany({ where: { organisationId: ORG } });
   await prisma.userStore.deleteMany({ where: { user: { organisationId: ORG } } });
   await prisma.user.deleteMany({ where: { organisationId: ORG } });
   await prisma.store.deleteMany({ where: { organisationId: ORG } });

@@ -92,9 +92,8 @@ export function useMarkAttendance() {
       );
       return data;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [HRMS_KEY, "attendance"] });
-    },
+    // Today, the register and reports all read attendance.
+    onSuccess: () => qc.invalidateQueries({ queryKey: [HRMS_KEY] }),
   });
 }
 
@@ -540,6 +539,10 @@ export interface CreateShiftInput {
   endTime: string;
   bufferMins?: number;
   isNightBatch?: boolean;
+  /** No fixed start: lateness is never computed. */
+  isFlexible?: boolean;
+  /** Short code ("S", "G", "F", "6HR"). */
+  code?: string;
   /** Minutes worked for a full day's payroll credit. Defaults to the shift length. */
   fullDayMins?: number;
   /** Minutes for a half day's credit. Defaults to half the full-day threshold. */
