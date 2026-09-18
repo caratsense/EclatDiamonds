@@ -1,7 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { ImagePlus, Search, X } from "lucide-react";
+import { Suspense, useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { ImagePlus, Plug, Search, SlidersHorizontal, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { ImageSearch } from "@/components/catalogue/image-search";
@@ -38,15 +40,18 @@ import { getNavItem } from "@/lib/navigation";
 import {
   CATEGORY_LABELS,
   METAL_LABELS,
+  SOURCE_LABELS,
   type Availability,
   type Metal,
   type Product,
   type ProductCategory,
+  type ProductSource,
 } from "@/lib/mock/catalogue";
 import {
   useCreateProduct,
   useProducts,
   useUploadProductImage,
+  type ImageCoverage,
 } from "@/lib/queries/products";
 import { useDebouncedValue } from "@/lib/queries/search";
 import { ROLE_RANK } from "@/lib/types";
@@ -59,77 +64,91 @@ import { apiErrorMessage, isRealName } from "@/lib/utils";
 
 const nav = getNavItem("catalogue")!;
 
-type CategoryFilter = ProductCategory | "all";
-type MetalFilter = Metal | "all";
-type AvailFilter = Availability | "all";
-type StoreFilter = string; // store id or "all"
+const KARATS = [24, 22, 18, 14, 10, 9];
+const COVERAGE_LABELS: Record<ImageCoverage, string> = {
+  none: "No photo",
+  no_cad: "No CAD",
+  unindexed: "Not searchable yet",
+  indexed: "Searchable by photo",
+};
+/** Filters behind "More filters" — counted on the button so none hides silently. */
+const ADVANCED = ["subCategory", "size", "karat", "colour", "metal", "priceMin", "priceMax", "source", "coverage"] as const;
+const PAGE_SIZE_DEFAULT = 100;
 
 export default function CataloguePage() {
+  // Filters live in the URL so a filtered catalogue survives a refresh and can
+  // be shared. useSearchParams needs a Suspense boundary or the production
+  // build refuses to prerender the page.
+  return (
+    <Suspense fallback={<Skeleton className="h-96 w-full rounded-xl" />}>
+      <CatalogueView />
+    </Suspense>
+  );
+}
+
+function CatalogueView() {
   const { currentStore, stores, role } = useSession();
+  const router = useRouter();
+  const pathname = usePathname();
+  const sp = useSearchParams();
   // The tenant's noun for a product — "Item" in a factory, "Article" in a
   // textile business, "Product" everywhere the industry has no opinion.
   const { data: pageConfig } = useConfigBootstrap();
   const productNoun = pageConfig?.lexicon?.product ?? "Product";
   const productNounPlural = pageConfig?.lexicon?.product_plural ?? "Products";
-  // The jewellery category and metal filters mean nothing to a pack that hides
-  // the metal field: a clinic's or mill's products are all "other" and unmetalled.
+  // The jewellery filters mean nothing to a pack that hides the metal field.
   const showsMetalFilters = useFieldVisible(pageConfig)("product", "metal");
   const [active, setActive] = useState<Product | null>(null);
   const [open, setOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
 
-  const [category, setCategory] = useState<CategoryFilter>("all");
-  const [metal, setMetal] = useState<MetalFilter>("all");
-  const [avail, setAvail] = useState<AvailFilter>("all");
-  // Default store filter follows the active session store (unless aggregate).
-  const [store, setStore] = useState<StoreFilter>(
-    currentStore.isAggregate ? "all" : currentStore.id,
-  );
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(100);
-  // Style-number search: a customer asks about "SK-010225-A", the salesperson
-  // types it, and the design (with its CAD sheet) is on screen.
-  const [query, setQuery] = useState("");
-  const q = useDebouncedValue(query.trim(), 300);
+  const get = (k: string) => sp.get(k) ?? "";
+  /** Write filters to the URL (no history entry per click); a filter change resets the page. */
+  const setParams = (patch: Record<string, string>) => {
+    const next = new URLSearchParams(sp.toString());
+    for (const [k, v] of Object.entries(patch)) {
+      if (v) next.set(k, v);
+      else next.delete(k);
+    }
+    if (!("page" in patch)) next.delete("page");
+    const qs = next.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  };
 
-  // Product index comes live + store-scoped from the API. Filters run
-  // server-side so `total` reflects the filtered count; a filter change
-  // always resets to page 1 (see the onValueChange handlers below).
+  const q = get("q");
+  const category = get("category") as ProductCategory | "";
+  const metal = get("metal") as Metal | "";
+  const avail = get("availability") as Availability | "";
+  // No store in the URL = the session's store, as before; "all" is explicit.
+  const store = get("store") || (currentStore.isAggregate ? "all" : currentStore.id);
+  const karat = get("karat");
+  const source = get("source") as ProductSource | "";
+  const coverage = get("coverage") as ImageCoverage | "";
+  const page = Math.max(1, Number(get("page")) || 1);
+  const pageSize = Number(get("pageSize")) || PAGE_SIZE_DEFAULT;
+  const num = (k: string) => (get(k) && Number.isFinite(Number(get(k))) ? Number(get(k)) : undefined);
+  const advancedCount = ADVANCED.filter((k) => get(k)).length;
+  const [showAdvanced, setShowAdvanced] = useState(advancedCount > 0);
+
   const { data, isLoading, isError, refetch } = useProducts({
     page,
     pageSize,
     q: q || undefined,
-    category: category === "all" ? undefined : category,
-    metal: metal === "all" ? undefined : metal,
-    availability: avail === "all" ? undefined : avail,
+    category: category || undefined,
+    metal: metal || undefined,
+    availability: avail || undefined,
     storeId: store === "all" ? undefined : store,
+    subCategory: get("subCategory") || undefined,
+    size: get("size") || undefined,
+    karat: num("karat"),
+    colour: get("colour") || undefined,
+    priceMin: num("priceMin"),
+    priceMax: num("priceMax"),
+    source: source || undefined,
+    imageCoverage: coverage || undefined,
   });
   const products = data?.items ?? [];
   const total = data?.total ?? 0;
-
-  // Facet snapshot — the metals / availabilities actually stocked in scope, so
-  // the dropdowns only offer real choices (no empty "platinum" or "lead-time"
-  // when the business carries none). Unfiltered by metal/availability on
-  // purpose; category is kept so the facets track the browsed category.
-  // ponytail: 200-row scan; a store with >200 designs could miss a rare facet.
-  const { data: facetData } = useProducts({
-    page: 1,
-    pageSize: 200,
-    category: category === "all" ? undefined : category,
-    storeId: store === "all" ? undefined : store,
-  });
-  const facetRows = facetData?.items;
-  const presentMetals = facetRows
-    ? new Set(facetRows.map((p) => p.metal))
-    : null;
-  const presentAvail = facetRows
-    ? new Set(facetRows.map((p) => p.availability))
-    : null;
-  // Fall back to all options until the snapshot loads, and always keep the
-  // currently-selected value so an active filter never hides itself.
-  const metalOptions = (Object.entries(METAL_LABELS) as [Metal, string][]).filter(
-    ([id]) => !presentMetals || presentMetals.has(id) || metal === id,
-  );
 
   function openProduct(p: Product) {
     setActive(p);
@@ -138,8 +157,6 @@ export default function CataloguePage() {
 
   // An exact code opens its design straight away — once per search, so closing
   // the dialog does not reopen it while the same text is still in the box.
-  // Adjusted during render (React's pattern for state derived from new data),
-  // not in an effect, so there is no extra render with the dialog shut.
   const [autoOpened, setAutoOpened] = useState("");
   if (q && autoOpened !== q) {
     const needle = q.toLowerCase();
@@ -154,9 +171,9 @@ export default function CataloguePage() {
   }
 
   const selectStores = stores.filter((s) => !s.isAggregate);
-
   // POST /products requires store_manager+; hide the CTA for salespeople.
   const canAddProduct = ROLE_RANK[role] >= ROLE_RANK.store_manager;
+  const anyFilter = [...ADVANCED, "q", "category", "availability", "store"].some((k) => get(k));
 
   return (
     <>
@@ -169,127 +186,153 @@ export default function CataloguePage() {
 
       <div className="mb-6 space-y-2">
         <ImageSearch />
-        {role === "head_office" ? <VisualIndexControl /> : null}
+        {role === "head_office" ? (
+          <>
+            <VisualIndexControl />
+            <Button asChild variant="outline" size="sm">
+              <Link href="/catalogue/integration">
+                <Plug className="h-4 w-4" /> Website &amp; Gati integration
+              </Link>
+            </Button>
+          </>
+        ) : null}
       </div>
 
       {/* Filters */}
-      <div className="mb-4 flex flex-wrap gap-2">
-        <div className="relative min-w-[240px] flex-1">
+      <div className="mb-3 flex flex-wrap gap-2">
+        <div className="relative min-w-[240px] flex-[2_1_240px]">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setPage(1);
-            }}
+          <UrlText
+            value={q}
+            onCommit={(v) => setParams({ q: v })}
             placeholder="Style no, SKU or name — e.g. SK-010225-A"
             aria-label="Search designs by style number, SKU or name"
-            className="pl-9 pr-9"
+            className="h-11 pl-9 pr-9"
           />
-          {query ? (
+          {q ? (
             <button
               type="button"
               aria-label="Clear search"
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
-              onClick={() => {
-                setQuery("");
-                setPage(1);
-              }}
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1.5 text-muted-foreground hover:text-foreground"
+              onClick={() => setParams({ q: "" })}
             >
               <X className="h-4 w-4" />
             </button>
           ) : null}
         </div>
         {showsMetalFilters ? (
-          <>
-            <Select
-              value={category}
-              onValueChange={(v) => {
-                setCategory(v as CategoryFilter);
-                setPage(1);
-              }}
-            >
-              <SelectTrigger className="w-[150px]">
-                <SelectValue placeholder="Category" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All categories</SelectItem>
-                {Object.entries(CATEGORY_LABELS).map(([id, label]) => (
-                  <SelectItem key={id} value={id}>
-                    {label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select
-              value={metal}
-              onValueChange={(v) => {
-                setMetal(v as MetalFilter);
-                setPage(1);
-              }}
-            >
-              <SelectTrigger className="w-[150px]">
-                <SelectValue placeholder="Metal" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All metals</SelectItem>
-                {metalOptions.map(([id, label]) => (
-                  <SelectItem key={id} value={id}>
-                    {label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </>
+          <UrlSelect
+            label="Category"
+            value={category}
+            onChange={(v) => setParams({ category: v })}
+            options={Object.entries(CATEGORY_LABELS)}
+            allLabel="All categories"
+          />
         ) : null}
-
-        <Select
+        <UrlSelect
+          label="Store"
           value={store}
-          onValueChange={(v) => {
-            setStore(v);
-            setPage(1);
-          }}
-        >
-          <SelectTrigger className="w-[170px]">
-            <SelectValue placeholder="Store" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All stores</SelectItem>
-            {selectStores.map((s) => (
-              <SelectItem key={s.id} value={s.id}>
-                {s.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select
+          onChange={(v) => setParams({ store: v || "all" })}
+          options={selectStores.map((s) => [s.id, s.name])}
+          allLabel="All stores"
+          allValue="all"
+          className="w-[170px]"
+        />
+        <UrlSelect
+          label="Availability"
           value={avail}
-          onValueChange={(v) => {
-            setAvail(v as AvailFilter);
-            setPage(1);
-          }}
+          onChange={(v) => setParams({ availability: v })}
+          options={[
+            ["in_stock", "In-Stock"],
+            ["lead_time", "Lead-Time"],
+          ]}
+          allLabel="All availability"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          className="h-11"
+          aria-expanded={showAdvanced}
+          onClick={() => setShowAdvanced((s) => !s)}
         >
-          <SelectTrigger className="w-[150px]">
-            <SelectValue placeholder="Availability" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All availability</SelectItem>
-            {!presentAvail || presentAvail.has("in_stock") || avail === "in_stock" ? (
-              <SelectItem value="in_stock">In-Stock</SelectItem>
-            ) : null}
-            {!presentAvail || presentAvail.has("lead_time") || avail === "lead_time" ? (
-              <SelectItem value="lead_time">Lead-Time</SelectItem>
-            ) : null}
-          </SelectContent>
-        </Select>
+          <SlidersHorizontal className="h-4 w-4" />
+          More filters{advancedCount ? ` (${advancedCount})` : ""}
+        </Button>
       </div>
+
+      {showAdvanced ? (
+        <div className="mb-4 grid grid-cols-2 gap-2 rounded-lg border bg-muted/20 p-3 sm:grid-cols-3 lg:grid-cols-5">
+          <Field label="Sub-category">
+            <UrlText value={get("subCategory")} onCommit={(v) => setParams({ subCategory: v })} placeholder="e.g. Solitaire" />
+          </Field>
+          <Field label="Size">
+            <UrlText value={get("size")} onCommit={(v) => setParams({ size: v })} placeholder="e.g. IND 12" />
+          </Field>
+          {showsMetalFilters ? (
+            <>
+              <Field label="Karat">
+                <UrlSelect
+                  label="Karat"
+                  value={karat}
+                  onChange={(v) => setParams({ karat: v })}
+                  options={KARATS.map((k) => [String(k), `${k}K`])}
+                  allLabel="Any karat"
+                  className="w-full"
+                />
+              </Field>
+              <Field label="Colour">
+                <UrlText value={get("colour")} onCommit={(v) => setParams({ colour: v })} placeholder="e.g. rose" />
+              </Field>
+              <Field label="Metal">
+                <UrlSelect
+                  label="Metal"
+                  value={metal}
+                  onChange={(v) => setParams({ metal: v })}
+                  options={Object.entries(METAL_LABELS).filter(([id]) => id !== "unspecified")}
+                  allLabel="All metals"
+                  className="w-full"
+                />
+              </Field>
+            </>
+          ) : null}
+          <Field label="Price from (₹)">
+            <UrlText value={get("priceMin")} onCommit={(v) => setParams({ priceMin: v })} inputMode="numeric" type="number" min={0} />
+          </Field>
+          <Field label="Price to (₹)">
+            <UrlText value={get("priceMax")} onCommit={(v) => setParams({ priceMax: v })} inputMode="numeric" type="number" min={0} />
+          </Field>
+          <Field label="Source">
+            <UrlSelect
+              label="Source"
+              value={source}
+              onChange={(v) => setParams({ source: v })}
+              options={Object.entries(SOURCE_LABELS)}
+              allLabel="Any source"
+              className="w-full"
+            />
+          </Field>
+          <Field label="Photos">
+            <UrlSelect
+              label="Photo coverage"
+              value={coverage}
+              onChange={(v) => setParams({ coverage: v })}
+              options={Object.entries(COVERAGE_LABELS)}
+              allLabel="Any"
+              className="w-full"
+            />
+          </Field>
+          {anyFilter ? (
+            <div className="flex items-end">
+              <Button type="button" variant="ghost" className="h-11" onClick={() => router.replace(pathname, { scroll: false })}>
+                <X className="h-4 w-4" /> Clear all
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <p className="mb-3 text-sm text-muted-foreground">
         <span className="num">{total}</span>{" "}
-        {/* "piece" is a jeweller's noun. Everyone else counts products — or
-            whatever their industry calls them, via the tenant lexicon. */}
         {total === 1 ? productNoun.toLowerCase() : productNounPlural.toLowerCase()}
       </p>
 
@@ -299,25 +342,16 @@ export default function CataloguePage() {
           <p className="mt-1 text-xs text-muted-foreground">
             The connection may have dropped. Check your network and try again.
           </p>
-          <Button
-            variant="outline"
-            size="sm"
-            className="mt-3"
-            onClick={() => refetch()}
-          >
+          <Button variant="outline" size="sm" className="mt-3" onClick={() => refetch()}>
             Retry
           </Button>
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4">
             {isLoading
-              ? Array.from({ length: 8 }).map((_, i) => (
-                  <Skeleton key={i} className="h-64 rounded-xl" />
-                ))
-              : products.map((p) => (
-                  <ProductCard key={p.id} product={p} onOpen={openProduct} />
-                ))}
+              ? Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-72 rounded-xl" />)
+              : products.map((p) => <ProductCard key={p.id} product={p} onOpen={openProduct} />)}
           </div>
 
           {!isLoading && products.length === 0 ? (
@@ -333,20 +367,96 @@ export default function CataloguePage() {
               page={page}
               pageSize={pageSize}
               total={total}
-              onPageChange={setPage}
-              onPageSizeChange={(size) => {
-                setPageSize(size);
-                setPage(1);
-              }}
+              onPageChange={(n) => setParams({ page: n > 1 ? String(n) : "" })}
+              onPageSizeChange={(size) =>
+                setParams({ pageSize: size === PAGE_SIZE_DEFAULT ? "" : String(size) })
+              }
             />
           ) : null}
         </>
       )}
 
-      <ProductDetailDialog product={active} open={open} onOpenChange={setOpen} />
+      <ProductDetailDialog
+        productId={active?.id ?? null}
+        seed={active ?? undefined}
+        open={open}
+        onOpenChange={setOpen}
+      />
 
       <AddProductDialog open={addOpen} onOpenChange={setAddOpen} />
     </>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="grid gap-1 text-xs text-muted-foreground">
+      {label}
+      {children}
+    </label>
+  );
+}
+
+/**
+ * A text filter that types locally and writes to the URL once typing pauses.
+ * Commits only when the debounce has caught up with the box, so "Clear all"
+ * cannot be undone by a stale value arriving 300ms later.
+ */
+function UrlText({
+  value,
+  onCommit,
+  className = "h-11",
+  ...props
+}: { value: string; onCommit: (v: string) => void } & Omit<React.ComponentProps<typeof Input>, "value" | "onChange">) {
+  const [text, setText] = useState(value);
+  const [seen, setSeen] = useState(value);
+  if (value !== seen) {
+    setSeen(value);
+    if (value !== text.trim()) setText(value);
+  }
+  const debounced = useDebouncedValue(text.trim(), 300);
+  const commit = useRef(onCommit);
+  useEffect(() => {
+    commit.current = onCommit;
+  });
+  useEffect(() => {
+    if (debounced === text.trim() && debounced !== value) commit.current(debounced);
+  }, [debounced, text, value]);
+  return <Input value={text} onChange={(e) => setText(e.target.value)} className={className} {...props} />;
+}
+
+/** Select bound to one URL param; "" (or `allValue`) means no filter. */
+function UrlSelect({
+  label,
+  value,
+  onChange,
+  options,
+  allLabel,
+  allValue = "__all__",
+  className = "w-[150px]",
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: [string, string][];
+  allLabel: string;
+  allValue?: string;
+  className?: string;
+}) {
+  return (
+    <Select value={value || allValue} onValueChange={(v) => onChange(v === "__all__" ? "" : v)}>
+      <SelectTrigger aria-label={label} className={`h-11 ${className}`}>
+        <SelectValue placeholder={label} />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={allValue}>{allLabel}</SelectItem>
+        {options.map(([id, text]) => (
+          <SelectItem key={id} value={id}>
+            {text}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 

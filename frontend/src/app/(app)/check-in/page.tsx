@@ -35,6 +35,12 @@ import { useCheckIn, useGeofence, useMyAttendance } from "@/lib/queries/hrms";
 import { FaceScannerDialog } from "@/components/biometrics/face-scanner-dialog";
 import { apiErrorMessage } from "@/lib/utils";
 import { useHydrated } from "@/lib/use-reset-on";
+import {
+  evaluatePunchLocation,
+  punchAction,
+  type PunchLocationDecision,
+  type PunchPosition,
+} from "@/lib/attendance-punch-policy";
 
 /** HH:mm from an ISO instant, or an em-dash. */
 function formatTime(iso: string | null): string {
@@ -65,26 +71,6 @@ function todayLabel(): string {
   });
 }
 
-/**
- * Great-circle distance in metres between two lat/lng points (haversine,
- * R = 6371000). Used to score the live watched position against the store centre.
- */
-function haversineM(
-  lat1: number,
-  lng1: number,
-  lat2: number,
-  lng2: number,
-): number {
-  const R = 6371000;
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLng = toRad(lng2 - lng1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(a));
-}
-
 /** Human distance: nearest 5 m under 1 km, else km with one decimal. */
 function formatDistance(m: number): string {
   if (m >= 1000) {
@@ -97,9 +83,9 @@ function formatDistance(m: number): string {
  * Best-effort one-shot browser geolocation. Resolves the coords, or null when
  * the API is unsupported / permission is denied / the fix times out. The caller
  * is lenient: a null just means the punch records without geo-verification.
- * Used by the manual "Check in anyway" fallback (the auto flow uses watchPosition).
+ * Used by the manual fallback (the automatic flow uses watchPosition).
  */
-function getPosition(): Promise<{ lat: number; lng: number; accuracyM?: number } | null> {
+function getPosition(): Promise<PunchPosition | null> {
   return new Promise((resolve) => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
       resolve(null);
@@ -140,8 +126,9 @@ function RangeChip({ record }: { record: SelfAttendance }) {
  * When the day isn't handled yet and the store has coordinates, it watches the
  * device location and AUTO checks the salesperson in the moment they come within
  * the store's geofence radius — a returning salesperson just has to be near the
- * store and the app welcomes them. Manual "Check in anyway" + "Skip for now"
- * remain as fallbacks, and the whole flow is lenient (a punch is always allowed).
+ * store and the app welcomes them. Manual check-in and "Skip for now" remain
+ * available. A confirmed outside check-in is blocked; an unavailable
+ * or inconclusive fix can continue only with a written reason.
  */
 export default function CheckInPage() {
   const router = useRouter();
@@ -156,24 +143,18 @@ export default function CheckInPage() {
   // True when the fresh check-in couldn't capture a location.
   const [geoMissed, setGeoMissed] = useState(false);
   // Latest watched position (drives the live distance card). Null until first fix.
-  const [watchPos, setWatchPos] = useState<{ lat: number; lng: number; accuracyM?: number } | null>(
-    null,
-  );
+  const [watchPos, setWatchPos] = useState<PunchPosition | null>(null);
   // True once the browser denies permission / geolocation is unsupported.
   // Permission refusals arrive from the browser and are state; "this device has
   // no geolocation API at all" is a fact about the device, read below rather
   // than copied into state by an effect.
   const [permissionDenied, setGeoDenied] = useState(false);
   const hydrated = useHydrated();
-  // An off-site punch needs a written reason before the API will record it, so
-  // "Check in anyway" opens this instead of firing a request that must fail.
+  // Missing or inconclusive GPS needs a written reason before the API records it.
   const [reasonOpen, setReasonOpen] = useState(false);
   const [reason, setReason] = useState("");
-  // Coordinates captured for the punch waiting on that reason (null = no fix).
-  const [pendingPos, setPendingPos] = useState<{
-    lat: number;
-    lng: number;
-  } | null>(null);
+  const [pendingPos, setPendingPos] = useState<PunchPosition | null>(null);
+  const [pendingDecision, setPendingDecision] = useState<PunchLocationDecision | null>(null);
   // The camera sheet, and the still it produced. The photo survives a detour
   // through the off-site reason box, so someone who took a photo and then had
   // to explain their location does not have to take it again.
@@ -183,7 +164,7 @@ export default function CheckInPage() {
   // watchPosition handle, so we can clearWatch on unmount / after a punch.
   const watchIdRef = useRef<number | null>(null);
   // Freshest coords for the auto-punch, without waiting on a state flush.
-  const latestPosRef = useRef<{ lat: number; lng: number; accuracyM?: number } | null>(null);
+  const latestPosRef = useRef<PunchPosition | null>(null);
   // Fires the auto check-in exactly once; also set by the manual button so the
   // watcher never double-punches.
   const punchedRef = useRef(false);
@@ -201,42 +182,12 @@ export default function CheckInPage() {
   const today = lastPunch ?? data?.today ?? null;
   const alreadyIn = !lastPunch && !!data?.today?.checkInAt;
 
-  // Live distance from the watched position to the store centre (null until a
-  // fix lands or when the store has no coordinates).
-  const distanceM = useMemo(() => {
-    if (
-      !watchPos ||
-      !geofence?.hasCoords ||
-      geofence.latitude == null ||
-      geofence.longitude == null
-    ) {
-      return null;
-    }
-    return haversineM(
-      watchPos.lat,
-      watchPos.lng,
-      geofence.latitude,
-      geofence.longitude,
-    );
-  }, [watchPos, geofence]);
-
-  const inRange = distanceM != null && distanceM <= radius;
-
-  /** Is a specific fix inside the fence? Used by the manual punch, which has its
-   *  own freshly-read position rather than the watched one. */
-  function inRangeOf(pos: { lat: number; lng: number }): boolean {
-    if (
-      !geofence?.hasCoords ||
-      geofence.latitude == null ||
-      geofence.longitude == null
-    ) {
-      return false;
-    }
-    return (
-      haversineM(pos.lat, pos.lng, geofence.latitude, geofence.longitude) <=
-      radius
-    );
-  }
+  const liveDecision = useMemo(
+    () => evaluatePunchLocation(watchPos, geofence),
+    [watchPos, geofence],
+  );
+  const distanceM = liveDecision.distanceM;
+  const inRange = liveDecision.state === "inside";
 
   /** Stop the geofence watcher if one is running. */
   function clearWatcher() {
@@ -267,7 +218,7 @@ export default function CheckInPage() {
    * first; see {@link startManual}.
    */
   function runCheckIn(
-    pos: { lat: number; lng: number; accuracyM?: number } | null,
+    pos: PunchPosition | null,
     note?: string,
     photo?: string | null,
   ) {
@@ -287,6 +238,8 @@ export default function CheckInPage() {
           setLastPunch(row);
           setReasonOpen(false);
           setReason("");
+          setPendingDecision(null);
+          setPendingPos(null);
           setScannerOpen(false);
           setPendingPhoto(null);
           markAttendanceHandled();
@@ -386,24 +339,33 @@ export default function CheckInPage() {
     router.replace(home);
   }
 
-  /**
-   * "Check in anyway" — the deliberate off-site punch.
-   *
-   * By definition this is either outside the fence or has no fix, both of which
-   * the server records only WITH a reason. So the button opens the reason box
-   * rather than firing a request that is certain to be refused.
-   */
+  function prepareCheckIn(pos: PunchPosition | null, photo?: string) {
+    const decision = evaluatePunchLocation(pos, geofence);
+    const action = punchAction(decision, "in");
+    if (action === "block") {
+      punchedRef.current = false;
+      setScannerOpen(false);
+      toast.error("Check-in blocked outside the store range", {
+        description: `You are ${formatDistance(decision.distanceM ?? 0)} away. Move within ${radius} m or ask a manager to regularize attendance.`,
+      });
+      return;
+    }
+    if (action === "reason") {
+      setPendingPos(pos);
+      setPendingPhoto(photo ?? null);
+      setPendingDecision(decision);
+      setScannerOpen(false);
+      setReasonOpen(true);
+      return;
+    }
+    runCheckIn(pos, undefined, photo);
+  }
+
+  /** Manual check-in follows the same policy as the automatic path. */
   async function startManual() {
     if (checkIn.isPending) return;
     punchedRef.current = true; // stop the watcher from also firing
-    const pos = await getPosition();
-    setPendingPos(pos);
-    // A fix that turns out to be inside the fence needs no explanation.
-    if (pos && inRangeOf(pos)) {
-      runCheckIn(pos);
-      return;
-    }
-    setReasonOpen(true);
+    prepareCheckIn(await getPosition());
   }
 
   /** Send the off-site punch once the reason has been written. */
@@ -421,16 +383,8 @@ export default function CheckInPage() {
    * it, and a punch with no photo remains a completely normal punch.
    */
   async function punchWithPhoto(photo: string) {
-    setPendingPhoto(photo);
     punchedRef.current = true; // stop the watcher from also firing
-    const pos = await getPosition();
-    setPendingPos(pos);
-    if (pos && inRangeOf(pos)) {
-      runCheckIn(pos, undefined, photo);
-      return;
-    }
-    setScannerOpen(false);
-    setReasonOpen(true);
+    prepareCheckIn(await getPosition(), photo);
   }
 
   return (
@@ -449,22 +403,17 @@ export default function CheckInPage() {
 
         <CardContent className="space-y-5">
           {reasonOpen ? (
-            /* ── Off-site punch: collect the reason the API requires ──────
-               Without this the button fired a request that could only 400,
-               and the page reported "please try again" — which never helps,
-               because an unexplained off-site punch fails identically every
-               time. */
+            /* Missing or inconclusive GPS: collect the reason required by the API. */
             <div className="space-y-4">
               <div className="rounded-xl border border-warning/40 bg-warning/10 p-4">
                 <p className="text-sm font-medium">
-                  {pendingPos
-                    ? "You're not at the store"
+                  {pendingDecision?.state === "imprecise"
+                    ? "GPS accuracy cannot confirm your location"
                     : "We couldn't read your location"}
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Your attendance will still be recorded. Tell your manager why
-                  you&apos;re checking in from here — they&apos;ll see this note
-                  when they review the day.
+                  Add a reason to continue. The check-in and your note will be
+                  recorded for manager review.
                 </p>
               </div>
               <div className="grid gap-1.5">
@@ -504,6 +453,9 @@ export default function CheckInPage() {
                   onClick={() => {
                     setReasonOpen(false);
                     setReason("");
+                    setPendingDecision(null);
+                    setPendingPos(null);
+                    setPendingPhoto(null);
                     punchedRef.current = false; // let the watcher try again
                   }}
                   className="text-sm font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
@@ -628,8 +580,9 @@ export default function CheckInPage() {
             /* ── No store coordinates → manual lenient punch only ──── */
             <div className="space-y-4">
               <p className="text-center text-sm text-muted-foreground">
-                You haven&apos;t marked attendance today. Your location is
-                captured to verify you&apos;re at the store.
+                You haven&apos;t marked attendance today. This store has no
+                geofence configured, so attendance will be recorded without a
+                range check.
               </p>
               <Button
                 variant="gold"
@@ -658,7 +611,7 @@ export default function CheckInPage() {
                 onClick={() => setScannerOpen(true)}
               >
                 <Camera className="h-5 w-5" />
-                Add a photo
+                Add optional photo
               </Button>
               <p className="text-center text-xs text-muted-foreground">
                 Automatic detection unavailable for this store.
@@ -701,7 +654,7 @@ export default function CheckInPage() {
                 ) : (
                   <>
                     <LogIn className="h-5 w-5" />
-                    Check in anyway
+                    Continue with reason
                   </>
                 )}
               </Button>
@@ -713,7 +666,7 @@ export default function CheckInPage() {
                 onClick={() => setScannerOpen(true)}
               >
                 <Camera className="h-5 w-5" />
-                Add a photo
+                Add optional photo
               </Button>
               <div className="text-center">
                 <button
@@ -761,15 +714,24 @@ export default function CheckInPage() {
               <div className="rounded-xl border border-warning/40 bg-warning/10 p-5 text-center">
                 <MapPin className="mx-auto h-8 w-8 text-warning" />
                 <p className="mt-3 text-sm font-medium">
-                  You&apos;re{" "}
-                  <span className="num">{formatDistance(distanceM)}</span> from{" "}
-                  {storeName}
+                  {liveDecision.state === "imprecise" ? (
+                    "GPS accuracy cannot confirm your location"
+                  ) : (
+                    <>
+                      You&apos;re <span className="num">{formatDistance(distanceM)}</span> from {storeName}
+                    </>
+                  )}
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Move closer — you&apos;ll be checked in automatically within{" "}
-                  <span className="num">{radius}</span> m.
+                  {liveDecision.state === "imprecise" ? (
+                    "You may continue with a reason, or wait for a more accurate GPS reading."
+                  ) : (
+                    <>Move closer — check-in is blocked until you are within <span className="num">{radius}</span> m.</>
+                  )}
                 </p>
               </div>
+              {liveDecision.state === "imprecise" ? (
+              <>
               <Button
                 variant="secondary"
                 size="lg"
@@ -785,7 +747,7 @@ export default function CheckInPage() {
                 ) : (
                   <>
                     <LogIn className="h-5 w-5" />
-                    Check in anyway
+                    Continue with reason
                   </>
                 )}
               </Button>
@@ -797,8 +759,10 @@ export default function CheckInPage() {
                 onClick={() => setScannerOpen(true)}
               >
                 <Camera className="h-5 w-5" />
-                Add a photo
+                Add optional photo
               </Button>
+              </>
+              ) : null}
               <div className="text-center">
                 <button
                   type="button"
@@ -813,8 +777,7 @@ export default function CheckInPage() {
         </CardContent>
       </Card>
 
-      {/* An addition to the punch, never a gate in front of it: every button
-          above still checks in without ever opening this. */}
+      {/* Optional evidence inside the punch flow; never an authentication step. */}
       <FaceScannerDialog
         open={scannerOpen}
         onOpenChange={setScannerOpen}

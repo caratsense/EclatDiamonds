@@ -10,6 +10,7 @@ import type {
   Product,
   ProductCategory,
   ProductImage,
+  ProductSource,
 } from "@/lib/mock/catalogue";
 
 export interface CreateProductInput {
@@ -56,7 +57,21 @@ export interface ProductListParams {
   availability?: Availability;
   /** Explicit store filter (distinct from the session store scope). */
   storeId?: string;
+  /** Website listing sub-category, as the listing spells it. */
+  subCategory?: string;
+  /** A size option, e.g. "IND 12". */
+  size?: string;
+  karat?: number;
+  /** Variant / image colour, e.g. "rose". */
+  colour?: string;
+  /** Rupees; matched against the online minimum, else the tag price. */
+  priceMin?: number;
+  priceMax?: number;
+  source?: ProductSource;
+  imageCoverage?: ImageCoverage;
 }
+
+export type ImageCoverage = "none" | "no_cad" | "unindexed" | "indexed";
 
 /**
  * GET /products — unified catalogue index, server-paginated. The API scopes
@@ -160,8 +175,12 @@ function useGalleryMutation<V>(
     onSuccess: (images, vars) => {
       // Seed the cache from the response instead of refetching: the server just
       // told us the new state, and a round trip here is a visible flicker on a
-      // shop iPad.
-      qc.setQueryData(["product-images", productIdOf(vars)], images);
+      // shop iPad. Only when it IS a gallery: an API answering with something
+      // else must not poison the cache.
+      if (Array.isArray(images)) qc.setQueryData(["product-images", productIdOf(vars)], images);
+      else qc.invalidateQueries({ queryKey: ["product-images", productIdOf(vars)] });
+      // The detail view reads images, hero and order from /full.
+      qc.invalidateQueries({ queryKey: ["product-full"] });
       qc.invalidateQueries({ queryKey: ["products"] });
     },
   });
@@ -205,7 +224,10 @@ export function useAddProductImages() {
   );
 }
 
-/** Make one photo the design’s cover. */
+/**
+ * Pin one photo as the design’s primary (head office). The pin outranks the
+ * default order (CAD, then website…) until it is removed.
+ */
 export function useSetPrimaryProductImage() {
   return useGalleryMutation(
     async ({ id, imageId }: { id: string; imageId: string }) => {
@@ -227,4 +249,202 @@ export function useDeleteProductImage() {
     },
     (v) => v.id,
   );
+}
+
+/** Remove the head-office pin; the default order (CAD first) takes over again. */
+export function useUnpinPrimaryProductImage() {
+  return useGalleryMutation(
+    async ({ id, imageId }: { id: string; imageId: string }) => {
+      const { data } = await api.delete<ProductImage[]>(
+        `/products/${id}/images/${imageId}/primary`,
+      );
+      return data;
+    },
+    (v) => v.id,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// GET /products/:id/full — everything about one design, fetched lazily when the
+// detail opens. Shapes follow docs/modules/05-catalogue-sources.md ("Product
+// API"). Cost fields (rates, amounts, margins, raw-material ids) are stripped
+// server-side by role; the UI shows a column only when the response has it.
+// ---------------------------------------------------------------------------
+
+export interface WebsiteListing {
+  marketingName?: string | null;
+  slug?: string | null;
+  categories?: string[];
+  subCategories?: string[];
+  features?: string[];
+  tags?: string[];
+  countries?: string[];
+  isActive?: boolean;
+  isDeleted?: boolean;
+  description?: string | null;
+  sizeGuide?: string | null;
+  tombstonedAt?: string | null;
+}
+
+/** One BOM line as the source sent it — its keys are the source's, not ours. */
+export type BomLine = Record<string, unknown>;
+
+export interface ProductVariantView {
+  id: string;
+  source?: string;
+  sourceKey?: string;
+  /** Server-built "18K · Yellow Gold · Natural". */
+  label?: string | null;
+  sku?: string | null;
+  metalType?: string | null;
+  karat?: number | null;
+  metal?: Metal | null;
+  diamondType?: string | null;
+  colour?: string | null;
+  weightType?: string | null;
+  goldWeight?: number | null;
+  diamondWeight?: number | null;
+  stoneWeight?: number | null;
+  totalWeight?: number | null;
+  price?: number | null;
+  /** Store manager and up only. */
+  priceWithMargin?: number | null;
+  marginPercentage?: number | null;
+  makingCharge?: number | null;
+  currency?: string | null;
+  bom?: BomLine[] | null;
+  status?: string | null;
+}
+
+export interface ProductPriceView {
+  id?: string;
+  /** Variant id for variant prices; null for product-level prices. */
+  variantId?: string | null;
+  variantLabel?: string | null;
+  source: string;
+  kind: string;
+  /** Server-side label, when it sends one. */
+  label?: string | null;
+  amount: number;
+  currency?: string | null;
+}
+
+export interface StoreAvailability {
+  storeId: string;
+  storeName: string;
+  count: number;
+  /** The viewer's own store. */
+  here?: boolean;
+}
+
+/** A physical piece with everything Gati knows about it. Amounts are role-gated. */
+export interface StockPieceFull {
+  id: string;
+  tagNo?: string | null;
+  storeId?: string | null;
+  storeName?: string | null;
+  status?: string | null;
+  sizeLabel?: string | null;
+  hsn?: string | null;
+  huid?: string | null;
+  hallmarkNo?: string | null;
+  certificateNo?: string | null;
+  productCode?: string | null;
+  quantity?: number | null;
+  grossWeight?: number | null;
+  netWeight?: number | null;
+  pureWeight?: number | null;
+  diamondWeightCt?: number | null;
+  diamondPieces?: number | null;
+  stoneWeightCt?: number | null;
+  stonePieces?: number | null;
+  tagPrice?: number | null;
+  mrp?: number | null;
+  metalAmount?: number | null;
+  diamondAmount?: number | null;
+  stoneAmount?: number | null;
+  makingAmount?: number | null;
+  cpfAmount?: number | null;
+  cost?: number | null;
+  variantId?: string | null;
+  inwardDate?: string | null;
+  ageDays?: number | null;
+}
+
+export interface CatalogueConflictView {
+  id: string;
+  kind: string;
+  summary: string;
+  status?: string;
+  productId?: string | null;
+  externalId?: string | null;
+  detail?: Record<string, unknown> | null;
+  resolution?: Record<string, unknown> | null;
+  firstSeenAt?: string | null;
+  lastSeenAt?: string | null;
+}
+
+/**
+ * GET /products/:id/full: the list-card view of the product at the root, plus
+ * everything below. Absent keys mean "not sent to this role" or "none".
+ */
+export type ProductFull = Product & {
+  hsn?: string | null;
+  legacyId?: string | null;
+  /** Store manager and up only. */
+  costPrice?: number | null;
+  identifiers?: Record<string, string | number | null | undefined> | null;
+  listing?: WebsiteListing | null;
+  /** Website specification text, verbatim, with where and when it came from. */
+  specifications?: { text: string; source?: string | null; syncedAt?: string | null } | null;
+  variants?: ProductVariantView[];
+  /** Size options in source order. */
+  sizes?: (string | { value: string; source?: string; sortOrder?: number })[];
+  prices?: ProductPriceView[];
+  availabilityByStore?: StoreAvailability[];
+  pieces?: StockPieceFull[];
+  /** Timestamps (…At) plus a few ids; the UI shows the timestamps. */
+  provenance?: Record<string, string | null | undefined> | null;
+  conflicts?: CatalogueConflictView[];
+  /**
+   * Set by THIS client when the API has no /full yet: the web app deploys on
+   * its own (Vercel, on push) and the API by hand, so for a while one can be
+   * ahead of the other. The detail then shows what the older endpoints have.
+   */
+  legacy?: boolean;
+};
+
+export function httpStatus(err: unknown): number | undefined {
+  return (err as { response?: { status?: number } })?.response?.status;
+}
+
+/** 403/404: the design was deleted, or is not in this viewer's scope. */
+export function isNotFound(err: unknown): boolean {
+  const s = httpStatus(err);
+  return s === 404 || s === 403;
+}
+
+export function useProductFull(productId: string | null) {
+  const storeId = useStoreKey();
+  return useQuery({
+    queryKey: ["product-full", storeId, productId],
+    enabled: !!productId,
+    retry: (count, err) => !isNotFound(err) && count < 2,
+    queryFn: async (): Promise<ProductFull> => {
+      try {
+        const { data } = await api.get<ProductFull>(`/products/${productId}/full`);
+        return data;
+      } catch (err) {
+        if (httpStatus(err) !== 404) throw err;
+        // The route itself may be missing (older API): ask the long-standing
+        // endpoint before calling the design gone. Its own 404 is the real one.
+        const [{ data: product }, images, pieces] = await Promise.all([
+          api.get<Product>(`/products/${productId}`),
+          api.get<ProductImage[]>(`/products/${productId}/images`).then((r) => r.data, () => []),
+          api.get<StockPiece[]>(`/products/${productId}/pieces`).then((r) => r.data, () => []),
+        ]);
+        return { ...product, images, pieces, legacy: true };
+      }
+    },
+  });
 }

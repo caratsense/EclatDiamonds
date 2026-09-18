@@ -7,9 +7,6 @@ import { Button } from "@/components/ui/button";
 import { useReindexStatus, useStartReindex } from "@/lib/queries/jewelry-similarity";
 import { apiErrorMessage, cn } from "@/lib/utils";
 
-const time = (iso?: string) =>
-  iso ? new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "";
-
 /**
  * Head office's handle on the visual-search index.
  *
@@ -27,16 +24,16 @@ export function VisualIndexControl() {
   const done = status?.done ?? 0;
   const pct = total ? Math.round((done / total) * 100) : 0;
 
+  const failed = (status?.counts?.failed ?? 0) + (status?.counts?.dead ?? 0);
   let line = "Rebuild after a bulk import, or when image search says the catalogue isn't indexed.";
   if (running) {
     line = total
-      ? `Rebuilding — ${done} of ${total} photos · ${pct}% (started ${time(status?.startedAt)}). Search keeps working meanwhile.`
-      : `Starting the rebuild… (started ${time(status?.startedAt)})`;
+      ? `Indexing — ${done} of ${total} photos · ${pct}%. Search keeps working meanwhile.`
+      : "Indexing is queued…";
   } else if (status?.error) {
-    line = `Last rebuild failed (${time(status.finishedAt)}): ${status.error}`;
-  } else if (status?.result) {
-    const r = status.result;
-    line = `Last rebuilt ${time(status.finishedAt)} — ${r.embedded ?? 0} indexed, ${r.skipped ?? 0} already current, ${r.failed ?? 0} unreadable`;
+    line = `Last rebuild failed: ${status.error}`;
+  } else if (total) {
+    line = `${done} of ${total} photos indexed${failed ? ` · ${failed} could not be read` : ""}. Queues only what is not current.`;
   }
 
   return (
@@ -61,7 +58,7 @@ export function VisualIndexControl() {
             start.mutate(undefined, {
               onSuccess: (d) =>
                 toast.success(
-                  d.started ? "Rebuild started — progress shows below the image search" : "A rebuild is already running",
+                  d.started ? `${d.queued ?? "Photos"} queued for indexing` : "Everything is already indexed or queued",
                 ),
               onError: (err) => toast.error(apiErrorMessage(err, "Could not start the rebuild.")),
             })

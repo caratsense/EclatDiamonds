@@ -108,6 +108,14 @@ export const ROUTE_FAMILIES: readonly RouteFamily[] = Object.freeze([
       'for the same reason /products is; its own prefix so /products/:id cannot ' +
       'swallow the routes.',
   },
+  {
+    prefix: '/catalogue-integration',
+    capability: null,
+    why:
+      'Head office connecting the catalogue sources (website feed, Gati) and ' +
+      'reviewing their sync receipts and conflicts. Universal for the same ' +
+      'reason /products is.',
+  },
   { prefix: '/checkins', capability: null, why: 'Customer visits are universal; every pack seeds visit purposes.' },
   { prefix: '/hrms', capability: null, why: 'Attendance is sold to every industry.' },
   { prefix: '/imports', capability: null, why: 'Bringing your own data in is universal.' },

@@ -63,6 +63,16 @@ export class MarkAttendanceDto {
   @IsDateString()
   checkInAt?: string;
 
+  /**
+   * Store-local wall-clock time (HH:mm) on `date`. Prefer this over
+   * `checkInAt` so the backend, not the browser, applies the store timezone.
+   * `checkInAt` remains available for older clients; the service rejects a
+   * request that supplies both forms.
+   */
+  @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'checkInLocal must be HH:mm' })
+  checkInLocal?: string;
+
   /** Day being marked (YYYY-MM-DD, store-local). Defaults to the store's today. */
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'date must be YYYY-MM-DD' })
@@ -522,9 +532,23 @@ export class CreatePunchDto {
   @IsIn(['in', 'out'])
   kind!: 'in' | 'out';
 
-  /** ISO 8601 instant. */
+  /**
+   * Legacy ISO 8601 instant. New clients should send `localDate` +
+   * `localTime`; exactly one input form is accepted by the service.
+   */
+  @IsOptional()
   @IsDateString()
-  at!: string;
+  at?: string;
+
+  /** Store-local calendar date used with `localTime`. */
+  @IsOptional()
+  @Matches(YMD, { message: 'localDate must be YYYY-MM-DD' })
+  localDate?: string;
+
+  /** Store-local wall-clock time used with `localDate`. */
+  @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'localTime must be HH:mm' })
+  localTime?: string;
 
   @IsString()
   @IsNotEmpty()

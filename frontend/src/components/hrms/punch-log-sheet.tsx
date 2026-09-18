@@ -225,11 +225,15 @@ export function AddPunchDialog({
       setErrors(next);
       return;
     }
-    // ponytail: the time is read in the browser's timezone — right while every
-    // store and manager sits in IST; send store-local HH:MM if that changes.
-    const at = new Date(`${date}T${time}:00`).toISOString();
     addPunch.mutate(
-      { userId, storeId, kind, at, note: note.trim() },
+      {
+        userId,
+        storeId,
+        kind,
+        localDate: date,
+        localTime: time,
+        note: note.trim(),
+      },
       {
         onSuccess: () => {
           toast.success("Punch added", { description: "The day is recomputed from the punches." });

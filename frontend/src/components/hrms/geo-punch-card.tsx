@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   Camera,
@@ -34,6 +34,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  evaluatePunchLocation,
+  punchAction,
+  type PunchLocationDecision,
+  type PunchPosition,
+} from "@/lib/attendance-punch-policy";
 import { apiErrorMessage, cn } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 import { FaceScannerDialog } from "@/components/biometrics/face-scanner-dialog";
@@ -85,7 +91,7 @@ function formatWorked(mins: number | null): string {
  * unsupported / permission is denied / the fix times out. The caller is lenient:
  * a null just means the punch records without geo-verification (backend allows it).
  */
-function getPosition(): Promise<{ lat: number; lng: number; accuracyM?: number } | null> {
+function getPosition(): Promise<PunchPosition | null> {
   return new Promise((resolve) => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
       resolve(null);
@@ -101,20 +107,6 @@ function getPosition(): Promise<{ lat: number; lng: number; accuracyM?: number }
 }
 
 /** Haversine distance in metres — mirrors the server's geofence maths. */
-function distanceM(
-  a: { lat: number; lng: number },
-  b: { lat: number; lng: number },
-): number {
-  const R = 6371000;
-  const toRad = (x: number) => (x * Math.PI) / 180;
-  const dLat = toRad(b.lat - a.lat);
-  const dLng = toRad(b.lng - a.lng);
-  const h =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
-  return Math.round(R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h)));
-}
-
 /** The geo outcome of the last / today's check-in. */
 function GeoResult({
   record,
@@ -175,7 +167,9 @@ export function GeoPunchCard() {
    */
   const [reasonFor, setReasonFor] = useState<"in" | "out" | null>(null);
   const [reason, setReason] = useState("");
-  const [pendingDistance, setPendingDistance] = useState<number | null>(null);
+  const [pendingDecision, setPendingDecision] = useState<PunchLocationDecision | null>(null);
+  const [pendingPos, setPendingPos] = useState<PunchPosition | null>(null);
+  const [pendingPhoto, setPendingPhoto] = useState<string | null>(null);
   /**
    * The camera sheet, and which punch it is for.
    *
@@ -187,14 +181,13 @@ export function GeoPunchCard() {
    */
   const [cameraFor, setCameraFor] = useState<"in" | "out" | null>(null);
 
-  const [enrolledPhoto, setEnrolledPhoto] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    return (
-      localStorage.getItem(`eclat_face_photo_${user.id}`) ||
-      (user.email ? localStorage.getItem(`eclat_face_photo_${user.email}`) : null)
-    );
-  });
-  const [enrollCameraOpen, setEnrollCameraOpen] = useState(false);
+  // Delete the old local-only pseudo-enrolment for this account. Those values
+  // were photos, not biometric templates, and must not survive as auth state.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.removeItem(`eclat_face_photo_${user.id}`);
+    if (user.email) localStorage.removeItem(`eclat_face_photo_${user.email}`);
+  }, [user.email, user.id]);
 
   const today = lastPunch ?? data?.today ?? null;
   const records = data?.records ?? [];
@@ -203,21 +196,8 @@ export function GeoPunchCard() {
   const checkedIn = !!today?.checkInAt;
   const checkedOut = !!today?.checkOutAt;
 
-  /**
-   * Distance from the store, computed on-device so we can prompt for a reason
-   * BEFORE the request. Null when either the fix or the store's coordinates are
-   * missing, in which case there is nothing to be outside of.
-   */
-  function offsiteDistance(pos: { lat: number; lng: number } | null): number | null {
-    if (!pos || !fence?.hasCoords || fence.latitude == null || fence.longitude == null) {
-      return null;
-    }
-    const d = distanceM(pos, { lat: fence.latitude, lng: fence.longitude });
-    return d > fence.geofenceRadiusM ? d : null;
-  }
-
   function submitCheckIn(
-    pos: { lat: number; lng: number; accuracyM?: number } | null,
+    pos: PunchPosition | null,
     note?: string,
     photo?: string,
   ) {
@@ -235,6 +215,9 @@ export function GeoPunchCard() {
           setLastPunch(row);
           setReasonFor(null);
           setReason("");
+          setPendingDecision(null);
+          setPendingPos(null);
+          setPendingPhoto(null);
           setCameraFor(null);
           toast.success("Checked in", {
             description: !captured
@@ -255,7 +238,7 @@ export function GeoPunchCard() {
   }
 
   function submitCheckOut(
-    pos: { lat: number; lng: number; accuracyM?: number } | null,
+    pos: PunchPosition | null,
     note?: string,
     photo?: string,
   ) {
@@ -270,6 +253,9 @@ export function GeoPunchCard() {
           setLastPunch(row);
           setReasonFor(null);
           setReason("");
+          setPendingDecision(null);
+          setPendingPos(null);
+          setPendingPhoto(null);
           setCameraFor(null);
           toast.success("Checked out", {
             description: `Worked ${formatWorked(row.workedMins)}${
@@ -285,64 +271,42 @@ export function GeoPunchCard() {
     );
   }
 
-  /** Coordinates captured for the punch currently waiting on a reason. */
-  const [pendingPos, setPendingPos] = useState<{ lat: number; lng: number } | null>(
-    null,
-  );
+  function preparePunch(
+    which: "in" | "out",
+    pos: PunchPosition | null,
+    photo?: string,
+  ) {
+    const decision = evaluatePunchLocation(pos, fence);
+    const action = punchAction(decision, which);
+    if (which === "in") setGeoMissed(pos == null);
 
-  async function handleCheckIn() {
-    const pos = await getPosition();
-    const captured = pos != null;
-    setGeoMissed(!captured);
-    if (!captured) {
-      toast.error("Couldn't capture your location", {
-        description:
-          "Recording the check-in without geo-verification — a manager can regularize it.",
-      });
-    }
-    const away = offsiteDistance(pos);
-    if (away != null) {
-      // Out of radius grace check: allow up to 3 times per employee
-      const storageKey = `eclat_out_radius_count_${user.id}`;
-      const count = Number(typeof window !== "undefined" ? localStorage.getItem(storageKey) : 0) || 0;
-      if (count < 3) {
-        const nextCount = count + 1;
-        if (typeof window !== "undefined") {
-          localStorage.setItem(storageKey, String(nextCount));
-        }
-        const graceNote = `Outside store geofence (${away}m away, Grace ${nextCount}/3) - Store Manager notified`;
-        toast.warning(`Outside store range (${away}m)`, {
-          description: `Punch allowed under grace allowance (${nextCount} of 3 used). Your Store Manager has been notified.`,
-        });
-        submitCheckIn(pos, graceNote);
-        return;
-      }
-
-      toast.error("Outside store range — grace limit reached", {
-        description: `You're ${away} m away (allowed: ${fence?.geofenceRadiusM ?? 0} m). You have used all 3 out-of-radius allowances. You must be at the store to check in.`,
+    if (action === "block") {
+      setCameraFor(null);
+      toast.error("Check-in blocked outside the store range", {
+        description: `You are ${decision.distanceM ?? "outside"} m away (allowed: ${fence?.geofenceRadiusM ?? 0} m). Move within range or ask a manager to regularize attendance.`,
       });
       return;
     }
-    submitCheckIn(pos);
+
+    if (action === "reason") {
+      setCameraFor(null);
+      setPendingPos(pos);
+      setPendingPhoto(photo ?? null);
+      setPendingDecision(decision);
+      setReasonFor(which);
+      return;
+    }
+
+    if (which === "in") submitCheckIn(pos, undefined, photo);
+    else submitCheckOut(pos, undefined, photo);
+  }
+
+  async function handleCheckIn() {
+    preparePunch("in", await getPosition());
   }
 
   async function handleCheckOut() {
-    const pos = await getPosition();
-    if (!pos) {
-      toast.error("Couldn't capture your location", {
-        description: "Recording the check-out without geo-verification.",
-      });
-    }
-    const away = offsiteDistance(pos);
-    if (away != null) {
-      const graceNote = `Check-out outside store geofence (${away}m away) - Store Manager notified`;
-      submitCheckOut(pos, graceNote);
-      toast.warning(`Check-out recorded (${away}m from store)`, {
-        description: "Your Store Manager has been notified of the off-site check-out.",
-      });
-      return;
-    }
-    submitCheckOut(pos);
+    preparePunch("out", await getPosition());
   }
 
   /**
@@ -356,42 +320,14 @@ export function GeoPunchCard() {
   async function punchWithPhoto(photo: string) {
     const which = cameraFor;
     if (!which) return;
-    const pos = await getPosition();
-
-    if (which === "in") {
-      setGeoMissed(pos == null);
-      const away = offsiteDistance(pos);
-      if (away != null) {
-        setCameraFor(null);
-        toast.error("Outside the store range", {
-          description: `You are ${away} m away (allowed: ${fence?.geofenceRadiusM ?? 0} m). You must be at the store to check in.`,
-        });
-        return;
-      }
-      submitCheckIn(pos, undefined, photo);
-      return;
-    }
-
-    const away = offsiteDistance(pos);
-    if (away != null) {
-      // Same lenient path as an ordinary check-out: ask why, then send. The
-      // photo is dropped here rather than held across the prompt — a reason box
-      // is a detour, and a stale frame filed minutes later is worse evidence
-      // than none.
-      setCameraFor(null);
-      setPendingPos(pos);
-      setPendingDistance(away);
-      setReasonFor("out");
-      return;
-    }
-    submitCheckOut(pos, undefined, photo);
+    preparePunch(which, await getPosition(), photo);
   }
 
   function submitReason() {
     const note = reason.trim();
     if (!note) return;
-    if (reasonFor === "in") submitCheckIn(pendingPos, note);
-    else submitCheckOut(pendingPos, note);
+    if (reasonFor === "in") submitCheckIn(pendingPos, note, pendingPhoto ?? undefined);
+    else submitCheckOut(pendingPos, note, pendingPhoto ?? undefined);
   }
 
   const staffName = user.name;
@@ -422,15 +358,7 @@ export function GeoPunchCard() {
         <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2">
           <div className="flex items-center gap-3">
             <Avatar className="h-9 w-9 border border-border">
-              {enrolledPhoto ? (
-                <img
-                  src={enrolledPhoto}
-                  alt={user.name}
-                  className="h-full w-full object-cover rounded-full"
-                />
-              ) : (
-                <AvatarFallback className="text-xs font-semibold">{user.initials}</AvatarFallback>
-              )}
+              <AvatarFallback className="text-xs font-semibold">{user.initials}</AvatarFallback>
             </Avatar>
             <div className="min-w-0 leading-tight">
               <p className="truncate text-sm font-medium">{user.name}</p>
@@ -439,78 +367,10 @@ export function GeoPunchCard() {
               </p>
             </div>
           </div>
-          {enrolledPhoto ? (
-            <Badge variant="outline" className="text-[10px] text-emerald-600 dark:text-emerald-400 border-emerald-500/30 gap-1">
-              <CheckCircle2 className="h-3 w-3" /> Face Enrolled
-            </Badge>
-          ) : (
-            <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400 border-amber-500/40 gap-1">
-              <AlertTriangle className="h-3 w-3" /> Face Pending
-            </Badge>
-          )}
+          <Badge variant="outline" className="text-[10px]">
+            Signed-in account
+          </Badge>
         </div>
-
-        {/* Profile Incomplete / Face Enrollment Banner */}
-        {!enrolledPhoto ? (
-          <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-amber-900 dark:text-amber-200 shadow-xs">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-start gap-3">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-500/20 text-amber-600 dark:text-amber-400">
-                  <AlertTriangle className="h-5 w-5" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="inline-flex items-center rounded-md bg-amber-500/20 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">
-                      Profile Incomplete
-                    </span>
-                    <span className="text-sm font-semibold text-amber-950 dark:text-amber-100">
-                      Face Reference Photo Required
-                    </span>
-                  </div>
-                  <p className="mt-1 text-xs text-amber-800/90 dark:text-amber-200/80 leading-relaxed">
-                    Capture your face reference photo once so managers can verify your daily punch-in and punch-out (login / logout) records.
-                  </p>
-                </div>
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => setEnrollCameraOpen(true)}
-                className="self-start sm:self-center shrink-0 bg-amber-600 hover:bg-amber-700 text-white font-medium text-xs rounded-lg px-3.5 py-2 gap-1.5 shadow-xs"
-              >
-                <Camera className="h-3.5 w-3.5" />
-                Enrol Face Photo
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <div className="flex items-center justify-between rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-2 text-xs text-emerald-800 dark:text-emerald-200">
-            <div className="flex items-center gap-2.5">
-              <img
-                src={enrolledPhoto}
-                alt="Enrolled Face"
-                className="h-7 w-7 rounded-full object-cover border border-emerald-500/40"
-              />
-              <div>
-                <span className="font-semibold text-emerald-950 dark:text-emerald-100">
-                  Profile Complete
-                </span>
-                <span className="ml-2 text-emerald-700 dark:text-emerald-300/80 text-[11px]">
-                  Face reference photo enrolled for login/logout verification
-                </span>
-              </div>
-            </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => setEnrollCameraOpen(true)}
-              className="h-7 text-[11px] text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20"
-            >
-              Update photo
-            </Button>
-          </div>
-        )}
 
         {isLoading ? (
           <Skeleton className="h-28 rounded-xl" />
@@ -527,23 +387,21 @@ export function GeoPunchCard() {
             </Button>
           </div>
         ) : reasonFor ? (
-          /* --- Off-site punch: collect a reason before sending ------
-             The API refuses an out-of-fence punch without one, so we ask
-             here instead of letting the request fail. The punch itself is
-             never blocked — it just has to be explained, and it lands in
-             the manager's review queue. */
+          /* Collect the explanation the server requires before sending. */
           <div className="space-y-3 rounded-xl border border-warning/40 bg-warning/5 p-4">
             <div className="flex items-start gap-2">
               <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
               <div className="space-y-1">
                 <p className="text-sm font-medium">
-                  You&apos;re{" "}
-                  {pendingDistance != null ? `${pendingDistance} m ` : ""}
-                  away from {fence?.storeName ?? "the store"}
+                  {pendingDecision?.state === "unavailable"
+                    ? "Location is unavailable"
+                    : pendingDecision?.state === "imprecise"
+                      ? "GPS accuracy cannot confirm your location"
+                      : `You are ${pendingDecision?.distanceM ?? "outside"} m from ${fence?.storeName ?? "the store"}`}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  Tell your manager why you&apos;re punching {reasonFor === "in" ? "in" : "out"}{" "}
-                  from here. The punch is recorded either way.
+                  Add a reason for this {reasonFor === "in" ? "check-in" : "check-out"}.
+                  It will be recorded for manager review.
                 </p>
               </div>
             </div>
@@ -574,6 +432,9 @@ export function GeoPunchCard() {
                 onClick={() => {
                   setReasonFor(null);
                   setReason("");
+                  setPendingDecision(null);
+                  setPendingPos(null);
+                  setPendingPhoto(null);
                 }}
               >
                 Cancel
@@ -616,6 +477,17 @@ export function GeoPunchCard() {
                   >
                     <LogIn className="h-4 w-4" />
                     {checkIn.isPending ? "Checking in…" : "Check in"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="lg"
+                    className="w-full sm:w-auto"
+                    disabled={punching}
+                    onClick={() => setCameraFor("in")}
+                  >
+                    <Camera className="h-4 w-4" />
+                    Add optional photo
                   </Button>
                 </div>
               </div>
@@ -671,6 +543,17 @@ export function GeoPunchCard() {
                   >
                     <LogOut className="h-4 w-4" />
                     {checkOut.isPending ? "Checking out…" : "Check out"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="lg"
+                    className="w-full sm:w-auto"
+                    disabled={punching}
+                    onClick={() => setCameraFor("out")}
+                  >
+                    <Camera className="h-4 w-4" />
+                    Add optional photo
                   </Button>
                 </div>
               </div>
@@ -826,31 +709,6 @@ export function GeoPunchCard() {
         }}
       />
 
-      {/* Profile Face Enrollment Dialog */}
-      <FaceScannerDialog
-        open={enrollCameraOpen}
-        onOpenChange={setEnrollCameraOpen}
-        title="Enrol Face Photo"
-        confirmLabel="Save Profile Photo"
-        context={{
-          staffName: user.name,
-          storeName,
-          action: "Profile Face Enrollment",
-        }}
-        onCapture={(photo) => {
-          if (typeof window !== "undefined") {
-            localStorage.setItem(`eclat_face_photo_${user.id}`, photo);
-            if (user.email) {
-              localStorage.setItem(`eclat_face_photo_${user.email}`, photo);
-            }
-          }
-          setEnrolledPhoto(photo);
-          setEnrollCameraOpen(false);
-          toast.success("Profile photo enrolled!", {
-            description: "Your reference face photo is saved for attendance verification.",
-          });
-        }}
-      />
     </>
   );
 }

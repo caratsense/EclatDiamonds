@@ -219,13 +219,23 @@ export function useAttendanceReportData(kind: ReportKind, params: ReportParams) 
  * makes a refusal arrive as a Blob too, so it is read back into JSON for
  * `apiErrorMessage`. The filename comes from Content-Disposition.
  */
-export function useDownloadReportCsv() {
+export type AttendanceExportFormat = "csv" | "xlsx" | "pdf";
+
+export function useDownloadAttendanceReport() {
   return useMutation({
-    mutationFn: async ({ kind, params }: { kind: ReportKind; params: ReportParams }) => {
+    mutationFn: async ({
+      kind,
+      params,
+      format,
+    }: {
+      kind: ReportKind;
+      params: ReportParams;
+      format: AttendanceExportFormat;
+    }) => {
       let res;
       try {
         res = await api.get<Blob>(`/hrms/reports/${kind}`, {
-          params: { ...clean(params), format: "csv" },
+          params: { ...clean(params), format },
           responseType: "blob",
         });
       } catch (e) {
@@ -240,17 +250,25 @@ export function useDownloadReportCsv() {
       }
       const disposition = String(res.headers?.["content-disposition"] ?? "");
       const filename =
-        /filename="?([^";]+)"?/i.exec(disposition)?.[1] ?? `attendance-${kind}.csv`;
+        /filename="?([^";]+)"?/i.exec(disposition)?.[1] ?? `attendance-${kind}.${format}`;
       const url = URL.createObjectURL(res.data);
-      try {
-        const a = document.createElement("a");
-        a.href = url;
+      const a = document.createElement("a");
+      a.href = url;
+      if (format === "pdf") {
+        // The API marks PDFs inline; a new browser tab gives the operator the
+        // native print/save viewer without adding a client-side PDF library.
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+      } else {
         a.download = filename;
-        a.click();
-      } finally {
+      }
+      a.click();
+      if (format === "pdf") {
+        window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      } else {
         URL.revokeObjectURL(url);
       }
-      return { filename };
+      return { filename, format };
     },
   });
 }

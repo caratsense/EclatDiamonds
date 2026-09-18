@@ -47,8 +47,8 @@ export class ReportQueryDto extends AnalyticsQueryDto {
   userId?: string;
 
   @IsOptional()
-  @IsIn(['json', 'csv'])
-  format?: 'json' | 'csv';
+  @IsIn(['json', 'csv', 'xlsx', 'pdf'])
+  format?: 'json' | 'csv' | 'xlsx' | 'pdf';
 
   /** constant-absent: minimum consecutive absent days. */
   @IsOptional()

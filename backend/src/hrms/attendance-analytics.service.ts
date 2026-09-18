@@ -1,5 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { AttendanceRecord, Prisma, Role } from '@prisma/client';
+import { Workbook } from 'exceljs';
+import { PDFDocument, PDFFont, StandardFonts, rgb } from 'pdf-lib';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
@@ -96,6 +98,169 @@ export function toCsv(r: Report): string {
   if (r.totals) lines.push(r.columns.map((c) => csvCell(r.totals![c.key])).join(','));
   // BOM so Excel reads UTF-8 names correctly.
   return `${String.fromCharCode(0xfeff)}${lines.join('\r\n')}\r\n`;
+}
+
+/** A real Office Open XML workbook, not CSV carrying an .xlsx extension. */
+export async function toXlsx(r: Report): Promise<Buffer> {
+  const workbook = new Workbook();
+  workbook.creator = 'CaratOS';
+  workbook.created = new Date();
+  const sheet = workbook.addWorksheet('Attendance', {
+    views: [{ state: 'frozen', ySplit: 1 }],
+  });
+  sheet.columns = r.columns.map((column) => ({
+    key: column.key,
+    header: column.label,
+    width: Math.min(
+      42,
+      Math.max(
+        10,
+        column.label.length + 2,
+        ...r.rows.slice(0, 250).map((row) => String(row[column.key] ?? '').length + 2),
+      ),
+    ),
+  }));
+  const header = sheet.getRow(1);
+  header.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  header.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF3F342D' } };
+  for (const row of r.rows) {
+    sheet.addRow(Object.fromEntries(r.columns.map((column) => [column.key, row[column.key] ?? ''])));
+  }
+  if (r.totals) {
+    const totals = sheet.addRow(
+      Object.fromEntries(r.columns.map((column) => [column.key, r.totals?.[column.key] ?? ''])),
+    );
+    totals.font = { bold: true };
+  }
+  if (r.columns.length) {
+    sheet.autoFilter = {
+      from: { row: 1, column: 1 },
+      to: { row: 1, column: r.columns.length },
+    };
+  }
+  return Buffer.from(await workbook.xlsx.writeBuffer());
+}
+
+const PDF_PAGE: [number, number] = [841.89, 595.28]; // A4 landscape
+const PDF_MARGIN = 24;
+const PDF_INK = rgb(0.12, 0.12, 0.14);
+const PDF_MUTED = rgb(0.42, 0.42, 0.46);
+const PDF_RULE = rgb(0.8, 0.8, 0.83);
+
+function printable(value: unknown, font: PDFFont): string {
+  const supported = new Set(font.getCharacterSet());
+  return [...String(value ?? '').replace(/₹/g, 'Rs. ').replace(/[\r\n\t]+/g, ' ')]
+    .map((ch) => (supported.has(ch.codePointAt(0)!) ? ch : '?'))
+    .join('');
+}
+
+function fitPdf(value: unknown, font: PDFFont, size: number, width: number): string {
+  let text = printable(value, font);
+  if (font.widthOfTextAtSize(text, size) <= width) return text;
+  while (text.length > 1 && font.widthOfTextAtSize(`${text}...`, size) > width) {
+    text = text.slice(0, -1);
+  }
+  return `${text}...`;
+}
+
+/**
+ * A compact, printable PDF. Wide reports are split into consecutive column
+ * panels rather than silently dropping columns; every panel repeats the title,
+ * period and row numbers so printed pages can be reconciled.
+ */
+export async function toPdf(r: Report): Promise<Buffer> {
+  const pdf = await PDFDocument.create();
+  pdf.setTitle(`Attendance ${r.kind}: ${r.period.from} to ${r.period.to}`);
+  pdf.setAuthor('CaratOS');
+  pdf.setCreator('CaratOS');
+  const regular = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const columnPanels = Array.from(
+    { length: Math.max(1, Math.ceil(r.columns.length / 7)) },
+    (_, index) => r.columns.slice(index * 7, index * 7 + 7),
+  );
+  const rowsPerPage = 31;
+  const printableRows = r.rows.length ? r.rows : [{}];
+
+  for (let panelIndex = 0; panelIndex < columnPanels.length; panelIndex++) {
+    const columns = columnPanels[panelIndex];
+    for (let start = 0; start < printableRows.length; start += rowsPerPage) {
+      const page = pdf.addPage(PDF_PAGE);
+      const width = PDF_PAGE[0] - PDF_MARGIN * 2;
+      const cellWidth = width / Math.max(columns.length, 1);
+      let y = PDF_PAGE[1] - PDF_MARGIN;
+      page.drawText(`Attendance - ${r.kind.replace(/-/g, ' ')}`, {
+        x: PDF_MARGIN,
+        y,
+        size: 13,
+        font: bold,
+        color: PDF_INK,
+      });
+      page.drawText(`${r.period.from} to ${r.period.to}`, {
+        x: PDF_MARGIN,
+        y: y - 15,
+        size: 8,
+        font: regular,
+        color: PDF_MUTED,
+      });
+      page.drawText(
+        `Columns ${panelIndex * 7 + 1}-${panelIndex * 7 + columns.length} of ${r.columns.length} | rows ${start + 1}-${Math.min(start + rowsPerPage, r.rows.length)} of ${r.rows.length}`,
+        { x: PDF_MARGIN + 210, y: y - 15, size: 8, font: regular, color: PDF_MUTED },
+      );
+      y -= 34;
+
+      page.drawRectangle({
+        x: PDF_MARGIN,
+        y: y - 13,
+        width,
+        height: 16,
+        color: rgb(0.25, 0.2, 0.18),
+      });
+      columns.forEach((column, index) => {
+        page.drawText(fitPdf(column.label, bold, 7, cellWidth - 8), {
+          x: PDF_MARGIN + index * cellWidth + 4,
+          y: y - 8,
+          size: 7,
+          font: bold,
+          color: rgb(1, 1, 1),
+        });
+      });
+      y -= 17;
+
+      for (const row of printableRows.slice(start, start + rowsPerPage)) {
+        columns.forEach((column, index) => {
+          page.drawText(fitPdf(row[column.key], regular, 6.5, cellWidth - 8), {
+            x: PDF_MARGIN + index * cellWidth + 4,
+            y: y - 8,
+            size: 6.5,
+            font: regular,
+            color: PDF_INK,
+          });
+        });
+        page.drawLine({
+          start: { x: PDF_MARGIN, y: y - 11 },
+          end: { x: PDF_PAGE[0] - PDF_MARGIN, y: y - 11 },
+          thickness: 0.35,
+          color: PDF_RULE,
+        });
+        y -= 15;
+      }
+
+      const isLastDataPage = start + rowsPerPage >= printableRows.length;
+      if (r.totals && isLastDataPage) {
+        columns.forEach((column, index) => {
+          page.drawText(fitPdf(r.totals?.[column.key], bold, 6.5, cellWidth - 8), {
+            x: PDF_MARGIN + index * cellWidth + 4,
+            y: y - 8,
+            size: 6.5,
+            font: bold,
+            color: PDF_INK,
+          });
+        });
+      }
+    }
+  }
+  return Buffer.from(await pdf.save());
 }
 
 /** Attendance KPIs, trends and the report families. See docs/modules/06-attendance.md. */

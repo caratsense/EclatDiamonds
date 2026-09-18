@@ -240,6 +240,7 @@ function MarkAttendanceDialog({
   const [status, setStatus] = useState<AttendanceStatus>("present");
   const [checkInTime, setCheckInTime] = useState("");
   const [shiftId, setShiftId] = useState<string>("");
+  const attended = status === "present" || status === "late" || status === "half_day";
   // Inline validation errors, keyed by field. Cleared per-field on change.
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -265,22 +266,13 @@ function MarkAttendanceDialog({
       return;
     }
 
-    // Build an ISO datetime for today from the HH:mm time, or omit it.
-    let checkInAt: string | undefined;
-    if (checkInTime) {
-      const [h, m] = checkInTime.split(":").map(Number);
-      const dt = new Date();
-      dt.setHours(h, m, 0, 0);
-      checkInAt = dt.toISOString();
-    }
-
     markAttendance.mutate(
       {
         staffId,
         status,
         storeId: targetStoreId,
-        checkInAt,
-        shiftId: shiftId || undefined,
+        checkInLocal: attended ? checkInTime || undefined : undefined,
+        shiftId: attended ? shiftId || undefined : undefined,
       },
       {
         onSuccess: () => {
@@ -352,7 +344,14 @@ function MarkAttendanceDialog({
             <Label htmlFor="att-status">Status</Label>
             <Select
               value={status}
-              onValueChange={(v) => setStatus(v as AttendanceStatus)}
+              onValueChange={(v) => {
+                const next = v as AttendanceStatus;
+                setStatus(next);
+                if (!(["present", "late", "half_day"] as AttendanceStatus[]).includes(next)) {
+                  setCheckInTime("");
+                  setShiftId("");
+                }
+              }}
             >
               <SelectTrigger id="att-status">
                 <SelectValue placeholder="Select status" />
@@ -372,13 +371,19 @@ function MarkAttendanceDialog({
               id="att-checkin"
               type="time"
               value={checkInTime}
+              disabled={!attended}
               onChange={(e) => setCheckInTime(e.target.value)}
             />
+            {!attended ? (
+              <p className="text-xs text-muted-foreground">
+                A non-working status does not carry a punch time.
+              </p>
+            ) : null}
           </div>
           {shifts.length > 0 ? (
             <div className="grid gap-1.5">
               <Label htmlFor="att-shift">Shift / batch</Label>
-              <Select value={shiftId} onValueChange={setShiftId}>
+              <Select value={shiftId} onValueChange={setShiftId} disabled={!attended}>
                 <SelectTrigger id="att-shift">
                   <SelectValue placeholder="Store default shift" />
                 </SelectTrigger>

@@ -43,6 +43,11 @@ import {
   parseDmy,
   titleCase,
 } from './ezattendance-import';
+import {
+  ATTENDANCE_CALCULATION_VERSION,
+  snapshotShift,
+  type ShiftLike,
+} from './attendance-ops.service';
 
 type Tx = Prisma.TransactionClient;
 type Db = PrismaService | Tx;
@@ -831,7 +836,7 @@ export class EmployeesService {
     const policy = readSignupPolicy(orgMeta.settings);
 
     // --- Shifts: seed the EzAttendance codes a store actually uses -------------
-    const shifts = new Map<string, { id: string; isFlexible: boolean }>();
+    const shifts = new Map<string, ShiftLike & { id: string }>();
     for (const s of await tx.shift.findMany({
       where: { organisationId: org, code: { not: null } },
     })) {
@@ -1217,6 +1222,9 @@ export class EmployeesService {
           lateMinutes: isLate ? lateMins : null,
           dayFraction: status === 'present' ? new Prisma.Decimal(1) : new Prisma.Decimal(0),
           source: 'import',
+          calculationVersion: ATTENDANCE_CALCULATION_VERSION,
+          shiftSnapshot:
+            status === 'present' && shift ? snapshotShift(shift) : Prisma.DbNull,
         };
 
         const existing = await tx.attendanceRecord.findUnique({
@@ -1238,6 +1246,7 @@ export class EmployeesService {
         const unchanged =
           existing &&
           existing.source === 'import' &&
+          existing.calculationVersion === ATTENDANCE_CALCULATION_VERSION &&
           existing.status === data.status &&
           existing.isLate === data.isLate &&
           existing.lateMinutes === data.lateMinutes &&
@@ -1287,10 +1296,15 @@ export class EmployeesService {
           );
         }
         if (data.checkInAt) {
-          // Org in the key: the column is globally unique and codes repeat across tenants.
+          // Retries are unique inside the tenant; employee codes repeat across tenants.
           const idempotencyKey = `ezatt:${org}:${code}:${dateOnly(today)}:in`;
           const seen = await tx.rawPunchEvent.findUnique({
-            where: { idempotencyKey },
+            where: {
+              organisationId_idempotencyKey: {
+                organisationId: org,
+                idempotencyKey,
+              },
+            },
           });
           if (!seen) {
             await tx.rawPunchEvent.create({

@@ -310,6 +310,52 @@ describe('Individual weekly offs and attendance-based payslips (e2e)', () => {
     expect(own.body.amount).toBe(30_000);
   });
 
+  it('a store manager cannot read pay or write weekly offs across store scope', async () => {
+    const otherStore = 'store_pay_other';
+    const otherUser = 'u_pay_other';
+    await prisma.store.create({
+      data: {
+        id: otherStore,
+        name: 'Other Branch',
+        city: 'Pune',
+        organisationId: A.org,
+        timezone: 'Asia/Kolkata',
+      },
+    });
+    await prisma.user.create({
+      data: {
+        id: otherUser,
+        email: 'other.pay@pay-a.local',
+        name: 'Other Branch Rep',
+        role: 'salesperson',
+        passwordHash: await bcrypt.hash(PASSWORD, 10),
+        isActive: true,
+        approvalStatus: 'approved',
+        organisationId: A.org,
+        userStores: { create: { storeId: otherStore, isPrimary: true } },
+      },
+    });
+    await prisma.staffCompensation.create({
+      data: {
+        organisationId: A.org,
+        userId: otherUser,
+        basis: 'monthly',
+        amount: 25_000,
+      },
+    });
+
+    await request(server())
+      .get(`/hrms/payroll/compensation/${otherUser}`)
+      .set(auth(mgrT))
+      .expect(404);
+    await request(server())
+      .put('/hrms/payroll/week-offs')
+      .set(auth(mgrT))
+      .send({ userId: otherUser, storeId: A.store, days: [2] })
+      .expect(400);
+    expect(await prisma.staffWeekOff.count({ where: { userId: otherUser } })).toBe(0);
+  });
+
   // ==========================================================================
   // 3. The payslip
   // ==========================================================================

@@ -180,7 +180,7 @@ export function AttendanceEditDialog({
               id="ae-note"
               value={note}
               aria-invalid={noteError}
-              placeholder="e.g. Biometric was down; confirmed with the store manager"
+              placeholder="e.g. Attendance terminal was down; confirmed with the store manager"
               onChange={(e) => {
                 setNote(e.target.value);
                 setNoteError(false);

@@ -113,7 +113,10 @@ export class SchedulerService {
       this.logger.error(`Omnichannel sweep failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     try {
-      const outcome = await this.jobs.drain(25);
+      // Each claim takes the highest-priority due job, so a long drain does not
+      // hold back a new urgent one; a low cap only idled the worker, leaving a
+      // backlog of one-second jobs (grid thumbnails) at 25 a minute.
+      const outcome = await this.jobs.drain(500);
       if (outcome.processed) {
         this.logger.log(
           `Jobs: ${outcome.processed} processed (${outcome.succeeded} ok, ${outcome.failed} failed)`,

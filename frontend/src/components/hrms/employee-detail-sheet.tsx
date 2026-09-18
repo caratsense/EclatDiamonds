@@ -109,7 +109,7 @@ export function EmployeeDetailSheet({
               <Item label="Mobile">{e.phone ?? "—"}</Item>
               <Item label="Personal email">{e.personalEmail ?? "—"}</Item>
               <Item label="Login">{e.loginEmail ?? "—"}</Item>
-              <Item label="Biometric no.">{e.biometricNo ?? "—"}</Item>
+              <Item label="Legacy attendance ID">{e.biometricNo ?? "—"}</Item>
               <Item label="Unit">{e.unit ?? "—"}</Item>
               <Item label="Source">{e.source ?? "—"}</Item>
               {/* Sensitive fields: the API only sends them to head office. */}

@@ -60,8 +60,9 @@ import {
   PERIOD_LABELS,
   presetRange,
   useAttendanceReportData,
-  useDownloadReportCsv,
+  useDownloadAttendanceReport,
   useStoreFilter,
+  type AttendanceExportFormat,
   type PeriodPreset,
   type ReportCell,
   type ReportKind,
@@ -400,14 +401,16 @@ function ReportCentre() {
   };
 
   const query = useAttendanceReportData(kind, params);
-  const download = useDownloadReportCsv();
+  const download = useDownloadAttendanceReport();
 
-  function downloadCsv() {
+  function exportReport(format: AttendanceExportFormat) {
     download.mutate(
-      { kind, params },
+      { kind, params, format },
       {
-        onSuccess: ({ filename }) => toast.success(`Downloaded ${filename}`),
-        onError: (e) => toast.error(apiErrorMessage(e, "Couldn't download the CSV.")),
+        onSuccess: ({ filename }) =>
+          toast.success(format === "pdf" ? `Opened ${filename}` : `Downloaded ${filename}`),
+        onError: (e) =>
+          toast.error(apiErrorMessage(e, `Couldn't produce the ${format.toUpperCase()} report.`)),
       },
     );
   }
@@ -509,19 +512,27 @@ function ReportCentre() {
               </div>
             ) : null}
 
-            <Button
-              variant="outline"
-              onClick={downloadCsv}
-              disabled={download.isPending}
-              className="sm:ml-auto"
-            >
-              {download.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Download className="h-4 w-4" />
-              )}
-              Download CSV
-            </Button>
+            <div className="flex flex-wrap gap-2 sm:ml-auto">
+              {([
+                ["csv", "CSV"],
+                ["xlsx", "Excel"],
+                ["pdf", "PDF / print"],
+              ] as const).map(([format, label]) => (
+                <Button
+                  key={format}
+                  variant="outline"
+                  onClick={() => exportReport(format)}
+                  disabled={download.isPending}
+                >
+                  {download.isPending && download.variables?.format === format ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Download className="h-4 w-4" />
+                  )}
+                  {label}
+                </Button>
+              ))}
+            </div>
           </div>
         </CardContent>
       </Card>

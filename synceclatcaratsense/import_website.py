@@ -1,36 +1,39 @@
 """
-Eclat / CaratSense — bring the WEBSITE designs into the catalogue.
+Eclat / CaratSense — bring the WEBSITE catalogue into Eclat, losslessly.
 
-Why this exists rather than using the shop's own picture folder:
+Why the website at all, when the shop has its own picture folder:
 
   The pictures in D:\\GATISOFTTECH\\SJEP IMAGES are the WORKING library. A large
   share of them have the measurements and specification printed across the
-  image — right for the workshop, wrong for a customer. Someone shown "18.5 mm"
-  written over a ring learns nothing from it and trusts the shop slightly less.
+  image — right for the workshop, wrong for a customer. The website carries
+  the retouched shots the client publishes, already on a public CDN, plus
+  every variant (9KT / 14KT / 18KT ...), size, price and bill of material.
 
-  The website already carries the retouched shots the client publishes, and
-  those files are already on a public CDN. So this uploads NOTHING: it reads the
-  same product feed the website itself uses and hands Eclat the URL.
+What this does:
 
-It also brings a price. Gati fills `StyleMstSummary.MRP` on under half the
-designs, while every website design has one.
+  Reads EVERY page of the website's product API until the website's own total
+  is reached, and sends each product exactly as the website published it — no
+  reduction, no picture cap, no choosing one price — to Eclat
+  (POST /sync/website/raw). Eclat keeps the payload verbatim, joins it to the
+  Gati design with the same code, and records anything it will not guess about
+  as a catalogue conflict for head office.
 
-Two kinds of design come across:
-  * one whose code matches a design already synced from Gati — that design is
-    only ENRICHED (photo, and price if it had none). Nothing Gati supplied is
-    overwritten; Gati is the authority on anything it actually holds.
-  * one that matches nothing — created as made-to-order, company-wide. The shop
-    sells it, no branch has one, and a salesperson can raise it to head office.
+  Only a COMPLETE read (every page, the website's total reached) lets Eclat
+  retire designs or photographs the website no longer shows. A partial read
+  adds and updates, and removes nothing.
 
 Read-only against the website. Touches SQL Server not at all.
 
 Run:  import_website.bat            see what would happen, send nothing
       import_website.bat --send     do it
+
+Optional: ECLAT_WEBSITE_TOKEN — a read-only service token from the website team,
+sent as a bearer. Never printed.
 """
-import itertools
 import json
 import os
 import sys
+import urllib.parse
 import urllib.request
 
 from gati_machine_auth import approved_connection
@@ -46,6 +49,7 @@ sys.path.insert(0, HERE)
 WEBSITE_API = (os.getenv("ECLAT_WEBSITE_API") or "").strip()
 APPROVED_WEBSITE_API = (os.getenv("ECLAT_APPROVED_WEBSITE_API") or "").strip()
 WEBSITE_ORIGIN = (os.getenv("ECLAT_WEBSITE_ORIGIN") or "").strip()
+WEBSITE_TOKEN = (os.getenv("ECLAT_WEBSITE_TOKEN") or "").strip()
 BASE_URL = (os.getenv("ECLAT_BASE_URL") or "").strip().rstrip("/")
 APPROVED_BACKEND = (os.getenv("CARATOS_APPROVED_BACKEND_ORIGIN") or "").strip()
 AGENT_TOKEN = (os.getenv("CARATOS_AGENT_TOKEN") or "").strip()
@@ -53,7 +57,11 @@ SQL_SERVER = (os.getenv("SJEP_SQL_SERVER") or r"localhost\SQLEXPRESS").strip()
 SQL_DB = (os.getenv("SJEP_SQL_DB") or "APRSSJEP").strip()
 APPROVAL_HEADERS = {}
 HEARTBEAT = None
-CHUNK = 200
+# Products per upload. Whole payloads are large (every variant, BOM line and
+# photograph), and the server writes each batch in one transaction.
+CHUNK = 25
+PAGE_SIZE = 100
+ENTITY = "website-raw"
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -69,142 +77,109 @@ except Exception:
     pass
 
 
-def fetch_products():
-    endpoint, public_origin = require_approved_website(
-        WEBSITE_API, APPROVED_WEBSITE_API, WEBSITE_ORIGIN
-    )
-    req = urllib.request.Request(
-        endpoint,
-        headers={
-            "User-Agent": "Mozilla/5.0",
-            "Origin": public_origin,
-            "Referer": f"{public_origin}/",
-        },
-    )
-    # A configured feed cannot redirect this one-click command to an unreviewed
-    # host. Review and pin the final endpoint instead.
-    with NO_REDIRECT_OPENER.open(req, timeout=90) as r:
-        d = json.loads(r.read().decode())
-    for key in ("data", "products", "items", "result"):
-        if isinstance(d, dict) and key in d:
-            d = d[key]
-            break
-    if isinstance(d, dict):
-        d = d.get("products") or next(iter(d.values()))
-    return d if isinstance(d, list) else []
+def page_url(endpoint, page, limit):
+    """The approved endpoint with page/limit set; every other query kept."""
+    parts = urllib.parse.urlsplit(endpoint)
+    query = [
+        (k, v)
+        for k, v in urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+        if k not in ("page", "limit")
+    ]
+    query += [("page", str(page)), ("limit", str(limit))]
+    return urllib.parse.urlunsplit(parts._replace(query=urllib.parse.urlencode(query)))
 
 
-def all_images(p, limit=12):
-    """Every real photograph on the product, without repeats, metals interleaved.
-
-    Products are shaped variantType[] -> shapes[] -> images[], and a shape can
-    carry an empty list, so this walks the whole structure rather than trusting
-    position 0.
-
-    This used to return the FIRST one and stop. That quietly threw away most of
-    what the client had already photographed: a ring shot from four sides
-    reached the catalogue as a single view, and because visual search matches
-    against indexed pictures, it could only ever be found from that one view.
-    The rest were sitting on the website CDN the whole time, costing nothing.
-
-    Interleaved because the feed lists every rose-gold angle, then every
-    white-gold one, then yellow. Cut in feed order, a design shot five ways per
-    metal lost yellow gold entirely, and a customer's yellow piece had only other
-    metals to match against. Round-robin keeps each metal's front and
-    three-quarter view before any metal's fourth angle.
-
-    Capped because every photo is embedded along with the jewellery detected in
-    it, and each of those is an index row: twelve is four angles in three metals,
-    which covers all but a handful of designs.
-    """
-    per_metal = []
-    for v in p.get("variantType") or []:
-        imgs = [img for s in v.get("shapes") or [] for img in s.get("images") or []]
-        per_metal.append(imgs + list(v.get("images") or []))
-    out = []
-    for row in itertools.zip_longest(*per_metal):
-        for img in row:
-            if isinstance(img, str) and img.startswith("http") and img not in out:
-                out.append(img)
-    return out[:limit]
-
-
-def first_image(p):
-    """The cover: the first real photograph, or None when there is none."""
-    imgs = all_images(p, limit=1)
-    return imgs[0] if imgs else None
-
-
-def names(v):
-    """category/subCategory arrive as [{name: ...}]; flatten to plain text."""
-    if isinstance(v, list):
-        return " ".join(str(x.get("name") if isinstance(x, dict) else x) for x in v)
-    return str(v or "")
-
-
-def karat_of(p):
-    for v in p.get("variants") or []:
-        k = str(v.get("karat") or "").strip()
-        if k.isdigit():
-            return int(k)
-    return 0
-
-
-def carat_of(p):
-    for v in p.get("variants") or []:
-        for key in ("diamondWeight", "caratWeight", "totalCaratWeight"):
-            try:
-                c = float(v.get(key))
-                if c > 0:
-                    return c
-            except (TypeError, ValueError):
-                pass
-    return 0
-
-
-def bill_of_material(p):
-    """The first variant's materials: what the design is made of, line by line.
-
-    The feed prices each variant (metal, karat, diamond type) from its own
-    billOfMaterial; the first is the one `indicativePrice` describes, so it is
-    the one that matches the price Eclat shows.
-    """
-    for v in p.get("variants") or []:
-        out = []
-        for m in v.get("billOfMaterial") or []:
-            if not isinstance(m, dict) or not m.get("materialName"):
-                continue
-            out.append({
-                "materialName": m.get("materialName"),
-                "weight": m.get("weight"),
-                "unit": m.get("unit"),
-                "quantity": m.get("quantity"),
-                "rate": m.get("rate"),
-                "lineTotal": m.get("_lineTotal"),
-                "isDiamond": bool(m.get("_isDiamond")),
-            })
-        if out:
-            return out
+def _count(v):
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v if v >= 0 else None
+    if isinstance(v, str) and v.strip().isdigit():
+        return int(v.strip())
     return None
 
 
-def to_record(p):
-    return {
-        "productCode": (p.get("productCode") or "").strip(),
-        "name": (p.get("name") or "").strip(),
-        "category": f"{names(p.get('category'))} {names(p.get('subCategory'))}".strip(),
-        "price": p.get("indicativePrice") or p.get("minVariantPrice") or 0,
-        "karat": karat_of(p),
-        "caratWeight": carat_of(p),
-        "description": (p.get("description") or "").strip() or None,
-        "imageUrl": first_image(p),
-        # Every published shot, so the design is searchable from more than the
-        # one angle that happened to be first in the feed.
-        "imageUrls": all_images(p),
-        # Metal, diamonds, stones with weights and amounts. Eclat shows the
-        # amounts to store managers and up only.
-        "composition": bill_of_material(p),
+def parse_page(body):
+    """(products, total, totalPages) from any envelope the feed has used."""
+    data = body.get("data") if isinstance(body, dict) else None
+    if isinstance(body, list):
+        products = body
+    elif isinstance(data, list):
+        products = data
+    elif isinstance(data, dict) and isinstance(data.get("products"), list):
+        products = data["products"]
+    elif isinstance(data, dict) and isinstance(data.get("docs"), list):
+        products = data["docs"]
+    elif isinstance(body, dict) and any(isinstance(body.get(k), list) for k in ("products", "items", "docs")):
+        products = next(body[k] for k in ("products", "items", "docs") if isinstance(body.get(k), list))
+    else:
+        raise RuntimeError("website response has no product list")
+    holders = [body, data]
+    for h in (body, data):
+        if isinstance(h, dict):
+            holders += [h.get("pagination"), h.get("meta")]
+    holders = [h for h in holders if isinstance(h, dict)]
+
+    def pick(keys):
+        for h in holders:
+            for k in keys:
+                n = _count(h.get(k))
+                if n is not None:
+                    return n
+        return None
+
+    return (
+        products,
+        pick(("total", "totalCount", "totalDocs", "totalProducts", "totalItems")),
+        pick(("totalPages", "pages", "pageCount")),
+    )
+
+
+def fetch_page(page, limit=PAGE_SIZE):
+    endpoint, public_origin = require_approved_website(
+        WEBSITE_API, APPROVED_WEBSITE_API, WEBSITE_ORIGIN
+    )
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Origin": public_origin,
+        "Referer": f"{public_origin}/",
+        "Accept": "application/json",
     }
+    if WEBSITE_TOKEN:
+        headers["Authorization"] = f"Bearer {WEBSITE_TOKEN}"
+    req = urllib.request.Request(page_url(endpoint, page, limit), headers=headers)
+    # A configured feed cannot redirect this one-click command to an unreviewed
+    # host. Review and pin the final endpoint instead.
+    with NO_REDIRECT_OPENER.open(req, timeout=90) as r:
+        return parse_page(json.loads(r.read().decode()))
+
+
+def fetch_all(limit=PAGE_SIZE, fetch=None):
+    """Every page until the website's own total is reached.
+
+    Returns (products, total, complete). `complete` is True only when the feed
+    reported a total, every page up to it came back full, and that many
+    products arrived. Eclat removes nothing on anything less.
+    """
+    fetch = fetch or fetch_page
+    products, total, page = [], None, 1
+    while True:
+        items, page_total, total_pages = fetch(page, limit)
+        if page_total is not None:
+            total = page_total
+        products.extend(items)
+        heartbeat("reading", entity=ENTITY, rowsRead=len(products))
+        if total is None:
+            # No total: completeness cannot be proven. Stop on a short page.
+            if len(items) < limit:
+                return products, None, False
+        else:
+            pages = total_pages or max(1, -(-total // limit))
+            if page >= pages:
+                return products, total, len(products) >= total
+            if len(items) < limit:
+                return products, total, False  # a short page before the last
+        page += 1
 
 
 def login():
@@ -239,54 +214,65 @@ def terminal_heartbeat(ok, error=None, **stats):
 
 
 def _validated_acknowledgement(value, expected):
-    if not isinstance(value, dict) or value.get("entity") != "website-products":
+    if not isinstance(value, dict) or value.get("entity") != ENTITY:
         raise RuntimeError("website import returned an invalid acknowledgement")
-    counts = {
-        name: value.get(name)
-        for name in ("received", "upserted", "skipped", "created", "enriched")
-    }
+    counts = {name: value.get(name) for name in ("received", "upserted", "skipped")}
     if any(type(number) is not int or number < 0 for number in counts.values()):
         raise RuntimeError("website import returned invalid acknowledgement counts")
-    if (
-        counts["received"] != expected
-        or counts["upserted"] + counts["skipped"] != expected
-        or counts["created"] + counts["enriched"] != counts["upserted"]
-    ):
+    if counts["received"] != expected or counts["upserted"] + counts["skipped"] != expected:
         raise RuntimeError("website import acknowledgement did not cover the sent batch")
+    if not isinstance(value.get("runId"), str) or not value["runId"]:
+        raise RuntimeError("website import acknowledgement has no run id")
     return value
 
 
-def push(token, records):
-    created = enriched = skipped = 0
-    for i in range(0, len(records), CHUNK):
-        batch = records[i:i + CHUNK]
-        heartbeat(
-            "uploading",
-            entity="website-products",
-            rowsRead=i,
-            rowsReady=len(records),
-        )
-        body = json.dumps({"records": batch}).encode()
-        req = urllib.request.Request(
-            f"{BASE_URL}/sync/website-products", data=body,
-            headers=dict(APPROVAL_HEADERS))
-        # Never forward the restricted machine bearer through an HTTP redirect.
-        with NO_REDIRECT_OPENER.open(req, timeout=300) as r:
-            res = _validated_acknowledgement(
-                json.loads(r.read().decode()), len(batch)
-            )
+def _post(body):
+    req = urllib.request.Request(
+        f"{BASE_URL}/sync/website/raw",
+        data=json.dumps(body).encode(),
+        headers=dict(APPROVAL_HEADERS),
+    )
+    # Never forward the restricted machine bearer through an HTTP redirect.
+    with NO_REDIRECT_OPENER.open(req, timeout=300) as r:
+        return json.loads(r.read().decode())
+
+
+def push(token, products, total=None, complete=False):
+    """Send raw payloads in batches under one Eclat sync run, then close it.
+
+    Returns (created, updated, unchanged, failed, final run status).
+    """
+    run_id = None
+    created = updated = unchanged = failed = 0
+    for i in range(0, len(products), CHUNK):
+        batch = products[i:i + CHUNK]
+        heartbeat("uploading", entity=ENTITY, rowsRead=i, rowsReady=len(products))
+        body = {"products": batch}
+        if run_id:
+            body["runId"] = run_id
+        if total is not None:
+            body["expected"] = total
+        res = _validated_acknowledgement(_post(body), len(batch))
+        run_id = res["runId"]
         created += res.get("created", 0)
-        enriched += res.get("enriched", 0)
-        skipped += res.get("skipped", 0)
-        print(f"    sent {i + len(batch)}/{len(records)}  "
-              f"created={created} enriched={enriched} skipped={skipped}")
-    return created, enriched, skipped
+        updated += res.get("updated", 0)
+        unchanged += res.get("unchanged", 0)
+        failed += res.get("failed", 0)
+        print(f"    sent {i + len(batch)}/{len(products)}  created={created} "
+              f"updated={updated} unchanged={unchanged} failed={failed}")
+    final = {"products": [], "final": True, "complete": bool(complete)}
+    if run_id:
+        final["runId"] = run_id
+    if total is not None:
+        final["expected"] = total
+    res = _validated_acknowledgement(_post(final), 0)
+    return created, updated, unchanged, failed, res.get("status")
 
 
 def _main():
     send = "--send" in sys.argv
     print("=" * 72)
-    print("  WEBSITE DESIGNS -> ECLAT CATALOGUE")
+    print("  WEBSITE CATALOGUE -> ECLAT (lossless)")
     print("  " + ("SENDING" if send else "PREVIEW — nothing will be sent"))
     print("=" * 72)
 
@@ -302,31 +288,25 @@ def _main():
             return 1
 
     try:
-        products = fetch_products()
+        products, total, complete = fetch_all()
     except Exception as e:
         print(f"\n[STOP] Could not read the website: {str(e)[:200]}")
         print("       No internet on this machine, or a proxy is blocking it.")
         return 1
-    print(f"\n  designs on the website : {len(products):,}")
+    coded = sum(1 for p in products if isinstance(p, dict) and str(p.get("productCode") or "").strip())
+    print(f"\n  website total          : {total if total is not None else 'not reported'}")
+    print(f"  designs received       : {len(products):,}")
+    print(f"  with a design code     : {coded:,}")
+    print(f"  complete read          : {'yes' if complete else 'NO — Eclat will add/update but remove nothing'}")
 
-    records = [to_record(p) for p in products]
-    records = [r for r in records if r["productCode"]]
-    with_img = sum(1 for r in records if r["imageUrl"])
-    total_img = sum(len(r.get("imageUrls") or []) for r in records)
-    with_price = sum(1 for r in records if r["price"])
-    print(f"  usable (have a code)   : {len(records):,}")
-    print(f"  with a photograph      : {with_img:,}")
-    print(f"  photographs in total   : {total_img:,}  (every angle, not just the cover)")
-    print(f"  with a price           : {with_price:,}")
-
-    if not records:
+    if not products:
         print("\n  Nothing to import.")
         return 1
 
     print("\n  first three:")
-    for r in records[:3]:
-        print(f"    {r['productCode']:<16} {r['name'][:34]:<36} "
-              f"{str(r['price']):>9}  {'photo' if r['imageUrl'] else 'NO PHOTO'}")
+    for p in products[:3]:
+        p = p if isinstance(p, dict) else {}
+        print(f"    {str(p.get('productCode') or '').strip():<16} {str(p.get('name') or '').strip()[:48]}")
 
     if not send:
         print("\n" + "=" * 72)
@@ -335,12 +315,12 @@ def _main():
         print("=" * 72)
         return 0
 
-    created, enriched, skipped = push(AGENT_TOKEN, records)
+    created, updated, unchanged, failed, status = push(AGENT_TOKEN, products, total, complete)
     print("\n" + "=" * 72)
-    print(f"  DONE. {created} new design(s) added, {enriched} existing one(s) "
-          f"given a photo/price, {skipped} unchanged.")
-    print("  Photographs are served from the website's own CDN — nothing was")
-    print("  uploaded, and nothing in the shop system was touched.")
+    print(f"  DONE (run {status}). {created} new, {updated} updated, {unchanged} unchanged, "
+          f"{failed} could not be read (see catalogue conflicts in Eclat).")
+    print("  Photographs stay on the website's CDN; nothing in the shop system")
+    print("  was touched.")
     print("=" * 72)
     return 0
 
@@ -353,13 +333,13 @@ def main():
         result = _main()
     except Exception as exc:
         print(f"[STOP] Website catalogue import failed: {str(exc)[:200]}")
-        terminal_heartbeat(False, exc, entity="website-products")
+        terminal_heartbeat(False, exc, entity=ENTITY)
         return 1
     if "--send" in sys.argv:
         reported = terminal_heartbeat(
             result == 0,
             None if result == 0 else "Website catalogue import failed",
-            entity="website-products",
+            entity=ENTITY,
         )
         if result == 0 and not reported:
             return 1
@@ -377,6 +357,6 @@ if __name__ == "__main__":
         print("\n  Stopped before the website catalogue import completed.")
         if "--send" in sys.argv:
             terminal_heartbeat(
-                False, exc, phase="interrupted", entity="website-products"
+                False, exc, phase="interrupted", entity=ENTITY
             )
         sys.exit(130)

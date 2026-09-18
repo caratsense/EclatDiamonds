@@ -425,8 +425,13 @@ export function EmployeeFormDialog({
             <Field label="Shift code" hint="EzAttendance code: S, G, 6HR, F…">
               <Input value={form.shiftCode} onChange={(e) => set("shiftCode", e.target.value)} className="num" />
             </Field>
-            <Field label="Biometric no.">
-              <Input value={form.biometricNo} onChange={(e) => set("biometricNo", e.target.value)} className="num" />
+            <Field label="Legacy attendance ID (optional)">
+              <Input
+                value={form.biometricNo}
+                onChange={(e) => set("biometricNo", e.target.value)}
+                className="num"
+                placeholder="Imported terminal identifier"
+              />
             </Field>
             <Field label="Unit" hint="City / legal unit">
               <Input value={form.unit} onChange={(e) => set("unit", e.target.value)} />

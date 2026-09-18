@@ -31,14 +31,14 @@ import { StorageService } from '../storage/storage.service';
  * A colleague at the same counter may not — they have no reason to hold a
  * picture of someone else's face, and "same organisation" is not a reason.
  *
- * ## What is still true
+ * ## At-rest protection
  *
- * On R2 the underlying object remains publicly readable to anyone who
- * separately obtains its key. Closing that means turning off public read on the
- * bucket and signing every media URL, which is a migration across
- * `Product.imageUrl`, `ReturnPhoto`, `QuotePhoto` and the receipt columns —
- * see `StorageService.mediaUrl`. This narrows the exposure to objects whose key
- * this API no longer discloses; it does not claim to have removed it.
+ * New attendance objects are AES-256-GCM envelopes written by StorageService.
+ * The existing R2 bucket may remain public for catalogue images: somebody who
+ * obtains an attendance object URL receives authenticated ciphertext, never the
+ * face photograph. The key remains server-only. Namespaced legacy plaintext is
+ * accepted on read during migration; every new production write fails closed
+ * when `ATTENDANCE_MEDIA_KEY` is absent.
  */
 @Injectable()
 export class AttendancePhotoService {
@@ -98,7 +98,7 @@ export class AttendancePhotoService {
       throw new NotFoundException('No photo was taken with this punch.');
     }
 
-    const object = await this.storage.readObject(stored);
+    const object = await this.storage.readAttendanceObject(user.organisationId, stored);
     if (!object) throw new NotFoundException('That photo is no longer stored.');
     return object;
   }

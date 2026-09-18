@@ -58,7 +58,8 @@ export interface MarkAttendanceInput {
   staffName?: string;
   status: AttendanceStatus;
   storeId: string;
-  checkInAt?: string;
+  /** Store-local HH:mm; the server combines it with the store's date/timezone. */
+  checkInLocal?: string;
   /** Day being marked (YYYY-MM-DD, store-local). Defaults to the store's today. */
   date?: string;
   /**
@@ -158,8 +159,10 @@ export function useCancelLeave() {
       return data;
     },
     onSuccess: () => {
-      // Prefix invalidation covers the leave list and the balance rows.
-      qc.invalidateQueries({ queryKey: [HRMS_KEY, "leave"] });
+      // Cancellation can release an approved request's balance as well as
+      // changing the history row, so refresh every HRMS projection that may
+      // have derived a figure from it.
+      qc.invalidateQueries({ queryKey: [HRMS_KEY] });
     },
   });
 }

@@ -47,10 +47,44 @@ export interface ProductImage {
   id: string;
   url: string;
   /** "front", "side", "on model", "CAD"… free text; absent means unlabelled. */
-  angle?: string;
+  angle?: string | null;
   /** The one shown in the grid. Exactly one per design. */
   isPrimary: boolean;
   sortOrder: number;
+  /** Where the picture came from (absent on an API that predates sources). */
+  source?: ImageSource;
+  /** Set only by a head-office pin; `isPrimary` is the computed result. */
+  pinned?: boolean;
+  /** Small (≤400px) rendition for strips and grids; fall back to `url`. */
+  thumbUrl?: string | null;
+  colour?: string | null;
+  shape?: string | null;
+  width?: number | null;
+  height?: number | null;
+  /** pending | queued | running | indexed | failed | dead | skipped */
+  embeddingStatus?: string | null;
+}
+
+export type ImageSource = "gati_cad" | "website" | "manual" | "inventory" | "other";
+
+/** Badge text for an image's source — what a salesperson calls it. */
+export const IMAGE_SOURCE_LABELS: Record<ImageSource, string> = {
+  gati_cad: "CAD",
+  website: "Website",
+  manual: "Manual",
+  inventory: "Inventory",
+  other: "Other",
+};
+
+/** Label for any source string, including one this build does not know yet. */
+export function imageSourceLabel(source?: string | null): string | null {
+  if (!source) return null;
+  return IMAGE_SOURCE_LABELS[source as ImageSource] ?? source;
+}
+
+export interface PriceRange {
+  min: number | null;
+  max: number | null;
 }
 
 export interface Product {
@@ -105,6 +139,32 @@ export interface Product {
   stock?: StockPresence;
   /** What it is made of. Rates and amounts arrive only for store managers and up. */
   composition?: Composition | null;
+
+  // ---- Lossless catalogue (list additions; absent on an older API) ----
+  /** listing.marketingName ?? name — what the design is called to a customer. */
+  displayName?: string | null;
+  /** Precedence #1 image (pin, else CAD, else website…), and its thumbnail. */
+  heroImageUrl?: string | null;
+  heroThumbUrl?: string | null;
+  heroSource?: ImageSource | null;
+  onlinePrice?: (PriceRange & { indicative?: number | null }) | null;
+  tagPrice?: PriceRange | null;
+  /** Pieces on hand in the viewer's scope. */
+  onHand?: number | null;
+  flags?: ProductFlags | null;
+}
+
+export interface ProductFlags {
+  noImage?: boolean;
+  noCad?: boolean;
+  /** Open catalogue conflicts on this design. */
+  conflicts?: number;
+  indexing?: "none" | "partial" | "full";
+}
+
+/** The name to show: the website's marketing name when there is one. */
+export function productDisplayName(p: Pick<Product, "displayName" | "name">): string {
+  return p.displayName || p.name;
 }
 
 export interface CompositionLine {

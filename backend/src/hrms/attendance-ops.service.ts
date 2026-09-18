@@ -29,6 +29,7 @@ import {
   dateOnly,
   formatHHMMInTz,
   instantFromLocalTime,
+  parseHHMM,
   resolveTz,
   shiftDurationMins,
   weekdayInTz,
@@ -65,9 +66,60 @@ export const ATTENDED_STATUSES: AttendanceStatus[] = ['present', 'late', 'half_d
 
 /** "YYYY-MM-DD" → the UTC-midnight Date a `@db.Date` column round-trips. */
 export function parseYmd(s: string): Date {
-  const d = new Date(`${s.slice(0, 10)}T00:00:00.000Z`);
-  if (Number.isNaN(d.getTime())) throw new BadRequestException(`Invalid date: ${s}`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    throw new BadRequestException(`Invalid date: ${s}`);
+  }
+  const d = new Date(`${s}T00:00:00.000Z`);
+  if (Number.isNaN(d.getTime()) || dateOnly(d) !== s) {
+    throw new BadRequestException(`Invalid date: ${s}`);
+  }
   return d;
+}
+
+/**
+ * Resolve a store-local date/time supplied by an operator into one UTC instant.
+ *
+ * A browser-created ISO string silently applies the browser's timezone, which
+ * can put a manager correction on the wrong business day. The backend owns the
+ * conversion because it owns the store timezone. DST gaps and folds are
+ * rejected rather than guessed: payroll evidence must identify one instant.
+ */
+export function instantFromUnambiguousLocal(
+  localDate: string,
+  localTime: string,
+  tz: string,
+): Date {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(localDate)) {
+    throw new BadRequestException('localDate must be YYYY-MM-DD');
+  }
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(localTime)) {
+    throw new BadRequestException('localTime must be HH:mm');
+  }
+  const zone = resolveTz(tz);
+  const instant = instantFromLocalTime(parseYmd(localDate), parseHHMM(localTime), zone);
+  const isSameWallClock = (candidate: Date) =>
+    dateOnly(businessDate(candidate, zone)) === localDate &&
+    formatHHMMInTz(candidate, zone) === localTime;
+
+  if (!isSameWallClock(instant)) {
+    throw new BadRequestException(
+      `${localDate} ${localTime} does not exist in the store timezone (${zone})`,
+    );
+  }
+
+  // A fall-back transition can map one wall-clock time to two instants. Check
+  // the practical IANA transition sizes rather than silently choosing one.
+  for (const minutes of [30, 60, 90, 120]) {
+    if (
+      isSameWallClock(new Date(instant.getTime() - minutes * 60_000)) ||
+      isSameWallClock(new Date(instant.getTime() + minutes * 60_000))
+    ) {
+      throw new BadRequestException(
+        `${localDate} ${localTime} is ambiguous in the store timezone (${zone}); use the legacy ISO instant with an explicit offset`,
+      );
+    }
+  }
+  return instant;
 }
 
 export function addDays(d: Date, n: number): Date {
@@ -123,6 +175,26 @@ export async function assertMonthOpen(prisma: Db, orgId: string, date: Date, to?
     select: { month: true },
   });
   if (lock) throw new ConflictException(`Payroll for ${lock.month} is locked`);
+}
+
+/** Refuse an effective-dated change whose old or new range touches a locked month. */
+export async function assertEffectiveRangeOpen(
+  prisma: Db,
+  orgId: string,
+  from: Date,
+  to: Date | null,
+): Promise<void> {
+  const locks = await prisma.payrollPeriodLock.findMany({
+    where: { organisationId: orgId, reopenedAt: null },
+    select: { month: true },
+  });
+  const conflict = locks.find(({ month }) => {
+    const [year, oneBasedMonth] = month.split('-').map(Number);
+    const start = new Date(Date.UTC(year, oneBasedMonth - 1, 1));
+    const end = new Date(Date.UTC(year, oneBasedMonth, 0));
+    return from <= end && (to == null || to >= start);
+  });
+  if (conflict) throw new ConflictException(`Payroll for ${conflict.month} is locked`);
 }
 
 // ===========================================================================
@@ -351,9 +423,48 @@ export async function resolveShiftFor(
   return prisma.shift.findFirst({ where: { storeId }, orderBy: { startTime: 'asc' } });
 }
 
-type ShiftLike = Pick<Shift, 'startTime' | 'endTime' | 'bufferMins' | 'fullDayMins' | 'halfDayMins'> & {
+export type ShiftLike = Pick<Shift, 'startTime' | 'endTime' | 'bufferMins' | 'fullDayMins' | 'halfDayMins'> & {
   isFlexible?: boolean | null;
 };
+
+export const ATTENDANCE_CALCULATION_VERSION = '2026-09-18.v1';
+
+/** Only calculation inputs are frozen; no employee or tenant data is duplicated. */
+export function snapshotShift(
+  shift: (ShiftLike & { id?: string | null }) | null,
+): Prisma.InputJsonObject | undefined {
+  if (!shift) return undefined;
+  return {
+    shiftId: shift.id ?? null,
+    startTime: shift.startTime,
+    endTime: shift.endTime,
+    bufferMins: shift.bufferMins,
+    fullDayMins: shift.fullDayMins ?? null,
+    halfDayMins: shift.halfDayMins ?? null,
+    isFlexible: shift.isFlexible ?? false,
+  };
+}
+
+/** Read a previously frozen shift defensively; malformed legacy JSON falls back to live resolution. */
+export function shiftFromSnapshot(value: Prisma.JsonValue | null | undefined): ShiftLike | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const row = value as Prisma.JsonObject;
+  if (
+    typeof row.startTime !== 'string' ||
+    typeof row.endTime !== 'string' ||
+    typeof row.bufferMins !== 'number'
+  ) {
+    return null;
+  }
+  return {
+    startTime: row.startTime,
+    endTime: row.endTime,
+    bufferMins: row.bufferMins,
+    fullDayMins: typeof row.fullDayMins === 'number' ? row.fullDayMins : null,
+    halfDayMins: typeof row.halfDayMins === 'number' ? row.halfDayMins : null,
+    isFlexible: row.isFlexible === true,
+  };
+}
 
 /** Lateness, never for a flexible shift (or with no shift). */
 export function shiftLateness(checkInAt: Date, shift: ShiftLike | null, tz: string) {
@@ -609,14 +720,30 @@ const REGISTER_FIELDS = [
   'overtimeMins',
   'dayFraction',
   'shiftId',
+  'calculationVersion',
+  'shiftSnapshot',
 ] as const;
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value as Record<string, unknown>)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'undefined';
+}
 
 function sameValue(a: unknown, b: unknown): boolean {
   if (a instanceof Date || b instanceof Date) {
     return (a as Date | null)?.getTime?.() === (b as Date | null)?.getTime?.();
   }
   if (a != null && b != null && (typeof a === 'object' || typeof b === 'object')) {
-    return Number(a) === Number(b); // Prisma.Decimal vs number
+    const an = Number(a);
+    const bn = Number(b);
+    if (!Number.isNaN(an) || !Number.isNaN(bn)) return an === bn; // Prisma.Decimal vs number
+    return stableJson(a) === stableJson(b); // Shift snapshot JSON
   }
   return (a ?? null) === (b ?? null);
 }
@@ -673,20 +800,23 @@ export class AttendanceOpsService {
     existing?: AttendanceRecord | null;
     punches?: PunchLite[];
     today?: Date;
+    /** Transaction client when the ledger mutation and register rebuild are one operation. */
+    prisma?: Db;
   }): Promise<boolean> {
     const { orgId, store, userId, date } = args;
+    const prisma = args.prisma ?? this.prisma;
     const tz = store.tz;
     const existing =
       args.existing !== undefined
         ? args.existing
-        : await this.prisma.attendanceRecord.findUnique({
+        : await prisma.attendanceRecord.findUnique({
             where: { storeId_staffId_date: { storeId: store.id, staffId: userId, date } },
           });
-    let punches = args.punches ?? (await punchesAround(this.prisma, userId, store.id, date, tz));
+    let punches = args.punches ?? (await punchesAround(prisma, userId, store.id, date, tz));
 
     // Seed a pre-ledger row's own times into the ledger (evidence first).
-    if (existing && (await seedLedgerFromRow(this.prisma, orgId, existing, tz, punches))) {
-      punches = await punchesAround(this.prisma, userId, store.id, date, tz);
+    if (existing && (await seedLedgerFromRow(prisma, orgId, existing, tz, punches))) {
+      punches = await punchesAround(prisma, userId, store.id, date, tz);
     }
 
     const day = attributePunches(punches, tz).get(dateOnly(date));
@@ -694,15 +824,26 @@ export class AttendanceOpsService {
     let source = existing?.source ?? 'auto';
 
     if (day && (day.ins.length || day.outs.length)) {
-      const shift = existing?.shiftId
-        ? await resolveShiftFor(this.prisma, store.id, null, null, existing.shiftId).catch(() => null)
-        : await resolveShiftFor(this.prisma, store.id, userId, date);
+      // A historical row is calculated from the frozen inputs it was born
+      // with. Live shift edits must not rewrite payroll history on reprocess.
+      const frozenShift = shiftFromSnapshot(existing?.shiftSnapshot);
+      const liveShift = frozenShift
+        ? null
+        : existing?.shiftId
+          ? await resolveShiftFor(prisma, store.id, null, null, existing.shiftId).catch(() => null)
+          : await resolveShiftFor(prisma, store.id, userId, date);
+      const shift = frozenShift ?? liveShift;
       const d = deriveFromPunches(day, shift, tz);
       if (!d.checkOutAt && existing?.status === 'half_day') {
         d.status = 'half_day';
         d.dayFraction = existing.dayFraction != null ? Number(existing.dayFraction) : 0.5;
       }
-      data = { ...d, shiftId: shift?.id ?? null };
+      data = {
+        ...d,
+        shiftId: existing?.shiftId ?? liveShift?.id ?? null,
+        calculationVersion: existing?.calculationVersion ?? ATTENDANCE_CALCULATION_VERSION,
+        shiftSnapshot: existing?.shiftSnapshot ?? snapshotShift(liveShift),
+      };
       if (!existing) source = (day.ins[0] ?? day.outs[0]).source;
     } else {
       if (existing && existing.source !== 'auto' && !ATTENDED_STATUSES.includes(existing.status)) {
@@ -723,15 +864,17 @@ export class AttendanceOpsService {
         overtimeMins: null,
         dayFraction: status === 'absent' ? 0 : null,
         shiftId: existing?.shiftId ?? null,
+        calculationVersion: existing?.calculationVersion ?? ATTENDANCE_CALCULATION_VERSION,
+        shiftSnapshot: existing?.shiftSnapshot ?? undefined,
       };
     }
 
     if (existing) {
       if (REGISTER_FIELDS.every((k) => sameValue((existing as any)[k], data[k]))) return false;
-      await this.prisma.attendanceRecord.update({ where: { id: existing.id }, data: data as any });
+      await prisma.attendanceRecord.update({ where: { id: existing.id }, data: data as any });
       return true;
     }
-    await this.prisma.attendanceRecord.create({
+    await prisma.attendanceRecord.create({
       data: {
         organisationId: orgId,
         storeId: store.id,
@@ -746,17 +889,33 @@ export class AttendanceOpsService {
   }
 
   /** Recompute one employee-day with its facts resolved (after a punch add/void). */
-  private async reprocessOne(orgId: string, storeId: string, userId: string, date: Date) {
-    const [store] = await this.stores(orgId, [storeId]);
-    const e = (await eligibleStaff(this.prisma, orgId, [storeId], date)).find((x) => x.userId === userId);
-    const user = e ? null : await this.prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
+  private async reprocessOne(
+    orgId: string,
+    storeId: string,
+    userId: string,
+    date: Date,
+    prisma: Db = this.prisma,
+  ) {
+    const storeRow = await prisma.store.findFirst({
+      where: { id: storeId, organisationId: orgId },
+      select: { id: true, timezone: true },
+    });
+    if (!storeRow) throw new NotFoundException('Store not found');
+    const store = { id: storeRow.id, tz: resolveTz(storeRow.timezone) };
+    const e = (await eligibleStaff(prisma, orgId, [storeId], date)).find(
+      (x) => x.userId === userId,
+    );
+    const target = e
+      ? null
+      : await prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
     await this.reprocessDay({
       orgId,
       store,
       userId,
-      staffName: e?.name ?? user?.name ?? null,
+      staffName: e?.name ?? target?.name ?? null,
       date,
       facts: e ?? { onLeave: false, isHoliday: false, isWeekOff: false },
+      prisma,
     });
   }
 
@@ -895,7 +1054,7 @@ export class AttendanceOpsService {
     };
   }
 
-  /** POST /hrms/punches — a manager records a punch the device missed. */
+  /** POST /hrms/punches — a manager records a missing dashboard punch. */
   async addPunch(user: AuthUser, dto: CreatePunchDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
     const [store] = await this.stores(user.organisationId, [dto.storeId]);
@@ -906,25 +1065,54 @@ export class AttendanceOpsService {
     });
     if (!member) throw new BadRequestException('Staff is not assigned to this store');
     assertCanCorrect(user, dto.userId, member.user.role);
-    const at = new Date(dto.at);
+    const hasInstant = dto.at != null;
+    const hasAnyLocalPart = dto.localDate != null || dto.localTime != null;
+    if (hasInstant === hasAnyLocalPart) {
+      throw new BadRequestException(
+        'Send exactly one punch-time form: either `at`, or `localDate` with `localTime`.',
+      );
+    }
+    if (hasAnyLocalPart && (!dto.localDate || !dto.localTime)) {
+      throw new BadRequestException('Both `localDate` and `localTime` are required together.');
+    }
+    const at = dto.at
+      ? new Date(dto.at)
+      : instantFromUnambiguousLocal(dto.localDate!, dto.localTime!, store.tz);
+    if (Number.isNaN(at.getTime())) throw new BadRequestException('Invalid punch time');
     if (at.getTime() > Date.now() + 5 * 60_000) throw new BadRequestException('A punch cannot be in the future');
     const date = businessDate(at, store.tz);
     await assertMonthOpen(this.prisma, user.organisationId, date);
 
     const key = `manager:${dto.userId}:${dto.storeId}:${dto.kind}:${at.toISOString()}`;
-    await recordPunch(this.prisma, {
-      organisationId: user.organisationId,
-      userId: dto.userId,
-      storeId: dto.storeId,
-      kind: dto.kind,
-      eventAt: at,
-      source: 'manager',
-      idempotencyKey: key,
-      note: dto.note.trim(),
-      createdById: user.id,
+    const row = await this.prisma.$transaction(async (tx) => {
+      await recordPunch(tx, {
+        organisationId: user.organisationId,
+        userId: dto.userId,
+        storeId: dto.storeId,
+        kind: dto.kind,
+        eventAt: at,
+        source: 'manager',
+        idempotencyKey: key,
+        note: dto.note.trim(),
+        createdById: user.id,
+      });
+      const saved = await tx.rawPunchEvent.findUniqueOrThrow({
+        where: {
+          organisationId_idempotencyKey: {
+            organisationId: user.organisationId,
+            idempotencyKey: key,
+          },
+        },
+      });
+      await this.reprocessOne(
+        user.organisationId,
+        dto.storeId,
+        dto.userId,
+        date,
+        tx,
+      );
+      return saved;
     });
-    const row = await this.prisma.rawPunchEvent.findUniqueOrThrow({ where: { idempotencyKey: key } });
-    await this.reprocessOne(user.organisationId, dto.storeId, dto.userId, date);
     await this.audit.record(user, {
       action: 'attendance.punch_add',
       entityType: 'RawPunchEvent',
@@ -953,11 +1141,14 @@ export class AttendanceOpsService {
     }
     await assertMonthOpen(this.prisma, user.organisationId, date);
 
-    const voided = await this.prisma.rawPunchEvent.update({
-      where: { id },
-      data: { voidedAt: new Date(), voidedById: user.id },
+    const voided = await this.prisma.$transaction(async (tx) => {
+      const saved = await tx.rawPunchEvent.update({
+        where: { id },
+        data: { voidedAt: new Date(), voidedById: user.id },
+      });
+      await this.reprocessOne(user.organisationId, row.storeId!, row.userId, date, tx);
+      return saved;
     });
-    await this.reprocessOne(user.organisationId, row.storeId, row.userId, date);
     await this.audit.record(user, {
       action: 'attendance.punch_void',
       entityType: 'RawPunchEvent',
@@ -998,6 +1189,7 @@ export class AttendanceOpsService {
     });
 
     let processed = 0;
+    let succeeded = 0;
     let changed = 0;
     let skippedLocked = 0;
     const errors: { storeId: string; userId?: string; date: string; message: string }[] = [];
@@ -1050,6 +1242,7 @@ export class AttendanceOpsService {
                 today,
               });
               if (didChange) changed++;
+              succeeded++;
             } catch (err) {
               errors.push({ storeId: store.id, userId: e.userId, date: dateOnly(d), message: (err as Error).message });
             }
@@ -1063,7 +1256,7 @@ export class AttendanceOpsService {
     const done = await this.prisma.attendanceProcessingRun.update({
       where: { id: run.id },
       data: {
-        status: errors.length && processed === 0 ? 'failed' : 'done',
+        status: errors.length ? (succeeded === 0 ? 'failed' : 'partially_failed') : 'done',
         processed,
         changed,
         skippedLocked,
@@ -1276,9 +1469,79 @@ export class AttendanceOpsService {
     return shift;
   }
 
+  /** A shift definition is not versioned, so changing it would rewrite any locked month that used it. */
+  private async assertShiftDefinitionOpen(orgId: string, shiftId: string): Promise<void> {
+    const locks = await this.prisma.payrollPeriodLock.findMany({
+      where: { organisationId: orgId, reopenedAt: null },
+      select: { month: true },
+    });
+    for (const { month } of locks) {
+      const [year, oneBasedMonth] = month.split('-').map(Number);
+      const start = new Date(Date.UTC(year, oneBasedMonth - 1, 1));
+      const end = new Date(Date.UTC(year, oneBasedMonth, 0));
+      const [assignment, attendance] = await Promise.all([
+        this.prisma.shiftAssignment.findFirst({
+          where: {
+            shiftId,
+            effectiveFrom: { lte: end },
+            OR: [{ effectiveTo: null }, { effectiveTo: { gte: start } }],
+          },
+          select: { id: true },
+        }),
+        this.prisma.attendanceRecord.findFirst({
+          where: { organisationId: orgId, shiftId, date: { gte: start, lte: end } },
+          select: { id: true },
+        }),
+      ]);
+      if (assignment || attendance) {
+        throw new ConflictException(
+          `This shift affected locked payroll for ${month}. Reopen the period before changing it.`,
+        );
+      }
+    }
+  }
+
+  private async assertNoAssignmentOverlap(
+    prisma: Db,
+    input: {
+      organisationId: string;
+      userId: string;
+      storeId: string;
+      from: Date;
+      to: Date | null;
+      excludeId?: string;
+    },
+  ): Promise<void> {
+    const shiftIds = (
+      await prisma.shift.findMany({
+        where: { organisationId: input.organisationId, storeId: input.storeId },
+        select: { id: true },
+      })
+    ).map((shift) => shift.id);
+    const clash = await prisma.shiftAssignment.findFirst({
+      where: {
+        organisationId: input.organisationId,
+        userId: input.userId,
+        shiftId: { in: shiftIds },
+        ...(input.excludeId ? { id: { not: input.excludeId } } : {}),
+        ...(input.to ? { effectiveFrom: { lte: input.to } } : {}),
+        OR: [{ effectiveTo: null }, { effectiveTo: { gte: input.from } }],
+      },
+      select: { effectiveFrom: true, effectiveTo: true },
+    });
+    if (clash) {
+      throw new ConflictException(
+        `This assignment overlaps the existing ${dateOnly(clash.effectiveFrom)} to ${
+          clash.effectiveTo ? dateOnly(clash.effectiveTo) : 'ongoing'
+        } assignment.`,
+      );
+    }
+  }
+
   /** PATCH /hrms/shifts/:id */
   async updateShift(user: AuthUser, id: string, dto: UpdateShiftDto) {
     const before = await this.shiftInScope(user, id);
+    await this.assertShiftDefinitionOpen(user.organisationId, id);
     const next = { ...before, ...Object.fromEntries(Object.entries(dto).filter(([, v]) => v !== undefined)) } as Shift;
     const scheduled = shiftDurationMins(next.startTime, next.endTime);
     if (next.fullDayMins != null && next.fullDayMins > scheduled) {
@@ -1322,6 +1585,7 @@ export class AttendanceOpsService {
    */
   async deleteShift(user: AuthUser, id: string, force: boolean) {
     const shift = await this.shiftInScope(user, id);
+    await this.assertShiftDefinitionOpen(user.organisationId, id);
     const store = await this.prisma.store.findUnique({ where: { id: shift.storeId }, select: { timezone: true } });
     const today = businessDate(new Date(), resolveTz(store?.timezone));
     // Every assignment counts, past ones too: they would dangle once the shift is gone.
@@ -1448,6 +1712,7 @@ export class AttendanceOpsService {
     if (!member) throw new BadRequestException('Staff is not assigned to this shift’s store');
     await assertCanCorrectUser(this.prisma, user, dto.userId);
     const from = parseYmd(dto.effectiveFrom);
+    await assertEffectiveRangeOpen(this.prisma, user.organisationId, from, null);
     const storeShiftIds = (
       await this.prisma.shift.findMany({ where: { storeId: shift.storeId }, select: { id: true } })
     ).map((s) => s.id);
@@ -1467,6 +1732,13 @@ export class AttendanceOpsService {
           OR: [{ effectiveTo: null }, { effectiveTo: { gte: from } }],
         },
         data: { effectiveTo: addDays(from, -1) },
+      });
+      await this.assertNoAssignmentOverlap(tx, {
+        organisationId: user.organisationId,
+        userId: dto.userId,
+        storeId: shift.storeId,
+        from,
+        to: null,
       });
       return tx.shiftAssignment.create({
         data: {
@@ -1512,6 +1784,21 @@ export class AttendanceOpsService {
     const to =
       dto.effectiveTo === undefined ? before.effectiveTo : dto.effectiveTo === null ? null : parseYmd(dto.effectiveTo);
     if (to && to < from) throw new BadRequestException('effectiveTo must be on or after effectiveFrom');
+    await assertEffectiveRangeOpen(
+      this.prisma,
+      user.organisationId,
+      before.effectiveFrom,
+      before.effectiveTo,
+    );
+    await assertEffectiveRangeOpen(this.prisma, user.organisationId, from, to);
+    await this.assertNoAssignmentOverlap(this.prisma, {
+      organisationId: user.organisationId,
+      userId: before.userId,
+      storeId: shift.storeId,
+      from,
+      to,
+      excludeId: id,
+    });
     const row = await this.prisma.shiftAssignment.update({
       where: { id },
       data: { shiftId: shift?.id ?? before.shiftId, effectiveFrom: from, effectiveTo: to },
@@ -1534,6 +1821,12 @@ export class AttendanceOpsService {
   /** DELETE /hrms/shift-assignments/:id */
   async deleteShiftAssignment(user: AuthUser, id: string) {
     const { row, shift } = await this.assignmentInScope(user, id);
+    await assertEffectiveRangeOpen(
+      this.prisma,
+      user.organisationId,
+      row.effectiveFrom,
+      row.effectiveTo,
+    );
     await this.prisma.shiftAssignment.delete({ where: { id } });
     await this.audit.record(user, {
       action: 'shift_assignment.delete',

@@ -37,6 +37,7 @@ import { SearchModule } from './search/search.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { WhatsAppBotModule } from './whatsapp-bot/whatsapp-bot.module';
 import { SyncModule } from './sync/sync.module';
+import { CatalogueModule } from './catalogue/catalogue.module';
 import { StorageModule } from './storage/storage.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { SpecialRequestsModule } from './special-requests/special-requests.module';
@@ -97,6 +98,7 @@ import { AttributionModule } from './attribution/attribution.module';
     IntegrationsModule,
     WhatsAppBotModule,
     SyncModule,
+    CatalogueModule,
     StorageModule,
     NotificationsModule,
     SpecialRequestsModule,

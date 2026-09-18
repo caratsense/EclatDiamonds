@@ -50,10 +50,16 @@ export interface RankCandidate {
   dino: ArrayLike<number>;
   siglip: ArrayLike<number>;
   category?: string | null;
+  /** The ProductImage this vector came from, so a hit can say which picture matched. */
+  imageId?: string | null;
+  /** Both vectors are already unit length: cosine is a plain dot product. */
+  unit?: boolean;
 }
 
 export interface RankedHit {
   productId: string;
+  /** The design's best-matching picture. */
+  imageId?: string | null;
   rank: number;
   closenessScore: number;
   matchLevel: MatchLevel;
@@ -74,6 +80,38 @@ export interface RankOptions {
 }
 
 // --- pure helpers (exported for unit tests — no DB, no network) --------------
+
+/** `v` scaled to unit length (a zero vector stays zero). */
+export function unitOf(v: ArrayLike<number>): Float32Array {
+  let s = 0;
+  for (let i = 0; i < v.length; i++) s += v[i] * v[i];
+  const k = s ? 1 / Math.sqrt(s) : 0;
+  return Float32Array.from(v as ArrayLike<number>, (x) => x * k);
+}
+
+function dot(a: ArrayLike<number>, b: ArrayLike<number>): number {
+  if (a.length !== b.length) return 0;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d += a[i] * b[i];
+  return d;
+}
+
+/**
+ * Indices of the k largest values, largest first; ties keep input order
+ * (what a stable full sort would give), in one pass instead of a sort of n.
+ */
+export function topK(xs: ArrayLike<number>, k: number): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < xs.length; i++) {
+    const x = xs[i];
+    if (out.length === k && x <= xs[out[k - 1]]) continue;
+    let j = out.length;
+    while (j > 0 && xs[out[j - 1]] < x) j--;
+    out.splice(j, 0, i);
+    if (out.length > k) out.pop();
+  }
+  return out;
+}
 
 /** Min-max normalize to [0,1] within the set. All-equal (incl. singletons) -> 1. */
 export function normalizePerSet(values: number[]): number[] {
@@ -137,17 +175,21 @@ export function rankCandidates(
     return { status: 'NO_CLOSE_MATCH', matchLevel: 'NO_CLOSE_MATCH', closenessScore: 0, results: [] };
   }
 
-  // 1. raw cosines per model.
-  const raw = candidates.map((c) => ({
-    c,
-    rawDino: cosineSimilarity(queryDino, c.dino),
-    rawSiglip: cosineSimilarity(querySiglip, c.siglip),
-  }));
+  // 1. raw cosines per model — a dot product when both sides are unit length.
+  const n = candidates.length;
+  const qd = unitOf(queryDino);
+  const qs = unitOf(querySiglip);
+  const rd = new Float64Array(n);
+  const rs = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const c = candidates[i];
+    rd[i] = c.unit ? dot(qd, c.dino) : cosineSimilarity(queryDino, c.dino);
+    rs[i] = c.unit ? dot(qs, c.siglip) : cosineSimilarity(querySiglip, c.siglip);
+  }
 
-  // 2. two-stage recall: union of top-N by each model.
-  const byDino = [...raw].sort((a, b) => b.rawDino - a.rawDino).slice(0, RECALL_PER_MODEL);
-  const bySiglip = [...raw].sort((a, b) => b.rawSiglip - a.rawSiglip).slice(0, RECALL_PER_MODEL);
-  const pool = [...new Set([...byDino, ...bySiglip])];
+  // 2. two-stage recall: union of top-N by each model (DINO's first).
+  const poolIdx = [...new Set([...topK(rd, RECALL_PER_MODEL), ...topK(rs, RECALL_PER_MODEL)])];
+  const pool = poolIdx.map((i) => ({ c: candidates[i], rawDino: rd[i], rawSiglip: rs[i] }));
 
   // 3. normalize each model's raw cosine PER candidate set.
   const nDino = normalizePerSet(pool.map((x) => x.rawDino));
@@ -162,7 +204,7 @@ export function rankCandidates(
     // absolute (closeness): weighted RAW cosine, category-free so a wrong category
     // guess never lowers how "close" the true match reads.
     const absSim = (w.dino * x.rawDino + w.siglip * x.rawSiglip) / absW;
-    return { productId: x.c.productId, fused, closeness: calibrateCloseness(absSim) };
+    return { productId: x.c.productId, imageId: x.c.imageId ?? null, fused, closeness: calibrateCloseness(absSim) };
   });
 
   // 4. sort by fused (ranking), tie-break by closeness.
@@ -205,6 +247,7 @@ export function rankCandidates(
     .slice(0, opts.limit)
     .map((s, i) => ({
       productId: s.productId,
+      imageId: s.imageId,
       rank: i + 1,
       closenessScore: s.closeness,
       matchLevel: levelFor(s.closeness, t),

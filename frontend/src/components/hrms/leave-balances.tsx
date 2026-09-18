@@ -9,6 +9,7 @@ import {
   CardContent,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -32,9 +33,14 @@ import {
   LEAVE_TYPE_LABELS,
   LEAVE_TYPE_ORDER,
   type LeaveBalance,
+  type LeaveRequest,
   type LeaveType,
 } from "@/lib/mock/hrms";
-import { useLeaveBalances } from "@/lib/queries/hrms";
+import {
+  useCancelLeave,
+  useLeaveBalances,
+  useLeaveRequests,
+} from "@/lib/queries/hrms";
 import {
   useCreateLeaveBalance,
   useEditLeaveBalance,
@@ -42,6 +48,8 @@ import {
 import { useStaff } from "@/lib/queries/users";
 import { apiErrorMessage } from "@/lib/utils";
 import { ApplyLeaveDialog } from "@/components/hrms/apply-leave-dialog";
+import { ReasonDialog } from "@/components/hrms/attendance-edit-dialog";
+import { useSession } from "@/store/use-session";
 
 /**
  * Leave balances row + "Apply for leave" action (Module 6). Balances are the
@@ -123,8 +131,120 @@ export function LeaveBalances({ canEditTeam = false }: { canEditTeam?: boolean }
 
       <ApplyLeaveDialog open={applyOpen} onOpenChange={setApplyOpen} />
 
+      <MyLeaveRequests />
+
       {canEditTeam ? <TeamBalanceEditor /> : null}
     </div>
+  );
+}
+
+const LEAVE_STATUS_VARIANT = {
+  pending: "warning",
+  approved: "success",
+  rejected: "destructive",
+  cancelled: "secondary",
+} as const;
+
+/** The signed-in person's request history, including pending-request withdrawal. */
+function MyLeaveRequests() {
+  const userId = useSession((state) => state.user.id);
+  const requests = useLeaveRequests();
+  const cancel = useCancelLeave();
+  const [cancelling, setCancelling] = useState<LeaveRequest | null>(null);
+  const own = useMemo(
+    () => (requests.data ?? []).filter((request) => request.staffId === userId),
+    [requests.data, userId],
+  );
+
+  return (
+    <Card>
+      <CardContent className="space-y-3 p-4">
+        <div>
+          <h3 className="text-sm font-medium">My leave requests</h3>
+          <p className="text-xs text-muted-foreground">
+            Track approvals and withdraw a request while it is pending.
+          </p>
+        </div>
+        {requests.isLoading ? (
+          <Skeleton className="h-20 rounded-lg" />
+        ) : requests.isError ? (
+          <div className="rounded-lg border border-destructive/30 p-3 text-sm">
+            Couldn&apos;t load your leave requests.{" "}
+            <button type="button" className="underline" onClick={() => requests.refetch()}>
+              Retry
+            </button>
+          </div>
+        ) : own.length === 0 ? (
+          <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+            No leave requests yet.
+          </p>
+        ) : (
+          <ul className="divide-y rounded-lg border">
+            {own.map((request) => (
+              <li
+                key={request.id}
+                className="flex flex-col gap-2 px-3 py-3 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-medium">{request.type}</span>
+                    <Badge variant={LEAVE_STATUS_VARIANT[request.status]}>
+                      {request.status}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {request.from} – {request.to} · {request.days} {request.days === 1 ? "day" : "days"}
+                  </p>
+                  {request.decisionNote ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Decision note: {request.decisionNote}
+                    </p>
+                  ) : null}
+                </div>
+                {request.status === "pending" ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="self-start sm:self-auto"
+                    disabled={cancel.isPending}
+                    onClick={() => setCancelling(request)}
+                  >
+                    Withdraw
+                  </Button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+
+      {cancelling ? (
+        <ReasonDialog
+          key={cancelling.id}
+          open
+          onOpenChange={(open) => (open ? null : setCancelling(null))}
+          title="Withdraw this leave request?"
+          description="The request stays in your history as cancelled and will no longer await approval."
+          confirmLabel="Withdraw request"
+          destructive
+          pending={cancel.isPending}
+          onConfirm={(reason) =>
+            cancel.mutate(
+              { id: cancelling.id, reason },
+              {
+                onSuccess: () => {
+                  toast.success("Leave request withdrawn");
+                  setCancelling(null);
+                },
+                onError: (error) =>
+                  toast.error(apiErrorMessage(error, "Could not withdraw the request.")),
+              },
+            )
+          }
+        />
+      ) : null}
+    </Card>
   );
 }
 

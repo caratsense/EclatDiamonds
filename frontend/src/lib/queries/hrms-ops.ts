@@ -238,8 +238,9 @@ export interface AddPunchInput {
   userId: string;
   storeId: string;
   kind: "in" | "out";
-  /** ISO datetime. */
-  at: string;
+  /** Store-local calendar date and wall-clock time; the server resolves timezone. */
+  localDate: string;
+  localTime: string;
   note: string;
 }
 

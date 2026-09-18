@@ -7,7 +7,6 @@ import {
   ArrowLeft,
   Bot,
   Building2,
-  Camera,
   Eye,
   EyeOff,
   Loader2,
@@ -25,7 +24,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Logo } from "@/components/brand/logo";
-import { FaceScannerDialog } from "@/components/biometrics/face-scanner-dialog";
 import { InstallAppButton } from "@/components/pwa/install-app-button";
 import { homeForRole } from "@/lib/navigation";
 import { clearAttendanceHandled } from "@/lib/attendance-gate";
@@ -682,8 +680,6 @@ function LoginPage() {
   const router = useRouter();
   const hydrate = useSession((s) => s.hydrate);
   const [showPassword, setShowPassword] = React.useState(false);
-  const [faceScannerOpen, setFaceScannerOpen] = React.useState(false);
-  const [capturedFacePhoto, setCapturedFacePhoto] = React.useState<string | null>(null);
 
   const login = useLogin();
 
@@ -713,20 +709,6 @@ function LoginPage() {
     toast.success(`Welcome, ${me.user.name}! 👋`, {
       description: `Signed in to ${me.currentStore?.name || "Bandra Store"}. Have a great shift today!`,
     });
-    // Store staff profile for fast recognition on subsequent Face Sign-Ins
-    if (typeof window !== "undefined") {
-      try {
-        localStorage.setItem(
-          "eclat_last_staff",
-          JSON.stringify({
-            id: me.user.id,
-            name: me.user.name,
-            email: me.user.email,
-            storeName: me.currentStore?.name,
-          }),
-        );
-      } catch {}
-    }
     clearAttendanceHandled();
     router.replace(
       me.role === "salesperson"
@@ -937,43 +919,6 @@ function LoginPage() {
             against, and a button that signed someone in anyway would be an
             authentication hole wearing Google's logo.
           */}
-          {/* Face Sign-In / Fast Biometric Attendance option */}
-          <div className="space-y-3">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setFaceScannerOpen(true)}
-              className="w-full flex items-center justify-center gap-2 border-indigo-200 dark:border-indigo-500/30 bg-indigo-50/70 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 font-semibold text-sm py-2.5 rounded-xl shadow-xs transition-all"
-            >
-              <Camera className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
-              Face Sign-In / Fast Attendance Punch
-            </Button>
-
-            {capturedFacePhoto ? (
-              <div className="flex items-center gap-2.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-xs text-emerald-800 dark:text-emerald-200">
-                <img
-                  src={capturedFacePhoto}
-                  alt="Captured Face"
-                  className="h-9 w-9 rounded-full object-cover border border-emerald-500/40"
-                />
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-emerald-950 dark:text-emerald-100">
-                    Photo captured
-                  </p>
-                  <p className="text-emerald-700 dark:text-emerald-300/80 text-[11px]">
-                    Enter password for your Login ID to complete sign-in.
-                  </p>
-                </div>
-              </div>
-            ) : null}
-
-            <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-[#f8fafc]/40">
-              <div className="h-px flex-1 bg-slate-200 dark:bg-white/[0.08]" />
-              or sign in with Login ID & password
-              <div className="h-px flex-1 bg-slate-200 dark:bg-white/[0.08]" />
-            </div>
-          </div>
-
           {/* Auth Form Container */}
           <div className="glass facet-top relative rounded-2xl p-5 shadow-xs">
             <form onSubmit={onSubmitPassword} className="space-y-4">
@@ -1101,47 +1046,6 @@ function LoginPage() {
         </div>
       </main>
 
-      {/* Biometric Face Scanner Modal */}
-      <FaceScannerDialog
-        open={faceScannerOpen}
-        onOpenChange={setFaceScannerOpen}
-        context={{
-          action: "Face Sign-In / Attendance Punch",
-        }}
-        onCapture={(photo) => {
-          setCapturedFacePhoto(photo);
-          setFaceScannerOpen(false);
-          let recognizedName = "";
-          if (typeof window !== "undefined") {
-            try {
-              const raw = localStorage.getItem("eclat_last_staff");
-              if (raw) {
-                const parsed = JSON.parse(raw);
-                if (parsed?.email) {
-                  setEmail(parsed.email);
-                  recognizedName = parsed.name || "";
-                }
-              }
-            } catch {}
-          }
-          // Say only what happened. Nothing here, and nothing on the server,
-          // compares this photo to an enrolled template — see the header of
-          // face-scanner-dialog.tsx, which refuses to fake a match precisely so
-          // a buddy punch cannot look verified. "Face verified" claimed the one
-          // thing the feature does not do, which is why signing in appeared to
-          // succeed and then stop. The photo is a record for a human to review;
-          // the password is still what authenticates.
-          if (recognizedName) {
-            toast.success(`Welcome back, ${recognizedName.split(" ")[0]} 👋`, {
-              description: "Photo captured and your Login ID filled in. Enter your password to sign in.",
-            });
-          } else {
-            toast.success("Photo captured", {
-              description: "Enter your Login ID and password to sign in.",
-            });
-          }
-        }}
-      />
     </div>
   );
 }

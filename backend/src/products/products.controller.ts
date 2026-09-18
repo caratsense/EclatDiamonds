@@ -7,18 +7,19 @@ import {
   Param,
   Post,
   Query,
+  Res,
   UploadedFile,
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { Permit } from '../auth/permissions';
 import {
   FileFieldsInterceptor,
   FileInterceptor,
   FilesInterceptor,
 } from '@nestjs/platform-express';
-import { Availability, MetalKind, ProductCategory } from '@prisma/client';
-import { ProductsService } from './products.service';
+import { ProductsService, parseProductFilters } from './products.service';
 import { AiImageSearchService } from './ai-image-search.service';
 import { JewelrySimilarityService } from './jewelry-similarity.service';
 import { CreateProductDto } from './dto/product.dto';
@@ -40,41 +41,8 @@ export class ProductsController {
   ) {}
 
   /**
-   * Re-index one design after its photographs change, without making the
-   * caller wait for it.
-   *
-   * Visual search only ever sees what is in ProductEmbedding, so a photo that
-   * is stored but not embedded is a photo the catalogue cannot be searched by.
-   * Leaving that to a manual head-office call meant the salesperson who took
-   * the picture had no way to make it count, and the feature looked broken to
-   * the only person using it.
-   *
-   * Deliberately not awaited. The inference service is allowed to be asleep and
-   * a cold start runs to three minutes while two vision models load; blocking
-   * an upload at the counter on that would be worse than the wait for search.
-   * The upload is already durable by this point — the worst case is a photo
-   * that is visible but not yet searchable, which the next re-index fixes.
-   * Scoped to the one design, so it costs one embedding call, not a rebuild.
-   */
-  private indexAfterPhotoChange(user: AuthUser, store: string | undefined, productId: string) {
-    void this.jewelry
-      .reindex(user, store, { productId })
-      .then((r) =>
-        this.logger.log(
-          `auto-index ${productId}: ${r.embedded ?? 0} embedded, ${r.skipped ?? 0} skipped, ` +
-            `${r.failed ?? 0} failed, ${(r as { pruned?: number }).pruned ?? 0} pruned`,
-        ),
-      )
-      .catch((err) =>
-        this.logger.warn(
-          `auto-index ${productId} failed: ${err instanceof Error ? err.message : err}`,
-        ),
-      );
-  }
-
-  /**
    * Jewelry visual similarity (M5): photograph a piece → ranked catalogue
-   * matches via dual DINOv3 + SigLIP 2 embeddings. Salesperson and above.
+   * matches via dual DINOv2 + SigLIP 2 embeddings. Salesperson and above.
    *
    * Takes one photo as `file`, or up to three as repeated `files` — the same
    * piece from several sides. A ring in the hand and a ring in the catalogue
@@ -96,13 +64,16 @@ export class ProductsController {
     @StoreHeader() store: string | undefined,
     @UploadedFiles() uploaded: { file?: any[]; files?: any[] },
     @Query() query: SimilaritySearchQueryDto,
+    @Res({ passthrough: true }) res: Response,
   ) {
     const shots = [...(uploaded?.file ?? []), ...(uploaded?.files ?? [])];
+    // `res` only receives Server-Timing, and Retry-After on a 429.
     return this.jewelry.search(
       user,
       shots,
       { category: query.category, limit: query.limit },
       store,
+      res,
     );
   }
 
@@ -131,10 +102,12 @@ export class ProductsController {
   }
 
   /**
-   * (Re)build dual visual embeddings (DINOv3 + SigLIP 2) for the store-scoped
-   * catalogue into ProductEmbedding (M5, HO-only). Idempotent — skips unchanged
-   * images/model versions. `?force=1` re-embeds everything; `?productId=` scopes
-   * to a single design (single-product reindex / failed-row retry).
+   * Queue the store-scoped catalogue's pictures for DINOv2 + SigLIP 2
+   * embedding (M5, HO-only) and return at once — the durable job queue does
+   * the work. Only pictures not indexed at the current model/pipeline version
+   * are queued; `?force=1` queues them all (also retries dead ones);
+   * `?productId=` scopes to one design. `background` is accepted and ignored:
+   * every rebuild is in the background now.
    */
   @Roles('head_office')
   @RateLimit('expensive')
@@ -144,16 +117,11 @@ export class ProductsController {
     @StoreHeader() store: string | undefined,
     @Query('force') force?: string,
     @Query('productId') productId?: string,
-    @Query('background') background?: string,
   ) {
-    const opts = { force: force === '1' || force === 'true', productId };
-    // The whole catalogue outlasts any request; `background=1` starts it and
-    // returns, and GET below reports progress.
-    if (background === '1' && !productId) return this.jewelry.startReindex(user, store, opts);
-    return this.jewelry.reindex(user, store, opts);
+    return this.jewelry.startReindex(user, store, { force: force === '1' || force === 'true', productId });
   }
 
-  /** The catalogue-wide background re-index: running, progress, last outcome. */
+  /** Index progress: counts by picture status, plus search latency p50/p95. */
   @Roles('head_office')
   @Get('embeddings/reindex')
   reindexStatus(@CurrentUser() user: AuthUser) {
@@ -163,26 +131,37 @@ export class ProductsController {
   /**
    * List catalogue products. Without `page`/`pageSize` returns the plain array
    * (legacy shape); with either param returns { items, total, page, pageSize }.
+   * Filters (all optional, validated in parseProductFilters): q, category,
+   * subCategory, size, karat, colour, metal, priceMin, priceMax, storeId,
+   * availability, source, imageCoverage.
    */
   @Permit('catalogue.read')
   @Get()
   list(
     @CurrentUser() user: AuthUser,
     @StoreHeader() store: string | undefined,
-    @Query('q') q?: string,
-    @Query('category') category?: ProductCategory,
-    @Query('metal') metal?: MetalKind,
-    @Query('storeId') storeId?: string,
-    @Query('availability') availability?: Availability,
-    @Query('page') page?: string,
-    @Query('pageSize') pageSize?: string,
+    @Query() query: Record<string, string | undefined>,
   ) {
     return this.products.list(
       user,
-      { q, category, metal, storeId, availability },
+      parseProductFilters(query),
       store,
-      parsePagination(page, pageSize),
+      parsePagination(query.page, query.pageSize),
     );
+  }
+
+  /**
+   * Everything about one design for the detail dialog (lazy). Cost fields are
+   * stripped by role inside the service — see ProductsService.full.
+   */
+  @Permit('catalogue.read')
+  @Get(':id/full')
+  full(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @StoreHeader() store?: string,
+  ) {
+    return this.products.full(user, id, store);
   }
 
   /** Create a catalogue product. Managers and above. */
@@ -218,15 +197,13 @@ export class ProductsController {
   @Permit('catalogue.images')
   @Post(':id/image')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 8 * 1024 * 1024 } }))
-  async uploadImage(
+  uploadImage(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
-    @StoreHeader() store: string | undefined,
     @UploadedFile() file: any,
   ) {
-    const updated = await this.products.setImage(user, id, file);
-    this.indexAfterPhotoChange(user, store, id);
-    return updated;
+    // Indexing is queued durably inside the service (CatalogueIndexService).
+    return this.products.setImage(user, id, file);
   }
 
   /** Every photograph of a design, cover first. */
@@ -247,21 +224,18 @@ export class ProductsController {
   @Permit('catalogue.images')
   @Post(':id/images')
   @UseInterceptors(FilesInterceptor('files', 10, { limits: { fileSize: 12 * 1024 * 1024 } }))
-  async addImages(
+  addImages(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
-    @StoreHeader() store: string | undefined,
     @UploadedFiles() files: any[],
     @Body('angles') angles?: string | string[],
   ) {
     // One repeated multipart field arrives as a string, several as an array.
     const list = angles == null ? undefined : Array.isArray(angles) ? angles : [angles];
-    const gallery = await this.products.addImages(user, id, files, list);
-    this.indexAfterPhotoChange(user, store, id);
-    return gallery;
+    return this.products.addImages(user, id, files, list);
   }
 
-  /** Make one photo the design’s cover. */
+  /** Pin one photo as the design’s cover (outranks the CAD-first default). */
   @Roles('store_manager', 'head_office')
   @Permit('catalogue.images')
   @Post(':id/images/:imageId/primary')
@@ -273,20 +247,28 @@ export class ProductsController {
     return this.products.setPrimaryImage(user, id, imageId);
   }
 
+  /** Unpin: the cover returns to the default order (CAD first). */
+  @Roles('store_manager', 'head_office')
+  @Permit('catalogue.images')
+  @Delete(':id/images/:imageId/primary')
+  unpinPrimaryImage(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Param('imageId') imageId: string,
+  ) {
+    return this.products.unpinPrimaryImage(user, id, imageId);
+  }
+
   /** Remove one photo; the cover is re-elected if it was the one removed. */
   @Roles('store_manager', 'head_office')
   @Permit('catalogue.images')
   @Delete(':id/images/:imageId')
-  async deleteImage(
+  deleteImage(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Param('imageId') imageId: string,
-    @StoreHeader() store?: string,
   ) {
-    const gallery = await this.products.deleteImage(user, id, imageId);
-    // Prunes the deleted photo’s vector. A stale one is worse than a missing
-    // one: the design keeps matching searches for a picture that is gone.
-    this.indexAfterPhotoChange(user, store, id);
-    return gallery;
+    // The service drops the photo's vectors in the same transaction.
+    return this.products.deleteImage(user, id, imageId);
   }
 }

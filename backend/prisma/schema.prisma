@@ -519,6 +519,14 @@ model Organisation {
   rawPunchEvents               RawPunchEvent[]
   attendanceProcessingRuns     AttendanceProcessingRun[]
   payrollPeriodLocks           PayrollPeriodLock[]
+  externalProductSnapshots     ExternalProductSnapshot[]
+  productWebsiteListings       ProductWebsiteListing[]
+  productVariants              ProductVariant[]
+  productOptions               ProductOption[]
+  productPrices                ProductPrice[]
+  productImageAssociations     ProductImageAssociation[]
+  catalogueSyncRuns            CatalogueSyncRun[]
+  catalogueConflicts           CatalogueConflict[]
   leaveRequests                LeaveRequest[]
   attendanceRegularizations    AttendanceRegularization[]
   marketingCampaigns           MarketingCampaign[]
@@ -1826,6 +1834,11 @@ model Product {
   /// pieces?, rate?, amount? }] }`. See src/products/composition.ts. Amounts
   /// are stripped from the API for anyone below store manager.
   composition    Json?
+  /// Gati-owned HSN code for the design.
+  hsn            String?
+  /// Last time each source wrote this design (provenance shown in the detail).
+  gatiSyncedAt    DateTime?
+  websiteSyncedAt DateTime?
 
   /// Block 9 — the design's classification. A made-to-order design is
   /// `customised`, and every piece of it inherits that unless the piece says
@@ -1859,6 +1872,10 @@ model Product {
   /// Every photograph of this design. `imageUrl` above is the cover; this is
   /// the full set, and visual search matches against all of them.
   images              ProductImage[]
+  variants            ProductVariant[]
+  options             ProductOption[]
+  prices              ProductPrice[]
+  websiteListing      ProductWebsiteListing?
   // CaratOS Phase A3.
   productInteractions ProductInteraction[]
   /// Phase A7 — the file or Connect import run that created this row. Later
@@ -1958,10 +1975,44 @@ model ProductImage {
 
   createdAt DateTime @default(now())
 
-  embeddings ProductEmbedding[]
+
+  /// Where the picture came from: gati_cad | website | manual | inventory | other.
+  /// Drives the default order: an admin pin, else the Gati CAD, else website
+  /// photos in source order, then the rest.
+  source        String    @default("other")
+  /// Set only by an explicit admin choice. `isPrimary` is the computed result.
+  pinnedPrimary Boolean   @default(false)
+  /// The URL the source published, and its own id for the picture if it has one.
+  sourceUrl     String?
+  sourceImageId String?
+  /// Position within the source (website: order inside its colour group).
+  sourceOrder   Int       @default(0)
+  /// sha256 of the downloaded bytes; identical pictures under different URLs
+  /// are one asset.
+  contentHash   String?
+  thumbUrl      String?
+  width         Int?
+  height        Int?
+  /// active | tombstoned. A picture the source stopped publishing is kept as a
+  /// tombstone (and dropped from search), never deleted outright.
+  status        String    @default("active")
+  tombstonedAt  DateTime?
+  /// pending | queued | running | indexed | failed | dead | skipped
+  embeddingStatus   String    @default("pending")
+  embeddingVersion  String?
+  embeddingError    String?
+  embeddingAttempts Int       @default(0)
+  embeddedAt        DateTime?
+
+  updatedAt DateTime  @default(now()) @updatedAt
+
+  embeddings   ProductEmbedding[]
+  associations ProductImageAssociation[]
 
   @@index([productId, sortOrder])
   @@index([organisationId])
+  @@index([organisationId, embeddingStatus])
+  @@index([productId, contentHash])
 }
 
 /// Module 5 � relevance feedback on a jewelry similarity-search result.
@@ -2062,6 +2113,19 @@ model StockItem {
   certificateNo String?
   imageUrl      String?
   inwardDate    DateTime?
+
+  // --- Gati fields previously dropped by the sync -------------------------
+  /// Ring/bangle size as Gati holds it (SizeNo / ItemSizeId).
+  sizeLabel     String?
+  itemSizeId    String?
+  hsn           String?
+  /// Gati ProductCode (the item-type code, not the style).
+  productCode   String?
+  quantity      Int?
+  stonePieces   Int?
+  /// The website variant this piece is, when the match is unambiguous.
+  variantId     String?
+  variant       ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
 
   // Legacy provenance (Inward.JewelId).
   legacyId        String?
@@ -2564,6 +2628,13 @@ model AttendanceRecord {
   shiftId     String?
   isLate      Boolean @default(false)
   lateMinutes Int?
+  /// Version of the dashboard calculation contract used for this day.
+  /// Nullable only for rows created before snapshots were introduced.
+  calculationVersion String?
+  /// Immutable copy of the applied shift inputs (times, grace and day-credit
+  /// thresholds). Reprocessing must not reinterpret an old day after somebody
+  /// edits the live Shift master.
+  shiftSnapshot Json?
 
   // --- Integrity + payroll (international-HRMS parity) ----------------------
   /// Metres from the store centre at check-OUT (mirrors checkInDistanceM).
@@ -6255,7 +6326,7 @@ model RawPunchEvent {
   source         String
   externalId     String?
   /// Replays of the same punch land here and are ignored.
-  idempotencyKey String       @unique
+  idempotencyKey String
   lat            Decimal?     @db.Decimal(10, 7)
   lng            Decimal?     @db.Decimal(10, 7)
   accuracyM      Int?
@@ -6267,6 +6338,7 @@ model RawPunchEvent {
 
   @@index([organisationId, eventAt])
   @@index([userId, eventAt])
+  @@unique([organisationId, idempotencyKey])
 }
 
 model AttendanceProcessingRun {
@@ -6304,4 +6376,248 @@ model PayrollPeriodLock {
   reopenReason   String?
 
   @@unique([organisationId, month])
+}
+
+
+// ===========================================================================
+// Lossless catalogue sources (Module 5). See docs/modules/05-catalogue-sources.md.
+//
+// The website owns marketing: name, categories, tags, sizes, variants, colours,
+// photos, online prices, publication and SEO. Gati owns the physical piece:
+// stock, stores, tag, style number, weights, hallmark/HUID/certificate, HSN and
+// the tag price. Each source writes only its own columns/tables, so neither can
+// silently overwrite the other.
+// ===========================================================================
+
+/// The source record exactly as received, one row per external product.
+/// `payloadHash` makes a re-sync of an unchanged product a no-op.
+model ExternalProductSnapshot {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  /// website | gati
+  source         String
+  /// The source's own id (website `_id`); falls back to the product code.
+  externalId     String
+  productCode    String?
+  schemaVersion  Int          @default(1)
+  payload        Json
+  payloadHash    String
+  sourceUpdatedAt DateTime?
+  firstSeenAt    DateTime     @default(now())
+  lastSeenAt     DateTime     @default(now())
+  /// Set when a full run no longer sees it, or the source marks it deleted.
+  goneAt         DateTime?
+  syncRunId      String?
+  /// ok | error | conflict
+  normalizationStatus String  @default("ok")
+  normalizationError  String?
+  productId      String?
+
+  @@unique([organisationId, source, externalId])
+  @@index([organisationId, source, productCode])
+}
+
+/// Website-owned marketing record for a design, kept beside the Product so a
+/// Gati sync never touches it and vice versa.
+model ProductWebsiteListing {
+  id              String       @id @default(cuid())
+  organisationId  String
+  organisation    Organisation @relation(fields: [organisationId], references: [id])
+  productId       String       @unique
+  product         Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  externalId      String
+  productCode     String
+  marketingName   String
+  slug            String?
+  categories      String[]
+  subCategories   String[]
+  features        String[]
+  tags            String[]
+  countries       String[]
+  isActive        Boolean      @default(true)
+  isDeleted       Boolean      @default(false)
+  description     String?
+  /// Customer-facing specification text, verbatim, with its conflicts flagged
+  /// separately (CatalogueConflict kind `spec_mismatch`).
+  specifications  String?
+  sizeGuide       String?
+  seo             Json?
+  sourceCreatedAt DateTime?
+  sourceUpdatedAt DateTime?
+  lastSeenAt      DateTime     @default(now())
+  tombstonedAt    DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([organisationId, productCode])
+}
+
+/// One purchasable configuration of a design as a source defines it
+/// (website: metal type × karat × diamond type). Sizes are NOT multiplied in:
+/// they are product-level options unless the source says otherwise.
+model ProductVariant {
+  id               String       @id @default(cuid())
+  organisationId   String
+  organisation     Organisation @relation(fields: [organisationId], references: [id])
+  productId        String
+  product          Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  /// website | gati
+  source           String
+  /// Stable key within the source: its variant id, else "metal|karat|diamond".
+  sourceKey        String
+  sku              String?
+  metalType        String?
+  /// Parsed purity, e.g. 9, 14, 18.
+  karat            Int?
+  metal            MetalKind?
+  diamondType      String?
+  colour           String?
+  weightType       String?
+  goldWeight       Decimal?     @db.Decimal(12, 3)
+  diamondWeight    Decimal?     @db.Decimal(10, 3)
+  stoneWeight      Decimal?     @db.Decimal(10, 3)
+  totalWeight      Decimal?     @db.Decimal(12, 3)
+  price            Decimal?     @db.Decimal(14, 2)
+  priceWithMargin  Decimal?     @db.Decimal(14, 2)
+  /// Internal costing: never in a public/customer response.
+  marginPercentage Decimal?     @db.Decimal(6, 2)
+  makingCharge     Decimal?     @db.Decimal(14, 2)
+  currency         String       @default("INR")
+  /// The bill of material lines as the source sent them (internal costing).
+  bom              Json?
+  attributes       Json?
+  status           String       @default("active")
+  tombstonedAt     DateTime?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  stockItems StockItem[]
+  imageAssociations ProductImageAssociation[]
+
+  @@unique([productId, source, sourceKey])
+  @@index([organisationId])
+}
+
+/// Product-level options such as sizes ("IND 6" … "IND 18"), in source order.
+model ProductOption {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  productId      String
+  product        Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  source         String
+  /// size
+  kind           String
+  value          String
+  sortOrder      Int          @default(0)
+  tombstonedAt   DateTime?
+
+  @@unique([productId, source, kind, value])
+  @@index([organisationId, kind, value])
+}
+
+/// Every price a design carries, labelled by what it is and who said it.
+/// kind: indicative | min_variant | natural_diamond | variant |
+///       variant_with_margin | gati_tag
+model ProductPrice {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  productId      String
+  product        Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  /// ProductVariant.id for variant prices; "" for product-level prices.
+  variantKey     String       @default("")
+  source         String
+  kind           String
+  amount         Decimal      @db.Decimal(14, 2)
+  currency       String       @default("INR")
+  capturedAt     DateTime     @default(now())
+
+  @@unique([productId, variantKey, source, kind])
+  @@index([organisationId, kind, amount])
+}
+
+/// Where one stored picture appears in the source: a colour group, a shape, a
+/// variant, a position. The same photo reused for three colours is one
+/// ProductImage with three associations.
+model ProductImageAssociation {
+  id             String          @id @default(cuid())
+  organisationId String
+  organisation   Organisation    @relation(fields: [organisationId], references: [id])
+  imageId        String
+  image          ProductImage    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  variantId      String?
+  variant        ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  source         String
+  colour         String          @default("")
+  shape          String          @default("")
+  angle          String?
+  sourceOrder    Int             @default(0)
+  tombstonedAt   DateTime?
+
+  @@unique([imageId, source, colour, shape, sourceOrder])
+  @@index([organisationId])
+}
+
+/// One catalogue synchronisation, with its receipt. Resumable from `nextPage`.
+model CatalogueSyncRun {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  /// website | gati
+  source         String
+  /// full | delta | resume
+  mode           String       @default("full")
+  dryRun         Boolean      @default(false)
+  /// running | done | partial | failed
+  status         String       @default("running")
+  nextPage       Int          @default(1)
+  pageSize       Int          @default(100)
+  expected       Int?
+  received       Int          @default(0)
+  created        Int          @default(0)
+  updated        Int          @default(0)
+  unchanged      Int          @default(0)
+  tombstoned     Int          @default(0)
+  conflicted     Int          @default(0)
+  failed         Int          @default(0)
+  imagesExpected Int          @default(0)
+  imagesReceived Int          @default(0)
+  imagesQueued   Int          @default(0)
+  /// Preview of what a dry run would change, and per-item failures.
+  detail         Json?
+  lastError      String?
+  startedById    String?
+  startedAt      DateTime     @default(now())
+  heartbeatAt    DateTime     @default(now())
+  finishedAt     DateTime?
+
+  @@index([organisationId, source, startedAt])
+}
+
+/// Operator review queue: things a sync refused to guess about.
+/// kind: gati_match_none | gati_match_ambiguous | spec_mismatch | unit_mismatch
+///       | missing_cad | image_failed | normalization_error
+model CatalogueConflict {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  kind           String
+  /// Idempotency: the same problem found again updates this row.
+  key            String
+  productId      String?
+  externalId     String?
+  summary        String
+  detail         Json?
+  /// open | resolved | ignored
+  status         String       @default("open")
+  resolution     Json?
+  resolvedById   String?
+  resolvedAt     DateTime?
+  firstSeenAt    DateTime     @default(now())
+  lastSeenAt     DateTime     @default(now())
+
+  @@unique([organisationId, kind, key])
+  @@index([organisationId, status])
 }

@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import os
 
+import numpy as np
 import torch
 from PIL import Image
 from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
@@ -86,6 +87,29 @@ def select_views(dets: list[Box], w: int, h: int, max_views: int) -> list[Box]:
 
     kept = [b for b in kept if sum(inside(o, b) for o in kept) < 2]
     return kept[:max_views]
+
+
+# DETECT_MODE=auto: skip the detector when the picture already IS the piece.
+# A piece on a plain ground that fills a good share of the frame gains nothing
+# from a crop; a sparse sheet of small renders, a small piece, or a busy ground
+# (velvet, a hand) does. Knobs, not truths: tune against inference/bench.
+AUTO_THUMB = 64
+AUTO_BG_DIST = 40         # 0-255 channel distance that counts as "not ground"
+AUTO_MIN_FG_FRAC = float(os.getenv("AUTO_MIN_FG_FRAC", "0.18"))
+AUTO_MAX_BORDER_STD = float(os.getenv("AUTO_MAX_BORDER_STD", "18"))
+
+
+def needs_detection(img: Image.Image) -> bool:
+    """Cheap (<1 ms) guess at whether the jewellery is small in frame or the
+    background dominates. Border median = the ground; pixels far from it = the
+    piece. ponytail: colour-distance heuristic, a learned gate if it misfires."""
+    a = np.asarray(img.convert("RGB").resize((AUTO_THUMB, AUTO_THUMB), Image.BILINEAR), dtype=np.int16)
+    border = np.concatenate([a[:2].reshape(-1, 3), a[-2:].reshape(-1, 3),
+                             a[:, :2].reshape(-1, 3), a[:, -2:].reshape(-1, 3)])
+    if float(border.std(axis=0).max()) > AUTO_MAX_BORDER_STD:
+        return True  # textured / uneven ground: velvet, skin, a table
+    fg = np.abs(a - np.median(border, axis=0)).max(axis=2) > AUTO_BG_DIST
+    return float(fg.mean()) < AUTO_MIN_FG_FRAC  # sparse: a sheet of renders, a small piece
 
 
 def crop_view(img: Image.Image, box: Box) -> Image.Image:
@@ -155,4 +179,14 @@ if __name__ == "__main__":
     # A pendant inside a chain box: one inner box does not make a group.
     chain = (80, 80, 320, 700, 0.3)
     assert select_views([a, chain], W, H, 6) == [a, chain]
+
+    # auto gate: a piece filling a plain ground skips; a small one, or any piece
+    # on a textured ground, is detected.
+    from PIL import ImageDraw
+    big = Image.new("RGB", (400, 400), (250, 250, 250))
+    ImageDraw.Draw(big).ellipse((60, 60, 340, 340), fill=(200, 160, 40))
+    small = Image.new("RGB", (400, 400), (250, 250, 250))
+    ImageDraw.Draw(small).ellipse((180, 180, 230, 230), fill=(200, 160, 40))
+    noisy = Image.fromarray(np.random.default_rng(0).integers(0, 255, (400, 400, 3), dtype=np.uint8))
+    assert not needs_detection(big) and needs_detection(small) and needs_detection(noisy)
     print("detection self-check OK")

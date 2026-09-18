@@ -3,9 +3,6 @@ import { Test } from '@nestjs/testing';
 import request = require('supertest');
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { StorageService } from '../src/storage/storage.service';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { MlInferenceService } from '../src/products/ml-inference.service';
 import {
   rankCandidates,
@@ -15,6 +12,8 @@ import {
   RankCandidate,
   Weights,
   MatchThresholds,
+  topK,
+  unitOf,
 } from '../src/products/jewelry-ranking.service';
 
 /**
@@ -24,7 +23,8 @@ import {
  *     no-match rule, category-as-signal-not-filter). No DB, no network.
  *   - E2E: the real Nest app with MlInferenceService overridden, asserting the
  *     honesty contract (available:false, SEARCH_ERROR vs NO_CLOSE_MATCH, auth,
- *     real-products-only, feedback persistence, idempotent reindex).
+ *     real-products-only, matched-picture fields, feedback, empty-index preflight).
+ * Indexing itself (queue, leases, failures) is in catalogue-index.e2e-spec.ts.
  */
 
 const W: Weights = { dino: 0.5, siglip: 0.4, category: 0.1 };
@@ -123,6 +123,12 @@ describe('rankCandidates — several angles of one design', () => {
     expect(out.results[0].matchLevel).toBe('VERY_CLOSE');
   });
 
+  it('names the picture that won for each design', () => {
+    const withIds = threeAngles.map((c, i) => ({ ...c, imageId: `img-${i}` }));
+    const out = rankCandidates([1, 0, 0], [1, 0, 0], withIds, opts());
+    expect(out.results[0].imageId).toBe('img-0'); // the front view
+  });
+
   it('ranks are contiguous from 1 after the collapse', () => {
     const out = rankCandidates([1, 0, 0], [1, 0, 0], threeAngles, opts());
     expect(out.results.map((r) => r.rank)).toEqual(
@@ -141,6 +147,24 @@ describe('rankCandidates — several angles of one design', () => {
     const out = rankCandidates([1, 0, 0], [1, 0, 0], twoViews, opts());
     expect(out.status).toBe('MATCHES_FOUND');
     expect(out.results).toHaveLength(1);
+  });
+});
+
+describe('rankCandidates — fast path', () => {
+  it('topK keeps the k largest, best first, ties in input order', () => {
+    expect(topK([0.1, 0.9, 0.5, 0.9, 0.2], 3)).toEqual([1, 3, 2]);
+    expect(topK([1, 2], 5)).toEqual([1, 0]);
+  });
+
+  it('pre-normalised candidates rank exactly like raw ones', () => {
+    const raw: RankCandidate[] = [
+      { productId: 'A', dino: [3, 1, 0], siglip: [2, 2, 1] },
+      { productId: 'B', dino: [0, 5, 1], siglip: [0, 1, 4] },
+      { productId: 'C', dino: [2, 0, 0.5], siglip: [1, 0, 0] },
+    ];
+    const unit = raw.map((c) => ({ ...c, dino: unitOf(c.dino), siglip: unitOf(c.siglip), unit: true }));
+    const q = [1, 0.2, 0];
+    expect(rankCandidates(q, q, unit, opts())).toEqual(rankCandidates(q, q, raw, opts()));
   });
 });
 
@@ -194,56 +218,48 @@ const REP = 'priya.rep@caratsense.in'; // salesperson, Surat — Main
 const HO = 'head.office@caratsense.in';
 const SURAT = 'surat-main';
 
-// Mutable mock of the inference client — flip fields per test.
+/**
+ * Mutable mock of the inference client — flip fields per test. `embedResult`
+ * is what every search photo embeds to (null = the call fails).
+ */
 const mockInference = {
   _available: true,
   embedResult: null as any,
+  batchCalls: 0,
   versions: { dino: 'd1', siglip: 's1', preprocessing: 'pp1' },
   get available() {
     return this._available;
   },
-  async embed() {
-    // The real client always returns a views array (empty without a detector).
-    return this.embedResult ? { views: [], ...this.embedResult } : null;
-  },
-  /** Jewellery "detected" in every batch image, as the real service returns it. */
-  batchViews: [] as { dino: number[]; siglip: number[] }[],
-  /**
-   * Bytes containing this marker come back as an error instead of a vector —
-   * a stand-in for the real thing's refusal to read, say, an SVG placeholder.
-   */
-  rejectMarker: null as string | null,
   async embedBatch(items: { id: string; bytes: Buffer; mime: string }[]) {
-    const rejected = (i: { bytes: Buffer }) =>
-      !!this.rejectMarker && i.bytes.toString().includes(this.rejectMarker);
+    this.batchCalls++;
+    if (!this.embedResult) throw new Error('HTTP 502: inference down');
     return {
-      results: items
-        .filter((i) => !rejected(i))
-        .map((i) => ({ id: i.id, dino: [1, 0, 0], siglip: [1, 0, 0], views: this.batchViews, imageHash: 'h' })),
-      errors: items
-        .filter(rejected)
-        .map((i) => ({ id: i.id, error: 'unsupported image' })),
+      results: items.map((i) => ({ id: i.id, views: [], ...this.embedResult })),
+      errors: [],
+      timings: { decode: 1, detect: 2, dino: 3, siglip: 4 },
+      wallMs: 12,
     };
   },
   async currentVersions() {
     return this.versions;
   },
+  cachedVersions() {
+    return this.versions;
+  },
 };
+
+/** A distinct, sniffable JPEG each call — identical bytes would hit the query cache. */
+let shotNo = 0;
+const jpeg = () => Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from(`jsim-shot-${shotNo++}-padding`)]);
 
 describe('Jewelry similarity search (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   const tokens: Record<string, string> = {};
-  const IMG = Buffer.from('fake-jpeg-bytes');
-  // Seeded embedding rows (cleaned up in afterAll).
   const EMB_A = 'p-001';
   const EMB_B = 'p-002';
-  const REINDEX_PRODUCT = 'test-sim-reindex';
-  const PRUNE_PRODUCT = 'test-sim-prune';
-  /** Written by the test itself: uploads/ is gitignored, so a clean checkout has no catalogue images. */
-  const REINDEX_IMAGE = 'catalogue/test-sim-reindex.png';
-  const ONE_PIXEL_PNG =
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const IMG_A = 'jsim-img-a';
+  const IMG_B = 'jsim-img-b';
 
   async function login(email: string) {
     const res = await request(app.getHttpServer()).post('/auth/login').send({ email, password: PASSWORD });
@@ -251,6 +267,7 @@ describe('Jewelry similarity search (e2e)', () => {
   }
 
   beforeAll(async () => {
+    process.env.SCHEDULER_ENABLED = 'false';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(MlInferenceService)
       .useValue(mockInference)
@@ -271,95 +288,102 @@ describe('Jewelry similarity search (e2e)', () => {
     tokens.rep = await login(REP);
     tokens.ho = await login(HO);
 
-    // Clean slate + seed two embeddings in Surat scope: A aligned to the query, B orthogonal.
+    // Clean slate + two indexed gallery pictures in Surat scope: A aligned to
+    // the query, B orthogonal.
     await prisma.similaritySearchFeedback.deleteMany({});
     await prisma.productEmbedding.deleteMany({});
-    await prisma.productEmbedding.createMany({
+    await prisma.productImage.deleteMany({ where: { id: { in: [IMG_A, IMG_B] } } });
+    await prisma.productImage.createMany({
       data: [
-        {
-          productId: EMB_A,
-          storeId: SURAT,
-          organisationId: 'org_eclat',
-          dinoEmbedding: [1, 0, 0],
-          siglipEmbedding: [1, 0, 0],
-          imageHash: 'seed-a',
-          preprocessingVersion: 'pp1',
-          dinoModelVersion: 'd1',
-          siglipModelVersion: 's1',
-        },
-        {
-          productId: EMB_B,
-          storeId: SURAT,
-          organisationId: 'org_eclat',
-          dinoEmbedding: [0, 1, 0],
-          siglipEmbedding: [0, 1, 0],
-          imageHash: 'seed-b',
-          preprocessingVersion: 'pp1',
-          dinoModelVersion: 'd1',
-          siglipModelVersion: 's1',
-        },
+        { id: IMG_A, organisationId: 'org_eclat', productId: EMB_A, url: '/uploads/jsim-a.jpg', source: 'website', angle: 'front', embeddingStatus: 'indexed' },
+        { id: IMG_B, organisationId: 'org_eclat', productId: EMB_B, url: '/uploads/jsim-b.jpg', source: 'gati_cad', embeddingStatus: 'indexed' },
       ],
+    });
+    await prisma.productImageAssociation.create({
+      data: { organisationId: 'org_eclat', imageId: IMG_A, source: 'website', colour: 'rose' },
+    });
+    const row = (productId: string, productImageId: string, v: number[], imageHash: string) => ({
+      productId,
+      productImageId,
+      storeId: SURAT,
+      organisationId: 'org_eclat',
+      dinoEmbedding: v,
+      siglipEmbedding: v,
+      imageHash,
+      preprocessingVersion: 'pp1',
+      dinoModelVersion: 'd1',
+      siglipModelVersion: 's1',
+    });
+    await prisma.productEmbedding.createMany({
+      data: [row(EMB_A, IMG_A, [1, 0, 0], 'seed-a'), row(EMB_B, IMG_B, [0, 1, 0], 'seed-b')],
     });
   });
 
   afterAll(async () => {
     await prisma.similaritySearchFeedback.deleteMany({});
     await prisma.productEmbedding.deleteMany({});
-    await prisma.productImage.deleteMany({ where: { productId: PRUNE_PRODUCT } });
-    await prisma.product.deleteMany({ where: { id: { in: [REINDEX_PRODUCT, PRUNE_PRODUCT] } } });
-    if (app) rmSync(join(app.get(StorageService).baseDir, REINDEX_IMAGE), { force: true });
+    await prisma.productImage.deleteMany({ where: { id: { in: [IMG_A, IMG_B] } } });
     await app?.close();
+    delete process.env.SCHEDULER_ENABLED;
   });
 
   function post(path: string, token?: string) {
     const r = request(app.getHttpServer()).post(path);
     return token ? r.set('Authorization', `Bearer ${token}`) : r;
   }
+  const search = (token = tokens.rep) =>
+    post('/products/jewelry/similarity-search', token).attach('file', jpeg(), { filename: 'q.jpg', contentType: 'image/jpeg' });
 
   it('requires auth', async () => {
-    const res = await post('/products/jewelry/similarity-search')
-      .attach('file', IMG, { filename: 'q.jpg', contentType: 'image/jpeg' });
+    const res = await post('/products/jewelry/similarity-search').attach('file', jpeg(), {
+      filename: 'q.jpg',
+      contentType: 'image/jpeg',
+    });
     expect(res.status).toBe(401);
   });
 
-  it('valid image → MATCHES_FOUND, results only real catalogue products', async () => {
+  it('refuses bytes that are not an image, whatever the content-type says', async () => {
+    const res = await post('/products/jewelry/similarity-search', tokens.rep).attach('file', Buffer.from('<svg/> not a photo'), {
+      filename: 'q.jpg',
+      contentType: 'image/jpeg',
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('valid image → MATCHES_FOUND with the matched picture, only real catalogue products', async () => {
     mockInference._available = true;
     mockInference.embedResult = { dino: [1, 0, 0], siglip: [1, 0, 0] };
-    const res = await post('/products/jewelry/similarity-search', tokens.rep)
-      .attach('file', IMG, { filename: 'q.jpg', contentType: 'image/jpeg' });
+    const res = await search();
     expect(res.status).toBe(201);
     expect(res.body.status).toBe('MATCHES_FOUND');
     expect(res.body.available).toBe(true);
     expect(typeof res.body.queryId).toBe('string');
-    // Only the aligned product; every id is a real seeded catalogue product.
     expect(res.body.results.map((r: any) => r.productId)).toEqual([EMB_A]);
-    const dbNames = await prisma.product.findMany({
-      where: { id: { in: res.body.results.map((r: any) => r.productId) } },
-      select: { id: true, name: true },
-    });
-    expect(res.body.results[0].productName).toBe(dbNames[0].name);
-    expect(res.body.results[0].matchLevel).toBe('VERY_CLOSE');
-    // Display fields the unified UI needs are present (sku + store, closeness).
-    expect(res.body.results[0]).toHaveProperty('sku');
-    expect(res.body.results[0]).toHaveProperty('storeName');
-    expect(typeof res.body.results[0].closenessScore).toBe('number');
-    // At most the TOP 10 closest, ordered closest-first by real similarity.
-    expect(res.body.results.length).toBeLessThanOrEqual(10);
+    const db = await prisma.product.findUniqueOrThrow({ where: { id: EMB_A }, select: { name: true, imageUrl: true } });
+    const hit = res.body.results[0];
+    expect(hit.productName).toBe(db.name);
+    expect(hit.matchLevel).toBe('VERY_CLOSE');
+    expect(hit).toHaveProperty('sku');
+    expect(hit).toHaveProperty('storeName');
+    expect(typeof hit.closenessScore).toBe('number');
+    // Which picture matched, and where it came from.
+    expect(hit.matchedImageId).toBe(IMG_A);
+    expect(hit.matchedImageUrl).toBe('/uploads/jsim-a.jpg');
+    expect(hit.matchedImageSource).toBe('website');
+    expect(hit.matchedColour).toBe('rose');
+    expect(hit.matchedAngle).toBe('front');
+    expect(hit.heroImageUrl).toBe(db.imageUrl ?? null);
     // No raw vectors leaked.
-    expect(res.body.results[0].dino).toBeUndefined();
-    expect(res.body.results[0].siglipEmbedding).toBeUndefined();
+    expect(hit.dino).toBeUndefined();
+    expect(hit.siglipEmbedding).toBeUndefined();
+    // Per-stage timings travel as a header, not in the body.
+    expect(res.headers['server-timing']).toMatch(/dino;dur=\d+/);
+    expect(res.headers['server-timing']).toMatch(/total;dur=\d+/);
   });
 
-  it('search is organisation-scoped — another org’s indexed product never leaks', async () => {
-    mockInference._available = true;
+  it('search is organisation-scoped — another org’s indexed picture never leaks', async () => {
     mockInference.embedResult = { dino: [1, 0, 0], siglip: [1, 0, 0] };
-    // A separate organisation with an embedding aligned to the query. It must
-    // NEVER surface for an Eclat user, even though it is a "perfect" visual match.
-    await prisma.organisation.upsert({
-      where: { id: 'org_jsim_b' },
-      update: {},
-      create: { id: 'org_jsim_b', name: 'JSim B', slug: 'jsim-b' },
-    });
+    await prisma.organisation.upsert({ where: { id: 'org_jsim_b' }, update: {}, create: { id: 'org_jsim_b', name: 'JSim B', slug: 'jsim-b' } });
     await prisma.store.upsert({
       where: { id: 'store_jsim_b' },
       update: {},
@@ -370,60 +394,48 @@ describe('Jewelry similarity search (e2e)', () => {
       update: {},
       create: { id: 'p-jsim-b', sku: 'JSIM-B-1', name: 'JSim B Ring', metal: 'gold_22k', organisationId: 'org_jsim_b', storeId: 'store_jsim_b', embedding: [] },
     });
+    const img = await prisma.productImage.create({
+      data: { organisationId: 'org_jsim_b', productId: 'p-jsim-b', url: '/uploads/b.jpg', embeddingStatus: 'indexed' },
+    });
     await prisma.productEmbedding.create({
       data: {
         productId: 'p-jsim-b',
+        productImageId: img.id,
         organisationId: 'org_jsim_b',
         storeId: 'store_jsim_b',
         dinoEmbedding: [1, 0, 0],
         siglipEmbedding: [1, 0, 0],
-        dinoModelVersion: 'x',
-        siglipModelVersion: 'x',
-        preprocessingVersion: 'x',
         imageHash: 'jsimb',
       },
     });
 
-    const res = await post('/products/jewelry/similarity-search', tokens.rep)
-      .attach('file', IMG, { filename: 'q.jpg', contentType: 'image/jpeg' });
+    const res = await search();
     expect(res.status).toBe(201);
     const ids = res.body.results.map((r: any) => r.productId);
-    expect(ids).not.toContain('p-jsim-b'); // the other org's product is invisible
-    expect(ids).toContain(EMB_A); // own-org match still found
+    expect(ids).not.toContain('p-jsim-b');
+    expect(ids).toContain(EMB_A);
 
     await prisma.productEmbedding.deleteMany({ where: { organisationId: 'org_jsim_b' } });
+    await prisma.productImage.deleteMany({ where: { organisationId: 'org_jsim_b' } });
     await prisma.product.deleteMany({ where: { organisationId: 'org_jsim_b' } });
     await prisma.store.deleteMany({ where: { organisationId: 'org_jsim_b' } });
     await prisma.organisation.deleteMany({ where: { id: 'org_jsim_b' } });
   });
 
   it('a piece detected in the photo finds the design its whole frame does not', async () => {
-    // The shop's case: the whole frame (mostly velvet stand) resembles nothing
-    // in the catalogue; the pendant detected inside it is design A.
-    mockInference._available = true;
-    mockInference.embedResult = {
-      dino: [0, 0, 1],
-      siglip: [0, 0, 1],
-      views: [{ dino: [1, 0, 0], siglip: [1, 0, 0] }],
-    };
-    const res = await post('/products/jewelry/similarity-search', tokens.rep)
-      .attach('file', IMG, { filename: 'q.jpg', contentType: 'image/jpeg' });
-    expect(res.status).toBe(201);
+    mockInference.embedResult = { dino: [0, 0, 1], siglip: [0, 0, 1], views: [{ dino: [1, 0, 0], siglip: [1, 0, 0] }] };
+    const res = await search();
     expect(res.body.status).toBe('MATCHES_FOUND');
     expect(res.body.results[0].productId).toBe(EMB_A);
-    expect(res.body.results[0].matchLevel).toBe('VERY_CLOSE');
 
-    // Without the detected view the same photo matches nothing.
     mockInference.embedResult = { dino: [0, 0, 1], siglip: [0, 0, 1] };
-    const whole = await post('/products/jewelry/similarity-search', tokens.rep)
-      .attach('file', IMG, { filename: 'q.jpg', contentType: 'image/jpeg' });
+    const whole = await search();
     expect(whole.body.status).toBe('NO_CLOSE_MATCH');
   });
 
   it('inference unavailable → available:false (never fabricates)', async () => {
     mockInference._available = false;
-    const res = await post('/products/jewelry/similarity-search', tokens.rep)
-      .attach('file', IMG, { filename: 'q.jpg', contentType: 'image/jpeg' });
+    const res = await search();
     mockInference._available = true;
     expect(res.status).toBe(201);
     expect(res.body.available).toBe(false);
@@ -431,28 +443,12 @@ describe('Jewelry similarity search (e2e)', () => {
   });
 
   it('provider failure → SEARCH_ERROR (distinct from NO_CLOSE_MATCH)', async () => {
-    mockInference._available = true;
-    mockInference.embedResult = null; // embed failed / timed out
-    const res = await post('/products/jewelry/similarity-search', tokens.rep)
-      .attach('file', IMG, { filename: 'q.jpg', contentType: 'image/jpeg' });
+    mockInference.embedResult = null;
+    const res = await search();
     expect(res.status).toBe(201);
     expect(res.body.status).toBe('SEARCH_ERROR');
     expect(res.body.available).toBe(true);
     expect(res.body.results).toEqual([]);
-  });
-
-  it('catalogue not embedded → NOT_INDEXED (distinct from NO_CLOSE_MATCH)', async () => {
-    mockInference._available = true;
-    mockInference.embedResult = { dino: [1, 0, 0], siglip: [1, 0, 0] };
-    // Clear the visual index; the catalogue products themselves still exist.
-    await prisma.productEmbedding.deleteMany({});
-    const res = await post('/products/jewelry/similarity-search', tokens.rep)
-      .attach('file', IMG, { filename: 'q.jpg', contentType: 'image/jpeg' });
-    expect(res.status).toBe(201);
-    expect(res.body.available).toBe(true);
-    expect(res.body.status).toBe('NOT_INDEXED'); // NOT the same as "nothing matched"
-    expect(res.body.results).toEqual([]);
-    expect(String(res.body.reason)).toMatch(/index/i);
   });
 
   it('feedback persists', async () => {
@@ -460,204 +456,35 @@ describe('Jewelry similarity search (e2e)', () => {
     const res = await post('/products/jewelry/similarity-feedback', tokens.rep).send(dto);
     expect(res.status).toBe(201);
     const row = await prisma.similaritySearchFeedback.findFirst({ where: { queryId: 'q-test-1' } });
-    expect(row).toBeTruthy();
     expect(row!.productId).toBe(EMB_A);
     expect(row!.feedback).toBe('very_close');
   });
 
-  it('reindex (HO) is idempotent: embeds once, skips on unchanged hash', async () => {
-    // A test product whose image is a real local file under uploads/.
-    const imagePath = join(app.get(StorageService).baseDir, REINDEX_IMAGE);
-    mkdirSync(join(imagePath, '..'), { recursive: true });
-    writeFileSync(imagePath, Buffer.from(ONE_PIXEL_PNG, 'base64'));
-    await prisma.product.upsert({
-      where: { id: REINDEX_PRODUCT },
-      create: {
-        id: REINDEX_PRODUCT,
-        sku: 'SIM-REIDX-1',
-        name: 'Sim Reindex Test',
-        metal: 'gold_22k',
-        storeId: SURAT,
-        organisationId: 'org_eclat',
-        imageUrl: `/uploads/${REINDEX_IMAGE}`,
-      },
-      update: { imageUrl: `/uploads/${REINDEX_IMAGE}` },
-    });
-
-    const first = await post(`/products/embeddings/reindex?force=1&productId=${REINDEX_PRODUCT}`, tokens.ho);
-    expect(first.status).toBe(201);
-    expect(first.body.available).toBe(true);
-    expect(first.body.embedded).toBe(1);
-
-    const second = await post(`/products/embeddings/reindex?productId=${REINDEX_PRODUCT}`, tokens.ho);
-    expect(second.status).toBe(201);
-    expect(second.body.skipped).toBe(1);
-    expect(second.body.embedded).toBe(0);
+  it('nothing indexed → CATALOGUE_INDEX_BUILD_REQUIRED with coverage, without calling inference', async () => {
+    mockInference.embedResult = { dino: [1, 0, 0], siglip: [1, 0, 0] };
+    await prisma.productEmbedding.deleteMany({});
+    const before = mockInference.batchCalls;
+    const res = await search();
+    expect(res.status).toBe(201);
+    expect(res.body.status).toBe('CATALOGUE_INDEX_BUILD_REQUIRED');
+    expect(res.body.coverage).toEqual(
+      expect.objectContaining({ indexed: expect.any(Number), total: expect.any(Number), queued: expect.any(Number), failed: expect.any(Number) }),
+    );
+    expect(res.body.results).toEqual([]);
+    expect(mockInference.batchCalls).toBe(before);
   });
 
-  it('reindex stores each detected piece as its own row, and keeps them current', async () => {
-    const hashes = async () =>
-      (
-        await prisma.productEmbedding.findMany({
-          where: { productId: REINDEX_PRODUCT },
-          select: { imageHash: true, preprocessingVersion: true },
-        })
-      ).map((e) => `${e.imageHash.replace(/^[0-9a-f]{64}/, 'photo')}@${e.preprocessingVersion}`);
-    const reindex = (force: boolean) =>
-      post(`/products/embeddings/reindex?${force ? 'force=1&' : ''}productId=${REINDEX_PRODUCT}`, tokens.ho);
-
-    try {
-      // Two pieces found: the photo plus two view rows.
-      mockInference.batchViews = [
-        { dino: [0, 1, 0], siglip: [0, 1, 0] },
-        { dino: [0, 0, 1], siglip: [0, 0, 1] },
-      ];
-      expect((await reindex(true)).body.embedded).toBe(1);
-      expect((await hashes()).sort()).toEqual(['photo#v1@pp1', 'photo#v2@pp1', 'photo@pp1']);
-
-      // The detector now finds one: the second view is no longer produced, so it goes.
-      mockInference.batchViews = [{ dino: [0, 1, 0], siglip: [0, 1, 0] }];
-      const fewer = await reindex(true);
-      expect(fewer.body.pruned).toBe(1);
-      expect((await hashes()).sort()).toEqual(['photo#v1@pp1', 'photo@pp1']);
-
-      // A pipeline bump re-embeds without being forced, and the old rows go once
-      // the new ones exist.
-      mockInference.versions = { ...mockInference.versions, preprocessing: 'pp2' };
-      const bumped = await reindex(false);
-      expect(bumped.body.embedded).toBe(1);
-      expect((await hashes()).sort()).toEqual(['photo#v1@pp2', 'photo@pp2']);
-    } finally {
-      mockInference.batchViews = [];
-      mockInference.versions = { ...mockInference.versions, preprocessing: 'pp1' };
-    }
-  });
-
-  it('reindex is HO-gated (salesperson forbidden)', async () => {
-    const res = await post('/products/embeddings/reindex', tokens.rep);
-    expect(res.status).toBe(403);
-  });
-
-  /**
-   * Pruning turns on whether a photo could be READ, not on whether it embedded.
-   *
-   * Conflating the two meant one permanently unembeddable picture kept its
-   * design out of pruning forever, so a deleted angle kept its vector and went
-   * on matching searches for a photograph nobody could see any more. Staging
-   * hits this every time, because every demo design carries a generated SVG
-   * placeholder no vision model will accept.
-   */
-  it('prunes a deleted photo even when a sibling photo will not embed', async () => {
-    const dir = app.get(StorageService).baseDir;
-    const goodRel = 'catalogue/test-prune-good.png';
-    const badRel = 'catalogue/test-prune-bad.png';
-    mkdirSync(join(dir, 'catalogue'), { recursive: true });
-    writeFileSync(join(dir, goodRel), Buffer.from('GOOD-PHOTO-BYTES'));
-    // Readable, but the models refuse it — exactly the placeholder case.
-    writeFileSync(join(dir, badRel), Buffer.from('REJECT-ME-PLACEHOLDER'));
-
-    await prisma.product.upsert({
-      where: { id: PRUNE_PRODUCT },
-      create: {
-        id: PRUNE_PRODUCT,
-        sku: 'TEST-PRUNE',
-        name: 'Prune Test',
-        metal: 'gold_22k',
-        storeId: SURAT,
-        organisationId: 'org_eclat',
-        imageUrl: `/uploads/${goodRel}`,
-      },
-      update: { imageUrl: `/uploads/${goodRel}` },
-    });
-    await prisma.productImage.deleteMany({ where: { productId: PRUNE_PRODUCT } });
-    await prisma.productImage.createMany({
-      data: [
-        {
-          organisationId: 'org_eclat',
-          productId: PRUNE_PRODUCT,
-          url: `/uploads/${goodRel}`,
-          isPrimary: true,
-          sortOrder: 0,
-        },
-        {
-          organisationId: 'org_eclat',
-          productId: PRUNE_PRODUCT,
-          url: `/uploads/${badRel}`,
-          isPrimary: false,
-          sortOrder: 1,
-        },
-      ],
-    });
-
-    // The orphan: a vector for a photograph that has since been deleted, so its
-    // hash matches nothing the re-index will see.
-    await prisma.productEmbedding.create({
-      data: {
-        productId: PRUNE_PRODUCT,
-        storeId: SURAT,
-        organisationId: 'org_eclat',
-        dinoEmbedding: [1, 0, 0],
-        siglipEmbedding: [1, 0, 0],
-        imageHash: 'hash-of-a-photo-that-was-deleted',
-        preprocessingVersion: 'pp1',
-        dinoModelVersion: 'd1',
-        siglipModelVersion: 's1',
-      },
-    });
-
-    mockInference.rejectMarker = 'REJECT-ME';
-    try {
-      const res = await post(
-        `/products/embeddings/reindex?force=1&productId=${PRUNE_PRODUCT}`,
-        tokens.ho,
-      );
-      expect(res.status).toBe(201);
-      // One photo embedded, one refused — and the orphan gone regardless.
-      expect(res.body.embedded).toBe(1);
-      expect(res.body.failed).toBe(1);
-      expect(res.body.pruned).toBe(1);
-    } finally {
-      mockInference.rejectMarker = null;
-    }
-
-    const left = await prisma.productEmbedding.findMany({
-      where: { productId: PRUNE_PRODUCT },
-      select: { imageHash: true },
-    });
-    expect(left.map((e) => e.imageHash)).not.toContain('hash-of-a-photo-that-was-deleted');
-    // The readable photo keeps its vector; the refused one simply has none.
-    expect(left).toHaveLength(1);
-
-    rmSync(join(dir, goodRel), { force: true });
-    rmSync(join(dir, badRel), { force: true });
-  });
-
-  it('a catalogue-wide rebuild runs in the background and reports its outcome', async () => {
-    const start = await post('/products/embeddings/reindex?background=1', tokens.ho);
-    expect(start.status).toBe(201);
-    expect(start.body.started).toBe(true);
-
-    // A second press while it runs does not start another.
-    const again = await post('/products/embeddings/reindex?background=1', tokens.ho);
-    if (again.body.running) expect(again.body.started).toBe(false);
-
-    let status: any = {};
-    for (let i = 0; i < 50; i++) {
-      status = (
-        await request(app.getHttpServer())
-          .get('/products/embeddings/reindex')
-          .set('Authorization', `Bearer ${tokens.ho}`)
-      ).body;
-      if (!status.running) break;
-      await new Promise((r) => setTimeout(r, 200));
-    }
-    expect(status.running).toBe(false);
-    expect(status.result?.available).toBe(true);
-    expect(typeof status.startedAt).toBe('string');
-
-    const rep = await request(app.getHttpServer())
-      .get('/products/embeddings/reindex')
-      .set('Authorization', `Bearer ${tokens.rep}`);
+  it('rebuild and its status are head-office only; status is counts from the database', async () => {
+    expect((await post('/products/embeddings/reindex', tokens.rep)).status).toBe(403);
+    const rep = await request(app.getHttpServer()).get('/products/embeddings/reindex').set('Authorization', `Bearer ${tokens.rep}`);
     expect(rep.status).toBe(403);
+
+    const status = await request(app.getHttpServer()).get('/products/embeddings/reindex').set('Authorization', `Bearer ${tokens.ho}`);
+    expect(status.status).toBe(200);
+    expect(typeof status.body.running).toBe('boolean');
+    expect(typeof status.body.total).toBe('number');
+    expect(status.body.counts).toEqual(expect.objectContaining({ indexed: expect.any(Number), dead: expect.any(Number) }));
+    // p50/p95 per stage from the searches above.
+    expect(status.body.searchMetrics.stages.total.p95).toBeGreaterThanOrEqual(0);
   });
 });

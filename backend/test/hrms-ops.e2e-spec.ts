@@ -5,10 +5,12 @@ import * as bcrypt from 'bcryptjs';
 
 import type { PrismaService } from '../src/prisma/prisma.service';
 import {
+  AttendanceOpsService,
   attributePunches,
   classifyDay,
   DAY_STATES,
   deriveFromPunches,
+  instantFromUnambiguousLocal,
 } from '../src/hrms/attendance-ops.service';
 import { businessDate, dateOnly, instantFromLocalTime, weekdayInTz } from '../src/common/tz.util';
 
@@ -87,6 +89,18 @@ async function teardown(prisma: PrismaService) {
 describe('attendance-ops pure rules', () => {
   const none = { onLeave: false, isHoliday: false, isWeekOff: false };
 
+  it('resolves store-local operator input and refuses DST gaps or folds', () => {
+    expect(
+      instantFromUnambiguousLocal('2026-09-10', '09:30', 'Asia/Kolkata').toISOString(),
+    ).toBe('2026-09-10T04:00:00.000Z');
+    expect(() =>
+      instantFromUnambiguousLocal('2026-03-08', '02:30', 'America/New_York'),
+    ).toThrow(/does not exist/);
+    expect(() =>
+      instantFromUnambiguousLocal('2026-11-01', '01:30', 'America/New_York'),
+    ).toThrow(/ambiguous/);
+  });
+
   it('classifyDay gives exactly one state; late is a modifier of present', () => {
     expect(classifyDay(none, { status: 'late', isLate: true })).toEqual({ state: 'present', isLate: true });
     expect(classifyDay(none, { status: 'present', isLate: false })).toEqual({ state: 'present', isLate: false });
@@ -139,6 +153,7 @@ describe('attendance-ops pure rules', () => {
 describe('Attendance operations (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
+  let attendanceOps: AttendanceOpsService;
   const t: Record<string, string> = {};
   const server = () => app.getHttpServer();
   const as = (who: string) => ({ Authorization: `Bearer ${t[who]}` });
@@ -159,6 +174,7 @@ describe('Attendance operations (e2e)', () => {
     );
     await app.init();
     prisma = app.get(PS);
+    attendanceOps = app.get(AttendanceOpsService);
     await teardown(prisma);
 
     await prisma.organisation.create({ data: { id: A.org, name: 'Ops B', slug: A.slug, industryPackCode: 'jewellery' } });
@@ -301,9 +317,30 @@ describe('Attendance operations (e2e)', () => {
       await request(server())
         .post('/hrms/punches')
         .set(as(U.mgr))
-        .send({ userId: U.repE, storeId: A.s1, kind, at: when.toISOString(), note: 'device missed it' })
+        .send({
+          userId: U.repE,
+          storeId: A.s1,
+          kind,
+          ...(kind === 'in'
+            ? { localDate: dateOnly(P), localTime: '10:20' }
+            : { at: when.toISOString() }),
+          note: 'device missed it',
+        })
         .expect(201);
     }
+    await request(server())
+      .post('/hrms/punches')
+      .set(as(U.mgr))
+      .send({
+        userId: U.repE,
+        storeId: A.s1,
+        kind: 'in',
+        at: at(P, '10:35').toISOString(),
+        localDate: dateOnly(P),
+        localTime: '10:35',
+        note: 'ambiguous input contract',
+      })
+      .expect(400);
     const row = await prisma.attendanceRecord.findUniqueOrThrow({
       where: { storeId_staffId_date: { storeId: A.s1, staffId: U.repE, date: P } },
     });
@@ -369,6 +406,12 @@ describe('Attendance operations (e2e)', () => {
     });
     expect(legacy.checkInAt?.getTime()).toBe(at(legacyDay, '09:35').getTime());
     expect(legacy.status).toBe('present');
+    expect(legacy.calculationVersion).toBe('2026-09-18.v1');
+    expect(legacy.shiftSnapshot).toMatchObject({
+      shiftId: shiftG,
+      startTime: '09:30',
+      endTime: '18:30',
+    });
     expect(await prisma.rawPunchEvent.count({ where: { userId: U.repB, idempotencyKey: { startsWith: 'backfill:' } } })).toBe(2);
 
     // Nobody else punched on P, so they are absent now (and the week-off man is not off on P).
@@ -397,6 +440,36 @@ describe('Attendance operations (e2e)', () => {
     const runs = (await request(server()).get('/hrms/processing-runs').set(as(U.ho)).expect(200)).body;
     expect(runs.map((r: { id: string }) => r.id).slice(0, 2)).toEqual([run2.id, run1.id]);
     await request(server()).post('/hrms/processing-runs').set(as(U.mgr)).send({ from: dateOnly(P), to: dateOnly(P) }).expect(403);
+  });
+
+  it('reports a processing run as partially_failed when one employee-day fails', async () => {
+    const original = attendanceOps.reprocessDay.bind(attendanceOps);
+    let inject = true;
+    const spy = jest.spyOn(attendanceOps, 'reprocessDay').mockImplementation(async (args) => {
+      if (inject) {
+        inject = false;
+        throw new Error('injected employee-day failure');
+      }
+      return original(args);
+    });
+    try {
+      const run = (
+        await request(server())
+          .post('/hrms/processing-runs')
+          .set(as(U.ho))
+          .send({ from: dateOnly(P), to: dateOnly(P), storeId: A.s1 })
+          .expect(201)
+      ).body;
+      expect(run.status).toBe('partially_failed');
+      expect(run.processed).toBeGreaterThan(1);
+      expect(run.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ message: 'injected employee-day failure' }),
+        ]),
+      );
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('voiding a punch keeps the row as evidence and recomputes the day', async () => {
@@ -446,13 +519,18 @@ describe('Attendance operations (e2e)', () => {
     await request(server()).post('/hrms/shift-assignments').set(as(U.mgr)).send({ userId: U.repH, shiftId: flex.id, effectiveFrom: dateOnly(dayOff(-10)) }).expect(201);
     const list = (await request(server()).get(`/hrms/shift-assignments?userId=${U.repH}`).set(as(U.mgr)).expect(200)).body;
     expect(list.find((a: { id: string }) => a.id === first.id).effectiveTo).toBe(dateOnly(dayOff(-11)));
+    await request(server())
+      .patch(`/hrms/shift-assignments/${first.id}`)
+      .set(as(U.mgr))
+      .send({ effectiveTo: dateOnly(dayOff(-5)) })
+      .expect(409);
 
     // 13:00 on a flexible day: on time. The same 13:00 on the G shift (day -15): late.
     const mark = (d: Date) =>
       request(server())
         .post('/hrms/attendance')
         .set(as(U.mgr))
-        .send({ staffId: U.repH, storeId: A.s1, status: 'present', date: dateOnly(d), checkInAt: at(d, '13:00').toISOString() })
+        .send({ staffId: U.repH, storeId: A.s1, status: 'present', date: dateOnly(d), checkInLocal: '13:00' })
         .expect(201);
     expect((await mark(dayOff(-6))).body).toMatchObject({ isLate: false, status: 'present', shiftId: flex.id });
     expect((await mark(dayOff(-15))).body).toMatchObject({ isLate: true, shiftId: shiftG });
@@ -614,6 +692,26 @@ describe('Attendance operations (e2e)', () => {
       .post('/hrms/punches')
       .set(as(U.mgr))
       .send({ userId: U.repE, storeId: A.s1, kind: 'out', at: at(P, '19:00').toISOString(), note: 'x' })
+      .expect(409);
+    await request(server())
+      .post('/hrms/shift-assignments')
+      .set(as(U.mgr))
+      .send({ userId: U.repC, shiftId: shiftG, effectiveFrom: dateOnly(P) })
+      .expect(409);
+    await request(server())
+      .patch(`/hrms/shifts/${shiftG}`)
+      .set(as(U.mgr))
+      .send({ bufferMins: 20 })
+      .expect(409);
+    await request(server())
+      .patch('/hrms/week-off')
+      .set(as(U.ho))
+      .send({ storeId: A.s1, weekOffDay: 1 })
+      .expect(409);
+    await request(server())
+      .put('/hrms/payroll/week-offs')
+      .set(as(U.mgr))
+      .send({ userId: U.repC, storeId: A.s1, days: [2] })
       .expect(409);
 
     const run = (await request(server()).post('/hrms/processing-runs').set(as(U.ho)).send({ from: dateOnly(P), to: dateOnly(P), storeId: A.s1 }).expect(201)).body;

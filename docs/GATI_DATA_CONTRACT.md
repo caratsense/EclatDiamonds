@@ -51,8 +51,10 @@ Imported `role:'salesperson', isActive:false, passwordHash:null` — cannot log 
 | Gati field | Eclat field | id key | store attr | transform | null/fail |
 |---|---|---|---|---|---|
 | StyleId | Product.legacyId | ✔ | **GLOBAL → storeId null** (company-wide) | | required; skip if null |
-| ToneFor+ToneCode | metal, karat | | | `metalFromTone` — **see §Karat** | |
+| SKU token (`-14KT-`) + ToneFor | metal, karat | | | `karatToMetal` (`src/catalogue/metal.ts`) — **see §Karat** | unknown → gold_unspecified |
 | StyleSKUNo/StyleCode | sku, name | | | `STYLE-<id>` fallback | |
+| StyleCode | styleNumber | | | trim | absent → unchanged |
+| (sync time) | gatiSyncedAt | | | now | |
 | (all text) | category | | | `categoryFromRow` keyword scan → 'other' | |
 | GrossWt/ModelWt, TotDiaWt, MRP/TagPrice/EndClientPrice, WebDescription, BestSeller | weightGrams, caratWeight, price, description, bestSeller | | | first non-null; '0' default | opt |
 
@@ -62,9 +64,13 @@ Imported `role:'salesperson', isActive:false, passwordHash:null` — cannot log 
 | JewelId | StockItem.legacyId | ✔ | EclatBranchId→**BranchNo**→LocationId→FirstLocationId | UpdateDate/EntryDate | | required; skip if null |
 | StyleId | productId (FK) | | | | via idMap; null if design not imported | opt |
 | Status | status | | | | `stockStatusFromInward` (16-letter `Const_InwardStatus` map; only A=in_stock; unknown letter→transferred + **reported**) | unknown→not sellable |
-| ToneFor+ToneCode | metal, karat | | | | **see §Karat** | |
-| SKU/JewelCode, weights, diamond/stone, amounts, HallMarkId, cert, InwardDate | sku, name, weights, diamond…, amounts, hallmarkNo, certificateNo, inwardDate | | | | | opt |
-| HUID | huid | | | | (entered in Eclat; not in legacy today) | opt |
+| SKU token + ToneFor | metal, karat | | | | `karatToMetal` — **see §Karat** | |
+| SKU/JewelCode, GrossWt/NetWt/PureWt/MetalLossWt, TotDiaWt/TotDiaPc/TotCZWt, TotMtlAmt/TotDiaAmt/TotCZAmt/TotHandlingAmt/TotCPFAmt, COST/MRP/TagPrice, Jewelry_CertificateNo, InwardDate | sku, name, weights, diamond…, amounts, certificateNo, inwardDate | | | | | opt |
+| StyleId → StyleMst.StyleCode | styleNumber | | | | via the linked Product | no product → unchanged |
+| ProductCode, InwardQty, ItemSizeId, TotCZPc | productCode, quantity, itemSizeId, stonePieces | | | | key absent (older agent) → unchanged | opt |
+| (derived) | variantId | | | | exactly one live website variant with the piece's karat (+ colour from ToneCode PG/YG/WG when present) | else null |
+| (derived) | ProductPrice `gati_tag_min`/`gati_tag_max` (source gati) | | | | min/max TagPrice > 0 of the design's in_stock pieces, recomputed per batch | none → rows removed |
+| HallMarkId, HSNId, ItemSizeId label, HUID | hallmarkNo, hsn, sizeLabel, huid | | | | **NOT MAPPED — BLOCKED**: HallMarkId/HSNId are FK ids to masters whose value columns are unconfirmed; SizeMst label column unconfirmed; HUID absent in legacy (entered in Eclat, never overwritten) | |
 **Source-of-truth guard (approved, live):** a piece mid/post Eclat transfer
 (`ho_approved`/`dispatched`/`received`/`acknowledged`) keeps its Eclat
 `storeId`+`status`; the sync updates every OTHER Gati-owned field. Tested.
@@ -129,6 +135,10 @@ row not yet synced → update throws → caught → skip (retried next run).
 `StockItem.imageUrl`.** **CLIENT INPUT REQUIRED for live retrieval:** photo folder
 path (`SJEP_IMAGE_ROOT`), network read access, customer-safe subfolder selection,
 R2 credentials.
+A `kind=product` picture is also registered as a `ProductImage source gati_cad`
+(upsert by `sourceUrl`; a new URL tombstones the previous CAD; other sources
+untouched), then `applyImageOrder` recomputes cover/order (Product.imageUrl) and
+the picture is queued for visual-search indexing after the batch commits.
 
 ## 13. Custom-order linkage — **BLOCKED / CLIENT PROCESS INPUT REQUIRED** (OP-25)
 `CustomOrder` is Eclat-native (no `legacyId`, no relation to
@@ -146,6 +156,9 @@ tone/rose marker; a `RateChart`/caratage join does not exist). As of 2026-08-13
 the sync no longer asserts a default 22K: a plain gold piece maps to
 **`gold_unspecified` with `karat = null`** (physical `StockItem`) — an honest
 "gold, purity unknown" — while a genuine rose/pink tone maps to `rose_gold_18k`.
+Since 2026-09-18 the karat parsed from the SKU token (`-9KT-`, `-14KT-`, …) maps
+through `karatToMetal` (9→gold_9k … 24→gold_24k); a rose/PG tone no longer
+forces `rose_gold_18k` — colour is carried by the website variant link.
 **CLIENT INPUT REQUIRED:** the authoritative per-piece purity source (a
 `RateChart`/tone→caratage table, or a `Caratage`/`Purity` column). Until provided,
 Gati gold reads as unspecified rather than a false karat.

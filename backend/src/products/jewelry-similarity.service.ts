@@ -1,32 +1,22 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, HttpException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { createHash, randomUUID } from 'crypto';
 import { Prisma, ProductCategory, SimilarityFeedback } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
-import { StorageService } from '../storage/storage.service';
-import { readImageBytes } from './image-fetch.util';
-import { MlInferenceService, BatchItem, BatchResult, DualEmbedding } from './ml-inference.service';
-import {
-  JewelryRankingService,
-  MatchLevel,
-  RankCandidate,
-  RANKING_VERSION,
-} from './jewelry-ranking.service';
+import { sniffImageMime } from './image-fetch.util';
+import { MlInferenceService, DualEmbedding, View } from './ml-inference.service';
+import { CatalogueIndexService } from './catalogue-index.service';
+import { JewelryRankingService, MatchLevel, RankCandidate, RANKING_VERSION, unitOf } from './jewelry-ranking.service';
 
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
-/**
- * Photos per inference call. Each one is now a detection pass (~3-9s on CPU)
- * plus an embedding of the whole frame and of every piece found in it (up to
- * five canvases), so batches are small enough to finish well inside the call's
- * 120s timeout. Throughput is unchanged: the service works through a batch one
- * image at a time either way.
- */
-const BATCH_SIZE = 4;
-/** Designs one re-index run will consider. */
-const CANDIDATE_CAP = 5000;
 /** Rows per page when loading the vector index into memory. */
 const INDEX_PAGE = 1000;
+/** The only dimension the ANN index is built for (DINOv2-base / SigLIP 2 base). */
+const ANN_DIM = 768;
+/** Rows fetched per query vector per model from the ANN index. */
+const ANN_K = 50;
 
 /**
  * One indexed vector — a whole photograph, or one piece of jewellery detected
@@ -34,28 +24,14 @@ const INDEX_PAGE = 1000;
  */
 interface IndexedVector extends RankCandidate {
   storeId: string | null;
+  imageId: string;
   dino: Float32Array;
   siglip: Float32Array;
 }
 
-/** A background re-index: its progress while running, its outcome after. */
-interface ReindexRun {
-  startedAt: Date;
-  finishedAt?: Date;
-  /** Photos processed so far (indexed, already current or unreadable), of all. */
-  done: number;
-  total: number;
-  result?: Record<string, unknown>;
-  error?: string;
-}
-
 /**
- * How many photographs one search may carry.
- *
- * A piece held in the hand looks different from three sides, and so does the
- * same piece in the catalogue; one photo of each is a single guess at which
- * pair happens to line up. Three is where the returns flatten and the wait at
- * the counter starts to be felt — each one is its own embedding call.
+ * How many photographs one search may carry: the same piece from up to three
+ * sides, scored on its best view against the catalogue's best view.
  */
 const MAX_QUERY_IMAGES = 3;
 
@@ -68,21 +44,65 @@ type Metric =
   | 'search_failure'
   | 'search_no_match'
   | 'search_not_indexed'
+  | 'search_rejected'
+  | 'cache_hit'
   | 'embedding_failure';
 
+/** Server-Timing stages, in pipeline order. */
+const STAGES = ['upload', 'decode', 'detect', 'dino', 'siglip', 'retrieve', 'rank', 'hydrate', 'total'] as const;
+type Stage = (typeof STAGES)[number];
+const SAMPLE_WINDOW = 500;
+
+function percentile(xs: number[], p: number): number {
+  if (!xs.length) return 0;
+  const s = [...xs].sort((a, b) => a - b);
+  return s[Math.min(s.length - 1, Math.ceil((p / 100) * s.length) - 1)];
+}
+
+/** Query vectors by sha256 of the uploaded bytes. Insertion order = recency. */
+class VectorCache {
+  private readonly map = new Map<string, { at: number; v: DualEmbedding }>();
+  constructor(
+    private readonly max: number,
+    private readonly ttlMs: number,
+  ) {}
+  get(k: string): DualEmbedding | null {
+    const e = this.map.get(k);
+    if (!e) return null;
+    this.map.delete(k);
+    if (Date.now() - e.at > this.ttlMs) return null;
+    this.map.set(k, e);
+    return e.v;
+  }
+  set(k: string, v: DualEmbedding) {
+    this.map.delete(k);
+    this.map.set(k, { at: Date.now(), v });
+    while (this.map.size > this.max) this.map.delete(this.map.keys().next().value!);
+  }
+  get size() {
+    return this.map.size;
+  }
+}
+
+/** Where a search can write response headers (an Express Response fits). */
+export interface HeaderSink {
+  setHeader(name: string, value: string): unknown;
+}
+
 /**
- * Jewelry visual similarity (Module 5): orchestrates the DINOv3 + SigLIP 2
+ * Jewelry visual similarity (Module 5): orchestrates the DINOv2 + SigLIP 2
  * inference client, the ProductEmbedding index, and the centralised ranker.
  *
  * Honesty contract, identical in spirit to AiImageSearchService:
- *   - no ML_INFERENCE_URL      -> available:false (never fabricates)
- *   - provider error / no embed -> SEARCH_ERROR (distinct from NO_CLOSE_MATCH)
- *   - nothing clears thresholds -> NO_CLOSE_MATCH with empty results
+ *   - no ML_INFERENCE_URL            -> available:false (never fabricates)
+ *   - nothing indexed yet            -> CATALOGUE_INDEX_BUILD_REQUIRED, without calling inference
+ *   - provider error / no embed      -> SEARCH_ERROR (distinct from NO_CLOSE_MATCH)
+ *   - nothing clears thresholds      -> NO_CLOSE_MATCH with empty results
  * Results are ALWAYS real store-scoped catalogue products; raw vectors, model
- * internals and credentials are never returned.
+ * internals and credentials are never returned. Query photos are never stored.
  */
 @Injectable()
-export class JewelrySimilarityService {
+export class JewelrySimilarityService implements OnModuleInit {
   private readonly logger = new Logger(JewelrySimilarityService.name);
   private readonly counters: Record<Metric, number> = {
     search_count: 0,
@@ -90,60 +110,113 @@ export class JewelrySimilarityService {
     search_failure: 0,
     search_no_match: 0,
     search_not_indexed: 0,
+    search_rejected: 0,
+    cache_hit: 0,
     embedding_failure: 0,
   };
+  private readonly samples = new Map<Stage, number[]>();
+  // ponytail: per-instance limit and cache; a shared (Redis) one when search runs on several replicas.
+  private inFlight = 0;
+  private readonly cache: VectorCache;
+  /** True when SEARCH_PGVECTOR=1 and the extension + ANN indexes were found at boot. */
+  private ann = false;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
-    private readonly storage: StorageService,
     private readonly inference: MlInferenceService,
     private readonly ranking: JewelryRankingService,
-  ) {}
+    private readonly index: CatalogueIndexService,
+    private readonly config: ConfigService,
+  ) {
+    this.cache = new VectorCache(this.num('SEARCH_CACHE_SIZE', 64), this.num('SEARCH_CACHE_TTL_MS', 10 * 60_000));
+  }
 
-  /**
-   * Each organisation's vectors, held in memory until its index changes.
-   *
-   * The index is one row per photograph AND per piece detected in it — ~10k
-   * rows for a Gati-plus-website catalogue. Pulled from Postgres on every
-   * search that is seconds and hundreds of MB of boxed numbers per request;
-   * packed as Float32 it is ~60MB, loaded once. The stamp (row count + latest
-   * write) is one cheap aggregate, so a re-index or a new photo is seen by the
-   * very next search, on any instance.
-   * ponytail: whole-index scan in process; the pgvector ANN index (see
-   * prisma/manual/20260819_pgvector_dual_embeddings.sql) is the upgrade when a
-   * catalogue reaches ~100k rows.
-   */
-  private readonly index = new Map<string, { stamp: string; vectors: IndexedVector[] }>();
+  private num(key: string, def: number): number {
+    const v = Number(this.config.get<string>(key));
+    return Number.isFinite(v) && v > 0 ? v : def;
+  }
 
-  /** The latest catalogue-wide re-index per organisation (this instance only). */
-  private readonly runs = new Map<string, ReindexRun>();
+  async onModuleInit() {
+    if (this.config.get<string>('SEARCH_PGVECTOR') !== '1') return;
+    this.ann = await this.detectAnn();
+    this.logger.log(
+      this.ann
+        ? 'visual search retrieval: pgvector ANN'
+        : 'SEARCH_PGVECTOR=1 but pgvector / its ANN indexes are missing — using the exact ranker',
+    );
+  }
+
+  /** The extension and both HNSW indexes from migration 20260918160000_pgvector_ann_768. */
+  async detectAnn(): Promise<boolean> {
+    try {
+      const [row] = await this.prisma.$queryRaw<{ ok: boolean }[]>`
+        SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')
+           AND (SELECT count(*) FROM pg_indexes
+                 WHERE indexname IN ('ProductEmbedding_dino768_hnsw', 'ProductEmbedding_siglip768_hnsw')) = 2 AS ok`;
+      return Boolean(row?.ok);
+    } catch {
+      return false;
+    }
+  }
 
   private bump(m: Metric): void {
     this.counters[m]++;
   }
 
+  private record(stage: Stage, ms: number) {
+    const xs = this.samples.get(stage) ?? [];
+    xs.push(ms);
+    if (xs.length > SAMPLE_WINDOW) xs.shift();
+    this.samples.set(stage, xs);
+  }
+
+  /** Counters plus p50/p95 per stage over the last {@link SAMPLE_WINDOW} searches. */
+  metrics() {
+    const stages: Record<string, { p50: number; p95: number; n: number }> = {};
+    for (const [k, xs] of this.samples) stages[k] = { p50: percentile(xs, 50), p95: percentile(xs, 95), n: xs.length };
+    return {
+      counters: { ...this.counters },
+      stages,
+      inFlight: this.inFlight,
+      cacheSize: this.cache.size,
+      retrieval: this.ann ? 'pgvector' : 'exact',
+    };
+  }
+
+  /**
+   * Each organisation's vectors, held in memory until its index changes.
+   *
+   * One row per photograph AND per piece detected in it. Packed as Float32 it
+   * is ~60MB for ~10k rows, loaded once; the stamp (row count + latest write)
+   * is one cheap aggregate, so a new photo is seen by the very next search on
+   * any instance. Only rows of a gallery picture are candidates.
+   */
+  private readonly memIndex = new Map<string, { stamp: string; vectors: IndexedVector[] }>();
+
   private async orgIndex(organisationId: string): Promise<IndexedVector[]> {
+    const where: Prisma.ProductEmbeddingWhereInput = { organisationId, productImageId: { not: null } };
     const agg = await this.prisma.productEmbedding.aggregate({
-      where: { organisationId },
+      where,
       _count: { _all: true },
       _max: { updatedAt: true },
     });
     const stamp = `${agg._count._all}:${agg._max.updatedAt?.getTime() ?? 0}`;
-    const cached = this.index.get(organisationId);
+    const cached = this.memIndex.get(organisationId);
     if (cached?.stamp === stamp) return cached.vectors;
 
     const vectors: IndexedVector[] = [];
     let cursor: string | undefined;
     for (;;) {
       const page = await this.prisma.productEmbedding.findMany({
-        where: { organisationId },
+        where,
         orderBy: { id: 'asc' },
         take: INDEX_PAGE,
         ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
         select: {
           id: true,
           productId: true,
+          productImageId: true,
           storeId: true,
           dinoEmbedding: true,
           siglipEmbedding: true,
@@ -154,17 +227,73 @@ export class JewelrySimilarityService {
         if (!r.dinoEmbedding.length || !r.siglipEmbedding.length) continue;
         vectors.push({
           productId: r.productId,
+          imageId: r.productImageId!,
           storeId: r.storeId,
           category: r.product?.category ?? null,
-          dino: Float32Array.from(r.dinoEmbedding),
-          siglip: Float32Array.from(r.siglipEmbedding),
+          dino: unitOf(r.dinoEmbedding),
+          siglip: unitOf(r.siglipEmbedding),
+          unit: true,
         });
       }
       if (page.length < INDEX_PAGE) break;
       cursor = page[page.length - 1].id;
     }
-    this.index.set(organisationId, { stamp, vectors });
+    this.memIndex.set(organisationId, { stamp, vectors });
     return vectors;
+  }
+
+  /**
+   * Candidates from the pgvector HNSW indexes: the nearest rows to every query
+   * vector under each model, then ranked exactly like the in-memory path. The
+   * store/active filters run inside the query (iterative scan keeps recall).
+   */
+  private async annCandidates(user: AuthUser, headerStore: string | undefined, vectors: View[]): Promise<IndexedVector[]> {
+    const stores =
+      headerStore && headerStore !== 'all' ? [headerStore] : user.allStores ? null : user.storeIds;
+    const scopeSql = stores ? `AND (e."storeId" IS NULL OR e."storeId" = ANY($3::text[]))` : '';
+    const ids = new Set<string>();
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL hnsw.ef_search = 200`);
+      await tx.$executeRawUnsafe(`SET LOCAL hnsw.iterative_scan = relaxed_order`);
+      for (const q of vectors) {
+        for (const [col, vec] of [
+          ['dinoEmbedding', q.dino],
+          ['siglipEmbedding', q.siglip],
+        ] as const) {
+          const rows = await tx.$queryRawUnsafe<{ id: string }[]>(
+            `SELECT e.id FROM "ProductEmbedding" e
+               JOIN "ProductImage" i ON i.id = e."productImageId" AND i.status = 'active'
+              WHERE e."organisationId" = $1 AND array_length(e."${col}", 1) = ${ANN_DIM} ${scopeSql}
+              ORDER BY (e."${col}"::vector(${ANN_DIM})) <=> $2::vector(${ANN_DIM})
+              LIMIT ${ANN_K}`,
+            user.organisationId,
+            `[${vec.join(',')}]`,
+            ...(stores ? [stores] : []),
+          );
+          for (const r of rows) ids.add(r.id);
+        }
+      }
+    });
+    const rows = await this.prisma.productEmbedding.findMany({
+      where: { id: { in: [...ids] } },
+      select: {
+        productId: true,
+        productImageId: true,
+        storeId: true,
+        dinoEmbedding: true,
+        siglipEmbedding: true,
+        product: { select: { category: true } },
+      },
+    });
+    return rows.map((r) => ({
+      productId: r.productId,
+      imageId: r.productImageId!,
+      storeId: r.storeId,
+      category: r.product?.category ?? null,
+      dino: unitOf(r.dinoEmbedding),
+      siglip: unitOf(r.siglipEmbedding),
+          unit: true,
+    }));
   }
 
   /** In-memory twin of {@link scopeWhere}, for vectors already loaded. */
@@ -183,7 +312,6 @@ export class JewelrySimilarityService {
   /** Store-scoped WHERE for a table carrying a nullable storeId (null = company-wide). */
   private scopeWhere(user: AuthUser, headerStore?: string): { organisationId: string; OR?: any[] } {
     // ORGANISATION boundary always — visual search/reindex never cross tenants.
-    // Applies to both Product and ProductEmbedding (both carry organisationId).
     const org = { organisationId: user.organisationId };
     if (headerStore && headerStore !== 'all') {
       this.scope.assertStoreAllowed(user, headerStore);
@@ -195,145 +323,190 @@ export class JewelrySimilarityService {
 
   private validateUpload(file?: { buffer?: Buffer; mimetype?: string }): { buffer: Buffer; mime: string } {
     if (!file?.buffer?.length) throw new BadRequestException('No image uploaded');
-    if (file.mimetype && !file.mimetype.startsWith('image/')) {
-      throw new BadRequestException('Uploaded file is not an image');
-    }
-    if (file.buffer.length > MAX_IMAGE_BYTES) {
-      throw new BadRequestException('Image too large (max 12MB)');
-    }
-    return { buffer: file.buffer, mime: file.mimetype?.startsWith('image/') ? file.mimetype : 'image/jpeg' };
+    if (file.buffer.length > MAX_IMAGE_BYTES) throw new BadRequestException('Image too large (max 12MB)');
+    // The bytes decide, not the client's content-type.
+    const mime = sniffImageMime(file.buffer);
+    if (!mime) throw new BadRequestException('Uploaded file is not an image');
+    return { buffer: file.buffer, mime };
   }
 
   // ------------------------------------------------------------------ search
   /**
-   * Find the catalogue designs closest to one or more photographs of a piece.
+   * Find the catalogue designs closest to one to three photographs of a piece.
    *
-   * Several photos are not several searches. They are several views of the SAME
-   * object, so a design is scored on its best view against the customer’s best
-   * view and the results stay one list of designs — which is what a salesperson
-   * holding a ring and an iPad actually wants.
+   * Several photos are several views of the SAME object, so a design is scored
+   * on its best view against the customer's best view and the result is one
+   * list of designs, each shown with the picture of it that matched.
    */
   async search(
     user: AuthUser,
     files: { buffer?: Buffer; mimetype?: string } | ({ buffer?: Buffer; mimetype?: string } | undefined)[] | undefined,
     opts: { category?: ProductCategory; limit?: number } = {},
     headerStore?: string,
+    res?: HeaderSink,
   ) {
+    const t0 = Date.now();
     const queryId = randomUUID();
     const uploads = (Array.isArray(files) ? files : [files]).filter(Boolean).slice(0, MAX_QUERY_IMAGES);
     if (!uploads.length) throw new BadRequestException('No image uploaded');
-    // Validate every one before embedding any: a rejected third photo should
-    // fail the request outright, not after two embedding calls have been paid for.
+    // Validate every one before embedding any.
     const shots = uploads.map((u) => this.validateUpload(u));
     const limit = Math.min(Math.max(opts.limit ?? DEFAULT_TOP_N, 1), 50);
+    const inScope = this.storeFilter(user, headerStore);
     this.bump('search_count');
+
+    const empty = (status: 'SEARCH_ERROR' | 'NO_CLOSE_MATCH', reason: string, extra: Record<string, unknown> = {}) => ({
+      queryId,
+      available: true,
+      status,
+      matchLevel: 'NO_CLOSE_MATCH' as MatchLevel,
+      closenessScore: 0,
+      reason,
+      ...extra,
+      results: [],
+    });
 
     if (!this.inference.available) {
       return {
-        queryId,
+        ...empty('SEARCH_ERROR', 'Visual similarity unavailable — no inference service configured (set ML_INFERENCE_URL).'),
         available: false,
-        status: 'SEARCH_ERROR' as const,
-        matchLevel: 'NO_CLOSE_MATCH' as const,
-        closenessScore: 0,
-        reason: 'Visual similarity unavailable — no inference service configured (set ML_INFERENCE_URL).',
-        results: [],
       };
     }
 
-    const t0 = Date.now();
-    // Sequential, not parallel: the inference service is a single container
-    // that may still be waking up, and three simultaneous cold requests are how
-    // you turn one slow search into three timed-out ones.
-    const queries: DualEmbedding[] = [];
-    for (const shot of shots) {
-      const q = await this.inference.embed(shot.buffer, shot.mime);
-      if (q) queries.push(q);
-    }
-    const embedMs = Date.now() - t0;
-    // One photo failing among several is survivable; all of them failing is not.
-    if (!queries.length) {
-      this.bump('search_failure');
-      this.bump('embedding_failure');
-      return {
-        queryId,
-        available: true,
-        status: 'SEARCH_ERROR' as const,
-        matchLevel: 'NO_CLOSE_MATCH' as const,
-        closenessScore: 0,
-        reason: 'Visual search temporarily unavailable — inference service did not respond.',
-        results: [],
-      };
-    }
-
-    const t1 = Date.now();
-    const inScope = this.storeFilter(user, headerStore);
-    const candidates = (await this.orgIndex(user.organisationId)).filter((v) => inScope(v.storeId));
-    const retrievalMs = Date.now() - t1;
-
-    // Nothing indexed in scope is NOT the same as "no design matched" — the
-    // catalogue simply hasn't been embedded yet. Report it distinctly and
-    // actionably (how many photographed designs are waiting) instead of a bare
-    // no-match, so the UI can tell the operator to run indexing.
-    if (candidates.length === 0) {
-      const indexable = await this.prisma.product.count({
-        where: {
-          ...(this.scopeWhere(user, headerStore) as Prisma.ProductWhereInput),
-          imageUrl: { not: null },
-        },
-      });
+    // Preflight: an organisation with nothing indexed gets its coverage back at
+    // once — no inference call, no queue slot, no spinner.
+    const indexedRows = await this.prisma.productEmbedding.count({
+      where: { organisationId: user.organisationId, productImage: { status: 'active' } },
+    });
+    if (!indexedRows) {
+      const c = await this.index.counts(user.organisationId);
       this.bump('search_not_indexed');
-      this.logger.log(`similarity queryId=${queryId} status=NOT_INDEXED indexable=${indexable}`);
       return {
         queryId,
         available: true,
-        status: 'NOT_INDEXED' as const,
+        status: 'CATALOGUE_INDEX_BUILD_REQUIRED' as const,
         matchLevel: 'NO_CLOSE_MATCH' as const,
         closenessScore: 0,
+        coverage: {
+          indexed: c.indexed,
+          total: c.total,
+          queued: c.queued + c.running + c.pending,
+          failed: c.failed + c.dead,
+        },
         reason:
-          indexable > 0
-            ? `Visual search isn't built yet — ${indexable} design${indexable === 1 ? '' : 's'} with photos are waiting to be indexed. Ask an administrator to run visual indexing.`
+          c.total > 0
+            ? `Visual search isn't built yet — ${c.total} photo${c.total === 1 ? '' : 's'} waiting to be indexed. Ask an administrator to run visual indexing.`
             : 'No product photos to search yet — add catalogue images, then run visual indexing.',
         results: [],
       };
     }
 
-    // Candidates are one per PHOTOGRAPH and per piece detected in it: a design
-    // shot from three angles competes as every one of them and is ranked on its
-    // best; the ranker collapses the duplicates so the list is ten designs.
-    //
-    // The query side is the same. Each photo contributes its whole frame AND
-    // each piece of jewellery found in it — so a pendant filling 15% of a shot
-    // of a velvet stand is compared as the pendant, against each render cut
-    // from a CAD sheet, rather than as a picture of velvet against a picture
-    // of a technical drawing. The whole frame stays in as the fallback for a
-    // photo where nothing was detected.
+    const maxConcurrent = this.num('SEARCH_MAX_CONCURRENT', 2);
+    if (this.inFlight >= maxConcurrent) {
+      this.bump('search_rejected');
+      const p50 = this.samples.get('total')?.length ? percentile(this.samples.get('total')!, 50) : 5000;
+      const retryAfter = Math.max(1, Math.ceil(p50 / 1000));
+      res?.setHeader('Retry-After', String(retryAfter));
+      throw new HttpException(
+        { statusCode: 429, message: 'Visual search is busy — try again in a few seconds.', retryAfter },
+        429,
+      );
+    }
+    this.inFlight++;
+    try {
+      return await this.runSearch(user, headerStore, shots, limit, opts.category, inScope, queryId, t0, res, empty);
+    } finally {
+      this.inFlight--;
+    }
+  }
+
+  private async runSearch(
+    user: AuthUser,
+    headerStore: string | undefined,
+    shots: { buffer: Buffer; mime: string }[],
+    limit: number,
+    category: ProductCategory | undefined,
+    inScope: (s: string | null) => boolean,
+    queryId: string,
+    t0: number,
+    res: HeaderSink | undefined,
+    empty: (s: 'SEARCH_ERROR' | 'NO_CLOSE_MATCH', reason: string, extra?: Record<string, unknown>) => any,
+  ) {
+    const timing: Partial<Record<Stage, number>> = {};
+    const deadline = t0 + this.num('SEARCH_DEADLINE_MS', 45_000);
+
+    // ONE inference call for every photo the cache does not already know.
+    const keys = shots.map((s) => createHash('sha256').update(s.buffer).digest('hex'));
+    const vecs: (DualEmbedding | null)[] = keys.map((k) => this.cache.get(k));
+    const hits = vecs.filter(Boolean).length;
+    if (hits) this.counters.cache_hit += hits;
+    const miss = vecs.map((v, i) => (v ? -1 : i)).filter((i) => i >= 0);
+    let failure = '';
+    if (miss.length) {
+      try {
+        const out = await this.inference.embedBatch(
+          miss.map((i) => ({ id: String(i), bytes: shots[i].buffer, mime: shots[i].mime })),
+          { timeoutMs: Math.max(1_000, deadline - Date.now()) },
+        );
+        for (const r of out.results) {
+          const i = Number(r.id);
+          if (!Number.isInteger(i) || !miss.includes(i)) continue;
+          vecs[i] = { dino: r.dino, siglip: r.siglip, views: r.views };
+          this.cache.set(keys[i], vecs[i]!);
+        }
+        const compute = ['decode', 'detect', 'dino', 'siglip'] as const;
+        for (const s of compute) if (out.timings[s] != null) timing[s] = out.timings[s];
+        // What the call cost beyond the service's own compute: transfer + queueing.
+        timing.upload = Math.max(0, out.wallMs - compute.reduce((n, s) => n + (out.timings[s] ?? 0), 0));
+      } catch (err) {
+        failure = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`similarity queryId=${queryId} embed failed: ${failure}`);
+      }
+    }
+    const queries = vecs.filter((v): v is DualEmbedding => !!v);
+    if (!queries.length) {
+      this.bump('search_failure');
+      this.bump('embedding_failure');
+      return empty(
+        'SEARCH_ERROR',
+        /abort|timeout/i.test(failure)
+          ? 'Visual search took too long — please try again.'
+          : 'Visual search temporarily unavailable — inference service did not respond.',
+      );
+    }
+
+    // Each photo contributes its whole frame AND each piece detected in it.
     const vectors = queries.flatMap((q) => [q, ...q.views]);
 
-    const t2 = Date.now();
-    // Rank each photograph against the same candidate set, then merge.
-    //
-    // Merging on closenessScore rather than on the fused ranking score is
-    // deliberate: closeness is calibrated from the ABSOLUTE similarity and is
-    // therefore comparable between runs, while the fused score is min-max
-    // normalised within its own candidate pool and means nothing across two.
-    //
-    // A design keeps its single best view against the customer’s single best
-    // view. Averaging instead would punish a design for the angles that happen
-    // not to correspond — photograph a ring front-on and the catalogue’s side
-    // view drags down a match the front view found perfectly.
-    const outcomes = vectors.map((q) =>
-      this.ranking.rank(q.dino, q.siglip, candidates, {
-        limit: Math.max(limit, DEFAULT_TOP_N),
-        queryCategory: opts.category ?? null,
-      }),
+    let t = Date.now();
+    const annOk = this.ann && vectors.every((v) => v.dino.length === ANN_DIM && v.siglip.length === ANN_DIM);
+    // Pictures tombstoned but whose vectors were not purged yet are never candidates.
+    const inactive = new Set(
+      (
+        await this.prisma.productEmbedding.findMany({
+          where: { organisationId: user.organisationId, productImage: { status: { not: 'active' } } },
+          select: { productImageId: true },
+          distinct: ['productImageId'],
+        })
+      ).map((r) => r.productImageId),
     );
+    const candidates = (
+      annOk ? await this.annCandidates(user, headerStore, vectors) : await this.orgIndex(user.organisationId)
+    ).filter((v) => inScope(v.storeId) && !inactive.has(v.imageId));
+    timing.retrieve = Date.now() - t;
 
-    const best = new Map<string, { closenessScore: number; matchLevel: MatchLevel }>();
+    t = Date.now();
+    // Rank each vector against the same candidates, then keep each design's
+    // single best view (closeness is absolute, so it compares across runs).
+    const outcomes = vectors.map((q) =>
+      this.ranking.rank(q.dino, q.siglip, candidates, { limit: Math.max(limit, DEFAULT_TOP_N), queryCategory: category ?? null }),
+    );
+    const best = new Map<string, { closenessScore: number; matchLevel: MatchLevel; imageId: string | null }>();
     for (const o of outcomes) {
       for (const hit of o.results) {
         const prev = best.get(hit.productId);
         if (!prev || hit.closenessScore > prev.closenessScore) {
-          best.set(hit.productId, { closenessScore: hit.closenessScore, matchLevel: hit.matchLevel });
+          best.set(hit.productId, { closenessScore: hit.closenessScore, matchLevel: hit.matchLevel, imageId: hit.imageId ?? null });
         }
       }
     }
@@ -342,42 +515,21 @@ export class JewelrySimilarityService {
       .sort((a, b) => b.closenessScore - a.closenessScore)
       .slice(0, limit)
       .map((h, i) => ({ ...h, rank: i + 1 }));
+    timing.rank = Date.now() - t;
 
-    const outcome = {
-      status: (merged.length ? 'MATCHES_FOUND' : 'NO_CLOSE_MATCH') as 'MATCHES_FOUND' | 'NO_CLOSE_MATCH',
-      // With nothing merged, report the closest any photo came, so the caller
-      // can tell “nothing is remotely like this” from “just under the bar”.
-      matchLevel: merged[0]?.matchLevel ?? outcomes[0]?.matchLevel ?? ("NO_CLOSE_MATCH" as MatchLevel),
-      closenessScore: merged[0]?.closenessScore ?? Math.max(0, ...outcomes.map((o) => o.closenessScore)),
-      results: merged,
-    };
-    const rankMs = Date.now() - t2;
-
-    this.logger.log(
-      `similarity queryId=${queryId} status=${outcome.status} photos=${queries.length}/${shots.length} ` +
-        `views=${vectors.length - queries.length} ` +
-        `candidates=${candidates.length} ` +
-        `latency_ms={embed:${embedMs},retrieval:${retrievalMs},rank:${rankMs}}`,
-    );
-
-    if (outcome.status === 'NO_CLOSE_MATCH') {
+    let body: any;
+    if (!merged.length) {
       this.bump('search_no_match');
-      return {
-        queryId,
-        available: true,
-        status: 'NO_CLOSE_MATCH' as const,
-        matchLevel: outcome.matchLevel,
-        closenessScore: outcome.closenessScore,
-        reason: 'No catalogue design matched closely enough.',
-        results: [],
-      };
-    }
-
-    this.bump('search_success');
-    const byId = new Map(
-      (
-        await this.prisma.product.findMany({
-          where: { id: { in: outcome.results.map((h) => h.productId) } },
+      body = empty('NO_CLOSE_MATCH', 'No catalogue design matched closely enough.', {
+        matchLevel: outcomes[0]?.matchLevel ?? 'NO_CLOSE_MATCH',
+        closenessScore: Math.max(0, ...outcomes.map((o) => o.closenessScore)),
+      });
+    } else {
+      t = Date.now();
+      this.bump('search_success');
+      const [products, images] = await Promise.all([
+        this.prisma.product.findMany({
+          where: { id: { in: merged.map((h) => h.productId) }, organisationId: user.organisationId },
           select: {
             id: true,
             name: true,
@@ -385,35 +537,76 @@ export class JewelrySimilarityService {
             imageUrl: true,
             storeId: true,
             store: { select: { name: true } },
+            websiteListing: { select: { marketingName: true } },
           },
-        })
-      ).map((p) => [p.id, p]),
+        }),
+        this.prisma.productImage.findMany({
+          where: { id: { in: merged.map((h) => h.imageId).filter((x): x is string => !!x) } },
+          select: {
+            id: true,
+            url: true,
+            source: true,
+            angle: true,
+            associations: {
+              where: { tombstonedAt: null },
+              orderBy: { sourceOrder: 'asc' },
+              take: 1,
+              select: { colour: true, angle: true },
+            },
+          },
+        }),
+      ]);
+      const byId = new Map(products.map((p) => [p.id, p]));
+      const imgById = new Map(images.map((m) => [m.id, m]));
+      body = {
+        queryId,
+        available: true,
+        status: 'MATCHES_FOUND' as const,
+        /** How many of the submitted photographs produced a usable vector. */
+        photosUsed: queries.length,
+        matchLevel: merged[0].matchLevel,
+        closenessScore: merged[0].closenessScore,
+        results: merged.map((h) => {
+          const p = byId.get(h.productId);
+          const m = h.imageId ? imgById.get(h.imageId) : undefined;
+          const a = m?.associations[0];
+          return {
+            productId: h.productId,
+            productName: p?.websiteListing?.marketingName || p?.name || '',
+            sku: p?.sku ?? null,
+            imageUrl: p?.imageUrl ?? undefined,
+            storeId: p?.storeId ?? null,
+            storeName: p?.store?.name ?? null,
+            rank: h.rank,
+            closenessScore: h.closenessScore,
+            matchLevel: h.matchLevel,
+            matchedImageId: m?.id ?? null,
+            matchedImageUrl: m?.url ?? null,
+            matchedImageSource: m?.source ?? null,
+            matchedColour: a?.colour || null,
+            matchedAngle: m?.angle ?? a?.angle ?? null,
+            heroImageUrl: p?.imageUrl ?? null,
+          };
+        }),
+      };
+      timing.hydrate = Date.now() - t;
+    }
+
+    timing.total = Date.now() - t0;
+    for (const s of STAGES) if (timing[s] != null) this.record(s, timing[s]!);
+    res?.setHeader(
+      'Server-Timing',
+      [
+        ...STAGES.filter((s) => timing[s] != null).map((s) => `${s};dur=${timing[s]}`),
+        `cache;desc="${hits}/${shots.length} hit"`,
+      ].join(', '),
     );
-    return {
-      queryId,
-      available: true,
-      status: 'MATCHES_FOUND' as const,
-      /** How many of the submitted photographs produced a usable vector. */
-      photosUsed: queries.length,
-      matchLevel: outcome.matchLevel,
-      closenessScore: outcome.closenessScore,
-      results: outcome.results.map((h) => {
-        const p = byId.get(h.productId);
-        return {
-          productId: h.productId,
-          productName: p?.name ?? '',
-          sku: p?.sku ?? null,
-          imageUrl: p?.imageUrl ?? undefined,
-          storeId: p?.storeId ?? null,
-          // Store name is included when the product is store-specific; the UI
-          // decides whether to show it (relevant only in a multi-store scope).
-          storeName: p?.store?.name ?? null,
-          rank: h.rank,
-          closenessScore: h.closenessScore,
-          matchLevel: h.matchLevel,
-        };
-      }),
-    };
+    this.logger.log(
+      `similarity queryId=${queryId} status=${body.status} photos=${queries.length}/${shots.length} cache=${hits} ` +
+        `views=${vectors.length - queries.length} candidates=${candidates.length} retrieval=${annOk ? 'ann' : 'exact'} ` +
+        `ms=${JSON.stringify(timing)}`,
+    );
+    return body;
   }
 
   // ---------------------------------------------------------------- feedback
@@ -458,318 +651,42 @@ export class JewelrySimilarityService {
 
   // ----------------------------------------------------------------- reindex
   /**
-   * Start a re-index in the background and return at once.
-   *
-   * A whole catalogue is thousands of photos, each a detection pass plus up to
-   * five embeddings — tens of minutes on CPU, far past any HTTP timeout. One run
-   * per organisation at a time: pressing again while one is going reports that
-   * run instead of doubling the load on the inference service.
+   * Queue the (store-scoped) catalogue for indexing and return at once. The
+   * work runs on the durable job queue; progress is read back from the
+   * pictures' own status, so a restart or a second instance loses nothing.
    */
-  startReindex(user: AuthUser, headerStore: string | undefined, opts: { force?: boolean } = {}) {
-    const current = this.runs.get(user.organisationId);
-    if (current && !current.finishedAt) return { started: false, ...this.reindexStatus(user) };
-
-    const run: ReindexRun = { startedAt: new Date(), done: 0, total: 0 };
-    this.runs.set(user.organisationId, run);
-    void this.reindex(user, headerStore, {
-      ...opts,
-      onProgress: (done, total) => Object.assign(run, { done, total }),
-    })
-      .then((result) => {
-        run.result = result;
-      })
-      .catch((err) => {
-        run.error = err instanceof Error ? err.message : String(err);
-        this.logger.warn(`background re-index failed: ${run.error}`);
-      })
-      .finally(() => {
-        run.finishedAt = new Date();
-      });
-    return { started: true, ...this.reindexStatus(user) };
-  }
-
-  reindexStatus(user: AuthUser) {
-    const run = this.runs.get(user.organisationId);
-    return run ? { running: !run.finishedAt, ...run } : { running: false };
-  }
-
-  /**
-   * Rebuild the ProductEmbedding index for store-scoped products with an image
-   * (HO-only endpoint). Idempotent: skips a product whose stored imageHash AND
-   * model/preprocessing versions are unchanged (unless force). A failure NEVER
-   * corrupts an existing vector — we only upsert on a successful embed.
-   */
-  async reindex(
-    user: AuthUser,
-    headerStore: string | undefined,
-    opts: {
-      force?: boolean;
-      productId?: string;
-      /** Photos processed so far / all photos — called after each batch. */
-      onProgress?: (done: number, total: number) => void;
-    } = {},
-  ) {
+  async startReindex(user: AuthUser, headerStore: string | undefined, opts: { force?: boolean; productId?: string } = {}) {
     if (!this.inference.available) {
       return {
+        started: false,
         available: false,
         reason: 'No inference service configured (set ML_INFERENCE_URL).',
-        total: 0,
-        embedded: 0,
-        skipped: 0,
-        failed: 0,
+        ...(await this.reindexStatus(user)),
       };
     }
-
-    const where: Prisma.ProductWhereInput = {
-      // Organisation boundary: reindex only the caller's own catalogue, never
-      // another tenant's products (scopeWhere alone is empty for head_office).
-      organisationId: user.organisationId,
-      ...(this.scopeWhere(user, headerStore) as Prisma.ProductWhereInput),
-      // A design qualifies on either kind of picture: a gallery photo, or the
-      // legacy single cover that an ERP import still writes straight to the row.
-      OR: [{ imageUrl: { not: null } }, { images: { some: {} } }],
-      ...(opts.productId ? { id: opts.productId } : {}),
-    };
-    const products = await this.prisma.product.findMany({
-      where,
-      take: CANDIDATE_CAP,
-      select: {
-        id: true,
-        storeId: true,
-        imageUrl: true,
-        organisationId: true,
-        images: { select: { id: true, url: true } },
-      },
+    // A head-office rebuild can afford one live /health: it decides what counts
+    // as current, and warms the cache enqueue reads.
+    await this.index.currentVersion();
+    const r = await this.index.rebuild(user.organisationId, {
+      force: opts.force,
+      productId: opts.productId,
+      productWhere: this.scopeWhere(user, headerStore) as Prisma.ProductWhereInput,
     });
+    this.logger.log(`visual index rebuild ${user.organisationId}: queued ${r.queued} of ${r.total}, purged ${r.purged}`);
+    return { started: r.queued > 0, available: true, queued: r.queued, purged: r.purged, ...(await this.reindexStatus(user)) };
+  }
 
-    // Current served versions — lets a model/pipeline bump auto-invalidate rows.
-    const versions = await this.inference.currentVersions();
-    const preproc = versions.preprocessing ?? 'unknown';
-
-    // Keyed by design AND image hash: a design now has as many rows as it has
-    // photographs, so "have I already embedded this?" is a question about a
-    // picture, not about a product.
-    const existing = new Map(
-      (
-        await this.prisma.productEmbedding.findMany({
-          where: { productId: { in: products.map((p) => p.id) } },
-          select: {
-            productId: true,
-            imageHash: true,
-            dinoModelVersion: true,
-            siglipModelVersion: true,
-            preprocessingVersion: true,
-          },
-        })
-      ).map((e) => [`${e.productId}:${e.imageHash}`, e] as const),
-    );
-
-    let embedded = 0;
-    let skipped = 0;
-    let failed = 0;
-
-    /** One unit of indexing work: a single photograph of a single design. */
-    type Shot = {
-      product: (typeof products)[number];
-      productImageId: string | null;
-      url: string;
-    };
-
-    // A design with a gallery is indexed from every angle in it. One with only
-    // the legacy cover is indexed from that, so an ERP import that writes
-    // imageUrl directly is never left out of visual search.
-    const shots: Shot[] = [];
-    for (const p of products) {
-      if (p.images.length) {
-        for (const im of p.images) shots.push({ product: p, productImageId: im.id, url: im.url });
-      } else if (p.imageUrl) {
-        shots.push({ product: p, productImageId: null, url: p.imageUrl });
-      }
-    }
-
-    /** Photo hashes seen this run, per design — the basis for pruning below. */
-    const seenHashes = new Map<string, Set<string>>();
-    /**
-     * Per design, photo hash -> the exact row hashes it produced: its own, then
-     * `<hash>#v1`, `#v2`… for each piece detected in it. Present only for photos
-     * that are current after this run (embedded now, or already up to date);
-     * an embedded photo lists what it wrote, a skipped one lists nothing.
-     */
-    const current = new Map<string, Map<string, Set<string> | null>>();
-    const markCurrent = (productId: string, photoHash: string, rows: Set<string> | null) => {
-      if (!current.has(productId)) current.set(productId, new Map());
-      current.get(productId)!.set(photoHash, rows);
-    };
-    /**
-     * Designs where a photo could not be READ, and whose hash is therefore
-     * unknown. Pruning works by elimination against the hashes seen this run,
-     * so a design missing one is a partial view of itself — eliminate against
-     * it and a vector whose image still exists gets deleted.
-     *
-     * Deliberately not about embedding. Whether the models could describe a
-     * picture says nothing about whether that picture is still in the
-     * catalogue, and treating a failure as uncertainty let one permanently
-     * unembeddable file (a vector placeholder, a corrupt upload) block pruning
-     * for its design forever — so deleted photos kept their vectors and went
-     * on matching searches. Read is what pruning needs; embedded is not.
-     */
-    const incomplete = new Set<string>();
-
-    // One batch at a time, read and embedded together. Reading every photo
-    // first held all of their bytes at once (~1GB for a 940-photo catalogue)
-    // and reported no progress for the minutes the reading alone took.
-    opts.onProgress?.(0, shots.length);
-    for (let start = 0; start < shots.length; start += BATCH_SIZE) {
-      const pending: { item: BatchItem; shot: Shot; imageHash: string }[] = [];
-      for (let i = start; i < Math.min(start + BATCH_SIZE, shots.length); i++) {
-        const shot = shots[i];
-        const p = shot.product;
-        const img = await readImageBytes(this.storage, shot.url);
-        if (!img) {
-          failed++;
-          incomplete.add(p.id);
-          continue;
-        }
-        const imageHash = createHash('sha256').update(img.buffer).digest('hex');
-        if (!seenHashes.has(p.id)) seenHashes.set(p.id, new Set());
-        seenHashes.get(p.id)!.add(imageHash);
-
-        const prev = existing.get(`${p.id}:${imageHash}`);
-        const versionsMatch =
-          prev &&
-          (!versions.dino || prev.dinoModelVersion === versions.dino) &&
-          (!versions.siglip || prev.siglipModelVersion === versions.siglip) &&
-          prev.preprocessingVersion === preproc;
-        if (!opts.force && prev && versionsMatch) {
-          skipped++;
-          markCurrent(p.id, imageHash, null);
-          continue;
-        }
-        // The batch id identifies the SHOT, not the design: two angles of one ring
-        // are two rows, and keying by product id would make the second overwrite
-        // the first on the way back out of the inference service.
-        pending.push({
-          item: { id: `${i}`, bytes: img.buffer, mime: img.mime },
-          shot,
-          imageHash,
-        });
-      }
-
-      if (pending.length) {
-        let results: BatchResult[] | null = null;
-        try {
-          results = (await this.inference.embedBatch(pending.map((c) => c.item))).results;
-        } catch (err) {
-          this.logger.warn(`embed/batch chunk failed: ${err instanceof Error ? err.message : err}`);
-        }
-        if (!results) {
-          failed += pending.length; // whole chunk failed; existing rows untouched.
-        } else {
-          const ok = new Set(results.map((r) => r.id));
-          failed += pending.filter((c) => !ok.has(c.item.id)).length;
-
-          // Upsert successful rows: the photo itself under the hash of the exact
-          // bytes sent, then each piece detected in it under `<hash>#v<n>`.
-          for (const c of pending) {
-            const r = results.find((x) => x.id === c.item.id);
-            if (!r) continue;
-            const p = c.shot.product;
-            const rows = [
-              { hash: c.imageHash, vec: r },
-              ...r.views.map((v, n) => ({ hash: `${c.imageHash}#v${n + 1}`, vec: v })),
-            ];
-            for (const { hash, vec } of rows) {
-              await this.prisma.productEmbedding.upsert({
-                where: {
-                  productId_imageHash_preprocessingVersion: {
-                    productId: p.id,
-                    imageHash: hash,
-                    preprocessingVersion: preproc,
-                  },
-                },
-                create: {
-                  organisationId: p.organisationId,
-                  productId: p.id,
-                  productImageId: c.shot.productImageId,
-                  storeId: p.storeId,
-                  dinoEmbedding: vec.dino,
-                  siglipEmbedding: vec.siglip,
-                  dinoModelVersion: versions.dino ?? 'unknown',
-                  siglipModelVersion: versions.siglip ?? 'unknown',
-                  preprocessingVersion: preproc,
-                  imageHash: hash,
-                },
-                update: {
-                  productImageId: c.shot.productImageId,
-                  storeId: p.storeId,
-                  dinoEmbedding: vec.dino,
-                  siglipEmbedding: vec.siglip,
-                  dinoModelVersion: versions.dino ?? 'unknown',
-                  siglipModelVersion: versions.siglip ?? 'unknown',
-                },
-              });
-            }
-            markCurrent(p.id, c.imageHash, new Set(rows.map((x) => x.hash)));
-            embedded++;
-          }
-        }
-      }
-      opts.onProgress?.(Math.min(start + BATCH_SIZE, shots.length), shots.length);
-    }
-
-    // Prune vectors whose photograph is gone.
-    //
-    // A deleted or replaced angle leaves its embedding behind, and a stale
-    // vector is worse than a missing one: the design keeps matching searches
-    // for a picture that is no longer in the catalogue. Only designs whose
-    // every photo was read successfully are pruned — a network blip must not
-    // be read as "this design has no pictures any more".
-    //
-    // Rows are matched to their photo by the part of imageHash before `#`, and
-    // a row is stale when:
-    //   - its photo is gone;
-    //   - its photo is current and the row is from an older pipeline version
-    //     (what a version bump leaves behind once the new rows exist);
-    //   - its photo was re-embedded now and the row is a view it no longer
-    //     produced (the detector found fewer pieces this time).
-    // A photo that failed to embed matches none of these, so its old rows —
-    // the only ones it has — keep it searchable.
-    let pruned = 0;
-    for (const [productId, hashes] of seenHashes) {
-      if (incomplete.has(productId)) continue;
-      const fresh = current.get(productId);
-      const rows = await this.prisma.productEmbedding.findMany({
-        where: { productId },
-        select: { id: true, imageHash: true, preprocessingVersion: true },
-      });
-      const stale = rows.filter((r) => {
-        const photo = r.imageHash.split('#')[0];
-        if (!hashes.has(photo)) return true;
-        if (!fresh?.has(photo)) return false;
-        if (r.preprocessingVersion !== preproc) return true;
-        const wrote = fresh.get(photo);
-        return wrote != null && !wrote.has(r.imageHash);
-      });
-      if (!stale.length) continue;
-      const res = await this.prisma.productEmbedding.deleteMany({
-        where: { id: { in: stale.map((r) => r.id) } },
-      });
-      pruned += res.count;
-    }
-
-    this.logger.log(
-      `dual-reindex: ${embedded} embedded, ${skipped} skipped, ${failed} failed, ${pruned} pruned of ${shots.length} photo(s) across ${products.length} design(s)`,
-    );
-    // `total` counts photographs now, because that is the unit of work. The
-    // design count is reported alongside so a caller can still see both.
+  /** Counts straight from ProductImage.embeddingStatus — the only truth. */
+  async reindexStatus(user: AuthUser) {
+    const c = await this.index.counts(user.organisationId);
     return {
-      available: true,
-      total: shots.length,
-      designs: products.length,
-      embedded,
-      skipped,
-      failed,
-      pruned,
+      running: c.queued + c.running + c.failed > 0,
+      done: c.indexed + c.dead + c.skipped,
+      total: c.total,
+      counts: c,
+      version: this.index.cachedVersion(),
+      result: { embedded: c.indexed, failed: c.failed + c.dead, skipped: c.skipped, total: c.total },
+      searchMetrics: this.metrics(),
     };
   }
 }

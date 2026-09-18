@@ -98,3 +98,34 @@ The watermark predicate is `UpdateDate > @since OR (UpdateDate IS NULL AND Entry
 
 ## Watermark columns (confirmed against legacy-schema.md §5)
 Transaction tables have an identity-bigint PK (best for *new* rows) + `EntryDate`/`UpdateDate` (for *changed* rows). Primary watermark = `UpdateDate`/`EntryDate` for edited-in-place tables (`JewelTrans`, `Inward`, `Spm_MfgOrder`), identity PK for append-only logs (`Journal`, `InwardHistory`). Soft-cancel via `isCancel` bit — re-pull updated rows, do not rely on deletes.
+
+## Website catalogue (lossless) — Module 5
+
+Spec: `docs/modules/05-catalogue-sources.md`. Code: `backend/src/catalogue/website/*`.
+
+Two ways in, one normaliser/persister:
+
+1. **Server connector (preferred).** Head office stores the website's read-only
+   service token once: `POST /catalogue-integration/website/credential
+   {token, baseUrl}` (AES-GCM in `IntegrationCredential`, kind `service_token`,
+   never returned). Host must be in `WEBSITE_CATALOGUE_ALLOWED_HOSTS` (default
+   `apis.eclatdiamonds.in`), https, no redirects followed. Runs: `POST
+   /catalogue-integration/website/sync {mode:'full'|'resume', dryRun}` queues a
+   `catalogue.website_sync` JobTask; a daily one is queued at 21:30 UTC (03:00
+   IST) per organisation with a credential. `GET /catalogue-integration/runs`,
+   `/conflicts`, `/health`.
+2. **Shop PC.** `import_website.bat --send` reads every page (limit 100) until
+   the website's own total and posts whole raw payloads, 25 per call, to
+   `POST /sync/website/raw` (Gati machine auth), then a `final` call. Optional
+   `ECLAT_WEBSITE_TOKEN` is sent as a bearer. Changing `import_website.py`
+   changes the agent profile hash, so head office must re-approve the agent.
+
+Rules: every run has a `CatalogueSyncRun` receipt; a run is `done` only when the
+source reported a total and that many distinct products arrived — only then are
+missing designs/photos/variants tombstoned. A missing/short page leaves the run
+`partial` (resume continues at `nextPage`; a run whose heartbeat is >10 min old
+can be taken over). Unchanged payloads (sha256 of canonical JSON) are no-ops.
+Gati-owned Product fields are never written; spec/BOM disagreements and
+ambiguous/absent Gati matches become `CatalogueConflict`s. The old
+`POST /sync/website-products` path still works (9KT/14KT now map to their own
+metals).
