@@ -144,11 +144,20 @@ export class ProductsController {
     @StoreHeader() store: string | undefined,
     @Query('force') force?: string,
     @Query('productId') productId?: string,
+    @Query('background') background?: string,
   ) {
-    return this.jewelry.reindex(user, store, {
-      force: force === '1' || force === 'true',
-      productId,
-    });
+    const opts = { force: force === '1' || force === 'true', productId };
+    // The whole catalogue outlasts any request; `background=1` starts it and
+    // returns, and GET below reports progress.
+    if (background === '1' && !productId) return this.jewelry.startReindex(user, store, opts);
+    return this.jewelry.reindex(user, store, opts);
+  }
+
+  /** The catalogue-wide background re-index: running, progress, last outcome. */
+  @Roles('head_office')
+  @Get('embeddings/reindex')
+  reindexStatus(@CurrentUser() user: AuthUser) {
+    return this.jewelry.reindexStatus(user);
   }
 
   /**

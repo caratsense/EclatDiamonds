@@ -10,8 +10,10 @@ Design notes (tuned to the Gati catalogue at backend/uploads/catalogue/):
   (aspect-preserving resize + centre-pad to a square) rather than centre-crop —
   a crop would slice off half the views. Padding is white because the dominant
   background already is; a white pad adds no edge the models would fixate on.
-  No segmentation model: backgrounds are light and uniform enough that it would
-  be cost with no measurable gain. Revisit only if busy/coloured backdrops show up.
+  Busy/coloured backdrops did show up (a pendant on a green velvet stand, a ring
+  on a hand), and CAD sheets hold several views on one canvas — so since v2 the
+  whole picture is no longer the only thing embedded: detection.py boxes each
+  piece of jewellery and every box is embedded as a view of its own.
 """
 from __future__ import annotations
 
@@ -20,7 +22,10 @@ import io
 
 from PIL import Image, ImageOps, ImageFile
 
-PREPROCESSING_VERSION = 1
+# v2: every image also yields detected-jewellery views (detection.py). The
+# whole-image vector is unchanged; the bump is what makes the backend re-index
+# the catalogue so existing designs gain their views.
+PREPROCESSING_VERSION = 2
 
 # Padding colour for the letterbox (neutral white, matches the catalogue ground).
 PAD_COLOR = (255, 255, 255)
@@ -44,6 +49,11 @@ def normalize_image(raw: bytes, size: int = 224) -> Image.Image:
     Deterministic and side-effect free (never touches the source file). Raises
     BadImageError on anything it cannot faithfully turn into a product image.
     """
+    return letterbox(decode_image(raw), size)
+
+
+def decode_image(raw: bytes) -> Image.Image:
+    """Decode -> orient -> flatten -> cap, at full resolution (detection needs it)."""
     if not raw:
         raise BadImageError("empty image payload")
     try:
@@ -73,8 +83,11 @@ def normalize_image(raw: bytes, size: int = 224) -> Image.Image:
     # Cap oversized inputs before the (cheap) final resize.
     if max(img.size) > MAX_SIDE:
         img.thumbnail((MAX_SIDE, MAX_SIDE), Image.BICUBIC)
+    return img
 
-    # Aspect-preserving resize + centre-pad to the square model canvas.
+
+def letterbox(img: Image.Image, size: int = 224) -> Image.Image:
+    """Aspect-preserving resize + centre-pad to the square model canvas."""
     return ImageOps.pad(img, (size, size), method=Image.BICUBIC,
                         color=PAD_COLOR, centering=(0.5, 0.5))
 

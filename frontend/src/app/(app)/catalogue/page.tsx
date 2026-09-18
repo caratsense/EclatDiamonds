@@ -5,6 +5,7 @@ import { ImagePlus } from "lucide-react";
 import { toast } from "sonner";
 
 import { ImageSearch } from "@/components/catalogue/image-search";
+import { VisualIndexControl } from "@/components/catalogue/visual-index-control";
 import { ProductCard } from "@/components/catalogue/product-card";
 import { CustomAttributeFields } from "@/components/common/custom-attributes";
 import {
@@ -143,8 +144,9 @@ export default function CataloguePage() {
         onPrimaryAction={() => setAddOpen(true)}
       />
 
-      <div className="mb-6">
+      <div className="mb-6 space-y-2">
         <ImageSearch />
+        {role === "head_office" ? <VisualIndexControl /> : null}
       </div>
 
       {/* Filters */}

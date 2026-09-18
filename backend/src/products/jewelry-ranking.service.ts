@@ -47,8 +47,8 @@ export interface MatchThresholds {
  */
 export interface RankCandidate {
   productId: string;
-  dino: number[];
-  siglip: number[];
+  dino: ArrayLike<number>;
+  siglip: ArrayLike<number>;
   category?: string | null;
 }
 
@@ -127,8 +127,8 @@ export function levelFor(closeness: number, t: MatchThresholds): MatchLevel {
  * outcome (empty results) that is distinct from an upstream SEARCH_ERROR.
  */
 export function rankCandidates(
-  queryDino: number[],
-  querySiglip: number[],
+  queryDino: ArrayLike<number>,
+  querySiglip: ArrayLike<number>,
   candidates: RankCandidate[],
   opts: RankOptions,
 ): RankOutcome {
@@ -248,8 +248,8 @@ export class JewelryRankingService {
   }
 
   rank(
-    queryDino: number[],
-    querySiglip: number[],
+    queryDino: ArrayLike<number>,
+    querySiglip: ArrayLike<number>,
     candidates: RankCandidate[],
     opts: { limit: number; queryCategory?: string | null },
   ): RankOutcome {

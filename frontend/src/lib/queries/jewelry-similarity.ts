@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
 import type { ProductCategory } from "@/lib/mock/catalogue";
@@ -119,5 +119,49 @@ export function useSimilarityFeedback() {
       );
       return data;
     },
+  });
+}
+
+/** GET/POST /products/embeddings/reindex — the catalogue-wide background rebuild. */
+export interface ReindexStatus {
+  running: boolean;
+  startedAt?: string;
+  finishedAt?: string;
+  /** Photos embedded so far, out of those that needed it. */
+  done?: number;
+  total?: number;
+  result?: { embedded?: number; skipped?: number; failed?: number; pruned?: number; total?: number };
+  error?: string;
+}
+
+const REINDEX_KEY = ["visual-index-status"] as const;
+
+/** Head office only. Polls while a rebuild is running, idle otherwise. */
+export function useReindexStatus(enabled: boolean) {
+  return useQuery({
+    queryKey: REINDEX_KEY,
+    enabled,
+    queryFn: async () =>
+      (await api.get<ReindexStatus>("/products/embeddings/reindex")).data,
+    refetchInterval: (q) => (q.state.data?.running ? 10_000 : false),
+  });
+}
+
+/**
+ * Start a rebuild. Returns at once: a whole catalogue is thousands of photos,
+ * each detected and embedded — minutes to hours on CPU, not one request.
+ */
+export function useStartReindex() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () =>
+      (
+        await api.post<ReindexStatus & { started: boolean }>(
+          "/products/embeddings/reindex",
+          undefined,
+          { params: { background: 1 } },
+        )
+      ).data,
+    onSuccess: (data) => qc.setQueryData(REINDEX_KEY, data),
   });
 }

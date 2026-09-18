@@ -20,6 +20,25 @@ class OpenResponse:
         return json.dumps(self._body).encode("utf-8")
 
 
+class WebsiteImageSelectionTests(unittest.TestCase):
+    def test_every_metal_keeps_its_first_angles(self):
+        def metal(tag, n):
+            return {"shapes": [{"images": [f"https://cdn/{tag}{i}.jpg" for i in range(n)]}]}
+
+        p = {"variantType": [metal("rg", 5), metal("wg", 5), metal("yg", 5)]}
+        got = website.all_images(p, limit=8)
+        self.assertEqual(got[:3], ["https://cdn/rg0.jpg", "https://cdn/wg0.jpg", "https://cdn/yg0.jpg"])
+        self.assertIn("https://cdn/yg1.jpg", got)
+        self.assertEqual(website.first_image(p), "https://cdn/rg0.jpg")
+
+    def test_repeats_and_non_urls_are_dropped(self):
+        p = {"variantType": [
+            {"shapes": [{"images": ["https://cdn/a.jpg", "", None]}, {"images": []}]},
+            {"shapes": [{"images": ["https://cdn/a.jpg", "https://cdn/b.jpg"]}]},
+        ]}
+        self.assertEqual(website.all_images(p), ["https://cdn/a.jpg", "https://cdn/b.jpg"])
+
+
 class WebsiteImportLifecycleTests(unittest.TestCase):
     def test_push_requires_a_complete_acknowledgement(self):
         valid = {

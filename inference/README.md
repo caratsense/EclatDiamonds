@@ -45,7 +45,7 @@ HF_TOKEN=hf_xxx        # required: DINOv3 repo is gated
 A future `GeminiEmbeddingProvider` (or any other) slots in by subclassing
 `EmbeddingProvider` in `app/providers.py` — the service logic never changes.
 
-## Preprocessing (ONE deterministic pipeline, `preprocessing_version = 1`)
+## Preprocessing (ONE deterministic pipeline, `preprocessing_version = 2`)
 
 Shared by both models; lives in `app/preprocessing.py`. Never touches the source
 file — all in memory. Steps: decode (JPEG/PNG/WebP/MPO only) → **EXIF orientation**
@@ -58,8 +58,29 @@ square** white canvas (default 224).
 dimension text on white) and portrait phone photos of pieces on paper/grey. Content
 spans the whole frame and aspect ratios are all over the place — a centre-crop would
 slice off half the views. Backgrounds are already light and uniform, so a white pad
-adds no edge the models fixate on, and a segmentation model would be cost with no
-measurable gain. Revisit segmentation only if busy/coloured backdrops appear.
+adds no edge the models fixate on.
+
+## Detected views (v2, `app/detection.py`)
+
+Busy backdrops did appear. A shop photo of a pendant on a green velvet stand is
+~15% pendant, so its whole-frame vector is mostly velvet; a Gati CAD sheet is five
+small renders plus dimension callouts, so its vector is mostly "technical drawing".
+The two never matched each other, even for the same piece.
+
+So every image also goes through an open-vocabulary detector — **Grounding DINO
+tiny** (`IDEA-Research/grounding-dino-tiny`, Apache-2.0, ~660MB), prompted with
+jewellery words. Each piece it boxes (the pendant on the stand, every render on a
+sheet, the ring on a hand) is cropped with a little margin, letterboxed like any
+image, and embedded as a **view** alongside the whole frame. Boxes that are the whole
+picture, specks, near-duplicates and "group" boxes wrapping two or more pieces are
+dropped (`select_views`, self-checked by `python -m app.detection`). The backend
+stores each view as its own index row and scores a design on its best view against
+the query's best view.
+
+Chosen over background removal (rembg/BiRefNet), which keeps the velvet stand as
+"the object", and over OWLv2, which was several times slower on CPU. If the detector
+fails to load, the service still answers whole-image only and reports
+`preprocessing_version: 1`, so nothing view-less is recorded as current.
 
 `image_hash` is a SHA-256 over the *normalized* canvas — a stable, model-independent
 dedup / change-detection key. Bump `PREPROCESSING_VERSION` if the pipeline changes.
@@ -70,17 +91,19 @@ dedup / change-detection key. Bump `PREPROCESSING_VERSION` if the pipeline chang
 ```json
 { "dino": [..768..], "siglip": [..768..], "dino_dim": 768, "siglip_dim": 768,
   "model_versions": {"dino": "facebook/dinov2-base", "siglip": "google/siglip2-base-patch16-224"},
-  "preprocessing_version": 1, "image_hash": "<sha256>" }
+  "preprocessing_version": 2, "image_hash": "<sha256>",
+  "views": [{"box": [x0, y0, x1, y1], "score": 0.61, "dino": [..768..], "siglip": [..768..]}] }
 ```
-Bad/corrupt/unsupported image → `400 {"error": "..."}`; model failure → `500 {"error": "..."}`.
+`box` is normalised to 0–1 of the image; `views` is best-first, at most `MAX_VIEWS`,
+and empty when nothing was detected. Bad/corrupt/unsupported image → `400 {"error": "..."}`; model failure → `500 {"error": "..."}`.
 (FastAPI wraps the message as `{"detail": "..."}`; the backend reads `detail`.)
 
 `POST /embed/batch` — `{"images": [{"id","image_b64","mime"}, ...]}` →
-`{"results": [{"id","dino","siglip","image_hash"}], "errors": [{"id","error"}]}`.
+`{"results": [{"id","dino","siglip","image_hash","views"}], "errors": [{"id","error"}]}`.
 Per-image errors don't fail the batch. Batched through the model in one forward pass
 (efficient for the ~2000-image one-time catalogue index). Cap `MAX_BATCH` (default 64).
 
-`GET /health` → `{"status": "ok"|"degraded", "models": {"dino": {"id","loaded","dim"}, "siglip": {...}}, "preprocessing_version": 1}`.
+`GET /health` → `{"status": "ok"|"degraded", "models": {"dino": {"id","loaded","dim"}, "siglip": {...}}, "detector": {"id","loaded","max_views"}, "preprocessing_version": 2}`.
 
 `GET /metrics` → `{"embed_count","embed_failure","latency_ms_sum","latency_ms_avg"}`.
 
@@ -96,6 +119,9 @@ Per-image errors don't fail the batch. Batched through the model in one forward 
 | `HF_TOKEN` | *(unset)* | Required only for gated models (DINOv3). |
 | `PREPROCESS_SIZE` | `224` | Square canvas size. |
 | `MAX_BATCH` | `64` | Max images per `/embed/batch`. |
+| `DETECTOR_MODEL_ID` | `IDEA-Research/grounding-dino-tiny` | Jewellery detector for views. |
+| `MAX_VIEWS` | `4` | Views per image beyond the whole frame (`0` turns views off). |
+| `DETECT_BOX_THRESHOLD` / `DETECT_TEXT_THRESHOLD` | `0.25` / `0.2` | Detector confidence floors. |
 | `TORCH_NUM_THREADS` | `#cpus` | CPU thread cap. |
 | `LOG_LEVEL` | `INFO` | Logging level. |
 

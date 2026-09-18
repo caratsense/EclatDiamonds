@@ -203,8 +203,11 @@ const mockInference = {
     return this._available;
   },
   async embed() {
-    return this.embedResult;
+    // The real client always returns a views array (empty without a detector).
+    return this.embedResult ? { views: [], ...this.embedResult } : null;
   },
+  /** Jewellery "detected" in every batch image, as the real service returns it. */
+  batchViews: [] as { dino: number[]; siglip: number[] }[],
   /**
    * Bytes containing this marker come back as an error instead of a vector —
    * a stand-in for the real thing's refusal to read, say, an SVG placeholder.
@@ -216,7 +219,7 @@ const mockInference = {
     return {
       results: items
         .filter((i) => !rejected(i))
-        .map((i) => ({ id: i.id, dino: [1, 0, 0], siglip: [1, 0, 0], imageHash: 'h' })),
+        .map((i) => ({ id: i.id, dino: [1, 0, 0], siglip: [1, 0, 0], views: this.batchViews, imageHash: 'h' })),
       errors: items
         .filter(rejected)
         .map((i) => ({ id: i.id, error: 'unsupported image' })),
@@ -394,6 +397,29 @@ describe('Jewelry similarity search (e2e)', () => {
     await prisma.organisation.deleteMany({ where: { id: 'org_jsim_b' } });
   });
 
+  it('a piece detected in the photo finds the design its whole frame does not', async () => {
+    // The shop's case: the whole frame (mostly velvet stand) resembles nothing
+    // in the catalogue; the pendant detected inside it is design A.
+    mockInference._available = true;
+    mockInference.embedResult = {
+      dino: [0, 0, 1],
+      siglip: [0, 0, 1],
+      views: [{ dino: [1, 0, 0], siglip: [1, 0, 0] }],
+    };
+    const res = await post('/products/jewelry/similarity-search', tokens.rep)
+      .attach('file', IMG, { filename: 'q.jpg', contentType: 'image/jpeg' });
+    expect(res.status).toBe(201);
+    expect(res.body.status).toBe('MATCHES_FOUND');
+    expect(res.body.results[0].productId).toBe(EMB_A);
+    expect(res.body.results[0].matchLevel).toBe('VERY_CLOSE');
+
+    // Without the detected view the same photo matches nothing.
+    mockInference.embedResult = { dino: [0, 0, 1], siglip: [0, 0, 1] };
+    const whole = await post('/products/jewelry/similarity-search', tokens.rep)
+      .attach('file', IMG, { filename: 'q.jpg', contentType: 'image/jpeg' });
+    expect(whole.body.status).toBe('NO_CLOSE_MATCH');
+  });
+
   it('inference unavailable → available:false (never fabricates)', async () => {
     mockInference._available = false;
     const res = await post('/products/jewelry/similarity-search', tokens.rep)
@@ -467,6 +493,44 @@ describe('Jewelry similarity search (e2e)', () => {
     expect(second.status).toBe(201);
     expect(second.body.skipped).toBe(1);
     expect(second.body.embedded).toBe(0);
+  });
+
+  it('reindex stores each detected piece as its own row, and keeps them current', async () => {
+    const hashes = async () =>
+      (
+        await prisma.productEmbedding.findMany({
+          where: { productId: REINDEX_PRODUCT },
+          select: { imageHash: true, preprocessingVersion: true },
+        })
+      ).map((e) => `${e.imageHash.replace(/^[0-9a-f]{64}/, 'photo')}@${e.preprocessingVersion}`);
+    const reindex = (force: boolean) =>
+      post(`/products/embeddings/reindex?${force ? 'force=1&' : ''}productId=${REINDEX_PRODUCT}`, tokens.ho);
+
+    try {
+      // Two pieces found: the photo plus two view rows.
+      mockInference.batchViews = [
+        { dino: [0, 1, 0], siglip: [0, 1, 0] },
+        { dino: [0, 0, 1], siglip: [0, 0, 1] },
+      ];
+      expect((await reindex(true)).body.embedded).toBe(1);
+      expect((await hashes()).sort()).toEqual(['photo#v1@pp1', 'photo#v2@pp1', 'photo@pp1']);
+
+      // The detector now finds one: the second view is no longer produced, so it goes.
+      mockInference.batchViews = [{ dino: [0, 1, 0], siglip: [0, 1, 0] }];
+      const fewer = await reindex(true);
+      expect(fewer.body.pruned).toBe(1);
+      expect((await hashes()).sort()).toEqual(['photo#v1@pp1', 'photo@pp1']);
+
+      // A pipeline bump re-embeds without being forced, and the old rows go once
+      // the new ones exist.
+      mockInference.versions = { ...mockInference.versions, preprocessing: 'pp2' };
+      const bumped = await reindex(false);
+      expect(bumped.body.embedded).toBe(1);
+      expect((await hashes()).sort()).toEqual(['photo#v1@pp2', 'photo@pp2']);
+    } finally {
+      mockInference.batchViews = [];
+      mockInference.versions = { ...mockInference.versions, preprocessing: 'pp1' };
+    }
   });
 
   it('reindex is HO-gated (salesperson forbidden)', async () => {
@@ -566,5 +630,34 @@ describe('Jewelry similarity search (e2e)', () => {
 
     rmSync(join(dir, goodRel), { force: true });
     rmSync(join(dir, badRel), { force: true });
+  });
+
+  it('a catalogue-wide rebuild runs in the background and reports its outcome', async () => {
+    const start = await post('/products/embeddings/reindex?background=1', tokens.ho);
+    expect(start.status).toBe(201);
+    expect(start.body.started).toBe(true);
+
+    // A second press while it runs does not start another.
+    const again = await post('/products/embeddings/reindex?background=1', tokens.ho);
+    if (again.body.running) expect(again.body.started).toBe(false);
+
+    let status: any = {};
+    for (let i = 0; i < 50; i++) {
+      status = (
+        await request(app.getHttpServer())
+          .get('/products/embeddings/reindex')
+          .set('Authorization', `Bearer ${tokens.ho}`)
+      ).body;
+      if (!status.running) break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    expect(status.running).toBe(false);
+    expect(status.result?.available).toBe(true);
+    expect(typeof status.startedAt).toBe('string');
+
+    const rep = await request(app.getHttpServer())
+      .get('/products/embeddings/reindex')
+      .set('Authorization', `Bearer ${tokens.rep}`);
+    expect(rep.status).toBe(403);
   });
 });

@@ -33,7 +33,9 @@ interface Shot {
  * profile — a ring, a pendant with depth.
  */
 const SHOT_HINTS = [
-  "Straight on, filling the frame",
+  // No cropping needed: the service finds the piece in the photo (a pendant on
+  // a velvet stand, a ring on a hand) and matches on that, not the backdrop.
+  "Straight on — no need to crop, the piece is found automatically",
   "At an angle, as a customer holds it",
   "From the side, if it has depth",
 ];

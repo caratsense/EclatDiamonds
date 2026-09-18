@@ -50,11 +50,10 @@ const ANGLES = [
  * first shot, the angled view the second, and the profile the third for pieces
  * whose shape reads differently in depth.
  *
- * "CAD / design" is deliberately NOT here. A Gati render is one canvas holding
- * several small orthographic views plus dimension callouts, and the models
- * describe the whole canvas — so it reads as a technical drawing rather than
- * as the piece, and matches a phone photo poorly. Worth keeping, not worth
- * counting as a view.
+ * "CAD / design" is deliberately NOT here. A Gati sheet is searchable — the
+ * index cuts each render out of it and matches them one by one — but they are
+ * renders, lit and coloured like no real piece is. A photograph of the piece
+ * itself is still the better thing to match a customer's photograph against.
  */
 const SEARCH_ANGLES = ["Front", "Side", "On model"] as const;
 

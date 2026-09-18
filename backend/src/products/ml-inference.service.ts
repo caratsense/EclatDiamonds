@@ -3,10 +3,22 @@ import { ConfigService } from '@nestjs/config';
 import { fetchJson } from '../integrations/integrations.util';
 import { parseEmbedding } from './image-embedding.service';
 
+/**
+ * One piece of jewellery the inference service found inside a picture, embedded
+ * on its own: the pendant on a velvet stand, each render on a CAD sheet, the
+ * ring on a hand. The whole-picture vector sits alongside, never replaced.
+ */
+export interface View {
+  dino: number[];
+  siglip: number[];
+}
+
 /** A dual visual embedding for one image. */
 export interface DualEmbedding {
   dino: number[];
   siglip: number[];
+  /** Detected jewellery, best first. Empty from a service without the detector. */
+  views: View[];
   dinoModelVersion: string;
   siglipModelVersion: string;
   preprocessingVersion: string;
@@ -29,7 +41,20 @@ export interface BatchResult {
   id: string;
   dino: number[];
   siglip: number[];
+  views: View[];
   imageHash?: string;
+}
+
+/** The views in a response, keeping only well-formed ones. */
+function parseViews(raw: unknown): View[] {
+  if (!Array.isArray(raw)) return [];
+  const out: View[] = [];
+  for (const v of raw) {
+    const dino = parseEmbedding(v?.dino);
+    const siglip = parseEmbedding(v?.siglip);
+    if (dino && siglip) out.push({ dino, siglip });
+  }
+  return out;
 }
 
 /**
@@ -38,8 +63,8 @@ export interface BatchResult {
  * Config-gated exactly like ImageEmbeddingService: with NO `ML_INFERENCE_URL` set
  * the service reports `available:false` and every call returns null/empty — the
  * feature is simply off, it NEVER fabricates a vector. Contract:
- *   POST /embed        { image_b64, mime } -> { dino, siglip, model_versions, preprocessing_version, image_hash }
- *   POST /embed/batch  { images:[{id,image_b64,mime}] } -> { results:[...], errors:[...] }
+ *   POST /embed        { image_b64, mime } -> { dino, siglip, views:[{box,score,dino,siglip}], model_versions, preprocessing_version, image_hash }
+ *   POST /embed/batch  { images:[{id,image_b64,mime}] } -> { results:[{id,dino,siglip,views,image_hash}], errors:[...] }
  *   GET  /health       -> { model_versions:{dino,siglip}, preprocessing_version, ... }
  * Optional bearer via `ML_INFERENCE_KEY`.
  */
@@ -144,6 +169,7 @@ export class MlInferenceService {
       return {
         dino,
         siglip,
+        views: parseViews(data?.views),
         dinoModelVersion: data?.model_versions?.dino ?? 'unknown',
         siglipModelVersion: data?.model_versions?.siglip ?? 'unknown',
         preprocessingVersion:
@@ -184,7 +210,7 @@ export class MlInferenceService {
       const dino = parseEmbedding(r?.dino);
       const siglip = parseEmbedding(r?.siglip);
       if (dino && siglip) {
-        results.push({ id: r.id, dino, siglip, imageHash: r?.image_hash });
+        results.push({ id: r.id, dino, siglip, views: parseViews(r?.views), imageHash: r?.image_hash });
       }
     }
     const errors = (data?.errors ?? []).map((e: any) => ({ id: e?.id, error: String(e?.error ?? 'error') }));

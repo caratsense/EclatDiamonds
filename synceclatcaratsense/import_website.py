@@ -27,6 +27,7 @@ Read-only against the website. Touches SQL Server not at all.
 Run:  import_website.bat            see what would happen, send nothing
       import_website.bat --send     do it
 """
+import itertools
 import json
 import os
 import sys
@@ -93,8 +94,8 @@ def fetch_products():
     return d if isinstance(d, list) else []
 
 
-def all_images(p, limit=8):
-    """Every real photograph on the product, in feed order, without repeats.
+def all_images(p, limit=12):
+    """Every real photograph on the product, without repeats, metals interleaved.
 
     Products are shaped variantType[] -> shapes[] -> images[], and a shape can
     carry an empty list, so this walks the whole structure rather than trusting
@@ -106,22 +107,25 @@ def all_images(p, limit=8):
     against indexed pictures, it could only ever be found from that one view.
     The rest were sitting on the website CDN the whole time, costing nothing.
 
-    Capped because a feed with dozens of near-identical colourway shots would
-    otherwise fill the index with duplicates of one design and crowd out other
-    designs in a result set.
+    Interleaved because the feed lists every rose-gold angle, then every
+    white-gold one, then yellow. Cut in feed order, a design shot five ways per
+    metal lost yellow gold entirely, and a customer's yellow piece had only other
+    metals to match against. Round-robin keeps each metal's front and
+    three-quarter view before any metal's fourth angle.
+
+    Capped because every photo is embedded along with the jewellery detected in
+    it, and each of those is an index row: twelve is four angles in three metals,
+    which covers all but a handful of designs.
     """
-    out = []
-
-    def take(img):
-        if isinstance(img, str) and img.startswith("http") and img not in out:
-            out.append(img)
-
+    per_metal = []
     for v in p.get("variantType") or []:
-        for s in v.get("shapes") or []:
-            for img in s.get("images") or []:
-                take(img)
-        for img in v.get("images") or []:
-            take(img)
+        imgs = [img for s in v.get("shapes") or [] for img in s.get("images") or []]
+        per_metal.append(imgs + list(v.get("images") or []))
+    out = []
+    for row in itertools.zip_longest(*per_metal):
+        for img in row:
+            if isinstance(img, str) and img.startswith("http") and img not in out:
+                out.append(img)
     return out[:limit]
 
 

@@ -28,7 +28,7 @@ def test_preprocessing():
     solid = Image.new("RGB", (640, 480), (10, 20, 200))
     norm = normalize_image(base64.b64decode(_b64(solid)), 224)
     assert norm.size == (224, 224) and norm.mode == "RGB"
-    assert PREPROCESSING_VERSION == 1
+    assert PREPROCESSING_VERSION == 2  # v2: detected-jewellery views
     # deterministic hash
     assert image_hash(norm) == image_hash(normalize_image(base64.b64decode(_b64(solid)), 224))
     print("[ok] preprocessing shape + deterministic hash")
