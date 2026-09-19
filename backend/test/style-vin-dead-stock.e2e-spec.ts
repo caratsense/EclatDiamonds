@@ -379,6 +379,8 @@ describe('Style number, VIN and configurable dead stock (e2e)', () => {
     expect(row.thresholdDays).toBe(45);
     // How far past the line, so the list can be worked worst-first.
     expect(row.daysOver).toBeGreaterThan(150);
+    // The design it opens for photos and details; this piece has none.
+    expect(row).toHaveProperty('productId', null);
   });
 
   it('the warning band shows pieces heading that way, without calling them dead', async () => {

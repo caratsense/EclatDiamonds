@@ -39,6 +39,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Table,
   TableBody,
@@ -49,6 +50,7 @@ import {
 } from "@/components/ui/table";
 import {
   useCreateTicket,
+  useReplyToTicket,
   useTickets,
   type TicketListItem,
 } from "@/lib/queries/ticketing";
@@ -267,16 +269,24 @@ function NewTicketDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { currentStore } = useSession();
+  const { currentStore, stores } = useSession();
   const createTicket = useCreateTicket();
+  const reply = useReplyToTicket();
   const [subject, setSubject] = useState("");
+  const [details, setDetails] = useState("");
+  // On "All Stores" the ticket is Head Office's unless a branch is picked.
+  const [pickedStore, setPickedStore] = useState("hq");
   // "none" = no category → server routes it to the back-office bucket.
   const [category, setCategory] = useState<TicketCategory | "none">("none");
   const [priority, setPriority] = useState<TicketPriority>("medium");
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Aggregate scope has no concrete store — let the ticket be HO-level (no storeId).
-  const targetStoreId = currentStore.isAggregate ? undefined : currentStore.id;
+  const branches = stores.filter((s) => !s.isAggregate);
+  const targetStoreId = currentStore.isAggregate
+    ? pickedStore === "hq"
+      ? undefined
+      : pickedStore
+    : currentStore.id;
 
   const resolvedCategory = category === "none" ? undefined : category;
   const routedTo = resolverFor(resolvedCategory);
@@ -300,13 +310,18 @@ function NewTicketDialog({
         priority,
       },
       {
-        onSuccess: () => {
+        onSuccess: (ticket) => {
           toast.success("Ticket raised", {
             description: `Auto-routed to ${routedTo}.`,
           });
+          // The details are the ticket's first message, so the resolver reads
+          // them in the same thread they answer in.
+          if (details.trim()) reply.mutate({ id: ticket.id, body: details.trim() });
           setSubject("");
+          setDetails("");
           setCategory("none");
           setPriority("medium");
+          setPickedStore("hq");
           onOpenChange(false);
         },
         onError: (err) => toast.error(apiErrorMessage(err, "Could not raise ticket.")),
@@ -320,12 +335,31 @@ function NewTicketDialog({
         <DialogHeader>
           <DialogTitle>New ticket</DialogTitle>
           <DialogDescription>
-            Raised against{" "}
-            {currentStore.isAggregate ? "Head Office" : currentStore.name}. It
-            auto-routes to a resolver team by category.
+            {currentStore.isAggregate
+              ? "Pick the branch it is about, or leave it with Head Office."
+              : `Raised against ${currentStore.name}.`}{" "}
+            It routes to a resolver team by category.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
+          {currentStore.isAggregate ? (
+            <div className="grid gap-1.5">
+              <Label htmlFor="ticket-store">Branch</Label>
+              <Select value={pickedStore} onValueChange={setPickedStore}>
+                <SelectTrigger id="ticket-store">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="hq">Head Office (no branch)</SelectItem>
+                  {branches.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
           <div className="grid gap-1.5">
             <Label htmlFor="subject">
               Subject <span className="text-destructive">*</span>
@@ -344,14 +378,9 @@ function NewTicketDialog({
               <p className="mt-1 text-xs text-destructive">{errors.subject}</p>
             ) : null}
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid items-start gap-3 sm:grid-cols-2">
             <div className="grid gap-1.5">
-              <Label htmlFor="cat">
-                Category{" "}
-                <span className="text-xs font-normal text-muted-foreground">
-                  (optional — routed to back office)
-                </span>
-              </Label>
+              <Label htmlFor="cat">Category</Label>
               <Select
                 value={category}
                 onValueChange={(v) => setCategory(v as TicketCategory | "none")}
@@ -360,9 +389,7 @@ function NewTicketDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">
-                    None — route to back office
-                  </SelectItem>
+                  <SelectItem value="none">Not sure</SelectItem>
                   {CATEGORIES.map((c) => (
                     <SelectItem key={c.key} value={c.key}>
                       {c.label}
@@ -370,6 +397,7 @@ function NewTicketDialog({
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">Goes to: {routedTo}</p>
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="prio">Priority</Label>
@@ -389,9 +417,18 @@ function NewTicketDialog({
               </Select>
             </div>
           </div>
-          <p className="text-xs text-muted-foreground">
-            Routes to: {routedTo}
-          </p>
+          <div className="grid gap-1.5">
+            <Label htmlFor="ticket-details">
+              Details <span className="text-xs font-normal text-muted-foreground">(optional)</span>
+            </Label>
+            <Textarea
+              id="ticket-details"
+              rows={3}
+              placeholder="What happened, since when, and what you already tried."
+              value={details}
+              onChange={(e) => setDetails(e.target.value)}
+            />
+          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>

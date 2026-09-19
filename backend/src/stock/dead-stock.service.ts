@@ -309,7 +309,7 @@ export class DeadStockService {
         ...(category ? { category } : {}),
       },
       select: {
-        id: true, sku: true, name: true, vin: true, styleNumber: true,
+        id: true, sku: true, name: true, vin: true, styleNumber: true, productId: true,
         category: true, inwardDate: true, ageDays: true, tagPrice: true,
         stockClass: true, remakeSuitable: true,
         storeId: true, store: { select: { name: true } },
@@ -333,6 +333,8 @@ export class DeadStockService {
         id: r.id,
         sku: r.sku ?? '',
         vin: r.vin,
+        /** The design, so a row can open its photos and full details. */
+        productId: r.productId,
         styleNumber: r.styleNumber ?? r.product?.styleNumber ?? null,
         name: r.name ?? '',
         category: cat,

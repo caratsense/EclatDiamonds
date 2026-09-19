@@ -2,11 +2,20 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Download, Hourglass, ScanLine, Tag, Trash2 } from "lucide-react";
+import { ArrowLeft, Camera, Download, Hourglass, ScanLine, Tag, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { ProductDetailDialog } from "@/components/catalogue/product-detail-dialog";
+import { BarcodeScannerSheet } from "@/components/instore/barcode-scanner-sheet";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -33,6 +42,7 @@ import {
   useIssueMissingVins,
   useSetDeadStockRule,
   useVinLookup,
+  type DeadStockItem,
   type DeadStockState,
   type DeadStockView,
   type StockClass,
@@ -61,6 +71,12 @@ export default function DeadStockPage() {
   const [state, setState] = useState<DeadStockState>("dead");
   const [view, setView] = useState<DeadStockView>("stock");
   const [vin, setVin] = useState("");
+  const [scanOpen, setScanOpen] = useState(false);
+  // A piece linked to a design opens the design (photos, every detail, all its
+  // pieces); one that is not shows what the piece itself carries.
+  const [design, setDesign] = useState<string | null>(null);
+  const [piece, setPiece] = useState<DeadStockItem | null>(null);
+  const openPiece = (r: DeadStockItem) => (r.productId ? setDesign(r.productId) : setPiece(r));
 
   const filters = {
     storeId: storeId || undefined,
@@ -159,6 +175,108 @@ export default function DeadStockPage() {
       </div>
 
       {/* ---------------------------------------------------------------- */}
+      {isHo ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">What counts as dead</CardTitle>
+            <CardDescription>
+              {policy.data?.usingPlatformDefault
+                ? "Nothing is configured, so everything uses 180 days."
+                : "A category with its own rule uses it; everything else uses your default."}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Each field stacks its label ABOVE the control: a bare <select>
+                is inline, so without flex-col it sat beside its label. */}
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="rule-cat">Category</Label>
+                <select
+                  id="rule-cat"
+                  className="h-9 w-60 rounded-md border bg-background px-3 text-sm capitalize"
+                  value={ruleCategory}
+                  onChange={(e) => setRuleCategory(e.target.value)}
+                >
+                  <option value="">Everything else (default)</option>
+                  {STOCK_CATEGORIES.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="rule-days">Dead after (days)</Label>
+                <Input
+                  id="rule-days"
+                  inputMode="numeric"
+                  className="w-32"
+                  placeholder="180"
+                  value={threshold}
+                  onChange={(e) => setThreshold(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="rule-warn">Warn after (days)</Label>
+                <Input
+                  id="rule-warn"
+                  inputMode="numeric"
+                  className="w-32"
+                  placeholder="Optional"
+                  value={warn}
+                  onChange={(e) => setWarn(e.target.value)}
+                />
+              </div>
+              <Button onClick={onSaveRule} disabled={setRule.isPending || !threshold.trim()}>
+                Save rule
+              </Button>
+            </div>
+
+            {(policy.data?.rules ?? []).length > 0 ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Applies to</TableHead>
+                    <TableHead className="text-right">Dead after</TableHead>
+                    <TableHead className="text-right">Warn after</TableHead>
+                    <TableHead />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(policy.data?.rules ?? []).map((r) => (
+                    <TableRow key={r.category ?? "default"}>
+                      <TableCell className="capitalize">
+                        {r.category ?? "Everything else"}
+                      </TableCell>
+                      <TableCell className="num text-right">{r.thresholdDays}d</TableCell>
+                      <TableCell className="num text-right text-muted-foreground">
+                        {r.warnAfterDays ? `${r.warnAfterDays}d` : "—"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() =>
+                            clearRule.mutate(r.category ?? "default", {
+                              onSuccess: () => toast.success("Rule removed"),
+                              onError: (e) =>
+                                toast.error(apiErrorMessage(e, "Could not remove it.")),
+                            })
+                          }
+                        >
+                          <Trash2 className="size-4" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {/* ---------------------------------------------------------------- */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
@@ -173,13 +291,19 @@ export default function DeadStockPage() {
           <div className="flex flex-wrap items-end gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="vin">Piece number</Label>
-              <Input
-                id="vin"
-                className="w-56 font-mono"
-                placeholder="260000123"
-                value={vin}
-                onChange={(e) => setVin(e.target.value)}
-              />
+              <div className="flex gap-2">
+                <Input
+                  id="vin"
+                  className="w-56 font-mono"
+                  placeholder="260000123"
+                  value={vin}
+                  onChange={(e) => setVin(e.target.value)}
+                  autoComplete="off"
+                />
+                <Button variant="outline" onClick={() => setScanOpen(true)}>
+                  <Camera className="size-4" /> Scan
+                </Button>
+              </div>
             </div>
             {canIssue ? (
               <Button variant="outline" onClick={onIssueMissing} disabled={issueMissing.isPending}>
@@ -200,6 +324,20 @@ export default function DeadStockPage() {
                   {lookup.data.styleNumber ? ` · design ${lookup.data.styleNumber}` : ""}
                   {lookup.data.tagPrice ? ` · ${formatINR(lookup.data.tagPrice)}` : ""}
                 </div>
+                {lookup.data.product ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-2"
+                    onClick={() => setDesign(lookup.data?.found ? (lookup.data.product?.id ?? null) : null)}
+                  >
+                    Open full details and photos
+                  </Button>
+                ) : (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Not linked to a catalogue design, so there are no photos for it.
+                  </p>
+                )}
                 {!lookup.data.inScope ? (
                   // Found and named rather than hidden: somebody holding the tag
                   // needs to be told where it belongs.
@@ -337,11 +475,18 @@ export default function DeadStockPage() {
                 {(data?.items ?? []).map((r) => (
                   <TableRow key={r.id}>
                     <TableCell>
-                      <div className="font-medium">{r.name}</div>
-                      <div className="num text-xs text-muted-foreground">
-                        {r.sku}
-                        {r.vin ? ` · ${r.vin}` : ""}
-                      </div>
+                      <button
+                        type="button"
+                        className="text-left hover:underline focus-visible:underline focus-visible:outline-none"
+                        onClick={() => openPiece(r)}
+                        title={r.productId ? "Open full details and photos" : "Open this piece's details"}
+                      >
+                        <div className="font-medium">{r.name}</div>
+                        <div className="num text-xs text-muted-foreground">
+                          {r.sku}
+                          {r.vin ? ` · ${r.vin}` : ""}
+                        </div>
+                      </button>
                     </TableCell>
                     <TableCell className="num text-muted-foreground">
                       {r.styleNumber ?? "—"}
@@ -428,106 +573,58 @@ export default function DeadStockPage() {
         </>
       )}
 
-      {/* ---------------------------------------------------------------- */}
-      {isHo ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">What counts as dead</CardTitle>
-            <CardDescription>
-              {policy.data?.usingPlatformDefault
-                ? "Nothing is configured, so everything uses 180 days."
-                : "A category with its own rule uses it; everything else uses your default."}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex flex-wrap items-end gap-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="rule-cat">Category</Label>
-                <select
-                  id="rule-cat"
-                  className="h-9 w-44 rounded-md border bg-background px-3 text-sm capitalize"
-                  value={ruleCategory}
-                  onChange={(e) => setRuleCategory(e.target.value)}
-                >
-                  <option value="">Everything else (default)</option>
-                  {STOCK_CATEGORIES.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="rule-days">Dead after (days)</Label>
-                <Input
-                  id="rule-days"
-                  inputMode="numeric"
-                  className="w-32"
-                  placeholder="180"
-                  value={threshold}
-                  onChange={(e) => setThreshold(e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="rule-warn">Warn after (days)</Label>
-                <Input
-                  id="rule-warn"
-                  inputMode="numeric"
-                  className="w-32"
-                  placeholder="Optional"
-                  value={warn}
-                  onChange={(e) => setWarn(e.target.value)}
-                />
-              </div>
-              <Button onClick={onSaveRule} disabled={setRule.isPending || !threshold.trim()}>
-                Save rule
-              </Button>
-            </div>
-
-            {(policy.data?.rules ?? []).length > 0 ? (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Applies to</TableHead>
-                    <TableHead className="text-right">Dead after</TableHead>
-                    <TableHead className="text-right">Warn after</TableHead>
-                    <TableHead />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {(policy.data?.rules ?? []).map((r) => (
-                    <TableRow key={r.category ?? "default"}>
-                      <TableCell className="capitalize">
-                        {r.category ?? "Everything else"}
-                      </TableCell>
-                      <TableCell className="num text-right">{r.thresholdDays}d</TableCell>
-                      <TableCell className="num text-right text-muted-foreground">
-                        {r.warnAfterDays ? `${r.warnAfterDays}d` : "—"}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() =>
-                            clearRule.mutate(r.category ?? "default", {
-                              onSuccess: () => toast.success("Rule removed"),
-                              onError: (e) =>
-                                toast.error(apiErrorMessage(e, "Could not remove it.")),
-                            })
-                          }
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            ) : null}
-          </CardContent>
-        </Card>
-      ) : null}
+      <BarcodeScannerSheet
+        open={scanOpen}
+        onOpenChange={setScanOpen}
+        title="Scan a piece tag"
+        onCode={setVin}
+      />
+      <ProductDetailDialog
+        productId={design}
+        open={design !== null}
+        onOpenChange={(o) => (o ? null : setDesign(null))}
+      />
+      <PieceDialog piece={piece} onClose={() => setPiece(null)} />
     </div>
+  );
+}
+
+/** A piece with no catalogue design: everything the piece itself carries. */
+function PieceDialog({ piece, onClose }: { piece: DeadStockItem | null; onClose: () => void }) {
+  const rows: [string, string][] = piece
+    ? [
+        ["SKU", piece.sku || "—"],
+        ["Piece number", piece.vin ?? "not issued"],
+        ["Design", piece.styleNumber ?? "—"],
+        ["Category", piece.category],
+        ["Branch", piece.storeName || "—"],
+        ["In stock", `${piece.ageDays} days`],
+        ["Dead after", `${piece.thresholdDays} days`],
+        ["Tag price", formatINR(piece.tagPrice)],
+        ["Classification", `${classLabel(piece.stockClass)}${piece.remakeSuitable ? " · suitable for remaking" : ""}`],
+        ["Suggested", piece.suggestion ? SUGGESTION_LABEL[piece.suggestion] : "—"],
+      ]
+    : [];
+  return (
+    <Dialog open={piece !== null} onOpenChange={(o) => (o ? null : onClose())}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{piece?.name}</DialogTitle>
+          <DialogDescription>
+            Not linked to a catalogue design, so there are no photos. Link it to its design in the
+            catalogue to see them here.
+          </DialogDescription>
+        </DialogHeader>
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
+          {rows.map(([k, v]) => (
+            <div key={k} className="contents">
+              <dt className="text-muted-foreground">{k}</dt>
+              <dd>{v}</dd>
+            </div>
+          ))}
+        </dl>
+      </DialogContent>
+    </Dialog>
   );
 }
 

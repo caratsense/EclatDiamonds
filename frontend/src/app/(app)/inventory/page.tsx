@@ -268,6 +268,7 @@ export default function InventoryPage() {
       <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard
           label="Total pieces"
+          href="#stock-list"
           value={summary?.totalPieces ?? 0}
           format="number"
           delta={null}
@@ -275,6 +276,7 @@ export default function InventoryPage() {
         />
         <KpiCard
           label="Gold weight (g)"
+          href="#stock-list"
           value={summary?.totalGoldGrams ?? 0}
           format="number"
           delta={null}
@@ -282,6 +284,7 @@ export default function InventoryPage() {
         />
         <KpiCard
           label="Stock value"
+          href={summary?.byStore?.length ? "#stock-by-branch" : "#stock-list"}
           value={summary?.totalStockValue ?? 0}
           format="inr"
           delta={null}
@@ -289,6 +292,7 @@ export default function InventoryPage() {
         />
         <KpiCard
           label="Dead-stock items"
+          href="/inventory/dead-stock"
           value={summary?.deadStock ?? 0}
           format="number"
           delta={null}
@@ -368,7 +372,7 @@ export default function InventoryPage() {
 
       {/* Store-wise breakdown — only when more than one store is in scope. */}
       {summary?.byStore && summary.byStore.length > 0 ? (
-        <Card className="mb-4">
+        <Card id="stock-by-branch" className="mb-4 scroll-mt-20">
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Store-wise stock</CardTitle>
             <CardDescription>
@@ -402,7 +406,7 @@ export default function InventoryPage() {
         </Card>
       ) : null}
 
-      <Tabs defaultValue="stock">
+      <Tabs id="stock-list" className="scroll-mt-20" defaultValue="stock">
         <TabsList>
           <TabsTrigger value="stock">Stock</TabsTrigger>
           <TabsTrigger value="rotation">Rotation</TabsTrigger>
