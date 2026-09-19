@@ -174,6 +174,9 @@ describe('Tenant module switches and the management view (e2e)', () => {
           approvalStatus: 'approved',
           organisationId: org,
           userStores: { create: { storeId: store, isPrimary: true } },
+          // The management view is head office's by default (auth/access.ts); this
+          // manager was given it.
+          ...(role === 'store_manager' ? { accessOverrides: { management: 'store' } } : {}),
         },
       });
     }
@@ -759,6 +762,7 @@ describe('Tenant module switches and the management view (e2e)', () => {
           isActive: true,
           approvalStatus: 'approved',
           organisationId: A.org,
+          accessOverrides: { management: 'store' },
         },
       });
       const token = await login(orphan.email);

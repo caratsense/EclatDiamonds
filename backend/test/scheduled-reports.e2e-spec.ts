@@ -152,6 +152,9 @@ describe('Scheduled reports (e2e)', () => {
           approvalStatus: 'approved',
           organisationId: A.org,
           userStores: { create: { storeId, isPrimary: true } },
+          // Scheduled reports are head office's by default (auth/access.ts); this
+          // manager was given them.
+          ...(role === 'store_manager' ? { accessOverrides: { 'reporting/scheduled': 'store' } } : {}),
         },
       });
     }

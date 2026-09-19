@@ -284,7 +284,7 @@ describe('Salesperson scope (e2e)', () => {
   it('no management surface at all', async () => {
     for (const path of [
       '/dashboard/kpis', '/dashboard/charts', '/dashboard/assignable-users', '/payments', '/management/kpis',
-      '/reporting/dsr', '/reporting/daily', '/hrms/attendance/report', '/hrms/attendance/team', '/hrms/payroll/runs',
+      '/reporting/dsr', '/hrms/attendance/report', '/hrms/attendance/team', '/hrms/payroll/runs',
       '/feedback/responses', '/feedback/summary', '/crm/omnichannel/summary', '/crm/segments',
       '/crm/round-robin/policy', '/crm/conversations/routing-conflicts', '/loyalty/members', '/loyalty/referral-codes',
       '/omnichannel/outbox', '/stock-transfers', '/users', '/users/pending', '/crm/exports/leads.xlsx',
@@ -293,7 +293,8 @@ describe('Salesperson scope (e2e)', () => {
       const res = await get(R1, path);
       expect({ path, status: res.status }).toEqual({ path, status: 403 });
     }
-    await request(server()).post('/reporting/daily').set(as(R1)).send({ storeId: A.s1, reportDate: '2026-09-01' }).expect(403);
+    // Filing the day's DSR is theirs now; overwriting a filed one is not
+    // (access-control.e2e-spec).
     await request(server()).patch('/discounts/any/approve').set(as(R1)).send({}).expect(403);
     // Lead ageing and SLA clocks stay open to a salesperson, narrowed to their own
     // leads and assigned threads (ageing is pinned in crm-merge-sla-automation).

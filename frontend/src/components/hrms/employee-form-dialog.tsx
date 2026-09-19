@@ -35,7 +35,7 @@ import {
   type EmploymentStatus,
   type EmploymentType,
 } from "@/lib/queries/hrms-employees";
-import { ROLE_LABELS, type Role } from "@/lib/types";
+import { ROLE_LABELS, type Role, ACTIVE_ROLES } from "@/lib/types";
 import { apiErrorMessage, normalizeIndianMobile } from "@/lib/utils";
 import { useResetOn } from "@/lib/use-reset-on";
 import { useSession } from "@/store/use-session";
@@ -43,7 +43,8 @@ import { useSession } from "@/store/use-session";
 /** Radix Select forbids "" as an item value. */
 const NONE = "__none";
 
-const MANAGER_ROLES: Role[] = ["salesperson", "storeperson"];
+// Storeperson and area manager are retired; nobody can be given them.
+const MANAGER_ROLES: Role[] = ["salesperson", "marketing"];
 const GENDERS = [
   { value: "M", label: "Male" },
   { value: "F", label: "Female" },
@@ -205,9 +206,7 @@ export function EmployeeFormDialog({
     });
   }
 
-  const roleOptions: Role[] = isHeadOffice
-    ? (Object.keys(ROLE_LABELS) as Role[])
-    : MANAGER_ROLES;
+  const roleOptions: Role[] = isHeadOffice ? ACTIVE_ROLES : MANAGER_ROLES;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !save.isPending && onOpenChange(o)}>

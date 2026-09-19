@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Get, Patch, Post } from '@nestjs/common';
 import { Permit } from './permissions';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
@@ -7,6 +7,7 @@ import { SignupDto, SignupPreviewDto } from './dto/signup.dto';
 import { CreateOrganisationDto } from './dto/create-organisation.dto';
 import { GoogleLoginDto } from './dto/google-login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { UpdateMeDto } from './dto/update-me.dto';
 import { RequestOtpDto, VerifyOtpDto } from './dto/otp.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { Public } from './public.decorator';
@@ -137,6 +138,13 @@ export class AuthController {
   @Get('me')
   me(@CurrentUser() user: AuthUser) {
     return this.auth.me(user);
+  }
+
+  /** PATCH /auth/me — change my own phone or personal email (nothing else). */
+  @Permit('session')
+  @Patch('me')
+  updateMe(@CurrentUser() user: AuthUser, @Body() dto: UpdateMeDto) {
+    return this.auth.updateMe(user, dto);
   }
 
   /** Authenticated, and rank-gated in the service — not a credential-guessing surface. */

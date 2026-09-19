@@ -55,6 +55,9 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'inventory.read',
     'inventory.write',
   ],
+  // A ladder role (rank 1): these only matter for permission-only roles, and
+  // what marketing may open is decided by auth/access.ts.
+  marketing: ['session', 'self.attendance', 'self.leave', 'self.payslip'],
   store_manager: EVERYTHING,
   area_manager: EVERYTHING,
   head_office: EVERYTHING,

@@ -47,7 +47,12 @@ enum Role {
   /// dead stock and product photos at their own branch — and nothing about
   /// customers, money or the team. Not a rung on the ladder above: its access is
   /// an explicit permission list (auth/permissions.ts), never a rank comparison.
+  /// RETIRED 2026-09-19 (with area_manager): no longer assignable; kept only
+  /// because Postgres enum values cannot be dropped while rows could hold them.
   storeperson
+  /// APPENDED 2026-09-19. One per store: CRM, marketing and inbound, and their
+  /// own attendance and leave — no sales, stock or money (auth/access.ts).
+  marketing
 }
 
 /// Self-signup approval lifecycle. `approved` is the default so every existing
@@ -846,6 +851,11 @@ model User {
 
   /// Primary role. Cross-store scope is derived from UserStore rows + role rank.
   role Role @default(salesperson)
+
+  /// Head office's changes to what this person may open, on top of their
+  /// role's defaults (auth/access.ts): `{ "<screen>": "none" | "own" | "store" }`.
+  /// Null = the role's defaults exactly.
+  accessOverrides Json?
 
   /// Self-signup approval workflow. Self-registered users start `pending` +
   /// `isActive=false` and hold NO role/store until an authorised approver grants

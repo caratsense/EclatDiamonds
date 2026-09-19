@@ -14,6 +14,7 @@ import { DailyReportSection } from "@/components/reporting/daily-report-section"
 import { AllStoresReports } from "@/components/reporting/all-stores-reports";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSession } from "@/store/use-session";
+import { ROLE_RANK } from "@/lib/types";
 import {
   Dialog,
   DialogContent,
@@ -81,7 +82,26 @@ function dsrKpiHref(id: string): string | undefined {
   }
 }
 
+/**
+ * A salesperson files the day's DSR and sees what their store filed; the
+ * analytics and cross-branch views are management's (and 403 for them).
+ */
 export default function ReportingPage() {
+  const role = useSession((s) => s.role);
+  return ROLE_RANK[role] < ROLE_RANK.store_manager ? <FrontLineReporting /> : <ManagerReporting />;
+}
+
+function FrontLineReporting() {
+  const item = getNavItem("reporting");
+  return (
+    <>
+      <SectionHeader title="Daily Sales Report (DSR)" purpose={item?.purpose ?? ""} />
+      <DailyReportSection />
+    </>
+  );
+}
+
+function ManagerReporting() {
   const item = getNavItem("reporting");
   const [dsrOpen, setDsrOpen] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);

@@ -27,6 +27,18 @@ export interface AuthUser {
    */
   storeIds: string[];
   /**
+   * The screens this person may open and at what level (auth/access.ts): their
+   * role's defaults with head office's per-person changes applied. Absent for
+   * machines.
+   */
+  access?: import('../auth/access').AccessMap;
+  /**
+   * Set by ModuleAccessGuard when this request is served at a different level
+   * than the person's own role (e.g. a salesperson head office gave Inventory
+   * to): the role they actually hold. Audit lines should name the real role.
+   */
+  actingAs?: import('@prisma/client').Role;
+  /**
    * true for head_office: sees every store of their organisation. It no longer
    * means "no filter" — `storeIds` is authoritative and organisation-bounded.
    */

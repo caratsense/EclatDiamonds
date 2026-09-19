@@ -11,6 +11,8 @@ import { Role } from '@prisma/client';
 export const ROLE_RANK: Record<Role, number> = {
   salesperson: 1,
   storeperson: 1,
+  /** Front-line like a salesperson; auth/access.ts lifts it to store level on its own screens. */
+  marketing: 1,
   store_manager: 2,
   area_manager: 3,
   head_office: 4,
@@ -19,6 +21,7 @@ export const ROLE_RANK: Record<Role, number> = {
 export const ROLE_LABELS: Record<Role, string> = {
   salesperson: 'Salesperson',
   storeperson: 'Storeperson',
+  marketing: 'Marketing',
   store_manager: 'Store Manager',
   area_manager: 'Area Manager',
   head_office: 'Head Office',

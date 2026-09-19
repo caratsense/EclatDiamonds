@@ -8,6 +8,7 @@ import { CommonModule } from './common/common.module';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { RolesGuard } from './auth/roles.guard';
+import { ModuleAccessGuard } from './auth/module-access.guard';
 import { EntitlementGuard } from './common/entitlement.guard';
 
 import { StoresModule } from './stores/stores.module';
@@ -125,6 +126,10 @@ import { AttributionModule } from './attribution/attribution.module';
   providers: [
     // Global auth: every route requires a valid JWT unless marked @Public().
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    // Per-screen access (auth/access.ts): refuses a screen switched off for the
+    // person and serves one given at store level as a manager would. Before
+    // RolesGuard, because it may change the level the request is served at.
+    { provide: APP_GUARD, useClass: ModuleAccessGuard },
     // Role-hierarchy gate for routes annotated with @Roles().
     { provide: APP_GUARD, useClass: RolesGuard },
     // Industry gate: refuses a module the tenant's industry pack does not

@@ -87,6 +87,8 @@ describe('Campaign orchestration (e2e)', () => {
       data: {
         email: A.mgr, name: 'Manager', role: 'store_manager', passwordHash: hash, isActive: true,
         approvalStatus: 'approved', organisationId: A.org,
+        // Campaigns are marketing's by default (auth/access.ts); head office gave them to this manager.
+        accessOverrides: { campaigns: 'store' },
         userStores: { create: { storeId: A.store, isPrimary: true } },
       },
     });

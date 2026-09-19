@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { Lock } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CORE_NAVIGATION, NAV_ITEMS, canSeeNavItem, getNavItem, homeForRole } from "@/lib/navigation";
-import type { Role } from "@/lib/types";
+import { ROLE_RANK, type AccessMap, type Role } from "@/lib/types";
 import { useEnabledNavigation } from "@/lib/queries/tenant-config";
 import { useSession } from "@/store/use-session";
 
@@ -42,14 +43,35 @@ import { useSession } from "@/store/use-session";
  */
 export function ModuleGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const role = useSession((s) => s.role);
+  const role = useSession((s) => s.baseRole);
+  const access = useSession((s) => s.access);
+  const pageRole = useSession((s) => s.role);
+  const setRole = useSession((s) => s.setRole);
   const enabled = useEnabledNavigation();
 
-  // Role first: a screen this role cannot use is not shown, whatever the
-  // tenant's plan. The server refuses the data either way; this is what stops a
-  // typed URL rendering a shell whose every panel then fails.
-  if (roleDecision(pathname, role) === "refuse") {
+  // Serve this page at the person's level for THIS screen (auth/access.ts): a
+  // salesperson head office gave Inventory to works it as a store manager, a
+  // manager limited to their own CRM records works CRM as a salesperson. Pages
+  // keep reading `role`; only the gate knows why it has that value.
+  const wanted = roleForPage(pathname, role, access);
+  useEffect(() => {
+    if (pageRole !== wanted) setRole(wanted);
+  }, [pageRole, wanted, setRole]);
+
+  // A screen this person may not open is not shown, whatever the tenant's plan.
+  // The server refuses the data either way; this is what stops a typed URL
+  // rendering a shell whose every panel then fails.
+  if (roleDecision(pathname, role, access) === "refuse") {
     return <NotForYourRole home={homeForRole(role, enabled)} />;
+  }
+  // One frame while the page role catches up, so no page renders at the wrong level.
+  if (pageRole !== wanted) {
+    return (
+      <div className="space-y-4" aria-busy="true">
+        <Skeleton className="h-9 w-72" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
   }
 
   switch (gateDecision(pathname, enabled)) {
@@ -138,15 +160,33 @@ const STOREPERSON_OPEN_PATHS = ["check-in"];
  * A storeperson: refused everywhere except their listed modules and the few
  * pages they need outside the navigation — closed by default, like the server.
  */
-export function roleDecision(pathname: string | null, role: Role): "render" | "refuse" {
+export function roleDecision(
+  pathname: string | null,
+  role: Role,
+  access?: AccessMap | null,
+): "render" | "refuse" {
   const slug = navSlugForPath(pathname);
   if (slug) {
     const item = getNavItem(slug);
-    return item && canSeeNavItem(item, role) ? "render" : "refuse";
+    return item && canSeeNavItem(item, role, access) ? "render" : "refuse";
   }
   if (role !== "storeperson") return "render";
   const path = (pathname ?? "/").replace(/^\/+|\/+$/g, "");
   return STOREPERSON_OPEN_PATHS.some((p) => path === p || path.startsWith(`${p}/`)) ? "render" : "refuse";
+}
+
+/**
+ * The role a page is served at: the person's own, raised to store manager on a
+ * screen they hold at `store` level, lowered to salesperson on one they hold at
+ * `own` level. Head office and pages outside the navigation keep the real role.
+ */
+export function roleForPage(pathname: string | null, role: Role, access?: AccessMap | null): Role {
+  const slug = navSlugForPath(pathname);
+  const level = slug ? access?.[slug] : undefined;
+  if (!level || role === "head_office") return role;
+  if (level === "store" && ROLE_RANK[role] < ROLE_RANK.store_manager) return "store_manager";
+  if (level === "own" && ROLE_RANK[role] >= ROLE_RANK.store_manager) return "salesperson";
+  return role;
 }
 
 function NotForYourRole({ home }: { home: string }) {
@@ -156,10 +196,11 @@ function NotForYourRole({ home }: { home: string }) {
         <Lock className="h-5 w-5" />
       </span>
       <h1 className="font-display text-2xl font-bold tracking-tight">
-        This section is not part of your role
+        This section is not switched on for you
       </h1>
       <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-        Your role decides which sections you can open. Ask your store manager if you need access.
+        Your role, and head office, decide which sections you can open. Ask head office if you
+        need this one.
       </p>
       <Button asChild className="mt-6">
         <Link href={home}>Back to your workspace</Link>

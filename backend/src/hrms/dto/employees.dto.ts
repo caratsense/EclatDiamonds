@@ -1,4 +1,5 @@
 import { Transform } from 'class-transformer';
+import { ACTIVE_ROLES } from '../../auth/access';
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -205,7 +206,7 @@ export class CreateEmployeeDto extends EmployeeProfileFieldsDto {
   @Matches(/^[+\d][\d\s-]{6,19}$/, { message: 'phone looks invalid' })
   phone?: string;
 
-  @IsEnum(Role)
+  @IsIn(ACTIVE_ROLES, { message: 'role must be salesperson, store_manager, marketing or head_office' })
   role!: Role;
 
   @IsArray()
@@ -234,7 +235,7 @@ export class UpdateEmployeeDto extends EmployeeProfileFieldsDto {
   phone?: string | null;
 
   @IsOptional()
-  @IsEnum(Role)
+  @IsIn(ACTIVE_ROLES, { message: 'role must be salesperson, store_manager, marketing or head_office' })
   role?: Role;
 
   @IsOptional()

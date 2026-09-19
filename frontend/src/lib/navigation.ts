@@ -49,9 +49,10 @@ import {
   Radio,
   Route,
   ListTodo,
+  ShieldCheck,
 } from "lucide-react";
 
-import type { Role } from "@/lib/types";
+import type { AccessMap, Role } from "@/lib/types";
 
 /**
  * Sidebar sections, in the order they are rendered.
@@ -66,12 +67,12 @@ import type { Role } from "@/lib/types";
  */
 export const NAV_GROUP_ORDER = [
   "Overview & Analytics",
-  "Omnichannel & CRM",
+  "CRM",
   "Showroom Floor",
   "Commerce & Orders",
   "Inventory & Supply",
   "Marketing & Inbound",
-  "Team & Workforce",
+  "HRM",
   "Back-office & Approvals",
   "Administration",
 ] as const;
@@ -157,7 +158,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Every customer message, on every channel, in one place.",
     primaryAction: "",
     icon: Inbox,
-    group: "Omnichannel & CRM",
+    group: "CRM",
   },
   {
     module: 1,
@@ -166,7 +167,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Leads and follow-ups for every customer enquiry.",
     primaryAction: "New Lead",
     icon: Users,
-    group: "Omnichannel & CRM",
+    group: "CRM",
   },
   {
     module: 1,
@@ -176,7 +177,7 @@ export const NAV_ITEMS: NavItem[] = [
       "Every follow-up owed to a customer, oldest first, with the history on one screen before you dial.",
     primaryAction: "",
     icon: PhoneCall,
-    group: "Omnichannel & CRM",
+    group: "CRM",
     roles: ["salesperson", "store_manager", "area_manager", "head_office"],
   },
   {
@@ -186,7 +187,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Today's and overdue lead follow-ups.",
     primaryAction: "",
     icon: BellRing,
-    group: "Omnichannel & CRM",
+    group: "CRM",
   },
   {
     module: 1,
@@ -196,7 +197,7 @@ export const NAV_ITEMS: NavItem[] = [
       "Your store's customer directory — contacts, purchase history and key dates.",
     primaryAction: "",
     icon: Contact,
-    group: "Omnichannel & CRM",
+    group: "CRM",
   },
   {
     module: 1,
@@ -206,7 +207,7 @@ export const NAV_ITEMS: NavItem[] = [
       "Ask a customer how it went; an unhappy answer reaches a person, not a public review page.",
     primaryAction: "",
     icon: MessageSquareHeart,
-    group: "Omnichannel & CRM",
+    group: "CRM",
     roles: ["store_manager", "area_manager", "head_office"],
   },
 
@@ -368,7 +369,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Add staff, assign roles and stores within your scope.",
     primaryAction: "Add Staff",
     icon: UsersRound,
-    group: "Team & Workforce",
+    group: "HRM",
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -378,7 +379,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Geo-attendance, rosters, leave and regularization.",
     primaryAction: "Mark Attendance",
     icon: Fingerprint,
-    group: "Team & Workforce",
+    group: "HRM",
   },
   {
     module: 6,
@@ -387,7 +388,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Sales leaderboard, commission and incentives.",
     primaryAction: "",
     icon: Trophy,
-    group: "Team & Workforce",
+    group: "HRM",
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -397,7 +398,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Set monthly sales targets per store and track achievement.",
     primaryAction: "",
     icon: Target,
-    group: "Team & Workforce",
+    group: "HRM",
     roles: ["store_manager", "area_manager", "head_office"],
   },
 
@@ -455,6 +456,16 @@ export const NAV_ITEMS: NavItem[] = [
       "What is set up and what is left — industry, locations, team, data and channels.",
     primaryAction: "",
     icon: ListChecks,
+    group: "Administration",
+    roles: ["head_office"],
+  },
+  {
+    module: 11,
+    slug: "settings/access",
+    title: "People & Access",
+    purpose: "Choose, person by person, which screens they can open and how far.",
+    primaryAction: "",
+    icon: ShieldCheck,
     group: "Administration",
     roles: ["head_office"],
   },
@@ -592,7 +603,7 @@ export const NAV_ITEMS: NavItem[] = [
       "The promise to answer within five minutes, measured — who is late, and who was told.",
     primaryAction: "",
     icon: Timer,
-    group: "Omnichannel & CRM",
+    group: "CRM",
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -603,7 +614,7 @@ export const NAV_ITEMS: NavItem[] = [
       "People taken out of the working lists. Their consent history is kept, which is what stops them being messaged again.",
     primaryAction: "",
     icon: Archive,
-    group: "Omnichannel & CRM",
+    group: "CRM",
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -613,7 +624,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Everything owed to a customer or a colleague, in one list.",
     primaryAction: "New Task",
     icon: ListTodo,
-    group: "Omnichannel & CRM",
+    group: "CRM",
   },
   {
     module: 9,
@@ -645,7 +656,7 @@ export const NAV_ITEMS: NavItem[] = [
       "Each person's own weekly off, and a payslip counted from the attendance register.",
     primaryAction: "",
     icon: ReceiptIcon,
-    group: "Team & Workforce",
+    group: "HRM",
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -741,6 +752,7 @@ export const CORE_NAVIGATION: readonly string[] = Object.freeze([
   "data/images",
   "settings/integrations",
   "settings/audit",
+  "settings/access",
 ]);
 
 export function getNavItem(slug: string): NavItem | undefined {
@@ -762,7 +774,10 @@ export const STOREPERSON_NAVIGATION: ReadonlySet<string> = new Set([
 ]);
 
 /** Whether a role may see a nav item (undefined roles = every ladder role). */
-export function canSeeNavItem(item: NavItem, role: Role): boolean {
+export function canSeeNavItem(item: NavItem, role: Role, access?: AccessMap | null): boolean {
+  // The server's word, once the session has it: the role's defaults with head
+  // office's per-person changes (auth/access.ts).
+  if (access) return item.slug in access;
   if (role === "storeperson") return STOREPERSON_NAVIGATION.has(item.slug);
   return !item.roles || item.roles.includes(role);
 }
@@ -774,6 +789,7 @@ export function canSeeNavItem(item: NavItem, role: Role): boolean {
 export function visibleNavGroups(
   role: Role,
   enabledNavigation?: readonly string[],
+  access?: AccessMap | null,
 ): NavGroup[] {
   const enabled = enabledNavigation?.length
     ? new Set(enabledNavigation)
@@ -781,7 +797,7 @@ export function visibleNavGroups(
   return NAV_GROUPS.map((group) => ({
     ...group,
     items: group.items.filter(
-      (item) => canSeeNavItem(item, role) && (!enabled || enabled.has(item.slug)),
+      (item) => canSeeNavItem(item, role, access) && (!enabled || enabled.has(item.slug)),
     ),
   })).filter((group) => group.items.length > 0);
 }
@@ -808,7 +824,7 @@ export function navigationFromSettings(
  */
 export function homeForRole(role: Role, enabledNavigation?: readonly string[] | null): string {
   if (role === "storeperson") return "/inventory";
-  if (role === "salesperson") return "/crm";
+  if (role === "salesperson" || role === "marketing") return "/crm";
   return enabledNavigation?.length && !enabledNavigation.includes("dashboards")
     ? "/crm"
     : "/dashboards";

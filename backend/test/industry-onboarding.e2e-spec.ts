@@ -162,6 +162,7 @@ const UNIVERSAL_ROUTES = [
   'data',
   'settings/integrations',
   'settings/audit',
+  'settings/access',
 ] as const;
 
 describe('industry packs — the catalogue', () => {

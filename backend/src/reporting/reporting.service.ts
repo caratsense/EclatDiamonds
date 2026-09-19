@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { isFrontLine } from '../common/role.util';
 import { MetalKind, PaymentMode, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
@@ -864,6 +865,19 @@ export class ReportingService {
     // who re-files the same day — a correction, or a second save — UPDATES the
     // row rather than creating a duplicate that would double every roll-up
     // reading it. Same idempotent shape as the WhatsApp bot's submit.
+    // A salesperson files the day's report, but correcting one already filed
+    // (theirs or anyone's) is the manager's call.
+    if (isFrontLine(user.role)) {
+      const filed = await this.prisma.dailyReport.findUnique({
+        where: { storeId_reportDate: { storeId, reportDate } },
+        select: { id: true },
+      });
+      if (filed) {
+        throw new ForbiddenException(
+          "This store's report for that day is already filed. Ask your store manager to correct it.",
+        );
+      }
+    }
     const created = await this.prisma.dailyReport.upsert({
       where: { storeId_reportDate: { storeId, reportDate } },
       create: { organisationId: user.organisationId, storeId, reportDate, ...fields },

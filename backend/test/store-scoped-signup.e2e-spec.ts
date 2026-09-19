@@ -327,8 +327,8 @@ describe('Store-scoped self-signup (e2e)', () => {
       const id = await pendingId((await signup({ name: 'Omkar Pal' }).expect(201)).body.loginId);
       await approve(tokens.mgrA, id, { role: 'store_manager' }).expect(403);
       await approve(tokens.mgrA, id, { storeId: T.b }).expect(403);
-      await approve(tokens.mgrA, id, { role: 'storeperson' }).expect(201);
-      expect((await prisma.user.findUniqueOrThrow({ where: { id } })).role).toBe('storeperson');
+      await approve(tokens.mgrA, id, { role: 'marketing' }).expect(201);
+      expect((await prisma.user.findUniqueOrThrow({ where: { id } })).role).toBe('marketing');
     });
   });
 
@@ -395,7 +395,7 @@ describe('Store-scoped self-signup (e2e)', () => {
 
     it('two approvals racing each other: exactly one wins', async () => {
       const id = await pendingId((await signup({ name: 'Ravi Iyer' }).expect(201)).body.loginId);
-      const results = await Promise.all([approve(tokens.ho, id), approve(tokens.mgrA, id, { role: 'storeperson' })]);
+      const results = await Promise.all([approve(tokens.ho, id), approve(tokens.mgrA, id, { role: 'marketing' })]);
       expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
       expect(await prisma.userStore.count({ where: { userId: id } })).toBe(1);
     });
