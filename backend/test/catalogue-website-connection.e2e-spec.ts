@@ -223,7 +223,7 @@ describe('Website connection health (e2e, stubbed website)', () => {
     expect(await prisma.product.count({ where: { organisationId: C.org } })).toBe(0);
   });
 
-  it('the weekly schedule skips an unverified connection and picks it up once it passes', async () => {
+  it('the weekly schedule waits for a passed test AND a finished first full sync', async () => {
     process.env.SCHEDULER_ENABLED = 'true';
     try {
       const mine = () => prisma.jobTask.count({ where: { organisationId: C.org, kind: 'catalogue.website_sync' } });
@@ -232,8 +232,16 @@ describe('Website connection health (e2e, stubbed website)', () => {
       site.mode = 'ok';
       await request(server()).post('/catalogue-integration/website/test').set(as()).expect(201);
       expect((await health()).website).toMatchObject({ verified: true, connectionState: 'connected' });
+      // Verified, but no full import yet: the first one is a person's call.
+      await website.scheduleWeekly();
+      expect(await mine()).toBe(0);
+      await prisma.catalogueSyncRun.create({ data: { organisationId: C.org, source: 'website', dryRun: true, status: 'done' } });
+      await website.scheduleWeekly();
+      expect(await mine()).toBe(0);
+      await prisma.catalogueSyncRun.create({ data: { organisationId: C.org, source: 'website', dryRun: false, status: 'done' } });
       await website.scheduleWeekly();
       expect(await mine()).toBe(1);
+      await prisma.catalogueSyncRun.deleteMany({ where: { organisationId: C.org } });
     } finally {
       process.env.SCHEDULER_ENABLED = 'false';
     }

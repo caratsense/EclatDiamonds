@@ -872,6 +872,8 @@ export class WebsiteCatalogueService implements OnModuleInit {
    * connection is configured and has passed its test, which picks up designs
    * added to the website. A connection that failed its last test is skipped
    * (health shows it as failed); one already running is skipped by startSync.
+   * Nothing is scheduled before the first full (non-dry) sync has finished:
+   * the first import into a catalogue is a person's decision, never a cron's.
    */
   @Cron('0 30 21 * * 6', { name: WEBSITE_SYNC_JOB })
   async scheduleWeekly(): Promise<number> {
@@ -879,7 +881,12 @@ export class WebsiteCatalogueService implements OnModuleInit {
     const day = new Date().toISOString().slice(0, 10);
     const orgs = (
       await this.prisma.integration.findMany({
-        where: { providerCode: WEBSITE_PROVIDER, status: 'connected', lastHealthAt: { not: null } },
+        where: {
+          providerCode: WEBSITE_PROVIDER,
+          status: 'connected',
+          lastHealthAt: { not: null },
+          organisation: { catalogueSyncRuns: { some: { source: WEBSITE, dryRun: false, status: 'done' } } },
+        },
         select: { organisationId: true, config: true },
       })
     ).filter((i) => this.endpointOf(i.config));
