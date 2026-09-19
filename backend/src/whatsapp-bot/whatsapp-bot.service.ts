@@ -391,7 +391,7 @@ export class WhatsAppBotService {
          * bot that never spoke.
          */
         if (!result.duplicate) {
-          const eligible = await this.botMaySpeak(organisationId, result.conversationId, from, event.payload);
+          const eligible = await this.claimBotTurn(organisationId, result.conversationId, from, event.payload);
           if (eligible) {
             const reply = await this.customerBot.handle(
               from,
@@ -482,7 +482,7 @@ export class WhatsAppBotService {
    * A stranger who texts the shop out of the blue matches none of these and
    * hears nothing, which is the behaviour this service already guaranteed.
    */
-  private async botMaySpeak(
+  private async claimBotTurn(
     organisationId: string,
     conversationId: string,
     phoneE164: string,
@@ -490,15 +490,47 @@ export class WhatsAppBotService {
   ): Promise<boolean> {
     const convo = await this.prisma.conversation.findFirst({
       where: { id: conversationId, organisationId },
-      select: { handling: true, sourceAdId: true },
+      select: { handling: true, sourceAdId: true, assignedUserId: true },
     });
     if (!convo) return false;
-    if (convo.handling === 'human') return false;
+
+    const freshReferral = Boolean(extractMetaReferral(payload));
+
+    if (convo.handling === 'human') {
+      /*
+       * A thread reaches 'human' two very different ways, and they deserve
+       * opposite answers.
+       *
+       * A PERSON OWNS IT (`assignedUserId` set): the bot never speaks again,
+       * whatever arrives. Someone is mid-conversation with this customer and a
+       * bot talking over them is precisely what the wrong-number rule exists to
+       * prevent.
+       *
+       * THE BOT GAVE UP AND NOBODY PICKED IT UP (no assignee): a NEW ad click is
+       * fresh intent, weeks or months later, and refusing it forever means one
+       * bad exchange disqualifies a customer for the life of the account. The
+       * referral is the provider's evidence that they chose to start again, so
+       * the thread reopens and the flow restarts from the first question.
+       */
+      if (!freshReferral || convo.assignedUserId) return false;
+
+      await this.prisma.conversation.update({
+        where: { id: conversationId },
+        data: { handling: 'unassigned', handoffReason: null },
+      });
+      // The old half-finished answers belong to the previous enquiry. Keeping
+      // them would skip questions this customer never answered about this ad.
+      await this.prisma.whatsAppSession
+        .delete({ where: { phoneE164 } })
+        .catch(() => undefined);
+      this.logger.log(`  bot turn reclaimed on ${conversationId}: new ad click on a thread nobody had taken`);
+      return true;
+    }
 
     // Ad-originated: either this very message carried a referral, or the thread
     // was stamped with one when it started.
     if (convo.sourceAdId) return true;
-    if (extractMetaReferral(payload)) return true;
+    if (freshReferral) return true;
 
     // Mid-conversation: a session exists only because the bot asked something
     // and is waiting for the answer.
