@@ -141,14 +141,12 @@ export class SchedulerService {
   }
 
   /**
-   * How often the gold-rate feed is pulled, in hours. Default 12 (an AM + PM
-   * refresh, matching how IBJA publishes and how a jeweller re-rates through the
-   * day) — low enough to track the market, high enough to sit inside a free feed
-   * tier's monthly request quota. Clamped to 1–24h.
+   * How often the gold-rate source is read, in hours. Default 3, so IBJA's AM
+   * and PM publications both land within hours. Clamped to 1–24h.
    */
   private get goldRateRefreshHours(): number {
     const raw = Number(this.config.get<string>('GOLD_RATE_REFRESH_HOURS'));
-    return Number.isFinite(raw) && raw >= 1 && raw <= 24 ? raw : 12;
+    return Number.isFinite(raw) && raw >= 1 && raw <= 24 ? raw : 3;
   }
 
   private async rosteredStores() {

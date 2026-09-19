@@ -3,20 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import { MetalKind } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { fetchJson } from './integrations.util';
+import { IBJA_URL, parseIbja } from './ibja-rates';
 
 const TROY_OUNCE_GRAMS = 31.1035;
 
-/**
- * Built-in keyless source, used when GOLD_RATE_API_URL is not set: CoinGecko's
- * PAX Gold price in INR. PAXG is a token redeemable 1:1 for one fine troy ounce
- * of London Good Delivery gold, so it tracks spot closely; CoinGecko serves it
- * with no API key and returns INR directly, so gold auto-updates out of the box
- * with zero configuration. `{ "pax-gold": { "inr": <per fine troy ounce> } }`.
- */
-const DEFAULT_FEED_URL =
-  'https://api.coingecko.com/api/v3/simple/price?ids=pax-gold&vs_currencies=inr';
-
-/** Sent on every feed request — CoinGecko (and good manners) reject a UA-less call. */
+/** Sent on every feed request — providers (and good manners) reject a UA-less call. */
 const FEED_USER_AGENT = 'Eclat-CaratSense/1.0 (+gold-rate)';
 
 /** Purity multipliers vs fine (24k) gold — used to derive each stored rate. */
@@ -28,13 +19,14 @@ const GOLD_PURITY: Array<[MetalKind, number]> = [
 ];
 
 /**
- * Gold / metal rate feed (Module 2 pricing). Pulls the fine-gold spot price and
- * upserts a MetalRate row per derived purity, lifted to the local retail rate by
- * GOLD_RATE_PREMIUM_PCT. It runs against a built-in keyless source by default
- * (CoinGecko PAX Gold, INR) so the rate auto-updates with no setup; point
- * GOLD_RATE_API_URL (+ optional GOLD_RATE_API_KEY) at a dedicated provider to
- * override it. Either way quotes fall back to the last stored MetalRate if a pull
- * fails, so pricing never hard-stops.
+ * Gold / metal rate feed (Module 2 pricing). By default it reads IBJA — the
+ * India Bullion and Jewellers Association benchmark on ibjarates.com, the rate
+ * Indian jewellers quote from: per gram, ex-GST, 999/916/750/585 gold and
+ * silver, with its publication date. No premium is added (it is already the
+ * local rate). Point GOLD_RATE_API_URL (+ optional GOLD_RATE_API_KEY) at a spot
+ * provider to use that instead, lifted by GOLD_RATE_PREMIUM_PCT. Either way
+ * quotes fall back to the last stored MetalRate if a pull fails, so pricing
+ * never hard-stops — and a page that cannot be read stores nothing.
  */
 @Injectable()
 export class GoldRateService {
@@ -45,9 +37,13 @@ export class GoldRateService {
     private readonly prisma: PrismaService,
   ) {}
 
-  /** Configured provider, or the built-in keyless CoinGecko source by default. */
+  /** A configured spot provider; empty means the IBJA default. */
+  private get spotFeedUrl(): string {
+    return this.config.get<string>('GOLD_RATE_API_URL')?.trim() ?? '';
+  }
+  /** Where rates come from, as shown to staff. */
   private get feedUrl(): string {
-    return this.config.get<string>('GOLD_RATE_API_URL')?.trim() || DEFAULT_FEED_URL;
+    return this.spotFeedUrl || IBJA_URL;
   }
   private get apiKey(): string {
     return this.config.get<string>('GOLD_RATE_API_KEY') ?? '';
@@ -69,7 +65,7 @@ export class GoldRateService {
 
   /**
    * Always true now — a feed URL is always resolvable (a configured provider, or
-   * the built-in keyless CoinGecko default). Kept as a flag so callers/tests can
+   * the IBJA default). Kept as a flag so callers/tests can
    * still gate on it and a future "disable entirely" switch has a home.
    */
   get enabled(): boolean {
@@ -134,6 +130,12 @@ export class GoldRateService {
       effectiveFrom: string;
       ageHours: number;
       stale: boolean;
+      /** ibja | manual | feed (a spot provider, or a row older than sources). */
+      source: 'ibja' | 'manual' | 'feed';
+      /** The IBJA publication day this rate is from, when source is ibja. */
+      publishedOn: string | null;
+      /** Not published by the source; derived from the 999 rate by fineness. */
+      derived: boolean;
     }>
   > {
     const metals = Object.values(MetalKind);
@@ -146,12 +148,16 @@ export class GoldRateService {
       .map(({ metal, row }) => {
         const effectiveFrom = row!.effectiveFrom ?? row!.createdAt;
         const ageHours = Math.max(0, (now - effectiveFrom.getTime()) / 3_600_000);
+        const tag = row!.legacyId?.split(':')[0];
         return {
           metal,
           ratePerGram: Number(row!.ratePerGram),
           effectiveFrom: effectiveFrom.toISOString(),
           ageHours: Math.round(ageHours * 10) / 10,
           stale: ageHours > this.staleAfterHours,
+          source: tag === 'ibja' || tag === 'manual' ? tag : ('feed' as const),
+          publishedOn: tag === 'ibja' && row!.legacyUpdatedAt ? row!.legacyUpdatedAt.toISOString().slice(0, 10) : null,
+          derived: row!.legacyId?.endsWith(':derived') ?? false,
         };
       });
   }
@@ -167,6 +173,7 @@ export class GoldRateService {
       this.logger.log('[dry-run] gold-rate feed not configured — keeping last stored rates.');
       return { updated: false, dryRun: true };
     }
+    if (!this.spotFeedUrl) return this.refreshFromIbja(organisationId);
 
     const spotInrPerGram = await this.fetchFineGoldInrPerGram();
     if (spotInrPerGram == null || spotInrPerGram <= 0) {
@@ -181,6 +188,50 @@ export class GoldRateService {
       `Gold rates refreshed: 24k = ₹${written.gold_24k}/g (spot ₹${spotInrPerGram} +${this.premiumPct}%)`,
     );
     return { updated: true, dryRun: false, rates: written };
+  }
+
+  /**
+   * Read IBJA and store its latest publication. One row per (publication,
+   * metal, rate) — a re-read of the same publication only renews its
+   * effectiveFrom, so it stays current over a weekend without piling up rows,
+   * and a manual rate typed since is superseded only by a newer read.
+   */
+  private async refreshFromIbja(
+    organisationId: string,
+  ): Promise<{ updated: boolean; dryRun: boolean; rates?: Record<string, number> }> {
+    let html: string;
+    try {
+      const res = await fetch(IBJA_URL, {
+        headers: { 'User-Agent': FEED_USER_AGENT, Accept: 'text/html' },
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      html = await res.text();
+    } catch (err) {
+      this.logger.warn(`IBJA rate fetch failed: ${(err as Error)?.message ?? err}`);
+      return { updated: false, dryRun: false };
+    }
+    const ibja = parseIbja(html);
+    if (!ibja) {
+      this.logger.warn('IBJA page did not carry a readable 999 rate — keeping the last stored rates.');
+      return { updated: false, dryRun: false };
+    }
+    const now = new Date();
+    // Noon IST is the same calendar day in IST and UTC; midnight IST is the day before in UTC.
+    const published = new Date(`${ibja.publishedOn}T12:00:00+05:30`);
+    const rates: Record<string, number> = {};
+    for (const [metal, ratePerGram] of Object.entries(ibja.perGram) as [MetalKind, number][]) {
+      const derived = ibja.derived.includes(metal);
+      const legacyId = `ibja:${ibja.publishedOn}:${metal}:${ratePerGram}${derived ? ':derived' : ''}`;
+      await this.prisma.metalRate.upsert({
+        where: { organisationId_legacyId: { organisationId, legacyId } },
+        create: { organisationId, metal, ratePerGram, effectiveFrom: now, legacyId, legacyUpdatedAt: published },
+        update: { effectiveFrom: now },
+      });
+      rates[metal] = ratePerGram;
+    }
+    this.logger.log(`IBJA rates of ${ibja.publishedOn} stored: 24k ₹${rates.gold_24k}/g, 22k ₹${rates.gold_22k}/g`);
+    return { updated: true, dryRun: false, rates };
   }
 
   /** Age in hours of the freshest gold (24k) rate on record; Infinity if none. */
@@ -231,7 +282,7 @@ export class GoldRateService {
     if (!Number.isFinite(fine) || fine <= 0) {
       throw new BadRequestException('Enter a valid gold rate');
     }
-    const rates = await this.writePurities(fine, new Date(), organisationId);
+    const rates = await this.writePurities(fine, new Date(), organisationId, 'manual');
     this.logger.log(
       `Gold rate set manually: ${input.karat}k = ₹${input.ratePerGram}/g (24k ₹${rates.gold_24k})`,
     );
@@ -243,12 +294,19 @@ export class GoldRateService {
     fineInrPerGram: number,
     effectiveFrom: Date,
     organisationId: string,
+    source?: 'manual',
   ): Promise<Record<string, number>> {
     const written: Record<string, number> = {};
     for (const [metal, mult] of GOLD_PURITY) {
       const ratePerGram = round2(fineInrPerGram * mult);
       await this.prisma.metalRate.create({
-        data: { metal, ratePerGram, effectiveFrom, organisationId },
+        data: {
+          metal,
+          ratePerGram,
+          effectiveFrom,
+          organisationId,
+          ...(source ? { legacyId: `${source}:${effectiveFrom.getTime()}:${metal}` } : {}),
+        },
       });
       written[metal] = ratePerGram;
     }
@@ -258,7 +316,7 @@ export class GoldRateService {
   /**
    * Normalise a feed response to INR per gram of fine gold. Handles the common
    * shapes so swapping providers is a config change, not a code change:
-   *   A) CoinGecko  → { "pax-gold": { inr } }       (built-in default; per troy ounce)
+   *   A) CoinGecko  → { "pax-gold": { inr } }       (per troy ounce)
    *   B) generic    → { inr_per_gram }
    *   C) goldapi.io → { price_gram_24k }            (per-gram, in requested currency)
    *   D) metals.dev → { metals: { gold } } / { price } (per troy ounce)
