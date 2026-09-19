@@ -4,7 +4,6 @@ import { useDeferredValue, useMemo, useState } from "react";
 import {
   AlertTriangle,
   Building2,
-  FileUp,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -48,7 +47,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { ConfirmDialog } from "@/components/hrms/confirm-dialog";
 import { EmployeeDetailSheet, EmployeeStatusBadge } from "@/components/hrms/employee-detail-sheet";
 import { EmployeeFormDialog } from "@/components/hrms/employee-form-dialog";
-import { EzAttendanceImportDialog } from "@/components/hrms/ezattendance-import-dialog";
 import { MastersDialog } from "@/components/hrms/masters-dialog";
 import {
   EMPLOYMENT_STATUS_LABELS,
@@ -126,7 +124,6 @@ export function EmployeesTab({
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<EmployeeRow | null>(null);
   const [mastersOpen, setMastersOpen] = useState(false);
-  const [importOpen, setImportOpen] = useState(false);
   const [separating, setSeparating] = useState<EmployeeRow | null>(null);
   const [purging, setPurging] = useState<EmployeeRow | null>(null);
   const [bulkAction, setBulkAction] = useState<{ action: BulkAction; ids: string[] } | null>(null);
@@ -194,14 +191,9 @@ export function EmployeesTab({
         </div>
         <div className="flex flex-wrap gap-2">
           {isHeadOffice ? (
-            <>
-              <Button variant="outline" onClick={() => setMastersOpen(true)}>
-                <Building2 /> Departments &amp; designations
-              </Button>
-              <Button variant="outline" onClick={() => setImportOpen(true)}>
-                <FileUp /> Import from EzAttendance
-              </Button>
-            </>
+            <Button variant="outline" onClick={() => setMastersOpen(true)}>
+              <Building2 /> Departments &amp; designations
+            </Button>
           ) : null}
           {canManage ? (
             <Button onClick={() => openForm(null)}>
@@ -420,12 +412,7 @@ export function EmployeesTab({
         people={rows}
         isHeadOffice={isHeadOffice}
       />
-      {isHeadOffice ? (
-        <>
-          <MastersDialog open={mastersOpen} onOpenChange={setMastersOpen} />
-          <EzAttendanceImportDialog open={importOpen} onOpenChange={setImportOpen} />
-        </>
-      ) : null}
+      {isHeadOffice ? <MastersDialog open={mastersOpen} onOpenChange={setMastersOpen} /> : null}
 
       <SeparateDialog
         row={separating}
