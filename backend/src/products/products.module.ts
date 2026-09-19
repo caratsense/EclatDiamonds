@@ -8,6 +8,7 @@ import { JewelryRankingService } from './jewelry-ranking.service';
 import { JewelrySimilarityService } from './jewelry-similarity.service';
 import { CatalogueExportController } from './catalogue-export.controller';
 import { CatalogueExportService } from './catalogue-export.service';
+import { CatalogueIndexService } from './catalogue-index.service';
 
 @Module({
   controllers: [ProductsController, CatalogueExportController],
@@ -19,6 +20,9 @@ import { CatalogueExportService } from './catalogue-export.service';
     MlInferenceService,
     JewelryRankingService,
     JewelrySimilarityService,
+    CatalogueIndexService,
   ],
+  // Syncs and the catalogue-source connector queue new pictures for indexing.
+  exports: [CatalogueIndexService],
 })
 export class ProductsModule {}

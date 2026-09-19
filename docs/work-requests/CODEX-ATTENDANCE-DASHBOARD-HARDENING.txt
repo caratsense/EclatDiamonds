@@ -1,0 +1,22 @@
+CARATOS ATTENDANCE — DASHBOARD-NATIVE HARDENING (2026-09-18)
+
+Ownership boundary
+- Codex owns attendance/HRMS, attendance privacy, attendance exports and their tests.
+- Claude's concurrent catalogue/product/sync/inference files are preserved.
+- Shared Prisma edits are limited to the two attendance invariants below and must
+  retain the concurrent lossless-catalogue models already in the working tree.
+
+ATT-001 — tenant-safe punch idempotency
+- Change RawPunchEvent uniqueness from global `idempotencyKey` to
+  `(organisationId, idempotencyKey)`.
+- Preserve existing values; the migration only replaces the unique index.
+
+ATT-002 — reproducible shift calculation
+- AttendanceRecord stores `calculationVersion` and a JSON `shiftSnapshot` used
+  to calculate that row.
+- New and recalculated rows capture the applied shift values. Reprocessing an
+  existing row uses its snapshot unless an authorised correction explicitly
+  changes the shift.
+
+No biometric/device schema will be added. CaratOS dashboard/mobile web is the
+system of record; imported biometric numbers remain archival identifiers only.

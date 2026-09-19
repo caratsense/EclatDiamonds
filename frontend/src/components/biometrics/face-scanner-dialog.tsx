@@ -181,8 +181,8 @@ export function FaceScannerDialog({
         <DialogHeader className="space-y-1">
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
-            The photo is stored with your punch so a manager can see who checked in. It is not
-            matched against anything — your identity comes from your login.
+            This optional photo is stored with the punch for manager review. It is not used to
+            sign in or decide whether the punch is allowed.
           </DialogDescription>
         </DialogHeader>
 
@@ -255,8 +255,8 @@ export function FaceScannerDialog({
           <p className="flex items-start gap-2 text-xs text-muted-foreground">
             <Lightbulb className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
             <span>
-              Fill the oval with your face and look at the camera. Face a window or a light rather
-              than standing with one behind you.
+              Keep yourself inside the guide and look at the camera. Stand facing a window or a
+              light rather than placing one behind you.
             </span>
           </p>
         ) : null}
@@ -264,7 +264,7 @@ export function FaceScannerDialog({
         <p className="flex items-start gap-2 text-xs text-muted-foreground">
           <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
           <span>
-            The outline is a framing guide only. No face recognition runs here or on the server.
+            The outline is only a framing guide. The app does not identify you from this image.
           </span>
         </p>
 

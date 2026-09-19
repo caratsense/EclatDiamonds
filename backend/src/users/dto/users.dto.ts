@@ -1,4 +1,5 @@
 import {
+  IsObject,
   IsBoolean,
   IsEmail,
   IsIn,
@@ -14,8 +15,11 @@ import {
 import { LeaveType, Role } from '@prisma/client';
 import { IsIndianMobile, IsRealName } from '../../common/contact.util';
 
-/** Roles a head-office admin may assign here — never `head_office` (HO cannot mint another HO). */
-export const ASSIGNABLE_ROLES: Role[] = ['salesperson', 'storeperson', 'store_manager'];
+/**
+ * Roles a head-office admin may assign here — never `head_office` (HO cannot
+ * mint another HO), and never the retired area manager or storeperson.
+ */
+export const ASSIGNABLE_ROLES: Role[] = ['salesperson', 'marketing', 'store_manager'];
 
 /**
  * POST /users — a manager onboards a staff member (defaults to salesperson).
@@ -46,6 +50,16 @@ export class CreateUserDto {
   @IsOptional()
   @IsIn(ASSIGNABLE_ROLES)
   role?: Role;
+}
+
+/**
+ * PUT /users/:id/access — head office's changes to what one person may open:
+ * `{ "<screen>": "none" | "own" | "store" }`. Replaces the previous changes; an
+ * entry equal to the role's default is dropped rather than stored.
+ */
+export class SetUserAccessDto {
+  @IsObject()
+  overrides!: Record<string, string>;
 }
 
 /** PATCH /users/:id/role — promote/demote within the assignable set (never to head_office). */

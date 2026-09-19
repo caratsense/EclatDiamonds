@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from './auth-user';
@@ -158,6 +158,20 @@ export class StoreScopeService {
   assertStoreAllowed(user: AuthUser, storeId: string): void {
     if (!user.storeIds.includes(storeId)) {
       throw new ForbiddenException('Store not in your scope');
+    }
+  }
+
+  /**
+   * Refuse a sales-side write (sale, quote, lead, footfall, stock, target, DSR)
+   * at an attendance-only location such as Head Office.
+   */
+  async assertTradingStore(storeId: string): Promise<void> {
+    const store = await this.prisma.store.findUnique({
+      where: { id: storeId },
+      select: { name: true, attendanceOnly: true },
+    });
+    if (store?.attendanceOnly) {
+      throw new BadRequestException(`${store.name} is an attendance-only location — choose a store branch.`);
     }
   }
 }

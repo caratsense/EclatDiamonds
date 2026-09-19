@@ -1,11 +1,28 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createHash } from 'crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
 import { createReadStream } from 'fs';
 import { mkdir, readFile, stat, writeFile } from 'fs/promises';
 import { dirname, isAbsolute, join, normalize, sep } from 'path';
 import { Readable } from 'stream';
 import { encodeKey, signRequest } from './sigv4';
+
+const ATTENDANCE_MEDIA_MAGIC = Buffer.from('CARATOS_ATTENDANCE_MEDIA', 'ascii');
+const ATTENDANCE_MEDIA_VERSION = 1;
+const ATTENDANCE_MEDIA_IV_BYTES = 12;
+const ATTENDANCE_MEDIA_TAG_BYTES = 16;
+
+/** Does this object start with the versioned attendance-media envelope? */
+function isAttendanceEnvelope(buffer: Buffer): boolean {
+  return (
+    buffer.length >=
+      ATTENDANCE_MEDIA_MAGIC.length +
+        4 +
+        ATTENDANCE_MEDIA_IV_BYTES +
+        ATTENDANCE_MEDIA_TAG_BYTES &&
+    buffer.subarray(0, ATTENDANCE_MEDIA_MAGIC.length).equals(ATTENDANCE_MEDIA_MAGIC)
+  );
+}
 
 /**
  * Object/file storage for jewellery images + return photos.
@@ -64,6 +81,102 @@ export class StorageService {
 
   private get selectedProvider(): string {
     return (this.config.get<string>('STORAGE_PROVIDER') ?? 'local').toLowerCase();
+  }
+
+  /**
+   * Key used only for attendance photographs.
+   *
+   * The value is deliberately strict: exactly 32 bytes, encoded as either
+   * base64 (recommended: `openssl rand -base64 32`) or 64 hexadecimal
+   * characters. A typo must not quietly produce a different key and make every
+   * existing photograph unreadable.
+   */
+  private attendanceMediaKey(): Buffer | null {
+    const configured = this.config.get<string>('ATTENDANCE_MEDIA_KEY')?.trim();
+    if (!configured) return null;
+
+    const raw = configured.replace(/^base64:/i, '');
+    let key: Buffer;
+    if (/^(?:hex:)?[a-f0-9]{64}$/i.test(configured)) {
+      key = Buffer.from(configured.replace(/^hex:/i, ''), 'hex');
+    } else if (/^[A-Za-z0-9+/]{43}=$/.test(raw)) {
+      key = Buffer.from(raw, 'base64');
+    } else {
+      throw new Error(
+        'ATTENDANCE_MEDIA_KEY must be exactly 32 bytes encoded as base64 or 64 hexadecimal characters.',
+      );
+    }
+    if (key.length !== 32) {
+      throw new Error('ATTENDANCE_MEDIA_KEY must decode to exactly 32 bytes.');
+    }
+    return key;
+  }
+
+  private attendanceAad(organisationId: string, header: Buffer): Buffer {
+    return Buffer.concat([
+      header,
+      Buffer.from(`\u0000caratos:attendance:v1:${organisationId}`, 'utf8'),
+    ]);
+  }
+
+  /** Encrypt one photo before it reaches local disk, R2 or Cloudinary. */
+  private encryptAttendanceMedia(
+    organisationId: string,
+    filename: string,
+    plaintext: Buffer,
+    key: Buffer,
+  ): Buffer {
+    const mime = Buffer.from(this.contentTypeOf(filename), 'utf8');
+    if (mime.length > 255) throw new Error('Attendance media type is too long to store safely.');
+
+    const header = Buffer.concat([
+      ATTENDANCE_MEDIA_MAGIC,
+      Buffer.from([ATTENDANCE_MEDIA_VERSION, mime.length]),
+      mime,
+    ]);
+    const iv = randomBytes(ATTENDANCE_MEDIA_IV_BYTES);
+    const cipher = createCipheriv('aes-256-gcm', key, iv);
+    cipher.setAAD(this.attendanceAad(organisationId, header));
+    const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return Buffer.concat([header, iv, tag, ciphertext]);
+  }
+
+  /** Decrypt the versioned envelope. Authentication failure is a hard refusal. */
+  private decryptAttendanceMedia(
+    organisationId: string,
+    envelope: Buffer,
+    key: Buffer,
+  ): { buffer: Buffer; contentType: string } {
+    const versionAt = ATTENDANCE_MEDIA_MAGIC.length;
+    const version = envelope[versionAt];
+    if (version !== ATTENDANCE_MEDIA_VERSION) {
+      throw new Error(`Unsupported attendance media envelope version ${version}.`);
+    }
+    const mimeLength = envelope[versionAt + 1];
+    const headerEnd = versionAt + 2 + mimeLength;
+    const minimum = headerEnd + ATTENDANCE_MEDIA_IV_BYTES + ATTENDANCE_MEDIA_TAG_BYTES + 1;
+    if (mimeLength === 0 || envelope.length < minimum) {
+      throw new Error('Attendance media envelope is truncated.');
+    }
+    const header = envelope.subarray(0, headerEnd);
+    const contentType = envelope.subarray(versionAt + 2, headerEnd).toString('utf8');
+    if (!/^image\/[a-z0-9.+-]+$/i.test(contentType)) {
+      throw new Error('Attendance media envelope has an invalid content type.');
+    }
+    const ivEnd = headerEnd + ATTENDANCE_MEDIA_IV_BYTES;
+    const tagEnd = ivEnd + ATTENDANCE_MEDIA_TAG_BYTES;
+    const decipher = createDecipheriv(
+      'aes-256-gcm',
+      key,
+      envelope.subarray(headerEnd, ivEnd),
+    );
+    decipher.setAAD(this.attendanceAad(organisationId, header));
+    decipher.setAuthTag(envelope.subarray(ivEnd, tagEnd));
+    return {
+      buffer: Buffer.concat([decipher.update(envelope.subarray(tagEnd)), decipher.final()]),
+      contentType,
+    };
   }
 
   /**
@@ -156,11 +269,35 @@ export class StorageService {
       throw new Error('StorageService.save requires an organisationId to namespace the object key');
     }
     const safeFolder = `org/${organisationId}/${folder}`.replace(/[^a-zA-Z0-9._/-]/g, '_');
-    const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+    let safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+    let storedBuffer = buffer;
+
+    // Attendance images are uniquely sensitive: encrypt the bytes themselves,
+    // so a public R2 URL yields only authenticated ciphertext. This does not
+    // change catalogue/return/quote media. Existing plaintext attendance rows
+    // remain readable through readAttendanceObject during migration.
+    if (folder === 'attendance') {
+      const key = this.attendanceMediaKey();
+      if (key) {
+        storedBuffer = this.encryptAttendanceMedia(organisationId, safeName, buffer, key);
+        safeName = `${safeName}.attendance.enc`;
+      } else if ((this.config.get<string>('NODE_ENV') ?? process.env.NODE_ENV) === 'production') {
+        // saveCapturedPhoto deliberately lets the punch continue when photo
+        // storage fails. Throwing here therefore fails CLOSED for the media: no
+        // plaintext object is written, while attendance itself is not lost.
+        throw new Error(
+          'ATTENDANCE_MEDIA_KEY is required in production before an attendance photo can be stored.',
+        );
+      } else {
+        this.logger.warn(
+          'ATTENDANCE_MEDIA_KEY is not configured; writing a plaintext attendance photo outside production.',
+        );
+      }
+    }
 
     if (this.usingR2) {
       try {
-        return await this.saveToR2(safeFolder, safeName, buffer);
+        return await this.saveToR2(safeFolder, safeName, storedBuffer);
       } catch (err) {
         // Never lose the upload over a provider outage — write it to disk and say
         // so. A photo on the wrong storage beats a failed intake at the counter.
@@ -172,7 +309,7 @@ export class StorageService {
 
     if (this.usingCloudinary) {
       try {
-        return await this.saveToCloudinary(safeFolder, safeName, buffer);
+        return await this.saveToCloudinary(safeFolder, safeName, storedBuffer);
       } catch (err) {
         this.logger.error(
           `Cloudinary upload failed (${err instanceof Error ? err.message : String(err)}) — storing locally instead.`,
@@ -182,9 +319,9 @@ export class StorageService {
 
     const dir = join(this.baseDir, safeFolder);
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, safeName), buffer);
+    await writeFile(join(dir, safeName), storedBuffer);
     const path = `${this.publicPrefix}/${safeFolder}/${safeName}`;
-    this.logger.log(`stored ${buffer.length}B -> ${path}`);
+    this.logger.log(`stored ${storedBuffer.length}B -> ${path}`);
     return path;
   }
 
@@ -387,6 +524,59 @@ export class StorageService {
     }
   }
 
+  /**
+   * Read an attendance photograph after the caller has authorised the database
+   * record that points at it.
+   *
+   * New objects are AES-256-GCM envelopes; existing namespaced plaintext rows
+   * remain readable so enabling the key is an online migration rather than a
+   * flag day. Ciphertext is never returned when the key is absent, wrong or the
+   * object was modified. Ownership is checked here as well as in the HRMS
+   * service so this lower-level seam cannot be reused across tenants later.
+   */
+  async readAttendanceObject(
+    organisationId: string,
+    storedPath: string | null | undefined,
+  ): Promise<{ buffer: Buffer; contentType: string } | null> {
+    if (
+      !storedPath ||
+      !StorageService.keyBelongsTo(storedPath, organisationId) ||
+      !StorageService.keyBelongsToFolder(storedPath, organisationId, 'attendance') ||
+      !this.isManagedMedia(storedPath)
+    ) {
+      return null;
+    }
+    const object = await this.readObject(storedPath);
+    if (!object) return null;
+    if (!isAttendanceEnvelope(object.buffer)) {
+      // Legacy rows are readable during migration, but this route must never
+      // become a way to serve some other tenant-owned document as a punch
+      // photo merely because a database field was corrupted or imported.
+      return /^image\/[a-z0-9.+-]+$/i.test(object.contentType) ? object : null;
+    }
+
+    const key = this.attendanceMediaKey();
+    if (!key) {
+      this.logger.error(
+        'An encrypted attendance photograph cannot be read because ATTENDANCE_MEDIA_KEY is missing.',
+      );
+      return null;
+    }
+    try {
+      return this.decryptAttendanceMedia(organisationId, object.buffer, key);
+    } catch (err) {
+      this.logger.error(
+        `Attendance photograph authentication failed (${err instanceof Error ? err.message : String(err)}).`,
+      );
+      return null;
+    }
+  }
+
+  /** Exposed for a storage-level negative control; it reveals no key material. */
+  static isEncryptedAttendanceMedia(buffer: Buffer): boolean {
+    return isAttendanceEnvelope(buffer);
+  }
+
   /* ------------------------------------------------ private documents */
 
   /**
@@ -556,6 +746,16 @@ export class StorageService {
    */
   static keyBelongsTo(key: string, organisationId: string): boolean {
     return key.includes(`org/${organisationId}/`);
+  }
+
+  /** A stricter object-family check used by private media readers. */
+  static keyBelongsToFolder(key: string, organisationId: string, folder: string): boolean {
+    // A substring test alone lets `org/<id>/attendance/../catalogue/x.png`
+    // through, and the storage layer would then resolve it to a catalogue
+    // object. No legitimate key has a parent segment, encoded or not.
+    if (/(^|[\\/])(\.|%2e){2}([\\/]|$)/i.test(key) || key.includes('\\')) return false;
+    const safeFolder = folder.replace(/[^a-zA-Z0-9._-]/g, '_');
+    return key.includes(`org/${organisationId}/${safeFolder}/`);
   }
 
 }

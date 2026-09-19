@@ -292,6 +292,16 @@ export function useResetPassword() {
  * password; Google sign-in is a separate path). The backend verifies
  * `currentPassword` before accepting `newPassword`.
  */
+/** PATCH /auth/me — my phone or personal email; returns the refreshed session. */
+export function useUpdateMe() {
+  return useMutation({
+    mutationFn: async (input: { phone?: string; contactEmail?: string }) => {
+      const { data } = await api.patch("/auth/me", input);
+      return data;
+    },
+  });
+}
+
 export function useChangePassword() {
   return useMutation({
     mutationFn: async (input: {

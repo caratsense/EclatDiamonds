@@ -106,9 +106,8 @@ export function PunchEvidenceButton({ record }: { record: AttendanceRecord }) {
           <p className="flex items-start gap-2 text-xs text-muted-foreground">
             <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
             <span>
-              A camera on the device produced this image at the time of the punch. Nothing
-              compares it to an enrolled face — who punched comes from the account that signed
-              in, and this is here for you to weigh.
+              A camera on the device produced this image at the time of the punch. The app does
+              not identify anyone from it; the attendance record belongs to the signed-in account.
             </span>
           </p>
         </DialogContent>

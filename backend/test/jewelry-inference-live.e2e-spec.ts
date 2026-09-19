@@ -6,12 +6,13 @@ import { join } from 'path';
 import * as http from 'http';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { JobsService } from '../src/jobs/jobs.service';
 
 /**
  * LIVE end-to-end: the REAL DINOv2 + SigLIP inference service (no mock).
  *
  * Proves the whole production path with real image data:
- *   upload → inference /embed → ProductEmbedding → vector search → TOP-10 ranked.
+ *   queued index job → inference /embed/batch → ProductEmbedding → vector search → TOP-10 ranked.
  *
  * Requires the inference service running (ML_INFERENCE_URL). It probes /health in
  * beforeAll and SKIPS cleanly when unreachable, so a normal CI run without the
@@ -104,7 +105,7 @@ describe('Jewelry similarity — LIVE real DINOv2+SigLIP inference (e2e)', () =>
     await app?.close();
   });
 
-  it('reindex builds REAL 768-dim embeddings for each product with an image', async () => {
+  it('reindex queues, the worker builds REAL 768-dim embeddings for each product with an image', async () => {
     if (!live) return console.warn('[skipped] inference service not reachable');
     for (const pid of PIDS) {
       const r = await request(app.getHttpServer())
@@ -113,14 +114,28 @@ describe('Jewelry similarity — LIVE real DINOv2+SigLIP inference (e2e)', () =>
       expect(r.status).toBe(201);
       expect(r.body.available).toBe(true);
     }
+    // The queue does the work; drive it here instead of waiting for the scheduler.
+    const jobs = app.get(JobsService);
+    for (let i = 0; i < 10; i++) {
+      await jobs.drain(10);
+      const open = await prisma.productImage.count({
+        where: { productId: { in: PIDS }, embeddingStatus: { in: ['queued', 'running', 'failed'] } },
+      });
+      if (!open) break;
+    }
     const rows = await prisma.productEmbedding.findMany({ where: { productId: { in: PIDS } } });
-    expect(rows.length).toBe(PIDS.length);
+    // One whole-image row per product, plus a row per jewellery piece the
+    // detector found in it.
+    const whole = rows.filter((r) => !r.imageHash?.includes('#'));
+    expect(whole.length).toBe(PIDS.length);
+    expect(new Set(rows.map((r) => r.productId)).size).toBe(PIDS.length);
     for (const row of rows) {
       expect(row.dinoEmbedding.length).toBe(768);
       expect(row.siglipEmbedding.length).toBe(768);
       expect(row.organisationId).toBe('org_eclat'); // stamped to the caller's org
+      expect(row.productImageId).toBeTruthy();
     }
-  }, 120000);
+  }, 600000);
 
   it('upload → TOP-10 genuinely ranked; the exact image ranks #1 (VERY_CLOSE)', async () => {
     if (!live) return console.warn('[skipped] inference service not reachable');
@@ -155,9 +170,13 @@ describe('Jewelry similarity — LIVE real DINOv2+SigLIP inference (e2e)', () =>
       update: {},
       create: { id: 'p-live-b', sku: 'LIVE-B-1', name: 'Live B Ring', metal: 'gold_22k', organisationId: 'org_live_b', storeId: 'store_live_b', imageUrl: `/uploads/catalogue/${IMAGES[0]}`, embedding: [] },
     });
+    const bImg = await prisma.productImage.create({
+      data: { organisationId: 'org_live_b', productId: 'p-live-b', url: `/uploads/catalogue/${IMAGES[0]}`, embeddingStatus: 'indexed' },
+    });
     await prisma.productEmbedding.create({
       data: {
         productId: 'p-live-b',
+        productImageId: bImg.id,
         organisationId: 'org_live_b',
         storeId: 'store_live_b',
         dinoEmbedding: match.dinoEmbedding,
@@ -178,18 +197,21 @@ describe('Jewelry similarity — LIVE real DINOv2+SigLIP inference (e2e)', () =>
     expect(ids).not.toContain('p-live-b'); // other org's perfect match is invisible
     expect(res.body.results[0].productId).toBe(PIDS[0]); // own-org match still #1
 
-    await prisma.productEmbedding.deleteMany({ where: { organisationId: 'org_live_b' } });
-    await prisma.product.deleteMany({ where: { organisationId: 'org_live_b' } });
-    await prisma.store.deleteMany({ where: { organisationId: 'org_live_b' } });
-    await prisma.organisation.deleteMany({ where: { id: 'org_live_b' } });
+    await cleanupOrgB(prisma);
   }, 120000);
 });
 
-async function cleanup(prisma: PrismaService) {
+async function cleanupOrgB(prisma: PrismaService) {
   await prisma.productEmbedding.deleteMany({ where: { organisationId: 'org_live_b' } });
+  await prisma.productImage.deleteMany({ where: { organisationId: 'org_live_b' } });
   await prisma.product.deleteMany({ where: { organisationId: 'org_live_b' } });
   await prisma.store.deleteMany({ where: { organisationId: 'org_live_b' } });
   await prisma.organisation.deleteMany({ where: { id: 'org_live_b' } });
+}
+
+async function cleanup(prisma: PrismaService) {
+  await cleanupOrgB(prisma);
   await prisma.productEmbedding.deleteMany({ where: { productId: { in: [...PIDS, 'p-live-b'] } } });
+  await prisma.productImage.deleteMany({ where: { productId: { in: PIDS } } });
   await prisma.product.deleteMany({ where: { id: { in: PIDS } } });
 }

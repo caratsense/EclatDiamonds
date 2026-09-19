@@ -64,6 +64,8 @@ export interface DeadStockItem {
   id: string;
   sku: string;
   vin: string | null;
+  /** The design; null when the piece is not linked to one (no photos). */
+  productId: string | null;
   styleNumber: string | null;
   name: string;
   category: string;

@@ -77,8 +77,9 @@ export function MobileNav() {
   const t = useT();
   const [moreOpen, setMoreOpen] = React.useState(false);
   // Role-aware "More" sheet: HO-only sections stay hidden for other roles.
-  const role = useSession((s) => s.role);
-  const groups = visibleNavGroups(role, useEnabledNavigation());
+  const role = useSession((s) => s.baseRole);
+  const access = useSession((s) => s.access);
+  const groups = visibleNavGroups(role, useEnabledNavigation(), access);
 
   const isActive = (slug: string) => {
     const href = `/${slug}`;

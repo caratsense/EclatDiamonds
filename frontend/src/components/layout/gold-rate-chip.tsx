@@ -18,7 +18,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { MetalRatesWidget } from "@/components/rates/metal-rates-widget";
+import { MetalRatesWidget, staleNote } from "@/components/rates/metal-rates-widget";
 
 /**
  * Live gold-rate chip in the top bar.
@@ -44,8 +44,8 @@ export function GoldRateChip() {
           )}
           title={
             rate.stale
-              ? `22K gold · updated ${Math.round(rate.ageHours)}h ago (click for all rates)`
-              : "22K gold · live (click for all rates)"
+              ? `22K gold · ${staleNote(rate)} (click for all rates)`
+              : `22K gold · ${rate.source === "ibja" ? "IBJA benchmark, excl. GST" : "current rate"} (click for all rates)`
           }
         >
           <span
@@ -67,20 +67,15 @@ export function GoldRateChip() {
               <Coins className="h-4 w-4" />
             </div>
             <div>
-              <DialogTitle className="text-base font-bold text-white">Live Metal Rates</DialogTitle>
-              <p className="text-xs text-muted-foreground">
-                Official daily market benchmark rates across bullion categories.
-              </p>
+              <DialogTitle className="text-base font-bold text-white">Today&apos;s Metal Rates</DialogTitle>
+              <p className="text-xs text-muted-foreground">The rates every quote is priced from, per gram.</p>
             </div>
           </div>
         </DialogHeader>
 
         <MetalRatesWidget />
 
-        <div className="flex items-center justify-between pt-2">
-          <span className="text-[11px] text-muted-foreground">
-            Market source: IBJA benchmark feed
-          </span>
+        <div className="flex items-center justify-end pt-2">
           {canEdit && (
             <Button
               asChild
@@ -90,7 +85,7 @@ export function GoldRateChip() {
               onClick={() => setOpen(false)}
             >
               <Link href="/settings/rates">
-                <span>Manage Store Overrides</span>
+                <span>Rates page</span>
                 <ExternalLink className="h-3.5 w-3.5" />
               </Link>
             </Button>

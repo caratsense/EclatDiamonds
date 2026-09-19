@@ -1,0 +1,222 @@
+{
+  "_id": "000000000000000000011871",
+  "productCode": " 11871RG ",
+  "name": "  3ct Round Regent Solitaire Men's Ring  ",
+  "slug": "3ct-round-regent-solitaire-mens-ring",
+  "category": [
+    {
+      "_id": "fakecat000000000000000001",
+      "name": "Solitaires"
+    },
+    {
+      "_id": "fakecat000000000000000002",
+      "name": "Rings"
+    }
+  ],
+  "subCategory": [
+    {
+      "_id": "fakesub000000000000000001",
+      "name": "Engagement Rings"
+    },
+    {
+      "_id": "fakesub000000000000000002",
+      "name": "Daily Wear"
+    },
+    {
+      "_id": "fakesub000000000000000003",
+      "name": "Rings"
+    },
+    {
+      "_id": "fakesub000000000000000004",
+      "name": "All Men's Ring"
+    }
+  ],
+  "feature": [
+    {
+      "_id": "fakefeat00000000000000001",
+      "name": "LATEST DESIGNS"
+    }
+  ],
+  "tags": [
+    "MODERN ROYALTY",
+    "ANNIVERSARY COLLECTION",
+    "RING SOLITAIRE"
+  ],
+  "size": [
+    "IND 6",
+    "IND 7",
+    "IND 8",
+    "IND 9",
+    "IND 10",
+    "IND 11",
+    "IND 12",
+    "IND 13",
+    "IND 14",
+    "IND 15",
+    "IND 16",
+    "IND 17",
+    "IND 18"
+  ],
+  "indicativePrice": 185000,
+  "minVariantPrice": 155392.10,
+  "naturalDiamondPrice": 3900000,
+  "description": "A 3ct round solitaire in a regent setting. Synthetic test fixture.",
+  "specifications": "Gold weight: approx 8.07 g (18KT) | Diamond: 3.08 ct lab-grown, Round, VVS-VS, E-F",
+  "sizeGuide": "Measure the inside diameter of a ring that fits. Synthetic test fixture.",
+  "isActive": true,
+  "isDeleted": false,
+  "countries": [
+    "IN",
+    "US"
+  ],
+  "metaTitle": "3ct Round Regent Solitaire Men's Ring",
+  "metaDescription": "Synthetic test fixture.",
+  "metaKeywords": "solitaire ring, men's ring, synthetic fixture",
+  "variantType": [
+    {
+      "_id": "fakevt0000000000000000001",
+      "shapes": [
+        {
+          "name": "Round",
+          "images": [
+            "https://cdn.example.com/products/11871RG/rose-front.jpg",
+            "https://cdn.example.com/products/11871RG/side-shared.jpg",
+            "https://cdn.example.com/products/11871RG/rose-hand.jpg"
+          ]
+        }
+      ],
+      "color": "Rose Gold",
+      "shape": "Round",
+      "images": []
+    },
+    {
+      "_id": "fakevt0000000000000000002",
+      "shapes": [
+        {
+          "name": "Round",
+          "images": [
+            "https://cdn.example.com/products/11871RG/white-front.jpg",
+            "https://cdn.example.com/products/11871RG/side-shared.jpg",
+            "https://cdn.example.com/products/11871RG/white-hand.jpg"
+          ]
+        }
+      ],
+      "color": "White Gold",
+      "shape": "Round",
+      "images": []
+    },
+    {
+      "_id": "fakevt0000000000000000003",
+      "shapes": [
+        {
+          "name": "Round",
+          "images": [
+            "https://cdn.example.com/products/11871RG/yellow-front.jpg",
+            "https://cdn.example.com/products/11871RG/yellow-side.jpg",
+            "https://cdn.example.com/products/11871RG/yellow-hand.jpg"
+          ]
+        }
+      ],
+      "color": "Yellow Gold",
+      "shape": "Round",
+      "images": []
+    }
+  ],
+  "variants": [
+    {
+      "metalType": "Gold",
+      "karat": "9KT",
+      "diamondType": "Lab Grown",
+      "weightType": "approx",
+      "totalWeight": 9.78,
+      "price": 155392.10,
+      "priceWithMargin": 186470.52,
+      "marginPercentage": 20,
+      "makingCharge": 4312.1,
+      "billOfMaterial": [
+        {
+          "rawMaterialId": "fakeraw-gold-9kt",
+          "materialName": "Gold 9KT",
+          "weight": 6.7,
+          "unit": "gram",
+          "quantity": 1,
+          "rate": 6000,
+          "_lineTotal": 40200
+        },
+        {
+          "rawMaterialId": "fakeraw-lgd-round",
+          "materialName": "Lab Grown Diamond Round",
+          "weight": 3.08,
+          "unit": "gram",
+          "quantity": 1,
+          "rate": 36000,
+          "_lineTotal": 110880
+        }
+      ]
+    },
+    {
+      "metalType": "Gold",
+      "karat": "14KT",
+      "diamondType": "Lab Grown",
+      "weightType": "approx",
+      "totalWeight": 10.74,
+      "price": 186758.60,
+      "priceWithMargin": 224110.32,
+      "marginPercentage": 20,
+      "makingCharge": 3108.6,
+      "billOfMaterial": [
+        {
+          "rawMaterialId": "fakeraw-gold-14kt",
+          "materialName": "Gold 14KT",
+          "weight": 7.66,
+          "unit": "gram",
+          "quantity": 1,
+          "rate": 9500,
+          "_lineTotal": 72770
+        },
+        {
+          "rawMaterialId": "fakeraw-lgd-round",
+          "materialName": "Lab Grown Diamond Round",
+          "weight": 3.08,
+          "unit": "gram",
+          "quantity": 1,
+          "rate": 36000,
+          "_lineTotal": 110880
+        }
+      ]
+    },
+    {
+      "metalType": "Gold",
+      "karat": "18KT",
+      "diamondType": "Lab Grown",
+      "weightType": "approx",
+      "totalWeight": 11.78,
+      "price": 219264.20,
+      "priceWithMargin": 263117.04,
+      "marginPercentage": 20,
+      "makingCharge": 5724.2,
+      "billOfMaterial": [
+        {
+          "rawMaterialId": "fakeraw-gold-18kt",
+          "materialName": "Gold 18KT",
+          "weight": 8.7,
+          "unit": "gram",
+          "quantity": 1,
+          "rate": 11800,
+          "_lineTotal": 102660
+        },
+        {
+          "rawMaterialId": "fakeraw-lgd-round",
+          "materialName": "Lab Grown Diamond Round",
+          "weight": 3.08,
+          "unit": "gram",
+          "quantity": 1,
+          "rate": 36000,
+          "_lineTotal": 110880
+        }
+      ]
+    }
+  ],
+  "createdAt": "2025-01-10T09:00:00.000Z",
+  "updatedAt": "2026-08-01T09:00:00.000Z"
+}

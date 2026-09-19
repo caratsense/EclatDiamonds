@@ -9,6 +9,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { effectiveAccess } from './access';
 import { Prisma } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -19,6 +20,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
+import { isValidEmail, normalizeIndianMobile } from '../common/contact.util';
 import { ROLE_RANK } from '../common/role.util';
 import { WhatsAppService } from '../integrations/whatsapp.service';
 import { SignupDto, SignupPreviewDto } from './dto/signup.dto';
@@ -644,6 +646,38 @@ export class AuthService {
     return this.buildSession(auth.id, auth.role);
   }
 
+  /** PATCH /auth/me — how to reach me; everything else is head office's to change. */
+  async updateMe(auth: AuthUser, dto: { phone?: string; contactEmail?: string }) {
+    const data: { phone?: string | null; contactEmail?: string | null } = {};
+    if (dto.phone !== undefined) {
+      const raw = dto.phone.trim();
+      const phone = raw ? normalizeIndianMobile(raw) : null;
+      if (raw && !phone) throw new BadRequestException('Enter a valid 10-digit mobile number');
+      data.phone = phone;
+    }
+    if (dto.contactEmail !== undefined) {
+      const email = dto.contactEmail.trim().toLowerCase();
+      if (email && !isValidEmail(email)) throw new BadRequestException('Enter a valid email address');
+      data.contactEmail = email || null;
+    }
+    if (Object.keys(data).length) {
+      const before = await this.prisma.user.findUniqueOrThrow({
+        where: { id: auth.id },
+        select: { phone: true, contactEmail: true },
+      });
+      await this.prisma.user.update({ where: { id: auth.id }, data });
+      await this.audit.record(auth, {
+        action: 'user.profile_self_update',
+        entityType: 'User',
+        entityId: auth.id,
+        storeId: null,
+        summary: `${auth.name} updated their contact details`,
+        metadata: { before, after: data },
+      });
+    }
+    return this.buildSession(auth.id, auth.role);
+  }
+
   /** POST /auth/change-password — verify current password, then store a new hash. */
   async changePassword(auth: AuthUser, currentPassword: string, newPassword: string) {
     const user = await this.prisma.user.findUniqueOrThrow({ where: { id: auth.id } });
@@ -902,8 +936,12 @@ export class AuthService {
         name: user.name,
         email: user.email,
         initials: user.initials ?? user.name.slice(0, 2).toUpperCase(),
+        phone: user.phone,
+        contactEmail: user.contactEmail,
       },
       role,
+      /** The screens this person may open and at what level (auth/access.ts). */
+      access: effectiveAccess(role, user.accessOverrides),
       stores: storeViews,
       currentStore,
       productProfile: {

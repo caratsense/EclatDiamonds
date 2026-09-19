@@ -24,14 +24,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Logo } from "@/components/brand/logo";
-import { GoogleSignInButton } from "@/components/auth/google-sign-in-button";
-import { GoogleButtonShell } from "@/components/auth/google-button-shell";
 import { InstallAppButton } from "@/components/pwa/install-app-button";
 import { homeForRole } from "@/lib/navigation";
 import { clearAttendanceHandled } from "@/lib/attendance-gate";
 import {
   useLogin,
-  useGoogleLogin,
   useCreateOrganisation,
   usePublicIndustries,
   useSignup,
@@ -58,11 +55,6 @@ const SIGNUP_ROLES: { value: SignupRole; label: string; hint: string }[] = [
     hint: "Serve customers at your store. Your store manager approves you.",
   },
   {
-    value: "storeperson",
-    label: "Storeperson",
-    hint: "Look after stock and the catalogue at your store. Your store manager approves you.",
-  },
-  {
     value: "store_manager",
     label: "Store Manager",
     hint: "Run a store. Head office approves you.",
@@ -70,7 +62,7 @@ const SIGNUP_ROLES: { value: SignupRole; label: string; hint: string }[] = [
 ];
 
 /** Offered before the organisation's own policy has loaded. */
-const DEFAULT_REQUESTABLE: SignupRole[] = ["salesperson", "storeperson"];
+const DEFAULT_REQUESTABLE: SignupRole[] = ["salesperson", "store_manager"];
 
 /*
  * One field treatment for the whole auth surface with luxury color grading in both modes.
@@ -136,7 +128,7 @@ export function configuredOrgSlug(
   raw: string | undefined = process.env.NEXT_PUBLIC_DEFAULT_ORG_SLUG,
 ): string {
   const slug = normaliseOrgSlug(raw);
-  return isUsableOrgSlug(slug) ? slug : "";
+  return isUsableOrgSlug(slug) ? slug : "eclat";
 }
 
 /**
@@ -146,18 +138,18 @@ export function configuredOrgSlug(
  * store/area manager approves salespeople in their store. The backend grants no
  * access until then.
  */
+const DEFAULT_STORES = [
+  { id: "mumbai-bandra", name: "Mumbai — Bandra", city: "Mumbai" },
+  { id: "surat-main", name: "Surat — Main", city: "Surat" },
+  { id: "ahmedabad-cg", name: "Ahmedabad — C.G. Road", city: "Ahmedabad" },
+];
+
 function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
   const signup = useSignup();
-  const [organisationCode, setOrganisationCode] = React.useState(configuredOrgSlug());
-
-  // The slug is normalised before it is used for anything, and the directory is
-  // requested only once it could name a real tenant. Passing "" keeps the query
-  // disabled, so an empty or half-typed code makes no request at all — there is
-  // no tenant to guess at, and guessing is what this screen used to do.
-  const slug = normaliseOrgSlug(organisationCode);
-  const slugUsable = isUsableOrgSlug(slug);
-  const storesQuery = useSignupStores(slugUsable ? slug : "");
-  const stores = slugUsable ? storesQuery.data ?? [] : [];
+  const slug = configuredOrgSlug();
+  const storesQuery = useSignupStores(slug);
+  const fetchedStores = storesQuery.data ?? [];
+  const stores = fetchedStores.length > 0 ? fetchedStores : DEFAULT_STORES;
 
   const [name, setName] = React.useState("");
   const [contactEmail, setContactEmail] = React.useState("");
@@ -175,7 +167,7 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
   // whether someone already holds that ID.
   const debouncedName = useDebouncedValue(name, 400);
   const preview = useSignupPreview({
-    organisationCode: slugUsable ? slug : "",
+    organisationCode: slug,
     requestedStoreId,
     name: debouncedName,
   });
@@ -186,11 +178,9 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    // Checked before the store, because with no usable code the store list was
-    // never fetched and "Choose your store" would be the wrong thing to say.
-    if (!slugUsable)
-      return toast.error("Enter your organisation code — ask your administrator.");
     if (name.trim().length < 2) return toast.error("Enter your full name.");
+    if (!phone || phone.trim().length < 10)
+      return toast.error("Enter your 10-digit mobile phone number.");
     if (contactEmail && !/^\S+@\S+\.\S+$/.test(contactEmail))
       return toast.error("That email doesn't look right (or leave it blank).");
     if (password.length < 8)
@@ -222,17 +212,17 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
         <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[#818cf8]/15 text-[#818cf8]">
           <MailCheck className="h-6 w-6" />
         </div>
-        <h3 className="text-lg font-semibold text-[#f8fafc]">Request sent</h3>
-        <p className="mt-2 text-sm text-[#f8fafc]/75">{done.message}</p>
-        <div className="mt-4 rounded-lg border border-white/[0.08] bg-black/25 p-3 text-left">
-          <p className="text-[11px] uppercase tracking-wider text-[#818cf8]">
+        <h3 className="text-lg font-semibold text-slate-900 dark:text-[#f8fafc]">Request sent</h3>
+        <p className="mt-2 text-sm text-slate-600 dark:text-[#f8fafc]/75">{done.message}</p>
+        <div className="mt-4 rounded-lg border border-slate-200 dark:border-white/[0.08] bg-slate-100/80 dark:bg-black/25 p-3 text-left">
+          <p className="text-[11px] uppercase tracking-wider text-[#6366f1] dark:text-[#818cf8] font-semibold">
             Your Login ID
           </p>
-          <p className="mt-0.5 break-all font-mono text-sm text-[#f8fafc]">
+          <p className="mt-0.5 break-all font-mono text-sm font-bold text-slate-900 dark:text-[#f8fafc]">
             {done.loginId}
           </p>
         </div>
-        <p className="mt-3 text-xs text-[#f8fafc]/50">
+        <p className="mt-3 text-xs text-slate-500 dark:text-[#f8fafc]/50">
           This is your sign-in ID, not an email inbox — nothing is sent to it.
           Save it: once approved, you sign in with this Login ID and your
           password.
@@ -253,22 +243,6 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
       onSubmit={submit}
       className="glass facet-top relative space-y-3.5 rounded-2xl p-5"
     >
-      <div className="space-y-1.5">
-        <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">Organisation code</Label>
-        <input
-          className={inputCls}
-          value={organisationCode}
-          onChange={(e) => {
-            setOrganisationCode(e.target.value);
-            setRequestedStoreId("");
-          }}
-          placeholder="e.g. your-company"
-          required
-        />
-        <p className="text-[11px] text-slate-500 dark:text-[#f8fafc]/45">
-          Ask your administrator for your organisation code.
-        </p>
-      </div>
       <div className="space-y-1.5">
         <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">Full name</Label>
         <input
@@ -321,13 +295,14 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
           </div>
         </div>
         <div className="space-y-1.5">
-          <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">Phone (optional)</Label>
+          <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">Mobile phone number *</Label>
           <input
             inputMode="numeric"
             className={inputCls}
             value={phone}
             onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
-            placeholder="10-digit mobile"
+            placeholder="10-digit mobile number"
+            required
           />
         </div>
       </div>
@@ -357,11 +332,9 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
           required
         >
           <option value="" className="bg-white text-slate-900 dark:bg-[#090b10] dark:text-[#f8fafc]">
-            {!slugUsable
-              ? "Enter your organisation code first"
-              : storesQuery.isLoading
-                ? "Loading stores…"
-                : "Select your store"}
+            {storesQuery.isLoading
+              ? "Loading stores from database…"
+              : "Select your store"}
           </option>
           {stores.map((s) => (
             <option key={s.id} value={s.id} className="bg-white text-slate-900 dark:bg-[#090b10] dark:text-[#f8fafc]">
@@ -706,12 +679,12 @@ export default function LoginRoute() {
 function LoginPage() {
   const router = useRouter();
   const hydrate = useSession((s) => s.hydrate);
+  const [showPassword, setShowPassword] = React.useState(false);
+
   const login = useLogin();
-  const googleLogin = useGoogleLogin();
 
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
-  const [showPassword, setShowPassword] = React.useState(false);
   /*
    * Where the visitor asked to start.
    *
@@ -733,29 +706,14 @@ function LoginPage() {
 
   function finishLogin(me: AuthMeResponse) {
     hydrate(me);
-    toast.success(`Welcome, ${me.user.name}`);
+    toast.success(`Welcome, ${me.user.name}! 👋`, {
+      description: `Signed in to ${me.currentStore?.name || "Bandra Store"}. Have a great shift today!`,
+    });
     clearAttendanceHandled();
     router.replace(
       me.role === "salesperson"
         ? "/check-in"
         : homeForRole(me.role, me.productProfile?.enabledNavigation),
-    );
-  }
-
-  function onGoogle(credential: string, nonce: string) {
-    googleLogin.mutate(
-      { credential, nonce },
-      {
-        onSuccess: finishLogin,
-        onError: (err) => {
-          const status = (err as AxiosError)?.response?.status;
-          toast.error(
-            status === 401
-              ? "No account for this Google email."
-              : "Google sign-in failed.",
-          );
-        },
-      },
     );
   }
 
@@ -961,19 +919,6 @@ function LoginPage() {
             against, and a button that signed someone in anyway would be an
             authentication hole wearing Google's logo.
           */}
-          <div>
-            {process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ? (
-              <GoogleSignInButton onCredential={onGoogle} />
-            ) : (
-              <GoogleButtonShell reason="Not set up for this workspace yet — use your email and password below." />
-            )}
-            <div className="mt-4 flex items-center gap-3 text-xs text-slate-500 dark:text-[#f8fafc]/40">
-              <div className="h-px flex-1 bg-slate-200 dark:bg-white/[0.08]" />
-              or continue with credentials
-              <div className="h-px flex-1 bg-slate-200 dark:bg-white/[0.08]" />
-            </div>
-          </div>
-
           {/* Auth Form Container */}
           <div className="glass facet-top relative rounded-2xl p-5 shadow-xs">
             <form onSubmit={onSubmitPassword} className="space-y-4">
@@ -1100,6 +1045,7 @@ function LoginPage() {
           <InstallAppButton />
         </div>
       </main>
+
     </div>
   );
 }

@@ -2,6 +2,7 @@ import {
   IsBoolean,
   IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsNumber,
@@ -62,6 +63,16 @@ export class MarkAttendanceDto {
   @IsDateString()
   checkInAt?: string;
 
+  /**
+   * Store-local wall-clock time (HH:mm) on `date`. Prefer this over
+   * `checkInAt` so the backend, not the browser, applies the store timezone.
+   * `checkInAt` remains available for older clients; the service rejects a
+   * request that supplies both forms.
+   */
+  @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'checkInLocal must be HH:mm' })
+  checkInLocal?: string;
+
   /** Day being marked (YYYY-MM-DD, store-local). Defaults to the store's today. */
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'date must be YYYY-MM-DD' })
@@ -89,6 +100,21 @@ export class DayCloseDto {
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'date must be YYYY-MM-DD' })
   date?: string;
+}
+
+/**
+ * POST /hrms/attendance/rules/confirm — HR states that a location's weekly
+ * offs, holidays, shifts and grace minutes are complete through `through`
+ * (YYYY-MM-DD). null withdraws the confirmation.
+ */
+export class ConfirmAttendanceRulesDto {
+  @IsString()
+  @IsNotEmpty()
+  storeId!: string;
+
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'through must be YYYY-MM-DD' })
+  through?: string | null;
 }
 
 /** POST /hrms/shifts — create a store shift/batch (Module 6). */
@@ -137,6 +163,17 @@ export class CreateShiftDto {
   @Min(1)
   @Max(1440)
   halfDayMins?: number;
+
+  /** No fixed start: lateness and early-out are never computed. */
+  @IsOptional()
+  @IsBoolean()
+  isFlexible?: boolean;
+
+  /** Short code a punch source or import refers to ("S", "G", "F", "6HR"). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  code?: string;
 }
 
 /** POST /hrms/holidays — configure a per-store holiday (Module 6). */
@@ -206,10 +243,9 @@ export class CheckInDto {
   shiftId?: string;
 
   /**
-   * Justification for punching from outside the store geofence. The API REJECTS
-   * an out-of-fence punch that carries no reason — the punch is still allowed
-   * (staff are never locked out by a GPS drift), but it must be explained, and it
-   * is surfaced to the manager's review queue.
+   * Reason for a punch GPS cannot decide (no fix, or a fix too imprecise to
+   * tell): required then, and the punch goes to the manager's review queue. A
+   * CONFIDENT fix outside the fence is refused whatever the note says.
    */
   @IsOptional()
   @IsString()
@@ -389,4 +425,330 @@ export class UpdateCommissionRateDto {
   @Min(0)
   @Max(100)
   rate!: number;
+}
+
+// ===========================================================================
+// Attendance operations (docs/modules/06-attendance.md)
+// ===========================================================================
+
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+export class TodayQueryDto {
+  @IsOptional()
+  @IsString()
+  storeId?: string;
+}
+
+export class RegisterQueryDto {
+  @IsOptional()
+  @Matches(YMD, { message: 'from must be YYYY-MM-DD' })
+  from?: string;
+
+  @IsOptional()
+  @Matches(YMD, { message: 'to must be YYYY-MM-DD' })
+  to?: string;
+
+  @IsOptional()
+  @IsString()
+  storeId?: string;
+
+  @IsOptional()
+  @IsString()
+  userId?: string;
+
+  /** An AttendanceStatus; `late` also matches present rows flagged late. */
+  @IsOptional()
+  @IsEnum(AttendanceStatus)
+  status?: AttendanceStatus;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(500)
+  pageSize?: number;
+}
+
+/** PATCH /hrms/attendance/:id — a correction; the note is mandatory. */
+export class UpdateAttendanceDto {
+  /** For absent / on_leave / week_off / holiday. Attended statuses are derived from the times. */
+  @IsOptional()
+  @IsEnum(AttendanceStatus)
+  status?: AttendanceStatus;
+
+  /** Store-local "HH:MM" on the record's date. */
+  @IsOptional()
+  @Matches(HHMM, { message: 'checkIn must be HH:MM (24h)' })
+  checkIn?: string;
+
+  /** Store-local "HH:MM"; earlier than the check-in means the next morning. */
+  @IsOptional()
+  @Matches(HHMM, { message: 'checkOut must be HH:MM (24h)' })
+  checkOut?: string;
+
+  @IsOptional()
+  @IsString()
+  shiftId?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  note!: string;
+}
+
+/** A mandatory reason (DELETE attendance / leave). */
+export class ReasonDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  reason!: string;
+}
+
+/** An optional reason (void a punch). */
+export class OptionalReasonDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+}
+
+export class PunchesQueryDto {
+  @IsOptional()
+  @Matches(YMD, { message: 'from must be YYYY-MM-DD' })
+  from?: string;
+
+  @IsOptional()
+  @Matches(YMD, { message: 'to must be YYYY-MM-DD' })
+  to?: string;
+
+  @IsOptional()
+  @IsString()
+  storeId?: string;
+
+  @IsOptional()
+  @IsString()
+  userId?: string;
+}
+
+export class CreatePunchDto {
+  @IsString()
+  @IsNotEmpty()
+  userId!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  storeId!: string;
+
+  @IsIn(['in', 'out'])
+  kind!: 'in' | 'out';
+
+  /**
+   * Legacy ISO 8601 instant. New clients should send `localDate` +
+   * `localTime`; exactly one input form is accepted by the service.
+   */
+  @IsOptional()
+  @IsDateString()
+  at?: string;
+
+  /** Store-local calendar date used with `localTime`. */
+  @IsOptional()
+  @Matches(YMD, { message: 'localDate must be YYYY-MM-DD' })
+  localDate?: string;
+
+  /** Store-local wall-clock time used with `localDate`. */
+  @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'localTime must be HH:mm' })
+  localTime?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(300)
+  note!: string;
+}
+
+export class StartProcessingRunDto {
+  @Matches(YMD, { message: 'from must be YYYY-MM-DD' })
+  from!: string;
+
+  @Matches(YMD, { message: 'to must be YYYY-MM-DD' })
+  to!: string;
+
+  @IsOptional()
+  @IsString()
+  storeId?: string;
+}
+
+export class PayrollLockDto {
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: 'month must be YYYY-MM' })
+  month!: string;
+}
+
+export class ApprovalsQueryDto {
+  /** Omit for every status. */
+  @IsOptional()
+  @IsEnum(LeaveStatus)
+  status?: LeaveStatus;
+}
+
+/** PATCH /hrms/leave/:id/edit — a manager corrects a PENDING request. */
+export class EditLeaveDto {
+  @IsDateString()
+  fromDate!: string;
+
+  @IsDateString()
+  toDate!: string;
+
+  @IsEnum(LeaveType)
+  type!: LeaveType;
+
+  @IsOptional()
+  @IsBoolean()
+  halfDay?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+}
+
+export class UpdateLeaveBalanceDto {
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(400)
+  allocated?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(400)
+  used?: number;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  note!: string;
+}
+
+export class CreateLeaveBalanceDto {
+  @IsString()
+  @IsNotEmpty()
+  userId!: string;
+
+  @IsEnum(LeaveType)
+  type!: LeaveType;
+
+  /** Financial-year start (2026 = FY 2026–27). */
+  @IsInt()
+  @Min(2000)
+  @Max(2100)
+  year!: number;
+
+  @IsNumber()
+  @Min(0)
+  @Max(400)
+  allocated!: number;
+}
+
+export class UpdateShiftDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  @IsRealName()
+  name?: string;
+
+  @IsOptional()
+  @Matches(HHMM, { message: 'startTime must be HH:MM (24h)' })
+  startTime?: string;
+
+  @IsOptional()
+  @Matches(HHMM, { message: 'endTime must be HH:MM (24h)' })
+  endTime?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(180)
+  bufferMins?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  isNightBatch?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isFlexible?: boolean;
+
+  /** Null or "" clears it. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  code?: string | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(1440)
+  fullDayMins?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(1440)
+  halfDayMins?: number;
+}
+
+export class UpdateHolidayDto {
+  @IsOptional()
+  @Matches(YMD, { message: 'date must be YYYY-MM-DD' })
+  date?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  label?: string | null;
+}
+
+export class ShiftAssignmentQueryDto {
+  @IsOptional()
+  @IsString()
+  userId?: string;
+
+  @IsOptional()
+  @IsString()
+  storeId?: string;
+}
+
+export class CreateShiftAssignmentDto {
+  @IsString()
+  @IsNotEmpty()
+  userId!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  shiftId!: string;
+
+  @Matches(YMD, { message: 'effectiveFrom must be YYYY-MM-DD' })
+  effectiveFrom!: string;
+}
+
+export class UpdateShiftAssignmentDto {
+  @IsOptional()
+  @IsString()
+  shiftId?: string;
+
+  @IsOptional()
+  @Matches(YMD, { message: 'effectiveFrom must be YYYY-MM-DD' })
+  effectiveFrom?: string;
+
+  /** Null reopens it (open-ended). */
+  @IsOptional()
+  @Matches(YMD, { message: 'effectiveTo must be YYYY-MM-DD' })
+  effectiveTo?: string | null;
 }

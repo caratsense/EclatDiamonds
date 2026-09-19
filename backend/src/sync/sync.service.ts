@@ -1,10 +1,16 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 
-import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { BadRequestException, ForbiddenException, Injectable, Logger, Optional } from '@nestjs/common';
+import { MetalKind, Prisma } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
+import { gatiComposition, websiteComposition } from '../products/composition';
+import { CatalogueIndexService } from '../products/catalogue-index.service';
+import { karatToMetal } from '../catalogue/metal';
+import { applyImageOrder } from '../catalogue/image-order';
+import type { WebsiteCatalogueService } from '../catalogue/website/website-catalogue.service';
+import type { WebsiteRawDto } from '../catalogue/website/website.dto';
 import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
 import { ProvenanceService } from '../common/provenance.service';
@@ -18,7 +24,6 @@ import {
   int,
   karatFromMetal,
   maxWatermark,
-  metalFromRow,
   karatFromRow,
   str,
   KNOWN_INWARD_STATUSES,
@@ -53,6 +58,8 @@ export interface SyncResult {
   /** Website import only — designs newly added vs. existing ones given a photo/price. */
   created?: number;
   enriched?: number;
+  /** Website import only — published photographs filed into product galleries. */
+  photos?: number;
   /**
    * Stock only — `Inward.Status` letters this build does not recognise, with
    * counts. Their pieces are deliberately withheld from the available set, and
@@ -74,6 +81,8 @@ type IngestionDatabase = PrismaService | Prisma.TransactionClient;
 interface ActiveGatiIngestion {
   db: Prisma.TransactionClient;
   routing: GatiRoutingPolicy;
+  /** Pictures to queue for indexing once the batch has committed. */
+  imagesToIndex: string[];
 }
 
 interface LockedGatiAgent {
@@ -164,7 +173,7 @@ function categoryFromCode(r: Rec): string | null {
 
 /** Category from the Gati product-group code first, then an English-word scan
  * (kept for website imports, which carry real descriptions); `other` if none. */
-function categoryFromRow(r: Rec): string {
+export function categoryFromRow(r: Rec): string {
   const fromCode = categoryFromCode(r);
   if (fromCode) return fromCode;
   const hay = Object.values(r)
@@ -221,6 +230,8 @@ export class SyncService {
     private readonly config: ConfigService,
     private readonly audit: AuditService,
     private readonly provenance: ProvenanceService,
+    // Optional so the unit-style specs that construct the service by hand keep working.
+    @Optional() private readonly catalogueIndex?: CatalogueIndexService,
   ) {}
 
   /**
@@ -264,7 +275,8 @@ export class SyncService {
       throw new ForbiddenException('Legacy Gati ingestion context does not match the authenticated principal.');
     }
 
-    return this.basePrisma.withTenant(
+    const imagesToIndex: string[] = [];
+    const accepted = await this.basePrisma.withTenant(
       user.organisationId,
       async (tx) => {
         const [agent] = await tx.$queryRaw<LockedGatiAgent[]>(Prisma.sql`
@@ -283,7 +295,7 @@ export class SyncService {
         `);
         const routing = await this.assertLockedGeneration(tx, user, request, agent);
 
-        return this.activeGatiIngestion.run({ db: tx, routing }, async () => {
+        return this.activeGatiIngestion.run({ db: tx, routing, imagesToIndex }, async () => {
           const result = await work();
           await this.recordAcceptedSyncState(tx, user.organisationId, routeEntity, rawSourceTable, received, result);
           await this.audit.record(
@@ -313,6 +325,28 @@ export class SyncService {
       // headroom for the response while allowing the existing 3,000-row chunk.
       { timeout: 170_000, maxWait: 10_000 },
     );
+    // After commit: the indexer reads the new rows from its own connection.
+    await this.queueImageIndex(user.organisationId, imagesToIndex);
+    return accepted;
+  }
+
+  /**
+   * Queue pictures for visual-search indexing. Inside a Gati batch this waits
+   * for the commit (runGatiIngestion flushes it); a failure to queue never fails
+   * a committed batch — a reindex picks the picture up.
+   */
+  private async queueImageIndex(organisationId: string, imageIds: string[]): Promise<void> {
+    const active = this.activeGatiIngestion.getStore();
+    if (active) {
+      active.imagesToIndex.push(...imageIds);
+      return;
+    }
+    if (!imageIds.length || !this.catalogueIndex) return;
+    try {
+      await this.catalogueIndex.enqueue(organisationId, [...new Set(imageIds)]);
+    } catch (err) {
+      this.logger.warn(`catalogue index enqueue failed (${imageIds.length} image(s)): ${(err as Error).message}`);
+    }
   }
 
   private async assertLockedGeneration(
@@ -714,7 +748,7 @@ export class SyncService {
 
     const candidates = (
       await this.prisma.store.findMany({
-        where: { legacyId: null, isAggregate: false, organisationId },
+        where: { legacyId: null, isAggregate: false, attendanceOnly: false, organisationId },
         select: { id: true, name: true },
       })
     ).map((s) => ({
@@ -1346,6 +1380,7 @@ export class SyncService {
         legacyId: null,
         importBatchId: null,
         isAggregate: false,
+        attendanceOnly: false,
         organisationId: org,
       },
       select: { id: true, name: true },
@@ -2138,18 +2173,22 @@ export class SyncService {
     const branch = await this.branchResolver('products', organisationId);
     let upserted = 0;
     let skipped = 0;
+    const synced: string[] = [];
+    const now = new Date();
     for (const r of records) {
       if (r.StyleId == null) {
         skipped++;
         continue;
       }
-      const metal = metalFromRow(r);
+      const metal = gatiMetal(r);
       const sku = str(r.StyleSKUNo) || str(r.StyleCode) || `STYLE-${r.StyleId}`;
       const storeId = await branch.resolve(r);
       const data = {
         storeId,
         sku,
         name: str(r.StyleCode) || sku,
+        styleNumber: sent(r, 'StyleCode', str),
+        gatiSyncedAt: now,
         category: categoryFromRow(r) as any,
         metal: metal as any,
         // Product.karat is a non-null Int; when purity is unknown the honest
@@ -2161,15 +2200,22 @@ export class SyncService {
         price: dec(r.MRP ?? r.TagPrice ?? r.EndClientPrice) ?? '0',
         description: str(r.WebDescription),
         bestSeller: bool(r.BestSeller),
+        // The summary totals the agent merges into every StyleMst row. Left
+        // untouched (undefined) when a row carries none, rather than wiping
+        // what an earlier, fuller sync stored.
+        composition: (gatiComposition(r, metal as MetalKind) ?? undefined) as Prisma.InputJsonValue | undefined,
       };
       const legacyId = String(r.StyleId);
-      await this.prisma.product.upsert({
+      const saved = await this.prisma.product.upsert({
         where: { organisationId_legacyId: { organisationId, legacyId } },
         create: { legacyId, organisationId, ...data },
         update: data,
+        select: { id: true },
       });
+      synced.push(saved.id);
       upserted++;
     }
+    await this.refreshGatiTagPrices(organisationId, synced);
     return this.result('products', records, upserted, skipped, branch.report());
   }
 
@@ -2204,10 +2250,27 @@ export class SyncService {
     const existingItems = legacyIds.length
       ? await this.prisma.stockItem.findMany({
           where: { legacyId: { in: legacyIds }, organisationId },
-          select: { id: true, legacyId: true },
+          select: { id: true, legacyId: true, productId: true },
         })
       : [];
     const idByLegacy = new Map(existingItems.map((s) => [s.legacyId as string, s.id]));
+    // The designs these pieces belong to: their style number (Inward carries
+    // only StyleId) and their live website variants, for the variant link.
+    const linkedProducts = await this.prisma.product.findMany({
+      where: { organisationId, id: { in: [...new Set(productByStyle.values())] } },
+      select: {
+        id: true,
+        styleNumber: true,
+        variants: {
+          where: { source: 'website', status: { not: 'tombstoned' } },
+          select: { id: true, karat: true, colour: true },
+        },
+      },
+    });
+    const productById = new Map(linkedProducts.map((p) => [p.id, p]));
+    // Tag-price ranges move with pieces: recompute for every design a piece
+    // in this batch belonged to before, or belongs to now.
+    const touchedProducts = new Set(existingItems.map((s) => s.productId));
     const controlled = existingItems.length
       ? await this.prisma.stockTransferItem.findMany({
           where: {
@@ -2229,8 +2292,11 @@ export class SyncService {
         skipped++;
         continue;
       }
-      const metal = metalFromRow(r);
+      const metal = gatiMetal(r);
       const storeId = await branch.resolveRequired(r);
+      const productId = productByStyle.get(String(r.StyleId)) ?? null;
+      const product = productId ? productById.get(productId) : undefined;
+      touchedProducts.add(productId);
       const rawStatus = String(r.Status ?? '')
         .trim()
         .toUpperCase();
@@ -2241,7 +2307,7 @@ export class SyncService {
       byStatus[stockStatus] = (byStatus[stockStatus] ?? 0) + 1;
       const data = {
         storeId,
-        productId: productByStyle.get(String(r.StyleId)) ?? null,
+        productId,
         sku: str(r.InwardSKUNo) || str(r.JewelCode),
         name: str(r.JewelCode),
         // Same keyword rule as the product sync — without this the piece keeps
@@ -2270,6 +2336,15 @@ export class SyncService {
         certificateNo: str(r.Jewelry_CertificateNo),
         inwardDate: dt(r.InwardDate),
         legacyUpdatedAt: dt(r.UpdateDate),
+        // Columns an older agent build may not send: absent -> left as stored
+        // (undefined), never nulled. Inward has no StyleCode; the design's
+        // style number comes from the linked StyleMst product.
+        styleNumber: product?.styleNumber ?? undefined,
+        productCode: sent(r, 'ProductCode', str),
+        quantity: sent(r, 'InwardQty', int),
+        itemSizeId: sent(r, 'ItemSizeId', str),
+        stonePieces: sent(r, 'TotCZPc', int),
+        variantId: product ? matchVariant(product.variants, karatFromRow(r), r.ToneCode) : null,
       };
       const legacyId = String(r.JewelId);
       // Eclat-controlled piece: keep syncing every Gati-owned field, but do NOT
@@ -2294,6 +2369,7 @@ export class SyncService {
       });
       upserted++;
     }
+    await this.refreshGatiTagPrices(organisationId, [...touchedProducts]);
 
     if (Object.keys(unknownStatuses).length) {
       this.logger.warn(
@@ -2676,23 +2752,14 @@ export class SyncService {
    * one on the shelf, and a salesperson can raise it to head office.
    */
   async syncWebsiteProducts(organisationId: string, records: Rec[]): Promise<SyncResult> {
-    // Website taxonomy -> our enum. Ordered: the first hit wins, so
-    // "Pendants & Necklace" resolves before the looser "necklace" test.
-    // Karat -> MetalKind. 9k and 14k have no member of their own; they are gold
-    // and the karat number is kept exactly on Product.karat, so nothing is lost
-    // by filing them under the nearest bucket.
-    const METAL: Record<string, string> = {
-      '24': 'gold_24k',
-      '22': 'gold_22k',
-      '18': 'gold_18k',
-      '14': 'gold_18k',
-      '9': 'gold_18k',
-    };
-
+    // Karat -> MetalKind through the one shared mapping (catalogue/metal.ts).
+    // This used to file 9KT and 14KT as 18K, which priced and filtered a 9KT
+    // ring as something it is not; an unreadable karat is now gold_unspecified.
     let upserted = 0;
     let skipped = 0;
     let created = 0;
     let enriched = 0;
+    let photos = 0;
 
     for (const r of records) {
       const code = str(r.productCode);
@@ -2701,6 +2768,21 @@ export class SyncService {
         continue;
       }
       const imageUrl = str(r.imageUrl) || null;
+      // Every published photograph of the design, cover first.
+      //
+      // The feed is shaped variantType[] -> shapes[] -> images[] and always
+      // carried several; the agent's first_image() took one and dropped the
+      // rest, so a design the client had photographed from four sides reached
+      // the catalogue as a single view — and visual search could only ever
+      // find it from that one. These are the retouched shots already on the
+      // website's CDN, so this stores links and uploads nothing.
+      const imageUrls = Array.isArray(r.imageUrls)
+        ? (r.imageUrls as unknown[])
+            .map((u) => str(u))
+            .filter((u): u is string => !!u && /^https?:\/\//i.test(u))
+        : [];
+      // The cover belongs in the gallery too, and first without duplicating.
+      const allImages = [...new Set([...(imageUrl ? [imageUrl] : []), ...imageUrls])];
       const price = dec(r.price);
       const karat = int(r.karat) ?? 0;
 
@@ -2709,18 +2791,19 @@ export class SyncService {
       // Every match is org-scoped: an org's website import must never enrich (or
       // adopt the provenance of) another org's product that happens to share a
       // code, name or SKU prefix.
+      const composition = websiteComposition(r.composition);
       const existing =
         (await this.prisma.product.findFirst({
           where: { legacyId: `WEB-${code}`, organisationId },
-          select: { id: true, imageUrl: true, price: true, legacyId: true },
+          select: { id: true, imageUrl: true, price: true, legacyId: true, websiteCode: true, composition: true },
         })) ??
         (await this.prisma.product.findFirst({
           where: { name: code, organisationId },
-          select: { id: true, imageUrl: true, price: true, legacyId: true },
+          select: { id: true, imageUrl: true, price: true, legacyId: true, websiteCode: true, composition: true },
         })) ??
         (await this.prisma.product.findFirst({
           where: { sku: { startsWith: `${code}-` }, organisationId },
-          select: { id: true, imageUrl: true, price: true, legacyId: true },
+          select: { id: true, imageUrl: true, price: true, legacyId: true, websiteCode: true, composition: true },
         }));
 
       if (existing) {
@@ -2733,6 +2816,10 @@ export class SyncService {
         // Repairs rows this import created before it stamped provenance. Without
         // it they read as demo data and the go-live purge deletes them.
         if (!existing.legacyId) data.legacyId = `WEB-${code}`;
+        // A Gati design keeps Gati's id; this is where its website code lives.
+        if (existing.websiteCode !== code) data.websiteCode = code;
+        // Gati's own breakdown wins; the website's only fills a gap.
+        if (!existing.composition && composition) data.composition = composition;
         if (Object.keys(data).length) {
           await this.prisma.product.update({
             where: { id: existing.id },
@@ -2743,10 +2830,11 @@ export class SyncService {
         } else {
           skipped++;
         }
+        photos += await this.addWebsiteImages(organisationId, existing.id, allImages);
         continue;
       }
 
-      await this.prisma.product.create({
+      const fresh = await this.prisma.product.create({
         data: {
           organisationId,
           // Provenance, and it has to be set. `purgeDemo` decides what is seeded
@@ -2755,10 +2843,12 @@ export class SyncService {
           // — which is exactly what happened the first time this ran. The `WEB-`
           // prefix keeps it clear of any Gati id and makes the import idempotent.
           legacyId: `WEB-${code}`,
+          websiteCode: code,
+          composition: (composition ?? undefined) as Prisma.InputJsonValue | undefined,
           sku: code,
           name: str(r.name) || code,
           category: categoryFromRow(r) as any,
-          metal: (METAL[String(karat)] ?? 'gold_18k') as any,
+          metal: karatToMetal(r.metal, karat || null),
           karat,
           price: price ?? 0,
           caratWeight: dec(r.caratWeight) ?? 0,
@@ -2773,14 +2863,81 @@ export class SyncService {
       });
       created++;
       upserted++;
+      photos += await this.addWebsiteImages(organisationId, fresh.id, allImages);
     }
 
-    this.logger.log(`sync website-products: created=${created} enriched=${enriched} skipped=${skipped}`);
+    this.logger.log(
+      `sync website-products: created=${created} enriched=${enriched} skipped=${skipped} photos=${photos}`,
+    );
     return {
       ...this.result('website-products', records, upserted, skipped),
       created,
       enriched,
+      photos,
     };
+  }
+
+  /**
+   * POST /sync/website/raw — raw, lossless website payloads from the shop-PC
+   * agent. The normalise/persist code is the catalogue connector's own
+   * (catalogue/website); this only runs it inside the fenced Gati ingestion
+   * transaction, so the batch and its receipt commit together.
+   */
+  syncWebsiteRaw(organisationId: string, body: WebsiteRawDto, catalogue: WebsiteCatalogueService) {
+    return catalogue.ingestRawBatch(this.prisma, organisationId, body);
+  }
+
+  /**
+   * File a website design's published photographs in its gallery.
+   *
+   * Idempotent on the URL, so re-running the import adds nothing and a photo
+   * the client later removes from the site is simply not re-added — it is not
+   * deleted either, because the site dropping a shot is not the shop saying the
+   * piece was never photographed that way.
+   *
+   * Never touches a photo somebody uploaded at the counter: those have no
+   * matching URL, so they are invisible to this. The cover is left exactly as
+   * the caller set it; ordering here only decides display order.
+   */
+  private async addWebsiteImages(
+    organisationId: string,
+    productId: string,
+    urls: string[],
+  ): Promise<number> {
+    if (!urls.length) return 0;
+    const existing = new Set(
+      (
+        await this.prisma.productImage.findMany({
+          where: { productId },
+          select: { url: true },
+        })
+      ).map((i) => i.url),
+    );
+    const fresh = urls.filter((u) => !existing.has(u));
+    if (!fresh.length) return 0;
+
+    // The design has no cover in the gallery yet only when it had no photos at
+    // all, in which case the first one published becomes it.
+    const hasPrimary =
+      existing.size > 0 &&
+      (await this.prisma.productImage.count({ where: { productId, isPrimary: true } })) > 0;
+
+    await this.prisma.productImage.createMany({
+      data: fresh.map((url, i) => ({
+        organisationId,
+        productId,
+        url,
+        // Provenance, so the lossless website sync adopts these rows instead
+        // of adding a second copy of each picture.
+        source: 'website',
+        sourceUrl: url,
+        sourceOrder: urls.indexOf(url),
+        isPrimary: !hasPrimary && i === 0,
+        sortOrder: existing.size + i,
+      })),
+    });
+    await applyImageOrder(this.prisma, productId);
+    return fresh.length;
   }
 
   // ── Journal -> LedgerEntry ───────────────────────────────────────────────────
@@ -2943,13 +3100,17 @@ export class SyncService {
       const kind = str(r.kind) === 'stock' ? 'stock' : 'product';
       try {
         if (kind === 'product') {
-          await this.prisma.product.update({
+          // The design picture is the Gati CAD: a ProductImage of its own, and
+          // Product.imageUrl follows the one precedence rule (a pin or a
+          // website photo may still come first — see image-order.ts).
+          const product = await this.prisma.product.update({
             where: { organisationId_legacyId: { organisationId, legacyId } },
-            data: {
-              imageUrl: url,
-              ...(str(r.stlUrl) ? { stlUrl: str(r.stlUrl) } : {}),
-            },
+            data: str(r.stlUrl) ? { stlUrl: str(r.stlUrl) } : {},
+            select: { id: true },
           });
+          const queued = await this.upsertGatiCad(organisationId, product.id, url);
+          await applyImageOrder(this.prisma, product.id);
+          if (queued) await this.queueImageIndex(organisationId, [queued]);
         } else {
           await this.prisma.stockItem.update({
             where: { organisationId_legacyId: { organisationId, legacyId } },
@@ -2964,6 +3125,86 @@ export class SyncService {
       }
     }
     return this.result('product-images', records, upserted, skipped);
+  }
+
+  /**
+   * The Gati design picture as a `gati_cad` ProductImage, keyed by its URL.
+   * Re-sending the same URL is a no-op (a tombstoned copy is revived); a new
+   * URL retires the previous CAD as a tombstone. Other sources are never
+   * touched. Returns the id to index when the picture is new or revived.
+   */
+  private async upsertGatiCad(organisationId: string, productId: string, url: string): Promise<string | null> {
+    const existing = await this.prisma.productImage.findFirst({
+      where: { organisationId, productId, source: 'gati_cad', sourceUrl: url },
+      select: { id: true, status: true },
+    });
+    let queued: string | null = null;
+    if (!existing) {
+      const created = await this.prisma.productImage.create({
+        data: { organisationId, productId, url, sourceUrl: url, source: 'gati_cad' },
+        select: { id: true },
+      });
+      queued = created.id;
+    } else if (existing.status === 'tombstoned') {
+      await this.prisma.productImage.update({
+        where: { id: existing.id },
+        data: { status: 'active', tombstonedAt: null },
+      });
+      queued = existing.id;
+    }
+    await this.prisma.productImage.updateMany({
+      where: { organisationId, productId, source: 'gati_cad', status: 'active', NOT: { sourceUrl: url } },
+      data: { status: 'tombstoned', tombstonedAt: new Date() },
+    });
+    return queued;
+  }
+
+  /**
+   * ProductPrice `gati_tag_min` / `gati_tag_max` (source gati): the range of
+   * tag prices over a design's in-stock pieces. A design with no priced piece
+   * in stock has no range. Only rows whose amount changes are written.
+   */
+  private async refreshGatiTagPrices(organisationId: string, productIds: (string | null | undefined)[]) {
+    const ids = [...new Set(productIds.filter((id): id is string => !!id))];
+    const kinds = ['gati_tag_min', 'gati_tag_max'];
+    for (let i = 0; i < ids.length; i += 500) {
+      const chunk = ids.slice(i, i + 500);
+      const [ranges, current] = await Promise.all([
+        this.prisma.stockItem.groupBy({
+          by: ['productId'],
+          where: { organisationId, productId: { in: chunk }, status: 'in_stock', tagPrice: { gt: 0 } },
+          _min: { tagPrice: true },
+          _max: { tagPrice: true },
+        }),
+        this.prisma.productPrice.findMany({
+          where: { organisationId, productId: { in: chunk }, variantKey: '', source: 'gati', kind: { in: kinds } },
+          select: { productId: true, kind: true, amount: true },
+        }),
+      ]);
+      const have = new Map(current.map((p) => [`${p.productId}|${p.kind}`, p.amount.toString()]));
+      const withRange = new Set<string>();
+      for (const range of ranges) {
+        const productId = range.productId as string;
+        withRange.add(productId);
+        for (const [kind, amount] of [
+          ['gati_tag_min', range._min.tagPrice],
+          ['gati_tag_max', range._max.tagPrice],
+        ] as const) {
+          if (!amount || have.get(`${productId}|${kind}`) === amount.toString()) continue;
+          await this.prisma.productPrice.upsert({
+            where: { productId_variantKey_source_kind: { productId, variantKey: '', source: 'gati', kind } },
+            create: { organisationId, productId, source: 'gati', kind, amount },
+            update: { amount, capturedAt: new Date() },
+          });
+        }
+      }
+      const stale = chunk.filter((id) => !withRange.has(id));
+      if (stale.length) {
+        await this.prisma.productPrice.deleteMany({
+          where: { organisationId, productId: { in: stale }, variantKey: '', source: 'gati', kind: { in: kinds } },
+        });
+      }
+    }
   }
 
   private async idMap(
@@ -3008,6 +3249,50 @@ export class SyncService {
       ...(attribution ? { attribution } : {}),
     };
   }
+}
+
+/**
+ * A column an older agent build may not send: absent -> `undefined` (Prisma
+ * leaves the stored value), present -> converted (a real null clears it).
+ */
+function sent<T>(r: Rec, column: string, convert: (v: unknown) => T): T | undefined {
+  return column in r ? convert(r[column]) : undefined;
+}
+
+/**
+ * Gati metal: karat from the row (explicit, else the SKU token `-14KT-`), mapped
+ * by the one shared table. Tone colour (PG/rose) no longer changes the enum.
+ */
+function gatiMetal(r: Rec): MetalKind {
+  return karatToMetal(r.ToneFor, karatFromRow(r));
+}
+
+/** Tone code / colour text -> rose | yellow | white; null when unreadable or mixed. */
+function toneColour(raw: unknown): string | null {
+  const s = String(raw ?? '').toUpperCase();
+  const found = new Set<string>();
+  if (/PG|RG|ROSE|PINK/.test(s)) found.add('rose');
+  if (/YG|YELLOW/.test(s)) found.add('yellow');
+  if (/WG|WHITE/.test(s)) found.add('white');
+  return found.size === 1 ? [...found][0] : null;
+}
+
+/**
+ * The website variant a Gati piece is: exactly one live website variant of the
+ * design with the piece's karat (and colour, when Gati records a tone). Any
+ * doubt — unknown karat, unreadable tone, zero or several candidates — is null.
+ */
+function matchVariant(
+  variants: { id: string; karat: number | null; colour: string | null }[],
+  karat: number | null,
+  toneCode: unknown,
+): string | null {
+  if (karat == null) return null;
+  const hasTone = str(toneCode) != null;
+  const colour = hasTone ? toneColour(toneCode) : null;
+  if (hasTone && !colour) return null;
+  const hits = variants.filter((v) => v.karat === karat && (!colour || toneColour(v.colour) === colour));
+  return hits.length === 1 ? hits[0].id : null;
 }
 
 function jsonObject(value: Prisma.JsonValue): Record<string, unknown> {

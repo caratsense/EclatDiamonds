@@ -90,7 +90,7 @@ function StatusBadge({ status }: { status: StoreStatus }) {
 }
 
 export default function StoreSetupPage() {
-  const role = useSession((s) => s.role);
+  const { role, user, stores: sessionStores } = useSession();
   const isHeadOffice = role === "head_office";
   const [addOpen, setAddOpen] = useState(false);
   const [editStore, setEditStore] = useState<AdminStore | null>(null);
@@ -101,10 +101,8 @@ export default function StoreSetupPage() {
   const { data: stores = [], isLoading, isError, refetch } = useStoresAdmin();
   const { data: pending = [] } = usePendingStores();
 
-  // Store lifecycle is managed by area managers and Head Office. Nav hides
-  // this for lower roles; guard the page too so a direct URL / a demo role
-  // switch can't reach the provisioning controls.
-  if (ROLE_RANK[role] < ROLE_RANK.head_office) {
+  // Store settings are managed by store managers, area managers, and Head Office.
+  if (ROLE_RANK[role] < ROLE_RANK.store_manager) {
     return (
       <>
         <SectionHeader title={nav.title} purpose={nav.purpose} />
@@ -112,10 +110,10 @@ export default function StoreSetupPage() {
           <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-muted">
             <Lock className="h-5 w-5 text-muted-foreground" />
           </div>
-          <p className="text-sm font-medium">Area Manager access required</p>
+          <p className="text-sm font-medium">Store Manager access required</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Store provisioning and lifecycle are managed by Area Managers and
-            Head Office. Switch to a higher role to continue.
+            Store geofencing and branch settings are managed by Store Managers and
+            Head Office.
           </p>
         </div>
       </>
@@ -123,7 +121,11 @@ export default function StoreSetupPage() {
   }
 
   // The synthetic "All Stores" aggregate is a view, not a branch to manage.
-  const manageable = stores.filter((s) => !s.isAggregate);
+  const manageable = stores.filter(
+    (s) =>
+      !s.isAggregate &&
+      (isHeadOffice || role === "area_manager" || sessionStores.some((ss) => ss.id === s.id)),
+  );
   const activeCount = manageable.filter((s) => s.status === "active").length;
 
   /** Open the edit dialog for a pending branch so HO can set geo + region. */
@@ -647,6 +649,8 @@ function EditStoreDialog({
   const [regionId, setRegionId] = useState("");
   const [latitude, setLatitude] = useState("");
   const [longitude, setLongitude] = useState("");
+  const [geofenceRadiusM, setGeofenceRadiusM] = useState("150");
+  const [locating, setLocating] = useState(false);
   const [isActive, setIsActive] = useState(true);
   // Inline validation errors, keyed by field. Cleared per-field on change.
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -659,12 +663,36 @@ function EditStoreDialog({
     setRegionId(store.regionId ?? "");
     setLatitude(store.latitude != null ? String(store.latitude) : "");
     setLongitude(store.longitude != null ? String(store.longitude) : "");
+    setGeofenceRadiusM(store.geofenceRadiusM != null ? String(store.geofenceRadiusM) : "150");
     setIsActive(store.isActive);
     setErrors({});
   }
 
   function clearError(field: string) {
     setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
+  }
+
+  function captureCurrentLocation() {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      toast.error("Geolocation is not supported on this browser.");
+      return;
+    }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLatitude(pos.coords.latitude.toFixed(6));
+        setLongitude(pos.coords.longitude.toFixed(6));
+        setLocating(false);
+        toast.success("Current GPS coordinates captured!", {
+          description: `Lat: ${pos.coords.latitude.toFixed(6)}, Lng: ${pos.coords.longitude.toFixed(6)}`,
+        });
+      },
+      () => {
+        setLocating(false);
+        toast.error("Could not capture GPS location. Check location permissions.");
+      },
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
   }
 
   function save() {
@@ -692,11 +720,12 @@ function EditStoreDialog({
         regionId: regionId.trim() || undefined,
         latitude: lat,
         longitude: lng,
+        geofenceRadiusM: Number(geofenceRadiusM) || 150,
         isActive,
       },
       {
         onSuccess: () => {
-          toast.success("Store updated");
+          toast.success("Store updated successfully");
           onOpenChange(false);
         },
         onError: (err) =>
@@ -711,11 +740,11 @@ function EditStoreDialog({
     <Dialog open={!!store} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Edit store</DialogTitle>
+          <DialogTitle>Edit store &amp; geofence</DialogTitle>
           <DialogDescription>
             {isPending
               ? "Set the geofence and region to clear this branch for activation."
-              : "Update branch details, geofence and region."}
+              : "Update branch details, GPS coordinates, and geofence radius."}
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
@@ -762,26 +791,82 @@ function EditStoreDialog({
               onChange={(e) => setRegionId(e.target.value)}
             />
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="grid gap-1.5">
-              <Label htmlFor="edit-lat">Latitude</Label>
-              <Input
-                id="edit-lat"
-                inputMode="decimal"
-                placeholder="e.g. 21.1702"
-                value={latitude}
-                onChange={(e) => setLatitude(e.target.value)}
-              />
+
+          {/* Geofence GPS Coordinates */}
+          <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Geofence Center &amp; Radius
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={captureCurrentLocation}
+                disabled={locating}
+                className="h-7 text-xs gap-1.5"
+              >
+                <MapPin className="h-3 w-3 text-indigo-500" />
+                {locating ? "Capturing…" : "Use My Current GPS"}
+              </Button>
             </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-1.5">
+                <Label htmlFor="edit-lat">Latitude</Label>
+                <Input
+                  id="edit-lat"
+                  inputMode="decimal"
+                  placeholder="e.g. 19.0606"
+                  value={latitude}
+                  onChange={(e) => setLatitude(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="edit-lng">Longitude</Label>
+                <Input
+                  id="edit-lng"
+                  inputMode="decimal"
+                  placeholder="e.g. 72.8362"
+                  value={longitude}
+                  onChange={(e) => setLongitude(e.target.value)}
+                />
+              </div>
+            </div>
+
             <div className="grid gap-1.5">
-              <Label htmlFor="edit-lng">Longitude</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="edit-radius">Geofence Radius (metres)</Label>
+                <span className="text-xs font-mono text-muted-foreground">{geofenceRadiusM} m</span>
+              </div>
               <Input
-                id="edit-lng"
-                inputMode="decimal"
-                placeholder="e.g. 72.8311"
-                value={longitude}
-                onChange={(e) => setLongitude(e.target.value)}
+                id="edit-radius"
+                type="number"
+                min={10}
+                max={5000}
+                value={geofenceRadiusM}
+                onChange={(e) => setGeofenceRadiusM(e.target.value)}
+                placeholder="150"
               />
+              <div className="flex flex-wrap gap-1.5 mt-1">
+                {[
+                  { label: "60m (Bandra)", val: "60" },
+                  { label: "75m (Surat)", val: "75" },
+                  { label: "100m", val: "100" },
+                  { label: "150m (Standard)", val: "150" },
+                ].map((p) => (
+                  <Button
+                    key={p.val}
+                    type="button"
+                    variant={geofenceRadiusM === p.val ? "default" : "outline"}
+                    size="sm"
+                    className="h-6 text-[10px] px-2"
+                    onClick={() => setGeofenceRadiusM(p.val)}
+                  >
+                    {p.label}
+                  </Button>
+                ))}
+              </div>
             </div>
           </div>
           <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/30 px-4 py-3">

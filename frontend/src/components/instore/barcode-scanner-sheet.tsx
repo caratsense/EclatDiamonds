@@ -26,9 +26,10 @@ import { apiErrorMessage } from "@/lib/utils";
  *      jewellery SKUs on screen, which is wrong twice over — it is a jewellery
  *      assumption in a universal product, and staff tapping a sample would file
  *      an interest in an item the customer never saw.
- *   2. It does not require a camera. `BarcodeDetector` is not available in every
- *      browser and permission is often refused, so typing is a first-class path
- *      rather than a fallback nobody finds.
+ *   2. It does not require a camera. Permission is often refused, so typing is a
+ *      first-class path rather than a fallback nobody finds. Where the browser
+ *      has no `BarcodeDetector` (Safari on iPad and iPhone), a WebAssembly
+ *      decoder with the same API is loaded on first use.
  *   3. It does not decide what the code means. The API answers that, including
  *      "no such item", which is an ordinary outcome at a counter.
  */
@@ -39,14 +40,35 @@ interface BarcodeDetectorLike {
 
 type CameraState = "idle" | "starting" | "running" | "denied" | "unsupported" | "error";
 
-interface Props {
+type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Called with the resolved item, or with the raw code when nothing matched. */
-  onResolved: (result: ScannedItem) => void;
+  title?: string;
+} & (
+  | {
+      /** Called with the resolved item, or with the raw code when nothing matched. */
+      onResolved: (result: ScannedItem) => void;
+      onCode?: never;
+    }
+  | {
+      /** Just the code: the caller looks it up itself. */
+      onCode: (code: string) => void;
+      onResolved?: never;
+    }
+);
+
+const FORMATS = ["code_128", "code_39", "ean_13", "ean_8", "upc_a", "qr_code"];
+
+/** The browser's own detector, else the WebAssembly one (Safari has none). */
+async function barcodeDetector(): Promise<BarcodeDetectorLike> {
+  const Native = (globalThis as unknown as { BarcodeDetector?: new (o?: unknown) => BarcodeDetectorLike })
+    .BarcodeDetector;
+  if (Native) return new Native({ formats: FORMATS });
+  const { BarcodeDetector } = await import("barcode-detector/ponyfill");
+  return new BarcodeDetector({ formats: FORMATS as never }) as unknown as BarcodeDetectorLike;
 }
 
-export function BarcodeScannerSheet({ open, onOpenChange, onResolved }: Props) {
+export function BarcodeScannerSheet({ open, onOpenChange, onResolved, onCode, title }: Props) {
   const [manual, setManual] = useState("");
   const [camera, setCamera] = useState<CameraState>("idle");
   const [cameraMessage, setCameraMessage] = useState<string | null>(null);
@@ -75,29 +97,33 @@ export function BarcodeScannerSheet({ open, onOpenChange, onResolved }: Props) {
       if (!value) return;
       setLookupError(null);
       setNotFound(null);
+      if (onCode) {
+        stopCamera();
+        onCode(value);
+        onOpenChange(false);
+        return;
+      }
       scan.mutate(value, {
         onSuccess: (result) => {
           if (!result.found) {
             // Not an error: an uncatalogued tag is a normal thing to scan. The
             // caller may still record interest against the raw code.
             setNotFound(result.code);
-            onResolved(result);
+            onResolved?.(result);
             return;
           }
           stopCamera();
-          onResolved(result);
+          onResolved?.(result);
           onOpenChange(false);
         },
         onError: (e) => setLookupError(apiErrorMessage(e, "Could not look that code up.")),
       });
     },
-    [onOpenChange, onResolved, scan, stopCamera],
+    [onCode, onOpenChange, onResolved, scan, stopCamera],
   );
 
   const startCamera = useCallback(async () => {
-    const Detector = (globalThis as unknown as { BarcodeDetector?: new (o?: unknown) => BarcodeDetectorLike })
-      .BarcodeDetector;
-    if (!Detector || !navigator.mediaDevices?.getUserMedia) {
+    if (!navigator.mediaDevices?.getUserMedia) {
       setCamera("unsupported");
       setCameraMessage(
         "This browser cannot read barcodes with the camera. Type the code instead — it works the same.",
@@ -111,15 +137,14 @@ export function BarcodeScannerSheet({ open, onOpenChange, onResolved }: Props) {
         video: { facingMode: "environment" },
       });
       streamRef.current = stream;
+      // The <video> is always mounted (hidden until running), so the stream
+      // has somewhere to go before the first frame is read.
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
       }
+      const detector = await barcodeDetector();
       setCamera("running");
-
-      const detector = new Detector({
-        formats: ["code_128", "code_39", "ean_13", "ean_8", "upc_a", "qr_code"],
-      });
       const tick = async () => {
         if (!videoRef.current || !streamRef.current) return;
         try {
@@ -159,7 +184,7 @@ export function BarcodeScannerSheet({ open, onOpenChange, onResolved }: Props) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>Scan an item</DialogTitle>
+          <DialogTitle>{title ?? "Scan an item"}</DialogTitle>
           <DialogDescription>
             Point the camera at the tag, or type the code printed on it.
           </DialogDescription>
@@ -167,12 +192,11 @@ export function BarcodeScannerSheet({ open, onOpenChange, onResolved }: Props) {
 
         <div className="space-y-4">
           <div className="overflow-hidden rounded-md border border-border bg-muted">
-            {camera === "running" ? (
-              <div className="relative">
-                <video ref={videoRef} playsInline muted className="h-48 w-full object-cover" />
-                <div className="pointer-events-none absolute inset-x-6 top-1/2 h-0.5 -translate-y-1/2 bg-foreground/70" />
-              </div>
-            ) : (
+            <div className={camera === "running" ? "relative" : "hidden"}>
+              <video ref={videoRef} playsInline muted className="h-48 w-full object-cover" />
+              <div className="pointer-events-none absolute inset-x-6 top-1/2 h-0.5 -translate-y-1/2 bg-foreground/70" />
+            </div>
+            {camera === "running" ? null : (
               <div className="flex h-48 flex-col items-center justify-center gap-3 p-4 text-center">
                 {camera === "starting" ? (
                   <>

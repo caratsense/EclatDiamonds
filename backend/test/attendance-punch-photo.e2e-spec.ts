@@ -438,6 +438,8 @@ async function teardown(prisma: import('../src/prisma/prisma.service').PrismaSer
     await fn().catch(() => undefined);
   };
   await drop(() => prisma.attendanceRecord.deleteMany({ where: { organisationId: { in: orgs } } }));
+  // Every punch now lands in the raw ledger too.
+  await drop(() => prisma.rawPunchEvent.deleteMany({ where: { organisationId: { in: orgs } } }));
   await drop(() => prisma.auditLog.deleteMany({ where: { organisationId: { in: orgs } } }));
   await drop(() => prisma.userStore.deleteMany({ where: { store: { organisationId: { in: orgs } } } }));
   await drop(() => prisma.user.deleteMany({ where: { organisationId: { in: orgs } } }));

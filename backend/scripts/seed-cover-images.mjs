@@ -15,16 +15,11 @@
 // ============================================================================
 
 import { PrismaClient } from "@prisma/client";
-import { mkdir, writeFile } from "fs/promises";
-import { isAbsolute, join } from "path";
 
 const prisma = new PrismaClient();
 
-function uploadDir() {
-  const c = process.env.UPLOAD_DIR;
-  if (c) return isAbsolute(c) ? c : join(process.cwd(), c);
-  return join(process.cwd(), "uploads");
-}
+/** What the file-writing version left behind, and the only thing safe to replace. */
+const STALE_COVER_PREFIX = "/uploads/covers/";
 
 // Metal -> premium gradient + gem/label colour (visually accurate to the metal).
 const METALS = {
@@ -62,21 +57,41 @@ function svg({ c1, c2, ink, label }) {
 </svg>`;
 }
 
-async function run() {
-  const dir = join(uploadDir(), "covers");
-  await mkdir(dir, { recursive: true });
-  console.log("Writing covers to", dir);
+/**
+ * The cover travels in the row, not on a disk.
+ *
+ * This used to write four SVGs into <UPLOAD_DIR>/covers and point imageUrl at
+ * /uploads/covers/<metal>.svg. On Railway that silently produced ten products
+ * whose pictures all 404: the pre-deploy command runs in its OWN container, so
+ * the files landed on a filesystem that is thrown away before the app starts,
+ * and the app's own /app/uploads — a persistent volume — never saw them.
+ *
+ * A generated cover is a few hundred bytes of markup. Inlining it as a data URI
+ * removes the filesystem from the problem entirely: no volume, no static route,
+ * no ordering between the writer and the server, and it works the same on a
+ * laptop, in CI and on Railway. A real photograph from the media sync is still
+ * an ordinary URL and is still never overwritten.
+ */
+function dataUri(cfg) {
+  return `data:image/svg+xml;base64,${Buffer.from(svg(cfg), "utf8").toString("base64")}`;
+}
 
-  for (const [metal, cfg] of Object.entries(METALS)) {
-    await writeFile(join(dir, `${metal}.svg`), svg(cfg), "utf8");
-  }
-  console.log(`  wrote ${Object.keys(METALS).length} cover SVGs`);
+async function run() {
+  // An earlier run of this script pointed products at files that were thrown
+  // away with the pre-deploy container. Those rows are not empty, so the fill
+  // below would skip them and the catalogue would stay broken. Clear exactly
+  // those and nothing else — a real photo never has this prefix.
+  const stale = await prisma.product.updateMany({
+    where: { imageUrl: { startsWith: STALE_COVER_PREFIX } },
+    data: { imageUrl: null },
+  });
+  if (stale.count) console.log(`  cleared ${stale.count} dead cover link(s)`);
 
   let total = 0;
-  for (const metal of Object.keys(METALS)) {
+  for (const [metal, cfg] of Object.entries(METALS)) {
     const res = await prisma.product.updateMany({
       where: { metal, OR: [{ imageUrl: null }, { imageUrl: "" }] },
-      data: { imageUrl: `/uploads/covers/${metal}.svg` },
+      data: { imageUrl: dataUri(cfg) },
     });
     if (res.count) console.log(`  ${metal.padEnd(14)} -> ${res.count} products`);
     total += res.count;

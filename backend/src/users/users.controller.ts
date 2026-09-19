@@ -6,6 +6,7 @@ import {
   DeactivateUserDto,
   RejectUserDto,
   SetLeaveAllocationDto,
+  SetUserAccessDto,
   UpdateSignupPolicyDto,
   UpdateUserRoleDto,
   UpdateUserStoreDto,
@@ -138,5 +139,19 @@ export class UsersController {
   @Patch(':id/activate')
   activate(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.users.activate(user, id);
+  }
+
+  /** GET /users/:id/access — what this person may open: role defaults, head office's changes, the result. */
+  @Roles('head_office')
+  @Get(':id/access')
+  access(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.users.access(user, id);
+  }
+
+  /** PUT /users/:id/access — replace head office's changes for this person (audited). */
+  @Roles('head_office')
+  @Put(':id/access')
+  setAccess(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: SetUserAccessDto) {
+    return this.users.setAccess(user, id, dto.overrides);
   }
 }

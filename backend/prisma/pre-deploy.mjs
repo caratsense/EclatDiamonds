@@ -18,6 +18,13 @@
  * ONLY when SEED_DEMO_TARGET=staging:
  *   3. the demo dataset, so a staging environment has something to show
  *   4. the five demo WhatsApp threads
+ *   5. catalogue cover images, so the catalogue is not a wall of grey boxes
+ *
+ * Step 5 writes into the uploads volume, which Railway keeps across deploys,
+ * so this is not regenerating something lost — it runs every deploy because
+ * products seeded later still need a cover, and rewriting the same few SVGs
+ * costs nothing. It fills `imageUrl` only where empty, so a real photograph
+ * from the media sync is never overwritten.
  *
  * Both of those write invented customers, so they are gated on the variable AND
  * on the seeders' own guards — `seed-conversations.mjs` refuses any database
@@ -36,6 +43,7 @@ const steps = [
     ? [
         ['demo dataset (staging only)', ['prisma/seed.mjs']],
         ['demo WhatsApp threads (staging only)', ['scripts/seed-conversations.mjs']],
+        ['catalogue cover images (staging only)', ['scripts/seed-cover-images.mjs']],
       ]
     : []),
 ];

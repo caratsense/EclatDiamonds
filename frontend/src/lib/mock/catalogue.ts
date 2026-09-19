@@ -38,6 +38,55 @@ export type Metal =
    */
   | "unspecified";
 
+/**
+ * One photograph of a design. A piece is shown from several angles — front,
+ * side, on the hand — and visual search matches against all of them, so a
+ * customer’s phone photo finds the design whichever way they held the camera.
+ */
+export interface ProductImage {
+  id: string;
+  url: string;
+  /** "front", "side", "on model", "CAD"… free text; absent means unlabelled. */
+  angle?: string | null;
+  /** The one shown in the grid. Exactly one per design. */
+  isPrimary: boolean;
+  sortOrder: number;
+  /** Where the picture came from (absent on an API that predates sources). */
+  source?: ImageSource;
+  /** Set only by a head-office pin; `isPrimary` is the computed result. */
+  pinned?: boolean;
+  /** Small (≤400px) rendition for strips and grids; fall back to `url`. */
+  thumbUrl?: string | null;
+  colour?: string | null;
+  shape?: string | null;
+  width?: number | null;
+  height?: number | null;
+  /** pending | queued | running | indexed | failed | dead | skipped */
+  embeddingStatus?: string | null;
+}
+
+export type ImageSource = "gati_cad" | "website" | "manual" | "inventory" | "other";
+
+/** Badge text for an image's source — what a salesperson calls it. */
+export const IMAGE_SOURCE_LABELS: Record<ImageSource, string> = {
+  gati_cad: "CAD",
+  website: "Website",
+  manual: "Manual",
+  inventory: "Inventory",
+  other: "Other",
+};
+
+/** Label for any source string, including one this build does not know yet. */
+export function imageSourceLabel(source?: string | null): string | null {
+  if (!source) return null;
+  return IMAGE_SOURCE_LABELS[source as ImageSource] ?? source;
+}
+
+export interface PriceRange {
+  min: number | null;
+  max: number | null;
+}
+
 export interface Product {
   id: string;
   sku: string;
@@ -61,6 +110,12 @@ export interface Product {
   /** Photo URL/path from the API (object storage). Card falls back to a gem glyph. */
   imageUrl?: string;
   /**
+   * Every photograph of this design, cover first. Only present on the detail
+   * view — absent (not empty) in a list, where one cover per tile is all the
+   * grid asks for.
+   */
+  images?: ProductImage[];
+  /**
    * What a non-jewellery tenant actually sells, in their own words. The typed
    * `category` / `metal` columns hold the neutral enum members for these rows,
    * so these are where the meaning lives. Absent for every jewellery product.
@@ -73,6 +128,77 @@ export interface Product {
    * organisation that has configured none — which is every existing store.
    */
   attributes?: Record<string, unknown> | null;
+  /** The code a customer or salesperson quotes. For Gati designs this is the StyleCode. */
+  styleNumber?: string | null;
+  /** Gati StyleId, when the design came from Gati. */
+  gatiId?: string | null;
+  /** The design's code on the client's website, when it is on the website. */
+  websiteCode?: string | null;
+  source?: ProductSource;
+  /** Where it can be had, from the viewer's counter (computed by the API). */
+  stock?: StockPresence;
+  /** What it is made of. Rates and amounts arrive only for store managers and up. */
+  composition?: Composition | null;
+
+  // ---- Lossless catalogue (list additions; absent on an older API) ----
+  /** listing.marketingName ?? name — what the design is called to a customer. */
+  displayName?: string | null;
+  /** Precedence #1 image (pin, else CAD, else website…), and its thumbnail. */
+  heroImageUrl?: string | null;
+  heroThumbUrl?: string | null;
+  heroSource?: ImageSource | null;
+  onlinePrice?: (PriceRange & { indicative?: number | null }) | null;
+  tagPrice?: PriceRange | null;
+  /** Pieces on hand in the viewer's scope. */
+  onHand?: number | null;
+  flags?: ProductFlags | null;
+}
+
+export interface ProductFlags {
+  noImage?: boolean;
+  noCad?: boolean;
+  /** Open catalogue conflicts on this design. */
+  conflicts?: number;
+  indexing?: "none" | "partial" | "full";
+}
+
+/** The name to show: the website's marketing name when there is one. */
+export function productDisplayName(p: Pick<Product, "displayName" | "name">): string {
+  return p.displayName || p.name;
+}
+
+export interface CompositionLine {
+  item: string;
+  kind: "metal" | "diamond" | "stone" | "labour" | "other";
+  weight?: number;
+  unit?: "g" | "ct";
+  pieces?: number;
+  rate?: number;
+  amount?: number;
+}
+
+export interface Composition {
+  source: "gati" | "website";
+  lines: CompositionLine[];
+}
+
+export type ProductSource = "gati" | "website" | "gati_website" | "import" | "manual";
+
+export const SOURCE_LABELS: Record<ProductSource, string> = {
+  gati: "Gati (CAD)",
+  website: "Website",
+  gati_website: "Gati (CAD) + Website",
+  import: "Imported",
+  manual: "Added in the app",
+};
+
+export interface StockPresence {
+  /** Pieces in the store the viewer is at. */
+  hereCount: number;
+  /** Pieces in other branches, most first. */
+  elsewhere: { storeId: string; storeName: string; count: number }[];
+  totalCount: number;
+  where: "here" | "elsewhere" | "made";
 }
 
 export const CATEGORY_LABELS: Record<ProductCategory, string> = {

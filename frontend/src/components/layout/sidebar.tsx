@@ -35,7 +35,8 @@ export function Sidebar() {
   const pathname = usePathname();
   const t = useT();
   // Role-aware nav: HO-only sections (e.g. Store Setup) stay hidden otherwise.
-  const role = useSession((s) => s.role);
+  const role = useSession((s) => s.baseRole);
+  const access = useSession((s) => s.access);
   const { data: config } = useConfigBootstrap();
   // Derived from the applied industry pack, so changing industry moves the
   // sidebar immediately instead of leaving it on whatever was frozen at signup.
@@ -48,7 +49,7 @@ export function Sidebar() {
    * the legal organisation name when they have set one.
    */
   const brandName = brandingName(config?.organisation.settings) ?? config?.organisation.name ?? null;
-  const groups = visibleNavGroups(role, enabledNavigation);
+  const groups = visibleNavGroups(role, enabledNavigation, access);
   // Pending follow-ups due today or overdue → the Reminders nav badge.
   const { data: reminders } = useReminders("pending");
   const dueCount = pendingDueCount(reminders);
@@ -256,9 +257,10 @@ function NavRow({
 function QuickActionMenu() {
   const router = useRouter();
   const request = useQuickAction((s) => s.request);
-  const role = useSession((s) => s.role);
+  const role = useSession((s) => s.baseRole);
+  const access = useSession((s) => s.access);
   const enabledNavigation = useEnabledNavigation();
-  const groups = visibleNavGroups(role, enabledNavigation);
+  const groups = visibleNavGroups(role, enabledNavigation, access);
   const allowed = new Set(groups.flatMap((g) => g.items.map((i) => i.slug)));
 
   const actions = [

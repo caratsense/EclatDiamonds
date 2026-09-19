@@ -74,6 +74,8 @@ describe('DSR create/file validation (e2e)', () => {
     expect([200, 201]).toContain(res.status);
     expect(res.body.id).toBeTruthy();
     expect(res.body.storeId).toBe(SURAT);
+    // Filed in the app, which head office tells apart from the WhatsApp bot.
+    expect(res.body.source).toBe('web');
   });
 
   // ── Req 3: footfall funnel + future date ───────────────────────────────────

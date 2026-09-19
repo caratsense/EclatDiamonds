@@ -58,7 +58,8 @@ export interface MarkAttendanceInput {
   staffName?: string;
   status: AttendanceStatus;
   storeId: string;
-  checkInAt?: string;
+  /** Store-local HH:mm; the server combines it with the store's date/timezone. */
+  checkInLocal?: string;
   /** Day being marked (YYYY-MM-DD, store-local). Defaults to the store's today. */
   date?: string;
   /**
@@ -92,9 +93,8 @@ export function useMarkAttendance() {
       );
       return data;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [HRMS_KEY, "attendance"] });
-    },
+    // Today, the register and reports all read attendance.
+    onSuccess: () => qc.invalidateQueries({ queryKey: [HRMS_KEY] }),
   });
 }
 
@@ -159,8 +159,10 @@ export function useCancelLeave() {
       return data;
     },
     onSuccess: () => {
-      // Prefix invalidation covers the leave list and the balance rows.
-      qc.invalidateQueries({ queryKey: [HRMS_KEY, "leave"] });
+      // Cancellation can release an approved request's balance as well as
+      // changing the history row, so refresh every HRMS projection that may
+      // have derived a figure from it.
+      qc.invalidateQueries({ queryKey: [HRMS_KEY] });
     },
   });
 }
@@ -540,6 +542,10 @@ export interface CreateShiftInput {
   endTime: string;
   bufferMins?: number;
   isNightBatch?: boolean;
+  /** No fixed start: lateness is never computed. */
+  isFlexible?: boolean;
+  /** Short code ("S", "G", "F", "6HR"). */
+  code?: string;
   /** Minutes worked for a full day's payroll credit. Defaults to the shift length. */
   fullDayMins?: number;
   /** Minutes for a half day's credit. Defaults to half the full-day threshold. */
@@ -611,6 +617,7 @@ export function useCreateShift() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [HRMS_KEY, "shifts"] });
+      qc.invalidateQueries({ queryKey: [HRMS_KEY, "attendance-rules"] });
     },
   });
 }
@@ -654,6 +661,7 @@ export function useAddHoliday() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [HRMS_KEY, "holidays"] });
+      qc.invalidateQueries({ queryKey: [HRMS_KEY, "attendance-rules"] });
     },
   });
 }
@@ -672,7 +680,56 @@ export function useSetWeekOff() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [HRMS_KEY, "week-off"] });
       qc.invalidateQueries({ queryKey: [HRMS_KEY, "holidays"] });
+      qc.invalidateQueries({ queryKey: [HRMS_KEY, "attendance-rules"] });
     },
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Attendance rules — is automatic absence on at each location?        */
+/* ------------------------------------------------------------------ */
+
+export interface AttendanceRulesStatus {
+  storeId: string;
+  name: string;
+  /** A Head Office-style location: attendance only, no sales. */
+  attendanceOnly: boolean;
+  geofence: "set" | "unverified";
+  weekOffDay: number | null;
+  /** Staff with their own weekly-off roster here. */
+  staffWeekOffs: number;
+  holidays: number;
+  lastHoliday: string | null;
+  shifts: { name: string; startTime: string; endTime: string; graceMins: number | null }[];
+  /** HR confirmed the rules complete through this date (YYYY-MM-DD). */
+  confirmedThrough: string | null;
+  /** false = an unpunched day stays "not marked", never "absent". */
+  automaticAbsence: boolean;
+  gaps: string[];
+}
+
+/** GET /hrms/attendance/rules — per location in scope (store_manager+). */
+export function useAttendanceRules(opts: { enabled?: boolean } = {}) {
+  const storeId = useStoreKey();
+  return useQuery({
+    queryKey: [HRMS_KEY, "attendance-rules", storeId],
+    queryFn: async () => {
+      const { data } = await api.get<AttendanceRulesStatus[]>("/hrms/attendance/rules");
+      return data;
+    },
+    enabled: opts.enabled ?? true,
+  });
+}
+
+/** POST /hrms/attendance/rules/confirm — head office; `through: null` withdraws. */
+export function useConfirmAttendanceRules() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { storeId: string; through: string | null }) => {
+      const { data } = await api.post("/hrms/attendance/rules/confirm", input);
+      return data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [HRMS_KEY, "attendance-rules"] }),
   });
 }
 

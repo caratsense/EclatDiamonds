@@ -101,7 +101,7 @@ export const NEW_STORE_PROJECT: NewStoreProject = {
         { id: "it-1", label: "Lease line + 4G failover provisioned", status: "done" },
         { id: "it-2", label: "POS terminals & billing rack installed", status: "in_progress", dependsOn: "it-1" },
         { id: "it-3", label: "CCTV & burglar alarm wiring", status: "in_progress" },
-        { id: "it-4", label: "Biometric attendance device synced", status: "todo", dependsOn: "it-2" },
+        { id: "it-4", label: "Legacy attendance device connected", status: "todo", dependsOn: "it-2" },
         { id: "it-5", label: "CaratOS terminal onboarding", status: "blocked", dependsOn: "it-2" },
       ],
     },

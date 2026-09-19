@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CaratOS — Complete System Map</title>
+  <style>
+    :root {
+      --ink:#12211b; --muted:#607069; --paper:#f7f5ee; --card:#ffffff;
+      --green:#0d5945; --green2:#dff1e9; --gold:#c69c45; --blue:#dcebf7;
+      --purple:#eee6f8; --orange:#f8e7d5; --red:#f7dfdf; --line:#bcc8c2;
+    }
+    *{box-sizing:border-box} body{margin:0;background:#dfe5e1;color:var(--ink);font:15px/1.45 Arial,sans-serif}
+    .page{width:1120px;min-height:790px;margin:24px auto;padding:46px 54px;background:var(--paper);box-shadow:0 8px 28px #0002;page-break-after:always;position:relative}
+    h1,h2,h3{margin:0 0 12px} h1{font:700 42px/1.05 Georgia,serif} h2{font:700 29px/1.1 Georgia,serif;color:var(--green)} h3{font-size:16px;color:var(--green)}
+    p{margin:7px 0 14px}.sub{font-size:19px;color:var(--muted);max-width:850px}.note{padding:14px 18px;border-left:5px solid var(--gold);background:#fff8e7}.tiny{font-size:12px;color:var(--muted)}
+    .brand{letter-spacing:3px;text-transform:uppercase;color:var(--gold);font-weight:700;margin-bottom:16px}.footer{position:absolute;bottom:22px;left:54px;right:54px;display:flex;justify-content:space-between;color:#78847e;font-size:11px}
+    .row{display:flex;gap:14px;align-items:stretch}.col{flex:1}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:15px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:13px}.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+    .box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:15px}.box.green{background:var(--green2);border-color:#8ebaa9}.box.blue{background:var(--blue)}.box.purple{background:var(--purple)}.box.orange{background:var(--orange)}.box.red{background:var(--red)}
+    .pill{display:inline-block;border-radius:20px;padding:4px 10px;font-size:11px;font-weight:700;background:var(--green2);color:var(--green)}
+    .flow{display:flex;align-items:center;gap:8px;margin:22px 0}.flow .box{flex:1;text-align:center;min-height:92px;display:flex;flex-direction:column;justify-content:center}.arrow{font-size:27px;color:var(--gold);font-weight:700}.down{text-align:center;font-size:25px;color:var(--gold);line-height:1}
+    .tree,.tree ul{list-style:none;margin:0;padding-left:21px}.tree>li{padding-left:0}.tree li{position:relative;margin:7px 0}.tree ul{border-left:2px solid var(--line);margin-left:7px}.tree ul li:before{content:"";position:absolute;left:-21px;top:10px;width:16px;border-top:2px solid var(--line)}
+    .tree strong{color:var(--green)}.legend{display:flex;gap:9px;flex-wrap:wrap;margin:12px 0}.legend span{border:1px solid var(--line);border-radius:7px;padding:5px 9px;background:#fff;font-size:11px}
+    table{width:100%;border-collapse:collapse;background:#fff}th,td{text-align:left;padding:9px;border-bottom:1px solid #dde3df;vertical-align:top}th{background:#e8eee9;color:var(--green)}
+    .actor{text-align:center;border:2px solid var(--green);background:white;border-radius:50%;width:92px;height:92px;padding-top:25px;font-weight:700;margin:auto}.lane{border:2px solid var(--green);border-radius:15px;padding:14px;background:#fff}.lane-title{text-transform:uppercase;letter-spacing:1px;color:var(--green);font-size:11px;font-weight:700;margin-bottom:10px}.module{padding:9px;border-radius:8px;background:#eef3f0;margin:7px 0}.module small{display:block;color:var(--muted)}
+    .decision{transform:rotate(45deg);width:84px;height:84px;background:#fff3cf;border:2px solid var(--gold);margin:15px auto}.decision span{display:block;transform:rotate(-45deg);width:105px;text-align:center;margin-left:-10px;margin-top:25px;font-size:11px;font-weight:700}
+    @media print{body{background:white}.page{margin:0;box-shadow:none;width:auto;min-height:100vh}}
+  </style>
+</head>
+<body>
+
+<section class="page">
+  <div class="brand">CaratOS system map</div>
+  <h1>One platform that turns customer activity into organised work.</h1>
+  <p class="sub">A plain-language guide for someone seeing CaratOS for the first time. CaratOS is a multi-company CRM and operations platform; Eclat is its jewellery implementation, not the whole product.</p>
+
+  <div class="flow">
+    <div class="box blue"><h3>1. People arrive</h3><div>Ads, WhatsApp, phone, walk-in, QR, website or imported data</div></div>
+    <div class="arrow">→</div>
+    <div class="box green"><h3>2. CaratOS recognises them</h3><div>Matches phone/email to one tenant’s customer profile</div></div>
+    <div class="arrow">→</div>
+    <div class="box orange"><h3>3. Work is created</h3><div>Lead, conversation, follow-up, service task or operational record</div></div>
+    <div class="arrow">→</div>
+    <div class="box purple"><h3>4. The right team handles it</h3><div>Branch routing, assignment, consent, AI draft and human approval</div></div>
+    <div class="arrow">→</div>
+    <div class="box"><h3>5. Results are measured</h3><div>Sale, response, attendance, campaign attribution and return on spend</div></div>
+  </div>
+
+  <div class="grid3" style="margin-top:30px">
+    <div class="box"><span class="pill">CUSTOMER</span><h3 style="margin-top:9px">Who is the person?</h3><p>A permanent profile containing identity, contact details, interactions and history.</p></div>
+    <div class="box"><span class="pill">LEAD</span><h3 style="margin-top:9px">What opportunity exists?</h3><p>A sales enquiry with source, location, owner, value, stage and outcome.</p></div>
+    <div class="box"><span class="pill">TENANT</span><h3 style="margin-top:9px">Whose data is it?</h3><p>Each client organisation has isolated users, branches, customers, rules and integrations.</p></div>
+  </div>
+
+  <div class="note" style="margin-top:28px"><strong>The essential rule:</strong> a customer and a lead are not the same. Importing a customer does not create a fake opportunity. A lead appears only when a real enquiry or sales opportunity occurs.</div>
+  <div class="footer"><span>Beginner overview</span><span>10 September 2026</span></div>
+</section>
+
+<section class="page">
+  <h2>The entire system as a work tree</h2>
+  <p class="sub">Start at the top and read downward. Each branch is a group of capabilities.</p>
+  <div class="grid2">
+    <div class="box">
+      <ul class="tree">
+        <li><strong>CaratOS</strong>
+          <ul>
+            <li><strong>People and access</strong>
+              <ul><li>Organisation / client account</li><li>Branches or locations</li><li>Head office, manager and staff roles</li><li>Tenant and location permissions</li></ul>
+            </li>
+            <li><strong>Customer and CRM</strong>
+              <ul><li>Customer profiles and contact identities</li><li>Leads and sales pipeline</li><li>WhatsApp/omnichannel inbox</li><li>Follow-ups, reminders and activities</li><li>Segmentation, ageing and qualification</li><li>Consent, opt-out and audit history</li></ul>
+            </li>
+            <li><strong>Marketing and attribution</strong>
+              <ul><li>Meta Lead Ads</li><li>Click-to-WhatsApp routing</li><li>Campaign/ad/ad-set tracking</li><li>Spend coverage and currency-safe ROAS</li><li>Templates, outbox, retry and receipts</li></ul>
+            </li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+    <div class="box">
+      <ul class="tree">
+        <li><strong>CaratOS</strong>
+          <ul>
+            <li><strong>Business operations</strong>
+              <ul><li>Catalogue and inventory</li><li>Quotes, sales, finance and payments</li><li>Returns, loyalty and reporting</li><li>Check-ins, attendance and HRMS</li><li>Tasks, tickets and workflows</li></ul>
+            </li>
+            <li><strong>AI and knowledge</strong>
+              <ul><li>Knowledge-grounded reply drafts</li><li>Intent and requirement extraction</li><li>Human approval and handoff</li><li>AI catalogue suggestions</li><li>Image embeddings and visual search</li></ul>
+            </li>
+            <li><strong>Connections and data</strong>
+              <ul><li>Tally, BUSY, Gati and custom connectors</li><li>Excel/file import with mapping</li><li>Meta, WhatsApp, email and payments</li><li>PostgreSQL, job queue and object storage</li><li>Monitoring, backups and audit logs</li></ul>
+            </li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+  </div>
+  <div class="note" style="margin-top:20px"><strong>Industry packs:</strong> the same platform changes its visible modules and language per client. A clinic sees patients/services; manufacturing sees accounts/items/plants; Eclat keeps its jewellery workflows.</div>
+  <div class="footer"><span>System work tree</span><span>CaratOS</span></div>
+</section>
+
+<section class="page">
+  <h2>UML-style component map</h2>
+  <p class="sub">This shows which technical layer owns each responsibility.</p>
+  <div class="grid4" style="align-items:start">
+    <div>
+      <div class="actor">Customers</div><div class="down">↓</div>
+      <div class="box blue"><strong>Entry channels</strong><br/>WhatsApp<br/>Meta forms<br/>Walk-in / phone<br/>QR / website</div>
+    </div>
+    <div class="lane">
+      <div class="lane-title">Frontend — Next.js/PWA</div>
+      <div class="module">CRM and inbox<small>Customers, leads, conversations</small></div>
+      <div class="module">Operations<small>Catalogue, stock, finance, attendance</small></div>
+      <div class="module">Administration<small>Users, industry pack, integrations</small></div>
+      <div class="module">Reporting<small>Activity, ageing, attribution, ROAS</small></div>
+    </div>
+    <div class="lane">
+      <div class="lane-title">Backend — NestJS</div>
+      <div class="module">Security boundary<small>Authentication, roles, tenant and store scope</small></div>
+      <div class="module">CRM core<small>Identity, leads, routing, consent, audit</small></div>
+      <div class="module">Integration adapters<small>Meta, WhatsApp, ERP, payments, email</small></div>
+      <div class="module">Workers<small>Durable jobs, retry, sync, AI and alerts</small></div>
+    </div>
+    <div class="lane">
+      <div class="lane-title">Data and providers</div>
+      <div class="module">PostgreSQL<small>Tenant-owned business records and job queue</small></div>
+      <div class="module">Object storage<small>Images and knowledge documents</small></div>
+      <div class="module">AI providers<small>Drafting, extraction and catalogue suggestions</small></div>
+      <div class="module">External systems<small>Meta, WhatsApp, Tally, BUSY, Gati</small></div>
+    </div>
+  </div>
+  <div class="flow" style="margin-top:25px">
+    <div class="box blue"><strong>Browser / provider</strong></div><div class="arrow">→</div>
+    <div class="box green"><strong>API security checks</strong></div><div class="arrow">→</div>
+    <div class="box orange"><strong>Business service</strong></div><div class="arrow">→</div>
+    <div class="box purple"><strong>Database transaction</strong></div><div class="arrow">→</div>
+    <div class="box"><strong>Audit + job/event</strong></div>
+  </div>
+  <p class="tiny">Provider webhooks never choose their own tenant. CaratOS resolves the tenant from a registered Page, form, phone-number or connection asset.</p>
+  <div class="footer"><span>Component/UML view</span><span>CaratOS</span></div>
+</section>
+
+<section class="page">
+  <h2>How a customer becomes a lead</h2>
+  <div class="flow">
+    <div class="box blue"><strong>Enquiry arrives</strong><br/><small>Meta form, CTWA, QR or staff entry</small></div>
+    <div class="arrow">→</div>
+    <div class="box"><strong>Request verified</strong><br/><small>Signature, login or signed QR</small></div>
+    <div class="arrow">→</div>
+    <div class="box green"><strong>Tenant resolved</strong><br/><small>Never trusted from customer payload</small></div>
+    <div class="arrow">→</div>
+    <div class="box orange"><strong>Identity resolved</strong><br/><small>Match/create customer by normalised contact</small></div>
+  </div>
+  <div class="down">↓</div>
+  <div class="decision"><span>Is this a real sales opportunity?</span></div>
+  <div class="grid2">
+    <div class="box red"><h3>No</h3><p>Keep the customer/conversation/activity, but do not manufacture a lead. Example: ordinary support WhatsApp or a customer-only import.</p></div>
+    <div class="box green"><h3>Yes</h3><p>Determine a location, create or reuse the opportunity, record its source, and assign it safely.</p></div>
+  </div>
+  <div class="down">↓</div>
+  <div class="flow">
+    <div class="box"><strong>Location</strong><br/><small>Ad rule, QR location, staff choice or only branch</small></div><div class="arrow">→</div>
+    <div class="box"><strong>Lead</strong><br/><small>Reference, source, interest, stage</small></div><div class="arrow">→</div>
+    <div class="box"><strong>Owner</strong><br/><small>Named rule or fair round-robin</small></div><div class="arrow">→</div>
+    <div class="box"><strong>Follow-up</strong><br/><small>Activities, reminders, qualification</small></div><div class="arrow">→</div>
+    <div class="box"><strong>Outcome</strong><br/><small>Open, won or lost</small></div>
+  </div>
+  <table style="margin-top:20px">
+    <tr><th>Source</th><th>Customer profile</th><th>Lead creation</th></tr>
+    <tr><td>Meta Lead Ad</td><td>Match/create using form phone or email</td><td>Automatic when a safe location is known</td></tr>
+    <tr><td>Click-to-WhatsApp ad</td><td>Match/create using WhatsApp identity</td><td>Create/reuse open lead for that customer and location</td></tr>
+    <tr><td>Ordinary WhatsApp</td><td>Match known customer; may remain anonymous</td><td>Not automatic</td></tr>
+    <tr><td>Location QR</td><td>Match/create using submitted phone</td><td>Automatic for the QR’s signed location</td></tr>
+    <tr><td>Staff entry</td><td>Match/create after lead capture</td><td>Immediate, with staff-selected source/location</td></tr>
+    <tr><td>Excel/ERP customer import</td><td>Create/update customer master</td><td>No lead until a real opportunity occurs</td></tr>
+  </table>
+  <div class="footer"><span>Customer-to-lead flow</span><span>CaratOS</span></div>
+</section>
+
+<section class="page">
+  <h2>Three important operating flows</h2>
+  <div class="grid3">
+    <div class="box">
+      <h3>Messaging and AI</h3>
+      <p>Inbound message</p><div class="down">↓</div><p>Store conversation</p><div class="down">↓</div><p>STOP/complaint/legal screening</p><div class="down">↓</div><p>Retrieve tenant knowledge</p><div class="down">↓</div><p>AI creates draft</p><div class="down">↓</div><p>Human approves</p><div class="down">↓</div><p>Consent + 24-hour/template checks</p><div class="down">↓</div><p>Outbox → provider → receipt</p>
+    </div>
+    <div class="box">
+      <h3>ERP and file sync</h3>
+      <p>Tally / BUSY / Gati / Excel</p><div class="down">↓</div><p>Read-only connector or upload</p><div class="down">↓</div><p>Discover columns</p><div class="down">↓</div><p>Map to neutral fields</p><div class="down">↓</div><p>Preview errors/conflicts</p><div class="down">↓</div><p>Tenant-scoped idempotent import</p><div class="down">↓</div><p>Reconcile and report</p>
+    </div>
+    <div class="box">
+      <h3>AI catalogue</h3>
+      <p>Upload product image/data</p><div class="down">↓</div><p>Validate file and tenant</p><div class="down">↓</div><p>AI suggests metadata</p><div class="down">↓</div><p>Human reviews facts</p><div class="down">↓</div><p>Approve product</p><div class="down">↓</div><p>Create versioned embedding</p><div class="down">↓</div><p>Visual search and feedback</p>
+    </div>
+  </div>
+  <div class="box blue" style="margin-top:18px">
+    <h3>Attendance/check-in flow</h3>
+    <div class="flow" style="margin:8px 0">
+      <div class="box">Employee action</div><div class="arrow">→</div><div class="box">Server time + location evidence</div><div class="arrow">→</div><div class="box">Shift/geofence rules</div><div class="arrow">→</div><div class="box">Attendance record</div><div class="arrow">→</div><div class="box">Manager correction with audit</div>
+    </div>
+    <p class="tiny">Attendance is rules-based and auditable; it does not need an AI model for the MVP.</p>
+  </div>
+  <div class="footer"><span>Operational flows</span><span>CaratOS</span></div>
+</section>
+
+<section class="page">
+  <h2>Where it runs and what is live</h2>
+  <div class="flow">
+    <div class="box blue"><h3>Vercel</h3><div>Web/PWA frontend</div></div><div class="arrow">→</div>
+    <div class="box green"><h3>Railway</h3><div>NestJS backend API</div></div><div class="arrow">→</div>
+    <div class="box purple"><h3>PostgreSQL</h3><div>Tenant data + durable jobs</div></div><div class="arrow">↔</div>
+    <div class="box orange"><h3>External providers</h3><div>Meta, WhatsApp, AI, ERP, email, payments</div></div>
+  </div>
+  <div class="legend"><span>✅ Built and locally tested</span><span>🧪 Staging ready</span><span>🔌 Needs provider/client setup</span><span>🚫 Production unchanged</span></div>
+  <table>
+    <tr><th>Area</th><th>Present state</th><th>What remains</th></tr>
+    <tr><td>Core multi-tenant platform</td><td>✅ Built, tested and pushed in PR #3</td><td>Approve merge after staging acceptance</td></tr>
+    <tr><td>CRM + Meta/WhatsApp code</td><td>✅ Built; fixtures and database tests pass</td><td>Real signed Meta traffic and credentials</td></tr>
+    <tr><td>Staging</td><td>🧪 Separate Railway backend/database and Vercel preview</td><td>Unlock preview, enter test credentials and allowlist testers</td></tr>
+    <tr><td>Production</td><td>🚫 Still on the older main commit</td><td>Backup, merge, migrations, deploy and smoke test</td></tr>
+    <tr><td>Tally/BUSY/custom ERP</td><td>✅ Connector/import framework</td><td>Client database mapping and onsite acceptance</td></tr>
+    <tr><td>AI catalogue/attendance</td><td>✅ Existing product foundations</td><td>Industry/client-specific acceptance and provider setup</td></tr>
+  </table>
+  <div class="note" style="margin-top:23px"><strong>Current truth:</strong> most product code exists. The remaining work is predominantly access, credentials, real-provider testing, client-specific mapping, PR approval and controlled production rollout.</div>
+  <h3 style="margin-top:24px">Glossary</h3>
+  <div class="grid3">
+    <div class="box"><strong>Webhook</strong><br/>A provider calling CaratOS when something happens.</div>
+    <div class="box"><strong>Adapter</strong><br/>A translator between CaratOS and another system.</div>
+    <div class="box"><strong>Idempotent</strong><br/>Repeating the same event does not create duplicates.</div>
+    <div class="box"><strong>Attribution</strong><br/>Evidence of which campaign produced an opportunity/result.</div>
+    <div class="box"><strong>Tenant</strong><br/>One client organisation and its isolated data.</div>
+    <div class="box"><strong>Outbox</strong><br/>The durable queue of messages waiting for delivery.</div>
+  </div>
+  <div class="footer"><span>Deployment and status</span><span>CaratOS</span></div>
+</section>
+
+</body>
+</html>

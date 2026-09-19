@@ -54,7 +54,7 @@ const OUTPUT_SCHEMA = {
 // ---------------------------------------------------------------------------
 
 /** Cosine similarity in [-1, 1]; 0 when shapes differ or either vector is zero. */
-export function cosineSimilarity(a: number[], b: number[]): number {
+export function cosineSimilarity(a: ArrayLike<number>, b: ArrayLike<number>): number {
   if (!a?.length || !b?.length || a.length !== b.length) return 0;
   let dot = 0;
   let na = 0;

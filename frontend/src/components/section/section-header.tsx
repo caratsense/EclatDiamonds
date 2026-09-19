@@ -34,7 +34,10 @@ export function SectionHeader({
   primaryAction,
   onPrimaryAction,
 }: SectionHeaderProps) {
-  const { currentStore, role } = useSession();
+  const { currentStore } = useSession();
+  // The person and the role they hold, not the level this page serves them at.
+  const role = useSession((s) => s.baseRole);
+  const userName = useSession((s) => s.user.name);
   const t = useT();
 
   return (
@@ -54,7 +57,7 @@ export function SectionHeader({
             </span>
             <span className="inline-flex items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs font-medium text-muted-foreground shadow-xs">
               <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-              {ROLE_LABELS[role]} view
+              {userName} · {ROLE_LABELS[role]}
             </span>
           </div>
         </div>

@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { AccessOverride, HEAD_OFFICE_ONLY, MODULES, ROLE_ACCESS, effectiveAccess } from '../auth/access';
 import { Prisma, Role } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
@@ -872,5 +873,68 @@ export class UsersService {
       );
     }
     return user;
+  }
+
+  // ===========================================================================
+  // Per-person access (auth/access.ts)
+  // ===========================================================================
+
+  /** GET /users/:id/access — role defaults, head office's changes, and the result. */
+  async access(actor: AuthUser, id: string) {
+    const u = await this.prisma.user.findFirst({
+      where: { id, organisationId: actor.organisationId },
+      select: { id: true, name: true, role: true, accessOverrides: true },
+    });
+    if (!u) throw new NotFoundException('User not found');
+    return {
+      userId: u.id,
+      name: u.name,
+      role: u.role,
+      defaults: ROLE_ACCESS[u.role],
+      overrides: (u.accessOverrides ?? {}) as Record<string, AccessOverride>,
+      effective: effectiveAccess(u.role, u.accessOverrides),
+    };
+  }
+
+  /** PUT /users/:id/access — replace head office's changes for one person. */
+  async setAccess(actor: AuthUser, id: string, overrides: Record<string, string>) {
+    const u = await this.prisma.user.findFirst({
+      where: { id, organisationId: actor.organisationId },
+      select: { id: true, name: true, role: true, accessOverrides: true },
+    });
+    if (!u) throw new NotFoundException('User not found');
+    if (u.role === 'head_office') {
+      throw new BadRequestException('Head office always has every screen.');
+    }
+    const defaults = ROLE_ACCESS[u.role];
+    const clean: Record<string, AccessOverride> = {};
+    for (const [slug, level] of Object.entries(overrides ?? {})) {
+      if (!(MODULES as readonly string[]).includes(slug)) {
+        throw new BadRequestException(`Unknown screen: ${slug}`);
+      }
+      if (level !== 'none' && level !== 'own' && level !== 'store') {
+        throw new BadRequestException(`${slug}: choose none, own or store`);
+      }
+      if (level !== 'none' && (HEAD_OFFICE_ONLY as string[]).includes(slug)) {
+        throw new BadRequestException(`${slug} is for head office only`);
+      }
+      // Equal to the role's default: not a change, so not stored.
+      if ((defaults[slug] ?? 'none') === level) continue;
+      clean[slug] = level;
+    }
+    const before = (u.accessOverrides ?? {}) as Record<string, AccessOverride>;
+    await this.prisma.user.update({
+      where: { id: u.id },
+      data: { accessOverrides: Object.keys(clean).length ? clean : Prisma.DbNull },
+    });
+    await this.audit.record(actor, {
+      action: 'user.access_update',
+      entityType: 'User',
+      entityId: u.id,
+      storeId: null,
+      summary: `Changed what ${u.name} can open`,
+      metadata: { before, after: clean },
+    });
+    return this.access(actor, id);
   }
 }

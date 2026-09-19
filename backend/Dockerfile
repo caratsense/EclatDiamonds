@@ -50,6 +50,11 @@ COPY --from=build /app/prisma ./prisma
 # prove it is staging, so shipping it costs nothing and running it needs an
 # explicit SEED_DEMO_TARGET=staging.
 COPY scripts/seed-conversations.mjs ./scripts/seed-conversations.mjs
+# The catalogue cover generator, for the same reason: the real photographs live
+# on the shop's own PC, so a cloud staging box has no source for them and the
+# catalogue renders as empty boxes. It fills imageUrl only where it is empty, so
+# a real photo from the media sync is never overwritten.
+COPY scripts/seed-cover-images.mjs ./scripts/seed-cover-images.mjs
 
 # NOTE: intentionally NOT dropping to the unprivileged 'node' user. The Railway
 # persistent volume mounted at /app/uploads is root-owned at mount time, and a

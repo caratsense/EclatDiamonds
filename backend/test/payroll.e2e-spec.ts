@@ -55,6 +55,7 @@ async function teardown(prisma: PrismaService) {
   await prisma.staffWeekOff.deleteMany({ where: { organisationId: A.org } });
   await prisma.auditLog.deleteMany({ where: { organisationId: A.org } });
   await prisma.attendanceRecord.deleteMany({ where: { organisationId: A.org } });
+  await prisma.rawPunchEvent.deleteMany({ where: { organisationId: A.org } });
   await prisma.storeHoliday.deleteMany({ where: { organisationId: A.org } });
   await prisma.leaveRequest.deleteMany({ where: { organisationId: A.org } });
   await prisma.shift.deleteMany({ where: { organisationId: A.org } });
@@ -246,6 +247,12 @@ describe('Individual weekly offs and attendance-based payslips (e2e)', () => {
   it('the day close marks each person off on THEIR day, not the branch’s', async () => {
     // Wednesday 2 September 2026. The branch's off day is Sunday.
     const wednesday = '2026-09-02';
+    // A configured branch: a shift, and HR has confirmed its rules — without
+    // that the day stays "not marked" (attendance-rules-gate.e2e-spec).
+    const shift = await prisma.shift.create({
+      data: { organisationId: A.org, storeId: A.store, name: 'Day', startTime: '10:00', endTime: '19:00' },
+    });
+    await prisma.store.update({ where: { id: A.store }, data: { attendanceRulesConfirmedThrough: SEPT(30) } });
     await request(server())
       .post('/hrms/attendance/day-close')
       .set(auth(mgrT))
@@ -267,6 +274,8 @@ describe('Individual weekly offs and attendance-based payslips (e2e)', () => {
     await prisma.attendanceRecord.deleteMany({
       where: { storeId: A.store, date: new Date(`${wednesday}T00:00:00.000Z`) },
     });
+    await prisma.shift.delete({ where: { id: shift.id } });
+    await prisma.store.update({ where: { id: A.store }, data: { attendanceRulesConfirmedThrough: null } });
   });
 
   // ==========================================================================
@@ -307,6 +316,52 @@ describe('Individual weekly offs and attendance-based payslips (e2e)', () => {
       .set(auth(repT))
       .expect(200);
     expect(own.body.amount).toBe(30_000);
+  });
+
+  it('a store manager cannot read pay or write weekly offs across store scope', async () => {
+    const otherStore = 'store_pay_other';
+    const otherUser = 'u_pay_other';
+    await prisma.store.create({
+      data: {
+        id: otherStore,
+        name: 'Other Branch',
+        city: 'Pune',
+        organisationId: A.org,
+        timezone: 'Asia/Kolkata',
+      },
+    });
+    await prisma.user.create({
+      data: {
+        id: otherUser,
+        email: 'other.pay@pay-a.local',
+        name: 'Other Branch Rep',
+        role: 'salesperson',
+        passwordHash: await bcrypt.hash(PASSWORD, 10),
+        isActive: true,
+        approvalStatus: 'approved',
+        organisationId: A.org,
+        userStores: { create: { storeId: otherStore, isPrimary: true } },
+      },
+    });
+    await prisma.staffCompensation.create({
+      data: {
+        organisationId: A.org,
+        userId: otherUser,
+        basis: 'monthly',
+        amount: 25_000,
+      },
+    });
+
+    await request(server())
+      .get(`/hrms/payroll/compensation/${otherUser}`)
+      .set(auth(mgrT))
+      .expect(404);
+    await request(server())
+      .put('/hrms/payroll/week-offs')
+      .set(auth(mgrT))
+      .send({ userId: otherUser, storeId: A.store, days: [2] })
+      .expect(400);
+    expect(await prisma.staffWeekOff.count({ where: { userId: otherUser } })).toBe(0);
   });
 
   // ==========================================================================

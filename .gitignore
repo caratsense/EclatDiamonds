@@ -57,3 +57,12 @@ EclatDiamonds/
 Thumbs.db
 .idea/
 *.swp
+
+# ── Local analysis scratch ────────────────────────────────────
+# Competitor-demo audio, extracted video frames and transcripts: ~130 MB of
+# media that git would carry forever. The written analysis is committed; the
+# raw material stays on the machine that produced it.
+.tmp-analysis/
+docs/zithara-analysis/screenshots/
+# (the 18 screenshots the written analysis actually embeds are tracked
+#  anyway — a rule here cannot untrack them, and the doc needs them.)

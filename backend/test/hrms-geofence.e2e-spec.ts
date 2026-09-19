@@ -53,10 +53,10 @@ describe('HrmsService.evaluateFence', () => {
     expect(r.distanceM).toBeGreaterThan(150);
   });
 
-  it('SAFETY: a store with no coordinates never blocks a punch', () => {
+  it('SAFETY: a store with no coordinates allows but never verifies a punch', () => {
     const noFence = store({ latitude: null, longitude: null });
     const r = evaluateFence(noFence, undefined, undefined, undefined, 'check-in');
-    expect(r.withinFence).toBe(true);
+    expect(r.withinFence).toBe(false);
     expect(r.distanceM).toBeNull();
   });
 });

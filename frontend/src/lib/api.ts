@@ -78,6 +78,10 @@ export function setStoredStoreId(storeId: string | null) {
 export function assetUrl(path?: string | null): string | undefined {
   if (!path) return undefined;
   if (/^https?:\/\//.test(path)) return path;
+  // A generated cover arrives inline rather than as a file, and a photo just
+  // picked in the browser is a blob: URL. Prefixing either with the API base
+  // would corrupt it into a request for "/_api/data:image/..." or "/_api/blob:...".
+  if (path.startsWith("data:") || path.startsWith("blob:")) return path;
   const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
   return `${base}${path.startsWith("/") ? "" : "/"}${path}`;
 }

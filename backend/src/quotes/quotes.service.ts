@@ -529,6 +529,7 @@ export class QuotesService {
 
   async create(user: AuthUser, dto: CreateQuoteDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
+    await this.scope.assertTradingStore(dto.storeId);
     const kind = dto.kind ?? QuoteKind.sale;
     const isKaccha = dto.isKaccha ?? false;
     const t = computeTotals(dto.lines, kind, dto.discountPercent ?? 0);

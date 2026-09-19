@@ -17,12 +17,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ROLE_LABELS } from "@/lib/types";
-import { useChangePassword } from "@/lib/queries/auth";
+import { useChangePassword, useUpdateMe } from "@/lib/queries/auth";
 import { useSession } from "@/store/use-session";
 import { apiErrorMessage } from "@/lib/utils";
 
 export default function SettingsPage() {
-  const { user, role, currentStore, stores } = useSession();
+  const { user, currentStore, stores } = useSession();
+  const role = useSession((s) => s.baseRole);
 
   // Assigned stores exclude the synthetic "All Stores" aggregate option.
   const assignedStores = stores.filter((s) => !s.isAggregate);
@@ -93,6 +94,9 @@ export default function SettingsPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Contact — the only details a person changes themselves. */}
+        <ContactCard />
 
         {/* Security — change password (email/password auth only). */}
         <ChangePasswordCard />
@@ -229,6 +233,75 @@ function ChangePasswordCard() {
           </div>
           <Button type="submit" disabled={changePassword.isPending}>
             {changePassword.isPending ? "Updating…" : "Update password"}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * How to reach me. Name, role, store and login ID are head office's to change,
+ * so only these two are editable here.
+ */
+function ContactCard() {
+  const user = useSession((s) => s.user);
+  const hydrate = useSession((s) => s.hydrate);
+  const update = useUpdateMe();
+  const [phone, setPhone] = useState(user.phone ?? "");
+  const [email, setEmail] = useState(user.contactEmail ?? "");
+  const changed = phone !== (user.phone ?? "") || email !== (user.contactEmail ?? "");
+
+  function save(e: React.FormEvent) {
+    e.preventDefault();
+    update.mutate(
+      { phone, contactEmail: email },
+      {
+        onSuccess: (session) => {
+          hydrate(session);
+          setPhone(session.user.phone ?? "");
+          setEmail(session.user.contactEmail ?? "");
+          toast.success("Contact details saved");
+        },
+        onError: (err) => toast.error(apiErrorMessage(err, "Could not save your details.")),
+      },
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Contact details</CardTitle>
+        <CardDescription>
+          How the team reaches you. Your name, role and store are set by head office.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={save} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="my-phone">Mobile number</Label>
+            <Input
+              id="my-phone"
+              inputMode="tel"
+              autoComplete="tel"
+              placeholder="10-digit mobile"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="my-email">Personal email</Label>
+            <Input
+              id="my-email"
+              type="email"
+              autoComplete="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </div>
+          <Button type="submit" disabled={!changed || update.isPending}>
+            {update.isPending ? "Saving…" : "Save"}
           </Button>
         </form>
       </CardContent>

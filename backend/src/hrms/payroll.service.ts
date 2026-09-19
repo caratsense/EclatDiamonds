@@ -13,6 +13,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
+  assertCanCorrect,
+  assertMonthOpen,
+  ROSTER_ROLES,
+} from './attendance-ops.service';
+import {
+  businessDate,
   dateOnly,
   instantFromLocalTime,
   resolveTz,
@@ -144,14 +150,38 @@ export class PayrollService {
     user: AuthUser,
     input: { userId: string; storeId?: string | null; days: number[] },
   ) {
+    if (!PAYROLL_ROLES.includes(user.role)) {
+      throw new ForbiddenException('Only a manager can configure weekly offs.');
+    }
     const staff = await this.prisma.user.findFirst({
       where: { id: input.userId, organisationId: user.organisationId },
-      select: { id: true, name: true, userStores: { select: { storeId: true } } },
+      select: { id: true, name: true, role: true, userStores: { select: { storeId: true } } },
     });
     if (!staff) throw new NotFoundException('No such employee here.');
+    if (!ROSTER_ROLES.includes(staff.role)) {
+      throw new BadRequestException('Weekly offs can only be configured for rostered staff.');
+    }
+    assertCanCorrect(user, staff.id, staff.role);
 
     const storeId = input.storeId ?? staff.userStores[0]?.storeId ?? null;
-    if (storeId) this.scope.assertStoreAllowed(user, storeId);
+    if (!storeId) throw new BadRequestException('This employee is not assigned to a store.');
+    this.scope.assertStoreAllowed(user, storeId);
+    if (!staff.userStores.some((assignment) => assignment.storeId === storeId)) {
+      throw new BadRequestException('Staff is not assigned to this store.');
+    }
+    const store = await this.prisma.store.findFirst({
+      where: { id: storeId, organisationId: user.organisationId },
+      select: { timezone: true },
+    });
+    if (!store) throw new NotFoundException('Store not found.');
+    // A historical lock must not freeze the roster forever. This model applies
+    // changes immediately, so only the current branch-local payroll month has
+    // to be open; issued historical slips remain immutable.
+    await assertMonthOpen(
+      this.prisma,
+      user.organisationId,
+      businessDate(new Date(), resolveTz(store.timezone)),
+    );
 
     const days = [...new Set(input.days)].sort();
     if (days.some((d) => !Number.isInteger(d) || d < 0 || d > 6)) {
@@ -277,6 +307,18 @@ export class PayrollService {
   async compensationFor(user: AuthUser, userId: string) {
     if (userId !== user.id && !PAYROLL_ROLES.includes(user.role)) {
       throw new ForbiddenException('You can only see your own pay.');
+    }
+    if (userId !== user.id && user.role !== Role.head_office) {
+      const target = await this.prisma.user.findFirst({
+        where: {
+          id: userId,
+          organisationId: user.organisationId,
+          userStores: { some: { storeId: { in: user.storeIds } } },
+        },
+        select: { id: true },
+      });
+      // Do not disclose whether an out-of-scope employee or their compensation exists.
+      if (!target) throw new NotFoundException('No such employee in your stores.');
     }
     const row = await this.prisma.staffCompensation.findFirst({
       where: { userId, organisationId: user.organisationId },

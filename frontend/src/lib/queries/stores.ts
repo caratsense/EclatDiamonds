@@ -48,6 +48,7 @@ export interface AdminStore {
   regionId?: string | null;
   latitude?: number | null;
   longitude?: number | null;
+  geofenceRadiusM?: number | null;
   /** Lifecycle state: pending review, live, or soft-closed. */
   status: StoreStatus;
   isActive: boolean;
@@ -81,6 +82,7 @@ export interface CreateStoreInput {
   regionId?: string;
   latitude?: number;
   longitude?: number;
+  geofenceRadiusM?: number;
 }
 
 export interface UpdateStoreInput {
@@ -92,6 +94,7 @@ export interface UpdateStoreInput {
   regionId?: string;
   latitude?: number;
   longitude?: number;
+  geofenceRadiusM?: number;
 }
 
 export interface AddStoreManagerInput {

@@ -374,6 +374,7 @@ export class StockService {
       throw new BadRequestException('Select a specific store to add stock to');
     }
     this.scope.assertStoreAllowed(user, storeId);
+    await this.scope.assertTradingStore(storeId);
     const store = await this.prisma.store.findUnique({
       where: { id: storeId },
       select: { id: true, isAggregate: true },

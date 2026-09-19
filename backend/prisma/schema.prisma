@@ -47,7 +47,12 @@ enum Role {
   /// dead stock and product photos at their own branch — and nothing about
   /// customers, money or the team. Not a rung on the ladder above: its access is
   /// an explicit permission list (auth/permissions.ts), never a rank comparison.
+  /// RETIRED 2026-09-19 (with area_manager): no longer assignable; kept only
+  /// because Postgres enum values cannot be dropped while rows could hold them.
   storeperson
+  /// APPENDED 2026-09-19. One per store: CRM, marketing and inbound, and their
+  /// own attendance and leave — no sales, stock or money (auth/access.ts).
+  marketing
 }
 
 /// Self-signup approval lifecycle. `approved` is the default so every existing
@@ -279,6 +284,9 @@ enum LeaveType {
   sick
   earned
   festival
+  /// EzAttendance's "K" leave: a store employee with no fixed weekly off gets
+  /// one day a week (~53 a year) and takes it as leave.
+  week_off_leave
 }
 
 enum LeaveStatus {
@@ -489,6 +497,7 @@ model Organisation {
   scheduledJobRuns             ScheduledJobRun[]
   products                     Product[]
   productEmbeddings            ProductEmbedding[]
+  productImages                ProductImage[]
   similaritySearchFeedbacks    SimilaritySearchFeedback[]
   leads                        Lead[]
   quotes                       Quote[]
@@ -508,6 +517,21 @@ model Organisation {
   attendanceRecords            AttendanceRecord[]
   shifts                       Shift[]
   storeHolidays                StoreHoliday[]
+  departments                  Department[]
+  designations                 Designation[]
+  employeeProfiles             EmployeeProfile[]
+  shiftAssignments             ShiftAssignment[]
+  rawPunchEvents               RawPunchEvent[]
+  attendanceProcessingRuns     AttendanceProcessingRun[]
+  payrollPeriodLocks           PayrollPeriodLock[]
+  externalProductSnapshots     ExternalProductSnapshot[]
+  productWebsiteListings       ProductWebsiteListing[]
+  productVariants              ProductVariant[]
+  productOptions               ProductOption[]
+  productPrices                ProductPrice[]
+  productImageAssociations     ProductImageAssociation[]
+  catalogueSyncRuns            CatalogueSyncRun[]
+  catalogueConflicts           CatalogueConflict[]
   leaveRequests                LeaveRequest[]
   attendanceRegularizations    AttendanceRegularization[]
   marketingCampaigns           MarketingCampaign[]
@@ -707,6 +731,15 @@ model Store {
   status         String       @default("active")
   /// true only for the synthetic "All Stores" aggregate the UI shows to broad roles.
   isAggregate    Boolean      @default(false)
+  /// An attendance-only location (e.g. Head Office): staff are rostered and
+  /// punch here, but it is not a trading branch — no sales, stock, targets,
+  /// footfall or DSR, and it is left out of store KPIs.
+  attendanceOnly Boolean      @default(false)
+  /// HR has entered this location's weekly offs, holidays, shifts and grace
+  /// minutes and confirmed them complete through this date. For any later date
+  /// (or while null) an unpunched day stays "not marked" — never an automatic
+  /// "absent" — because none of those rules can be inferred from the data.
+  attendanceRulesConfirmedThrough DateTime? @db.Date
 
   // Geofence for HRMS geo-attendance (Module 6).
   latitude        Decimal? @db.Decimal(10, 7)
@@ -819,6 +852,11 @@ model User {
   /// Primary role. Cross-store scope is derived from UserStore rows + role rank.
   role Role @default(salesperson)
 
+  /// Head office's changes to what this person may open, on top of their
+  /// role's defaults (auth/access.ts): `{ "<screen>": "none" | "own" | "store" }`.
+  /// Null = the role's defaults exactly.
+  accessOverrides Json?
+
   /// Self-signup approval workflow. Self-registered users start `pending` +
   /// `isActive=false` and hold NO role/store until an authorised approver grants
   /// it: the requested role/store are only a request, never access. `head_office`
@@ -903,6 +941,8 @@ model User {
   slaResponses             ConversationResponseSla[]     @relation("SlaResponder")
   weekOffs                 StaffWeekOff[]
   compensation             StaffCompensation?
+  employeeProfile          EmployeeProfile?  @relation("EmployeeProfileUser")
+  shiftAssignments         ShiftAssignment[]
   payslips                 Payslip[]
   quotesApprovalRequested  Quote[]                       @relation("QuoteApprovalRequestedBy")
   quotesApprovalDecided    Quote[]                       @relation("QuoteApprovalDecidedBy")
@@ -1803,6 +1843,21 @@ model Product {
   /// ours, and deliberately NOT unique: many products sharing a style number is
   /// the entire point.
   styleNumber    String?
+  /// The design's code on the client's website (its `productCode`), when the
+  /// website carries it. Kept separately because a Gati design matched to a
+  /// website one keeps Gati's id in `legacyId` — without this the website code,
+  /// and the fact that the design is on the website at all, was lost.
+  websiteCode    String?
+  /// What the design is made of — metal, diamonds, stones, making — as
+  /// `{ source: 'gati'|'website', lines: [{ item, kind, weight?, unit?,
+  /// pieces?, rate?, amount? }] }`. See src/products/composition.ts. Amounts
+  /// are stripped from the API for anyone below store manager.
+  composition    Json?
+  /// Gati-owned HSN code for the design.
+  hsn            String?
+  /// Last time each source wrote this design (provenance shown in the detail).
+  gatiSyncedAt    DateTime?
+  websiteSyncedAt DateTime?
 
   /// Block 9 — the design's classification. A made-to-order design is
   /// `customised`, and every piece of it inherits that unless the piece says
@@ -1833,6 +1888,13 @@ model Product {
   quoteLines          QuoteLine[]
   saleLines           SaleLine[]
   imageEmbeddings     ProductEmbedding[]
+  /// Every photograph of this design. `imageUrl` above is the cover; this is
+  /// the full set, and visual search matches against all of them.
+  images              ProductImage[]
+  variants            ProductVariant[]
+  options             ProductOption[]
+  prices              ProductPrice[]
+  websiteListing      ProductWebsiteListing?
   // CaratOS Phase A3.
   productInteractions ProductInteraction[]
   /// Phase A7 — the file or Connect import run that created this row. Later
@@ -1843,6 +1905,7 @@ model Product {
   @@unique([organisationId, sku])
   @@unique([organisationId, legacyId])
   @@index([organisationId, styleNumber])
+  @@index([organisationId, websiteCode])
   @@index([storeId, createdAt])
   @@index([category])
   @@index([sku])
@@ -1865,6 +1928,13 @@ model ProductEmbedding {
   /// Inherited from the product at index time so search can store-scope without a join.
   storeId        String?
 
+  /// Which photograph this vector describes, when it came from the gallery.
+  /// Null for a design whose only picture is the legacy `Product.imageUrl`.
+  /// SET NULL rather than CASCADE so deleting a photo cannot silently take a
+  /// vector with it mid-search; the next re-index prunes the orphan.
+  productImageId String?
+  productImage   ProductImage? @relation(fields: [productImageId], references: [id], onDelete: SetNull)
+
   /// DINOv3 patch/global embedding � structure & shape.
   dinoEmbedding   Float[]
   /// SigLIP 2 embedding � semantic / text-aligned appearance.
@@ -1882,9 +1952,86 @@ model ProductEmbedding {
 
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  @@unique([productId, preprocessingVersion])
+  /// One vector per IMAGE per pipeline version, not one per design.
+  ///
+  /// It used to be [productId, preprocessingVersion], which allowed a design
+  /// exactly one embedding — so a ring photographed from the front, the side
+  /// and on a hand could only ever be searchable from whichever angle was
+  /// indexed last. imageHash is already the idempotency key for re-indexing,
+  /// so it costs nothing to make it part of the identity too.
+  @@unique([productId, imageHash, preprocessingVersion])
   @@index([storeId])
   @@index([organisationId])
+  @@index([productImageId])
+}
+
+/// One photograph of a design. A jeweller shows a piece from several angles —
+/// front, side, on the hand — and a customer photographs it from wherever they
+/// happen to be standing; a catalogue holding one picture per design can only
+/// ever match the one view somebody chose to upload.
+model ProductImage {
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  id             String       @id @default(cuid())
+  productId      String
+  product        Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  /// Object-storage URL (R2 / Cloudinary), or a local /uploads path.
+  url   String
+
+  /// Which view this is: "front", "side", "on model", "CAD". Free text, not
+  /// an enum — the useful list is the trade’s, not ours, and it differs by
+  /// tenant. Null means nobody said, which is not the same as "front".
+  angle String?
+
+  /// The picture that represents the design in a grid. Not enforced unique in
+  /// the database: two rows briefly both true during a re-order is harmless,
+  /// and a partial unique index that blocks the intermediate state is not.
+  /// The service clears the old cover in the same transaction as setting the
+  /// new one.
+  isPrimary Boolean @default(false)
+  sortOrder Int     @default(0)
+
+  createdAt DateTime @default(now())
+
+
+  /// Where the picture came from: gati_cad | website | manual | inventory | other.
+  /// Drives the default order: an admin pin, else the Gati CAD, else website
+  /// photos in source order, then the rest.
+  source        String    @default("other")
+  /// Set only by an explicit admin choice. `isPrimary` is the computed result.
+  pinnedPrimary Boolean   @default(false)
+  /// The URL the source published, and its own id for the picture if it has one.
+  sourceUrl     String?
+  sourceImageId String?
+  /// Position within the source (website: order inside its colour group).
+  sourceOrder   Int       @default(0)
+  /// sha256 of the downloaded bytes; identical pictures under different URLs
+  /// are one asset.
+  contentHash   String?
+  thumbUrl      String?
+  width         Int?
+  height        Int?
+  /// active | tombstoned. A picture the source stopped publishing is kept as a
+  /// tombstone (and dropped from search), never deleted outright.
+  status        String    @default("active")
+  tombstonedAt  DateTime?
+  /// pending | queued | running | indexed | failed | dead | skipped
+  embeddingStatus   String    @default("pending")
+  embeddingVersion  String?
+  embeddingError    String?
+  embeddingAttempts Int       @default(0)
+  embeddedAt        DateTime?
+
+  updatedAt DateTime  @default(now()) @updatedAt
+
+  embeddings   ProductEmbedding[]
+  associations ProductImageAssociation[]
+
+  @@index([productId, sortOrder])
+  @@index([organisationId])
+  @@index([organisationId, embeddingStatus])
+  @@index([productId, contentHash])
 }
 
 /// Module 5 � relevance feedback on a jewelry similarity-search result.
@@ -1985,6 +2132,19 @@ model StockItem {
   certificateNo String?
   imageUrl      String?
   inwardDate    DateTime?
+
+  // --- Gati fields previously dropped by the sync -------------------------
+  /// Ring/bangle size as Gati holds it (SizeNo / ItemSizeId).
+  sizeLabel     String?
+  itemSizeId    String?
+  hsn           String?
+  /// Gati ProductCode (the item-type code, not the style).
+  productCode   String?
+  quantity      Int?
+  stonePieces   Int?
+  /// The website variant this piece is, when the match is unambiguous.
+  variantId     String?
+  variant       ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
 
   // Legacy provenance (Inward.JewelId).
   legacyId        String?
@@ -2487,6 +2647,13 @@ model AttendanceRecord {
   shiftId     String?
   isLate      Boolean @default(false)
   lateMinutes Int?
+  /// Version of the dashboard calculation contract used for this day.
+  /// Nullable only for rows created before snapshots were introduced.
+  calculationVersion String?
+  /// Immutable copy of the applied shift inputs (times, grace and day-credit
+  /// thresholds). Reprocessing must not reinterpret an old day after somebody
+  /// edits the live Shift master.
+  shiftSnapshot Json?
 
   // --- Integrity + payroll (international-HRMS parity) ----------------------
   /// Metres from the store centre at check-OUT (mirrors checkInDistanceM).
@@ -2545,6 +2712,10 @@ model Shift {
   endTime        String
   bufferMins     Int          @default(15)
   isNightBatch   Boolean      @default(false)
+  /// No fixed start: lateness is never computed (EzAttendance's "F" shift).
+  isFlexible     Boolean      @default(false)
+  /// Short code a punch source or import refers to ("S", "G", "F", "6HR").
+  code           String?
   /// Minutes that must be worked to earn a FULL day's credit. Null = the shift's
   /// own scheduled duration (endTime �� startTime, midnight-crossing aware).
   fullDayMins    Int?
@@ -3583,14 +3754,49 @@ model DailyReport {
   reportTime       String? // "8:00 PM"
   walkIns          Int          @default(0)
   seriousEnquiries Int          @default(0)
+  /// The third row of the store's own traffic sheet: how many of the serious
+  /// enquiries actually bought. A subset of seriousEnquiries, which is itself a
+  /// subset of walkIns — the service enforces both, so the funnel can never
+  /// widen on the way down.
+  conversions      Int          @default(0)
+
+  /// TABLE A — counter sale. This is its value; cash/card/upi and oldGold*
+  /// below are its payment split.
   deliveredBilled  Decimal      @default(0) @db.Decimal(14, 2)
+
+  /// TABLE B — customised sale. `bookingsNew` is the value booked today and
+  /// `advanceReceived` is what was actually collected against the book; the
+  /// custom* columns below are that collection's payment split.
   bookingsNew      Decimal      @default(0) @db.Decimal(14, 2)
   advanceReceived  Decimal      @default(0) @db.Decimal(14, 2)
+
+  /// The customised-order book as the store already keeps it: what stood open at
+  /// the start of the day, and what closed (sale completed) during it.
+  ///
+  /// Closing booking is deliberately NOT a column: it is open + new - closed,
+  /// and two stored numbers that have to agree is a reconciliation bug waiting
+  /// to happen. The sheet shows it; the database derives it.
+  bookingsOpen     Decimal      @default(0) @db.Decimal(14, 2)
+  bookingsClosed   Decimal      @default(0) @db.Decimal(14, 2)
+
+  /// Payment split for the COUNTER sale (Table A). Gold is a mode of payment on
+  /// the store's sheet, not a separate transaction — a customer settling with
+  /// old gold is paying — so it sits here beside cash/card/UPI.
   cash             Decimal      @default(0) @db.Decimal(14, 2)
   card             Decimal      @default(0) @db.Decimal(14, 2)
   upi              Decimal      @default(0) @db.Decimal(14, 2)
   oldGoldWtG       Decimal?     @db.Decimal(12, 3)
   oldGoldValue     Decimal?     @db.Decimal(14, 2)
+
+  /// Payment split for the CUSTOMISED sale (Table B). Separate columns rather
+  /// than one merged split, because the store reconciles the two tables
+  /// separately and a merged total cannot be checked against either table. The
+  /// short names above keep their meaning for every report already filed.
+  customCash       Decimal      @default(0) @db.Decimal(14, 2)
+  customCard       Decimal      @default(0) @db.Decimal(14, 2)
+  customUpi        Decimal      @default(0) @db.Decimal(14, 2)
+  customGoldWtG    Decimal?     @db.Decimal(12, 3)
+  customGoldValue  Decimal?     @db.Decimal(14, 2)
   submittedBy      String?
   /// Where this came from: "web" (the in-app form) or "whatsapp" (the bot), so
   /// HO can tell the channels apart.
@@ -6008,4 +6214,429 @@ model StoreMessagingRoute {
   @@unique([storeId, channel])
   @@index([organisationId, channel])
   @@index([assetId])
+}
+
+
+// ===========================================================================
+// Employee master, roster and the attendance ledger (Module 6).
+//
+// A person is a User; EmployeeProfile is their employment record beside it,
+// never a second person. Departments and designations are masters with stable
+// ids, so "Bandra" and "BANDRA" are one department and renaming one never
+// rewrites history.
+// ===========================================================================
+
+enum EmploymentStatus {
+  active
+  /// On the books but not working (long leave, suspended). Not marked absent.
+  inactive
+  /// Left. Kept for history; never counted from `exitDate` on.
+  separated
+}
+
+model Department {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  name           String
+  /// The branch this department is, when it is one (EzAttendance used
+  /// departments for stores: "BANDRA", "Kala Ghoda"). Null for head office teams.
+  storeId        String?
+  sortOrder      Int          @default(0)
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  employees EmployeeProfile[]
+
+  @@unique([organisationId, name])
+}
+
+model Designation {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  name           String
+  sortOrder      Int          @default(0)
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  employees EmployeeProfile[]
+
+  @@unique([organisationId, name])
+}
+
+model EmployeeProfile {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  userId         String       @unique
+  user           User         @relation("EmployeeProfileUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  /// "ED003". Unique per organisation; what payroll and the biometric device use.
+  employeeCode   String
+  biometricNo    String?
+  departmentId   String?
+  department     Department?  @relation(fields: [departmentId], references: [id])
+  designationId  String?
+  designation    Designation? @relation(fields: [designationId], references: [id])
+  /// EzAttendance "UNIT" (city / legal unit), kept as text.
+  unit           String?
+  reportingManagerId String?
+  gender         String?
+  dateOfBirth    DateTime?    @db.Date
+  dateOfJoining  DateTime?    @db.Date
+  dateOfConfirmation DateTime? @db.Date
+  exitDate       DateTime?    @db.Date
+  exitReason     String?
+  /// full_time | part_time | contract
+  employmentType String       @default("full_time")
+  status         EmploymentStatus @default(active)
+  bloodGroup     String?
+  address        String?
+  personalEmail  String?
+  /// Legacy shift code ("S", "G", "F", "6HR") until a ShiftAssignment exists.
+  shiftCode      String?
+  /// manual | ezattendance
+  source         String       @default("manual")
+  /// The source row exactly as imported, so cleaning never loses evidence.
+  sourceRaw      Json?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([organisationId, employeeCode])
+  @@index([organisationId, status])
+}
+
+/// Which shift an employee works, from a date. History is never rewritten:
+/// a change closes the open row and opens a new one.
+model ShiftAssignment {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shiftId        String
+  effectiveFrom  DateTime     @db.Date
+  /// Inclusive last day; null = open-ended.
+  effectiveTo    DateTime?    @db.Date
+  createdById    String?
+  createdAt      DateTime     @default(now())
+
+  @@index([userId, effectiveFrom])
+  @@index([organisationId])
+}
+
+/// One punch as it happened. Append-only: a correction is a new event with
+/// source "manager"/"regularization", never an edit. The daily register
+/// (AttendanceRecord) is computed from these.
+model RawPunchEvent {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  userId         String
+  storeId        String?
+  /// in | out
+  kind           String
+  eventAt        DateTime
+  receivedAt     DateTime     @default(now())
+  /// self | manager | regularization | import | device | auto
+  source         String
+  externalId     String?
+  /// Replays of the same punch land here and are ignored.
+  idempotencyKey String
+  lat            Decimal?     @db.Decimal(10, 7)
+  lng            Decimal?     @db.Decimal(10, 7)
+  accuracyM      Int?
+  note           String?
+  createdById    String?
+  /// Set when a manager voids a punch; the row stays as evidence.
+  voidedAt       DateTime?
+  voidedById     String?
+
+  @@index([organisationId, eventAt])
+  @@index([userId, eventAt])
+  @@unique([organisationId, idempotencyKey])
+}
+
+model AttendanceProcessingRun {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  storeId        String?
+  fromDate       DateTime     @db.Date
+  toDate         DateTime     @db.Date
+  /// running | done | failed
+  status         String       @default("running")
+  processed      Int          @default(0)
+  changed        Int          @default(0)
+  skippedLocked  Int          @default(0)
+  errors         Json?
+  startedById    String?
+  startedAt      DateTime     @default(now())
+  finishedAt     DateTime?
+
+  @@index([organisationId, startedAt])
+}
+
+/// A payroll month closed to edits. Attendance, leave and punches dated inside
+/// it are refused until head office reopens it with a reason.
+model PayrollPeriodLock {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  /// "YYYY-MM"
+  month          String
+  lockedAt       DateTime     @default(now())
+  lockedById     String?
+  reopenedAt     DateTime?
+  reopenedById   String?
+  reopenReason   String?
+
+  @@unique([organisationId, month])
+}
+
+
+// ===========================================================================
+// Lossless catalogue sources (Module 5). See docs/modules/05-catalogue-sources.md.
+//
+// The website owns marketing: name, categories, tags, sizes, variants, colours,
+// photos, online prices, publication and SEO. Gati owns the physical piece:
+// stock, stores, tag, style number, weights, hallmark/HUID/certificate, HSN and
+// the tag price. Each source writes only its own columns/tables, so neither can
+// silently overwrite the other.
+// ===========================================================================
+
+/// The source record exactly as received, one row per external product.
+/// `payloadHash` makes a re-sync of an unchanged product a no-op.
+model ExternalProductSnapshot {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  /// website | gati
+  source         String
+  /// The source's own id (website `_id`); falls back to the product code.
+  externalId     String
+  productCode    String?
+  schemaVersion  Int          @default(1)
+  payload        Json
+  payloadHash    String
+  sourceUpdatedAt DateTime?
+  firstSeenAt    DateTime     @default(now())
+  lastSeenAt     DateTime     @default(now())
+  /// Set when a full run no longer sees it, or the source marks it deleted.
+  goneAt         DateTime?
+  syncRunId      String?
+  /// ok | error | conflict
+  normalizationStatus String  @default("ok")
+  normalizationError  String?
+  productId      String?
+
+  @@unique([organisationId, source, externalId])
+  @@index([organisationId, source, productCode])
+}
+
+/// Website-owned marketing record for a design, kept beside the Product so a
+/// Gati sync never touches it and vice versa.
+model ProductWebsiteListing {
+  id              String       @id @default(cuid())
+  organisationId  String
+  organisation    Organisation @relation(fields: [organisationId], references: [id])
+  productId       String       @unique
+  product         Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  externalId      String
+  productCode     String
+  marketingName   String
+  slug            String?
+  categories      String[]
+  subCategories   String[]
+  features        String[]
+  tags            String[]
+  countries       String[]
+  isActive        Boolean      @default(true)
+  isDeleted       Boolean      @default(false)
+  description     String?
+  /// Customer-facing specification text, verbatim, with its conflicts flagged
+  /// separately (CatalogueConflict kind `spec_mismatch`).
+  specifications  String?
+  sizeGuide       String?
+  seo             Json?
+  sourceCreatedAt DateTime?
+  sourceUpdatedAt DateTime?
+  lastSeenAt      DateTime     @default(now())
+  tombstonedAt    DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([organisationId, productCode])
+}
+
+/// One purchasable configuration of a design as a source defines it
+/// (website: metal type × karat × diamond type). Sizes are NOT multiplied in:
+/// they are product-level options unless the source says otherwise.
+model ProductVariant {
+  id               String       @id @default(cuid())
+  organisationId   String
+  organisation     Organisation @relation(fields: [organisationId], references: [id])
+  productId        String
+  product          Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  /// website | gati
+  source           String
+  /// Stable key within the source: its variant id, else "metal|karat|diamond".
+  sourceKey        String
+  sku              String?
+  metalType        String?
+  /// Parsed purity, e.g. 9, 14, 18.
+  karat            Int?
+  metal            MetalKind?
+  diamondType      String?
+  colour           String?
+  weightType       String?
+  goldWeight       Decimal?     @db.Decimal(12, 3)
+  diamondWeight    Decimal?     @db.Decimal(10, 3)
+  stoneWeight      Decimal?     @db.Decimal(10, 3)
+  totalWeight      Decimal?     @db.Decimal(12, 3)
+  price            Decimal?     @db.Decimal(14, 2)
+  priceWithMargin  Decimal?     @db.Decimal(14, 2)
+  /// Internal costing: never in a public/customer response.
+  marginPercentage Decimal?     @db.Decimal(6, 2)
+  makingCharge     Decimal?     @db.Decimal(14, 2)
+  currency         String       @default("INR")
+  /// The bill of material lines as the source sent them (internal costing).
+  bom              Json?
+  attributes       Json?
+  status           String       @default("active")
+  tombstonedAt     DateTime?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  stockItems StockItem[]
+  imageAssociations ProductImageAssociation[]
+
+  @@unique([productId, source, sourceKey])
+  @@index([organisationId])
+}
+
+/// Product-level options such as sizes ("IND 6" … "IND 18"), in source order.
+model ProductOption {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  productId      String
+  product        Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  source         String
+  /// size
+  kind           String
+  value          String
+  sortOrder      Int          @default(0)
+  tombstonedAt   DateTime?
+
+  @@unique([productId, source, kind, value])
+  @@index([organisationId, kind, value])
+}
+
+/// Every price a design carries, labelled by what it is and who said it.
+/// kind: indicative | min_variant | natural_diamond | variant |
+///       variant_with_margin | gati_tag
+model ProductPrice {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  productId      String
+  product        Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  /// ProductVariant.id for variant prices; "" for product-level prices.
+  variantKey     String       @default("")
+  source         String
+  kind           String
+  amount         Decimal      @db.Decimal(14, 2)
+  currency       String       @default("INR")
+  capturedAt     DateTime     @default(now())
+
+  @@unique([productId, variantKey, source, kind])
+  @@index([organisationId, kind, amount])
+}
+
+/// Where one stored picture appears in the source: a colour group, a shape, a
+/// variant, a position. The same photo reused for three colours is one
+/// ProductImage with three associations.
+model ProductImageAssociation {
+  id             String          @id @default(cuid())
+  organisationId String
+  organisation   Organisation    @relation(fields: [organisationId], references: [id])
+  imageId        String
+  image          ProductImage    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  variantId      String?
+  variant        ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  source         String
+  colour         String          @default("")
+  shape          String          @default("")
+  angle          String?
+  sourceOrder    Int             @default(0)
+  tombstonedAt   DateTime?
+
+  @@unique([imageId, source, colour, shape, sourceOrder])
+  @@index([organisationId])
+}
+
+/// One catalogue synchronisation, with its receipt. Resumable from `nextPage`.
+model CatalogueSyncRun {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  /// website | gati
+  source         String
+  /// full | delta | resume
+  mode           String       @default("full")
+  dryRun         Boolean      @default(false)
+  /// running | done | partial | failed
+  status         String       @default("running")
+  nextPage       Int          @default(1)
+  pageSize       Int          @default(100)
+  expected       Int?
+  received       Int          @default(0)
+  created        Int          @default(0)
+  updated        Int          @default(0)
+  unchanged      Int          @default(0)
+  tombstoned     Int          @default(0)
+  conflicted     Int          @default(0)
+  failed         Int          @default(0)
+  imagesExpected Int          @default(0)
+  imagesReceived Int          @default(0)
+  imagesQueued   Int          @default(0)
+  /// Preview of what a dry run would change, and per-item failures.
+  detail         Json?
+  lastError      String?
+  startedById    String?
+  startedAt      DateTime     @default(now())
+  heartbeatAt    DateTime     @default(now())
+  finishedAt     DateTime?
+
+  @@index([organisationId, source, startedAt])
+}
+
+/// Operator review queue: things a sync refused to guess about.
+/// kind: gati_match_none | gati_match_ambiguous | spec_mismatch | unit_mismatch
+///       | missing_cad | image_failed | normalization_error
+model CatalogueConflict {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  kind           String
+  /// Idempotency: the same problem found again updates this row.
+  key            String
+  productId      String?
+  externalId     String?
+  summary        String
+  detail         Json?
+  /// open | resolved | ignored
+  status         String       @default("open")
+  resolution     Json?
+  resolvedById   String?
+  resolvedAt     DateTime?
+  firstSeenAt    DateTime     @default(now())
+  lastSeenAt     DateTime     @default(now())
+
+  @@unique([organisationId, kind, key])
+  @@index([organisationId, status])
 }

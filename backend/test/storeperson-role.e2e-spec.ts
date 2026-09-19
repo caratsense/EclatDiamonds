@@ -32,6 +32,8 @@ const A = { org: 'org_sp_a', slug: 'sp-a', s1: 'store_sp_1', s2: 'store_sp_2' };
 const STOREPERSON_ROUTES = [
   'DELETE /notifications',
   'DELETE /notifications/:id',
+  'DELETE /products/:id/images/:imageId',
+  'DELETE /products/:id/images/:imageId/primary',
   'GET /auth/me',
   'GET /config/bootstrap',
   'GET /config/capabilities',
@@ -52,6 +54,8 @@ const STOREPERSON_ROUTES = [
   'GET /onboarding/tour',
   'GET /products',
   'GET /products/:id',
+  'GET /products/:id/full',
+  'GET /products/:id/images',
   'GET /products/:id/pieces',
   'GET /stock',
   'GET /stock/dead',
@@ -59,6 +63,7 @@ const STOREPERSON_ROUTES = [
   'GET /stock/summary',
   'GET /stock/vin/:vin',
   'GET /stores',
+  'PATCH /auth/me',
   'PATCH /hrms/leave/:id/cancel',
   'PATCH /notifications/:id/read',
   'POST /auth/change-password',
@@ -73,6 +78,8 @@ const STOREPERSON_ROUTES = [
   'POST /onboarding/tour/reset',
   'POST /onboarding/tour/viewed',
   'POST /products/:id/image',
+  'POST /products/:id/images',
+  'POST /products/:id/images/:imageId/primary',
   'POST /products/image-search',
   'POST /products/jewelry/similarity-feedback',
   'POST /products/jewelry/similarity-search',
@@ -278,13 +285,11 @@ describe('Storeperson role (e2e)', () => {
       .expect(201);
   });
 
-  it('a store manager may provision a storeperson; a salesperson may not', async () => {
+  it('storeperson is retired: nobody can be given it (2026-09-19); a salesperson provisions nobody', async () => {
     const body = { name: 'New Stock Hand', phone: '9812388001', email: 'stockhand@sp-a.local', role: 'storeperson', storeId: A.s1 };
     await request(server()).post('/users').set(as('u_sp_sales')).send(body).expect(403);
-    const made = await request(server()).post('/users').set(as('u_sp_mgr')).send(body);
-    expect([200, 201]).toContain(made.status);
-    const row = await prisma.user.findFirst({ where: { organisationId: A.org, name: 'New Stock Hand' } });
-    expect(row?.role).toBe('storeperson');
+    await request(server()).post('/users').set(as('u_sp_mgr')).send(body).expect(400);
+    expect(await prisma.user.findFirst({ where: { organisationId: A.org, name: 'New Stock Hand' } })).toBeNull();
     // And a storeperson cannot provision anyone.
     await request(server()).post('/users').set(as('u_sp_store')).send({ ...body, email: 'x2@sp-a.local', phone: '9812388002' }).expect(403);
   });

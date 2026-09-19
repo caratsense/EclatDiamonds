@@ -5,6 +5,7 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { effectiveAccess } from './access';
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -113,6 +114,7 @@ export class JwtAuthGuard implements CanActivate {
         isActive: true,
         approvalStatus: true,
         organisationId: true,
+        accessOverrides: true,
         // industryPackCode and the tenant's own module switches ride along on a
         // select that already runs, so the entitlement guard needs no query of
         // its own. `disabledCapabilities` is a plain text array and costs
@@ -162,6 +164,7 @@ export class JwtAuthGuard implements CanActivate {
       allStores,
       industryPackCode: dbUser.organisation?.industryPackCode ?? null,
       disabledCapabilities: dbUser.organisation?.disabledCapabilities ?? [],
+      access: effectiveAccess(dbUser.role, dbUser.accessOverrides),
     };
     // A machine must never reach a route marked @HumansOnly(). Checked for every
     // principal, not only machines, so the marker is a property of the ROUTE

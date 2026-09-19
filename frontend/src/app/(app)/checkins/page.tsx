@@ -1,8 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { DoorOpen, Users, UserCheck, TrendingUp } from "lucide-react";
+import { DoorOpen, Users, UserCheck, TrendingUp, ScanLine, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { useRecordInteraction } from "@/lib/queries/crm";
 
 import { SectionHeader } from "@/components/section/section-header";
 import {
@@ -127,10 +128,6 @@ export default function CheckinsPage() {
 
   const { data: checkins = [], isLoading, isError, refetch } = useCheckins();
   const [addOpen, setAddOpen] = useState(false);
-  // The visit currently being closed (drives the "Close visit" dialog).
-  const [closing, setClosing] = useState<CheckIn | null>(null);
-  // Opened from the "Follow up" button: the dialog starts on that outcome.
-  const [closingAsFollowUp, setClosingAsFollowUp] = useState(false);
 
   /*
    * "Log walk-in" from the sidebar's Quick Action lands here.
@@ -183,14 +180,6 @@ export default function CheckinsPage() {
     }
     return [...map.values()];
   }, [todaysVisits, isAggregate, stores]);
-
-  function handleCheckout(id: string, asFollowUp = false) {
-    const target = checkins.find((c) => c.id === id);
-    if (target) {
-      setClosingAsFollowUp(asFollowUp);
-      setClosing(target);
-    }
-  }
 
   return (
     <>
@@ -254,9 +243,6 @@ export default function CheckinsPage() {
           <>
             <LiveInStore
               checkins={checkins}
-              onCheckout={(id) => handleCheckout(id)}
-              onFollowUp={(id) => handleCheckout(id, true)}
-              checkingOutId={closing?.id ?? null}
             />
 
             <div className="grid gap-4 lg:grid-cols-2">
@@ -271,26 +257,27 @@ export default function CheckinsPage() {
         )}
       </div>
 
-      <AddCheckinDialog open={addDialogOpen} onOpenChange={setAddDialogOpen} />
-      <CloseVisitDialog
-        checkin={closing}
-        startAsFollowUp={closingAsFollowUp}
-        open={closing != null}
-        onOpenChange={(o) => {
-          if (!o) setClosing(null);
-        }}
-      />
+      <UnifiedWalkinDialog open={addDialogOpen} onOpenChange={setAddDialogOpen} />
     </>
   );
 }
 
-/** Outcome options offered when closing a walk-in visit. */
-const CLOSE_OUTCOME_OPTIONS: { value: CheckinOutcomeInput; label: string }[] = [
+/** Outcome options offered for the visit. */
+const OUTCOME_OPTIONS: { value: CheckinOutcomeInput; label: string }[] = [
+  { value: "in_store", label: "Still in store (active visit)" },
   { value: "sale_closed", label: "Sale closed" },
   { value: "quote_given", label: "Quote given" },
   { value: "follow_up", label: "Follow up" },
-  { value: "left", label: "Just browsing" },
+  { value: "left", label: "Just browsing / left" },
 ];
+
+const ITEM_KINDS = [
+  { value: "shown", label: "Shown to them" },
+  { value: "tried", label: "Tried on / sampled" },
+  { value: "shortlisted", label: "Shortlisted" },
+  { value: "quoted", label: "Quoted" },
+  { value: "rejected", label: "Not for them" },
+] as const;
 
 const REMIND_BY: { value: "call" | "whatsapp" | "visit"; label: string }[] = [
   { value: "call", label: "Call" },
@@ -304,220 +291,6 @@ function todayYmd(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-/** Capture the real visit outcome as a customer leaves the store. */
-function CloseVisitDialog({
-  checkin,
-  startAsFollowUp = false,
-  open,
-  onOpenChange,
-}: {
-  checkin: CheckIn | null;
-  startAsFollowUp?: boolean;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const checkout = useCheckoutCheckin();
-  const [outcome, setOutcome] = useState<CheckinOutcomeInput | "">("");
-  const [remark, setRemark] = useState("");
-  const [followUpDate, setFollowUpDate] = useState("");
-  const [remindBy, setRemindBy] = useState<"call" | "whatsapp" | "visit" | "">("");
-  const [reminderAt, setReminderAt] = useState("");
-  const reminderDefaults = useFollowUpReminderSettings();
-  const [errors, setErrors] = useState<Record<string, string>>({});
-
-  function clearError(field: string) {
-    setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
-  }
-
-  // Reset the selection whenever a new visit is opened for closing. Done during
-  // render, so the dialog is never painted holding the previous visit's outcome.
-  useResetOn(open ? checkin?.id ?? "open" : null, () => {
-    if (!open) return;
-    setOutcome(startAsFollowUp ? "follow_up" : "");
-    setRemark("");
-    setFollowUpDate("");
-    setRemindBy("");
-    setReminderAt("");
-    setErrors({});
-  });
-
-  function submit() {
-    if (!checkin) return;
-    const next: Record<string, string> = {};
-    if (!outcome) next.outcome = "Select the visit outcome.";
-    // "Follow up" with no date is a promise nobody is reminded of.
-    if (outcome === "follow_up" && !followUpDate && !reminderAt) {
-      next.followUpDate = "Pick the follow-up date or a reminder.";
-    }
-    if (followUpDate && reminderAt && reminderAt.slice(0, 10) > followUpDate) {
-      next.reminderAt = "The reminder must be on or before the follow-up date.";
-    }
-    if (Object.keys(next).length) {
-      setErrors(next);
-      toast.error("Please fix the highlighted fields.");
-      return;
-    }
-    checkout.mutate(
-      {
-        id: checkin.id,
-        outcome: outcome as CheckinOutcomeInput,
-        remark: remark.trim() || undefined,
-        followUpDate: followUpDate || undefined,
-        preferredAction: (followUpDate || reminderAt) && remindBy ? remindBy : undefined,
-        reminderAt: reminderAt || undefined,
-      },
-      {
-        onSuccess: (row) => {
-          toast.success(
-            row.reminder
-              ? `Visit closed — follow-up booked, ${reminderLabel(row.reminder)?.toLowerCase()}`
-              : row.feedback?.status === "scheduled" && row.feedback.scheduledFor
-                ? `Visit closed — we'll ask how it went on ${new Date(row.feedback.scheduledFor).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}`
-                : "Visit closed",
-          );
-          onOpenChange(false);
-        },
-        onError: (err) => toast.error(apiErrorMessage(err, "Could not close the visit.")),
-      },
-    );
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Close visit</DialogTitle>
-          <DialogDescription>
-            {checkin
-              ? `How did ${checkin.customer}'s visit end?`
-              : "Record how the visit ended."}
-          </DialogDescription>
-        </DialogHeader>
-        <div className="grid gap-1.5">
-          <Label htmlFor="close-outcome">
-            Outcome <span className="text-destructive">*</span>
-          </Label>
-          <Select
-            value={outcome}
-            onValueChange={(v) => {
-              setOutcome(v as CheckinOutcomeInput);
-              clearError("outcome");
-            }}
-          >
-            <SelectTrigger id="close-outcome" aria-invalid={!!errors.outcome}>
-              <SelectValue placeholder="Select the visit outcome" />
-            </SelectTrigger>
-            <SelectContent>
-              {CLOSE_OUTCOME_OPTIONS.map((o) => (
-                <SelectItem key={o.value} value={o.value}>
-                  {o.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {errors.outcome ? (
-            <p className="mt-1 text-xs text-destructive">{errors.outcome}</p>
-          ) : null}
-        </div>
-
-        <div className="grid gap-1.5">
-          <Label htmlFor="close-remark">Remark</Label>
-          <Textarea
-            id="close-remark"
-            rows={2}
-            maxLength={2000}
-            value={remark}
-            onChange={(e) => setRemark(e.target.value)}
-            placeholder="What did the customer say? e.g. liked the necklace, wants it in rose gold"
-          />
-        </div>
-
-        <fieldset className="grid gap-3 rounded-lg border p-3">
-          <legend className="px-1 text-sm font-medium">Follow up</legend>
-          <div className="grid gap-1.5">
-            <Label htmlFor="close-followup-date">
-              Follow-up date
-              {outcome === "follow_up" ? <span className="text-destructive"> *</span> : null}
-            </Label>
-            <Input
-              id="close-followup-date"
-              type="date"
-              min={todayYmd()}
-              value={followUpDate}
-              aria-invalid={!!errors.followUpDate}
-              onChange={(e) => {
-                setFollowUpDate(e.target.value);
-                clearError("followUpDate");
-              }}
-            />
-            {errors.followUpDate ? (
-              <p className="text-xs text-destructive">{errors.followUpDate}</p>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                Adds the follow-up to Reminders for that day.
-              </p>
-            )}
-          </div>
-          <div className="grid gap-1.5">
-            <span id="close-remind-by" className="text-sm font-medium">
-              Reminder — follow up by
-            </span>
-            <div role="radiogroup" aria-labelledby="close-remind-by" className="flex flex-wrap gap-2">
-              {REMIND_BY.map((r) => (
-                <Button
-                  key={r.value}
-                  type="button"
-                  size="sm"
-                  role="radio"
-                  aria-checked={remindBy === r.value}
-                  variant={remindBy === r.value ? "default" : "outline"}
-                  disabled={!followUpDate && !reminderAt}
-                  onClick={() => setRemindBy(remindBy === r.value ? "" : r.value)}
-                >
-                  {r.label}
-                </Button>
-              ))}
-            </div>
-          </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="close-reminder-at">Remind me at</Label>
-            <Input
-              id="close-reminder-at"
-              type="datetime-local"
-              min={`${todayYmd()}T00:00`}
-              max={followUpDate ? `${followUpDate}T23:59` : undefined}
-              value={reminderAt}
-              aria-invalid={!!errors.reminderAt}
-              onChange={(e) => {
-                setReminderAt(e.target.value);
-                clearError("reminderAt");
-              }}
-            />
-            {errors.reminderAt ? (
-              <p className="text-xs text-destructive">{errors.reminderAt}</p>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                {followUpDate || !reminderAt
-                  ? `Leave empty to be reminded ${describeDefaultReminder(reminderDefaults.data)}.`
-                  : "With no date, the follow-up is due on the reminder's day."}
-              </p>
-            )}
-          </div>
-        </fieldset>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button onClick={submit} disabled={checkout.isPending}>
-            {checkout.isPending ? "Closing…" : "Close visit"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 const PURPOSE_OPTIONS: VisitPurpose[] = [
   "Browsing",
   "Bridal",
@@ -527,7 +300,8 @@ const PURPOSE_OPTIONS: VisitPurpose[] = [
   "Quote Follow-up",
 ];
 
-function AddCheckinDialog({
+/** Unified dialog for logging walk-ins, items shown, and outcome in one popup. */
+function UnifiedWalkinDialog({
   open,
   onOpenChange,
 }: {
@@ -536,27 +310,37 @@ function AddCheckinDialog({
 }) {
   const { targetStoreId, storeLabel, pickedStoreId, setPickedStoreId } =
     useStoreScope();
-  const create = useCreateCheckin();
+  const createCheckin = useCreateCheckin();
+  const checkoutCheckin = useCheckoutCheckin();
+  const recordInteraction = useRecordInteraction();
+  const reminderDefaults = useFollowUpReminderSettings();
+
+  // Customer details
   const [customer, setCustomer] = useState("");
   const [phone, setPhone] = useState("");
-  /*
-   * The CANONICAL value, not the display label.
-   *
-   * This used to hold a jeweller's English ("Gold Coin / Investment") and map it
-   * to the enum on submit, so the list a clinic saw was Bridal / Gold Scheme /
-   * Repair whatever their pack had configured. Holding the enum value means the
-   * options can come from the tenant's own vocabulary while what gets STORED is
-   * unchanged — the same `CheckinPurpose` member either way.
-   */
+  // Plenty of people walk in, look, and leave without giving a name or a
+  // number. Before this they could not be logged at all, so they vanished
+  // from footfall entirely and the DSR walk-in count was quietly short. An
+  // anonymous visit is still a visit.
+  const [anonymous, setAnonymous] = useState(false);
   const [purpose, setPurpose] = useState<CheckinPurposeInput>("browsing");
+
+  // Item shown
+  const [sku, setSku] = useState("");
+  const [itemKind, setItemKind] = useState<string>("shown");
+  const [itemNote, setItemNote] = useState("");
+
+  // Outcome & follow-up
+  const [outcome, setOutcome] = useState<CheckinOutcomeInput>("in_store");
+  const [remark, setRemark] = useState("");
+  const [followUpDate, setFollowUpDate] = useState("");
+  const [remindBy, setRemindBy] = useState<"call" | "whatsapp" | "visit" | "">("");
+  const [reminderAt, setReminderAt] = useState("");
+
+  const [saving, setSaving] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
   const { data: checkinConfig } = useConfigBootstrap();
-  /*
-   * The tenant's configured visit purposes, falling back to the built-in list.
-   *
-   * A term only qualifies if it declares a `systemValue`, because that is the
-   * enum member the column accepts; a label-only term the tenant invented has
-   * nowhere to be stored and would fail on save.
-   */
   const purposeOptions: { value: CheckinPurposeInput; label: string }[] = (() => {
     const terms = checkinConfig?.taxonomies?.checkin_purpose?.terms ?? [];
     const configured = terms
@@ -565,137 +349,411 @@ function AddCheckinDialog({
     if (configured.length) return configured;
     return PURPOSE_OPTIONS.map((label) => ({ value: PURPOSE_TO_ENUM[label], label }));
   })();
-  // Inline validation errors, keyed by field. Cleared per-field on change.
-  const [errors, setErrors] = useState<Record<string, string>>({});
 
   function clearError(field: string) {
     setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
   }
 
-  function save() {
+  function resetForm() {
+    setCustomer("");
+    setPhone("");
+    setAnonymous(false);
+    setPurpose("browsing");
+    setSku("");
+    setItemKind("shown");
+    setItemNote("");
+    setOutcome("in_store");
+    setRemark("");
+    setFollowUpDate("");
+    setRemindBy("");
+    setReminderAt("");
+    setErrors({});
+  }
+
+  async function save() {
     if (!targetStoreId) {
       toast.error("Select a store to log this walk-in against.");
       return;
     }
     const next: Record<string, string> = {};
-    if (!customer.trim()) next.customer = "Customer name is required.";
-    else if (!isRealName(customer))
-      next.customer = "Enter a real name — letters, not just a number.";
-    // Phone is optional; only validate a non-empty value (backend @IsIndianMobile).
-    const normalizedPhone = phone.trim() ? normalizeIndianMobile(phone) : null;
-    if (phone.trim() && !normalizedPhone)
+    // An anonymous visit carries a timestamped label instead of a name, so
+    // the row is obviously a walk-in rather than a person somebody failed to
+    // identify — and two of them on the same day never look like the same
+    // customer.
+    const customerName = anonymous
+      ? `Walk-in · ${new Date().toLocaleTimeString([], {
+          hour: "numeric",
+          minute: "2-digit",
+        })}`
+      : customer.trim();
+    if (!anonymous) {
+      if (!customer.trim()) next.customer = "Customer name is required.";
+      else if (!isRealName(customer))
+        next.customer = "Enter a real name — letters, not just a number.";
+    }
+    const normalizedPhone =
+      !anonymous && phone.trim() ? normalizeIndianMobile(phone) : null;
+    if (!anonymous && phone.trim() && !normalizedPhone)
       next.phone = "Enter a valid 10-digit mobile number.";
+    if (outcome === "follow_up" && !followUpDate && !reminderAt) {
+      next.followUpDate = "Pick the follow-up date or a reminder.";
+    }
+    if (followUpDate && reminderAt && reminderAt.slice(0, 10) > followUpDate) {
+      next.reminderAt = "The reminder must be on or before the follow-up date.";
+    }
     if (Object.keys(next).length > 0) {
       setErrors(next);
       toast.error("Please fix the highlighted fields.");
       return;
     }
-    create.mutate(
-      {
+
+    setSaving(true);
+    try {
+      // Step 1: Create check-in
+      const row = await createCheckin.mutateAsync({
         storeId: targetStoreId,
-        customerName: customer.trim(),
+        customerName,
         phone: normalizedPhone ?? undefined,
         purpose,
-      },
-      {
-        onSuccess: () => {
-          toast.success("Check-in logged");
-          setCustomer("");
-          setPhone("");
-          setPurpose("browsing");
-          setErrors({});
-          onOpenChange(false);
-        },
-        onError: (err) => toast.error(apiErrorMessage(err, "Could not log the walk-in.")),
-      },
-    );
+      });
+
+      // Step 2: Record item shown if an item code was scanned or entered
+      if (sku.trim() && row.partyId) {
+        try {
+          await recordInteraction.mutateAsync({
+            kind: itemKind,
+            partyId: row.partyId,
+            sku: sku.trim(),
+            storeId: targetStoreId,
+            channel: "store",
+            notes: itemNote.trim() || undefined,
+          });
+        } catch {
+          // Logged non-blocking if CRM interaction fails
+        }
+      }
+
+      // Step 3: Record outcome and follow-up if closed or outcome selected
+      if (outcome && outcome !== "in_store") {
+        await checkoutCheckin.mutateAsync({
+          id: row.id,
+          outcome,
+          remark: remark.trim() || undefined,
+          followUpDate: followUpDate || undefined,
+          preferredAction: (followUpDate || reminderAt) && remindBy ? remindBy : undefined,
+          reminderAt: reminderAt || undefined,
+        });
+      }
+
+      toast.success(`Walk-in recorded for ${customerName}`);
+      resetForm();
+      onOpenChange(false);
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Could not record the walk-in."));
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+    <Dialog open={open} onOpenChange={(o) => {
+      if (!o) resetForm();
+      onOpenChange(o);
+    }}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Log walk-in</DialogTitle>
+          <DialogTitle>Log walk-in &amp; visit</DialogTitle>
           <DialogDescription>
-            New check-ins are recorded against {storeLabel}.
+            Record customer details, items shown, and outcome against {storeLabel}.
           </DialogDescription>
         </DialogHeader>
-        <div className="grid gap-3">
+
+        <div className="space-y-4">
           <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
 
-          <div className="grid gap-1.5">
-            <Label htmlFor="ci-cust">
-              Customer name <span className="text-destructive">*</span>
-            </Label>
-            <Input
-              id="ci-cust"
-              placeholder="e.g. Rajesh Agarwal"
-              value={customer}
-              aria-invalid={!!errors.customer}
-              onChange={(e) => {
-                setCustomer(e.target.value);
-                clearError("customer");
-              }}
-            />
-            {errors.customer ? (
-              <p className="mt-1 text-xs text-destructive">{errors.customer}</p>
-            ) : null}
-          </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="ci-phone">Phone</Label>
-            <Input
-              id="ci-phone"
-              placeholder="+91 ..."
-              inputMode="tel"
-              value={phone}
-              aria-invalid={!!errors.phone}
-              onChange={(e) => {
-                setPhone(capIndianPhone(e.target.value));
-                clearError("phone");
-              }}
-            />
-            {errors.phone ? (
-              <p className="mt-1 text-xs text-destructive">{errors.phone}</p>
-            ) : null}
-            {/* Recognition before creation: the counter finds out who this is
-                while they are still typing, and a returning customer's name is
-                filled in rather than re-typed (and possibly re-spelled, which
-                is how one person becomes two records). */}
-            <CustomerRecognition
-              phone={phone}
-              onRecognised={(c) => {
-                if (!customer.trim()) {
-                  setCustomer(c.name);
+          {/* Section 1: Customer Details */}
+          <div className="space-y-3 rounded-lg border bg-card p-3 shadow-xs">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Customer Details
+            </h4>
+
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+              <input
+                id="ci-anon"
+                type="checkbox"
+                className="h-4 w-4 accent-[var(--primary)]"
+                checked={anonymous}
+                onChange={(e) => {
+                  setAnonymous(e.target.checked);
                   clearError("customer");
-                }
-              }}
-            />
+                  clearError("phone");
+                }}
+              />
+              Customer didn&apos;t share details
+            </label>
+            {anonymous ? (
+              <p className="text-xs text-muted-foreground">
+                Logged as an anonymous walk-in with the time of the visit. It
+                still counts towards footfall and the DSR; items shown and the
+                outcome can be recorded as usual.
+              </p>
+            ) : null}
+
+            <div className="grid gap-1.5">
+              <Label htmlFor="ci-cust">
+                Customer name
+                {anonymous ? null : (
+                  <span className="text-destructive"> *</span>
+                )}
+              </Label>
+              <Input
+                id="ci-cust"
+                placeholder={anonymous ? "Not provided" : "e.g. Rajesh Agarwal"}
+                disabled={anonymous}
+                value={anonymous ? "" : customer}
+                aria-invalid={!!errors.customer}
+                onChange={(e) => {
+                  setCustomer(e.target.value);
+                  clearError("customer");
+                }}
+              />
+              {errors.customer ? (
+                <p className="mt-1 text-xs text-destructive">{errors.customer}</p>
+              ) : null}
+            </div>
+
+            <div className="grid gap-1.5">
+              <Label htmlFor="ci-phone">Phone</Label>
+              <Input
+                id="ci-phone"
+                placeholder={anonymous ? "Not provided" : "+91 ..."}
+                inputMode="tel"
+                disabled={anonymous}
+                value={anonymous ? "" : phone}
+                aria-invalid={!!errors.phone}
+                onChange={(e) => {
+                  setPhone(capIndianPhone(e.target.value));
+                  clearError("phone");
+                }}
+              />
+              {errors.phone ? (
+                <p className="mt-1 text-xs text-destructive">{errors.phone}</p>
+              ) : null}
+              <CustomerRecognition
+                phone={phone}
+                onRecognised={(c) => {
+                  if (!customer.trim()) {
+                    setCustomer(c.name);
+                    clearError("customer");
+                  }
+                }}
+              />
+            </div>
+
+            <div className="grid gap-1.5">
+              <Label htmlFor="ci-purpose">Purpose</Label>
+              <Select
+                value={purpose}
+                onValueChange={(v) => setPurpose(v as CheckinPurposeInput)}
+              >
+                <SelectTrigger id="ci-purpose">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {purposeOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="ci-purpose">Purpose</Label>
-            <Select
-              value={purpose}
-              onValueChange={(v) => setPurpose(v as CheckinPurposeInput)}
-            >
-              <SelectTrigger id="ci-purpose">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {purposeOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+
+          {/* Section 2: Items Shown / Interest */}
+          <div className="space-y-3 rounded-lg border bg-card p-3 shadow-xs">
+            <div className="flex items-center justify-between">
+              <h4 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <ScanLine className="h-3.5 w-3.5 text-indigo-500" />
+                What did you show?
+              </h4>
+              <span className="text-[11px] text-muted-foreground">Optional</span>
+            </div>
+
+            <div className="grid gap-1.5">
+              <Label htmlFor="ri-sku">Item code</Label>
+              <div className="relative">
+                <ScanLine className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  id="ri-sku"
+                  className="pl-8"
+                  placeholder="Scan or type the code"
+                  value={sku}
+                  onChange={(e) => setSku(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-1.5">
+              <Label htmlFor="ri-kind">What happened</Label>
+              <Select value={itemKind} onValueChange={setItemKind}>
+                <SelectTrigger id="ri-kind">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ITEM_KINDS.map((k) => (
+                    <SelectItem key={k.value} value={k.value}>
+                      {k.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid gap-1.5">
+              <Label htmlFor="ri-notes">Item note</Label>
+              <Textarea
+                id="ri-notes"
+                rows={2}
+                placeholder="e.g. wanted it in rose gold, size smaller"
+                value={itemNote}
+                onChange={(e) => setItemNote(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {/* Section 3: Visit Outcome & Follow-up */}
+          <div className="space-y-3 rounded-lg border bg-card p-3 shadow-xs">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Visit Outcome &amp; Follow-up
+            </h4>
+
+            <div className="grid gap-1.5">
+              <Label htmlFor="close-outcome">Outcome</Label>
+              <Select
+                value={outcome}
+                onValueChange={(v) => {
+                  setOutcome(v as CheckinOutcomeInput);
+                  clearError("outcome");
+                }}
+              >
+                <SelectTrigger id="close-outcome" aria-invalid={!!errors.outcome}>
+                  <SelectValue placeholder="Select outcome" />
+                </SelectTrigger>
+                <SelectContent>
+                  {OUTCOME_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {errors.outcome ? (
+                <p className="mt-1 text-xs text-destructive">{errors.outcome}</p>
+              ) : null}
+            </div>
+
+            <div className="grid gap-1.5">
+              <Label htmlFor="close-remark">Customer feedback / remark</Label>
+              <Textarea
+                id="close-remark"
+                rows={2}
+                maxLength={2000}
+                value={remark}
+                onChange={(e) => setRemark(e.target.value)}
+                placeholder="What did the customer say? e.g. liked the necklace, will return this weekend"
+              />
+            </div>
+
+            {(outcome === "follow_up" || followUpDate) ? (
+              <fieldset className="grid gap-3 rounded-lg border border-indigo-200 dark:border-indigo-500/20 bg-indigo-50/40 dark:bg-indigo-500/5 p-3">
+                <legend className="px-1 text-xs font-semibold uppercase text-indigo-700 dark:text-indigo-400">
+                  Follow up details
+                </legend>
+
+                <div className="grid gap-1.5">
+                  <Label htmlFor="close-followup-date">
+                    Follow-up date
+                    {outcome === "follow_up" ? <span className="text-destructive"> *</span> : null}
+                  </Label>
+                  <Input
+                    id="close-followup-date"
+                    type="date"
+                    min={todayYmd()}
+                    value={followUpDate}
+                    aria-invalid={!!errors.followUpDate}
+                    onChange={(e) => {
+                      setFollowUpDate(e.target.value);
+                      clearError("followUpDate");
+                    }}
+                  />
+                  {errors.followUpDate ? (
+                    <p className="text-xs text-destructive">{errors.followUpDate}</p>
+                  ) : null}
+                </div>
+
+                <div className="grid gap-1.5">
+                  <span id="close-remind-by" className="text-xs font-medium">
+                    Reminder channel
+                  </span>
+                  <div role="radiogroup" aria-labelledby="close-remind-by" className="flex flex-wrap gap-2">
+                    {REMIND_BY.map((r) => (
+                      <Button
+                        key={r.value}
+                        type="button"
+                        size="sm"
+                        role="radio"
+                        aria-checked={remindBy === r.value}
+                        variant={remindBy === r.value ? "default" : "outline"}
+                        onClick={() => setRemindBy(remindBy === r.value ? "" : r.value)}
+                      >
+                        {r.label}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid gap-1.5">
+                  <Label htmlFor="close-reminder-at">Remind me at</Label>
+                  <Input
+                    id="close-reminder-at"
+                    type="datetime-local"
+                    min={`${todayYmd()}T00:00`}
+                    max={followUpDate ? `${followUpDate}T23:59` : undefined}
+                    value={reminderAt}
+                    aria-invalid={!!errors.reminderAt}
+                    onChange={(e) => {
+                      setReminderAt(e.target.value);
+                      clearError("reminderAt");
+                    }}
+                  />
+                  {errors.reminderAt ? (
+                    <p className="text-xs text-destructive">{errors.reminderAt}</p>
+                  ) : (
+                    <p className="text-[11px] text-muted-foreground">
+                      {followUpDate || !reminderAt
+                        ? `Default: ${describeDefaultReminder(reminderDefaults.data)}.`
+                        : "Follow-up due on reminder day."}
+                    </p>
+                  )}
+                </div>
+              </fieldset>
+            ) : null}
           </div>
         </div>
-        <DialogFooter>
+
+        <DialogFooter className="gap-2 sm:gap-0">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={save} disabled={create.isPending}>
-            {create.isPending ? "Saving…" : "Log check-in"}
+          <Button onClick={save} disabled={saving || createCheckin.isPending} className="bg-[#6366f1] hover:bg-[#4f46e5] text-white">
+            {saving ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Recording…
+              </>
+            ) : (
+              "Record Walk-in"
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>

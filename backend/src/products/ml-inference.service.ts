@@ -3,14 +3,22 @@ import { ConfigService } from '@nestjs/config';
 import { fetchJson } from '../integrations/integrations.util';
 import { parseEmbedding } from './image-embedding.service';
 
+/**
+ * One piece of jewellery the inference service found inside a picture, embedded
+ * on its own: the pendant on a velvet stand, each render on a CAD sheet, the
+ * ring on a hand. The whole-picture vector sits alongside, never replaced.
+ */
+export interface View {
+  dino: number[];
+  siglip: number[];
+}
+
 /** A dual visual embedding for one image. */
 export interface DualEmbedding {
   dino: number[];
   siglip: number[];
-  dinoModelVersion: string;
-  siglipModelVersion: string;
-  preprocessingVersion: string;
-  imageHash: string;
+  /** Detected jewellery, best first. Empty from a service without the detector. */
+  views: View[];
 }
 
 /** The model/pipeline versions the inference service is currently serving. */
@@ -25,27 +33,61 @@ export interface BatchItem {
   bytes: Buffer;
   mime: string;
 }
-export interface BatchResult {
+export interface BatchResult extends DualEmbedding {
   id: string;
-  dino: number[];
-  siglip: number[];
   imageHash?: string;
+  /** A ≤`thumbnailPx` rendition, when asked for and the service supports it. */
+  thumb?: { bytes: Buffer; mime: string };
+  width?: number;
+  height?: number;
+}
+export interface BatchResponse {
+  results: BatchResult[];
+  errors: { id: string; error: string }[];
+  /** Per-stage compute time reported by the service (decode/detect/dino/siglip). */
+  timings: Record<string, number>;
+  /** Wall time of the HTTP call, as seen from here. */
+  wallMs: number;
+}
+
+/** The views in a response, keeping only well-formed ones. */
+function parseViews(raw: unknown): View[] {
+  if (!Array.isArray(raw)) return [];
+  const out: View[] = [];
+  for (const v of raw) {
+    const dino = parseEmbedding(v?.dino);
+    const siglip = parseEmbedding(v?.siglip);
+    if (dino && siglip) out.push({ dino, siglip });
+  }
+  return out;
+}
+
+function numbers(raw: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (raw && typeof raw === 'object') {
+    for (const [k, v] of Object.entries(raw)) if (Number.isFinite(Number(v))) out[k] = Number(v);
+  }
+  return out;
 }
 
 /**
- * Client for the separately-built DINOv3 + SigLIP 2 inference service (Module 5).
+ * Client for the separately-built DINOv2 + SigLIP 2 inference service (Module 5).
  *
- * Config-gated exactly like ImageEmbeddingService: with NO `ML_INFERENCE_URL` set
- * the service reports `available:false` and every call returns null/empty — the
- * feature is simply off, it NEVER fabricates a vector. Contract:
- *   POST /embed        { image_b64, mime } -> { dino, siglip, model_versions, preprocessing_version, image_hash }
- *   POST /embed/batch  { images:[{id,image_b64,mime}] } -> { results:[...], errors:[...] }
- *   GET  /health       -> { model_versions:{dino,siglip}, preprocessing_version, ... }
- * Optional bearer via `ML_INFERENCE_KEY`.
+ * Config-gated: with NO `ML_INFERENCE_URL` the service reports `available:false`
+ * and every call returns empty — the feature is off, it NEVER fabricates a
+ * vector. Contract:
+ *   POST /embed/batch  { images:[{id,image_b64,mime}], thumbnail_px? }
+ *        -> { results:[{id,dino,siglip,views,image_hash,thumb_b64?,thumb_mime?,width?,height?}], errors:[...], timings_ms? }
+ *   GET  /health       -> { models:{dino:{id},siglip:{id}} | model_versions:{dino,siglip}, preprocessing_version }
+ * Optional key via `ML_INFERENCE_KEY`, sent as both `x-api-key` and a bearer.
+ *
+ * One attempt per call. Retrying belongs to the caller: the index queue backs
+ * off between attempts, and search has a single deadline it must not exceed.
  */
 @Injectable()
 export class MlInferenceService {
   private readonly logger = new Logger(MlInferenceService.name);
+  private versionsCache: { at: number; v: InferenceVersions } | null = null;
 
   constructor(private readonly config: ConfigService) {}
 
@@ -61,133 +103,87 @@ export class MlInferenceService {
     return Boolean(this.url);
   }
 
-  /**
-   * One retry, for a service that is allowed to be asleep.
-   *
-   * The inference container runs with Railway Serverless on: after ten idle
-   * minutes it is stopped, and the request that wakes it either times out while
-   * two vision models load or comes back 502. Both are normal, both are
-   * transient, and without this the caller sees an ordinary failure and quietly
-   * returns no vector -- an image search that silently finds nothing.
-   *
-   * Deliberately one retry, not a backoff loop: if the second attempt also fails
-   * the service is broken rather than sleeping, and hammering it helps nobody.
-   * The retry is given a longer budget because a cold start is the slow case by
-   * definition.
-   */
-  private async wakeAware<T>(
-    what: string,
-    call: (timeoutMs: number) => Promise<T>,
-    warmMs: number,
-    coldMs: number,
-  ): Promise<T> {
-    try {
-      return await call(warmMs);
-    } catch (err) {
-      this.logger.log(`inference ${what} failed (${err instanceof Error ? err.message : err}); retrying once in case it was asleep`);
-      return await call(coldMs);
-    }
-  }
-
   private headers(): Record<string, string> {
     const h: Record<string, string> = { 'content-type': 'application/json' };
-    if (this.key) h.authorization = `Bearer ${this.key}`;
+    if (this.key) {
+      h.authorization = `Bearer ${this.key}`;
+      h['x-api-key'] = this.key;
+    }
     return h;
   }
 
-  /** Best-effort probe of the versions currently served. Nulls on any failure. */
+  /**
+   * The last versions a /health call returned — no network, never blocks.
+   * Empty until one has succeeded. For callers on a request path (enqueue from
+   * an upload or a sync); the worker checks the live version before it embeds.
+   */
+  cachedVersions(): InferenceVersions {
+    return this.versionsCache?.v ?? {};
+  }
+
+  /**
+   * The versions currently served, cached for 30s (every index job asks). Empty
+   * on any failure — callers treat that as "cannot tell", never as a version.
+   */
   async currentVersions(): Promise<InferenceVersions> {
     if (!this.available) return {};
+    if (this.versionsCache && Date.now() - this.versionsCache.at < 30_000) return this.versionsCache.v;
     try {
-      const data = await fetchJson(`${this.url}/health`, {
-        method: 'GET',
-        headers: this.headers(),
-        timeoutMs: 10_000,
-      });
-      return {
-        dino: data?.model_versions?.dino,
-        siglip: data?.model_versions?.siglip,
-        // The service returns preprocessing_version as an int; the DB column is a
-        // String, so normalise it here (a number would fail the Prisma upsert).
-        preprocessing:
-          data?.preprocessing_version != null ? String(data.preprocessing_version) : undefined,
+      const data = await fetchJson(`${this.url}/health`, { method: 'GET', headers: this.headers(), timeoutMs: 10_000 });
+      const v: InferenceVersions = {
+        // Both health shapes seen in the wild: the service's own `models.*.id`
+        // and the documented `model_versions`.
+        dino: data?.model_versions?.dino ?? data?.models?.dino?.id,
+        siglip: data?.model_versions?.siglip ?? data?.models?.siglip?.id,
+        // An int from the service; the DB column is a String.
+        preprocessing: data?.preprocessing_version != null ? String(data.preprocessing_version) : undefined,
       };
+      if (v.dino && v.siglip && v.preprocessing) this.versionsCache = { at: Date.now(), v };
+      return v;
     } catch (err) {
       this.logger.warn(`inference /health failed: ${err instanceof Error ? err.message : err}`);
       return {};
     }
   }
 
-  /** Embed a single image, or null when unavailable / empty / the call fails. */
-  async embed(bytes: Buffer | undefined, mime: string): Promise<DualEmbedding | null> {
-    if (!this.available || !bytes?.length) return null;
-    try {
-      const body = JSON.stringify({ image_b64: bytes.toString('base64'), mime });
-      const data = await this.wakeAware(
-        '/embed',
-        (timeoutMs) =>
-          fetchJson(`${this.url}/embed`, {
-            method: 'POST',
-            headers: this.headers(),
-            timeoutMs,
-            body,
-          }),
-        30_000,
-        180_000,
-      );
-      const dino = parseEmbedding(data?.dino);
-      const siglip = parseEmbedding(data?.siglip);
-      if (!dino || !siglip) {
-        this.logger.warn('inference /embed returned no usable dual vector');
-        return null;
-      }
-      return {
-        dino,
-        siglip,
-        dinoModelVersion: data?.model_versions?.dino ?? 'unknown',
-        siglipModelVersion: data?.model_versions?.siglip ?? 'unknown',
-        preprocessingVersion:
-          data?.preprocessing_version != null ? String(data.preprocessing_version) : 'unknown',
-        imageHash: data?.image_hash ?? '',
-      };
-    } catch (err) {
-      this.logger.warn(`inference /embed failed: ${err instanceof Error ? err.message : err}`);
-      return null;
-    }
-  }
-
   /**
-   * Embed a batch. Returns per-id results plus per-id errors so one bad image
-   * never fails the whole re-index. Throws only when the whole call fails (so the
-   * caller can mark every item in the chunk failed without corrupting existing
-   * rows).
+   * Embed a batch. Per-id results and per-id errors, so one bad image never
+   * fails the rest. Throws only when the whole call fails or times out.
    */
-  async embedBatch(items: BatchItem[]): Promise<{ results: BatchResult[]; errors: { id: string; error: string }[] }> {
-    if (!this.available || !items.length) return { results: [], errors: [] };
-    const batchBody = JSON.stringify({
+  async embedBatch(items: BatchItem[], opts: { timeoutMs?: number; thumbnailPx?: number } = {}): Promise<BatchResponse> {
+    if (!this.available || !items.length) return { results: [], errors: [], timings: {}, wallMs: 0 };
+    const body = JSON.stringify({
       images: items.map((i) => ({ id: i.id, image_b64: i.bytes.toString('base64'), mime: i.mime })),
+      ...(opts.thumbnailPx ? { thumbnail_px: opts.thumbnailPx } : {}),
     });
-    const data = await this.wakeAware(
-      '/embed/batch',
-      (timeoutMs) =>
-        fetchJson(`${this.url}/embed/batch`, {
-          method: 'POST',
-          headers: this.headers(),
-          timeoutMs,
-          body: batchBody,
-        }),
-      120_000,
-      300_000,
-    );
+    const t0 = Date.now();
+    const data = await fetchJson(`${this.url}/embed/batch`, {
+      method: 'POST',
+      headers: this.headers(),
+      timeoutMs: opts.timeoutMs ?? 120_000,
+      body,
+    });
+    const wallMs = Date.now() - t0;
     const results: BatchResult[] = [];
     for (const r of data?.results ?? []) {
       const dino = parseEmbedding(r?.dino);
       const siglip = parseEmbedding(r?.siglip);
-      if (dino && siglip) {
-        results.push({ id: r.id, dino, siglip, imageHash: r?.image_hash });
-      }
+      if (!dino || !siglip) continue;
+      results.push({
+        id: String(r.id),
+        dino,
+        siglip,
+        views: parseViews(r?.views),
+        imageHash: r?.image_hash,
+        thumb:
+          typeof r?.thumb_b64 === 'string' && r.thumb_b64
+            ? { bytes: Buffer.from(r.thumb_b64, 'base64'), mime: String(r?.thumb_mime ?? 'image/jpeg') }
+            : undefined,
+        width: Number.isInteger(r?.width) ? r.width : undefined,
+        height: Number.isInteger(r?.height) ? r.height : undefined,
+      });
     }
-    const errors = (data?.errors ?? []).map((e: any) => ({ id: e?.id, error: String(e?.error ?? 'error') }));
-    return { results, errors };
+    const errors = (data?.errors ?? []).map((e: any) => ({ id: String(e?.id), error: String(e?.error ?? 'error') }));
+    return { results, errors, timings: numbers(data?.timings_ms), wallMs };
   }
 }

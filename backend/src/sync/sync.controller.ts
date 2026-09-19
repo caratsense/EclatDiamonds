@@ -6,6 +6,8 @@ import { SyncService } from './sync.service';
 import { RateLimit } from '../common/rate-limit';
 import { PurgeDemoDto, RawSyncDto, SyncBatchDto, SyncStaffDto, SyncStoresDto } from './dto/sync.dto';
 import { CurrentGatiIngestion, GatiIngestion, GatiIngestionContext } from './gati-ingestion.guard';
+import { WebsiteCatalogueService } from '../catalogue/website/website-catalogue.service';
+import { WebsiteRawDto } from '../catalogue/website/website.dto';
 
 /**
  * Legacy-sync ingestion (the on-site sync_sjep.py agent's production sink).
@@ -29,7 +31,10 @@ import { CurrentGatiIngestion, GatiIngestion, GatiIngestionContext } from './gat
 @RateLimit('integration')
 @Controller('sync')
 export class SyncController {
-  constructor(private readonly sync: SyncService) {}
+  constructor(
+    private readonly sync: SyncService,
+    private readonly websiteCatalogue: WebsiteCatalogueService,
+  ) {}
 
   @GatiIngestion()
   @Post('parties')
@@ -195,6 +200,31 @@ export class SyncController {
     return this.sync.runGatiIngestion(user, generation, 'website-products', body.records.length, () =>
       this.sync.syncWebsiteProducts(user.organisationId, body.records),
     );
+  }
+
+  /**
+   * The website catalogue, raw and lossless, from the shop-PC agent: whole
+   * product payloads in batches, normalised and persisted by the same code as
+   * the head-office connector (docs/modules/05-catalogue-sources.md). The first
+   * batch opens a CatalogueSyncRun; `final` closes it. New pictures are queued
+   * for indexing only after the ingestion transaction has committed.
+   */
+  @GatiIngestion()
+  @Post('website/raw')
+  async websiteRaw(
+    @CurrentUser() user: AuthUser,
+    @CurrentGatiIngestion() generation: GatiIngestionContext,
+    @Body() body: WebsiteRawDto,
+  ) {
+    const { queueImageIds, ...result } = await this.sync.runGatiIngestion(
+      user,
+      generation,
+      'website-raw',
+      body.products.length,
+      () => this.sync.syncWebsiteRaw(user.organisationId, body, this.websiteCatalogue),
+    );
+    await this.websiteCatalogue.enqueueImages(user.organisationId, queueImageIds);
+    return result;
   }
 
   /** Auto-ingest Gati branches: new legacyIds become `pending` stores for HO/AM to set up. */

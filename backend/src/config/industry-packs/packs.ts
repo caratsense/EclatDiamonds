@@ -159,6 +159,8 @@ const CORE_NAVIGATION = [
   'data',
   'settings/integrations',
   'settings/audit',
+  /** Head office decides, person by person, which screens someone can open. */
+  'settings/access',
 ] as const;
 
 function universalNavigation(): string[] {

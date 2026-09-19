@@ -32,6 +32,9 @@ export type MetalKind =
   | "gold_24k"
   | "gold_22k"
   | "gold_18k"
+  | "gold_14k"
+  | "gold_10k"
+  | "gold_9k"
   | "rose_gold_18k"
   | "platinum"
   | "silver";
@@ -42,8 +45,14 @@ export interface MetalRate {
   /** ISO timestamp the rate took effect. */
   effectiveFrom: string;
   ageHours: number;
-  /** True once older than the configured window (24h by default). */
+  /** True once the rate is older than the server's stale window. */
   stale: boolean;
+  /** ibja (the IBJA benchmark), manual (entered by hand) or feed (another provider). */
+  source?: "ibja" | "manual" | "feed";
+  /** The IBJA publication day (YYYY-MM-DD) when source is ibja. */
+  publishedOn?: string | null;
+  /** Not published by the source; derived from the 999 rate by purity. */
+  derived?: boolean;
 }
 
 /** Karat shown in the quote builder → the metal key the backend stores. */
@@ -51,6 +60,9 @@ const KARAT_METAL: Record<number, MetalKind> = {
   24: "gold_24k",
   22: "gold_22k",
   18: "gold_18k",
+  14: "gold_14k",
+  10: "gold_10k",
+  9: "gold_9k",
 };
 
 /**

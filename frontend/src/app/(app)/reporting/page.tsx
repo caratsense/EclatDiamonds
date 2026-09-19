@@ -11,6 +11,10 @@ import { MoversTable } from "@/components/reporting/movers-table";
 import { PeriodRollup } from "@/components/reporting/period-rollup";
 import { SendReportDialog } from "@/components/reporting/send-report-dialog";
 import { DailyReportSection } from "@/components/reporting/daily-report-section";
+import { AllStoresReports } from "@/components/reporting/all-stores-reports";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useSession } from "@/store/use-session";
+import { ROLE_RANK } from "@/lib/types";
 import {
   Dialog,
   DialogContent,
@@ -78,11 +82,34 @@ function dsrKpiHref(id: string): string | undefined {
   }
 }
 
+/**
+ * A salesperson files the day's DSR and sees what their store filed; the
+ * analytics and cross-branch views are management's (and 403 for them).
+ */
 export default function ReportingPage() {
+  const role = useSession((s) => s.role);
+  return ROLE_RANK[role] < ROLE_RANK.store_manager ? <FrontLineReporting /> : <ManagerReporting />;
+}
+
+function FrontLineReporting() {
+  const item = getNavItem("reporting");
+  return (
+    <>
+      <SectionHeader title="Daily Sales Report (DSR)" purpose={item?.purpose ?? ""} />
+      <DailyReportSection />
+    </>
+  );
+}
+
+function ManagerReporting() {
   const item = getNavItem("reporting");
   const [dsrOpen, setDsrOpen] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
   const [period, setPeriod] = useState<ReportPeriod>("daily");
+  // Head office, or anyone who sees more than one branch, reads them side by side.
+  const { role, stores } = useSession();
+  const showAllStores =
+    role === "head_office" || stores.filter((st) => !st.isAggregate).length > 1;
 
   // DSR (headline + payment mix + store rows) and movers come live, store-scoped.
   const dsrQuery = useDsr();
@@ -98,22 +125,8 @@ export default function ReportingPage() {
     [dsrQuery.data],
   );
 
-  return (
+  const overview = (
     <>
-      <SectionHeader
-        title="Reporting & Daily Sales Report (DSR)"
-        purpose={item?.purpose ?? ""}
-        primaryAction={item?.primaryAction}
-        onPrimaryAction={() => setDsrOpen(true)}
-      />
-
-      <GenerateDsrDialog
-        open={dsrOpen}
-        onOpenChange={setDsrOpen}
-        summary={dsrSummary}
-        isLoading={dsrQuery.isLoading}
-      />
-
       <PeriodRollup
         period={period}
         onPeriodChange={setPeriod}
@@ -197,6 +210,39 @@ export default function ReportingPage() {
           onRetry={() => moversQuery.refetch()}
         />
       </div>
+    </>
+  );
+
+  return (
+    <>
+      <SectionHeader
+        title="Reporting & Daily Sales Report (DSR)"
+        purpose={item?.purpose ?? ""}
+        primaryAction={item?.primaryAction}
+        onPrimaryAction={() => setDsrOpen(true)}
+      />
+
+      <GenerateDsrDialog
+        open={dsrOpen}
+        onOpenChange={setDsrOpen}
+        summary={dsrSummary}
+        isLoading={dsrQuery.isLoading}
+      />
+
+      {showAllStores ? (
+        <Tabs defaultValue="overview" className="space-y-4">
+          <TabsList>
+            <TabsTrigger value="overview">This view</TabsTrigger>
+            <TabsTrigger value="stores">All stores reports</TabsTrigger>
+          </TabsList>
+          <TabsContent value="overview">{overview}</TabsContent>
+          <TabsContent value="stores">
+            <AllStoresReports />
+          </TabsContent>
+        </Tabs>
+      ) : (
+        overview
+      )}
     </>
   );
 }

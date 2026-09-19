@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { gateDecision, navSlugForPath, roleDecision } from "./module-gate";
+import { gateDecision, navSlugForPath, roleDecision, roleForPage } from "./module-gate";
 import { CORE_NAVIGATION, NAV_ITEMS } from "@/lib/navigation";
 
 /**
@@ -222,5 +222,25 @@ describe("roleDecision", () => {
   it("lets a store manager into management screens", () => {
     expect(roleDecision("/reporting", "store_manager")).toBe("render");
     expect(roleDecision("/inventory/dead-stock", "store_manager")).toBe("render");
+  });
+});
+
+describe("per-person access (auth/access.ts)", () => {
+  const salesAccess = { crm: "own", hrms: "own", inventory: "store" } as const;
+
+  it("follows the access map, not the role, once the session has one", () => {
+    expect(roleDecision("/inventory", "salesperson", salesAccess)).toBe("render");
+    expect(roleDecision("/quotation", "salesperson", salesAccess)).toBe("refuse");
+    expect(roleDecision("/crm", "marketing", { crm: "store" })).toBe("render");
+    expect(roleDecision("/quotation", "marketing", { crm: "store" })).toBe("refuse");
+  });
+
+  it("serves a page at the person's level for that screen", () => {
+    expect(roleForPage("/inventory", "salesperson", salesAccess)).toBe("store_manager");
+    expect(roleForPage("/crm", "salesperson", salesAccess)).toBe("salesperson");
+    expect(roleForPage("/crm", "store_manager", { crm: "own" })).toBe("salesperson");
+    expect(roleForPage("/crm", "marketing", { crm: "store" })).toBe("store_manager");
+    expect(roleForPage("/settings", "salesperson", salesAccess)).toBe("salesperson");
+    expect(roleForPage("/crm", "head_office", { crm: "own" })).toBe("head_office");
   });
 });
