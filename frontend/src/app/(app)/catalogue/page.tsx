@@ -1,13 +1,11 @@
 "use client";
 
 import { Suspense, useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { ImagePlus, Plug, Search, SlidersHorizontal, X } from "lucide-react";
+import { ImagePlus, Search, SlidersHorizontal, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { ImageSearch } from "@/components/catalogue/image-search";
-import { VisualIndexControl } from "@/components/catalogue/visual-index-control";
 import { ProductCard } from "@/components/catalogue/product-card";
 import { CustomAttributeFields } from "@/components/common/custom-attributes";
 import {
@@ -186,16 +184,6 @@ function CatalogueView() {
 
       <div className="mb-6 space-y-2">
         <ImageSearch />
-        {role === "head_office" ? (
-          <>
-            <VisualIndexControl />
-            <Button asChild variant="outline" size="sm">
-              <Link href="/catalogue/integration">
-                <Plug className="h-4 w-4" /> Website &amp; Gati integration
-              </Link>
-            </Button>
-          </>
-        ) : null}
       </div>
 
       {/* Filters */}

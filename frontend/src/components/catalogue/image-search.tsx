@@ -17,6 +17,7 @@ import {
   type SimilaritySearchResult,
 } from "@/lib/queries/jewelry-similarity";
 import { cn, apiErrorMessage } from "@/lib/utils";
+import { ImageLightbox } from "@/components/catalogue/image-lightbox";
 
 /** Before shrinking. After it every photo is ≤1 MB; this only stops absurd files. */
 const MAX_PICK_BYTES = 25 * 1024 * 1024;
@@ -60,6 +61,8 @@ export function ImageSearch() {
   const libraryRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const [shots, setShots] = useState<Shot[]>([]);
+  // The photo being shown full size, by index.
+  const [viewing, setViewing] = useState<number | null>(null);
   const [preparing, setPreparing] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [result, setResult] = useState<SimilaritySearchResult | null>(null);
@@ -201,12 +204,18 @@ export function ImageSearch() {
             <div className="flex flex-wrap items-center justify-center gap-2">
               {shots.map((s, i) => (
                 <figure key={s.url} className="relative">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={s.url}
-                    alt={`View ${i + 1}`}
-                    className="h-24 w-24 rounded-md object-cover"
-                  />
+                  <button
+                    type="button"
+                    aria-label={`Show view ${i + 1} full size`}
+                    className="block rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setViewing(i);
+                    }}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={s.url} alt={`View ${i + 1}`} className="h-24 w-24 cursor-zoom-in rounded-md object-cover" />
+                  </button>
                   <button
                     type="button"
                     aria-label={`Remove view ${i + 1}`}
@@ -306,7 +315,7 @@ export function ImageSearch() {
             <div className="flex items-center justify-between gap-2">
               <p className="text-xs font-medium text-muted-foreground">
                 {result.status === "MATCHES_FOUND" || result.status === "NO_CLOSE_MATCH"
-                  ? `Closest matches from ${searchedWith} view${searchedWith === 1 ? "" : "s"} (ranked by DINOv2 + SigLIP 2)`
+                  ? `Closest matches from ${searchedWith} view${searchedWith === 1 ? "" : "s"}`
                   : "Visual search"}
               </p>
               <Button variant="ghost" size="sm" onClick={reset}>
@@ -348,6 +357,13 @@ export function ImageSearch() {
                 }
               : undefined
           }
+        />
+        <ImageLightbox
+          images={shots.map((s, i) => ({ url: s.url, label: `View ${i + 1}` }))}
+          index={viewing}
+          onIndexChange={setViewing}
+          onClose={() => setViewing(null)}
+          title="Your photo"
         />
       </CardContent>
     </Card>

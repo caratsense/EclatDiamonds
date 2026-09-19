@@ -463,15 +463,15 @@ describe('Website catalogue sync (e2e, stubbed website)', () => {
       expect((await listing(gatiId))!.tombstonedAt).toBeNull();
     });
 
-    it('the daily schedule queues one run per configured organisation, and it runs', async () => {
+    it('the weekly schedule queues one run per configured organisation, and it runs', async () => {
       process.env.SCHEDULER_ENABLED = 'true';
       try {
-        expect(await website.scheduleDaily()).toBe(1);
-        expect(await website.scheduleDaily()).toBe(1); // idempotent: same key, deduplicated
+        expect(await website.scheduleWeekly()).toBe(1);
+        expect(await website.scheduleWeekly()).toBe(1); // idempotent: same key, deduplicated
       } finally {
         process.env.SCHEDULER_ENABLED = 'false';
       }
-      const jobs = await prisma.jobTask.findMany({ where: { kind: 'catalogue.website_sync', idempotencyKey: { contains: 'daily-' } } });
+      const jobs = await prisma.jobTask.findMany({ where: { kind: 'catalogue.website_sync', idempotencyKey: { contains: 'weekly-' } } });
       expect(jobs.map((j) => j.organisationId)).toEqual([A.org]);
       const out = await (website as unknown as { runJob: (p: unknown, c: unknown) => Promise<unknown> }).runJob({}, { organisationId: A.org });
       expect(out).toEqual({ status: 'done' });

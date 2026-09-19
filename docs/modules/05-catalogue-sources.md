@@ -94,7 +94,8 @@ matched image selected; the hero stays marked "Primary".
   inside a rolled-back transaction or without writes; resume continues at
   `nextPage` of a `partial` run (heartbeat + stale-run takeover).
 - Scheduled: a JobTask kind `catalogue.website_sync` enqueued by the scheduler
-  daily per org that has the integration configured (reuse scheduler/job infra).
+  weekly (Sunday 03:00 IST) per org that has the integration configured, so
+  designs added to the website arrive without anyone starting a sync.
 - Routes (head_office): `GET /catalogue-integration/health`, `POST
   /catalogue-integration/website/credential` (write-only, returns
   `{configured:true, lastFour?:never}` — never echoes), `POST

@@ -656,9 +656,12 @@ export class WebsiteCatalogueService implements OnModuleInit {
   }
 
   // ── schedule ────────────────────────────────────────────────────────────
-  /** 21:30 UTC = 03:00 IST: once a day per organisation with a configured connection. */
-  @Cron('0 30 21 * * *', { name: WEBSITE_SYNC_JOB })
-  async scheduleDaily(): Promise<number> {
+  /**
+   * Saturday 21:30 UTC = Sunday 03:00 IST: once a week per organisation with a
+   * configured connection, which picks up designs added to the website.
+   */
+  @Cron('0 30 21 * * 6', { name: WEBSITE_SYNC_JOB })
+  async scheduleWeekly(): Promise<number> {
     if ((this.config.get<string>('SCHEDULER_ENABLED') ?? 'true') === 'false') return 0;
     const day = new Date().toISOString().slice(0, 10);
     const orgs = await this.prisma.integration.findMany({
@@ -672,7 +675,7 @@ export class WebsiteCatalogueService implements OnModuleInit {
           kind: WEBSITE_SYNC_JOB,
           organisationId,
           payload: {},
-          idempotencyKey: `${WEBSITE_SYNC_JOB}:${organisationId}:daily-${day}`,
+          idempotencyKey: `${WEBSITE_SYNC_JOB}:${organisationId}:weekly-${day}`,
           maxAttempts: 1,
         });
         queued++;
