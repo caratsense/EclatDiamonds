@@ -59,17 +59,13 @@ export function NewRequestDialog({
   const [neededBy, setNeededBy] = useState("");
   const [diamondSpec, setDiamondSpec] = useState("");
   const [rate, setRate] = useState("");
+  // On "All Stores" the branch is a choice, never silently the first one.
+  const [pickedStore, setPickedStore] = useState("");
 
   const isDiamond = kind === "diamond_rate";
 
-  // The aggregate ("All stores") view has no concrete branch to raise against;
-  // fall back to the first real store the user can see.
-  const targetStoreId = currentStore.isAggregate
-    ? (stores.find((s) => !s.isAggregate)?.id ?? "")
-    : currentStore.id;
-  const targetStoreName = currentStore.isAggregate
-    ? (stores.find((s) => !s.isAggregate)?.name ?? "your branch")
-    : currentStore.name;
+  const branches = stores.filter((s) => !s.isAggregate);
+  const targetStoreId = currentStore.isAggregate ? pickedStore : currentStore.id;
 
   function reset() {
     setKind("diamond_rate");
@@ -80,11 +76,12 @@ export function NewRequestDialog({
     setNeededBy("");
     setDiamondSpec("");
     setRate("");
+    setPickedStore("");
   }
 
   function submit() {
     if (!targetStoreId) {
-      toast.error("Pick a branch before raising a request.");
+      toast.error("Pick the branch this request is for.");
       return;
     }
     if (title.trim().length < 3) {
@@ -132,12 +129,29 @@ export function NewRequestDialog({
         <DialogHeader>
           <DialogTitle>New request</DialogTitle>
           <DialogDescription>
-            Raised from {targetStoreName}. Who signs it off is decided by what
-            you&apos;re asking for and how much it&apos;s worth.
+            {currentStore.isAggregate ? "" : `Raised from ${currentStore.name}. `}Who signs it off
+            is decided by what you&apos;re asking for and how much it&apos;s worth.
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-3">
+          {currentStore.isAggregate ? (
+            <div className="grid gap-1.5">
+              <Label htmlFor="req-store">Branch</Label>
+              <Select value={pickedStore} onValueChange={setPickedStore}>
+                <SelectTrigger id="req-store">
+                  <SelectValue placeholder="Which branch is this for?" />
+                </SelectTrigger>
+                <SelectContent>
+                  {branches.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
           <div className="grid gap-1.5">
             <Label htmlFor="req-kind">What do you need?</Label>
             <Select value={kind} onValueChange={(v) => setKind(v as SpecialRequestKind)}>
@@ -158,6 +172,20 @@ export function NewRequestDialog({
                 them. Approving it publishes the new rate for this branch.
               </p>
             ) : null}
+          </div>
+
+          <div className="grid gap-1.5">
+            <Label htmlFor="req-title">Title</Label>
+            <Input
+              id="req-title"
+              placeholder={
+                isDiamond
+                  ? "e.g. Rate for Mehta wedding set"
+                  : "e.g. Transfer 3 bangles from Surat"
+              }
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+            />
           </div>
 
           {isDiamond ? (
@@ -186,20 +214,6 @@ export function NewRequestDialog({
           ) : null}
 
           <div className="grid gap-1.5">
-            <Label htmlFor="req-title">Title</Label>
-            <Input
-              id="req-title"
-              placeholder={
-                isDiamond
-                  ? "e.g. Rate for Mehta wedding set"
-                  : "e.g. Transfer 3 bangles from Surat"
-              }
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-            />
-          </div>
-
-          <div className="grid gap-1.5">
             <Label htmlFor="req-details">Details</Label>
             <Textarea
               id="req-details"
@@ -210,7 +224,7 @@ export function NewRequestDialog({
             />
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid items-start gap-3 sm:grid-cols-3">
             <div className="grid gap-1.5">
               <Label htmlFor="req-amount">Value (₹)</Label>
               <Input
