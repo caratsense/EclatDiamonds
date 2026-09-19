@@ -180,7 +180,9 @@ describe('Attendance operations (e2e)', () => {
     await prisma.organisation.create({ data: { id: A.org, name: 'Ops B', slug: A.slug, industryPackCode: 'jewellery' } });
     await prisma.store.createMany({
       data: [
-        { id: A.s1, name: 'Bandra', city: 'Mumbai', organisationId: A.org, timezone: TZ, latitude: MUMBAI.lat, longitude: MUMBAI.lng, geofenceRadiusM: 150 },
+        // HR has confirmed Bandra's rules, so an unpunched day there is absent
+        // (unconfirmed locations: attendance-rules-gate.e2e-spec).
+        { id: A.s1, name: 'Bandra', city: 'Mumbai', organisationId: A.org, timezone: TZ, latitude: MUMBAI.lat, longitude: MUMBAI.lng, geofenceRadiusM: 150, attendanceRulesConfirmedThrough: new Date('2099-12-31T00:00:00Z') },
         { id: A.s2, name: 'Kala Ghoda', city: 'Mumbai', organisationId: A.org, timezone: TZ },
       ],
     });

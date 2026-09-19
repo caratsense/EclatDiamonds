@@ -726,6 +726,15 @@ model Store {
   status         String       @default("active")
   /// true only for the synthetic "All Stores" aggregate the UI shows to broad roles.
   isAggregate    Boolean      @default(false)
+  /// An attendance-only location (e.g. Head Office): staff are rostered and
+  /// punch here, but it is not a trading branch — no sales, stock, targets,
+  /// footfall or DSR, and it is left out of store KPIs.
+  attendanceOnly Boolean      @default(false)
+  /// HR has entered this location's weekly offs, holidays, shifts and grace
+  /// minutes and confirmed them complete through this date. For any later date
+  /// (or while null) an unpunched day stays "not marked" — never an automatic
+  /// "absent" — because none of those rules can be inferred from the data.
+  attendanceRulesConfirmedThrough DateTime? @db.Date
 
   // Geofence for HRMS geo-attendance (Module 6).
   latitude        Decimal? @db.Decimal(10, 7)

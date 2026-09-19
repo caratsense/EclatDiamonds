@@ -241,7 +241,7 @@ export class DashboardService {
     const currentPeriod = `${ty}-${String(tm).padStart(2, '0')}`;
     const [stores, storeMonthTargets] = await Promise.all([
       this.prisma.store.findMany({
-        where: { id: { in: storeIds } },
+        where: { id: { in: storeIds }, attendanceOnly: false },
         select: { id: true, name: true, city: true },
       }),
       this.prisma.salesTarget.findMany({

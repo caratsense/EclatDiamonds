@@ -18,6 +18,7 @@ import { PayrollService } from './payroll.service';
 import {
   AttendanceOpsService,
   ATTENDANCE_CALCULATION_VERSION,
+  absenceRuleGaps,
   addDays,
   assertCanCorrect,
   assertCanCorrectUser,
@@ -59,6 +60,7 @@ import {
   CheckOutDto,
   CreateHolidayDto,
   CreateRegularizationDto,
+  ConfirmAttendanceRulesDto,
   CreateShiftDto,
   CreateLeaveBalanceDto,
   DayCloseDto,
@@ -1036,9 +1038,10 @@ export class HrmsService {
      * (Weekly offs are per person, falling back to the branch's day; area
      * managers and head office are mapped for visibility, not rostered.)
      */
-    const [assignments, records] = await Promise.all([
+    const [assignments, records, ruleGaps] = await Promise.all([
       eligibleStaff(this.prisma, user.organisationId, [storeId], date),
       this.prisma.attendanceRecord.findMany({ where: { storeId, date } }),
+      absenceRuleGaps(this.prisma, storeId, date),
     ]);
     const byStaff = new Map(records.map((r) => [r.staffId, r]));
 
@@ -1046,6 +1049,7 @@ export class HrmsService {
     let absentCount = 0;
     let leaveCount = 0;
     let nonWorkingCount = 0;
+    let notMarkedCount = 0;
 
     for (const a of assignments) {
       const existing = byStaff.get(a.userId);
@@ -1107,6 +1111,13 @@ export class HrmsService {
         continue; // A row that already exists is never reclassified.
       }
 
+      // Weekly offs / holidays / grace not confirmed for this date: write
+      // nothing. The day shows "not marked" until a manager marks it.
+      if (ruleGaps.length) {
+        notMarkedCount++;
+        continue;
+      }
+
       const state = classifyDay(a, null).state;
       const status: AttendanceStatus = state === 'not_marked' ? 'absent' : state;
       if (status === 'absent') absentCount++;
@@ -1137,6 +1148,9 @@ export class HrmsService {
       markedAbsent: absentCount,
       markedOnLeave: leaveCount,
       markedNonWorking: nonWorkingCount,
+      notMarked: notMarkedCount,
+      /** Why no automatic rows were written (empty = the rules are confirmed). */
+      ruleGaps,
     };
 
     await this.audit.record(user, {
@@ -1144,7 +1158,9 @@ export class HrmsService {
       entityType: 'Store',
       entityId: storeId,
       storeId,
-      summary: `Closed attendance for ${store.name} on ${result.date}: ${absentCount} absent, ${autoClosedCount} auto-closed`,
+      summary:
+        `Closed attendance for ${store.name} on ${result.date}: ${absentCount} absent, ${autoClosedCount} auto-closed` +
+        (ruleGaps.length ? `; ${notMarkedCount} left not marked (${ruleGaps.join('; ')})` : ''),
       metadata: result,
     });
 
@@ -1242,6 +1258,104 @@ export class HrmsService {
       weekOffDay: store.weekOffDay,
       weekOffLabel: store.weekOffDay == null ? null : dayNames[store.weekOffDay],
     };
+  }
+
+  /**
+   * GET /hrms/attendance/rules — per location, what is configured (weekly off,
+   * staff's own offs, holidays, shifts + grace, geofence) and whether HR has
+   * confirmed it, i.e. whether an unpunched day can become "absent" at all.
+   */
+  async attendanceRules(user: AuthUser, headerStore?: string) {
+    const storeIds = this.scope.effectiveStoreIds(user, headerStore);
+    const [stores, offs, holidays] = await Promise.all([
+      this.prisma.store.findMany({
+        where: { id: { in: storeIds }, isAggregate: false, isActive: true },
+        select: {
+          id: true,
+          name: true,
+          timezone: true,
+          attendanceOnly: true,
+          weekOffDay: true,
+          latitude: true,
+          longitude: true,
+          attendanceRulesConfirmedThrough: true,
+          shifts: {
+            select: { name: true, startTime: true, endTime: true, bufferMins: true, isFlexible: true },
+            orderBy: { startTime: 'asc' },
+          },
+        },
+        orderBy: { name: 'asc' },
+      }),
+      this.prisma.staffWeekOff.groupBy({ by: ['storeId'], where: { storeId: { in: storeIds } }, _count: true }),
+      this.prisma.storeHoliday.groupBy({
+        by: ['storeId'],
+        where: { storeId: { in: storeIds } },
+        _count: true,
+        _max: { date: true },
+      }),
+    ]);
+    return Promise.all(
+      stores.map(async (s) => {
+        // The day the next nightly close will decide: today, store-locally.
+        const gaps = await absenceRuleGaps(this.prisma, s.id, businessDate(new Date(), resolveTz(s.timezone)));
+        const h = holidays.find((x) => x.storeId === s.id);
+        return {
+          storeId: s.id,
+          name: s.name,
+          attendanceOnly: s.attendanceOnly,
+          geofence: s.latitude != null && s.longitude != null ? 'set' : 'unverified',
+          weekOffDay: s.weekOffDay,
+          staffWeekOffs: offs.find((x) => x.storeId === s.id)?._count ?? 0,
+          holidays: h?._count ?? 0,
+          lastHoliday: h?._max.date ? dateOnly(h._max.date) : null,
+          shifts: s.shifts.map((x) => ({
+            name: x.name,
+            startTime: x.startTime,
+            endTime: x.endTime,
+            graceMins: x.isFlexible ? null : x.bufferMins,
+          })),
+          confirmedThrough: s.attendanceRulesConfirmedThrough ? dateOnly(s.attendanceRulesConfirmedThrough) : null,
+          automaticAbsence: gaps.length === 0,
+          gaps,
+        };
+      }),
+    );
+  }
+
+  /** POST /hrms/attendance/rules/confirm — see ConfirmAttendanceRulesDto. */
+  async confirmAttendanceRules(user: AuthUser, dto: ConfirmAttendanceRulesDto) {
+    this.scope.assertStoreAllowed(user, dto.storeId);
+    const store = await this.prisma.store.findFirst({
+      where: { id: dto.storeId, organisationId: user.organisationId },
+      select: { id: true, name: true, attendanceRulesConfirmedThrough: true, _count: { select: { shifts: true } } },
+    });
+    if (!store) throw new NotFoundException('Store not found');
+    const through = dto.through ? parseDateOnly(dto.through) : null;
+    if (through) {
+      if (!store._count.shifts) {
+        throw new BadRequestException('Set up at least one shift, with its grace minutes, before confirming.');
+      }
+      // Holiday lists are yearly; a confirmation years ahead is a guess.
+      if (through.getTime() - Date.now() > 400 * 86_400_000) {
+        throw new BadRequestException('Confirm at most about a year ahead — holiday lists are yearly.');
+      }
+    }
+    await this.prisma.store.update({
+      where: { id: store.id },
+      data: { attendanceRulesConfirmedThrough: through },
+    });
+    const before = store.attendanceRulesConfirmedThrough ? dateOnly(store.attendanceRulesConfirmedThrough) : null;
+    await this.audit.record(user, {
+      action: 'attendance.rules_confirm',
+      entityType: 'Store',
+      entityId: store.id,
+      storeId: store.id,
+      summary: through
+        ? `Confirmed ${store.name}'s weekly offs, holidays, shifts and grace through ${dto.through}`
+        : `Withdrew ${store.name}'s attendance-rules confirmation`,
+      metadata: { before, after: dto.through ?? null },
+    });
+    return { storeId: store.id, confirmedThrough: dto.through ?? null };
   }
 
   // ==========================================================================

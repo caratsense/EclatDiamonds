@@ -461,6 +461,7 @@ export class NotificationsService {
         where: {
           isAggregate: false,
           isActive: true,
+          attendanceOnly: false,
           id: { in: user.storeIds },
         },
         select: { id: true, timezone: true },

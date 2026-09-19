@@ -175,6 +175,7 @@ export class CheckinsService {
   /** POST /checkins — register a walk-in. */
   async create(user: AuthUser, dto: CreateCheckInDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
+    await this.scope.assertTradingStore(dto.storeId);
 
     // Phase A6 — a walk-in is the moment a real person is in front of a
     // salesperson, which makes it the single best point to establish identity.

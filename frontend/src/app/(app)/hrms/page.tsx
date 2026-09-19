@@ -33,6 +33,7 @@ import { getNavItem } from "@/lib/navigation";
 import { ROLE_RANK } from "@/lib/types";
 import { useStaff } from "@/lib/queries/users";
 import { ShiftsScheduleTab } from "@/components/hrms/shifts-schedule-tab";
+import { AttendanceRulesBanner } from "@/components/hrms/attendance-rules";
 import { LateFlagsTab } from "@/components/hrms/late-flags-tab";
 import { GeoPunchCard } from "@/components/hrms/geo-punch-card";
 import { LeaveBalances } from "@/components/hrms/leave-balances";
@@ -107,6 +108,8 @@ export default function HrmsPage() {
           <GeoPunchCard />
         </div>
       )}
+
+      {isManager ? <AttendanceRulesBanner /> : null}
 
       <Tabs defaultValue={isManager ? "today" : "roster"} className="space-y-4">
         <TabsList className="flex h-auto flex-wrap">

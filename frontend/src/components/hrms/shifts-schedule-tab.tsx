@@ -57,6 +57,7 @@ import {
 } from "@/lib/queries/hrms-ops";
 import { ReasonDialog } from "@/components/hrms/attendance-edit-dialog";
 import { ShiftAssignments } from "@/components/hrms/shift-assignments";
+import { AttendanceRulesCard } from "@/components/hrms/attendance-rules";
 import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
 
@@ -127,6 +128,8 @@ export function ShiftsScheduleTab({ shifts, holidays }: ShiftsScheduleTabProps) 
   return (
     <div className="space-y-4">
       <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
+
+      <AttendanceRulesCard storeId={targetStoreId} canConfirm={role === "head_office"} />
 
       {/* --- Shifts / batches --------------------------------------- */}
       <Card>

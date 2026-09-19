@@ -41,6 +41,7 @@ import {
   CheckOutDto,
   CreateHolidayDto,
   CreateRegularizationDto,
+  ConfirmAttendanceRulesDto,
   CreateShiftDto,
   DayCloseDto,
   DecideLeaveDto,
@@ -278,6 +279,20 @@ export class HrmsController {
   @Post('attendance/day-close')
   dayClose(@CurrentUser() user: AuthUser, @Body() dto: DayCloseDto) {
     return this.hrms.dayClose(user, dto);
+  }
+
+  /** Per location: the configured attendance rules and whether automatic absence is on. */
+  @Roles('store_manager', 'head_office')
+  @Get('attendance/rules')
+  attendanceRules(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
+    return this.hrms.attendanceRules(user, store);
+  }
+
+  /** HR confirms a location's rules complete through a date. Head office only. */
+  @Roles('head_office')
+  @Post('attendance/rules/confirm')
+  confirmAttendanceRules(@CurrentUser() user: AuthUser, @Body() dto: ConfirmAttendanceRulesDto) {
+    return this.hrms.confirmAttendanceRules(user, dto);
   }
 
   // --- Leave ----------------------------------------------------------------

@@ -204,7 +204,7 @@ export class FinanceService {
     );
 
     const stores = await this.prisma.store.findMany({
-      where: { id: { in: storeIds } },
+      where: { id: { in: storeIds }, attendanceOnly: false },
       select: { id: true, name: true, city: true },
     });
 

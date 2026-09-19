@@ -60,7 +60,7 @@ export class TargetsService {
     const { start, end } = periodRange(p);
     const [stores, targets] = await Promise.all([
       this.prisma.store.findMany({
-        where: { id: { in: storeIds } },
+        where: { id: { in: storeIds }, attendanceOnly: false },
         select: { id: true, name: true },
       }),
       this.prisma.salesTarget.findMany({
@@ -94,6 +94,7 @@ export class TargetsService {
   /** POST /targets — upsert on (storeId, staffId, period). staffId null allowed. */
   async set(user: AuthUser, dto: SetTargetDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
+    await this.scope.assertTradingStore(dto.storeId);
     const staffId = dto.staffId ?? null;
 
     // A per-staff target must point at a staffer actually assigned to that store.

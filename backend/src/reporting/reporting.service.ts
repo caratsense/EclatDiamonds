@@ -267,7 +267,7 @@ export class ReportingService {
         _sum: { amount: true },
       }),
       this.prisma.store.findMany({
-        where: { id: { in: storeIds } },
+        where: { id: { in: storeIds }, attendanceOnly: false },
         select: { id: true, name: true, timezone: true },
       }),
     ]);
@@ -728,7 +728,7 @@ export class ReportingService {
     const storeIds = this.scope.effectiveStoreIds(user, query.storeId ?? headerStore);
 
     const stores = await this.prisma.store.findMany({
-      where: { id: { in: storeIds }, isAggregate: false, isActive: true },
+      where: { id: { in: storeIds }, isAggregate: false, isActive: true, attendanceOnly: false },
       select: { id: true, name: true, timezone: true },
       orderBy: { name: 'asc' },
     });
@@ -807,6 +807,7 @@ export class ReportingService {
       throw new BadRequestException('Select a store to file the DSR for');
     }
     this.scope.assertStoreAllowed(user, storeId);
+    await this.scope.assertTradingStore(storeId);
 
     // Footfall funnel: serious enquiries are a subset of walk-ins, so they can
     // never exceed the total walk-in count (industry-standard retail metric).

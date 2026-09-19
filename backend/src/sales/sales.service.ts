@@ -59,6 +59,7 @@ export class SalesService {
    */
   async create(user: AuthUser, dto: CreateSaleDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
+    await this.scope.assertTradingStore(dto.storeId);
 
     const gross = new Prisma.Decimal(dto.salesValue);
     const dPct = dto.diamondDiscountPercent ?? 0;

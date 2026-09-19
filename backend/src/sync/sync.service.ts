@@ -748,7 +748,7 @@ export class SyncService {
 
     const candidates = (
       await this.prisma.store.findMany({
-        where: { legacyId: null, isAggregate: false, organisationId },
+        where: { legacyId: null, isAggregate: false, attendanceOnly: false, organisationId },
         select: { id: true, name: true },
       })
     ).map((s) => ({
@@ -1380,6 +1380,7 @@ export class SyncService {
         legacyId: null,
         importBatchId: null,
         isAggregate: false,
+        attendanceOnly: false,
         organisationId: org,
       },
       select: { id: true, name: true },

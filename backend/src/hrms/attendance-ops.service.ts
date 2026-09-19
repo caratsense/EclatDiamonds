@@ -381,6 +381,26 @@ export function classifyDay(
   return { state: 'not_marked', isLate: false };
 }
 
+/**
+ * Why an unpunched day at this location may NOT be recorded as "absent" yet;
+ * empty = it may. No weekly off, no holidays and a 15-minute grace are all
+ * valid settings, so "not configured" cannot be read from the data: HR states
+ * the rules complete through a date (`attendanceRulesConfirmedThrough`). Until
+ * that date covers the day, the day stays "not marked" for a human to decide.
+ */
+export async function absenceRuleGaps(prisma: Db, storeId: string, date: Date): Promise<string[]> {
+  const store = await prisma.store.findUnique({
+    where: { id: storeId },
+    select: { attendanceRulesConfirmedThrough: true, _count: { select: { shifts: true } } },
+  });
+  const gaps: string[] = [];
+  const through = store?.attendanceRulesConfirmedThrough;
+  if (!through) gaps.push('weekly offs, holidays and grace minutes not confirmed');
+  else if (through < date) gaps.push(`rules confirmed only through ${dateOnly(through)}`);
+  if (!store?._count.shifts) gaps.push('no shift set up');
+  return gaps;
+}
+
 // ===========================================================================
 // Shifts: effective-dated resolution + flexible-aware maths
 // ===========================================================================
@@ -802,6 +822,8 @@ export class AttendanceOpsService {
     today?: Date;
     /** Transaction client when the ledger mutation and register rebuild are one operation. */
     prisma?: Db;
+    /** `absenceRuleGaps` for this store/date, when the caller already has it. */
+    ruleGaps?: string[];
   }): Promise<boolean> {
     const { orgId, store, userId, date } = args;
     const prisma = args.prisma ?? this.prisma;
@@ -852,6 +874,13 @@ export class AttendanceOpsService {
       const today = args.today ?? businessDate(new Date(), tz);
       if (date.getTime() >= today.getTime() && !existing) return false;
       const st = classifyDay(args.facts, null).state;
+      if (st === 'not_marked' && (args.ruleGaps ?? (await absenceRuleGaps(prisma, store.id, date))).length) {
+        // Rules unconfirmed: the day stays "not marked". The app's own earlier
+        // inference is withdrawn; a human's row is left as they set it.
+        if (existing?.source !== 'auto') return false;
+        await prisma.attendanceRecord.delete({ where: { id: existing.id } });
+        return true;
+      }
       const status: AttendanceStatus = st === 'not_marked' ? 'absent' : st;
       data = {
         status,
@@ -1225,6 +1254,7 @@ export class AttendanceOpsService {
             skippedLocked++;
             continue;
           }
+          const ruleGaps = await absenceRuleGaps(this.prisma, store.id, d);
           for (const e of await eligibleStaff(this.prisma, user.organisationId, [store.id], d)) {
             processed++;
             try {
@@ -1240,6 +1270,7 @@ export class AttendanceOpsService {
                   (p) => Math.abs(p.eventAt.getTime() - d.getTime()) < 3 * DAY_MS,
                 ),
                 today,
+                ruleGaps,
               });
               if (didChange) changed++;
               succeeded++;

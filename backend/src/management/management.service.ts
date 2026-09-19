@@ -105,7 +105,7 @@ export class ManagementService {
   private async context(user: AuthUser, filters: KpiFilters) {
     const storeIds = this.scope.effectiveStoreIds(user, filters.storeId);
     const stores = await this.prisma.store.findMany({
-      where: { id: { in: storeIds }, organisationId: user.organisationId },
+      where: { id: { in: storeIds }, organisationId: user.organisationId, attendanceOnly: false },
       select: { id: true, name: true, timezone: true, isAggregate: true },
     });
     const organisation = await this.prisma.organisation.findUnique({

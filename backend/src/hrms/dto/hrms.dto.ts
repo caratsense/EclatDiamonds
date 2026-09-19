@@ -102,6 +102,21 @@ export class DayCloseDto {
   date?: string;
 }
 
+/**
+ * POST /hrms/attendance/rules/confirm — HR states that a location's weekly
+ * offs, holidays, shifts and grace minutes are complete through `through`
+ * (YYYY-MM-DD). null withdraws the confirmation.
+ */
+export class ConfirmAttendanceRulesDto {
+  @IsString()
+  @IsNotEmpty()
+  storeId!: string;
+
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'through must be YYYY-MM-DD' })
+  through?: string | null;
+}
+
 /** POST /hrms/shifts — create a store shift/batch (Module 6). */
 export class CreateShiftDto {
   @IsString()

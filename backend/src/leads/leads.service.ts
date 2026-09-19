@@ -306,6 +306,7 @@ export class LeadsService {
 
   async create(user: AuthUser, dto: CreateLeadDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
+    await this.scope.assertTradingStore(dto.storeId);
     if (dto.ownerId && dto.ownerId !== user.id) {
       await this.assertAssignableOwner(user, dto.ownerId, dto.storeId);
     }

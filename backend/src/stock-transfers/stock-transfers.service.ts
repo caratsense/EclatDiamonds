@@ -94,6 +94,8 @@ export class StockTransfersService {
     this.assertStoreOperator(user);
     // Authoritative: the source must be in the caller's scope, never trust the body alone.
     this.scope.assertStoreAllowed(user, dto.fromStoreId);
+    await this.scope.assertTradingStore(dto.fromStoreId);
+    await this.scope.assertTradingStore(dto.toStoreId);
 
     if (dto.fromStoreId === dto.toStoreId) {
       throw new BadRequestException('Source and destination must differ');

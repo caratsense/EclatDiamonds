@@ -617,6 +617,7 @@ export function useCreateShift() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [HRMS_KEY, "shifts"] });
+      qc.invalidateQueries({ queryKey: [HRMS_KEY, "attendance-rules"] });
     },
   });
 }
@@ -660,6 +661,7 @@ export function useAddHoliday() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [HRMS_KEY, "holidays"] });
+      qc.invalidateQueries({ queryKey: [HRMS_KEY, "attendance-rules"] });
     },
   });
 }
@@ -678,7 +680,56 @@ export function useSetWeekOff() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [HRMS_KEY, "week-off"] });
       qc.invalidateQueries({ queryKey: [HRMS_KEY, "holidays"] });
+      qc.invalidateQueries({ queryKey: [HRMS_KEY, "attendance-rules"] });
     },
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Attendance rules — is automatic absence on at each location?        */
+/* ------------------------------------------------------------------ */
+
+export interface AttendanceRulesStatus {
+  storeId: string;
+  name: string;
+  /** A Head Office-style location: attendance only, no sales. */
+  attendanceOnly: boolean;
+  geofence: "set" | "unverified";
+  weekOffDay: number | null;
+  /** Staff with their own weekly-off roster here. */
+  staffWeekOffs: number;
+  holidays: number;
+  lastHoliday: string | null;
+  shifts: { name: string; startTime: string; endTime: string; graceMins: number | null }[];
+  /** HR confirmed the rules complete through this date (YYYY-MM-DD). */
+  confirmedThrough: string | null;
+  /** false = an unpunched day stays "not marked", never "absent". */
+  automaticAbsence: boolean;
+  gaps: string[];
+}
+
+/** GET /hrms/attendance/rules — per location in scope (store_manager+). */
+export function useAttendanceRules(opts: { enabled?: boolean } = {}) {
+  const storeId = useStoreKey();
+  return useQuery({
+    queryKey: [HRMS_KEY, "attendance-rules", storeId],
+    queryFn: async () => {
+      const { data } = await api.get<AttendanceRulesStatus[]>("/hrms/attendance/rules");
+      return data;
+    },
+    enabled: opts.enabled ?? true,
+  });
+}
+
+/** POST /hrms/attendance/rules/confirm — head office; `through: null` withdraws. */
+export function useConfirmAttendanceRules() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { storeId: string; through: string | null }) => {
+      const { data } = await api.post("/hrms/attendance/rules/confirm", input);
+      return data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [HRMS_KEY, "attendance-rules"] }),
   });
 }
 
