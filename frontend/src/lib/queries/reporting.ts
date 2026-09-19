@@ -120,6 +120,39 @@ export function useSendReport() {
 
 const DAILY_REPORTS_KEY = "daily-reports";
 
+export interface DsrCompliance {
+  days: number;
+  from: string | null;
+  to: string | null;
+  missingToday: number;
+  stores: {
+    storeId: string;
+    storeName: string;
+    submitted: number;
+    missing: number;
+    reportedToday: boolean;
+    entries: {
+      date: string;
+      submitted: boolean;
+      source: string | null;
+      submittedBy: string | null;
+      reportId: string | null;
+    }[];
+  }[];
+}
+
+/** GET /reporting/compliance — which branches filed a DSR on each of the last `days` days. */
+export function useDsrCompliance(days = 7) {
+  const storeId = useStoreKey();
+  return useQuery({
+    queryKey: ["dsr-compliance", days, storeId],
+    queryFn: async () => {
+      const { data } = await api.get<DsrCompliance>("/reporting/compliance", { params: { days } });
+      return data;
+    },
+  });
+}
+
 /**
  * GET /reporting/daily?date=&storeId= — recent filed DSRs, store-scoped.
  * Keyed on the optional date + active store so the topbar switcher refetches.

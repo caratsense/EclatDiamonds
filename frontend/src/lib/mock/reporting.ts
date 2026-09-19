@@ -207,6 +207,8 @@ export interface DailyReport extends DailyReportInput {
   text: string;
   /** ISO timestamp the report was filed. */
   createdAt?: string;
+  /** How it was filed: "web" (the app) or "whatsapp" (the bot). */
+  source?: string | null;
 }
 
 /** yyyy-mm-dd -> dd/MM/yyyy (the owner's WhatsApp date format). */

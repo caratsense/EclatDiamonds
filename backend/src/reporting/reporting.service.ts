@@ -1042,6 +1042,8 @@ export class ReportingService {
       customGoldWtG: r.customGoldWtG == null ? null : Number(r.customGoldWtG),
       customGoldValue: r.customGoldValue == null ? null : Number(r.customGoldValue),
       submittedBy: r.submittedBy,
+      /** "web" (the app) or "whatsapp" (the bot). */
+      source: r.source,
       createdAt: r.createdAt.toISOString(),
       text: this.composeDsrText(r),
     };
