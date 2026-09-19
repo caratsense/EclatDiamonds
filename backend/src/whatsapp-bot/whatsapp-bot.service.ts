@@ -7,6 +7,7 @@ import { WhatsAppConversationService } from './whatsapp-conversation.service';
 import { ConversationsService } from '../crm/conversations.service';
 import { IdentityService } from '../crm/identity.service';
 import { WhatsAppIdentityService } from './whatsapp-identity.service';
+import { CustomerBotService } from './customer-bot.service';
 import { extractMetaReferral } from '../integrations/meta-referral';
 import { ConversationAiGate } from '../crm/ai-responder';
 import { OmnichannelService } from '../omnichannel/omnichannel.service';
@@ -47,6 +48,7 @@ export class WhatsAppBotService {
     private readonly prisma: PrismaService,
     private readonly wa: WhatsAppService,
     private readonly identity: WhatsAppIdentityService,
+    private readonly customerBot: CustomerBotService,
     private readonly conversation: WhatsAppConversationService,
     private readonly crmConversations: ConversationsService,
     private readonly credentials: WhatsAppCredentialsService,
@@ -373,6 +375,63 @@ export class WhatsAppBotService {
           return { status: 'processed', organisationId };
         }
 
+        /*
+         * THE QUALIFICATION BOT.
+         *
+         * The rule above — a wrong number never gets an unsolicited reply — is
+         * kept, not weakened. The bot answers only someone who demonstrably
+         * started this: a click-to-WhatsApp ad (the referral is provider-proven
+         * consent to be answered) or a conversation it is already mid-way
+         * through. Everything else still reaches a person via the inbox and
+         * hears nothing from us.
+         *
+         * A thread a human has taken over is silent from the bot's side
+         * forever after. `handling === 'human'` is the whole check: once a
+         * person owns a conversation, a bot talking over them is worse than a
+         * bot that never spoke.
+         */
+        if (!result.duplicate) {
+          const eligible = await this.botMaySpeak(organisationId, result.conversationId, from, event.payload);
+          if (eligible) {
+            const reply = await this.customerBot.handle(
+              from,
+              organisationId,
+              text ?? '',
+              {},
+              undefined,
+            );
+            if (reply.text) {
+              await this.wa.sendText(organisationId, from, reply.text, replyRoute);
+            }
+            if (reply.outcome?.kind === 'handoff') {
+              /*
+               * Handed to a person, and the thread STAYS on this number. The
+               * branch manager answers from the CRM inbox; the customer sees
+               * the same chat they have been in all along. Assignment itself is
+               * left to the queue rather than picked here — this service knows
+               * the conversation, not who is on shift.
+               */
+              await this.prisma.conversation.update({
+                where: { id: result.conversationId },
+                data: {
+                  handling: 'human',
+                  handoffReason:
+                    reply.outcome.reason === 'gave_up'
+                      ? 'The customer could not be understood twice; handed to a person.'
+                      : 'The customer asked to speak to someone.',
+                },
+              });
+              if (reply.handoffNote) {
+                this.logger.log('  bot handoff logged for conversation ' + result.conversationId);
+              }
+            }
+            this.logger.log(
+              `  bot replied${reply.outcome ? ` (${reply.outcome.kind}: ${reply.outcome.reason})` : ''}`,
+            );
+            return { status: 'processed', organisationId };
+          }
+        }
+
         // Whether the assistant may speak is decided in ONE place, and it is not
         // here. The gate enforces human-only and unassigned threads, the tenant
         // switch (off by default) and provider availability; this call site only
@@ -403,6 +462,51 @@ export class WhatsAppBotService {
       `inbound from unrecognised ${from}: ignored (no organisation owns the business number it was sent to)`,
     );
     return { status: 'ignored' };
+  }
+
+  /**
+   * May the qualification bot answer this message?
+   *
+   * Three gates, and all of them have to pass. The default is silence, because
+   * the cost of a bot messaging a wrong number is a complaint against the
+   * client's number, and the cost of staying quiet is a message a person reads
+   * in the inbox a few minutes later.
+   *
+   *   1. A human has not taken the thread over. Once `handling` is 'human',
+   *      the bot is finished with that conversation permanently.
+   *   2. EITHER the thread began with a click-to-WhatsApp ad — the referral is
+   *      the provider's own evidence that this person chose to start it —
+   *   3. OR the bot is already mid-conversation with them, in which case they
+   *      have answered at least one question and are plainly expecting a reply.
+   *
+   * A stranger who texts the shop out of the blue matches none of these and
+   * hears nothing, which is the behaviour this service already guaranteed.
+   */
+  private async botMaySpeak(
+    organisationId: string,
+    conversationId: string,
+    phoneE164: string,
+    payload: unknown,
+  ): Promise<boolean> {
+    const convo = await this.prisma.conversation.findFirst({
+      where: { id: conversationId, organisationId },
+      select: { handling: true, sourceAdId: true },
+    });
+    if (!convo) return false;
+    if (convo.handling === 'human') return false;
+
+    // Ad-originated: either this very message carried a referral, or the thread
+    // was stamped with one when it started.
+    if (convo.sourceAdId) return true;
+    if (extractMetaReferral(payload)) return true;
+
+    // Mid-conversation: a session exists only because the bot asked something
+    // and is waiting for the answer.
+    const session = await this.prisma.whatsAppSession.findUnique({
+      where: { phoneE164 },
+      select: { flow: true, expiresAt: true },
+    });
+    return Boolean(session && session.flow === 'customer' && session.expiresAt > new Date());
   }
 
   /**
