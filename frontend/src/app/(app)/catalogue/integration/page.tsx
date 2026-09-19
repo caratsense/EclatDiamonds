@@ -34,11 +34,13 @@ import {
   useCatalogueRuns,
   useSaveWebsiteCredential,
   useStartWebsiteSync,
+  useTestWebsiteConnection,
   useUpdateConflict,
   type CatalogueSyncRun,
   type ConflictStatus,
 } from "@/lib/queries/catalogue-integration";
 import { useStartReindex } from "@/lib/queries/jewelry-similarity";
+import { connectionView, type ConnectionState, type ConnectionView } from "@/lib/catalogue-connection";
 import type { CatalogueConflictView } from "@/lib/queries/products";
 import { imageSourceLabel } from "@/lib/mock/catalogue";
 import { apiErrorMessage, cn } from "@/lib/utils";
@@ -57,7 +59,7 @@ export default function CatalogueIntegrationPage() {
     <>
       <SectionHeader
         title="Catalogue integration"
-        purpose="Website and Gati catalogue sync, conflicts to review, and the visual-search index."
+        purpose="Is the website connected, what did each sync do, and what each catalogue number counts."
       />
       <Button asChild variant="ghost" size="sm" className="-mt-2 mb-4">
         <Link href="/catalogue">
@@ -78,6 +80,9 @@ export default function CatalogueIntegrationPage() {
 function IntegrationView() {
   const health = useCatalogueHealth(true);
   const runs = useCatalogueRuns(true);
+  // Owned here so the Website panel can say "Checking…" while either runs.
+  const save = useSaveWebsiteCredential();
+  const test = useTestWebsiteConnection();
   const h = health.data;
   const lastRun = runs.data?.[0] ?? h?.website?.lastRun ?? null;
 
@@ -107,24 +112,59 @@ function IntegrationView() {
   const cat = h?.catalogue;
   const emb = h?.embeddings;
   const conflictsOpen = Object.entries(h?.conflictsOpen ?? {});
+  const state = (w?.connectionState ?? "not_configured") as ConnectionState;
+  const view = connectionView(state, save.isPending || test.isPending);
+  const probeFailed = w?.lastProbe && !w.lastProbe.ok;
+  const st = emb?.byStatus ?? {};
+  const waiting = (st.pending ?? 0) + (st.queued ?? 0);
+  const failedPictures = (st.failed ?? 0) + (st.dead ?? 0);
 
   return (
     <div className="space-y-6">
+      {h?.scheduler?.enabled === false ? (
+        <p className="flex items-start gap-2 rounded-xl border border-warning/40 bg-warning/10 p-3 text-sm">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+          Background jobs are switched off on this server, so a queued sync or picture indexing will wait until they are
+          switched on.
+        </p>
+      ) : null}
+
       <div className="grid gap-4 md:grid-cols-2">
         <Panel title="Website" icon={<Globe className="h-4 w-4" />}>
-          <State ok={!!w?.configured} okText="Connected" badText="Not connected" />
-          {w?.host ? (
-            <KV label="Host">
-              <span className="font-mono text-xs">{w.host}</span>
+          <ConnectionBadge view={view} />
+          <KV label="Products endpoint">
+            <span className="break-all font-mono text-xs font-normal">{w?.productsEndpoint ?? "—"}</span>
+          </KV>
+          <KV label="Last passed check">{when(w?.lastHealthAt)}</KV>
+          {w?.lastProbe ? (
+            <KV label="Last check">
+              {when(w.lastProbe.at)} · {w.lastProbe.ok ? "passed" : "failed"}
             </KV>
           ) : null}
+          {probeFailed ? (
+            <ErrorLine>
+              {w?.lastProbe?.endpoint && w.lastProbe.endpoint !== w.productsEndpoint
+                ? `A new address failed and was not saved (${w.lastProbe.endpoint}): ${w.lastProbe.error}`
+                : w?.lastProbe?.error}
+            </ErrorLine>
+          ) : w?.lastError ? (
+            <ErrorLine>{w.lastError}</ErrorLine>
+          ) : null}
+          <KV label="Website says it has">{w?.sourceTotal == null ? "—" : `${n(w.sourceTotal)} designs`}</KV>
           <KV label="Last run">{lastRun?.status ? <RunStatus status={lastRun.status} /> : "Never"}</KV>
-          <KV label="Last success">{when(w?.lastSuccessAt)}</KV>
-          <KV label="Website says it has">{n(w?.sourceTotal)}</KV>
-          <KV label="Live listings here">
+          {lastRun?.status ? (
+            <KV label="Received">
+              {n(lastRun.received)} of {n(lastRun.expected)}
+              {lastRun.failed ? ` · ${n(lastRun.failed)} failed` : ""}
+            </KV>
+          ) : null}
+          {lastRun?.status && lastRun.status !== "done" && lastRun.lastError ? <ErrorLine>{lastRun.lastError}</ErrorLine> : null}
+          <KV label="Last full sync">{when(w?.lastSuccessAt)}</KV>
+          <KV label="Website listings stored">
             {n(w?.listingsActive)}
             {w?.sourceTotal != null &&
             w?.listingsActive != null &&
+            w.lastSuccessAt &&
             w.sourceTotal !== w.listingsActive + (w.listingsUnpublished ?? 0) ? (
               <Badge variant="warning" className="ml-2">
                 differs by {formatNumber(Math.abs(w.sourceTotal - w.listingsActive - (w.listingsUnpublished ?? 0)))}
@@ -133,6 +173,8 @@ function IntegrationView() {
           </KV>
           {w?.listingsUnpublished ? <KV label="Unpublished on the website">{n(w.listingsUnpublished)}</KV> : null}
           {w?.listingsTombstoned ? <KV label="Gone from the website">{n(w.listingsTombstoned)}</KV> : null}
+          <KV label="Website variants">{n(w?.variants)}</KV>
+          <KV label="Automatic sync">Weekly, Sunday 3:00 am</KV>
           {w?.tokenStored ? <KV label="Token last used">{when(w.credentialLastUsedAt)}</KV> : null}
         </Panel>
 
@@ -147,11 +189,15 @@ function IntegrationView() {
           <KV label="CAD pictures last synced">{when(g?.imagesSyncedAt)}</KV>
         </Panel>
 
-        <Panel title="Catalogue">
-          <KV label="Designs">{n(cat?.products)}</KV>
+        <Panel title="What each number counts">
+          <KV label="Product records in CaratOS">{n(cat?.products)}</KV>
+          <KV label="· carrying a website design">{n(cat?.websiteLinked)}</KV>
+          <KV label="· website-only (no Gati match)">{n(cat?.websiteOnly)}</KV>
+          <KV label="Designs on the website">{n(w?.sourceTotal)}</KV>
           <KV label="Website variants">{n(cat?.variants)}</KV>
+          <KV label="Active pictures, all sources">{n(cat?.imagesActive)}</KV>
           {Object.entries(cat?.imagesBySource ?? {}).map(([k, v]) => (
-            <KV key={k} label={`Pictures · ${imageSourceLabel(k)}`}>
+            <KV key={k} label={`· ${imageSourceLabel(k)}`}>
               {n(v)}
             </KV>
           ))}
@@ -162,12 +208,24 @@ function IntegrationView() {
               {n(v)}
             </KV>
           ))}
+          <p className="pt-1 text-[11px] text-muted-foreground">
+            These measure different things. A website design that matches a Gati design enriches that same product, so a
+            sync does not add one product per website design — and every design brings several pictures.
+          </p>
         </Panel>
 
         <Panel title="Visual search index" icon={<ScanSearch className="h-4 w-4" />}>
-          {Object.entries(emb?.byStatus ?? {}).map(([k, v]) => (
-            <KV key={k} label={humanize(k)}>
-              {n(v)}
+          <KV label="Indexed image files">
+            {n(st.indexed ?? 0)} of {n(emb?.imagesActive)}
+          </KV>
+          <KV label="Waiting">{n(waiting)}</KV>
+          <KV label="Processing">{n(st.running ?? 0)}</KV>
+          <KV label="Failed or given up">{n(failedPictures)}</KV>
+          <KV label="Products with an indexed picture">{n(emb?.productsWithIndexedImage)}</KV>
+          <KV label="Products with no picture">{n(emb?.productsWithoutImage)}</KV>
+          {Object.entries(emb?.bySource ?? {}).map(([k, v]) => (
+            <KV key={k} label={`· ${imageSourceLabel(k)}`}>
+              {n(v.indexed ?? 0)} of {n(Object.values(v).reduce((t, x) => t + x, 0))}
             </KV>
           ))}
           {Object.entries(emb?.latestVersions ?? {}).map(([k, v]) => (
@@ -178,9 +236,17 @@ function IntegrationView() {
         </Panel>
       </div>
 
-      <Actions lastRun={lastRun} deadCount={(emb?.byStatus?.dead ?? 0) + (emb?.byStatus?.failed ?? 0)} />
+      <Actions lastRun={lastRun} deadCount={failedPictures} verified={!!w?.verified} />
 
-      <CredentialForm key={w?.baseUrl ?? ""} configured={!!w?.configured} tokenStored={!!w?.tokenStored} savedBaseUrl={w?.baseUrl ?? null} />
+      <CredentialForm
+        key={w?.productsEndpoint ?? ""}
+        state={state}
+        view={view}
+        productsEndpoint={w?.productsEndpoint ?? null}
+        tokenStored={!!w?.tokenStored}
+        save={save}
+        test={test}
+      />
 
       <Runs runs={runs.data ?? []} loading={runs.isLoading} />
 
@@ -189,7 +255,15 @@ function IntegrationView() {
   );
 }
 
-function Actions({ lastRun, deadCount }: { lastRun: Partial<CatalogueSyncRun> | null; deadCount: number }) {
+function Actions({
+  lastRun,
+  deadCount,
+  verified,
+}: {
+  lastRun: Partial<CatalogueSyncRun> | null;
+  deadCount: number;
+  verified: boolean;
+}) {
   const sync = useStartWebsiteSync();
   const reindex = useStartReindex();
   const retryDead = useStartReindex();
@@ -209,13 +283,18 @@ function Actions({ lastRun, deadCount }: { lastRun: Partial<CatalogueSyncRun> | 
       <CardContent className="space-y-3 p-4">
         <h3 className="text-sm font-semibold">Run</h3>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-          <Button variant="outline" className="h-11" disabled={sync.isPending || running} onClick={() => start("full", true)}>
+          <Button variant="outline" className="h-11" disabled={sync.isPending || running || !verified} onClick={() => start("full", true)}>
             <TestTube2 className="h-4 w-4" /> Dry run
           </Button>
-          <Button variant="gold" className="h-11" disabled={sync.isPending || running} onClick={() => start("full", false)}>
+          <Button variant="gold" className="h-11" disabled={sync.isPending || running || !verified} onClick={() => start("full", false)}>
             <Play className="h-4 w-4" /> Full sync
           </Button>
-          <Button variant="outline" className="h-11" disabled={sync.isPending || running || !canResume} onClick={() => start("resume", false)}>
+          <Button
+            variant="outline"
+            className="h-11"
+            disabled={sync.isPending || running || !canResume || !verified}
+            onClick={() => start("resume", false)}
+          >
             <RotateCcw className="h-4 w-4" /> Resume
           </Button>
           <Button
@@ -250,6 +329,9 @@ function Actions({ lastRun, deadCount }: { lastRun: Partial<CatalogueSyncRun> | 
             <RefreshCw className="h-4 w-4" /> Retry failed ({formatNumber(deadCount)})
           </Button>
         </div>
+        {!verified ? (
+          <p className="text-xs text-muted-foreground">Syncs start once the website connection has passed its test.</p>
+        ) : null}
         {running ? (
           <p className="flex items-center gap-2 text-xs text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" /> A run is in progress — page {lastRun?.nextPage ?? "?"},{" "}
@@ -265,24 +347,32 @@ function Actions({ lastRun, deadCount }: { lastRun: Partial<CatalogueSyncRun> | 
 const DEFAULT_BASE_URL = "https://apis.eclatdiamonds.in/v1/api";
 
 function CredentialForm({
-  configured,
+  state,
+  view,
+  productsEndpoint,
   tokenStored,
-  savedBaseUrl,
+  save,
+  test,
 }: {
-  configured: boolean;
+  state: ConnectionState;
+  view: ConnectionView;
+  productsEndpoint: string | null;
   tokenStored: boolean;
-  savedBaseUrl: string | null;
+  save: ReturnType<typeof useSaveWebsiteCredential>;
+  test: ReturnType<typeof useTestWebsiteConnection>;
 }) {
-  const save = useSaveWebsiteCredential();
   const [token, setToken] = useState("");
-  const [baseUrl, setBaseUrl] = useState(savedBaseUrl ?? DEFAULT_BASE_URL);
+  const [baseUrl, setBaseUrl] = useState(productsEndpoint ?? DEFAULT_BASE_URL);
+  const configured = state !== "not_configured";
+  const busy = save.isPending || test.isPending;
+  const designs = (total: number | null) => (total == null ? "" : ` — the website lists ${formatNumber(total)} designs`);
   return (
     <Card>
       <CardContent className="space-y-3 p-4">
         <div className="flex flex-wrap items-center gap-2">
           <KeyRound className="h-4 w-4 text-muted-foreground" />
           <h3 className="text-sm font-semibold">Website connection</h3>
-          {configured ? <Badge variant="success">Connected</Badge> : <Badge variant="warning">Not connected</Badge>}
+          <Badge variant={view.tone}>{view.label}</Badge>
         </div>
         <form
           className="flex flex-col gap-2 sm:flex-row sm:items-end"
@@ -292,16 +382,18 @@ function CredentialForm({
             save.mutate(
               { token: token.trim() || undefined, baseUrl: baseUrl.trim() },
               {
-                onSuccess: () => {
+                onSuccess: (r) => {
                   setToken("");
-                  toast.success("Connection saved");
+                  toast.success(`Connected${designs(r.sourceTotal)}`, {
+                    description: "Nothing has been imported yet: run a dry run, then a full sync.",
+                  });
                 },
-                onError: (err) => toast.error(apiErrorMessage(err, "Could not save the connection.")),
+                onError: (err) => toast.error(apiErrorMessage(err, "The address failed its test and was not saved.")),
               },
             );
           }}
         >
-          <div className="grid flex-1 gap-1.5">
+          <div className="grid min-w-0 flex-1 gap-1.5">
             <Label htmlFor="website-base">API address</Label>
             <Input
               id="website-base"
@@ -311,7 +403,7 @@ function CredentialForm({
               className="h-11 font-mono text-xs"
             />
           </div>
-          <div className="grid flex-1 gap-1.5">
+          <div className="grid min-w-0 flex-1 gap-1.5">
             <Label htmlFor="website-token">{tokenStored ? "Replace the token" : "Token (optional)"}</Label>
             <Input
               id="website-token"
@@ -324,14 +416,30 @@ function CredentialForm({
               className="h-11"
             />
           </div>
-          <Button type="submit" className="h-11" disabled={!baseUrl.trim() || save.isPending}>
+          <Button type="submit" className="h-11" disabled={!baseUrl.trim() || busy}>
             {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            {configured ? "Save" : "Connect"}
+            Save and test
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-11"
+            disabled={!configured || busy}
+            onClick={() =>
+              test.mutate(undefined, {
+                onSuccess: (r) => toast.success(`Connection test passed${designs(r.sourceTotal)}`),
+                onError: (err) => toast.error(apiErrorMessage(err, "The connection test failed.")),
+              })
+            }
+          >
+            {test.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            Test connection
           </Button>
         </form>
         <p className="text-[11px] text-muted-foreground">
-          The Eclat product feed is public, so no token is needed. A token, if given, is stored encrypted and never shown
-          again — to change it, paste a new one.
+          Enter the API base (…/v1/api) or the exact products endpoint (…/v1/api/products) — both are saved as the same
+          products endpoint. Saving reads one product to prove the address works; it imports nothing. The Eclat product
+          feed is public, so no token is needed; a token, if given, is stored encrypted and never shown again.
         </p>
       </CardContent>
     </Card>
@@ -539,6 +647,24 @@ function KV({ label, children }: { label: string; children: ReactNode }) {
       <dt className="text-muted-foreground">{label}</dt>
       <dd className="num text-right font-medium">{children}</dd>
     </div>
+  );
+}
+
+function ConnectionBadge({ view }: { view: ConnectionView }) {
+  return (
+    <p className="flex flex-wrap items-center gap-2">
+      <Badge variant={view.tone}>{view.label}</Badge>
+      <span className="text-xs text-muted-foreground">{view.help}</span>
+    </p>
+  );
+}
+
+function ErrorLine({ children }: { children: ReactNode }) {
+  return (
+    <p className="flex items-start gap-1.5 rounded-md bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
+      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+      <span className="break-words">{children}</span>
+    </p>
   );
 }
 

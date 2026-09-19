@@ -21,6 +21,13 @@ export interface WebsitePage {
   totalPages: number | null;
 }
 
+/** What a successful read-only connection probe learned. Never the payload. */
+export interface WebsiteProbe {
+  productsEndpoint: string;
+  sourceTotal: number | null;
+  latencyMs: number;
+}
+
 export class WebsiteClientError extends Error {
   constructor(
     message: string,
@@ -64,9 +71,24 @@ export class WebsiteCatalogueClient {
     return url;
   }
 
-  async fetchPage(base: string, token: string | null, page: number, limit = WEBSITE_PAGE_SIZE): Promise<WebsitePage> {
-    const root = this.assertAllowedBase(base);
-    const url = new URL(`${root.pathname.replace(/\/+$/, '')}/products`, root.origin);
+  /**
+   * The one URL contract, shared by saving, probing and paging. Accepts the API
+   * base (…/v1/api) or the exact products endpoint (…/v1/api/products) and
+   * returns the exact endpoint: `/products` appended once, never doubled; the
+   * reviewed query (e.g. country=IN) kept; page/limit dropped for the pager to
+   * set. The host is never changed.
+   */
+  productsEndpoint(input: string): URL {
+    const url = this.assertAllowedBase(input.trim());
+    const path = url.pathname.replace(/\/+$/, '');
+    url.pathname = /\/products$/i.test(path) ? path : `${path}/products`;
+    url.searchParams.delete('page');
+    url.searchParams.delete('limit');
+    return url;
+  }
+
+  async fetchPage(endpoint: string, token: string | null, page: number, limit = WEBSITE_PAGE_SIZE): Promise<WebsitePage> {
+    const url = this.productsEndpoint(endpoint);
     url.searchParams.set('page', String(page));
     url.searchParams.set('limit', String(limit));
     let last: WebsiteClientError | null = null;
@@ -80,6 +102,25 @@ export class WebsiteCatalogueClient {
       }
     }
     throw last ?? new WebsiteClientError('Website request failed.', true);
+  }
+
+  /**
+   * A read-only connection check through the same path a sync uses: page 1,
+   * limit 1. Proves the endpoint answers with a product list, a sane total when
+   * it gives one, and a usable productCode. Returns counts only.
+   */
+  async probe(endpoint: string, token: string | null): Promise<WebsiteProbe> {
+    const productsEndpoint = this.productsEndpoint(endpoint).toString();
+    const t0 = Date.now();
+    const page = await this.fetchPage(productsEndpoint, token, 1, 1);
+    if (!page.products.length && (page.total ?? 0) > 0) {
+      throw new WebsiteClientError(`The website reported ${page.total} products but returned none.`, false);
+    }
+    const first = page.products[0] as { productCode?: unknown } | undefined;
+    if (first && !(typeof first.productCode === 'string' && first.productCode.trim())) {
+      throw new WebsiteClientError('The website answered, but its first product has no productCode.', false);
+    }
+    return { productsEndpoint, sourceTotal: page.total, latencyMs: Date.now() - t0 };
   }
 
   private async once(url: URL, token: string | null): Promise<unknown> {
