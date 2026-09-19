@@ -24,7 +24,11 @@ export class SetWebsiteCredentialDto {
   @MaxLength(4000)
   token?: string;
 
-  /** e.g. https://apis.eclatdiamonds.in/v1/api — must be on the allow-listed host. */
+  /**
+   * The API base (https://apis.eclatdiamonds.in/v1/api) or the exact products
+   * endpoint (…/v1/api/products) — both become the same products endpoint.
+   * Must be https on the allow-listed host; it is saved only after a probe passes.
+   */
   @IsString()
   @MaxLength(300)
   baseUrl!: string;

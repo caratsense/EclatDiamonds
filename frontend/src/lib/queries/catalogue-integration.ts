@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
+import type { ConnectionState } from "@/lib/catalogue-connection";
 import type { CatalogueConflictView } from "@/lib/queries/products";
 
 /**
@@ -42,38 +43,65 @@ export interface CatalogueSyncRun {
 /** GET /catalogue-integration/health (WebsiteCatalogueService.health). */
 export interface CatalogueHealth {
   website?: {
-    /** Address saved? The Eclat feed is public, so a token is optional. */
+    /** An address is saved. Says nothing about whether it works. */
     configured?: boolean;
+    /** The last read-only probe of the saved address passed. */
+    verified?: boolean;
+    connectionState?: ConnectionState;
+    /** The canonical products endpoint (…/products). */
+    productsEndpoint?: string | null;
     /** Token stored? Never the token itself. */
     tokenStored?: boolean;
     host?: string | null;
-    baseUrl?: string | null;
     credentialLastUsedAt?: string | null;
+    /** Last probe that passed. */
+    lastHealthAt?: string | null;
+    /** Why the saved address last failed its check. */
+    lastError?: string | null;
+    /** The most recent check of any address, passed or failed. */
+    lastProbe?: { at: string; ok: boolean; endpoint: string; latencyMs?: number; sourceTotal?: number | null; error?: string } | null;
     lastRun?: Partial<CatalogueSyncRun> | null;
     lastSuccessAt?: string | null;
-    /** What the website said it has on the last complete run… */
+    /** What the website says it has (last complete run, else last probe)… */
     sourceTotal?: number | null;
     /** …against what we hold as live listings. */
     listingsActive?: number | null;
     /** In the feed and its total, but unpublished or deleted on the website. */
     listingsUnpublished?: number | null;
     listingsTombstoned?: number | null;
+    /** Website variants stored (metal / karat / diamond options). */
+    variants?: number | null;
   } | null;
+  /** Background jobs (a sync, picture indexing) run only while this is on. */
+  scheduler?: { enabled?: boolean } | null;
   gati?: {
     productsSyncedAt?: string | null;
     stockSyncedAt?: string | null;
     imagesSyncedAt?: string | null;
   } | null;
   catalogue?: {
+    /** Every Product record: Gati, manual, import and website-only. */
     products?: number;
+    /** Products carrying a website design code (matched or website-only). */
+    websiteLinked?: number;
+    /** Website designs with no Gati match (WEB-* records). */
+    websiteOnly?: number;
     variants?: number;
+    /** Active picture records, all sources. */
+    imagesActive?: number;
     imagesBySource?: Record<string, number>;
     missingCad?: number;
   } | null;
   /** Open conflicts by kind. */
   conflictsOpen?: Record<string, number> | null;
   embeddings?: {
+    /** Active picture records — the denominator for "indexed". */
+    imagesActive?: number;
     byStatus?: Record<string, number>;
+    /** source -> embedding status -> pictures */
+    bySource?: Record<string, Record<string, number>>;
+    productsWithIndexedImage?: number;
+    productsWithoutImage?: number;
     latestVersions?: Record<string, string | null> | null;
   } | null;
 }
@@ -124,7 +152,8 @@ function useIntegrationMutation<V, R>(call: (v: V) => Promise<R>) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: call,
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    // Settled, not success: a failed connection test changes the state too.
+    onSettled: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
 
@@ -140,10 +169,25 @@ export function useUpdateConflict() {
  * Store the website service token. WRITE-ONLY: the response only says it is
  * configured, and nothing here ever reads the token back.
  */
+export interface ConnectionCheck {
+  verified: boolean;
+  productsEndpoint: string;
+  sourceTotal: number | null;
+  checkedAt: string;
+}
+
 export function useSaveWebsiteCredential() {
   return useIntegrationMutation(
     async (body: { token?: string; baseUrl: string }) =>
-      (await api.post<{ configured: boolean }>("/catalogue-integration/website/credential", body)).data,
+      (await api.post<ConnectionCheck & { configured: boolean; host: string }>("/catalogue-integration/website/credential", body))
+        .data,
+  );
+}
+
+/** Re-check the saved address (page 1, one product). Starts no sync. */
+export function useTestWebsiteConnection() {
+  return useIntegrationMutation(
+    async () => (await api.post<ConnectionCheck>("/catalogue-integration/website/test", {})).data,
   );
 }
 

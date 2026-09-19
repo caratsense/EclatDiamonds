@@ -68,7 +68,27 @@ matched image selected; the hero stays marked "Primary".
 ## Contracts
 
 ### Catalogue sync (integrations agent — `backend/src/catalogue/website/*`, `catalogue-sync.controller.ts`)
-- `WebsiteCatalogueClient`: GET `{base}/products?page&limit`, base from the
+- Endpoint contract (2026-09-19): `WebsiteCatalogueClient.productsEndpoint()`
+  is the one rule for saving, probing and paging. It accepts the API base
+  (`…/v1/api`) or the exact endpoint (`…/v1/api/products`) and returns the exact
+  endpoint — `/products` appended once, never `/products/products`; a reviewed
+  query (e.g. `country=IN`) kept; `page`/`limit` dropped for the pager to set.
+  https only, no credentials, no fragment, allow-listed host, redirects refused.
+  Stored as `Integration.config.productsEndpoint`; rows saved earlier as
+  `config.baseUrl` are read through the same rule and never written again.
+- Connection truth: saving an address runs a read-only probe (page 1, limit 1,
+  same client as a sync) and saves nothing unless it passes — a product list, a
+  sane total when given, a usable `productCode`. Pass: `status=connected`,
+  `lastHealthAt`, `config.lastProbe`. A failed new address keeps a working one
+  and is recorded in `config.lastProbe`; a failed re-test (`POST
+  /catalogue-integration/website/test`) sets `status=error` + `lastError`.
+  Health reports `configured` (an address exists) separately from `verified`
+  (last probe passed, `lastHealthAt` set — rows saved before probes existed are
+  not verified) and a `connectionState`: not_configured / connected /
+  sync_running / needs_attention / failed. Syncs, manual or scheduled, need a
+  verified connection. 502 = the website could not be reached; 400 = its answer
+  was wrong.
+- `WebsiteCatalogueClient`: GET `{productsEndpoint}?page&limit`, endpoint from the
   stored integration config, host must equal the allow-listed
   `apis.eclatdiamonds.in` (config `WEBSITE_CATALOGUE_ALLOWED_HOSTS`), bearer =
   encrypted `IntegrationCredential` kind `service_token` (reuse
@@ -97,8 +117,10 @@ matched image selected; the hero stays marked "Primary".
   weekly (Sunday 03:00 IST) per org that has the integration configured, so
   designs added to the website arrive without anyone starting a sync.
 - Routes (head_office): `GET /catalogue-integration/health`, `POST
-  /catalogue-integration/website/credential` (write-only, returns
-  `{configured:true, lastFour?:never}` — never echoes), `POST
+  /catalogue-integration/website/credential {baseUrl, token?}` (probes first;
+  returns `{configured, verified, host, productsEndpoint, sourceTotal,
+  checkedAt}` — never the token), `POST /catalogue-integration/website/test`
+  (re-probe; no sync, no catalogue write), `POST
   /catalogue-integration/website/sync {mode:'full'|'resume', dryRun}`, `GET
   /catalogue-integration/runs`, `GET /catalogue-integration/conflicts?status`,
   `PATCH /catalogue-integration/conflicts/:id {status, resolution}` (for

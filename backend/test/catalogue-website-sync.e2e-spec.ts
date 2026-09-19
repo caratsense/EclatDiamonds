@@ -235,7 +235,8 @@ describe('Website catalogue sync (e2e, stubbed website)', () => {
         .set(auth(hoA))
         .send({ token: TOKEN, baseUrl: BASE })
         .expect(201);
-      expect(ok.body).toEqual({ configured: true });
+      // Saved only after a real probe through the sync's own client passed.
+      expect(ok.body).toMatchObject({ configured: true, verified: true, productsEndpoint: `${BASE}/products` });
 
       const cred = await prisma.integrationCredential.findFirstOrThrow({ where: { organisationId: A.org, kind: 'service_token' } });
       expect(cred.ciphertext).not.toContain(TOKEN);
@@ -598,7 +599,7 @@ describe('Website catalogue sync (e2e, stubbed website)', () => {
     await request(server()).post('/catalogue-integration/website/credential').set(auth(hoB)).send({ baseUrl: BASE }).expect(201);
     expect(await prisma.integrationCredential.count({ where: { organisationId: B.org } })).toBe(0);
     const health = await request(server()).get('/catalogue-integration/health').set(auth(hoB)).expect(200);
-    expect(health.body.website).toMatchObject({ configured: true, tokenStored: false, baseUrl: BASE });
+    expect(health.body.website).toMatchObject({ configured: true, verified: true, tokenStored: false, productsEndpoint: `${BASE}/products` });
 
     site.products = [golden()];
     const before = site.auth.length;

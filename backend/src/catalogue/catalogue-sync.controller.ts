@@ -25,6 +25,12 @@ export class CatalogueSyncController {
     return this.website.setCredential(user, body.token, body.baseUrl);
   }
 
+  /** A read-only probe of the saved address: page 1, one product. Starts no sync, writes no catalogue row. */
+  @Post('website/test')
+  test(@CurrentUser() user: AuthUser) {
+    return this.website.testConnection(user);
+  }
+
   @Post('website/sync')
   sync(@CurrentUser() user: AuthUser, @Body() body: StartWebsiteSyncDto) {
     return this.website.requestSync(user, body.mode, body.dryRun ?? false);

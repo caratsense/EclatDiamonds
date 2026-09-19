@@ -1,4 +1,5 @@
 import {
+  BadGatewayException,
   BadRequestException,
   ConflictException,
   Injectable,
@@ -17,7 +18,7 @@ import { JobContext, JobsService } from '../../jobs/jobs.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CatalogueIndexService } from '../../products/catalogue-index.service';
 import { categoryFromRow } from '../../sync/sync.service';
-import { WebsiteCatalogueClient, WebsitePage } from './website-catalogue.client';
+import { WebsiteCatalogueClient, WebsiteClientError, WebsitePage } from './website-catalogue.client';
 import { normalizeWebsiteProduct } from './website-normalizer';
 import {
   PersistContext,
@@ -38,6 +39,21 @@ export const STALE_RUN_MS = 10 * 60_000;
 const PREVIEW_LIMIT = 500;
 
 type Db = Prisma.TransactionClient;
+
+/**
+ * What the connection row's `config` holds. `productsEndpoint` is the one
+ * canonical address (…/products). `baseUrl` is how rows saved before
+ * 2026-09-19 stored it; it is read, canonicalised, and never written again.
+ * `lastProbe` is the most recent connection check, passed or failed — a failed
+ * check of a new address is recorded here without replacing a working one.
+ */
+interface WebsiteConfig {
+  productsEndpoint?: string;
+  baseUrl?: string;
+  lastProbe?: { at: string; ok: boolean; endpoint: string; latencyMs?: number; sourceTotal?: number | null; error?: string };
+}
+
+export type WebsiteConnectionState = 'not_configured' | 'connected' | 'sync_running' | 'needs_attention' | 'failed';
 type Counters = { created: number; updated: number; unchanged: number; conflicted: number; failed: number; imagesExpected: number; imagesReceived: number; imagesQueued: number };
 
 class DryRunRollback extends Error {
@@ -75,16 +91,73 @@ export class WebsiteCatalogueService implements OnModuleInit {
   }
 
   // ── credential ──────────────────────────────────────────────────────────
-  async setCredential(user: AuthUser, token: string | undefined, baseUrl: string) {
-    let url: URL;
+  private endpointOf(config: unknown): string | null {
+    const c = (config ?? {}) as WebsiteConfig;
+    const raw = c.productsEndpoint ?? c.baseUrl;
+    if (!raw) return null;
     try {
-      url = this.client.assertAllowedBase(baseUrl.trim());
+      return this.client.productsEndpoint(raw).toString();
+    } catch {
+      return null;
+    }
+  }
+
+  private findIntegration(organisationId: string) {
+    return this.prisma.integration.findFirst({
+      where: { organisationId, providerCode: WEBSITE_PROVIDER },
+      include: { credentials: { where: { kind: WEBSITE_CREDENTIAL_KIND, organisationId } } },
+    });
+  }
+
+  private storedToken(integration: { id: string; organisationId: string; credentials: { ciphertext: string; iv: string; authTag: string; keyVersion: number }[] }): string | null {
+    const row = integration.credentials[0];
+    return row
+      ? this.crypto.decrypt(row, { organisationId: integration.organisationId, integrationId: integration.id, kind: WEBSITE_CREDENTIAL_KIND })
+      : null;
+  }
+
+  /**
+   * Save an address (the API base or the exact products endpoint) and, with it,
+   * an optional token — but only once a read-only probe through the sync's own
+   * client has read a product from it. A failed probe persists nothing new: a
+   * working address stays, with the failed attempt recorded beside it.
+   */
+  async setCredential(user: AuthUser, token: string | undefined, address: string) {
+    let candidate: string;
+    try {
+      candidate = this.client.productsEndpoint(address).toString();
     } catch (e) {
       throw new BadRequestException(errText(e));
     }
     const newToken = token?.trim() || null;
     if (newToken) this.crypto.assertConfigured();
     const org = user.organisationId;
+    const existing = await this.findIntegration(org);
+    const at = new Date();
+    let probe;
+    try {
+      probe = await this.client.probe(candidate, newToken ?? (existing ? this.storedToken(existing) : null));
+    } catch (e) {
+      if (existing) {
+        const config: WebsiteConfig = {
+          ...((existing.config ?? {}) as WebsiteConfig),
+          lastProbe: { at: at.toISOString(), ok: false, endpoint: candidate, error: errText(e) },
+        };
+        await this.prisma.integration.update({ where: { id: existing.id }, data: { config: config as Prisma.InputJsonValue } });
+      }
+      await this.audit.record(user, {
+        action: 'integration.connection_failed',
+        entityType: 'Integration',
+        entityId: existing?.id ?? 'website_catalogue',
+        summary: 'A website catalogue address failed its connection test and was not saved',
+        metadata: { host: new URL(candidate).hostname, error: errText(e) },
+      });
+      throw upstreamError(e);
+    }
+    const config: WebsiteConfig = {
+      productsEndpoint: probe.productsEndpoint,
+      lastProbe: { at: at.toISOString(), ok: true, endpoint: probe.productsEndpoint, latencyMs: probe.latencyMs, sourceTotal: probe.sourceTotal },
+    };
     const integration = await this.prisma.integration.upsert({
       where: { organisationId_providerCode_name: { organisationId: org, providerCode: WEBSITE_PROVIDER, name: 'Website catalogue' } },
       create: {
@@ -92,10 +165,11 @@ export class WebsiteCatalogueService implements OnModuleInit {
         providerCode: WEBSITE_PROVIDER,
         name: 'Website catalogue',
         status: 'connected',
-        config: { baseUrl: url.toString().replace(/\/+$/, '') },
+        config: config as Prisma.InputJsonValue,
+        lastHealthAt: at,
         createdById: user.id,
       },
-      update: { config: { baseUrl: url.toString().replace(/\/+$/, '') }, status: 'connected', lastError: null },
+      update: { config: config as Prisma.InputJsonValue, status: 'connected', lastHealthAt: at, lastError: null },
     });
     if (newToken) {
       const ctx = { organisationId: org, integrationId: integration.id, kind: WEBSITE_CREDENTIAL_KIND };
@@ -107,29 +181,72 @@ export class WebsiteCatalogueService implements OnModuleInit {
         update: { organisationId: org, ...secret, rotatedAt: new Date() },
       });
     }
+    const host = new URL(probe.productsEndpoint).hostname;
     await this.audit.record(user, {
       action: 'integration.credential_set',
       entityType: 'Integration',
       entityId: integration.id,
-      summary: newToken ? 'Updated the website catalogue service token' : 'Updated the website catalogue address',
-      metadata: { kind: WEBSITE_CREDENTIAL_KIND, host: url.hostname, token: !!newToken },
+      summary: newToken ? 'Updated the website catalogue service token' : 'Connected the website catalogue',
+      metadata: { kind: WEBSITE_CREDENTIAL_KIND, host, token: !!newToken, sourceTotal: probe.sourceTotal },
     });
-    return { configured: true };
+    return { configured: true, verified: true, host, productsEndpoint: probe.productsEndpoint, sourceTotal: probe.sourceTotal, checkedAt: at };
+  }
+
+  /** Re-check the saved address with the same read-only probe. Starts no sync and writes no catalogue row. */
+  async testConnection(user: AuthUser) {
+    const integration = await this.findIntegration(user.organisationId);
+    const endpoint = integration && this.endpointOf(integration.config);
+    if (!integration || !endpoint) throw new BadRequestException('The website catalogue connection is not configured.');
+    const at = new Date();
+    const prior = (integration.config ?? {}) as WebsiteConfig;
+    try {
+      const probe = await this.client.probe(endpoint, this.storedToken(integration));
+      const config: WebsiteConfig = {
+        productsEndpoint: probe.productsEndpoint,
+        lastProbe: { at: at.toISOString(), ok: true, endpoint: probe.productsEndpoint, latencyMs: probe.latencyMs, sourceTotal: probe.sourceTotal },
+      };
+      await this.prisma.integration.update({
+        where: { id: integration.id },
+        data: { status: 'connected', lastHealthAt: at, lastError: null, config: config as Prisma.InputJsonValue },
+      });
+      await this.audit.record(user, {
+        action: 'integration.connection_tested',
+        entityType: 'Integration',
+        entityId: integration.id,
+        summary: 'Website catalogue connection test passed',
+        metadata: { sourceTotal: probe.sourceTotal, latencyMs: probe.latencyMs },
+      });
+      return { verified: true, productsEndpoint: probe.productsEndpoint, sourceTotal: probe.sourceTotal, latencyMs: probe.latencyMs, checkedAt: at };
+    } catch (e) {
+      const config: WebsiteConfig = { ...prior, productsEndpoint: endpoint, lastProbe: { at: at.toISOString(), ok: false, endpoint, error: errText(e) } };
+      await this.prisma.integration.update({
+        where: { id: integration.id },
+        data: { status: 'error', lastError: errText(e), config: config as Prisma.InputJsonValue },
+      });
+      await this.audit.record(user, {
+        action: 'integration.connection_tested',
+        entityType: 'Integration',
+        entityId: integration.id,
+        summary: 'Website catalogue connection test failed',
+        metadata: { error: errText(e) },
+      });
+      throw upstreamError(e);
+    }
   }
 
   /** The token is optional: the Eclat product feed is public. */
-  private async connection(organisationId: string): Promise<{ baseUrl: string; token: string | null }> {
-    const integration = await this.prisma.integration.findFirst({
-      where: { organisationId, providerCode: WEBSITE_PROVIDER },
-      include: { credentials: { where: { kind: WEBSITE_CREDENTIAL_KIND, organisationId } } },
-    });
-    const row = integration?.credentials[0];
-    const baseUrl = (integration?.config as { baseUrl?: string } | null)?.baseUrl;
-    if (!integration || !baseUrl) throw new BadRequestException('The website catalogue connection is not configured.');
-    if (!row) return { baseUrl, token: null };
-    const token = this.crypto.decrypt(row, { organisationId, integrationId: integration.id, kind: WEBSITE_CREDENTIAL_KIND });
-    await this.prisma.integrationCredential.update({ where: { id: row.id }, data: { lastUsedAt: new Date() } }).catch(() => undefined);
-    return { baseUrl, token };
+  private async connection(organisationId: string, opts: { requireVerified?: boolean } = {}): Promise<{ endpoint: string; token: string | null }> {
+    const integration = await this.findIntegration(organisationId);
+    const endpoint = integration && this.endpointOf(integration.config);
+    if (!integration || !endpoint) throw new BadRequestException('The website catalogue connection is not configured.');
+    // Rows saved before probes existed say 'connected' with no check time: not verified.
+    if (opts.requireVerified && (integration.status !== 'connected' || !integration.lastHealthAt)) {
+      throw new BadRequestException('The website connection has not passed its test. Test the connection first.');
+    }
+    const token = this.storedToken(integration);
+    const row = integration.credentials[0];
+    if (row) await this.prisma.integrationCredential.update({ where: { id: row.id }, data: { lastUsedAt: new Date() } }).catch(() => undefined);
+    return { endpoint, token };
   }
 
   // ── runs ────────────────────────────────────────────────────────────────
@@ -192,7 +309,7 @@ export class WebsiteCatalogueService implements OnModuleInit {
   }
 
   async requestSync(user: AuthUser, mode: 'full' | 'resume', dryRun = false) {
-    await this.connection(user.organisationId);
+    await this.connection(user.organisationId, { requireVerified: true });
     const { run, claim } = await this.startSync(user, user.organisationId, mode, dryRun);
     const job = await this.enqueueRun(user.organisationId, run.id, claim, user.id);
     return { runId: run.id, jobId: job.id, status: 'queued', mode, dryRun: run.dryRun };
@@ -252,7 +369,7 @@ export class WebsiteCatalogueService implements OnModuleInit {
     const counters = () => ({ ...c, expected, detail: { ...detail, preview, failures } as Prisma.InputJsonValue });
 
     try {
-      let conn: { baseUrl: string; token: string | null };
+      let conn: { endpoint: string; token: string | null };
       try {
         conn = await this.connection(organisationId);
       } catch (e) {
@@ -263,7 +380,7 @@ export class WebsiteCatalogueService implements OnModuleInit {
       for (;;) {
         let res: WebsitePage;
         try {
-          res = await this.client.fetchPage(conn.baseUrl, conn.token, page, run.pageSize);
+          res = await this.client.fetchPage(conn.endpoint, conn.token, page, run.pageSize);
         } catch (e) {
           return this.stopPartial(fence, counters(), `Page ${page}: ${errText(e)}`, page);
         }
@@ -579,54 +696,119 @@ export class WebsiteCatalogueService implements OnModuleInit {
     return updated;
   }
 
+  /**
+   * The integration board's facts, each measuring one thing. "Connected" means
+   * the last read-only probe of the saved address passed — not that an address
+   * is stored. Products, website designs, variants and pictures are counted
+   * separately because they are different things: a website design matched to
+   * a Gati design enriches that one Product rather than adding another.
+   */
   async health(organisationId: string) {
     const org = organisationId;
     const integration = await this.prisma.integration.findFirst({
       where: { organisationId: org, providerCode: WEBSITE_PROVIDER },
-      select: { config: true, credentials: { where: { kind: WEBSITE_CREDENTIAL_KIND }, select: { lastUsedAt: true, rotatedAt: true } } },
+      select: {
+        status: true,
+        config: true,
+        lastHealthAt: true,
+        lastError: true,
+        credentials: { where: { kind: WEBSITE_CREDENTIAL_KIND }, select: { lastUsedAt: true, rotatedAt: true } },
+      },
     });
-    const baseUrl = (integration?.config as { baseUrl?: string } | null)?.baseUrl;
-    const [lastRun, lastSuccess, listingsActive, listingsUnpublished, listingsTombstoned, syncStates, products, variants, imagesBySource, conflicts, missingCad, embeddingsByStatus, versions] =
-      await Promise.all([
-        this.prisma.catalogueSyncRun.findFirst({ where: { organisationId: org, source: WEBSITE }, orderBy: { startedAt: 'desc' } }),
-        this.prisma.catalogueSyncRun.findFirst({ where: { organisationId: org, source: WEBSITE, status: 'done', dryRun: false }, orderBy: { startedAt: 'desc' } }),
-        this.prisma.productWebsiteListing.count({ where: { organisationId: org, tombstonedAt: null, isActive: true, isDeleted: false } }),
-        // Still in the feed (and in its total) but switched off or deleted there.
-        this.prisma.productWebsiteListing.count({
-          where: { organisationId: org, tombstonedAt: null, OR: [{ isActive: false }, { isDeleted: true }] },
-        }),
-        this.prisma.productWebsiteListing.count({ where: { organisationId: org, tombstonedAt: { not: null } } }),
-        this.prisma.syncState.findMany({ where: { organisationId: org, sourceTable: { in: ['StyleMst', 'Inward', 'GatiMediaFiles'] } }, select: { sourceTable: true, lastRunAt: true } }),
-        this.prisma.product.count({ where: { organisationId: org } }),
-        this.prisma.productVariant.count({ where: { organisationId: org, status: 'active' } }),
-        this.prisma.productImage.groupBy({ by: ['source'], where: { organisationId: org, status: 'active' }, _count: { _all: true } }),
-        this.prisma.catalogueConflict.groupBy({ by: ['kind'], where: { organisationId: org, status: 'open' }, _count: { _all: true } }),
-        this.prisma.product.count({
-          where: {
-            organisationId: org,
-            legacyId: { not: null },
-            NOT: { legacyId: { startsWith: 'WEB-' } },
-            images: { none: { source: 'gati_cad', status: 'active' } },
-          },
-        }),
-        this.prisma.productImage.groupBy({ by: ['embeddingStatus'], where: { organisationId: org, status: 'active' }, _count: { _all: true } }),
-        this.prisma.productEmbedding.findFirst({
-          where: { organisationId: org },
-          orderBy: { updatedAt: 'desc' },
-          select: { dinoModelVersion: true, siglipModelVersion: true, preprocessingVersion: true },
-        }),
-      ]);
+    const cfg = (integration?.config ?? {}) as WebsiteConfig;
+    const endpoint = integration ? this.endpointOf(cfg) : null;
+    const activeImage = { organisationId: org, status: 'active' };
+    const [
+      lastRun,
+      lastSuccess,
+      listingsActive,
+      listingsUnpublished,
+      listingsTombstoned,
+      syncStates,
+      products,
+      websiteLinked,
+      websiteOnly,
+      variants,
+      imagesBySource,
+      conflicts,
+      missingCad,
+      imagesBySourceStatus,
+      productsWithIndexedImage,
+      productsWithoutImage,
+      versions,
+    ] = await Promise.all([
+      this.prisma.catalogueSyncRun.findFirst({ where: { organisationId: org, source: WEBSITE }, orderBy: { startedAt: 'desc' } }),
+      this.prisma.catalogueSyncRun.findFirst({ where: { organisationId: org, source: WEBSITE, status: 'done', dryRun: false }, orderBy: { startedAt: 'desc' } }),
+      this.prisma.productWebsiteListing.count({ where: { organisationId: org, tombstonedAt: null, isActive: true, isDeleted: false } }),
+      // Still in the feed (and in its total) but switched off or deleted there.
+      this.prisma.productWebsiteListing.count({
+        where: { organisationId: org, tombstonedAt: null, OR: [{ isActive: false }, { isDeleted: true }] },
+      }),
+      this.prisma.productWebsiteListing.count({ where: { organisationId: org, tombstonedAt: { not: null } } }),
+      this.prisma.syncState.findMany({ where: { organisationId: org, sourceTable: { in: ['StyleMst', 'Inward', 'GatiMediaFiles'] } }, select: { sourceTable: true, lastRunAt: true } }),
+      this.prisma.product.count({ where: { organisationId: org } }),
+      this.prisma.product.count({ where: { organisationId: org, websiteCode: { not: null } } }),
+      this.prisma.product.count({ where: { organisationId: org, legacyId: { startsWith: 'WEB-' } } }),
+      this.prisma.productVariant.count({ where: { organisationId: org, status: 'active', source: WEBSITE } }),
+      this.prisma.productImage.groupBy({ by: ['source'], where: activeImage, _count: { _all: true } }),
+      this.prisma.catalogueConflict.groupBy({ by: ['kind'], where: { organisationId: org, status: 'open' }, _count: { _all: true } }),
+      this.prisma.product.count({
+        where: {
+          organisationId: org,
+          legacyId: { not: null },
+          NOT: { legacyId: { startsWith: 'WEB-' } },
+          images: { none: { source: 'gati_cad', status: 'active' } },
+        },
+      }),
+      this.prisma.productImage.groupBy({ by: ['source', 'embeddingStatus'], where: activeImage, _count: { _all: true } }),
+      this.prisma.product.count({ where: { organisationId: org, images: { some: { status: 'active', embeddingStatus: 'indexed' } } } }),
+      this.prisma.product.count({ where: { organisationId: org, images: { none: { status: 'active' } } } }),
+      this.prisma.productEmbedding.findFirst({
+        where: { organisationId: org },
+        orderBy: { updatedAt: 'desc' },
+        select: { dinoModelVersion: true, siglipModelVersion: true, preprocessingVersion: true },
+      }),
+    ]);
     const latest = (table: string) =>
       syncStates.filter((s) => s.sourceTable === table).reduce<Date | null>((m, s) => (s.lastRunAt && (!m || s.lastRunAt > m) ? s.lastRunAt : m), null);
     const byKey = <T extends { _count: { _all: number } }>(rows: T[], key: keyof T) =>
       Object.fromEntries(rows.map((r) => [String(r[key]), r._count._all]));
+
+    // A probe that passed sets lastHealthAt; a row saved before probes existed
+    // says 'connected' without one, and is not verified.
+    const verified = !!endpoint && integration?.status === 'connected' && !!integration.lastHealthAt;
+    const running = lastRun?.status === 'running' && lastRun.heartbeatAt.getTime() > Date.now() - STALE_RUN_MS;
+    const connectionState: WebsiteConnectionState = !endpoint
+      ? 'not_configured'
+      : running
+        ? 'sync_running'
+        : integration?.status === 'error'
+          ? 'failed'
+          : !verified || (lastRun && (lastRun.status === 'partial' || lastRun.status === 'failed'))
+            ? 'needs_attention'
+            : 'connected';
+
+    const byStatus: Record<string, number> = {};
+    const bySource: Record<string, Record<string, number>> = {};
+    for (const r of imagesBySourceStatus) {
+      byStatus[r.embeddingStatus] = (byStatus[r.embeddingStatus] ?? 0) + r._count._all;
+      (bySource[r.source] ??= {})[r.embeddingStatus] = r._count._all;
+    }
+    const imagesActive = imagesBySource.reduce((t, r) => t + r._count._all, 0);
+
     return {
       website: {
-        configured: !!baseUrl,
+        configured: !!endpoint,
+        verified,
+        connectionState,
+        productsEndpoint: endpoint,
+        host: endpoint ? new URL(endpoint).hostname : null,
         tokenStored: !!integration?.credentials.length,
-        host: baseUrl ? new URL(baseUrl).hostname : null,
-        baseUrl: baseUrl ?? null,
         credentialLastUsedAt: integration?.credentials[0]?.lastUsedAt ?? null,
+        lastHealthAt: integration?.lastHealthAt ?? null,
+        lastError: integration?.lastError ?? null,
+        lastProbe: cfg.lastProbe ?? null,
+        schedule: 'weekly',
         lastRun: lastRun && {
           id: lastRun.id,
           status: lastRun.status,
@@ -634,40 +816,80 @@ export class WebsiteCatalogueService implements OnModuleInit {
           dryRun: lastRun.dryRun,
           startedAt: lastRun.startedAt,
           finishedAt: lastRun.finishedAt,
+          heartbeatAt: lastRun.heartbeatAt,
+          nextPage: lastRun.nextPage,
           expected: lastRun.expected,
           received: lastRun.received,
+          created: lastRun.created,
+          updated: lastRun.updated,
+          unchanged: lastRun.unchanged,
+          failed: lastRun.failed,
+          conflicted: lastRun.conflicted,
+          tombstoned: lastRun.tombstoned,
+          imagesReceived: lastRun.imagesReceived,
+          imagesQueued: lastRun.imagesQueued,
           lastError: lastRun.lastError,
         },
         lastSuccessAt: lastSuccess?.finishedAt ?? null,
-        sourceTotal: lastSuccess?.expected ?? lastRun?.expected ?? null,
+        sourceTotal: lastSuccess?.expected ?? lastRun?.expected ?? cfg.lastProbe?.sourceTotal ?? null,
         listingsActive,
         listingsUnpublished,
         listingsTombstoned,
+        variants,
       },
+      // Queued jobs (a sync, picture indexing) run only where the scheduler
+      // drains the queue; with it off they wait forever, so say so.
+      scheduler: { enabled: (this.config.get<string>('SCHEDULER_ENABLED') ?? 'true') !== 'false' },
       gati: {
         productsSyncedAt: latest('StyleMst'),
         stockSyncedAt: latest('Inward'),
         imagesSyncedAt: latest('GatiMediaFiles'),
       },
-      catalogue: { products, variants, imagesBySource: byKey(imagesBySource, 'source'), missingCad },
+      catalogue: {
+        products,
+        websiteLinked,
+        websiteOnly,
+        variants,
+        imagesActive,
+        imagesBySource: byKey(imagesBySource, 'source'),
+        missingCad,
+      },
       conflictsOpen: byKey(conflicts, 'kind'),
-      embeddings: { byStatus: byKey(embeddingsByStatus, 'embeddingStatus'), latestVersions: versions ?? null },
+      embeddings: {
+        imagesActive,
+        byStatus,
+        bySource,
+        productsWithIndexedImage,
+        productsWithoutImage,
+        latestVersions: versions ?? null,
+      },
     };
   }
 
   // ── schedule ────────────────────────────────────────────────────────────
   /**
-   * Saturday 21:30 UTC = Sunday 03:00 IST: once a week per organisation with a
-   * configured connection, which picks up designs added to the website.
+   * Saturday 21:30 UTC = Sunday 03:00 IST: once a week per organisation whose
+   * connection is configured and has passed its test, which picks up designs
+   * added to the website. A connection that failed its last test is skipped
+   * (health shows it as failed); one already running is skipped by startSync.
+   * Nothing is scheduled before the first full (non-dry) sync has finished:
+   * the first import into a catalogue is a person's decision, never a cron's.
    */
   @Cron('0 30 21 * * 6', { name: WEBSITE_SYNC_JOB })
   async scheduleWeekly(): Promise<number> {
     if ((this.config.get<string>('SCHEDULER_ENABLED') ?? 'true') === 'false') return 0;
     const day = new Date().toISOString().slice(0, 10);
-    const orgs = await this.prisma.integration.findMany({
-      where: { providerCode: WEBSITE_PROVIDER },
-      select: { organisationId: true },
-    });
+    const orgs = (
+      await this.prisma.integration.findMany({
+        where: {
+          providerCode: WEBSITE_PROVIDER,
+          status: 'connected',
+          lastHealthAt: { not: null },
+          organisation: { catalogueSyncRuns: { some: { source: WEBSITE, dryRun: false, status: 'done' } } },
+        },
+        select: { organisationId: true, config: true },
+      })
+    ).filter((i) => this.endpointOf(i.config));
     let queued = 0;
     for (const { organisationId } of orgs) {
       try {
@@ -690,6 +912,11 @@ export class WebsiteCatalogueService implements OnModuleInit {
 function productCodeOf(payload: unknown): string | null {
   const c = (payload as { productCode?: unknown } | null)?.productCode;
   return typeof c === 'string' ? c.trim() : null;
+}
+
+/** A failed probe as an HTTP error: 502 when the website could not be reached, 400 when its answer was wrong. */
+function upstreamError(e: unknown) {
+  return e instanceof WebsiteClientError && e.retryable ? new BadGatewayException(errText(e)) : new BadRequestException(errText(e));
 }
 
 function errText(e: unknown): string {
