@@ -271,6 +271,15 @@ export function parseProductFilters(raw: Record<string, unknown>): ProductFilter
 /** Decimal → number, keeping null as null (unlike `num`, which reads null as 0). */
 const dec = (v: Prisma.Decimal | number | null | undefined): number | null => (v == null ? null : Number(v));
 
+/**
+ * An earlier sync stored Gati's HallMarkId — an opaque 2-digit reference (33,
+ * 38) — as the hallmark number, and the sync no longer refreshes the column.
+ * Shown, it reads as "Hallmark 33". Such a value is not a hallmark: hide it.
+ */
+export function realHallmark(v: string | null | undefined): string | null {
+  return v && !/^\d{1,3}$/.test(v.trim()) ? v : null;
+}
+
 @Injectable()
 export class ProductsService {
   private readonly logger = new Logger(ProductsService.name);
@@ -856,7 +865,7 @@ export class ProductsService {
             itemSizeId: r.itemSizeId,
             hsn: r.hsn,
             huid: r.huid,
-            hallmarkNo: r.hallmarkNo,
+            hallmarkNo: realHallmark(r.hallmarkNo),
             certificateNo: r.certificateNo,
             quantity: r.quantity,
             grossWeight: dec(r.grossWeight),
@@ -956,7 +965,7 @@ export class ProductsService {
       diamondPieces: r.diamondPieces ?? 0,
       tagPrice: num(r.tagPrice),
       mrp: num(r.mrp),
-      hallmarkNo: r.hallmarkNo ?? '',
+      hallmarkNo: realHallmark(r.hallmarkNo) ?? '',
       certificateNo: r.certificateNo ?? '',
       inwardDate: r.inwardDate ? r.inwardDate.toISOString() : null,
       ageDays: r.ageDays ?? null,

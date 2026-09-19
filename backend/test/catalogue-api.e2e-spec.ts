@@ -14,6 +14,7 @@ import { StorageService } from '../src/storage/storage.service';
 import { applyImageOrder } from '../src/catalogue/image-order';
 import { gatiComposition } from '../src/products/composition';
 import { costTier, stripCostJson } from '../src/products/cost-boundary';
+import { realHallmark } from '../src/products/products.service';
 
 /**
  * Product API for the lossless catalogue (docs/modules/05-catalogue-sources.md,
@@ -87,6 +88,15 @@ async function teardown(prisma: PrismaService) {
     await prisma.organisation.deleteMany({ where: { id: org } });
   }
 }
+
+describe('hallmark number — pure', () => {
+  it("hides Gati's 2-digit HallMarkId, keeps a real hallmark", () => {
+    expect(realHallmark('33')).toBeNull();
+    expect(realHallmark('38')).toBeNull();
+    expect(realHallmark(null)).toBeNull();
+    expect(realHallmark('HM-2024-000183')).toBe('HM-2024-000183');
+  });
+});
 
 describe('Catalogue product API (e2e)', () => {
   let app: INestApplication;

@@ -1,5 +1,6 @@
 "use client";
 
+import { toast } from "sonner";
 import { useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
@@ -655,30 +656,30 @@ function Composition({ product, seesAmounts }: { product: ProductFull; seesAmoun
 }
 
 type PieceKey = keyof StockPieceFull;
-const PIECE_COLS: { key: PieceKey; label: string; kind?: "g" | "ct" | "inr" | "int" | "mono" }[] = [
-  { key: "tagNo", label: "Tag", kind: "mono" },
-  { key: "storeName", label: "Store" },
-  { key: "sizeLabel", label: "Size" },
-  { key: "hsn", label: "HSN", kind: "mono" },
-  { key: "huid", label: "HUID", kind: "mono" },
-  { key: "hallmarkNo", label: "Hallmark", kind: "mono" },
-  { key: "certificateNo", label: "Certificate", kind: "mono" },
-  { key: "grossWeight", label: "Gross", kind: "g" },
-  { key: "netWeight", label: "Net", kind: "g" },
-  { key: "pureWeight", label: "Pure", kind: "g" },
-  { key: "diamondWeightCt", label: "Diamond", kind: "ct" },
-  { key: "diamondPieces", label: "Dia pcs", kind: "int" },
-  { key: "stoneWeightCt", label: "Stone", kind: "ct" },
-  { key: "stonePieces", label: "Stone pcs", kind: "int" },
-  { key: "quantity", label: "Qty", kind: "int" },
-  { key: "tagPrice", label: "Tag price", kind: "inr" },
-  { key: "mrp", label: "MRP", kind: "inr" },
-  { key: "metalAmount", label: "Metal amt", kind: "inr" },
-  { key: "diamondAmount", label: "Diamond amt", kind: "inr" },
-  { key: "stoneAmount", label: "Stone amt", kind: "inr" },
-  { key: "makingAmount", label: "Making", kind: "inr" },
-  { key: "cpfAmount", label: "CPF", kind: "inr" },
-  { key: "cost", label: "Cost", kind: "inr" },
+const PIECE_COLS: { key: PieceKey; label: string; kind?: "g" | "ct" | "inr" | "int" | "mono"; help: string }[] = [
+  { key: "tagNo", label: "Tag", kind: "mono", help: "The piece's tag number in Gati." },
+  { key: "storeName", label: "Store", help: "Where the piece is right now." },
+  { key: "sizeLabel", label: "Size", help: "Ring or bangle size." },
+  { key: "hsn", label: "HSN", kind: "mono", help: "GST HSN code." },
+  { key: "huid", label: "HUID", kind: "mono", help: "The 6-character BIS hallmark ID on the piece." },
+  { key: "hallmarkNo", label: "Hallmark", kind: "mono", help: "Hallmark number." },
+  { key: "certificateNo", label: "Certificate", kind: "mono", help: "Diamond certificate (grading report) number." },
+  { key: "grossWeight", label: "Gross", kind: "g", help: "Whole piece: metal + diamonds + stones." },
+  { key: "netWeight", label: "Net", kind: "g", help: "Metal only: gross minus diamonds and stones." },
+  { key: "pureWeight", label: "Pure", kind: "g", help: "Pure gold in the metal (net × purity)." },
+  { key: "diamondWeightCt", label: "Diamond", kind: "ct", help: "Total diamond weight, in carats." },
+  { key: "diamondPieces", label: "Dia pcs", kind: "int", help: "Number of diamonds." },
+  { key: "stoneWeightCt", label: "Stone", kind: "ct", help: "Colour-stone weight, in carats." },
+  { key: "stonePieces", label: "Stone pcs", kind: "int", help: "Number of colour stones." },
+  { key: "quantity", label: "Qty", kind: "int", help: "Pieces under this tag." },
+  { key: "tagPrice", label: "Tag price", kind: "inr", help: "Selling price on the tag." },
+  { key: "mrp", label: "MRP", kind: "inr", help: "Maximum retail price." },
+  { key: "metalAmount", label: "Metal amt", kind: "inr", help: "Value of the metal." },
+  { key: "diamondAmount", label: "Diamond amt", kind: "inr", help: "Value of the diamonds." },
+  { key: "stoneAmount", label: "Stone amt", kind: "inr", help: "Value of the colour stones." },
+  { key: "makingAmount", label: "Making", kind: "inr", help: "Making (labour) charge." },
+  { key: "cpfAmount", label: "CPF", kind: "inr", help: "CPF charge, as in Gati." },
+  { key: "cost", label: "Cost", kind: "inr", help: "What the piece cost." },
 ];
 
 function Pieces({ pieces }: { pieces: StockPieceFull[] }) {
@@ -693,7 +694,7 @@ function Pieces({ pieces }: { pieces: StockPieceFull[] }) {
         </p>
       ) : (
         <Table
-          head={shown.map((c) => ({ label: c.label, num: c.kind === "g" || c.kind === "ct" || c.kind === "inr" || c.kind === "int" }))}
+          head={shown.map((c) => ({ label: c.label, help: c.help, num: c.kind === "g" || c.kind === "ct" || c.kind === "inr" || c.kind === "int" }))}
           rows={pieces.map((p) => ({
             key: p.id,
             cells: shown.map((c) => {
@@ -776,9 +777,14 @@ function Table({
   head,
   rows,
 }: {
-  head: { label: string; num?: boolean }[];
+  /** `help` makes the column tappable: its name and meaning, wherever the header scrolled to. */
+  head: { label: string; num?: boolean; help?: string }[];
   rows: { key: string; cells: ReactNode[] }[];
 }) {
+  const explain = (i: number) => {
+    const h = head[i];
+    if (h?.help) toast(h.label, { description: h.help });
+  };
   return (
     <div className="-mx-3 overflow-x-auto px-3">
       <table className="w-full text-sm">
@@ -786,7 +792,21 @@ function Table({
           <tr className="text-left text-xs text-muted-foreground">
             {head.map((h) => (
               <th key={h.label} className={`whitespace-nowrap pb-1 pr-3 font-normal ${h.num ? "text-right" : ""}`}>
-                {h.label}
+                {h.help ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      explain(head.indexOf(h));
+                    }}
+                    title={h.help}
+                    className="cursor-help underline decoration-dotted underline-offset-4"
+                  >
+                    {h.label}
+                  </button>
+                ) : (
+                  h.label
+                )}
               </th>
             ))}
           </tr>
@@ -795,7 +815,12 @@ function Table({
           {rows.map((r) => (
             <tr key={r.key} className="border-t">
               {r.cells.map((c, i) => (
-                <td key={i} className={`whitespace-nowrap py-1.5 pr-3 ${head[i]?.num ? "num text-right" : ""}`}>
+                <td
+                  key={i}
+                  onClick={head[i]?.help ? () => explain(i) : undefined}
+                  title={head[i]?.help ? `${head[i].label}: ${head[i].help}` : undefined}
+                  className={`whitespace-nowrap py-1.5 pr-3 ${head[i]?.num ? "num text-right" : ""} ${head[i]?.help ? "cursor-help" : ""}`}
+                >
                   {c}
                 </td>
               ))}
