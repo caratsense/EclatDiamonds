@@ -72,13 +72,20 @@ describe('GoldRateService with IBJA as the default source', () => {
   }
 
   let fetchSpy: jest.SpyInstance;
-  afterEach(() => fetchSpy?.mockRestore());
+  afterEach(() => {
+    fetchSpy?.mockRestore();
+    jest.useRealTimers();
+  });
+  /** Only the clock is fake; timers and promises stay real. */
+  const at = (iso: string) =>
+    jest.useFakeTimers({ now: new Date(iso), doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
 
   it('stores the IBJA publication with no premium, and a re-read renews it without new rows', async () => {
     const { rows, prisma } = fakePrisma();
     const svc = new GoldRateService(new ConfigService({}), prisma);
     fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(async () => new Response(page(), { status: 200 }));
 
+    at('2026-09-18T15:00:00+05:30'); // Friday, the day of the publication
     const r = await svc.refresh('org_x');
     expect(r.updated).toBe(true);
     expect(String(fetchSpy.mock.calls[0][0])).toBe('https://ibjarates.com/');
@@ -92,8 +99,15 @@ describe('GoldRateService with IBJA as the default source', () => {
     });
     expect((await svc.currentRates('org_x')).find((x) => x.metal === 'gold_9k')).toMatchObject({ derived: true });
 
-    await svc.refresh('org_x'); // the weekend: IBJA has not published anything new
+    at('2026-09-19T10:00:00+05:30'); // Saturday: IBJA publishes nothing new
+    await svc.refresh('org_x');
     expect(rows.length).toBe(count);
+    // Renewed, but still Friday's rate — and it says so.
+    expect((await svc.currentRates('org_x')).find((x) => x.metal === 'gold_22k')).toMatchObject({
+      ratePerGram: 14081,
+      publishedOn: '2026-09-18',
+      stale: true,
+    });
   });
 
   it('keeps the last stored rate when IBJA cannot be read', async () => {

@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { MetalKind } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { DEFAULT_TZ, businessDate, dateOnly } from '../common/tz.util';
 import { fetchJson } from './integrations.util';
 import { IBJA_URL, parseIbja } from './ibja-rates';
 
@@ -140,6 +141,9 @@ export class GoldRateService {
   > {
     const metals = Object.values(MetalKind);
     const now = Date.now();
+    // IBJA publishes on weekdays only; Friday's rate re-read on Saturday is
+    // still Friday's, so an IBJA rate is stale whenever it is not today's.
+    const today = dateOnly(businessDate(new Date(now), DEFAULT_TZ));
     const rows = await Promise.all(
       metals.map(async (metal) => ({ metal, row: await this.latestRow(metal, organisationId, storeId) })),
     );
@@ -149,14 +153,15 @@ export class GoldRateService {
         const effectiveFrom = row!.effectiveFrom ?? row!.createdAt;
         const ageHours = Math.max(0, (now - effectiveFrom.getTime()) / 3_600_000);
         const tag = row!.legacyId?.split(':')[0];
+        const publishedOn = tag === 'ibja' && row!.legacyUpdatedAt ? dateOnly(row!.legacyUpdatedAt) : null;
         return {
           metal,
           ratePerGram: Number(row!.ratePerGram),
           effectiveFrom: effectiveFrom.toISOString(),
           ageHours: Math.round(ageHours * 10) / 10,
-          stale: ageHours > this.staleAfterHours,
+          stale: publishedOn ? publishedOn !== today : ageHours > this.staleAfterHours,
           source: tag === 'ibja' || tag === 'manual' ? tag : ('feed' as const),
-          publishedOn: tag === 'ibja' && row!.legacyUpdatedAt ? row!.legacyUpdatedAt.toISOString().slice(0, 10) : null,
+          publishedOn,
           derived: row!.legacyId?.endsWith(':derived') ?? false,
         };
       });

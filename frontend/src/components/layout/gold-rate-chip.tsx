@@ -18,7 +18,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { MetalRatesWidget } from "@/components/rates/metal-rates-widget";
+import { MetalRatesWidget, staleNote } from "@/components/rates/metal-rates-widget";
 
 /**
  * Live gold-rate chip in the top bar.
@@ -44,7 +44,7 @@ export function GoldRateChip() {
           )}
           title={
             rate.stale
-              ? `22K gold · updated ${Math.round(rate.ageHours)}h ago (click for all rates)`
+              ? `22K gold · ${staleNote(rate)} (click for all rates)`
               : `22K gold · ${rate.source === "ibja" ? "IBJA benchmark, excl. GST" : "current rate"} (click for all rates)`
           }
         >

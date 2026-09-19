@@ -22,6 +22,20 @@ const DERIVED_ROW: Array<[MetalKind, string]> = [
 
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 
+/**
+ * Why a rate must not be read as today's; null when it is current. IBJA does
+ * not publish on weekends or holidays, so on those days its latest rate is an
+ * earlier day's — shown with that day, never passed off as today's.
+ */
+export function staleNote(r: MetalRate | null | undefined): string | null {
+  if (!r?.stale) return null;
+  if (r.source === "ibja" && r.publishedOn) {
+    const on = new Date(r.publishedOn).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+    return `Latest IBJA rate is from ${on}, not today`;
+  }
+  return `Last updated ${Math.round(r.ageHours)}h ago`;
+}
+
 /** Where the rates came from, in words, for the footer of every rates view. */
 export function rateSourceLabel(r: MetalRate | null | undefined): string {
   if (!r) return "No rate on record yet";
@@ -71,7 +85,7 @@ export function MetalRatesWidget({ className }: { className?: string; compact?: 
         </div>
         {fine?.stale ? (
           <span className="flex items-center gap-1 text-xs text-amber-400">
-            <AlertTriangle className="h-3.5 w-3.5" /> Last updated {Math.round(fine.ageHours)}h ago
+            <AlertTriangle className="h-3.5 w-3.5" /> {staleNote(fine)}
           </span>
         ) : null}
       </div>
