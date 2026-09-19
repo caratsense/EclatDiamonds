@@ -146,6 +146,99 @@ export class WhatsAppService {
   }
 
   /**
+   * Send tappable reply buttons (only inside an open 24h window).
+   *
+   * WhatsApp allows at most three, each title at most 20 characters. Both
+   * limits are ENFORCED here rather than trimmed: a silently truncated option
+   * stops meaning what it says, and on a phone nobody can tell it was cut.
+   * Callers with more than three choices want `sendList`.
+   */
+  async sendButtons(
+    organisationId: string,
+    to: string,
+    body: string,
+    buttons: { id: string; title: string }[],
+    route?: SenderRoute,
+  ): Promise<WhatsAppSendResult> {
+    if (buttons.length < 1 || buttons.length > 3) {
+      throw new Error(`WhatsApp allows 1-3 reply buttons; got ${buttons.length}.`);
+    }
+    const tooLong = buttons.find((b) => b.title.length > 20);
+    if (tooLong) {
+      throw new Error(`Button title "${tooLong.title}" exceeds WhatsApp's 20-character limit.`);
+    }
+    return this.send(
+      organisationId,
+      to,
+      {
+        type: 'interactive',
+        interactive: {
+          type: 'button',
+          body: { text: body },
+          action: {
+            buttons: buttons.map((b) => ({
+              type: 'reply',
+              reply: { id: b.id, title: b.title },
+            })),
+          },
+        },
+      },
+      route,
+    );
+  }
+
+  /**
+   * Send a single-select list (only inside an open 24h window).
+   *
+   * Ten rows across all sections, row titles 24 characters, descriptions 72,
+   * and the button that opens the sheet 20. Same reasoning as `sendButtons`:
+   * refused, never trimmed.
+   */
+  async sendList(
+    organisationId: string,
+    to: string,
+    body: string,
+    buttonText: string,
+    sections: { title?: string; rows: { id: string; title: string; description?: string }[] }[],
+    route?: SenderRoute,
+  ): Promise<WhatsAppSendResult> {
+    const rows = sections.flatMap((s) => s.rows);
+    if (rows.length < 1 || rows.length > 10) {
+      throw new Error(`WhatsApp allows 1-10 list rows in total; got ${rows.length}.`);
+    }
+    if (buttonText.length > 20) {
+      throw new Error(`List button "${buttonText}" exceeds WhatsApp's 20-character limit.`);
+    }
+    const badRow = rows.find((r) => r.title.length > 24 || (r.description?.length ?? 0) > 72);
+    if (badRow) {
+      throw new Error(`List row "${badRow.title}" exceeds WhatsApp's title/description limits.`);
+    }
+    return this.send(
+      organisationId,
+      to,
+      {
+        type: 'interactive',
+        interactive: {
+          type: 'list',
+          body: { text: body },
+          action: {
+            button: buttonText,
+            sections: sections.map((s) => ({
+              ...(s.title ? { title: s.title } : {}),
+              rows: s.rows.map((r) => ({
+                id: r.id,
+                title: r.title,
+                ...(r.description ? { description: r.description } : {}),
+              })),
+            })),
+          },
+        },
+      },
+      route,
+    );
+  }
+
+  /**
    * Send a document (a quote PDF) as a WhatsApp document message.
    *
    * The bytes are uploaded to the provider's own media store first and the

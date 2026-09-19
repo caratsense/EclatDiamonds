@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { SchedulerModule } from '../scheduler/scheduler.module';
+import { CustomerBotService } from './customer-bot.service';
 import { WhatsAppBotController } from './whatsapp-bot.controller';
 import { WhatsAppBotScheduler } from './whatsapp-bot.scheduler';
 import { WhatsAppBotService } from './whatsapp-bot.service';
@@ -23,7 +24,8 @@ import { WhatsAppIdentityService } from './whatsapp-identity.service';
     WhatsAppIdentityService,
     WhatsAppConversationService,
     WhatsAppBotScheduler,
+    CustomerBotService,
   ],
-  exports: [WhatsAppBotService, WhatsAppIdentityService],
+  exports: [WhatsAppBotService, WhatsAppIdentityService, CustomerBotService],
 })
 export class WhatsAppBotModule {}
