@@ -38,7 +38,7 @@ import { ROLE_RANK } from "@/lib/types";
 import { apiErrorMessage, cn } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
-import { MetalRatesWidget } from "@/components/rates/metal-rates-widget";
+import { MetalRatesWidget, staleNote } from "@/components/rates/metal-rates-widget";
 
 const nav = getNavItem("settings/rates")!;
 
@@ -133,7 +133,7 @@ export default function RatesPage() {
                       {formatINR(r.ratePerGram)}/g
                     </span>
                     <Badge variant={r.stale ? "warning" : "success"}>
-                      {r.stale ? `stale · ${ageLabel(r.ageHours)}` : ageLabel(r.ageHours)}
+                      {r.stale ? staleNote(r) : ageLabel(r.ageHours)}
                     </Badge>
                   </div>
                 </div>

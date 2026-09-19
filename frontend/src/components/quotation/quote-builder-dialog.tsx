@@ -55,6 +55,7 @@ import {
   useUploadQuotePhoto,
 } from "@/lib/queries/quotes";
 import { useMetalRates } from "@/lib/queries/integrations";
+import { staleNote } from "@/components/rates/metal-rates-widget";
 import { apiErrorMessage, cn, normalizeIndianMobile } from "@/lib/utils";
 import {
   StoreScopeField,
@@ -201,6 +202,7 @@ export function QuoteBuilderDialog({
   const liveRate = metalRates.rateFor(karat);
   const autoRate = liveRate?.ratePerGram ?? GOLD_RATE_PER_GRAM[karat] ?? 7180;
   const rateIsStale = liveRate?.stale ?? false;
+  const rateStaleNote = staleNote(liveRate);
   const rateIsFallback = liveRate == null;
   const goldRate = rateMode === "auto" ? autoRate : toNumber(manualRate) ?? 0;
   const diamondsTotal = diamonds.reduce((s, d) => {
@@ -959,14 +961,12 @@ export function QuoteBuilderDialog({
                               {karat}K · out of date
                             </Badge>
                             <span className="text-xs text-muted-foreground">
-                              Last updated{" "}
-                              {Math.round((liveRate?.ageHours ?? 0) / 24)} day(s)
-                              ago. Confirm today&apos;s rate before quoting.
+                              {rateStaleNote}. Confirm today&apos;s rate before quoting.
                             </span>
                           </>
                         ) : (
                           <Badge variant="outline" className="text-[10px]">
-                            {karat}K · today&apos;s rate
+                            {karat}K · {liveRate?.derived ? "derived from 24K by purity" : "today’s rate"}
                           </Badge>
                         )}
                       </div>
