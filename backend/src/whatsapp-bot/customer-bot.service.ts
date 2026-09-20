@@ -39,9 +39,20 @@ import {
 /** Session bookkeeping inside `draft`, kept out of the answer namespace. */
 const STEP_KEY = '_step';
 const REPROMPT_KEY = '_reprompts';
+/** Set when the script has ended, so a later message is not a fresh start. */
+const DONE_KEY = '_done';
 
 /** Matches the staff bot: an abandoned half-conversation must not resurface. */
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * How long a finished enquiry suppresses a restart.
+ *
+ * Matched to the first follow-up in the campaign plan: inside a week the
+ * answers are still current and a person should be replying; beyond it,
+ * treating a new message as a new enquiry is reasonable again.
+ */
+const FINISHED_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface CustomerBotReply {
   /** What to send back. Empty string means send nothing. */
@@ -83,23 +94,27 @@ export class CustomerBotService {
   ): Promise<CustomerBotReply> {
     const text = (rawText ?? '').trim();
 
-    // Opt-out is checked before anything else, on every message, whatever the
-    // conversation was doing. A customer who says stop while mid-question must
-    // not first be re-asked the question.
-    if (isStop(text)) {
-      await this.clear(phoneE164);
-      return { text: stopConfirmation(), optOut: true };
-    }
-
     const session = await this.load(phoneE164);
     const draft = (session.draft ?? {}) as Draft;
     const answers = this.answersOf(draft, known);
+
+    // Opt-out is checked before anything else, on every message, whatever the
+    // conversation was doing. A customer who says stop while mid-question must
+    // not first be re-asked the question.
+    //
+    // Marked finished rather than deleted: a deleted session is indistinguishable
+    // from a first-time contact, and now that organic messages get a greeting,
+    // that greeting would be the one message an opt-out failed to prevent.
+    if (isStop(text)) {
+      await this.markFinished(phoneE164, organisationId, draft);
+      return { text: stopConfirmation(), optOut: true };
+    }
 
     // "call me" at any point short-circuits the script. Continuing to ask about
     // diamond shapes after someone has asked for a person reads as a bot that is
     // not listening, and it is the moment they are most likely to leave.
     if (wantsHuman(text)) {
-      await this.clear(phoneE164);
+      await this.markFinished(phoneE164, organisationId, draft);
       return {
         text: closingFor({ kind: 'handoff', reason: 'wants_call' }),
         outcome: { kind: 'handoff', reason: 'wants_call' },
@@ -109,6 +124,26 @@ export class CustomerBotService {
     }
 
     const currentKey = typeof draft[STEP_KEY] === 'string' ? (draft[STEP_KEY] as string) : null;
+
+    /*
+     * They have been through the script already, and nothing is in flight.
+     *
+     * Restarting from "What are you looking for today?" is what makes a bot
+     * feel like a form rather than a colleague. Their answers are already on
+     * the thread, so a person takes it from here. The cooldown is refreshed so
+     * a short back-and-forth cannot turn into a second interrogation, and a NEW
+     * ad click drops the marker upstream in `claimBotTurn` -- that is fresh
+     * intent and does start the script again.
+     */
+    if (!currentKey && typeof draft[DONE_KEY] === 'string') {
+      await this.markFinished(phoneE164, organisationId, draft);
+      return {
+        text: closingFor({ kind: 'handoff', reason: 'returning' }),
+        outcome: { kind: 'handoff', reason: 'returning' },
+        answers,
+        handoffNote: handoffSummary(answers),
+      };
+    }
 
     // No step in flight — this is the opening message.
     if (!currentKey) {
@@ -135,7 +170,7 @@ export class CustomerBotService {
       const tries = Number(draft[REPROMPT_KEY] ?? 0) + 1;
       if (tries > MAX_REPROMPTS) {
         // Asking a third time is how a bot traps someone. Fetch a person.
-        await this.clear(phoneE164);
+        await this.markFinished(phoneE164, organisationId, draft);
         return {
           text: closingFor({ kind: 'handoff', reason: 'gave_up' }),
           outcome: { kind: 'handoff', reason: 'gave_up' },
@@ -156,7 +191,7 @@ export class CustomerBotService {
     }
 
     // The flow is over. Which ending depends on the last answer.
-    await this.clear(phoneE164);
+    await this.markFinished(phoneE164, organisationId, nextDraft);
     const outcome = endingFor(step.key, value);
     return {
       text: closingFor(outcome),
@@ -235,6 +270,43 @@ export class CustomerBotService {
         organisationId,
         flow: 'customer',
         draft: draft as Prisma.InputJsonValue,
+        expiresAt,
+      },
+    });
+  }
+
+  /**
+   * End the script without forgetting who this was.
+   *
+   * `clear()` deletes the row, which makes the next message look like a
+   * first-time contact. That was harmless while the bot only answered ad
+   * clicks; it is wrong now that an organic message gets a greeting, because
+   * every customer who finished would be re-interrogated on their next word.
+   *
+   * The answers are kept so the handoff note still reads, and the bookkeeping
+   * keys are dropped so nothing resumes mid-question.
+   */
+  private async markFinished(phoneE164: string, organisationId: string, draft: Draft) {
+    const kept: Draft = {};
+    for (const [k, v] of Object.entries(draft)) {
+      if (!k.startsWith('_')) kept[k] = v;
+    }
+    kept[DONE_KEY] = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + FINISHED_COOLDOWN_MS);
+    await this.prisma.whatsAppSession.upsert({
+      where: { phoneE164 },
+      create: {
+        phoneE164,
+        organisationId,
+        flow: 'customer',
+        step: 0,
+        draft: kept as Prisma.InputJsonValue,
+        expiresAt,
+      },
+      update: {
+        organisationId,
+        flow: 'customer',
+        draft: kept as Prisma.InputJsonValue,
         expiresAt,
       },
     });

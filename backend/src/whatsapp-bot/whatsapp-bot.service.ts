@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppCredentialsService } from '../integrations/whatsapp-credentials.service';
-import { WhatsAppService } from '../integrations/whatsapp.service';
+import { WhatsAppService, type WhatsAppSendResult } from '../integrations/whatsapp.service';
 import { WhatsAppConversationService } from './whatsapp-conversation.service';
 import { ConversationsService } from '../crm/conversations.service';
 import { IdentityService } from '../crm/identity.service';
@@ -378,12 +378,15 @@ export class WhatsAppBotService {
         /*
          * THE QUALIFICATION BOT.
          *
+         * The bot answers anyone who wrote to the business and whose thread no
+         * person has taken: an ad click, a conversation already mid-way through,
+         * or an organic first contact from the website, Google, a QR code or a
+         * saved contact.
+         *
          * The rule above — a wrong number never gets an unsolicited reply — is
-         * kept, not weakened. The bot answers only someone who demonstrably
-         * started this: a click-to-WhatsApp ad (the referral is provider-proven
-         * consent to be answered) or a conversation it is already mid-way
-         * through. Everything else still reaches a person via the inbox and
-         * hears nothing from us.
+         * not weakened by that. An unsolicited message is one WE start. Replying
+         * to someone who messaged first is the 24-hour customer-care window
+         * working as designed: free-form, no template, no review.
          *
          * A thread a human has taken over is silent from the bot's side
          * forever after. `handling === 'human'` is the whole check: once a
@@ -401,7 +404,8 @@ export class WhatsAppBotService {
               undefined,
             );
             if (reply.text) {
-              await this.wa.sendText(organisationId, from, reply.text, replyRoute);
+              const sent = await this.wa.sendText(organisationId, from, reply.text, replyRoute);
+              await this.recordBotReply(organisationId, result.conversationId, reply.text, sent);
             }
             if (reply.outcome?.kind === 'handoff') {
               /*
@@ -482,6 +486,62 @@ export class WhatsAppBotService {
    * A stranger who texts the shop out of the blue matches none of these and
    * hears nothing, which is the behaviour this service already guaranteed.
    */
+  /**
+   * Put the bot's reply in the thread it belongs to.
+   *
+   * Without this the CRM shows a conversation in which the customer answers
+   * questions nobody can see being asked — the screen renders one half of a
+   * dialogue, and a manager taking over a handoff cannot tell what was already
+   * promised or which options the customer was offered.
+   *
+   * The status comes from the send RESULT rather than being assumed. A message
+   * filed as sent when the provider refused it is a lie the screen then tells a
+   * salesperson, who reads the thread, believes the customer has the message and
+   * waits for a reply that was never going to come. `dryRun` counts as not sent:
+   * that is exactly the state staging was in, where the bot was working
+   * perfectly and nothing reached the handset.
+   */
+  private async recordBotReply(
+    organisationId: string,
+    conversationId: string,
+    body: string,
+    sent: WhatsAppSendResult,
+  ): Promise<void> {
+    try {
+      await this.prisma.message.create({
+        data: {
+          organisationId,
+          conversationId,
+          direction: 'outbound',
+          // Not 'ai': this flow is scripted copy the client approved, and
+          // labelling it AI in front of every manager would be a small untruth
+          // repeated on every thread. Not 'agent' either — no person wrote it.
+          authorType: 'bot',
+          body,
+          // The provider's id, so a later status webhook can mark it delivered
+          // or read against the row it belongs to.
+          externalId: sent.messageId ?? null,
+          status: sent.delivered ? 'sent' : 'failed',
+          error: sent.delivered ? null : (sent.reason ?? sent.error ?? 'Not sent.'),
+        },
+      });
+      await this.prisma.conversation.update({
+        where: { id: conversationId },
+        data: { lastMessageAt: new Date() },
+      });
+    } catch (err) {
+      /*
+       * The customer already HAS the message by this point. Throwing would fail
+       * the webhook, Meta would redeliver it, and the bot would answer the same
+       * question twice. A missing row in the CRM is the smaller harm, and it is
+       * logged loudly enough to be noticed.
+       */
+      this.logger.warn(
+        `  could not record bot reply on ${conversationId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   private async claimBotTurn(
     organisationId: string,
     conversationId: string,
@@ -490,7 +550,7 @@ export class WhatsAppBotService {
   ): Promise<boolean> {
     const convo = await this.prisma.conversation.findFirst({
       where: { id: conversationId, organisationId },
-      select: { handling: true, sourceAdId: true, assignedUserId: true },
+      select: { handling: true, assignedUserId: true },
     });
     if (!convo) return false;
 
@@ -527,18 +587,46 @@ export class WhatsAppBotService {
       return true;
     }
 
-    // Ad-originated: either this very message carried a referral, or the thread
-    // was stamped with one when it started.
-    if (convo.sourceAdId) return true;
-    if (freshReferral) return true;
+    /*
+     * A NEW ad click is fresh intent even on a thread that finished the script
+     * weeks ago, so the completion marker is dropped and the questions start
+     * again rather than the customer getting an acknowledgement.
+     *
+     * A HALF-ANSWERED flow is deliberately left alone. The click arrives
+     * carrying the customer's own first message, and throwing away four answers
+     * in order to ask for them a second time is exactly what this gate exists
+     * to prevent.
+     */
+    if (freshReferral) {
+      const session = await this.prisma.whatsAppSession.findUnique({
+        where: { phoneE164 },
+        select: { draft: true },
+      });
+      const draft = (session?.draft ?? {}) as Record<string, unknown>;
+      if (draft._done && !draft._step) {
+        await this.prisma.whatsAppSession
+          .delete({ where: { phoneE164 } })
+          .catch(() => undefined);
+      }
+      return true;
+    }
 
-    // Mid-conversation: a session exists only because the bot asked something
-    // and is waiting for the answer.
-    const session = await this.prisma.whatsAppSession.findUnique({
-      where: { phoneE164 },
-      select: { flow: true, expiresAt: true },
-    });
-    return Boolean(session && session.flow === 'customer' && session.expiresAt > new Date());
+    /*
+     * Everyone else whose thread no person owns: ad-originated threads, replies
+     * mid-flow, and — since 2026-09-20 — ORGANIC first contacts.
+     *
+     * Organic traffic previously returned false here and the customer got
+     * silence until somebody happened to open the inbox. That is most of the
+     * traffic rather than an edge case: the website, Google Business Profile,
+     * QR codes and printed material all arrive with no referral, and the lead
+     * forms on roughly two thirds of the live campaigns carry no WhatsApp
+     * option at all.
+     *
+     * WHAT to say is `CustomerBotService`'s decision, not this gate's: the
+     * script for a new enquiry, a short acknowledgement for someone who has
+     * already been through it.
+     */
+    return true;
   }
 
   /**

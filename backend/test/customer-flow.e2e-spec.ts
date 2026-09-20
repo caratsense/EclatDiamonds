@@ -7,6 +7,7 @@
  */
 import {
   FLOW_STEPS,
+  closingFor,
   FIRST_STEP,
   MAX_REPROMPTS,
   firstUnanswered,
@@ -184,6 +185,45 @@ describe('customer flow — the note a manager picks up', () => {
       for (const o of s.options) {
         expect(labelFor(s.key, o.value)).toBe(o.label);
       }
+    }
+  });
+});
+
+describe('customer flow - someone who has already been through it', () => {
+  it('acknowledges rather than re-asking', () => {
+    // The whole point of the returning path: no question, and a clear promise
+    // that a person is coming. Re-asking is what makes a bot feel like a form.
+    const text = closingFor({ kind: 'handoff', reason: 'returning' });
+    expect(text).toContain('again');
+    expect(text).toContain('shortly');
+    for (const s of FLOW_STEPS) {
+      expect(text).not.toContain(s.prompt);
+    }
+  });
+
+  it('reads differently from a first-time handoff', () => {
+    const returning = closingFor({ kind: 'handoff', reason: 'returning' });
+    const wantsCall = closingFor({ kind: 'handoff', reason: 'wants_call' });
+    expect(returning).not.toBe(wantsCall);
+  });
+
+  it('names the branch when one is known', () => {
+    expect(closingFor({ kind: 'handoff', reason: 'returning' }, 'Bandra')).toContain('Bandra');
+  });
+
+  it('still has an ending for every outcome the flow can produce', () => {
+    // A missing case would return undefined and the customer would get nothing
+    // at the exact moment the bot stops talking to them.
+    const outcomes = [
+      { kind: 'handoff', reason: 'wants_call' },
+      { kind: 'handoff', reason: 'wants_call_later' },
+      { kind: 'handoff', reason: 'gave_up' },
+      { kind: 'handoff', reason: 'returning' },
+      { kind: 'parked', reason: 'not_now' },
+    ] as const;
+    for (const o of outcomes) {
+      expect(typeof closingFor(o)).toBe('string');
+      expect(closingFor(o).length).toBeGreaterThan(0);
     }
   });
 });

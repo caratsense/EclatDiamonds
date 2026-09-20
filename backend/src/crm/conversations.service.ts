@@ -1,4 +1,12 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  forwardRef,
+} from '@nestjs/common';
+import { OmnichannelService } from '../omnichannel/omnichannel.service';
 import { LeadSource, Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
@@ -97,6 +105,8 @@ export class ConversationsService {
     private readonly advanced: AdvancedCrmService,
     private readonly intake: LeadIntakeService,
     private readonly sla: ResponseSlaService,
+    @Inject(forwardRef(() => OmnichannelService))
+    private readonly omnichannel: OmnichannelService,
   ) {}
 
   private readonly logger = new Logger(ConversationsService.name);
@@ -1418,12 +1428,21 @@ export class ConversationsService {
   }
 
   /**
-   * Record an outbound reply.
+   * Record an outbound reply AND send it.
    *
-   * Status is 'queued', NOT 'sent'. Nothing in this repository can deliver a
-   * message to WhatsApp or Instagram without a configured provider integration,
-   * and reporting a message as sent when no provider was contacted would be a
-   * lie the UI then shows to a salesperson who believes the customer got it.
+   * It used to only record. The doc here said "nothing in this repository can
+   * deliver a message ... reporting a message as sent when no provider was
+   * contacted would be a lie the UI then shows to a salesperson who believes
+   * the customer got it" — correct then, and the reason the copy promised
+   * nothing. Once a number was connected the same copy became the lie it was
+   * written to avoid: the reply was saved, the screen said so, and the waiting
+   * customer got silence.
+   *
+   * Delivery goes through `OmnichannelService.queueAgentReply`, which is the
+   * single chokepoint for consent, the 24-hour window and the outbox. What
+   * comes back is reported verbatim rather than summarised, because "outside
+   * the 24-hour window" and "this customer opted out" need different actions
+   * from the person who just typed.
    */
   async queueOutbound(
     user: AuthUser,
@@ -1435,19 +1454,15 @@ export class ConversationsService {
     }
     const conversation = await this.load(user, conversationId);
 
-    const message = await this.prisma.message.create({
-      data: {
-        organisationId: user.organisationId,
-        conversationId,
-        direction: 'outbound',
-        authorType: 'agent',
-        authorUserId: user.id,
-        body: input.body?.trim() ?? null,
-        mediaUrl: input.mediaUrl ?? null,
-        mediaType: input.mediaType ?? null,
-        status: 'queued',
-      },
+    const outcome = await this.omnichannel.queueAgentReply({
+      organisationId: user.organisationId,
+      conversationId,
+      authorUserId: user.id,
+      body: input.body?.trim() ?? null,
+      mediaUrl: input.mediaUrl ?? null,
+      mediaType: input.mediaType ?? null,
     });
+    const message = outcome.message;
 
     await this.prisma.conversation.update({
       where: { id: conversationId },
@@ -1474,8 +1489,11 @@ export class ConversationsService {
     return {
       message,
       delivery: {
-        state: 'queued' as const,
-        note: 'Saved to the conversation. It will not reach the customer until a messaging integration is connected for this channel.',
+        // 'queued' still means queued: the outbox worker carries it from here,
+        // so claiming 'sent' would overstate what has happened by one hop.
+        state: outcome.queued ? ('queued' as const) : ('saved' as const),
+        note: outcome.reason,
+        jobId: outcome.jobId,
       },
     };
   }

@@ -278,6 +278,8 @@ export interface MessageRow {
   body: string | null;
   mediaUrl: string | null;
   status: string;
+  /** Why a send failed. Null unless `status` is 'failed'. */
+  error: string | null;
   sentAt: string;
   authorUser: { id: string; name: string } | null;
 }
@@ -472,7 +474,11 @@ export function useConversationThread(id: string | null) {
 }
 
 /**
- * Sends a reply. The server responds with `delivery.state === "queued"` because
+ * Sends a reply. `delivery.state` is "queued" when the outbox accepted it, or
+ * "saved" when it was written to the thread but deliberately not sent — the
+ * customer opted out, or the 24-hour window has closed. `delivery.note` says
+ * which, in words meant for the person who typed it.
+ * Historically this was always "queued" because
  * nothing can actually deliver to WhatsApp or Instagram until an integration is
  * connected — the UI shows that state verbatim rather than claiming "sent".
  */

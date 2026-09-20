@@ -39,7 +39,7 @@ export interface FlowStep {
 
 /** Where the flow ends, and why. The caller decides what to do about it. */
 export type FlowOutcome =
-  | { kind: 'handoff'; reason: 'wants_call' | 'wants_call_later' | 'gave_up' }
+  | { kind: 'handoff'; reason: 'wants_call' | 'wants_call_later' | 'gave_up' | 'returning' }
   | { kind: 'parked'; reason: 'not_now' };
 
 export const RING_SHAPES: FlowOption[] = [
@@ -302,9 +302,21 @@ export function closingFor(outcome: FlowOutcome, branch?: string): string {
   const team = branch ? `our *${branch}* team` : 'our team';
   switch (outcome.kind) {
     case 'handoff':
-      return outcome.reason === 'wants_call'
-        ? `Perfect — I'm connecting you with ${team} now. They'll take it from here. 💎`
-        : `Noted — ${team} will call you then. 💎`;
+      switch (outcome.reason) {
+        case 'wants_call':
+          return `Perfect — I'm connecting you with ${team} now. They'll take it from here. 💎`;
+        case 'returning':
+          // Someone who has already been through the script. Asking their
+          // budget a second time is what makes a bot feel like a form, and
+          // their answers are already on the thread — a person takes it on.
+          return [
+            'Good to hear from you again 👋',
+            '',
+            `I've passed this to ${team} — someone will reply here shortly. 💎`,
+          ].join('\n');
+        default:
+          return `Noted — ${team} will call you then. 💎`;
+      }
     case 'parked':
       return [
         'No problem at all — no pressure from us.',
