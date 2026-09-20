@@ -783,6 +783,139 @@ export class OmnichannelService implements OnModuleInit {
    * refusal is returned as a reason rather than thrown, because "consent was
    * withdrawn" is an expected answer, not an incident.
    */
+  /**
+   * Deliver a reply a PERSON typed into the CRM inbox.
+   *
+   * ## Why this exists
+   *
+   * `ConversationsService.queueOutbound` used to write the message and stop,
+   * telling the salesperson "it will not reach the customer until a messaging
+   * integration is connected". That sentence was true when nothing could send.
+   * With a connected number it became a lie the screen told the one person who
+   * had no way to check: they typed a reply to a waiting customer, saw it
+   * appear in the thread, and it went nowhere. A store manager chasing a lead
+   * has no worse failure than a reply that looks sent.
+   *
+   * ## What it does NOT do
+   *
+   * It never sends outside the 24-hour customer-care window, because a reply
+   * typed in a box is free text and free text is refused out there by WhatsApp,
+   * not by us. It carries no template for the same reason `queueAiReply` does
+   * not: a template is a pre-approved artefact chosen deliberately, and picking
+   * one on a person's behalf would start a conversation they meant to continue.
+   * Outside the window the message is still SAVED, and the reason comes back in
+   * words the salesperson can act on.
+   *
+   * Consent is checked exactly as it is for every other producer here. A
+   * customer who opted out is not messaged because a person rather than a bot
+   * typed it.
+   */
+  async queueAgentReply(input: {
+    organisationId: string;
+    conversationId: string;
+    authorUserId: string;
+    body: string | null;
+    mediaUrl: string | null;
+    mediaType: string | null;
+  }) {
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { id: input.conversationId, organisationId: input.organisationId },
+      select: {
+        id: true, channel: true, partyId: true, storeId: true,
+        externalThreadId: true, lastInboundAt: true,
+        party: {
+          select: {
+            phone: true, whatsapp: true,
+            contactPoints: { select: { kind: true, value: true } },
+          },
+        },
+      },
+    });
+    if (!conversation) throw new BadRequestException('Conversation not found');
+
+    const refuse = async (reason: string) => {
+      // Saved, not sent, and the reason travels back with it. The agent keeps
+      // their words; nobody is told they were delivered.
+      const message = await this.prisma.message.create({
+        data: {
+          organisationId: input.organisationId,
+          conversationId: conversation.id,
+          direction: 'outbound',
+          authorType: 'agent',
+          authorUserId: input.authorUserId,
+          body: input.body,
+          mediaUrl: input.mediaUrl,
+          mediaType: input.mediaType,
+          status: 'queued',
+        },
+      });
+      return { message, queued: false, reason, jobId: undefined as string | undefined };
+    };
+
+    if (!conversation.partyId) {
+      return refuse(
+        'Saved to the conversation. No customer is attached to this thread yet, so consent cannot be checked and nothing was sent.',
+      );
+    }
+
+    const consent = await this.resolveConsent(
+      input.organisationId,
+      conversation.partyId,
+      conversation.channel,
+      'service',
+    );
+
+    const decision = evaluateDeliveryPolicy({
+      channel: conversation.channel,
+      purpose: 'service',
+      consent: consent.state,
+      hasApprovedTemplate: false,
+      lastInboundAt: conversation.lastInboundAt,
+      channelDeliverable: await this.channelDeliverable(
+        input.organisationId,
+        conversation.channel,
+      ),
+    });
+    if (!decision.allowed) {
+      return refuse(`Saved to the conversation, but not sent. ${decision.reason}`);
+    }
+
+    try {
+      await this.resolveRecipient(input.organisationId, conversation);
+    } catch (err) {
+      return refuse(
+        `Saved to the conversation. ${err instanceof Error ? err.message : 'No reachable address for this customer.'}`,
+      );
+    }
+
+    const now = new Date();
+    const instructions: MessageInstructions = {
+      purpose: 'service',
+      queuedAt: now.toISOString(),
+    };
+
+    // Created WITH the delivery instruction, rather than written and promoted.
+    // `sweepQueued` treats `payload.omnichannel` as the instruction itself, so a
+    // row that carries it has unambiguously asked to be delivered.
+    const message = await this.prisma.message.create({
+      data: {
+        organisationId: input.organisationId,
+        conversationId: conversation.id,
+        direction: 'outbound',
+        authorType: 'agent',
+        authorUserId: input.authorUserId,
+        body: input.body,
+        mediaUrl: input.mediaUrl,
+        mediaType: input.mediaType,
+        status: 'queued',
+        payload: { omnichannel: instructions } as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    const job = await this.enqueueMessage(input.organisationId, message.id, undefined);
+    return { message, queued: true, reason: 'Sending to the customer on WhatsApp.', jobId: job?.id };
+  }
+
   async queueAiReply(input: {
     organisationId: string;
     conversationId: string;

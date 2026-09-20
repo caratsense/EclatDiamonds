@@ -4289,8 +4289,11 @@ model Message {
 
   /// 'inbound' | 'outbound'
   direction    String
-  /// 'customer' | 'agent' | 'ai' | 'system' — who composed it. An AI reply is
-  /// never recorded as an agent's, so an audit can always tell them apart.
+  /// 'customer' | 'agent' | 'ai' | 'bot' | 'system' — who composed it. An AI
+  /// reply is never recorded as an agent's, so an audit can always tell them
+  /// apart. 'bot' is the SCRIPTED qualification flow, kept distinct from 'ai'
+  /// for the same reason: approved copy and generated text are not the same
+  /// claim, and the CRM labels them differently to the people reading them.
   authorType   String
   authorUserId String?
   authorUser   User?   @relation("MessageAuthor", fields: [authorUserId], references: [id])

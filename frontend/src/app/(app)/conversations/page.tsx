@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   AlarmClock,
+  AlertCircle,
   Archive,
   Bot,
   Calendar,
@@ -567,7 +568,12 @@ function ThreadView({
       const result = await send.mutateAsync({ body: draft });
       setDraft("");
       toast.success(
-        result.delivery?.state === "queued" ? "Reply saved & queued" : "Reply delivered via WhatsApp",
+        // 'queued' = accepted by the outbox and on its way. 'saved' = written
+        // to the thread and deliberately NOT sent (opted out, or outside the
+        // 24-hour window). The note says which, so never soften it here.
+        result.delivery?.state === "queued"
+          ? "Sending on WhatsApp"
+          : "Saved — not sent",
         { description: result.delivery?.note },
       );
     } catch (e) {
@@ -754,6 +760,17 @@ function ThreadView({
                         </div>
                       )}
 
+                      {/* The scripted qualification bot. Deliberately NOT
+                          labelled "AI": these are approved lines from
+                          customer-flow.ts, not generated text, and a manager
+                          reading the thread should be able to tell. */}
+                      {m.authorType === "bot" && !isInbound && (
+                        <div className="flex items-center gap-1 text-[10.5px] font-medium text-[#128C7E] dark:text-[#25D366] mb-0.5">
+                          <Bot className="h-3 w-3" />
+                          <span>Qualification bot</span>
+                        </div>
+                      )}
+
                       <p className="whitespace-pre-wrap select-text">{m.body ?? "(attachment)"}</p>
 
                       <div className="mt-1 flex items-center justify-end gap-1 text-[10.5px] text-[#667781] dark:text-[#8696a0]">
@@ -771,6 +788,13 @@ function ThreadView({
                             ) : m.status === "sent" ? (
                               <span title="Sent">
                                 <Check className="h-3.5 w-3.5 text-[#667781] dark:text-[#8696a0]" />
+                              </span>
+                            ) : m.status === "failed" ? (
+                              // Never a tick and never "Queued": this one did
+                              // not reach the customer, and the reason is the
+                              // difference between waiting and chasing it.
+                              <span title={m.error ?? "Not delivered"}>
+                                <AlertCircle className="h-3 w-3 text-red-500" />
                               </span>
                             ) : (
                               <span title="Queued">
