@@ -542,6 +542,43 @@ export class WhatsAppBotService {
     }
   }
 
+  /**
+   * A new ad click is an OPENING, never an answer.
+   *
+   * The message that arrives with a referral is the customer's first words —
+   * Meta's pre-fill when the ad carries one, and whatever they felt like typing
+   * when it does not. Either way it is not a reply to a question, and parsing
+   * it as one produces the worst possible first impression: somebody taps an
+   * advert and the business answers "Sorry, I didn't quite catch that."
+   *
+   * That is exactly what happened on the first live click. An earlier session
+   * had left a question pending, the opening line was read as an answer to it,
+   * found unreadable, and reprompted.
+   *
+   * So the bookkeeping is cleared and the ANSWERS are kept. Clearing the step
+   * makes the bot greet and ask again; keeping the answers means a customer who
+   * already said their budget last week is not asked a second time, which is the
+   * same courtesy the lead-form skip exists for.
+   */
+  private async reopenForFreshClick(phoneE164: string): Promise<void> {
+    const session = await this.prisma.whatsAppSession.findUnique({
+      where: { phoneE164 },
+      select: { draft: true },
+    });
+    if (!session) return;
+    const draft = (session.draft ?? {}) as Record<string, unknown>;
+    const answersOnly: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(draft)) {
+      if (!k.startsWith('_')) answersOnly[k] = v;
+    }
+    await this.prisma.whatsAppSession
+      .update({
+        where: { phoneE164 },
+        data: { draft: answersOnly as Prisma.InputJsonValue },
+      })
+      .catch(() => undefined);
+  }
+
   private async claimBotTurn(
     organisationId: string,
     conversationId: string,
@@ -598,16 +635,7 @@ export class WhatsAppBotService {
      * to prevent.
      */
     if (freshReferral) {
-      const session = await this.prisma.whatsAppSession.findUnique({
-        where: { phoneE164 },
-        select: { draft: true },
-      });
-      const draft = (session?.draft ?? {}) as Record<string, unknown>;
-      if (draft._done && !draft._step) {
-        await this.prisma.whatsAppSession
-          .delete({ where: { phoneE164 } })
-          .catch(() => undefined);
-      }
+      await this.reopenForFreshClick(phoneE164);
       return true;
     }
 
