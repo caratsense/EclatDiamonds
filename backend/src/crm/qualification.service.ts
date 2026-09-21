@@ -38,6 +38,20 @@ import { updateOrgSettings } from '../config/org-settings';
  * statement about a moment — overwriting it would destroy the record of what the
  * business was told at the time it acted.
  */
+/**
+ * Who asked for a score.
+ *
+ * `user` is null when the QUALIFICATION BOT scored a conversation on its own,
+ * which is the normal case for an ad click at two in the morning. Kept as an
+ * explicit null rather than a stand-in account: a timeline entry naming a
+ * person who never opened the thread is a fabricated audit trail, and
+ * `createdById` is nullable precisely so this can be recorded honestly.
+ */
+export interface QualificationActor {
+  organisationId: string;
+  user: AuthUser | null;
+}
+
 @Injectable()
 export class QualificationService {
   private readonly log = new Logger(QualificationService.name);
@@ -127,6 +141,78 @@ export class QualificationService {
    * answers a UI should show as themselves, and a thrown error would turn an
    * ordinary "not enough to go on" into an incident.
    */
+  /**
+   * Score a conversation the BOT is handling, with no user behind the request.
+   *
+   * The score decides whether a qualified lead reaches a person while they are
+   * still typing, rather than waiting for somebody to notice the thread. Until
+   * this existed, `handoffAtScore` was configurable, documented and never read
+   * by anything — the bot handed over only on "call me", two unreadable
+   * answers, or a returning customer.
+   *
+   * Returns null rather than throwing. A scoring failure must never cost the
+   * customer their reply: the bot has already answered by the time this runs,
+   * and an exception here would fail the webhook and have Meta redeliver the
+   * message.
+   */
+  async assessFromBot(
+    organisationId: string,
+    conversationId: string,
+  ): Promise<{ score: number | null; band: string | null; handoff: boolean; reason: string | null } | null> {
+    try {
+      const conversation = await this.prisma.conversation.findFirst({
+        where: { id: conversationId, organisationId },
+        select: {
+          id: true,
+          partyId: true,
+          messages: {
+            orderBy: { sentAt: 'asc' },
+            take: 200,
+            select: { direction: true, body: true },
+          },
+        },
+      });
+      if (!conversation) return null;
+
+      // Only what the CUSTOMER said — the same rule as the interactive path.
+      // Including the bot's own questions would let "What is your approximate
+      // budget?" fire a budget signal on every single thread.
+      const inbound = conversation.messages.filter((m) => m.direction === 'inbound' && m.body?.trim());
+      const transcript = inbound.map((m) => m.body).join('\n');
+
+      const lead = conversation.partyId
+        ? await this.prisma.lead.findFirst({
+            where: { organisationId, partyId: conversation.partyId, outcome: 'open' },
+            orderBy: { createdAt: 'desc' },
+            select: { id: true },
+          })
+        : null;
+
+      const view = await this.assess(
+        { organisationId, user: null },
+        {
+          conversationId: conversation.id,
+          partyId: conversation.partyId,
+          leadId: lead?.id ?? null,
+          transcript,
+          messageCount: inbound.length,
+        },
+      );
+
+      return {
+        score: view.score ?? null,
+        band: view.band ?? null,
+        handoff: Boolean(view.handoffRequested),
+        reason: view.handoffReason ?? null,
+      };
+    } catch (err) {
+      this.log.warn(
+        `bot scoring failed for ${conversationId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+  }
+
   async assessConversation(user: AuthUser, conversationId: string) {
     const conversation = await this.prisma.conversation.findFirst({
       where: { id: conversationId, organisationId: user.organisationId },
@@ -166,7 +252,7 @@ export class QualificationService {
         })
       : null;
 
-    return this.assess(user, {
+    return this.assess({ organisationId: user.organisationId, user }, {
       conversationId: conversation.id,
       partyId: conversation.partyId,
       leadId: lead?.id ?? null,
@@ -194,7 +280,7 @@ export class QualificationService {
     }
 
     const parts = [lead.interest ?? '', ...lead.notes.map((n) => n.text)].filter(Boolean);
-    return this.assess(user, {
+    return this.assess({ organisationId: user.organisationId, user }, {
       conversationId: null,
       partyId: lead.partyId,
       leadId: lead.id,
@@ -208,7 +294,7 @@ export class QualificationService {
    * turns it into a stored, explainable verdict.
    */
   private async assess(
-    user: AuthUser,
+    actor: QualificationActor,
     input: {
       conversationId: string | null;
       partyId: string | null;
@@ -217,21 +303,21 @@ export class QualificationService {
       messageCount: number;
     },
   ) {
-    const policy = await this.policyFor(user.organisationId);
+    const policy = await this.policyFor(actor.organisationId);
 
     if (!policy.enabled) {
-      return this.storeUnavailable(user, input, policy, 'Lead qualification is switched off for this organisation.');
+      return this.storeUnavailable(actor, input, policy, 'Lead qualification is switched off for this organisation.');
     }
     if (input.messageCount < policy.minMessagesToScore) {
       return this.storeUnavailable(
-        user,
+        actor,
         input,
         policy,
         `Not enough to go on yet — ${input.messageCount} message${input.messageCount === 1 ? '' : 's'} where your policy asks for at least ${policy.minMessagesToScore}.`,
       );
     }
     if (!input.transcript.trim()) {
-      return this.storeUnavailable(user, input, policy, 'There is no customer text to read.');
+      return this.storeUnavailable(actor, input, policy, 'There is no customer text to read.');
     }
 
     // Extraction: the model if configured, otherwise the tenant's own phrases.
@@ -255,7 +341,7 @@ export class QualificationService {
 
     const row = await this.prisma.leadQualification.create({
       data: {
-        organisationId: user.organisationId,
+        organisationId: actor.organisationId,
         partyId: input.partyId,
         leadId: input.leadId,
         conversationId: input.conversationId,
@@ -278,16 +364,20 @@ export class QualificationService {
         provider: extracted?.provider ?? null,
         model: extracted?.model ?? null,
         messagesConsidered: input.messageCount,
-        createdById: user.id,
+        createdById: actor.user?.id ?? null,
       },
     });
 
     // A best-effort projection, exactly like every other activity write: the
     // qualification itself is already saved, and a timeline failure must not
     // undo it.
-    if (input.partyId) {
+    // No activity row when the BOT scored it. `recordFor` is written around an
+    // acting user, and a timeline entry claiming a person qualified this lead
+    // when nobody looked at it would be a fabricated audit trail. The
+    // LeadQualification row itself is the record, and it carries the method.
+    if (input.partyId && actor.user) {
       this.activity
-        .recordFor(user, {
+        .recordFor(actor.user, {
           type: 'lead.qualified',
           partyId: input.partyId,
           leadId: input.leadId ?? undefined,
@@ -321,14 +411,14 @@ export class QualificationService {
    * "nobody has looked yet".
    */
   private async storeUnavailable(
-    user: AuthUser,
+    actor: QualificationActor,
     input: { conversationId: string | null; partyId: string | null; leadId: string | null; messageCount: number },
     policy: QualificationPolicy,
     reason: string,
   ) {
     const row = await this.prisma.leadQualification.create({
       data: {
-        organisationId: user.organisationId,
+        organisationId: actor.organisationId,
         partyId: input.partyId,
         leadId: input.leadId,
         conversationId: input.conversationId,
@@ -339,7 +429,7 @@ export class QualificationService {
         unavailableReason: reason,
         policyVersion: policy.version,
         messagesConsidered: input.messageCount,
-        createdById: user.id,
+        createdById: actor.user?.id ?? null,
       },
     });
     return this.toView(row, policy, false);

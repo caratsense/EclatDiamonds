@@ -452,7 +452,7 @@ function ConversationsContent() {
                           </span>
                         )}
                         <span className="text-[10px] text-muted-foreground truncate">
-                          {c.store?.name ?? "Surat Main"}
+                          {c.store?.name ?? "No store yet"}
                         </span>
                       </div>
 
@@ -616,7 +616,7 @@ function ThreadView({
                 <span className="shrink-0 inline-block h-1.5 w-1.5 rounded-full bg-[#25D366] animate-pulse" />
                 <span className="shrink-0 text-[#25D366] font-medium text-[11px]">Online</span>
                 <span className="shrink-0 text-muted-foreground/30">·</span>
-                <span className="truncate">{conversation.store?.name ?? "Surat Main"}</span>
+                <span className="truncate">{conversation.store?.name ?? "No store yet"}</span>
                 <span className="shrink-0 text-muted-foreground/30">·</span>
                 <span className="truncate">{conversation.assignedUser?.name ?? "Unassigned"}</span>
               </div>
@@ -976,7 +976,7 @@ function ThreadView({
                 <div>
                   <span className="text-muted-foreground block text-[11px]">Company name</span>
                   <span className="font-medium text-foreground">
-                    {conversation.store?.name ?? "Éclat Surat"}
+                    {conversation.store?.name ?? "No store yet"}
                   </span>
                 </div>
                 <div>

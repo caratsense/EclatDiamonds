@@ -1,11 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { WhatsAppCredentialsService } from '../integrations/whatsapp-credentials.service';
+import {
+  WhatsAppCredentialsService,
+  type SenderRoute,
+} from '../integrations/whatsapp-credentials.service';
 import { WhatsAppService, type WhatsAppSendResult } from '../integrations/whatsapp.service';
 import { WhatsAppConversationService } from './whatsapp-conversation.service';
 import { ConversationsService } from '../crm/conversations.service';
 import { IdentityService } from '../crm/identity.service';
+import { QualificationService } from '../crm/qualification.service';
 import { WhatsAppIdentityService } from './whatsapp-identity.service';
 import { CustomerBotService } from './customer-bot.service';
 import { extractMetaReferral } from '../integrations/meta-referral';
@@ -54,6 +58,7 @@ export class WhatsAppBotService {
     private readonly credentials: WhatsAppCredentialsService,
     private readonly omnichannel: OmnichannelService,
     private readonly crmIdentity: IdentityService,
+    private readonly qualification: QualificationService,
   ) {}
 
   /**
@@ -290,6 +295,21 @@ export class WhatsAppBotService {
       // Decided from the text alone, before anything is filed, so the same
       // verdict governs both the CRM write and the assistant below.
       const optOut = isUnambiguousOptOut(text);
+
+      /*
+       * A photo, voice note or document arrives with NO text, and everything
+       * downstream reads `body`. Filed as-is it becomes an empty row: the CRM
+       * shows a blank bubble and the manager cannot tell that anything was
+       * sent, let alone what.
+       *
+       * The caption is used when there is one, and a plain label otherwise, so
+       * the thread reads honestly. The media ITSELF is still not downloaded —
+       * that needs a second authenticated call to Meta per attachment, and
+       * saying so in the body is better than a bubble that silently implies
+       * the picture is somewhere in the CRM when it is not.
+       */
+      const mediaLabel = describeMedia(event.messageType, event.payload);
+      const filedBody = text ?? mediaLabel;
       try {
         const result = await this.crmConversations.ingestInbound({
           optOut,
@@ -299,7 +319,7 @@ export class WhatsAppBotService {
           externalId: event.wamid ?? undefined,
           senderKind: 'whatsapp',
           senderValue: from,
-          body: text ?? undefined,
+          body: filedBody ?? undefined,
           sentAt: event.createdAt,
           payload: event.payload as never,
           // The number this arrived on, so every reply leaves from it.
@@ -396,6 +416,30 @@ export class WhatsAppBotService {
         if (!result.duplicate) {
           const eligible = await this.claimBotTurn(organisationId, result.conversationId, from, event.payload);
           if (eligible) {
+            /*
+             * A PHOTO IS NOT AN UNREADABLE ANSWER.
+             *
+             * The bot's own closing line invites one — "Send me a photo of any
+             * design you like and I can get you a price" — and a customer who
+             * did exactly that got silence, because a media message carries no
+             * text, so it was read as a failed answer to whatever question was
+             * pending. The business asked for something and then ignored it.
+             *
+             * Nothing here can price a photograph, so it goes straight to a
+             * person with the thread attached. That is the promise kept: the
+             * price comes from someone who can actually give one.
+             */
+            if (!text && mediaLabel) {
+              await this.handMediaToAPerson(
+                organisationId,
+                result.conversationId,
+                from,
+                mediaLabel,
+                replyRoute,
+              );
+              return { status: 'processed', organisationId };
+            }
+
             const reply = await this.customerBot.handle(
               from,
               organisationId,
@@ -432,6 +476,45 @@ export class WhatsAppBotService {
             this.logger.log(
               `  bot replied${reply.outcome ? ` (${reply.outcome.kind}: ${reply.outcome.reason})` : ''}`,
             );
+
+            /*
+             * INTENT SCORE.
+             *
+             * Runs after the reply has gone, never before: scoring must not
+             * delay the customer's answer, and a scoring failure must not cost
+             * them one. Skipped once the flow has already ended in a handoff,
+             * because the thread is on its way to a person either way and a
+             * second reason would only overwrite the first.
+             *
+             * The bot does NOT announce the score or change what it says. A
+             * high score moves the thread to a person while the customer is
+             * still typing, which is the whole point — until now
+             * `handoffAtScore` was configurable, documented, and read by
+             * nothing.
+             */
+            if (!reply.outcome) {
+              const scored = await this.qualification.assessFromBot(
+                organisationId,
+                result.conversationId,
+              );
+              if (scored?.handoff) {
+                await this.prisma.conversation.update({
+                  where: { id: result.conversationId },
+                  data: {
+                    handling: 'human',
+                    handoffReason:
+                      scored.reason ??
+                      `Qualified at ${scored.score}/100${scored.band ? ` (${scored.band})` : ''} — handed to a person.`,
+                  },
+                });
+                this.logger.log(
+                  `  intent handoff on ${result.conversationId}: score ${scored.score}${scored.band ? ` (${scored.band})` : ''}`,
+                );
+              } else if (scored?.score != null) {
+                this.logger.log(`  intent score ${scored.score}${scored.band ? ` (${scored.band})` : ''}`);
+              }
+            }
+
             return { status: 'processed', organisationId };
           }
         }
@@ -501,6 +584,40 @@ export class WhatsAppBotService {
    * that is exactly the state staging was in, where the bot was working
    * perfectly and nothing reached the handset.
    */
+  /**
+   * A customer sent something the bot cannot read. Fetch a person.
+   *
+   * Deliberately NOT a reprompt. The reprompt exists for an unreadable ANSWER
+   * to a question the bot asked; a photograph is a different act, usually a
+   * ring the customer wants priced, and asking them to "reply with a number"
+   * reads as a machine that did not look at what they sent.
+   */
+  private async handMediaToAPerson(
+    organisationId: string,
+    conversationId: string,
+    to: string,
+    mediaLabel: string,
+    replyRoute: SenderRoute | undefined,
+  ): Promise<void> {
+    const body = [
+      'Thank you — I have that.',
+      '',
+      'One of our team will take a look and come back to you shortly with details and pricing. 💎',
+    ].join('\n');
+
+    const sent = await this.wa.sendText(organisationId, to, body, replyRoute);
+    await this.recordBotReply(organisationId, conversationId, body, sent);
+
+    await this.prisma.conversation.update({
+      where: { id: conversationId },
+      data: {
+        handling: 'human',
+        handoffReason: `The customer sent ${mediaLabel.toLowerCase()} — it needs a person to look at it.`,
+      },
+    });
+    this.logger.log(`  media handed to a person on ${conversationId}: ${mediaLabel}`);
+  }
+
   private async recordBotReply(
     organisationId: string,
     conversationId: string,
@@ -688,4 +805,13 @@ export class WhatsAppBotService {
       storeId: owner.storeId,
     };
   }
+}
+
+function describeMedia(messageType: string, payload: unknown): string | null {
+  const msg = (payload ?? {}) as Record<string, unknown>;
+  const media = (msg[messageType] ?? {}) as Record<string, unknown>;
+  const caption = typeof media.caption === 'string' ? media.caption.trim() : '';
+  const label = ({ image: 'a photo', video: 'a video', audio: 'a voice note', document: 'a document', sticker: 'a sticker', location: 'a location', contacts: 'a contact' } as Record<string,string>)[messageType] ?? null;
+  if (!label) return null;
+  return caption ? `[${label}] ${caption}` : `[${label}]`;
 }
