@@ -10,6 +10,7 @@ import { WhatsAppConversationService } from './whatsapp-conversation.service';
 import { ConversationsService } from '../crm/conversations.service';
 import { IdentityService } from '../crm/identity.service';
 import { QualificationService } from '../crm/qualification.service';
+import { StorageService } from '../storage/storage.service';
 import { WhatsAppIdentityService } from './whatsapp-identity.service';
 import { CustomerBotService } from './customer-bot.service';
 import { extractMetaReferral } from '../integrations/meta-referral';
@@ -59,6 +60,7 @@ export class WhatsAppBotService {
     private readonly omnichannel: OmnichannelService,
     private readonly crmIdentity: IdentityService,
     private readonly qualification: QualificationService,
+    private readonly storage: StorageService,
   ) {}
 
   /**
@@ -310,6 +312,21 @@ export class WhatsAppBotService {
        */
       const mediaLabel = describeMedia(event.messageType, event.payload);
       const filedBody = text ?? mediaLabel;
+
+      /*
+       * Fetch the attachment itself, before the message is filed, so the row
+       * lands complete rather than being written twice.
+       *
+       * Stored through `savePrivate`: a customer's photograph is their content,
+       * usually a ring they own or a screenshot of a design, and it belongs
+       * behind the same authenticated read as attendance faces and counter
+       * photos rather than on a public URL that anyone holding the link can
+       * open. A failure here is deliberately not fatal — the message is still
+       * filed, labelled, and answered.
+       */
+      const stored = mediaLabel
+        ? await this.storeInboundMedia(organisationId, event.messageType, event.payload, replyRoute)
+        : null;
       try {
         const result = await this.crmConversations.ingestInbound({
           optOut,
@@ -320,6 +337,8 @@ export class WhatsAppBotService {
           senderKind: 'whatsapp',
           senderValue: from,
           body: filedBody ?? undefined,
+          mediaUrl: stored?.key,
+          mediaType: stored?.mimeType,
           sentAt: event.createdAt,
           payload: event.payload as never,
           // The number this arrived on, so every reply leaves from it.
@@ -592,6 +611,48 @@ export class WhatsAppBotService {
    * ring the customer wants priced, and asking them to "reply with a number"
    * reads as a machine that did not look at what they sent.
    */
+  /**
+   * Download an inbound attachment and keep it where only this tenant can read it.
+   *
+   * Returns the private storage KEY, not a URL. The key is meaningless to a
+   * browser on purpose: the CRM reads it back through an authenticated route
+   * that re-checks who is asking, so a photograph cannot leak by someone
+   * pasting a link into a group chat.
+   */
+  private async storeInboundMedia(
+    organisationId: string,
+    messageType: string,
+    payload: unknown,
+    route: SenderRoute | undefined,
+  ): Promise<{ key: string; mimeType: string } | null> {
+    const msg = (payload ?? {}) as Record<string, unknown>;
+    const media = (msg[messageType] ?? {}) as Record<string, unknown>;
+    const mediaId = typeof media.id === 'string' ? media.id : null;
+    if (!mediaId) return null;
+
+    const fetched = await this.wa.fetchInboundMedia(organisationId, mediaId, route);
+    if (!fetched) return null;
+
+    try {
+      const key = await this.storage.savePrivate(
+        organisationId,
+        'messages',
+        // The provider's media id is already unique and carries no customer
+        // data; the extension is derived from the mime type rather than from
+        // anything the sender controls.
+        `${mediaId}${extensionFor(fetched.mimeType)}`,
+        fetched.buffer,
+      );
+      this.logger.log(`  stored inbound ${messageType} (${fetched.buffer.byteLength} bytes)`);
+      return { key, mimeType: fetched.mimeType };
+    } catch (err) {
+      this.logger.warn(
+        `  inbound ${messageType} could not be stored: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+  }
+
   private async handMediaToAPerson(
     organisationId: string,
     conversationId: string,
@@ -805,6 +866,23 @@ export class WhatsAppBotService {
       storeId: owner.storeId,
     };
   }
+}
+
+/** A file extension from the provider's mime type, never from a sender-supplied name. */
+function extensionFor(mimeType: string): string {
+  const base = mimeType.split(';')[0].trim().toLowerCase();
+  return (
+    {
+      'image/jpeg': '.jpg',
+      'image/png': '.png',
+      'image/webp': '.webp',
+      'audio/ogg': '.ogg',
+      'audio/mpeg': '.mp3',
+      'audio/mp4': '.m4a',
+      'video/mp4': '.mp4',
+      'application/pdf': '.pdf',
+    }[base] ?? '.bin'
+  );
 }
 
 function describeMedia(messageType: string, payload: unknown): string | null {

@@ -277,6 +277,7 @@ export interface MessageRow {
   authorType: string;
   body: string | null;
   mediaUrl: string | null;
+  mediaType: string | null;
   status: string;
   /** Why a send failed. Null unless `status` is 'failed'. */
   error: string | null;

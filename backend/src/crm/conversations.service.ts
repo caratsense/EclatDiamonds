@@ -7,6 +7,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { OmnichannelService } from '../omnichannel/omnichannel.service';
+import { StorageService } from '../storage/storage.service';
 import { LeadSource, Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
@@ -107,6 +108,7 @@ export class ConversationsService {
     private readonly sla: ResponseSlaService,
     @Inject(forwardRef(() => OmnichannelService))
     private readonly omnichannel: OmnichannelService,
+    private readonly storage: StorageService,
   ) {}
 
   private readonly logger = new Logger(ConversationsService.name);
@@ -1425,6 +1427,45 @@ export class ConversationsService {
       include: { authorUser: { select: { id: true, name: true } } },
     });
     return { conversation, messages };
+  }
+
+  /**
+   * Read one attachment from a thread, for somebody entitled to see it.
+   *
+   * `load()` first, deliberately: it applies the same visibility rule as
+   * opening the conversation, so a salesperson cannot reach a photograph from
+   * a thread the list correctly refuses to show them. The message is then
+   * matched to THAT conversation, so a valid message id from another thread
+   * does not resolve.
+   *
+   * `readPrivate` is scoped to the organisation as well, which makes this safe
+   * twice over: even a mismatched key cannot read another tenant's file.
+   */
+  async mediaFor(
+    user: AuthUser,
+    conversationId: string,
+    messageId: string,
+  ): Promise<{ buffer: Buffer; contentType: string }> {
+    await this.load(user, conversationId);
+
+    const message = await this.prisma.message.findFirst({
+      where: { id: messageId, conversationId, organisationId: user.organisationId },
+      select: { mediaUrl: true, mediaType: true },
+    });
+    if (!message?.mediaUrl) {
+      throw new NotFoundException('That message has no attachment.');
+    }
+
+    const buffer = await this.storage.readPrivate(user.organisationId, message.mediaUrl);
+    if (!buffer) {
+      // Distinguished from "no attachment" on purpose: this one means the row
+      // promises a file that is not on disk, which is a fault worth seeing
+      // rather than a 404 that reads like the customer never sent anything.
+      this.logger.warn(`attachment missing from storage for message ${messageId}`);
+      throw new NotFoundException('That attachment is no longer available.');
+    }
+
+    return { buffer, contentType: message.mediaType || 'application/octet-stream' };
   }
 
   /**

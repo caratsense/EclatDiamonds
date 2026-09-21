@@ -1,4 +1,16 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Header,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Res,
+} from '@nestjs/common';
+import type { Response } from 'express';
 import { IsIn, IsNotEmpty, IsOptional, IsString, MaxLength, ValidateIf } from 'class-validator';
 
 import { AuthUser, CurrentUser } from '../common/auth-user';
@@ -287,6 +299,31 @@ export class CrmConversationsController {
   @Get(':id')
   thread(@CurrentUser() user: AuthUser, @Param('id') id: string, @Query('limit') limit?: string) {
     return this.conversations.thread(user, id, limit ? Number(limit) : 100);
+  }
+
+  /**
+   * An attachment a customer sent, read back for somebody allowed to see it.
+   *
+   * Served through the API rather than from a public URL because the bytes are
+   * the customer's: usually a photograph of a ring they own, sometimes of
+   * themselves wearing it. `mediaFor` re-checks the caller against the same
+   * visibility rule that governs opening the thread, so a link pasted into a
+   * group chat is worth nothing to anyone outside the business.
+   */
+  @Get(':id/media/:messageId')
+  @Header('Cache-Control', 'private, max-age=300')
+  async media(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Param('messageId') messageId: string,
+    @Res() res: Response,
+  ) {
+    const found = await this.conversations.mediaFor(user, id, messageId);
+    res.setHeader('Content-Type', found.contentType);
+    // Never an attachment download, and never sniffed into something else.
+    res.setHeader('Content-Disposition', 'inline');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.send(found.buffer);
   }
 
   /** Saves the reply and marks it queued — see ConversationsService.queueOutbound. */
