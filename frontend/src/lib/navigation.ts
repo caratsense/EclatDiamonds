@@ -802,6 +802,28 @@ export function visibleNavGroups(
   })).filter((group) => group.items.length > 0);
 }
 
+/**
+ * The groups narrowed to screens whose name, section or purpose contains
+ * `query` — the sidebar's "find a screen" box. `label` is the name as shown
+ * (translated), so what someone reads is what they can type.
+ */
+export function filterNavGroups(
+  groups: NavGroup[],
+  query: string,
+  label: (item: NavItem) => string = (item) => item.title,
+): NavGroup[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return groups;
+  return groups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) =>
+        `${label(item)} ${item.title} ${group.label} ${item.purpose}`.toLowerCase().includes(q),
+      ),
+    }))
+    .filter((group) => group.items.length > 0);
+}
+
 /** Read the fresh-tenant feature profile defensively from Organisation.settings. */
 export function navigationFromSettings(
   settings: Record<string, unknown> | undefined,

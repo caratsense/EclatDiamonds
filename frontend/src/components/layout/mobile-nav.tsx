@@ -12,7 +12,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { NAV_ITEMS, visibleNavGroups } from "@/lib/navigation";
+import { NAV_ITEMS, filterNavGroups, visibleNavGroups } from "@/lib/navigation";
+import { Input } from "@/components/ui/input";
 import { useEnabledNavigation } from "@/lib/queries/tenant-config";
 import { useSession } from "@/store/use-session";
 import { useT } from "@/lib/i18n";
@@ -76,6 +77,7 @@ export function MobileNav() {
   const pathname = usePathname();
   const t = useT();
   const [moreOpen, setMoreOpen] = React.useState(false);
+  const [find, setFind] = React.useState("");
   // Role-aware "More" sheet: HO-only sections stay hidden for other roles.
   const role = useSession((s) => s.baseRole);
   const access = useSession((s) => s.access);
@@ -134,15 +136,28 @@ export function MobileNav() {
         </button>
       </nav>
 
-      <Dialog open={moreOpen} onOpenChange={setMoreOpen}>
+      <Dialog
+        open={moreOpen}
+        onOpenChange={(o) => {
+          setMoreOpen(o);
+          if (!o) setFind("");
+        }}
+      >
         <DialogContent className="max-h-[80dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display text-xl font-bold">
               All sections
             </DialogTitle>
           </DialogHeader>
+          <Input
+            type="search"
+            value={find}
+            onChange={(e) => setFind(e.target.value)}
+            placeholder="Find a screen…"
+            aria-label="Find a screen"
+          />
           <div className="space-y-5">
-            {groups.map((group) => (
+            {filterNavGroups(groups, find, (item) => t(`nav.${item.slug}`, item.title)).map((group) => (
               <div key={group.label}>
                 <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
                   {t(`group.${group.label}`, group.label)}
