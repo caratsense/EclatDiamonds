@@ -190,13 +190,13 @@ describe('Item master + item-level quote pricing (e2e)', () => {
   });
 
   it('refuses unreal karats, negative carats, odd sizes and a discount that reaches the gold', async () => {
-    await quote({ lines: [{ ...ITEM, karat: 12 }] }).expect(400);
+    await quote({ lines: [{ ...ITEM, karat: 10 }] }).expect(400);
     await quote({ lines: [{ ...ITEM, stones: [{ ...ITEM.stones[0], carats: -0.5 }] }] }).expect(400);
     await quote({ lines: [{ ...ITEM, stones: [{ ...ITEM.stones[0], type: 'X' }] }] }).expect(400);
     await quote({ lines: [{ ...ITEM, size: '12<b>' }] }).expect(400);
     const tooMuch = await quote({ lines: [ITEM], additionalDiscount: 12101 }).expect(400);
     expect(JSON.stringify(tooMuch.body)).toMatch(/Gold is never discounted/);
-    await quote({ lines: [{ ...ITEM, size: '16 inch' }], additionalDiscount: 12100 }).expect(201);
+    await quote({ lines: [{ ...ITEM, karat: 12, size: '16 inch' }], additionalDiscount: 12100 }).expect(201);
   });
 
   it('the PDF itemises by code, prints the rate with the multiplier in, the size, discounts and words', async () => {

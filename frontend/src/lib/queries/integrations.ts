@@ -33,6 +33,7 @@ export type MetalKind =
   | "gold_22k"
   | "gold_18k"
   | "gold_14k"
+  | "gold_12k"
   | "gold_10k"
   | "gold_9k"
   | "rose_gold_18k"
@@ -61,6 +62,7 @@ const KARAT_METAL: Record<number, MetalKind> = {
   22: "gold_22k",
   18: "gold_18k",
   14: "gold_14k",
+  12: "gold_12k",
   10: "gold_10k",
   9: "gold_9k",
 };

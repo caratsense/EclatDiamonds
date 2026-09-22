@@ -20,8 +20,8 @@ import {
 import { QuoteKind, QuoteStatus } from '@prisma/client';
 import { IsIndianMobile, IsRealName } from '../../common/contact.util';
 
-/** Karats a quote may be priced in; 0 is a line with no metal (repair, stones). */
-export const QUOTE_KARATS = [0, 9, 10, 14, 18, 22, 24];
+/** The karats the business quotes in; 0 is a line with no metal (repair, stones). */
+export const QUOTE_KARATS = [0, 9, 12, 14, 18, 22, 24];
 
 /**
  * One diamond (D) or colour stone (C) entry of an item: a code from the item
@@ -75,7 +75,7 @@ export class QuoteLineDto {
   description!: string;
 
   @IsInt()
-  @IsIn(QUOTE_KARATS, { message: 'karat must be 9, 10, 14, 18, 22 or 24 (0 for no metal)' })
+  @IsIn(QUOTE_KARATS, { message: 'karat must be 9, 12, 14, 18, 22 or 24 (0 for no metal)' })
   karat!: number;
 
   @IsOptional()

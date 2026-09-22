@@ -32,7 +32,8 @@ describe('parseIbja', () => {
     // Not published by IBJA: derived from 999 by fineness, and said so.
     expect(r.perGram.gold_9k).toBeCloseTo(15373 * 0.375, 1);
     expect(r.perGram.gold_10k).toBeCloseTo(15373 * 0.417, 1);
-    expect(r.derived).toEqual(['gold_10k', 'gold_9k']);
+    expect(r.perGram.gold_12k).toBeCloseTo(15373 * 0.5, 1);
+    expect(r.derived).toEqual(['gold_12k', 'gold_10k', 'gold_9k']);
   });
 
   it('stores nothing when the page no longer carries a believable 999 rate', () => {

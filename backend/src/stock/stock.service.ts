@@ -43,6 +43,7 @@ const GOLD_METALS = new Set<MetalKind>([
   'gold_22k',
   'gold_18k',
   'gold_14k',
+  'gold_12k',
   'gold_10k',
   'gold_9k',
   'rose_gold_18k',

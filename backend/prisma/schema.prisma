@@ -128,6 +128,8 @@ enum MetalKind {
   /// 14K/10K/9K gold � the real purities this (lab-grown diamond) business uses;
   /// karat is read per-piece from the SKU token (-14KT-/-18KT-/-9KT-).
   gold_14k
+  /// 12K (500 fineness): one of the six karats the business quotes in.
+  gold_12k
   gold_10k
   gold_9k
   rose_gold_18k

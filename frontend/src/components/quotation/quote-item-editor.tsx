@@ -25,8 +25,8 @@ import {
 } from "@/lib/queries/materials";
 import { apiErrorMessage, cn } from "@/lib/utils";
 
-/** Karats a quote is priced in. The ERP's gold items are 9K, 10K, 14K and 18K. */
-export const QUOTE_KARATS = [9, 10, 14, 18];
+/** The karats the business quotes in (owner, 22 Sep 2026). */
+export const QUOTE_KARATS = [9, 12, 14, 18, 22, 24];
 
 /** Item types when the item master has not been loaded yet (the ERP's list). */
 const ITEM_TYPES_FALLBACK = [
@@ -35,8 +35,8 @@ const ITEM_TYPES_FALLBACK = [
   ["ACH", "CHAIN"], ["AANK", "ANKLET"],
 ].map(([code, name]) => ({ code, name }));
 
-/** Gold items when the master is not loaded: the ERP's G<karat><tone> codes. */
-const METALS_FALLBACK: MaterialOption[] = QUOTE_KARATS.flatMap((karat) =>
+/** Gold items in the ERP's G<karat><tone> form, for karats the master has none of. */
+const metalsFor = (karats: number[]): MaterialOption[] => karats.flatMap((karat) =>
   ["YG", "WG", "PG"].map((tone) => ({
     code: `G${String(karat).padStart(2, "0")}${tone}`,
     name: `GOLD${karat}${tone}`,
@@ -124,9 +124,11 @@ export function priceItem(item: ItemRow, goldRate: number) {
 /** The master with fallbacks, so the builder works before the master is loaded. */
 export function masterLists(master: MaterialMaster | undefined) {
   const metals = master?.metals.filter((m) => m.karat != null && QUOTE_KARATS.includes(m.karat)) ?? [];
+  // The ERP has no 12K items; any karat it lacks still gets its YG/WG/PG codes.
+  const missing = QUOTE_KARATS.filter((k) => !metals.some((m) => m.karat === k));
   return {
     itemTypes: master?.itemTypes.length ? master.itemTypes : ITEM_TYPES_FALLBACK,
-    metals: (metals.length ? metals : METALS_FALLBACK).sort(
+    metals: [...metals, ...metalsFor(missing)].sort(
       (a, b) => (a.karat ?? 0) - (b.karat ?? 0) || a.code.localeCompare(b.code),
     ),
     diamonds: master?.diamonds ?? [],
@@ -276,7 +278,7 @@ export function QuoteItemEditor({
       toast.success(`Loaded ${bom.styleCode}`, {
         description: [
           `${stones.length} stone line${stones.length === 1 ? "" : "s"}`,
-          heavyMetal ? "its gold is not 9/10/14/18K — pick the metal" : "",
+          heavyMetal ? "its gold is not 9/12/14/18/22/24K — pick the metal" : "",
           skipped ? `${skipped} other line${skipped === 1 ? "" : "s"} (charges) left out` : "",
         ]
           .filter(Boolean)

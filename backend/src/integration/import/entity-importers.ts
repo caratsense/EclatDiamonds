@@ -226,6 +226,7 @@ function toMetal(metalRaw: string, karat: number | null, neutralDefault: boolean
       case 22: return MetalKind.gold_22k;
       case 18: return MetalKind.gold_18k;
       case 14: return MetalKind.gold_14k;
+      case 12: return MetalKind.gold_12k;
       case 10: return MetalKind.gold_10k;
       case 9: return MetalKind.gold_9k;
       default: return MetalKind.gold_unspecified;

@@ -21,6 +21,7 @@ export type Metal =
   | "gold_22k"
   | "gold_18k"
   | "gold_14k"
+  | "gold_12k"
   | "gold_10k"
   | "gold_9k"
   | "rose_gold_18k"
@@ -222,6 +223,7 @@ export const METAL_LABELS: Record<Metal, string> = {
   gold_22k: "22K Gold",
   gold_18k: "18K Gold",
   gold_14k: "14K Gold",
+  gold_12k: "12K Gold",
   gold_10k: "10K Gold",
   gold_9k: "9K Gold",
   rose_gold_18k: "18K Rose Gold",
