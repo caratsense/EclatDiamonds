@@ -5,6 +5,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { AxiosError } from "axios";
 
 import { api } from "@/lib/api";
 import { useStoreKey } from "@/lib/queries/keys";
@@ -210,6 +211,58 @@ export function useSendDailyReport() {
         body,
       );
       return data;
+    },
+  });
+}
+
+export type DsrSheetPeriod = "day" | "week" | "month";
+
+export interface DsrSheetInput {
+  storeId: string;
+  period: DsrSheetPeriod;
+  /** Any day in the period (YYYY-MM-DD). */
+  date: string;
+}
+
+/**
+ * GET /reporting/daily/pdf — the store's DSRs laid out as its paper sheet,
+ * saved as a file. Through axios, not a plain link, so the bearer token and the
+ * `/_api` proxy apply; `responseType: "blob"` keeps the PDF bytes intact.
+ */
+export function useDownloadDsrSheet() {
+  return useMutation({
+    mutationFn: async (input: DsrSheetInput) => {
+      let res;
+      try {
+        res = await api.get<Blob>("/reporting/daily/pdf", {
+          params: input,
+          responseType: "blob",
+        });
+      } catch (e) {
+        // A refusal arrives as a Blob too; read it back so the reason shows.
+        if (e instanceof AxiosError && e.response?.data instanceof Blob) {
+          try {
+            e.response.data = JSON.parse(await e.response.data.text());
+          } catch {
+            // Not JSON: leave it, the caller falls back to its own sentence.
+          }
+        }
+        throw e;
+      }
+      const disposition = String(res.headers?.["content-disposition"] ?? "");
+      const filename =
+        /filename="?([^";]+)"?/i.exec(disposition)?.[1] ??
+        `DSR-${input.storeId}-${input.period}-${input.date}.pdf`;
+      const url = URL.createObjectURL(res.data);
+      try {
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        a.click();
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+      return { filename };
     },
   });
 }

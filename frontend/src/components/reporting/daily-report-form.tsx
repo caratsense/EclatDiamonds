@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -39,7 +40,7 @@ function toNumber(v: string): number | undefined {
 }
 
 /** Today as yyyy-mm-dd in local time (for the date input default). */
-function todayLocal(): string {
+export function todayLocal(): string {
   const d = new Date();
   const off = d.getTimezoneOffset();
   return new Date(d.getTime() - off * 60_000).toISOString().slice(0, 10);
@@ -114,13 +115,17 @@ function GroupLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** The five money/weight fields every mode-of-payment block on the sheet has. */
+/**
+ * The money/weight fields of a mode-of-payment block on the sheet. Bank
+ * transfer is on Table B's block only, so it stays blank on Table A's.
+ */
 interface PaymentSplit {
   cash: string;
   card: string;
   upi: string;
   goldWt: string;
   goldValue: string;
+  bank: string;
 }
 
 const EMPTY_SPLIT: PaymentSplit = {
@@ -129,6 +134,7 @@ const EMPTY_SPLIT: PaymentSplit = {
   upi: "",
   goldWt: "",
   goldValue: "",
+  bank: "",
 };
 
 /**
@@ -146,11 +152,13 @@ function PaymentSplitFields({
   split,
   onChange,
   expected,
+  withBank = false,
 }: {
   idPrefix: string;
   split: PaymentSplit;
   onChange: (next: PaymentSplit) => void;
   expected: number;
+  withBank?: boolean;
 }) {
   const set = (k: keyof PaymentSplit) => (v: string) =>
     onChange({ ...split, [k]: v });
@@ -159,7 +167,8 @@ function PaymentSplitFields({
     (toNumber(split.cash) ?? 0) +
     (toNumber(split.card) ?? 0) +
     (toNumber(split.upi) ?? 0) +
-    (toNumber(split.goldValue) ?? 0);
+    (toNumber(split.goldValue) ?? 0) +
+    (toNumber(split.bank) ?? 0);
   const diff = expected - total;
   // Sub-rupee drift is rounding, not a discrepancy worth a red line.
   const reconciles = Math.abs(diff) < 1;
@@ -190,7 +199,7 @@ function PaymentSplitFields({
           prefix="₹"
         />
       </div>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className={cn("grid gap-3", withBank ? "sm:grid-cols-3" : "sm:grid-cols-2")}>
         <NumberField
           id={`${idPrefix}-gold-wt`}
           label="Gold — weight"
@@ -208,6 +217,15 @@ function PaymentSplitFields({
           prefix="₹"
           placeholder="—"
         />
+        {withBank ? (
+          <NumberField
+            id={`${idPrefix}-bank`}
+            label="Bank transfer"
+            value={split.bank}
+            onChange={set("bank")}
+            prefix="₹"
+          />
+        ) : null}
       </div>
       <div
         className={cn(
@@ -270,6 +288,7 @@ export function DailyReportForm() {
   // The customised-order book
   const [bookingsOpen, setBookingsOpen] = useState("");
   const [bookingsClosed, setBookingsClosed] = useState("");
+  const [remark, setRemark] = useState("");
   const [submittedBy, setSubmittedBy] = useState(user.name);
 
   // Build the live input snapshot (numbers default to 0 for the preview).
@@ -294,8 +313,10 @@ export function DailyReportForm() {
       customUpi: toNumber(customSplit.upi) ?? 0,
       customGoldWtG: toNumber(customSplit.goldWt),
       customGoldValue: toNumber(customSplit.goldValue),
+      customBankTransfer: toNumber(customSplit.bank) ?? 0,
       bookingsOpen: toNumber(bookingsOpen) ?? 0,
       bookingsClosed: toNumber(bookingsClosed) ?? 0,
+      remark: remark.trim() || undefined,
       submittedBy: submittedBy.trim() || undefined,
     }),
     [
@@ -312,6 +333,7 @@ export function DailyReportForm() {
       customSplit,
       bookingsOpen,
       bookingsClosed,
+      remark,
       submittedBy,
     ],
   );
@@ -346,6 +368,7 @@ export function DailyReportForm() {
     setAdvanceReceived("");
     setCustomSplit(EMPTY_SPLIT);
     setBookingsClosed("");
+    setRemark("");
     // Opening is deliberately kept: tomorrow morning's opening book is tonight's
     // closing, so the manager carries it forward rather than looking it up again.
     setBookingsOpen(String(closing));
@@ -551,6 +574,7 @@ export function DailyReportForm() {
               split={customSplit}
               onChange={setCustomSplit}
               expected={draft.advanceReceived}
+              withBank
             />
           </div>
 
@@ -588,6 +612,20 @@ export function DailyReportForm() {
               Closing is calculated — open + booked today − completed today — and
               becomes tomorrow&apos;s opening automatically when you file.
             </p>
+          </div>
+
+          {/* Remark */}
+          <div className="grid gap-1.5">
+            <Label htmlFor="dsr-remark" className="text-xs">
+              Remark
+            </Label>
+            <Textarea
+              id="dsr-remark"
+              maxLength={500}
+              placeholder="Anything worth noting about the day"
+              value={remark}
+              onChange={(e) => setRemark(e.target.value)}
+            />
           </div>
 
           {/* Submitted by */}

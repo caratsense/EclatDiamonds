@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Header, Param, Post, Query, Res, StreamableFile } from '@nestjs/common';
+import type { Response } from 'express';
 import { ReportingService } from './reporting.service';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
@@ -7,6 +8,7 @@ import {
   ComplianceQueryDto,
   CreateDailyReportDto,
   DailyReportQueryDto,
+  DailySheetQueryDto,
   ReportSummaryQueryDto,
   SendDailyReportDto,
   SendReportDto,
@@ -99,6 +101,27 @@ export class ReportingController {
     @StoreHeader() store?: string,
   ) {
     return this.reporting.listDaily(user, query, store);
+  }
+
+  /**
+   * GET /reporting/daily/pdf?storeId=&period=day|week|month&date=YYYY-MM-DD —
+   * the store's DSRs as its paper sheet. Declared before `daily/:id`, which
+   * would otherwise take "pdf" for an id.
+   */
+  @Roles('salesperson')
+  @Get('daily/pdf')
+  @Header('Content-Type', 'application/pdf')
+  @Header('Cache-Control', 'private, no-store')
+  async dailyPdf(
+    @CurrentUser() user: AuthUser,
+    @Query() query: DailySheetQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { buffer, filename } = await this.reporting.dailySheetPdf(user, query);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', String(buffer.byteLength));
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return new StreamableFile(buffer);
   }
 
   /** GET /reporting/daily/:id — a single DSR, gated to the caller's store scope. */
