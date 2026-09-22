@@ -210,11 +210,20 @@ export function QuoteDetailDialog({
         <div className="space-y-4">
           {quote.lines.map((line) => (
             <div key={line.id} className="rounded-lg border p-3">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-medium">{line.description}</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-medium">
+                  {line.description}
+                  {line.styleNumber || line.size ? (
+                    <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                      {[line.styleNumber && `Style ${line.styleNumber}`, line.size && `Size ${line.size}`]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                  ) : null}
+                </p>
                 {line.karat > 0 ? (
                   <Badge variant="outline">
-                    <span className="num">{formatPurity(line.karat)}</span>
+                    <span className="num">{line.metalCode ?? formatPurity(line.karat)}</span>
                   </Badge>
                 ) : null}
               </div>
@@ -239,11 +248,36 @@ export function QuoteDetailDialog({
                 ) : null}
                 {line.makingCharges > 0 ? (
                   <Row
-                    label="Making charges"
+                    label={
+                      line.makingRatePerGram ? (
+                        <>
+                          Making <span className="num">{formatINR(line.makingRatePerGram)}</span>/g
+                        </>
+                      ) : (
+                        "Making charges"
+                      )
+                    }
                     value={formatINR(line.makingCharges)}
                   />
                 ) : null}
-                {line.stoneCharges > 0 ? (
+                {/* Staff view: the multiplier shows here and never on the PDF. */}
+                {(line.stones ?? []).map((st, i) => (
+                  <Row
+                    key={`${st.code}-${i}`}
+                    label={
+                      <>
+                        <span className="font-mono text-xs">{st.type}</span> {st.code}
+                        {st.size ? ` · ${st.size}` : ""}
+                        {st.pieces ? ` · ${st.pieces} pc` : ""} ·{" "}
+                        <span className="num">{formatCarats(st.carats)}</span> ×{" "}
+                        <span className="num">{formatINR(st.ratePerCt)}</span>
+                        {st.multiplier && st.multiplier !== 1 ? <span className="num"> × {st.multiplier}</span> : null}
+                      </>
+                    }
+                    value={formatINR(st.amount ?? 0)}
+                  />
+                ))}
+                {line.stoneCharges > 0 && !line.stones?.length ? (
                   <Row
                     label={
                       <>
@@ -327,7 +361,25 @@ export function QuoteDetailDialog({
                 value={formatINR(totals.makingCharges)}
               />
             )}
-            {totals.discount > 0 ? (
+            {totals.makingDiscount != null ? (
+              <>
+                {totals.makingDiscount > 0 ? (
+                  <Row
+                    label={`Making discount ${quote.makingDiscountPercent ?? 0}%`}
+                    value={`- ${formatINR(totals.makingDiscount)}`}
+                  />
+                ) : null}
+                {(totals.stoneDiscount ?? 0) > 0 ? (
+                  <Row
+                    label={`Diamond discount ${quote.stoneDiscountPercent ?? 0}%`}
+                    value={`- ${formatINR(totals.stoneDiscount ?? 0)}`}
+                  />
+                ) : null}
+                {(totals.additionalDiscount ?? 0) > 0 ? (
+                  <Row label="Additional discount" value={`- ${formatINR(totals.additionalDiscount ?? 0)}`} />
+                ) : null}
+              </>
+            ) : totals.discount > 0 ? (
               <Row
                 label={
                   <>

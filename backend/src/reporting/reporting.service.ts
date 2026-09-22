@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { isFrontLine } from '../common/role.util';
-import { MetalKind, PaymentMode, Prisma } from '@prisma/client';
+import { DailyReport, MetalKind, PaymentMode, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { isValidEmail, normalizeIndianMobile } from '../common/contact.util';
@@ -10,6 +10,7 @@ import { paymentModeLabel } from '../common/payment-mode.util';
 import {
   businessDate,
   dateOnly,
+  formatHHMMInTz,
   instantFromLocalTime,
   resolveTz,
   startOfDayAgoInTz,
@@ -18,10 +19,12 @@ import {
 import { ratio } from '../management/kpi-window';
 import { WhatsAppService } from '../integrations/whatsapp.service';
 import { EmailService } from '../integrations/email.service';
+import { DSR_SUMMED, DsrSheetValues, renderDsrSheetPdf } from './dsr-pdf';
 import {
   ComplianceQueryDto,
   CreateDailyReportDto,
   DailyReportQueryDto,
+  DailySheetQueryDto,
   ReportChannel,
   ReportPeriod,
   SendDailyReportDto,
@@ -52,12 +55,31 @@ function closingBooking(r: {
   return num(r.bookingsOpen) + num(r.bookingsNew) - num(r.bookingsClosed);
 }
 
+/**
+ * One column of the DSR sheet from the reports filed in it, or null when none
+ * were — a day nobody filed prints blank, not as a day of zeros. Flows add up;
+ * the booking book is a balance, so a column opens at its first report's
+ * opening and closes at its last one's closing.
+ */
+function sheetValues(rows: DailyReport[]): DsrSheetValues | null {
+  if (!rows.length) return null;
+  const sums = Object.fromEntries(
+    DSR_SUMMED.map((k) => [k, rows.reduce((t, r) => t + num(r[k]), 0)]),
+  ) as Record<(typeof DSR_SUMMED)[number], number>;
+  return {
+    ...sums,
+    bookingsOpen: num(rows[0].bookingsOpen),
+    bookingsClosing: closingBooking(rows[rows.length - 1]),
+  };
+}
+
 /** MetalKind values that count as gold — everything else (platinum, silver) is excluded from goldGrams. */
 const GOLD_METALS: MetalKind[] = [
   'gold_24k',
   'gold_22k',
   'gold_18k',
   'gold_14k',
+  'gold_12k',
   'gold_10k',
   'gold_9k',
   'rose_gold_18k',
@@ -190,6 +212,14 @@ function fmtISODateUTC(d: Date): string {
   const m = String(d.getUTCMonth() + 1).padStart(2, '0');
   const day = String(d.getUTCDate()).padStart(2, '0');
   return `${d.getUTCFullYear()}-${m}-${day}`;
+}
+
+const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** "22 Sep" from a @db.Date value (UTC components — no timezone shift). */
+function dayMon(d: Date): string {
+  return `${d.getUTCDate()} ${MON[d.getUTCMonth()]}`;
 }
 
 export interface ReportSummary {
@@ -857,6 +887,8 @@ export class ReportingService {
       customGoldWtG: dto.customGoldWtG == null ? null : new Prisma.Decimal(dto.customGoldWtG),
       customGoldValue:
         dto.customGoldValue == null ? null : new Prisma.Decimal(dto.customGoldValue),
+      customBankTransfer: new Prisma.Decimal(dto.customBankTransfer ?? 0),
+      remark: dto.remark?.trim() || null,
       submittedBy: dto.submittedBy,
       source: 'web',
     };
@@ -909,6 +941,72 @@ export class ReportingService {
   async getDaily(user: AuthUser, id: string) {
     const report = await this.loadScopedDaily(user, id);
     return this.toDailyView(report);
+  }
+
+  /**
+   * GET /reporting/daily/pdf — one store's filed DSRs laid out as the paper
+   * sheet it keeps: the day; its Mon–Sun week day by day; or its month week by
+   * week (Mon–Sun, clipped to the month). A week or a month adds a Total column.
+   */
+  async dailySheetPdf(user: AuthUser, query: DailySheetQueryDto) {
+    const storeId = query.storeId.trim();
+    if (storeId === 'all') throw new BadRequestException('Select a store to download the DSR for');
+    this.scope.assertStoreAllowed(user, storeId);
+    const store = await this.prisma.store.findUniqueOrThrow({
+      where: { id: storeId },
+      select: { name: true, timezone: true, organisation: { select: { name: true } } },
+    });
+    const tz = resolveTz(store.timezone);
+    const base = anchorDay(query.date, tz);
+    const range = ({ day: 'daily', week: 'weekly', month: 'monthly' } as const)[query.period];
+    const { fromDay, toDayInclusive } = periodRange(range, base, tz);
+
+    const rows = await this.prisma.dailyReport.findMany({
+      where: { storeId, reportDate: { gte: fromDay, lte: toDayInclusive } },
+      orderBy: { reportDate: 'asc' },
+    });
+    const byDay = new Map(rows.map((r) => [fmtISODateUTC(r.reportDate), r]));
+
+    // The window's days, grouped into the sheet's columns: a month starts a
+    // new column each Monday, a day or a week has one per day.
+    const groups: Date[][] = [];
+    for (let d = fromDay; d <= toDayInclusive; d = new Date(d.getTime() + 86_400_000)) {
+      if (query.period === 'month' && groups.length && d.getUTCDay() !== 1) groups[groups.length - 1].push(d);
+      else groups.push([d]);
+    }
+    const columns = groups.map((g, i) => ({
+      title: query.period === 'month' ? `Week ${i + 1}` : DOW[g[0].getUTCDay()],
+      sub: g.length > 1 ? `${g[0].getUTCDate()}–${dayMon(g[g.length - 1])}` : dayMon(g[0]),
+      values: sheetValues(g.flatMap((d) => byDay.get(fmtISODateUTC(d)) ?? [])),
+    }));
+    if (query.period !== 'day') columns.push({ title: 'Total', sub: '', values: sheetValues(rows) });
+
+    const year = toDayInclusive.getUTCFullYear();
+    const periodLabel =
+      query.period === 'day'
+        ? `${DOW[base.getUTCDay()]} ${dayMon(base)} ${year}`
+        : query.period === 'week'
+          ? `Mon ${dayMon(fromDay)} – Sun ${dayMon(toDayInclusive)} ${year}`
+          : `${MON[base.getUTCMonth()]} ${year}`;
+    const now = new Date();
+    const today = businessDate(now, tz);
+
+    const buffer = await renderDsrSheetPdf({
+      organisation: store.organisation.name,
+      store: store.name,
+      period: query.period,
+      periodLabel,
+      generatedAt: `${dayMon(today)} ${today.getUTCFullYear()} ${formatHHMMInTz(now, tz)}`,
+      columns,
+      remarks: rows
+        .filter((r) => r.remark?.trim())
+        .map((r) => ({
+          day: `${DOW[r.reportDate.getUTCDay()]} ${r.reportDate.getUTCDate()}`,
+          text: r.remark!.trim(),
+        })),
+    });
+    const slug = store.name.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '') || storeId;
+    return { buffer, filename: `DSR-${slug}-${query.period}-${dateOnly(base)}.pdf` };
   }
 
   /**
@@ -981,13 +1079,15 @@ export class ReportingService {
     type Money = Prisma.Decimal | number | null;
     const gold = (wt: Money, val: Money) =>
       `${wt == null ? '__' : String(Number(wt))} gm / ${val == null ? '₹__' : inr(Number(val))}`;
-    const split = (cash: Money, card: Money, upi: Money, wt: Money, val: Money) =>
+    // Bank transfer is a Table B mode only; the counter split has no such leg.
+    const split = (cash: Money, card: Money, upi: Money, wt: Money, val: Money, bank?: Money) =>
       ''.padEnd(10) +
       [
         `→ Cash ${inr(num(cash))}`,
         `→ Card ${inr(num(card))}`,
         `→ UPI ${inr(num(upi))}`,
         `→ Gold (wt/val): ${gold(wt, val)}`,
+        ...(bank === undefined ? [] : [`→ Bank transfer ${inr(num(bank))}`]),
       ].join('   ');
 
     const header = [`STORE: ${storeName}`, `DATE: ${fmtDMY(report.reportDate)}`];
@@ -1016,6 +1116,7 @@ export class ReportingService {
         report.customUpi,
         report.customGoldWtG,
         report.customGoldValue,
+        report.customBankTransfer,
       ),
       'BOOK'.padEnd(10) +
         [
@@ -1023,6 +1124,7 @@ export class ReportingService {
           `Closed: ${rupeeRaw(num(report.bookingsClosed))}`,
           `Closing: ${rupeeRaw(closingBooking(report))}`,
         ].join('   '),
+      ...(report.remark ? [`Remark: ${report.remark}`] : []),
       `Submitted by: ${report.submittedBy ?? '—'}`,
     ].join('\n');
   }
@@ -1055,6 +1157,8 @@ export class ReportingService {
       customUpi: num(r.customUpi),
       customGoldWtG: r.customGoldWtG == null ? null : Number(r.customGoldWtG),
       customGoldValue: r.customGoldValue == null ? null : Number(r.customGoldValue),
+      customBankTransfer: num(r.customBankTransfer),
+      remark: r.remark,
       submittedBy: r.submittedBy,
       /** "web" (the app) or "whatsapp" (the bot). */
       source: r.source,

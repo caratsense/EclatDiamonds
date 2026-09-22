@@ -175,11 +175,15 @@ export interface DailyReportInput {
   /** Old gold taken against a customised order — optional. */
   customGoldWtG?: number;
   customGoldValue?: number;
+  /** Table B only: collected by bank transfer. */
+  customBankTransfer?: number;
 
   // The customised-order book. Closing is derived, never entered.
   bookingsOpen: number;
   bookingsClosed: number;
 
+  /** The sheet's Remark row. */
+  remark?: string;
   submittedBy?: string;
 }
 
@@ -254,10 +258,12 @@ export function composeDailyReportText(
   /** A gold leg reads as dashes on a day no gold changed hands. */
   const gold = (wt?: number, val?: number) =>
     `${wt != null ? `${wt} gm` : "— gm"} / ${val != null ? inr(val) : "₹—"}`;
-  const split = (cash: number, card: number, upi: number, wt?: number, val?: number) =>
+  // Bank transfer is a Table B mode only, as in the server's text.
+  const split = (cash: number, card: number, upi: number, wt?: number, val?: number, bank?: number) =>
     `          → Cash ${inr(cash)}   → Card ${inr(card)}   → UPI ${inr(
       upi,
-    )}   → Gold (wt/val): ${gold(wt, val)}`;
+    )}   → Gold (wt/val): ${gold(wt, val)}` +
+    (bank === undefined ? "" : `   → Bank transfer ${inr(bank)}`);
 
   return [
     header,
@@ -273,10 +279,12 @@ export function composeDailyReportText(
       r.customUpi,
       r.customGoldWtG,
       r.customGoldValue,
+      r.customBankTransfer ?? 0,
     ),
     `BOOK      Opening: ${raw(r.bookingsOpen)}   Closed: ${raw(
       r.bookingsClosed,
     )}   Closing: ${raw(closingBooking(r))}`,
+    ...(r.remark?.trim() ? [`Remark: ${r.remark.trim()}`] : []),
     `Submitted by: ${r.submittedBy?.trim() || "—"}`,
   ].join("\n");
 }

@@ -18,6 +18,7 @@ const PUBLISHED: Array<[string, MetalKind[]]> = [
 
 /** Not published by IBJA: derived from the 999 rate by fineness, as IBJA derives its own. */
 export const DERIVED_FROM_999: Array<[MetalKind, number]> = [
+  ['gold_12k', 0.5],
   ['gold_10k', 0.417],
   ['gold_9k', 0.375],
 ];

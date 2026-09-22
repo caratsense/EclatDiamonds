@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { ChevronDown, DoorOpen, FileText, Plus, Search, UserPlus } from "lucide-react";
+import { ChevronDown, DoorOpen, FileText, Plus, Search, UserPlus, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/brand/logo";
@@ -14,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  filterNavGroups,
   homeForRole,
   visibleNavGroups,
   type NavGroup,
@@ -50,6 +51,30 @@ export function Sidebar() {
    */
   const brandName = brandingName(config?.organisation.settings) ?? config?.organisation.name ?? null;
   const groups = visibleNavGroups(role, enabledNavigation, access);
+
+  /*
+   * Find a screen by typing its name. "/" jumps here from anywhere that is not
+   * a text field, and so does Ctrl/Cmd+K while the record search is switched
+   * off. Enter opens the first match, Esc clears.
+   */
+  const router = useRouter();
+  const [find, setFind] = useState("");
+  const findRef = useRef<HTMLInputElement>(null);
+  const shown = filterNavGroups(groups, find, (item) => t(`nav.${item.slug}`, item.title));
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      const typing = !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+      const ctrlK = !SEARCH_ENABLED && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k";
+      if (ctrlK || (e.key === "/" && !typing && !e.ctrlKey && !e.metaKey && !e.altKey)) {
+        e.preventDefault();
+        findRef.current?.focus();
+        findRef.current?.select();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
   // Pending follow-ups due today or overdue → the Reminders nav badge.
   const { data: reminders } = useReminders("pending");
   const dueCount = pendingDueCount(reminders);
@@ -66,7 +91,7 @@ export function Sidebar() {
    */
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
   const sectionOpen = (group: NavGroup) =>
-    toggled[group.label] ?? true;
+    find.trim() !== "" || (toggled[group.label] ?? true);
 
   const toggleAll = (openState: boolean) => {
     const next: Record<string, boolean> = {};
@@ -99,6 +124,43 @@ export function Sidebar() {
       <div className="space-y-2 border-b border-sidebar-border px-3.5 py-3">
         <QuickActionMenu />
         {SEARCH_ENABLED ? <SearchPill /> : null}
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-sidebar-foreground/50" aria-hidden />
+          <input
+            ref={findRef}
+            type="search"
+            value={find}
+            onChange={(e) => setFind(e.target.value)}
+            onKeyDown={(e) => {
+              const first = shown[0]?.items[0];
+              if (e.key === "Enter" && first) {
+                router.push(`/${first.slug}`);
+                setFind("");
+                findRef.current?.blur();
+              } else if (e.key === "Escape") {
+                setFind("");
+                findRef.current?.blur();
+              }
+            }}
+            placeholder="Find a screen…"
+            aria-label="Find a screen"
+            className="w-full rounded-lg border border-white/10 bg-white/[0.04] py-2 pl-9 pr-8 text-sm text-sidebar-foreground placeholder:text-sidebar-foreground/50 outline-none transition-colors focus:border-white/25 focus:bg-white/[0.07] [&::-webkit-search-cancel-button]:hidden"
+          />
+          {find ? (
+            <button
+              type="button"
+              onClick={() => setFind("")}
+              className="absolute right-2 top-2 rounded p-0.5 text-sidebar-foreground/60 hover:text-white"
+            >
+              <X className="h-4 w-4" />
+              <span className="sr-only">Clear</span>
+            </button>
+          ) : (
+            <kbd className="pointer-events-none absolute right-2.5 top-2 rounded border border-white/15 px-1.5 py-0.5 text-[10px] font-medium text-sidebar-foreground/50">
+              /
+            </kbd>
+          )}
+        </div>
       </div>
 
       {/* Nav section controls header */}
@@ -115,7 +177,10 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 py-2 scrollbar-thin">
-        {groups.map((group) => {
+        {find.trim() && !shown.length ? (
+          <p className="px-2.5 py-2 text-xs text-sidebar-foreground/60">No screen matches &ldquo;{find.trim()}&rdquo;.</p>
+        ) : null}
+        {shown.map((group) => {
           const open = sectionOpen(group);
           const panelId = `nav-${group.label.replace(/\W+/g, "-").toLowerCase()}`;
           const activeInside = group.items.some((item) => isActive(item.slug));

@@ -1,22 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  ArrowRight,
-  ChevronDown,
-  Gem,
-  ImagePlus,
-  Plus,
-  SlidersHorizontal,
-  Sparkles,
-  Trash2,
-  Wrench,
-  X,
-  Zap,
-} from "lucide-react";
+import { ChevronDown, ImagePlus, Plus, Sparkles, Wrench, X } from "lucide-react";
 import { toast } from "sonner";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -55,34 +42,41 @@ import {
   useUploadQuotePhoto,
 } from "@/lib/queries/quotes";
 import { useMetalRates } from "@/lib/queries/integrations";
+import { useMaterials } from "@/lib/queries/materials";
 import { staleNote } from "@/components/rates/metal-rates-widget";
 import { apiErrorMessage, cn, normalizeIndianMobile } from "@/lib/utils";
 import {
   StoreScopeField,
   useStoreScope,
 } from "@/components/common/store-scope-field";
+import {
+  MaterialDatalists,
+  QuoteItemEditor,
+  emptyItem,
+  emptyStone,
+  masterLists,
+  num,
+  priceItem,
+  round2,
+  sizeText,
+  type AutoRate,
+  type ItemRow,
+} from "@/components/quotation/quote-item-editor";
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 
-/** Parse a numeric input into a number, or undefined when blank/invalid. */
-function toNumber(v: string): number | undefined {
-  const n = Number(v);
-  return v.trim() !== "" && Number.isFinite(n) ? n : undefined;
-}
+/** Metal colour for a custom order, from the gold item's tone. */
+const TONE_COLOUR: Record<string, (typeof METAL_COLOR_PRESETS)[number]> = {
+  YG: "Yellow gold",
+  WG: "White gold",
+  PG: "Rose gold",
+};
 
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
-}
-
-interface DiamondRow {
-  id: number;
-  desc: string;
-  carat: string;
-  perCaratRate: string;
-  price: string;
 }
 
 type QuoteLineInput = Omit<QuoteLine, "id">;
@@ -95,11 +89,15 @@ interface QuoteBuilderDialogProps {
 /**
  * Module 2 — Quote builder. Round-2 merged Quotation + Custom-order flow.
  *
- * Sale mode prices gold (weight × rate + making) plus any number of diamond
- * lines; repair mode is making-only (metal & stones zero, GST on labour). The
- * live preview mirrors the server formula. Two actions: "Create Quote" (shares
- * a priced quote) and "Custom Order" (creates the quote then converts it to a
- * timeline production order). Reference photos upload after the id is known.
+ * A sale quote is one or more items, each priced from the item master: gold by
+ * item code and weight at today's rate, making per gram x weight, and diamonds
+ * (D) and colour stones (C) by code and size at a rate per carat x a staff-only
+ * multiplier. A style number loads the design's default materials. Discounts:
+ * % off making, % off stones, then a flat amount; never into the gold. Repair
+ * mode is making-only. The live preview mirrors the server formula.
+ *
+ * Keyboard: Alt+N new item, Alt+D diamond, Alt+C colour stone (on the item
+ * being edited), Ctrl+Enter creates the quote.
  */
 export function QuoteBuilderDialog({
   open,
@@ -109,15 +107,12 @@ export function QuoteBuilderDialog({
     useStoreScope();
   const createQuote = useCreateQuote();
   const metalRates = useMetalRates();
+  const materials = useMaterials();
   const uploadPhoto = useUploadQuotePhoto();
   const convertToOrder = useConvertQuoteToOrder();
+  const lists = useMemo(() => masterLists(materials.data), [materials.data]);
 
   const [mode, setMode] = useState<QuoteKind>("sale");
-
-  // Quick = simplified front door (gold + one diamond); Advanced = the full
-  // builder. Both drive the SAME state/totals/submit — Quick only hides extra
-  // controls, so nothing about pricing or saving changes between them.
-  const [view, setView] = useState<"quick" | "advanced">("quick");
   // Inline validation errors, keyed by field. Cleared per-field on change.
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -127,50 +122,39 @@ export function QuoteBuilderDialog({
   // Kaccha ("@") estimate — rough, no-GST, kept head-office-only.
   const [isKaccha, setIsKaccha] = useState(false);
 
-  // Sale — gold
-  const [category, setCategory] = useState("ring");
-  const [saleDesc, setSaleDesc] = useState("");
-  const [karat, setKarat] = useState(18);
-  const [weight, setWeight] = useState("");
-  const [rateMode, setRateMode] = useState<"auto" | "manual">("auto");
-  const [manualRate, setManualRate] = useState("");
-  const [makingMode, setMakingMode] = useState<"flat" | "per_gram">("flat");
-  const [makingRatePerGram, setMakingRatePerGram] = useState("1500");
-  const [making, setMaking] = useState("");
-
-  // Sale — diamonds
-  const [diamonds, setDiamonds] = useState<DiamondRow[]>([]);
-  const diamondId = useRef(0);
+  // Sale — the items, and which one the keyboard shortcuts add stones to.
+  const [items, setItems] = useState<ItemRow[]>(() => [emptyItem()]);
+  const [activeItem, setActiveItem] = useState(0);
 
   // Repair
   const [grossWeight, setGrossWeight] = useState("");
   const [repairDetails, setRepairDetails] = useState("");
   const [remarks, setRemarks] = useState("");
   const [repairMaking, setRepairMaking] = useState("");
-  /** One discount % off making + diamonds. Gold is never discounted. */
-  const [discount, setDiscount] = useState("");
+
+  // Discounts: % off making, % off diamonds and stones, a flat amount at the end.
+  const [makingDiscount, setMakingDiscount] = useState("");
+  const [stoneDiscount, setStoneDiscount] = useState("");
+  const [additionalDiscount, setAdditionalDiscount] = useState("");
 
   // Reference photos (uploaded after the quote id is known)
   const [refFiles, setRefFiles] = useState<File[]>([]);
   const refInput = useRef<HTMLInputElement>(null);
 
-  // Diamond pricing reference (client's chart — placeholder until provided)
-  const [chartOpen, setChartOpen] = useState(false);
-  const [chartFile, setChartFile] = useState<File | null>(null);
-  const chartInput = useRef<HTMLInputElement>(null);
-
   // Custom-order details (revealed for the "Custom Order" action)
   const [customOpen, setCustomOpen] = useState(false);
-  const [ringSize, setRingSize] = useState("");
-  const [bangleSize, setBangleSize] = useState("");
   const [metalColorSel, setMetalColorSel] = useState("");
   const [metalColorOther, setMetalColorOther] = useState("");
   const [deliveryDate, setDeliveryDate] = useState("");
   const [advance, setAdvance] = useState("");
   const [advanceMode, setAdvanceMode] = useState("");
 
+  const firstMetal = lists.metals.find((m) => m.code === items[0]?.metalCode);
   const metalColor =
-    metalColorSel === "other" ? metalColorOther.trim() : metalColorSel;
+    metalColorSel === "other"
+      ? metalColorOther.trim()
+      : metalColorSel || (firstMetal?.tone ? TONE_COLOUR[firstMetal.tone] ?? "" : "");
+  const itemTypeName = (code: string) => lists.itemTypes.find((t) => t.code === code)?.name ?? "";
 
   /*
    * Object-URL previews are DERIVED from the picked files, not state that
@@ -181,140 +165,88 @@ export function QuoteBuilderDialog({
   const refUrls = useMemo(() => refFiles.map((f) => URL.createObjectURL(f)), [refFiles]);
   useEffect(() => () => refUrls.forEach((u) => URL.revokeObjectURL(u)), [refUrls]);
 
-  const chartUrl = useMemo(
-    () => (chartFile ? URL.createObjectURL(chartFile) : null),
-    [chartFile],
-  );
-  useEffect(() => {
-    if (!chartUrl) return;
-    const u = chartUrl;
-    return () => URL.revokeObjectURL(u);
-  }, [chartUrl]);
-
-  const weightNum = toNumber(weight) ?? 0;
-  const makingNum = makingMode === "per_gram" 
-    ? (toNumber(makingRatePerGram) ?? 0) * weightNum 
-    : (toNumber(making) ?? 0);
-  // "Auto" now means the rate on record for this store, not a constant baked
-  // into the repo. GOLD_RATE_PER_GRAM survives only as the last-resort fallback
-  // for a fresh deployment with no MetalRate rows yet — every quote priced off
-  // it was otherwise using whatever gold cost the day that file was written.
-  const liveRate = metalRates.rateFor(karat);
-  const autoRate = liveRate?.ratePerGram ?? GOLD_RATE_PER_GRAM[karat] ?? 7180;
-  const rateIsStale = liveRate?.stale ?? false;
-  const rateStaleNote = staleNote(liveRate);
-  const rateIsFallback = liveRate == null;
-  const goldRate = rateMode === "auto" ? autoRate : toNumber(manualRate) ?? 0;
-  const diamondsTotal = diamonds.reduce((s, d) => {
-    const p = toNumber(d.price);
-    const c = toNumber(d.carat);
-    const r = toNumber(d.perCaratRate);
-    const calcP = r != null && c != null ? r * c : (p ?? 0);
-    return s + calcP;
-  }, 0);
-
-  const repairMakingNum = toNumber(repairMaking) ?? 0;
-
-  // Quick-mode gold rate: show the live auto rate but let the user overwrite it
-  // (typing switches the shared rate control to manual so goldRate follows).
-  const quickRate = rateMode === "manual" ? manualRate : String(autoRate);
-  function onQuickRateChange(v: string) {
-    setRateMode("manual");
-    setManualRate(v);
+  /*
+   * "Today's rate" is the rate on record for this store. GOLD_RATE_PER_GRAM
+   * survives only as the last-resort fallback for a fresh deployment with no
+   * MetalRate rows yet, and a quote cannot be saved on it (see submit).
+   */
+  function autoRate(karat: number): AutoRate {
+    const live = metalRates.rateFor(karat);
+    return {
+      rate: live?.ratePerGram ?? GOLD_RATE_PER_GRAM[karat] ?? 0,
+      stale: live?.stale ?? false,
+      fallback: live == null,
+      note: live == null
+        ? "No rate on record — type today's"
+        : live.stale
+          ? `${karat}K · ${staleNote(live) ?? "out of date"}`
+          : `${karat}K · ${live.derived ? "derived from 24K by purity" : "today's rate"}`,
+    };
   }
-  // Quick mode edits a single diamond — the first row of the shared array — so
-  // buildLines()/totals treat it identically to an Advanced diamond line.
-  const quickDiamond = diamonds[0];
-  function setQuickDiamond(patch: Partial<DiamondRow>) {
-    setDiamonds((d) =>
-      d.length === 0
-        ? [
-            {
-              id: (diamondId.current += 1),
-              desc: "",
-              carat: "",
-              perCaratRate: "",
-              price: "",
-              ...patch,
-            },
+  const karatOf = (item: ItemRow) => lists.metals.find((m) => m.code === item.metalCode)?.karat ?? 0;
+  const goldRateOf = (item: ItemRow) =>
+    num(item.manualRate) ?? (karatOf(item) ? autoRate(karatOf(item)).rate : 0);
 
-          ]
-        : d.map((x, i) => (i === 0 ? { ...x, ...patch } : x)),
-    );
-  }
+  const repairMakingNum = num(repairMaking) ?? 0;
+  const disc = {
+    making: Math.min(Math.max(num(makingDiscount) ?? 0, 0), 100),
+    stone: Math.min(Math.max(num(stoneDiscount) ?? 0, 0), 100),
+    additional: Math.max(num(additionalDiscount) ?? 0, 0),
+  };
 
-  function clearError(field: string) {
-    setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
-  }
-
-  function changeView(next: "quick" | "advanced") {
-    // Quick only handles Sale (gold + diamond); returning to Quick from an
-    // Advanced repair snaps the mode back so the simplified form stays coherent.
-    if (next === "quick" && mode === "repair") setMode("sale");
-    setView(next);
-  }
-
-  const discountNum = Math.min(Math.max(toNumber(discount) ?? 0, 0), 100);
-  const preview = useMemo(() => {
+  const preview = (() => {
     // Kaccha estimates carry no GST — mirror the server (GST = 0, grand =
-    // taxable) for both Sale and Repair modes. The discount comes off making +
-    // diamonds before tax, exactly as the server computes it.
+    // taxable). The discounts come off making + stones before tax, exactly as
+    // the server computes them.
     const rate = isKaccha ? 0 : GST_RATE;
-    if (mode === "repair") {
-      const makingV = repairMakingNum;
-      const discountV = Math.round(makingV * discountNum) / 100;
-      const taxable = makingV - discountV;
-      const gst = taxable * rate;
-      return {
-        metal: 0,
-        making: makingV,
-        stones: 0,
-        discount: discountV,
-        taxable,
-        gst,
-        grand: taxable + gst,
-      };
+    let metal = 0;
+    let making = repairMakingNum;
+    let stones = 0;
+    if (mode === "sale") {
+      making = 0;
+      for (const it of items) {
+        const p = priceItem(it, goldRateOf(it));
+        metal += p.metal;
+        making += p.making;
+        stones += p.stoneTotal;
+      }
     }
-    const metal = weightNum * goldRate;
-    const discountV = Math.round((makingNum + diamondsTotal) * discountNum) / 100;
-    const taxable = metal + makingNum + diamondsTotal - discountV;
+    const makingOff = round2((making * disc.making) / 100);
+    const byPercent = (making * disc.making + stones * disc.stone) / 100;
+    const discount = round2(byPercent + disc.additional);
+    const taxable = metal + making + stones - discount;
     const gst = taxable * rate;
     return {
       metal,
-      making: makingNum,
-      stones: diamondsTotal,
-      discount: discountV,
+      making,
+      stones,
+      makingOff,
+      stoneOff: round2(byPercent - makingOff),
+      additional: disc.additional,
+      discount,
+      overDiscount: disc.additional > round2(making + stones - byPercent) + 0.001,
       taxable,
       gst,
       grand: taxable + gst,
     };
-  }, [
-    mode,
-    isKaccha,
-    repairMakingNum,
-    weightNum,
-    goldRate,
-    makingNum,
-    diamondsTotal,
-    discountNum,
-  ]);
+  })();
 
   const busy =
     createQuote.isPending ||
     uploadPhoto.isPending ||
     convertToOrder.isPending;
 
-  function addDiamond() {
-    setDiamonds((d) => [
-      ...d,
-      { id: (diamondId.current += 1), desc: "", carat: "", perCaratRate: "", price: "" },
-    ]);
+  const updateItem = (i: number, next: ItemRow) =>
+    setItems((list) => list.map((x, idx) => (idx === i ? next : x)));
+  function addItem() {
+    setItems((list) => [...list, emptyItem()]);
+    setActiveItem(items.length);
   }
-  function updateDiamond(id: number, patch: Partial<DiamondRow>) {
-    setDiamonds((d) => d.map((x) => (x.id === id ? { ...x, ...patch } : x)));
-  }
-  function removeDiamond(id: number) {
-    setDiamonds((d) => d.filter((x) => x.id !== id));
+  function addStone(type: "D" | "C") {
+    const i = Math.min(activeItem, items.length - 1);
+    setItems((list) =>
+      list.map((x, idx) => (idx === i ? { ...x, stones: [...x.stones, emptyStone(type)] } : x)),
+    );
   }
 
   function onPickRefs(e: React.ChangeEvent<HTMLInputElement>) {
@@ -329,48 +261,30 @@ export function QuoteBuilderDialog({
   function removeRef(i: number) {
     setRefFiles((prev) => prev.filter((_, idx) => idx !== i));
   }
-  function onPickChart(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0] ?? null;
-    if (f && f.size > MAX_FILE_BYTES) {
-      toast.error("Chart image is too large — keep it under 8 MB.");
-      e.target.value = "";
-      return;
-    }
-    setChartFile(f);
-  }
 
   function reset() {
     setMode("sale");
-    setView("quick");
     setErrors({});
     setCustomer("");
     setPhone("");
     setIsKaccha(false);
-    setSaleDesc("");
-    setKarat(22);
-    setWeight("");
-    setRateMode("auto");
-    setManualRate("");
-    setMaking("");
-    setDiamonds([]);
+    setItems([emptyItem()]);
+    setActiveItem(0);
     setGrossWeight("");
     setRepairDetails("");
     setRemarks("");
     setRepairMaking("");
-    setDiscount("");
+    setMakingDiscount("");
+    setStoneDiscount("");
+    setAdditionalDiscount("");
     setRefFiles([]);
-    setChartOpen(false);
-    setChartFile(null);
     setCustomOpen(false);
-    setRingSize("");
-    setBangleSize("");
     setMetalColorSel("");
     setMetalColorOther("");
     setDeliveryDate("");
     setAdvance("");
     setAdvanceMode("");
     if (refInput.current) refInput.current.value = "";
-    if (chartInput.current) chartInput.current.value = "";
   }
 
   /** Build the payload lines for the active mode. */
@@ -388,63 +302,77 @@ export function QuoteBuilderDialog({
         },
       ];
     }
-    const lines: QuoteLineInput[] = [];
-    if (weightNum > 0 || makingNum > 0) {
-      lines.push({
-        description: saleDesc.trim() || `${karat}K gold`,
-        karat,
-        weightGrams: weightNum,
-        goldRatePerGram: goldRate,
-        makingCharges: makingNum,
-        stoneCharges: 0,
-        caratWeight: 0,
+    return items
+      .filter((it) => (num(it.weight) ?? 0) > 0 || it.stones.length > 0)
+      .map((it) => {
+        const p = priceItem(it, goldRateOf(it));
+        const hasGold = p.weight > 0;
+        return {
+          description: itemTypeName(it.itemType) || "Item",
+          karat: hasGold ? karatOf(it) : 0,
+          weightGrams: p.weight,
+          goldRatePerGram: hasGold ? goldRateOf(it) : 0,
+          makingCharges: p.making,
+          stoneCharges: p.stoneTotal,
+          caratWeight: it.stones.reduce((s, x) => s + (num(x.carats) ?? 0), 0),
+          styleNumber: it.styleNumber.trim() || undefined,
+          size: sizeText(it) || undefined,
+          metalCode: hasGold ? it.metalCode : undefined,
+          makingRatePerGram: hasGold ? num(it.makingRate) ?? 0 : undefined,
+          stones: it.stones.length
+            ? it.stones.map((s) => ({
+                type: s.type,
+                code: s.code.trim(),
+                size: s.size.trim() || undefined,
+                pieces: num(s.pieces),
+                carats: round2(num(s.carats) ?? 0),
+                ratePerCt: num(s.rate) ?? 0,
+                multiplier: num(s.multiplier) ?? 1,
+              }))
+            : undefined,
+        };
       });
-    }
-    for (const d of diamonds) {
-      const price = toNumber(d.price) ?? 0;
-      const carat = toNumber(d.carat) ?? 0;
-      const perCaratRate = toNumber(d.perCaratRate) ?? 0;
-      const calcPrice = perCaratRate > 0 && carat > 0 ? perCaratRate * carat : price;
-      if (calcPrice > 0 || carat > 0 || d.desc.trim()) {
-        lines.push({
-          description: d.desc.trim() || "Diamond",
-          karat: 0,
-          weightGrams: 0,
-          goldRatePerGram: 0,
-          makingCharges: 0,
-          stoneCharges: calcPrice,
-          caratWeight: carat,
-          perCaratRate: perCaratRate > 0 ? perCaratRate : undefined,
-        });
-      }
-    }
-
-    return lines;
   }
 
-  /** Best-effort upload of every picked reference + the diamond chart. */
+  /** What stops the items being priced, if anything. */
+  function itemProblem(): string | null {
+    const priced = items.filter((it) => (num(it.weight) ?? 0) > 0 || it.stones.length > 0);
+    if (!priced.length) return "Add a gold weight or a diamond to an item.";
+    for (const [i, it] of items.entries()) {
+      if (!priced.includes(it)) continue;
+      const n = `Item ${i + 1}`;
+      if (!it.itemType) return `${n}: pick the item type.`;
+      if ((num(it.weight) ?? 0) > 0 && !karatOf(it)) return `${n}: pick the metal (9, 12, 14, 18, 22 or 24K).`;
+      if ((num(it.weight) ?? 0) > 0 && !num(it.manualRate)) {
+        const a = autoRate(karatOf(it));
+        // A quote freezes the gold rate it was priced at. It must not freeze a
+        // built-in default or a rate that has gone out of date while looking
+        // like today's: with either, the person confirms today's by typing it.
+        if (a.fallback || a.stale) return `${n}: the ${karatOf(it)}K rate is not today's — type today's rate.`;
+      }
+      for (const s of it.stones) {
+        const list = s.type === "D" ? lists.diamonds : lists.stones;
+        if (!s.code.trim()) return `${n}: a ${s.type === "D" ? "diamond" : "colour stone"} has no code.`;
+        if (list.length && !list.some((m) => m.code === s.code.trim())) {
+          return `${n}: ${s.code} is not a ${s.type === "D" ? "diamond" : "colour stone"} code — pick one from the list.`;
+        }
+        if (!((num(s.carats) ?? 0) > 0)) return `${n}: ${s.code} needs its carats.`;
+      }
+      if (sizeText(it).length > 30) return `${n}: the size is too long.`;
+    }
+    return null;
+  }
+
+  /** Best-effort upload of every picked reference photo. */
   async function uploadPhotos(id: string) {
     let failed = false;
-    const jobs: Promise<unknown>[] = [];
-    for (const f of refFiles) {
-      jobs.push(
-        uploadPhoto
-          .mutateAsync({ id, file: f, label: "Reference" })
-          .catch(() => {
-            failed = true;
-          }),
-      );
-    }
-    if (chartFile) {
-      jobs.push(
-        uploadPhoto
-          .mutateAsync({ id, file: chartFile, label: "Diamond pricing chart" })
-          .catch(() => {
-            failed = true;
-          }),
-      );
-    }
-    await Promise.all(jobs);
+    await Promise.all(
+      refFiles.map((f) =>
+        uploadPhoto.mutateAsync({ id, file: f, label: "Reference" }).catch(() => {
+          failed = true;
+        }),
+      ),
+    );
     if (failed) {
       toast.warning(
         "Quote saved, but one or more photos failed to upload. You can re-attach them from the quote.",
@@ -456,7 +384,7 @@ export function QuoteBuilderDialog({
     const rows = buildLines()
       .map(
         (l) =>
-          `<tr><td>${escapeHtml(l.description)}</td><td style="text-align:right">${formatINR(
+          `<tr><td>${escapeHtml([l.description, l.size ? `size ${l.size}` : ""].filter(Boolean).join(" · "))}</td><td style="text-align:right">${formatINR(
             l.weightGrams * l.goldRatePerGram +
               l.makingCharges +
               l.stoneCharges,
@@ -482,7 +410,7 @@ export function QuoteBuilderDialog({
       <table class="tot" style="margin-top:16px"><tbody>
         ${
           preview.discount > 0
-            ? `<tr><td>Discount ${discountNum}%</td><td style="text-align:right">- ${formatINR(preview.discount)}</td></tr>`
+            ? `<tr><td>Discount</td><td style="text-align:right">- ${formatINR(preview.discount)}</td></tr>`
             : ""
         }
         <tr><td>Taxable</td><td style="text-align:right">${formatINR(
@@ -511,6 +439,7 @@ export function QuoteBuilderDialog({
   }
 
   async function submit(asCustomOrder: boolean) {
+    if (busy) return;
     if (!targetStoreId) {
       toast.error("Select a store to raise this quote at.");
       return;
@@ -533,35 +462,18 @@ export function QuoteBuilderDialog({
       toast.error("Please fill in the required fields.");
       return;
     }
-    // Weights can't be negative (backend @Min(0) on weightGrams / gross weight).
-    if (weightNum < 0 || (toNumber(grossWeight) ?? 0) < 0) {
-      toast.error("Weight cannot be negative.");
+    if (mode === "sale") {
+      const problem = itemProblem();
+      if (problem) {
+        toast.error(problem);
+        return;
+      }
+    } else if (repairMakingNum <= 0) {
+      toast.error("Enter a making charge for the repair.");
       return;
     }
-    // A quote freezes the gold rate it was priced at. It must not freeze a
-    // built-in default or a rate that has gone out of date while looking like
-    // today's: with either, the person confirms today's rate by entering it.
-    if (mode !== "repair" && weightNum > 0 && rateMode === "auto" && (rateIsFallback || rateIsStale)) {
-      toast.error(
-        rateIsFallback
-          ? `No ${karat}K gold rate is on record. Switch to Manual and enter today's rate.`
-          : `The ${karat}K gold rate is out of date. Switch to Manual and confirm today's rate.`,
-      );
-      return;
-    }
-    const discountValue = toNumber(discount);
-    if (discount.trim() && (discountValue == null || discountValue < 0 || discountValue > 100)) {
-      toast.error("Discount must be a percentage between 0 and 100.");
-      return;
-    }
-    const lines = buildLines();
-    // Guard: at least one line must carry a weight or a price before saving.
-    if (lines.length === 0) {
-      toast.error(
-        mode === "repair"
-          ? "Enter a making charge for the repair."
-          : "Add a gold weight/making charge or at least one diamond.",
-      );
+    if (preview.overDiscount) {
+      toast.error("The discount comes to more than the making and diamonds. Gold is never discounted.");
       return;
     }
 
@@ -573,21 +485,22 @@ export function QuoteBuilderDialog({
         kind: mode,
         isKaccha: isKaccha || undefined,
         remarks: mode === "repair" ? remarks.trim() || undefined : undefined,
-        grossWeightG: mode === "repair" ? toNumber(grossWeight) : undefined,
-        discountPercent: discountValue || undefined,
-        lines,
+        grossWeightG: mode === "repair" ? num(grossWeight) : undefined,
+        makingDiscountPercent: disc.making || undefined,
+        stoneDiscountPercent: disc.stone || undefined,
+        additionalDiscount: disc.additional || undefined,
+        lines: buildLines(),
       });
 
       await uploadPhotos(quote.id);
 
       if (asCustomOrder) {
+        // The item type and size travel on the quote's first item.
         const res = await convertToOrder.mutateAsync({
           id: quote.id,
-          ringSize: ringSize.trim() || undefined,
-          bangleSize: bangleSize.trim() || undefined,
           metalColor: metalColor || undefined,
           deliveryDate: deliveryDate || undefined,
-          advanceReceived: toNumber(advance),
+          advanceReceived: num(advance),
           advanceMode: advanceMode || undefined,
         });
         toast.success(`Custom order ${res.order.ref} created`, {
@@ -599,7 +512,7 @@ export function QuoteBuilderDialog({
         // sharing action lives on the quote itself; saying it had already gone
         // out meant a rep could walk away believing the customer had the price.
         toast.success(`Quote ${quote.ref} created`, {
-          description: `${formatINR(preview.grand)} · ready for ${name}.`,
+          description: `${formatINR(quote.totals?.grandTotal ?? preview.grand)} · ready for ${name}.`,
           action: { label: "Print", onClick: () => printSummary(html) },
         });
       }
@@ -611,19 +524,27 @@ export function QuoteBuilderDialog({
   }
 
   function onCustomOrderClick() {
-    // A custom order needs the extra details (size, delivery, advance) that
-    // only live in Advanced — jump there and open that section first.
-    if (view === "quick") {
-      setView("advanced");
-      setCustomOpen(true);
-      return;
-    }
     // First tap reveals the custom-order fields; second tap submits.
     if (!customOpen) {
       setCustomOpen(true);
       return;
     }
-    submit(true);
+    void submit(true);
+  }
+
+  function onShortcut(e: React.KeyboardEvent) {
+    if (e.ctrlKey && e.key === "Enter") {
+      e.preventDefault();
+      void submit(false);
+      return;
+    }
+    if (!e.altKey || mode !== "sale") return;
+    const key = e.key.toLowerCase();
+    if (key === "n") addItem();
+    else if (key === "d") addStone("D");
+    else if (key === "c") addStone("C");
+    else return;
+    e.preventDefault();
   }
 
   return (
@@ -634,37 +555,21 @@ export function QuoteBuilderDialog({
         onOpenChange(o);
       }}
     >
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
+      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-4xl" onKeyDown={onShortcut}>
         <DialogHeader>
           <DialogTitle>New quote</DialogTitle>
           <DialogDescription>
-            Raised at {storeLabel}. Gold rate is snapshotted from the active feed
-            unless overridden.
+            Raised at {storeLabel}. Gold is priced at today&apos;s rate unless you
+            type another.
           </DialogDescription>
         </DialogHeader>
+
+        <MaterialDatalists lists={lists} />
 
         <div className="grid gap-4">
           <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
 
-          {/* Quick vs Advanced — simplified front door defaults on */}
-          <Tabs
-            value={view}
-            onValueChange={(v) => changeView(v as "quick" | "advanced")}
-          >
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="quick">
-                <Zap className="mr-1.5 h-4 w-4" />
-                Quick
-              </TabsTrigger>
-              <TabsTrigger value="advanced">
-                <SlidersHorizontal className="mr-1.5 h-4 w-4" />
-                Advanced
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-
-          {/* Sale / Repair mode — Advanced only */}
-          {view === "advanced" ? (
+          <div className="grid gap-3 sm:grid-cols-[auto_1fr_1fr]">
             <div className="grid gap-1.5">
               <Label>Quote type</Label>
               <Tabs value={mode} onValueChange={(v) => setMode(v as QuoteKind)}>
@@ -680,10 +585,6 @@ export function QuoteBuilderDialog({
                 </TabsList>
               </Tabs>
             </div>
-          ) : null}
-
-          {/* Customer */}
-          <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="qb-cust">
                 Customer name <span className="text-destructive">*</span>
@@ -694,14 +595,12 @@ export function QuoteBuilderDialog({
                 aria-invalid={!!errors.customer}
                 onChange={(e) => {
                   setCustomer(e.target.value);
-                  clearError("customer");
+                  setErrors((p) => ({ ...p, customer: "" }));
                 }}
                 placeholder="e.g. Meera Iyer"
               />
               {errors.customer ? (
-                <p className="mt-1 text-xs text-destructive">
-                  {errors.customer}
-                </p>
+                <p className="mt-1 text-xs text-destructive">{errors.customer}</p>
               ) : null}
             </div>
             <div className="grid gap-1.5">
@@ -714,7 +613,7 @@ export function QuoteBuilderDialog({
                 aria-invalid={!!errors.phone}
                 onChange={(e) => {
                   setPhone(e.target.value);
-                  clearError("phone");
+                  setErrors((p) => ({ ...p, phone: "" }));
                 }}
                 placeholder="+91 ..."
               />
@@ -724,122 +623,11 @@ export function QuoteBuilderDialog({
             </div>
           </div>
 
-          {/* Quick mode — essentials only. Reuses the SAME weight/rate/making
-              and first-diamond state that Advanced edits, so totals + submit
-              are identical; this is just a simplified front door. */}
-          {view === "quick" ? (
-            <>
-              {/* Gold */}
-              <div className="rounded-lg border p-3">
-                <p className="mb-3 flex items-center gap-1.5 text-sm font-medium">
-                  <Sparkles className="h-4 w-4 text-gold-strong" />
-                  Gold
-                </p>
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="qb-q-wt">Weight (g)</Label>
-                    <Input
-                      id="qb-q-wt"
-                      type="number"
-                      inputMode="decimal"
-                      min={0}
-                      placeholder="0"
-                      value={weight}
-                      onChange={(e) => setWeight(e.target.value)}
-                    />
-                  </div>
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="qb-q-rate">Rate (₹/g)</Label>
-                    <Input
-                      id="qb-q-rate"
-                      type="number"
-                      inputMode="numeric"
-                      placeholder="0"
-                      value={quickRate}
-                      onChange={(e) => onQuickRateChange(e.target.value)}
-                    />
-                  </div>
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="qb-q-making">Making (₹)</Label>
-                    <Input
-                      id="qb-q-making"
-                      type="number"
-                      inputMode="numeric"
-                      placeholder="0"
-                      value={making}
-                      onChange={(e) => setMaking(e.target.value)}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* One diamond (optional) */}
-              <div className="rounded-lg border p-3">
-                <p className="mb-3 flex items-center gap-1.5 text-sm font-medium">
-                  <Gem className="h-4 w-4 text-muted-foreground" />
-                  Diamond
-                  <span className="text-xs font-normal text-muted-foreground">
-                    optional
-                  </span>
-                </p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="qb-q-carat">Carat (ct)</Label>
-                    <Input
-                      id="qb-q-carat"
-                      type="number"
-                      inputMode="decimal"
-                      placeholder="0"
-                      value={quickDiamond?.carat ?? ""}
-                      onChange={(e) =>
-                        setQuickDiamond({ carat: e.target.value })
-                      }
-                    />
-                  </div>
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="qb-q-price">Price (₹)</Label>
-                    <Input
-                      id="qb-q-price"
-                      type="number"
-                      inputMode="numeric"
-                      placeholder="0"
-                      value={quickDiamond?.price ?? ""}
-                      onChange={(e) =>
-                        setQuickDiamond({ price: e.target.value })
-                      }
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Escalate to the full builder */}
-              <button
-                type="button"
-                onClick={() => changeView("advanced")}
-                className="inline-flex items-center gap-1 justify-self-start text-sm font-medium text-primary hover:underline"
-              >
-                More options
-                <ArrowRight className="h-4 w-4" />
-              </button>
-            </>
-          ) : null}
-
-          {/* Advanced-only body — kaccha toggle, full gold/repair sections and
-              reference images. Quick mode hides all of this. */}
-          {view === "advanced" ? (
-            <>
           {/* Kaccha ("@") estimate — no-GST, head-office-only */}
-          <div className="flex items-start justify-between gap-4 rounded-lg border bg-muted/30 px-3 py-2.5">
-            <div className="min-w-0">
-              <Label htmlFor="qb-kaccha" className="text-sm font-medium">
-                Kaccha estimate — no GST (head-office only)
-              </Label>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                Rough estimate; typing &ldquo;@&rdquo; before an amount is the
-                kaccha convention. Saved privately, hidden from the normal quote
-                list.
-              </p>
-            </div>
+          <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/30 px-3 py-2">
+            <Label htmlFor="qb-kaccha" className="text-sm font-normal">
+              Kaccha estimate — no GST, kept private to head office
+            </Label>
             <button
               id="qb-kaccha"
               type="button"
@@ -848,7 +636,7 @@ export function QuoteBuilderDialog({
               aria-label="Kaccha estimate — no GST"
               onClick={() => setIsKaccha((v) => !v)}
               className={cn(
-                "relative mt-0.5 inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 isKaccha ? "bg-primary" : "bg-input",
               )}
             >
@@ -862,273 +650,25 @@ export function QuoteBuilderDialog({
           </div>
 
           {mode === "sale" ? (
-            <>
-              {/* Gold section */}
-              <div className="rounded-lg border p-3">
-                <p className="mb-3 flex items-center gap-1.5 text-sm font-medium">
-                  <Sparkles className="h-4 w-4 text-gold-strong" />
-                  Gold
-                </p>
-                <div className="grid gap-3">
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="qb-desc">Item / description</Label>
-                    <Input
-                      id="qb-desc"
-                      value={saleDesc}
-                      onChange={(e) => setSaleDesc(e.target.value)}
-                      placeholder="e.g. 22K gold chain"
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                    <div className="grid gap-1.5">
-                      <Label htmlFor="qb-karat">Karat</Label>
-                      <Input
-                        id="qb-karat"
-                        type="number"
-                        inputMode="numeric"
-                        value={karat}
-                        onChange={(e) =>
-                          setKarat(Number(e.target.value) || 22)
-                        }
-                      />
-                    </div>
-                    <div className="grid gap-1.5">
-                      <Label htmlFor="qb-wt">Weight (g)</Label>
-                      <Input
-                        id="qb-wt"
-                        type="number"
-                        inputMode="decimal"
-                        min={0}
-                        placeholder="0"
-                        value={weight}
-                        onChange={(e) => setWeight(e.target.value)}
-                      />
-                    </div>
-                    <div className="grid gap-1.5">
-                      <Label htmlFor="qb-making">Making (₹)</Label>
-                      <Input
-                        id="qb-making"
-                        type="number"
-                        inputMode="numeric"
-                        placeholder="0"
-                        value={making}
-                        onChange={(e) => setMaking(e.target.value)}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Gold rate — auto vs manual */}
-                  <div className="grid gap-1.5">
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="qb-rate">Gold rate (₹/g)</Label>
-                      <Tabs
-                        value={rateMode}
-                        onValueChange={(v) =>
-                          setRateMode(v as "auto" | "manual")
-                        }
-                      >
-                        <TabsList className="h-7">
-                          <TabsTrigger value="auto" className="text-xs">
-                            Auto
-                          </TabsTrigger>
-                          <TabsTrigger value="manual" className="text-xs">
-                            Manual
-                          </TabsTrigger>
-                        </TabsList>
-                      </Tabs>
-                    </div>
-                    {rateMode === "auto" ? (
-                      <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm">
-                        <span className="num font-medium">
-                          {formatINR(autoRate)}/g
-                        </span>
-                        {/* Say where the number came from. A rate that is stale
-                            or a built-in default looks identical to a fresh one
-                            on the total, and the difference is real money. */}
-                        {rateIsFallback ? (
-                          <>
-                            <Badge variant="destructive" className="text-[10px]">
-                              No rate on record
-                            </Badge>
-                            <span className="text-xs text-muted-foreground">
-                              Using a built-in default — check today&apos;s rate
-                              and switch to Manual.
-                            </span>
-                          </>
-                        ) : rateIsStale ? (
-                          <>
-                            <Badge variant="destructive" className="text-[10px]">
-                              {karat}K · out of date
-                            </Badge>
-                            <span className="text-xs text-muted-foreground">
-                              {rateStaleNote}. Confirm today&apos;s rate before quoting.
-                            </span>
-                          </>
-                        ) : (
-                          <Badge variant="outline" className="text-[10px]">
-                            {karat}K · {liveRate?.derived ? "derived from 24K by purity" : "today’s rate"}
-                          </Badge>
-                        )}
-                      </div>
-                    ) : (
-                      <Input
-                        id="qb-rate"
-                        type="number"
-                        inputMode="numeric"
-                        placeholder="e.g. 7180"
-                        value={manualRate}
-                        onChange={(e) => setManualRate(e.target.value)}
-                      />
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Diamonds section */}
-              <div className="rounded-lg border p-3">
-                <div className="mb-2 flex items-center justify-between">
-                  <p className="flex items-center gap-1.5 text-sm font-medium">
-                    <Gem className="h-4 w-4 text-muted-foreground" />
-                    Diamonds
-                  </p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={addDiamond}
-                  >
-                    <Plus className="h-4 w-4" />
-                    Add diamond
-                  </Button>
-                </div>
-                {diamonds.length === 0 ? (
-                  <p className="rounded-md border border-dashed py-3 text-center text-xs text-muted-foreground">
-                    No diamonds yet — add one line per stone/lot with its own
-                    price.
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    {diamonds.map((d) => (
-                      <div
-                        key={d.id}
-                        className="grid grid-cols-[1fr_auto] items-end gap-2 rounded-md bg-muted/30 p-2"
-                      >
-                        <div className="grid gap-2">
-                          <Input
-                            aria-label="Diamond type / description"
-                            placeholder="Type / description (e.g. VVS round 0.30ct)"
-                            value={d.desc}
-                            onChange={(e) =>
-                              updateDiamond(d.id, { desc: e.target.value })
-                            }
-                          />
-                          <div className="grid grid-cols-2 gap-2">
-                            <Input
-                              aria-label="Carat weight"
-                              type="number"
-                              inputMode="decimal"
-                              placeholder="Carat (ct)"
-                              value={d.carat}
-                              onChange={(e) =>
-                                updateDiamond(d.id, { carat: e.target.value })
-                              }
-                            />
-                            <Input
-                              aria-label="Diamond price"
-                              type="number"
-                              inputMode="numeric"
-                              placeholder="Price (₹)"
-                              value={d.price}
-                              onChange={(e) =>
-                                updateDiamond(d.id, { price: e.target.value })
-                              }
-                            />
-                          </div>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => removeDiamond(d.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          <span className="sr-only">Remove diamond</span>
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Diamond pricing reference — placeholder chart slot */}
-                <div className="mt-3 rounded-md border border-dashed">
-                  <button
-                    type="button"
-                    onClick={() => setChartOpen((v) => !v)}
-                    className="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-medium"
-                  >
-                    <span>Diamond pricing reference</span>
-                    <ChevronDown
-                      className={cn(
-                        "h-4 w-4 transition-transform",
-                        chartOpen && "rotate-180",
-                      )}
-                    />
-                  </button>
-                  {chartOpen ? (
-                    <div className="border-t px-3 py-3">
-                      <p className="mb-2 text-xs text-muted-foreground">
-                        Upload the client&apos;s diamond pricing chart here — the
-                        chart isn&apos;t provided yet, so diamond prices are
-                        entered manually per line for now.
-                      </p>
-                      {chartUrl ? (
-                        <div className="relative flex items-center gap-3 rounded-md border bg-muted/30 p-2">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={chartUrl}
-                            alt="Diamond pricing chart"
-                            className="h-14 w-14 shrink-0 rounded object-cover"
-                          />
-                          <p className="min-w-0 flex-1 truncate text-xs">
-                            {chartFile?.name}
-                          </p>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => {
-                              setChartFile(null);
-                              if (chartInput.current)
-                                chartInput.current.value = "";
-                            }}
-                          >
-                            <X className="h-4 w-4" />
-                            <span className="sr-only">Remove chart</span>
-                          </Button>
-                        </div>
-                      ) : (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => chartInput.current?.click()}
-                        >
-                          <ImagePlus className="h-4 w-4" />
-                          Upload pricing chart
-                        </Button>
-                      )}
-                      <input
-                        ref={chartInput}
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={onPickChart}
-                      />
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            </>
+            <div className="grid gap-3">
+              {items.map((it, i) => (
+                <QuoteItemEditor
+                  key={it.id}
+                  index={i}
+                  item={it}
+                  lists={lists}
+                  master={materials.data}
+                  autoRate={autoRate}
+                  onChange={(nextItem) => updateItem(i, nextItem)}
+                  onRemove={items.length > 1 ? () => setItems((list) => list.filter((x) => x.id !== it.id)) : undefined}
+                  onFocus={() => setActiveItem(i)}
+                />
+              ))}
+              <Button type="button" variant="outline" size="sm" className="justify-self-start" title="Alt+N" onClick={addItem}>
+                <Plus className="h-4 w-4" />
+                Add item
+              </Button>
+            </div>
           ) : (
             /* Repair mode */
             <div className="rounded-lg border p-3">
@@ -1137,17 +677,27 @@ export function QuoteBuilderDialog({
                 Repair / service
               </p>
               <div className="grid gap-3">
-                <div className="grid gap-1.5">
-                  <Label htmlFor="qb-gross">Gross weight (g)</Label>
-                  <Input
-                    id="qb-gross"
-                    type="number"
-                    inputMode="decimal"
-                    min={0}
-                    placeholder="0"
-                    value={grossWeight}
-                    onChange={(e) => setGrossWeight(e.target.value)}
-                  />
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="qb-gross">Gross weight (g)</Label>
+                    <Input
+                      id="qb-gross"
+                      inputMode="decimal"
+                      placeholder="0"
+                      value={grossWeight}
+                      onChange={(e) => setGrossWeight(e.target.value.replace(/[^0-9.]/g, ""))}
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="qb-rmaking">Making / labour charge (₹)</Label>
+                    <Input
+                      id="qb-rmaking"
+                      inputMode="decimal"
+                      placeholder="0"
+                      value={repairMaking}
+                      onChange={(e) => setRepairMaking(e.target.value.replace(/[^0-9.]/g, ""))}
+                    />
+                  </div>
                 </div>
                 <div className="grid gap-1.5">
                   <Label htmlFor="qb-rdetails">Details</Label>
@@ -1167,17 +717,6 @@ export function QuoteBuilderDialog({
                     placeholder="Condition on intake, customer notes…"
                   />
                 </div>
-                <div className="grid gap-1.5">
-                  <Label htmlFor="qb-rmaking">Making / labour charge (₹)</Label>
-                  <Input
-                    id="qb-rmaking"
-                    type="number"
-                    inputMode="numeric"
-                    placeholder="0"
-                    value={repairMaking}
-                    onChange={(e) => setRepairMaking(e.target.value)}
-                  />
-                </div>
               </div>
             </div>
           )}
@@ -1185,51 +724,33 @@ export function QuoteBuilderDialog({
           {/* Reference images */}
           <div className="grid gap-1.5">
             <Label>Reference images</Label>
-            {refUrls.length > 0 ? (
-              <div className="flex flex-wrap gap-2">
-                {refUrls.map((u, i) => (
-                  <div
-                    key={u}
-                    className="relative h-20 w-20 overflow-hidden rounded-md border bg-muted/30"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={u}
-                      alt={`Reference ${i + 1}`}
-                      className="h-full w-full object-cover"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => removeRef(i)}
-                      className="absolute right-0.5 top-0.5 rounded-full bg-background/80 p-0.5 text-foreground shadow"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                      <span className="sr-only">Remove image</span>
-                    </button>
-                  </div>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => refInput.current?.click()}
-                  className="flex h-20 w-20 flex-col items-center justify-center gap-1 rounded-md border-2 border-dashed border-muted-foreground/25 text-muted-foreground transition-colors hover:border-primary/50"
+            <div className="flex flex-wrap gap-2">
+              {refUrls.map((u, i) => (
+                <div
+                  key={u}
+                  className="relative h-16 w-16 overflow-hidden rounded-md border bg-muted/30"
                 >
-                  <ImagePlus className="h-5 w-5" />
-                  <span className="text-[10px]">Add</span>
-                </button>
-              </div>
-            ) : (
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={u} alt={`Reference ${i + 1}`} className="h-full w-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => removeRef(i)}
+                    className="absolute right-0.5 top-0.5 rounded-full bg-background/80 p-0.5 text-foreground shadow"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    <span className="sr-only">Remove image</span>
+                  </button>
+                </div>
+              ))}
               <button
                 type="button"
                 onClick={() => refInput.current?.click()}
-                className="flex flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-muted-foreground/25 p-5 text-center transition-colors hover:border-primary/50"
+                className="flex h-16 min-w-16 flex-col items-center justify-center gap-1 rounded-md border-2 border-dashed border-muted-foreground/25 px-3 text-muted-foreground transition-colors hover:border-primary/50"
               >
-                <ImagePlus className="h-5 w-5 text-muted-foreground" />
-                <span className="text-sm font-medium">Add reference photos</span>
-                <span className="text-xs text-muted-foreground">
-                  JPG / PNG up to 8 MB each — uploaded once the quote is created
-                </span>
+                <ImagePlus className="h-5 w-5" />
+                <span className="text-[10px]">{refUrls.length ? "Add" : "Add photos (8 MB each)"}</span>
               </button>
-            )}
+            </div>
             <input
               ref={refInput}
               type="file"
@@ -1239,21 +760,45 @@ export function QuoteBuilderDialog({
               onChange={onPickRefs}
             />
           </div>
-            </>
-          ) : null}
 
-          {/* Discount — judged on the server against the role's cap. Above it,
+          {/* Discounts — judged on the server against the role's cap. Above it,
               the quote waits for a manager before it can be sent. */}
           <div className="grid gap-1.5">
-            <Label htmlFor="qb-discount">Discount % (on making + diamonds)</Label>
-            <Input
-              id="qb-discount"
-              inputMode="decimal"
-              value={discount}
-              onChange={(e) => setDiscount(e.target.value.replace(/[^0-9.]/g, ""))}
-              placeholder="0"
-              className="w-32"
-            />
+            <div className={cn("grid gap-3", mode === "sale" ? "grid-cols-3" : "grid-cols-2")}>
+              <div className="grid gap-1.5">
+                <Label htmlFor="qb-disc-making">Making discount %</Label>
+                <Input
+                  id="qb-disc-making"
+                  inputMode="decimal"
+                  value={makingDiscount}
+                  onChange={(e) => setMakingDiscount(e.target.value.replace(/[^0-9.]/g, ""))}
+                  placeholder="0"
+                />
+              </div>
+              {mode === "sale" ? (
+                <div className="grid gap-1.5">
+                  <Label htmlFor="qb-disc-stone">Diamond discount %</Label>
+                  <Input
+                    id="qb-disc-stone"
+                    inputMode="decimal"
+                    value={stoneDiscount}
+                    onChange={(e) => setStoneDiscount(e.target.value.replace(/[^0-9.]/g, ""))}
+                    placeholder="0"
+                  />
+                </div>
+              ) : null}
+              <div className="grid gap-1.5">
+                <Label htmlFor="qb-disc-extra">Additional discount (₹)</Label>
+                <Input
+                  id="qb-disc-extra"
+                  inputMode="decimal"
+                  value={additionalDiscount}
+                  onChange={(e) => setAdditionalDiscount(e.target.value.replace(/[^0-9.]/g, ""))}
+                  placeholder="0"
+                  aria-invalid={preview.overDiscount}
+                />
+              </div>
+            </div>
             <p className="text-xs text-muted-foreground">
               Gold is never discounted. Above your limit, a manager must approve
               before the quote can be sent.
@@ -1270,13 +815,19 @@ export function QuoteBuilderDialog({
                 <>
                   <PreviewRow label="Metal value" value={preview.metal} />
                   <PreviewRow label="Making charges" value={preview.making} />
-                  <PreviewRow label="Diamonds" value={preview.stones} />
+                  <PreviewRow label="Diamonds & stones" value={preview.stones} />
                 </>
               ) : (
                 <PreviewRow label="Making / labour" value={preview.making} />
               )}
-              {preview.discount > 0 ? (
-                <PreviewRow label={`Discount ${discountNum}%`} value={-preview.discount} />
+              {preview.makingOff > 0 ? (
+                <PreviewRow label={`Making discount ${disc.making}%`} value={-preview.makingOff} />
+              ) : null}
+              {preview.stoneOff > 0 ? (
+                <PreviewRow label={`Diamond discount ${disc.stone}%`} value={-preview.stoneOff} />
+              ) : null}
+              {preview.additional > 0 ? (
+                <PreviewRow label="Additional discount" value={-preview.additional} />
               ) : null}
               <Separator className="my-1" />
               <PreviewRow label="Taxable value" value={preview.taxable} />
@@ -1293,8 +844,7 @@ export function QuoteBuilderDialog({
             </dl>
           </div>
 
-          {/* Custom-order details — Advanced only (Quick escalates here). */}
-          {view === "advanced" ? (
+          {/* Custom-order details. The item type and size come from item 1. */}
           <div className="rounded-lg border">
             <button
               type="button"
@@ -1312,58 +862,43 @@ export function QuoteBuilderDialog({
             {customOpen ? (
               <div className="grid gap-3 border-t p-3">
                 <p className="text-xs text-muted-foreground">
-                  Fill these to book the piece into production when you tap{" "}
-                  <span className="font-medium">Custom Order</span>. All optional.
+                  Booked into production when you tap{" "}
+                  <span className="font-medium">Create Custom Order</span>, as{" "}
+                  <span className="font-medium">
+                    {mode === "sale"
+                      ? [itemTypeName(items[0]?.itemType ?? "") || "item 1", sizeText(items[0] ?? emptyItem()) && `size ${sizeText(items[0])}`]
+                          .filter(Boolean)
+                          .join(", ")
+                      : repairDetails.trim() || "Repair / service"}
+                  </span>
+                  . All optional.
                 </p>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-3 sm:grid-cols-2">
                   <div className="grid gap-1.5">
-                    <Label htmlFor="qb-ring">Ring size</Label>
-                    <Input
-                      id="qb-ring"
-                      value={ringSize}
-                      onChange={(e) => setRingSize(e.target.value)}
-                      placeholder="e.g. 16"
-                    />
-                  </div>
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="qb-bangle">Bangle size</Label>
-                    <Input
-                      id="qb-bangle"
-                      value={bangleSize}
-                      onChange={(e) => setBangleSize(e.target.value)}
-                      placeholder="e.g. 2.6"
-                    />
-                  </div>
-                </div>
-                <div className="grid gap-1.5">
-                  <Label htmlFor="qb-metal">Metal colour</Label>
-                  <Select
-                    value={metalColorSel}
-                    onValueChange={setMetalColorSel}
-                  >
-                    <SelectTrigger id="qb-metal">
-                      <SelectValue placeholder="Select metal colour" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {METAL_COLOR_PRESETS.map((c) => (
-                        <SelectItem key={c} value={c}>
-                          {c}
+                    <Label htmlFor="qb-metal">Metal colour</Label>
+                    <Select value={metalColorSel} onValueChange={setMetalColorSel}>
+                      <SelectTrigger id="qb-metal">
+                        <SelectValue placeholder={metalColor || "Select metal colour"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {METAL_COLOR_PRESETS.map((c) => (
+                          <SelectItem key={c} value={c}>
+                            {c}
+                          </SelectItem>
+                        ))}
+                        <SelectItem value="other">
+                          Other (platinum / silver…)
                         </SelectItem>
-                      ))}
-                      <SelectItem value="other">
-                        Other (platinum / silver…)
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {metalColorSel === "other" ? (
-                    <Input
-                      value={metalColorOther}
-                      onChange={(e) => setMetalColorOther(e.target.value)}
-                      placeholder="e.g. Platinum"
-                    />
-                  ) : null}
-                </div>
-                <div className="grid grid-cols-2 gap-3">
+                      </SelectContent>
+                    </Select>
+                    {metalColorSel === "other" ? (
+                      <Input
+                        value={metalColorOther}
+                        onChange={(e) => setMetalColorOther(e.target.value)}
+                        placeholder="e.g. Platinum"
+                      />
+                    ) : null}
+                  </div>
                   <div className="grid gap-1.5">
                     <Label htmlFor="qb-delivery">Delivery date</Label>
                     <Input
@@ -1377,47 +912,46 @@ export function QuoteBuilderDialog({
                     <Label htmlFor="qb-advance">Advance (₹)</Label>
                     <Input
                       id="qb-advance"
-                      type="number"
-                      inputMode="numeric"
+                      inputMode="decimal"
                       placeholder="0"
                       value={advance}
-                      onChange={(e) => setAdvance(e.target.value)}
+                      onChange={(e) => setAdvance(e.target.value.replace(/[^0-9.]/g, ""))}
                     />
                   </div>
-                </div>
-                <div className="grid gap-1.5">
-                  <Label htmlFor="qb-advmode">Advance mode</Label>
-                  <Select value={advanceMode} onValueChange={setAdvanceMode}>
-                    <SelectTrigger id="qb-advmode">
-                      <SelectValue placeholder="Cash / Card / UPI / Bank" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ADVANCE_MODE_OPTIONS.map((o) => (
-                        <SelectItem key={o.value} value={o.value}>
-                          {o.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="qb-advmode">Advance mode</Label>
+                    <Select value={advanceMode} onValueChange={setAdvanceMode}>
+                      <SelectTrigger id="qb-advmode">
+                        <SelectValue placeholder="Cash / Card / UPI / Bank" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ADVANCE_MODE_OPTIONS.map((o) => (
+                          <SelectItem key={o.value} value={o.value}>
+                            {o.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
               </div>
             ) : null}
           </div>
-          ) : null}
         </div>
 
-        <DialogFooter className="gap-2 sm:justify-between">
-          <Button
-            variant="outline"
-            onClick={() => submit(false)}
-            disabled={busy}
-          >
-            {busy ? "Working…" : "Create Quote"}
-          </Button>
-          <Button variant="gold" onClick={onCustomOrderClick} disabled={busy}>
-            <Sparkles className="h-4 w-4" />
-            {customOpen ? "Create Custom Order" : "Custom Order"}
-          </Button>
+        <DialogFooter className="gap-2 sm:items-center sm:justify-between">
+          <p className="hidden text-[11px] text-muted-foreground sm:block">
+            Alt+N item · Alt+D diamond · Alt+C colour stone · Ctrl+Enter save
+          </p>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row">
+            <Button variant="outline" onClick={() => void submit(false)} disabled={busy}>
+              {busy ? "Working…" : "Create Quote"}
+            </Button>
+            <Button variant="gold" onClick={onCustomOrderClick} disabled={busy}>
+              <Sparkles className="h-4 w-4" />
+              {customOpen ? "Create Custom Order" : "Custom Order"}
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

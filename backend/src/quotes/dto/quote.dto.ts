@@ -1,9 +1,11 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayNotEmpty,
   IsArray,
   IsBoolean,
   IsEnum,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsNumber,
@@ -18,6 +20,53 @@ import {
 import { QuoteKind, QuoteStatus } from '@prisma/client';
 import { IsIndianMobile, IsRealName } from '../../common/contact.util';
 
+/** The karats the business quotes in; 0 is a line with no metal (repair, stones). */
+export const QUOTE_KARATS = [0, 9, 12, 14, 18, 22, 24];
+
+/**
+ * One diamond (D) or colour stone (C) entry of an item: a code from the item
+ * master, its size, and carats priced per carat. The server works out the
+ * amount; the multiplier is the staff's lever and is never printed.
+ */
+export class QuoteStoneDto {
+  @IsIn(['D', 'C'])
+  type!: 'D' | 'C';
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(60)
+  code!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  size?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  pieces?: number;
+
+  @IsNumber({ maxDecimalPlaces: 3 })
+  @Min(0)
+  carats!: number;
+
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  ratePerCt!: number;
+
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 3 })
+  @Min(0)
+  @Max(10)
+  multiplier?: number;
+}
+
 export class QuoteLineDto {
   @IsString()
   @IsNotEmpty()
@@ -26,8 +75,38 @@ export class QuoteLineDto {
   description!: string;
 
   @IsInt()
-  @Min(0)
+  @IsIn(QUOTE_KARATS, { message: 'karat must be 9, 12, 14, 18, 22 or 24 (0 for no metal)' })
   karat!: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  styleNumber?: string;
+
+  /** Letters, digits and a unit: "12", "2.6", "16 inch", "5.5 cm", "IND 12". */
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  @Matches(/^[A-Za-z0-9 ./-]*$/, { message: 'size may only hold letters, digits, spaces, . / and -' })
+  size?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  metalCode?: string;
+
+  /** Making per gram; making charges are this x the weight when it is given. */
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  makingRatePerGram?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => QuoteStoneDto)
+  stones?: QuoteStoneDto[];
 
   @IsNumber()
   @Min(0)
@@ -124,9 +203,10 @@ export class CreateQuoteDto {
   redeemableStoreIds?: string[];
 
   /**
-   * One discount percentage off making + diamond/stone charges. Gold is never
-   * discounted. Above the pricer's DiscountLimit cap, the quote cannot leave
-   * without approval.
+   * One discount percentage off making + diamond/stone charges, for a caller
+   * that does not send the separate making / stone discounts below (it then
+   * counts as both). Gold is never discounted. Above the pricer's
+   * DiscountLimit cap, the quote cannot leave without approval.
    */
   @IsOptional()
   @Type(() => Number)
@@ -134,6 +214,29 @@ export class CreateQuoteDto {
   @Min(0)
   @Max(100)
   discountPercent?: number;
+
+  /** % off making charges. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  makingDiscountPercent?: number;
+
+  /** % off diamonds and colour stones. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  stoneDiscountPercent?: number;
+
+  /** A flat amount off at the end, before GST. Never more than making + stones. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  additionalDiscount?: number;
 
   @IsArray()
   @ArrayNotEmpty()
@@ -162,6 +265,29 @@ export class UpdateQuoteDto {
   @Min(0)
   @Max(100)
   discountPercent?: number;
+
+  /** % off making charges. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  makingDiscountPercent?: number;
+
+  /** % off diamonds and colour stones. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  stoneDiscountPercent?: number;
+
+  /** A flat amount off at the end, before GST. Never more than making + stones. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  additionalDiscount?: number;
 
   /** yyyy-mm-dd, or empty to clear. */
   @IsOptional()

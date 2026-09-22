@@ -40,6 +40,7 @@ const METAL_NAMES: Partial<Record<MetalKind, string>> = {
   gold_22k: 'Gold 22K',
   gold_18k: 'Gold 18K',
   gold_14k: 'Gold 14K',
+  gold_12k: 'Gold 12K',
   gold_10k: 'Gold 10K',
   gold_9k: 'Gold 9K',
   rose_gold_18k: 'Rose gold 18K',

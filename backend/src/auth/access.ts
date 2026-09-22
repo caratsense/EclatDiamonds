@@ -156,6 +156,8 @@ const ROUTE_MODULES: [prefix: string, module: ModuleSlug | null][] = [
   ['checkins', 'checkins'],
   ['catalogue-exports', 'catalogue'],
   ['quotes', 'quotation'],
+  // The item master the quote builder prices from.
+  ['materials', 'quotation'],
   ['timelines', 'quotation'],
   ['discounts', 'discounts'],
   ['returns', 'returns'],

@@ -187,6 +187,18 @@ export class CreateDailyReportDto {
   @Min(0)
   customGoldValue?: number;
 
+  /** Customised-sale collection received by bank transfer (INR). */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  customBankTransfer?: number;
+
+  /** The sheet's Remark row — free text for the day. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  remark?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(120)
@@ -205,6 +217,27 @@ export class DailyReportQueryDto {
   @IsOptional()
   @IsString()
   storeId?: string;
+}
+
+/** The window a DSR sheet PDF covers: the day, its Mon–Sun week, or its month. */
+export type DsrSheetPeriod = 'day' | 'week' | 'month';
+export const DSR_SHEET_PERIODS: DsrSheetPeriod[] = ['day', 'week', 'month'];
+
+/** GET /reporting/daily/pdf?storeId=&period=&date= */
+export class DailySheetQueryDto {
+  /** One store per sheet (must be in scope). */
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(64)
+  storeId!: string;
+
+  @IsIn(DSR_SHEET_PERIODS)
+  period!: DsrSheetPeriod;
+
+  /** Any day in the period (YYYY-MM-DD). Defaults to today at the store. */
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'date must be in YYYY-MM-DD format' })
+  date?: string;
 }
 
 /** POST /reporting/daily/:id/send */

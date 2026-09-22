@@ -15,8 +15,9 @@ const GOLD_CARDS: Array<[MetalKind, string]> = [
   ["gold_18k", "18K Gold (750) /g"],
   ["gold_14k", "14K Gold (585) /g"],
 ];
+/** Not published by IBJA; derived from 999. The business quotes 12K and 9K. */
 const DERIVED_ROW: Array<[MetalKind, string]> = [
-  ["gold_10k", "10K"],
+  ["gold_12k", "12K"],
   ["gold_9k", "9K"],
 ];
 

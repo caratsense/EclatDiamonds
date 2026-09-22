@@ -11,6 +11,7 @@ import { MetalKind } from '@prisma/client';
 const GOLD: Record<number, MetalKind> = {
   9: 'gold_9k',
   10: 'gold_10k',
+  12: 'gold_12k',
   14: 'gold_14k',
   18: 'gold_18k',
   22: 'gold_22k',
@@ -22,7 +23,7 @@ export function parseKarat(raw: unknown): number | null {
   if (typeof raw === 'number') return Number.isFinite(raw) && raw > 0 ? Math.round(raw) : null;
   const s = String(raw ?? '').trim().toUpperCase();
   if (!s) return null;
-  const fineness: Record<string, number> = { '375': 9, '417': 10, '585': 14, '750': 18, '916': 22, '999': 24 };
+  const fineness: Record<string, number> = { '375': 9, '417': 10, '500': 12, '585': 14, '750': 18, '916': 22, '999': 24 };
   if (fineness[s]) return fineness[s];
   const m = /^(\d{1,2})\s*(K|KT|KARAT|CT)?$/.exec(s.replace(/\s+/g, ' '));
   return m ? Number(m[1]) : null;

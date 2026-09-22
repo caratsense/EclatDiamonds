@@ -79,6 +79,7 @@ export function metalFromRow(r: any): string {
   if (k === 22) return 'gold_22k';
   if (k === 18) return 'gold_18k';
   if (k === 14) return 'gold_14k';
+  if (k === 12) return 'gold_12k';
   if (k === 10) return 'gold_10k';
   if (k === 9) return 'gold_9k';
   return 'gold_unspecified';
@@ -91,6 +92,7 @@ export function karatFromMetal(metal: string): number | null {
     gold_22k: 22,
     gold_18k: 18,
     gold_14k: 14,
+    gold_12k: 12,
     gold_10k: 10,
     gold_9k: 9,
     rose_gold_18k: 18,

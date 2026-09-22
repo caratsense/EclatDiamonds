@@ -167,6 +167,7 @@ export const ROUTE_FAMILIES: readonly RouteFamily[] = Object.freeze([
   { prefix: '/returns', capability: 'returns', why: 'Retail returns and exchange.' },
   { prefix: '/discounts', capability: 'discounts', why: 'Discount approval workflow.' },
   { prefix: '/quotes', capability: 'quotation', why: 'Metal-rate quotation builder.' },
+  { prefix: '/materials', capability: 'quotation', why: 'Item master (metals, stones, sizes, style BOMs) the quotation builder prices from.' },
   { prefix: '/timelines', capability: 'quotation', why: 'Custom-order and production-stage tracking; reached from the quotation screen.' },
   { prefix: '/stock-transfers', capability: 'stock-transfers', why: 'Inter-branch stock movement.' },
   { prefix: '/stock', capability: 'inventory', why: 'Inventory and merchandising.' },
