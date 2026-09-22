@@ -289,7 +289,8 @@ describe('Quote discount approval + quote PDF (e2e)', () => {
     expect(parsed.text).toContain('Maison qd-a');
     expect(parsed.text).toContain('24ABCDE1234F1Z5');
     expect(parsed.text).toContain('Solitaire ring');
-    expect(parsed.text).toContain('Discount 8%');
+    expect(parsed.text).toContain('making discount 8%');
+    expect(parsed.text).toContain('diamond discount 8%');
     expect(parsed.text).toContain('2026-10-15');
   });
 

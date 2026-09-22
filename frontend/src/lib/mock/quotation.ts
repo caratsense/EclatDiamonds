@@ -62,6 +62,30 @@ export interface QuoteLine {
   caratWeight: number;
   /** Per-carat stone rate in ₹ (optional). */
   perCaratRate?: number;
+  /** Design the item was priced from, its size, metal item code and making ₹/g. */
+  styleNumber?: string | null;
+  size?: string | null;
+  metalCode?: string | null;
+  makingRatePerGram?: number | null;
+  /** Diamonds (D) and colour stones (C) by item-master code. */
+  stones?: QuoteStone[];
+}
+
+/**
+ * One diamond or colour-stone entry of an item. The server works out
+ * `amount` = carats x ratePerCt x multiplier; the multiplier is staff-only and
+ * never printed for the customer.
+ */
+export interface QuoteStone {
+  type: "D" | "C";
+  code: string;
+  name?: string;
+  size?: string;
+  pieces?: number;
+  carats: number;
+  ratePerCt: number;
+  multiplier?: number;
+  amount?: number;
 }
 
 
@@ -105,8 +129,14 @@ export interface Quote {
   validUntil: string;
   assignedRep: string;
   lines: QuoteLine[];
-  /** One % off making + diamonds (never gold). Absent on mock rows. */
+  /** What the discounts come to as one % of making + diamonds (never gold). */
   discountPercent?: number;
+  /** The discount as given: % off making, % off diamonds, flat amount at the end. */
+  makingDiscountPercent?: number;
+  stoneDiscountPercent?: number;
+  additionalDiscount?: number;
+  /** The server's money breakdown — the only authoritative totals. */
+  totals?: QuoteTotals;
   /** Content revision; every edit bumps it and withdraws approval. */
   revision?: number;
 }
@@ -126,6 +156,9 @@ export interface QuoteTotals {
   makingCharges: number;
   stoneCharges: number;
   discount: number;
+  makingDiscount?: number;
+  stoneDiscount?: number;
+  additionalDiscount?: number;
   taxable: number;
   gst: number;
   grandTotal: number;
@@ -133,6 +166,8 @@ export interface QuoteTotals {
 
 /** Roll up all lines into a money breakdown. */
 export function computeQuoteTotals(quote: Quote): QuoteTotals {
+  // The server prices every quote; its figures win whenever they are here.
+  if (quote.totals) return quote.totals;
   // A quote from the list endpoint may arrive without its lines expanded —
   // default to [] so the reduces don't throw (the totals just come out 0).
   const lines = quote.lines ?? [];

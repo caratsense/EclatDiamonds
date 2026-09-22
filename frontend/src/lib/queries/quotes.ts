@@ -26,8 +26,12 @@ export interface CreateQuoteInput {
   grossWeightG?: number;
   /** Kaccha ("@") estimate — server forces GST = 0 and hides it from the list. */
   isKaccha?: boolean;
-  /** One % off making + diamonds (never gold). Over the role's cap needs approval. */
+  /** One % off making + diamonds (never gold), for callers without the split below. */
   discountPercent?: number;
+  /** % off making, % off diamonds and stones, and a flat amount off at the end. */
+  makingDiscountPercent?: number;
+  stoneDiscountPercent?: number;
+  additionalDiscount?: number;
   lines: Omit<QuoteLine, "id">[];
 }
 

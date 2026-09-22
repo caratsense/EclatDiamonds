@@ -601,6 +601,9 @@ model Organisation {
   loyaltyLedgerEntries         LoyaltyLedgerEntry[]
   loyaltyWebhookDeliveries     LoyaltyWebhookDelivery[]
   storeMessagingRoutes         StoreMessagingRoute[]
+  materials                    Material[]
+  materialSizes                MaterialSize[]
+  styleBoms                    StyleBom[]
 }
 
 /// CaratOS import-engine provenance + reconciliation record. One row per import
@@ -1708,6 +1711,13 @@ model Quote {
    */
   discountPercent Decimal @default(0) @db.Decimal(5, 2)
   discountAmount  Decimal @default(0) @db.Decimal(14, 2)
+  /// The discount as the salesperson gives it: a % off making, a % off
+  /// diamonds and stones, and a flat amount off at the end. `discountPercent`
+  /// above is what the three come to as one % of making + stones, the number
+  /// the approval caps are judged on.
+  makingDiscountPercent Decimal @default(0) @db.Decimal(5, 2)
+  stoneDiscountPercent  Decimal @default(0) @db.Decimal(5, 2)
+  additionalDiscount    Decimal @default(0) @db.Decimal(14, 2)
   pricedById      String?
   pricedByRole    Role?
 
@@ -1791,6 +1801,20 @@ model QuoteLine {
   /// Diamond rate per carat (INR/ct) snapshot.
   perCaratRate    Decimal? @db.Decimal(12, 2)
 
+  /// The design this item was priced from, when there is one (StyleBom).
+  styleNumber       String?
+  /// The piece's size as the customer gives it: "12", "2.6", "16 inch", "5.5 cm".
+  size              String?
+  /// Item-master code of the metal (G14YG …) and its making rate per gram;
+  /// making charges = rate x weight.
+  metalCode         String?
+  makingRatePerGram Decimal? @db.Decimal(12, 2)
+  /// Diamonds (D) and colour stones (C), one entry per code and size:
+  /// [{ type, code, name?, size?, pieces?, carats, ratePerCt, multiplier, amount }].
+  /// The multiplier is the staff's pricing lever and never printed; the
+  /// customer sees ratePerCt x multiplier as the rate.
+  stones            Json?
+
   quote   Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
   product Product? @relation(fields: [productId], references: [id])
 
@@ -1800,6 +1824,73 @@ model QuoteLine {
 // ============================================================================
 // MODULE 5 + 9 � CATALOGUE / PRODUCT (Design) + STOCK (per-piece)
 // ============================================================================
+
+/// Item master used to price a quote: metals, diamonds, colour stones, charges
+/// and item types, by the code the ERP uses (SJEP `SPM_Items`: G14YG,
+/// LG-RND-VVS-E-F …; item types from `MainProduct`: ALR LADIES RING …). A quote
+/// copies the code and name; nothing points back here, so a master edit never
+/// changes a price already given.
+model Material {
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  id             String       @id @default(cuid())
+  code           String
+  name           String
+  /// metal | diamond | stone | charge | other | item_type
+  kind           String
+  /// ERP raw-material group: G, LG, LS, D, LGRB, PRL …
+  groupCode      String?
+  groupName      String?
+  karat          Int?
+  /// Metal tone (YG, WG, PG, W/YG) or diamond colour (E-F, D …).
+  tone           String?
+  shape          String?
+  quality        String?
+  /// Sale rate per carat by stone size group: { "<group>": rate }. Never cost.
+  saleRates      Json?
+  isActive       Boolean      @default(true)
+  legacyId       String?
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([organisationId, kind, code])
+  @@index([organisationId, kind])
+}
+
+/// Stone sizes (SJEP `SizeMst`): the sieve or mm label and one stone's weight,
+/// so pieces x caratPerPiece gives the carats.
+model MaterialSize {
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  id             String       @id @default(cuid())
+  code           String
+  mm             String?
+  caratPerPiece  Decimal?     @db.Decimal(8, 4)
+  /// Rate-chart size group this size prices in (Material.saleRates key).
+  sizeGroup      String?
+  sortOrder      Int          @default(0)
+  legacyId       String?
+
+  @@unique([organisationId, code])
+}
+
+/// A design's default bill of materials (SJEP `StyleMst` + `StyleMstDetail`).
+/// Entering the style number in a quote loads these lines, which the
+/// salesperson then changes for the customer.
+model StyleBom {
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  id             String       @id @default(cuid())
+  styleCode      String
+  /// Item-type code (ALR, APD …).
+  itemType       String?
+  itemSize       String?
+  /// [{ code, size?, pieces?, weight }]
+  lines          Json
+  legacyId       String?
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([organisationId, styleCode])
+}
 
 /// Product / design template. Legacy: StyleMst (design) blended with catalogue view.
 model Product {
@@ -3797,6 +3888,9 @@ model DailyReport {
   customUpi        Decimal      @default(0) @db.Decimal(14, 2)
   customGoldWtG    Decimal?     @db.Decimal(12, 3)
   customGoldValue  Decimal?     @db.Decimal(14, 2)
+  customBankTransfer Decimal    @default(0) @db.Decimal(14, 2)
+  /// The sheet's Remark row, free text for the day.
+  remark           String?
   submittedBy      String?
   /// Where this came from: "web" (the in-app form) or "whatsapp" (the bot), so
   /// HO can tell the channels apart.

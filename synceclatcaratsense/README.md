@@ -279,6 +279,11 @@ maintenance session. Do not run the agent scripts from that session.
   the process is permanently fenced until it exits and a clean run starts.
 - Records are upserted on their original id, so re-sending refreshes rather than
   duplicating. The sync never deletes anything in Eclat.
+- **Item master for quotes** (metals, diamonds, colour stones, stone sizes,
+  item types, style BOMs, sale-rate charts): `bak_item_master.py` builds the
+  `PUT /materials` file from an `APRSSJEP.bak` without SQL Server —
+  `python bak_item_master.py <APRSSJEP.bak> sjep_materials.json` — then head
+  office loads it. Read-only; sale rates only, never cost.
 
 ### Discovery → controlled sample → full sync
 

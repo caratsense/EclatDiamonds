@@ -5,7 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { OrderStatus, Prisma, QuoteKind } from '@prisma/client';
+import { OrderStatus, Prisma, ProductCategory, QuoteKind } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { isSalesScoped } from '../common/sales-scope';
@@ -24,6 +24,7 @@ import {
   ConvertToOrderDto,
   CreateQuoteDto,
   QuoteLineDto,
+  QuoteStoneDto,
   SendQuotePdfDto,
   UpdateQuoteDto,
 } from './dto/quote.dto';
@@ -41,6 +42,9 @@ function toView(q: any) {
     status: q.status,
     revision: q.revision ?? 1,
     discountPercent: Number(q.discountPercent ?? 0),
+    makingDiscountPercent: Number(q.makingDiscountPercent ?? 0),
+    stoneDiscountPercent: Number(q.stoneDiscountPercent ?? 0),
+    additionalDiscount: Number(q.additionalDiscount ?? 0),
     kind: q.kind,
     isKaccha: q.isKaccha ?? false,
     remarks: q.remarks ?? '',
@@ -58,6 +62,11 @@ function toView(q: any) {
       stoneCharges: Number(l.stoneCharges),
       caratWeight: Number(l.caratWeight),
       perCaratRate: l.perCaratRate != null ? Number(l.perCaratRate) : null,
+      styleNumber: l.styleNumber ?? null,
+      size: l.size ?? null,
+      metalCode: l.metalCode ?? null,
+      makingRatePerGram: l.makingRatePerGram != null ? Number(l.makingRatePerGram) : null,
+      stones: (l.stones as StoredStone[] | null) ?? [],
     })),
     photos: (q.photos ?? []).map((p: any) => ({
       id: p.id,
@@ -70,10 +79,101 @@ function toView(q: any) {
       makingCharges: Number(q.makingCharges),
       stoneCharges: Number(q.stoneCharges),
       discount: Number(q.discountAmount ?? 0),
+      ...discountSplit(q),
       taxable: Number(q.taxableAmount),
       gst: Number(q.gstAmount),
       grandTotal: Number(q.grandTotal),
     },
+  };
+}
+
+/** The stored discount in its three parts, the same way computeTotals made it. */
+function discountSplit(q: any) {
+  const total = Number(q.discountAmount ?? 0);
+  const additional = Number(q.additionalDiscount ?? 0);
+  const making = Math.min(
+    round2((Number(q.makingCharges) * Number(q.makingDiscountPercent ?? 0)) / 100),
+    total - additional,
+  );
+  return { makingDiscount: making, stoneDiscount: round2(total - additional - making), additionalDiscount: additional };
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/** A diamond / colour-stone entry as stored on a line. */
+export interface StoredStone {
+  type: 'D' | 'C';
+  code: string;
+  name?: string;
+  size?: string;
+  pieces?: number;
+  carats: number;
+  ratePerCt: number;
+  multiplier: number;
+  amount: number;
+}
+
+/** The amount is always the server's: carats x rate per carat x multiplier. */
+function stoneData(s: QuoteStoneDto): StoredStone {
+  const multiplier = s.multiplier ?? 1;
+  return {
+    type: s.type,
+    code: s.code.trim(),
+    ...(s.name?.trim() ? { name: s.name.trim() } : {}),
+    ...(s.size?.trim() ? { size: s.size.trim() } : {}),
+    ...(s.pieces != null ? { pieces: s.pieces } : {}),
+    carats: s.carats,
+    ratePerCt: s.ratePerCt,
+    multiplier,
+    amount: round2(s.carats * s.ratePerCt * multiplier),
+  };
+}
+
+/**
+ * What one item comes to. Making is its per-gram rate x the weight when a rate
+ * is given, else the amount entered. Stones are the sum of their entries when
+ * there are any; an older line prices its stones as rate x carats or a price.
+ */
+function linePrice(l: QuoteLineDto) {
+  const stones = l.stones?.map(stoneData);
+  const making =
+    l.makingRatePerGram != null ? round2(l.makingRatePerGram * l.weightGrams) : (l.makingCharges ?? 0);
+  const stoneCharges = stones
+    ? round2(stones.reduce((sum, x) => sum + x.amount, 0))
+    : l.perCaratRate != null && l.caratWeight != null
+      ? l.perCaratRate * l.caratWeight
+      : (l.stoneCharges ?? 0);
+  const caratWeight = stones
+    ? Math.round(stones.reduce((sum, x) => sum + x.carats, 0) * 1000) / 1000
+    : (l.caratWeight ?? 0);
+  return { stones, making, stoneCharges, caratWeight };
+}
+
+/** The discount as the salesperson gives it. */
+export interface QuoteDiscounts {
+  making: number;
+  stone: number;
+  additional: number;
+}
+
+/**
+ * The discount a request asks for. A caller that sends only the one old
+ * `discountPercent` gets it on making and stones both, which is what it meant.
+ * On an edit, whatever is not sent stays as it was.
+ */
+function discountsFrom(
+  dto: {
+    discountPercent?: number;
+    makingDiscountPercent?: number;
+    stoneDiscountPercent?: number;
+    additionalDiscount?: number;
+  },
+  current?: QuoteDiscounts,
+): QuoteDiscounts {
+  return {
+    making: dto.makingDiscountPercent ?? dto.discountPercent ?? current?.making ?? 0,
+    stone: dto.stoneDiscountPercent ?? dto.discountPercent ?? current?.stone ?? 0,
+    additional: dto.additionalDiscount ?? current?.additional ?? 0,
   };
 }
 
@@ -84,57 +184,89 @@ function toView(q: any) {
  * For a `repair` quote: making-ONLY — metal & stone are zeroed, taxable = sum of
  * line making charges, GST 3% on making, grandTotal = making + GST.
  *
- * Discount comes off BEFORE tax: one percentage of making + stone charges.
- * Gold is never discounted, so no percentage can reach the metal value.
+ * Discount comes off BEFORE tax: a % of making, a % of the stones, then a flat
+ * amount. Gold is never discounted, so the three together may not come to more
+ * than making + stones. `discountPercent` is what they come to as one % of
+ * making + stones — the figure the approval caps judge.
  */
 function computeTotals(
   lines: QuoteLineDto[],
   kind: QuoteKind = QuoteKind.sale,
-  discountPercent = 0,
+  discounts: QuoteDiscounts = { making: 0, stone: 0, additional: 0 },
 ) {
   const repair = kind === QuoteKind.repair;
   let metalValue = 0;
   let makingCharges = 0;
   let stoneCharges = 0;
   for (const l of lines) {
-    makingCharges += l.makingCharges ?? 0;
+    const p = linePrice(l);
+    makingCharges += p.making;
     if (!repair) {
       metalValue += l.weightGrams * l.goldRatePerGram;
-      const computedStone = (l.perCaratRate != null && l.caratWeight != null) 
-        ? l.perCaratRate * l.caratWeight 
-        : (l.stoneCharges ?? 0);
-      stoneCharges += computedStone;
+      stoneCharges += p.stoneCharges;
     }
   }
-  const discountAmount = new Prisma.Decimal(makingCharges)
-    .plus(stoneCharges)
-    .times(discountPercent)
-    .dividedBy(100)
-    .toDecimalPlaces(2)
-    .toNumber();
+  const base = makingCharges + stoneCharges;
+  // Summed before rounding, so equal making and stone percentages come to
+  // exactly what the single percentage always did.
+  const byPercent = (makingCharges * discounts.making + stoneCharges * discounts.stone) / 100;
+  if (discounts.additional > round2(base - byPercent) + 0.001) {
+    throw new BadRequestException(
+      'The discount comes to more than the making and diamonds. Gold is never discounted.',
+    );
+  }
+  const discountAmount = round2(byPercent + discounts.additional);
+  const discountPercent =
+    base > 0
+      ? round2(((byPercent + discounts.additional) / base) * 100)
+      : Math.max(discounts.making, discounts.stone);
   const taxable = metalValue + makingCharges + stoneCharges - discountAmount;
   const gst = taxable * GST_RATE;
   return {
-    metalValue, makingCharges, stoneCharges, discountAmount, taxable, gst,
+    metalValue, makingCharges, stoneCharges, discountAmount, discountPercent, discounts, taxable, gst,
     grandTotal: taxable + gst,
   };
 }
 
-/** A line as stored. Stone value is per-carat rate x carats when both are given. */
+/** A line as stored, with the amounts the server worked out. */
 function lineData(l: QuoteLineDto) {
-  const stoneCharges = (l.perCaratRate != null && l.caratWeight != null)
-    ? l.perCaratRate * l.caratWeight
-    : (l.stoneCharges ?? 0);
+  const p = linePrice(l);
   return {
     productId: l.productId,
     description: l.description,
     karat: l.karat,
     weightGrams: new Prisma.Decimal(l.weightGrams),
     goldRatePerGram: new Prisma.Decimal(l.goldRatePerGram),
-    makingCharges: new Prisma.Decimal(l.makingCharges ?? 0),
-    stoneCharges: new Prisma.Decimal(stoneCharges),
-    caratWeight: new Prisma.Decimal(l.caratWeight ?? 0),
-    perCaratRate: l.perCaratRate != null ? new Prisma.Decimal(l.perCaratRate) : null,
+    makingCharges: new Prisma.Decimal(p.making),
+    stoneCharges: new Prisma.Decimal(p.stoneCharges),
+    caratWeight: new Prisma.Decimal(p.caratWeight),
+    perCaratRate: !p.stones && l.perCaratRate != null ? new Prisma.Decimal(l.perCaratRate) : null,
+    styleNumber: l.styleNumber?.trim() || null,
+    size: l.size?.trim() || null,
+    metalCode: l.metalCode?.trim() || null,
+    makingRatePerGram: l.makingRatePerGram != null ? new Prisma.Decimal(l.makingRatePerGram) : null,
+    ...(p.stones ? { stones: p.stones as unknown as Prisma.InputJsonValue } : {}),
+  };
+}
+
+/** A stored line back as input, so an edit that leaves the lines re-prices them the same. */
+function lineInput(l: any): QuoteLineDto {
+  const stones = l.stones as StoredStone[] | null;
+  return {
+    productId: l.productId ?? undefined,
+    description: l.description,
+    karat: l.karat,
+    weightGrams: Number(l.weightGrams),
+    goldRatePerGram: Number(l.goldRatePerGram),
+    makingCharges: Number(l.makingCharges),
+    stoneCharges: Number(l.stoneCharges),
+    caratWeight: Number(l.caratWeight),
+    perCaratRate: l.perCaratRate != null ? Number(l.perCaratRate) : undefined,
+    styleNumber: l.styleNumber ?? undefined,
+    size: l.size ?? undefined,
+    metalCode: l.metalCode ?? undefined,
+    makingRatePerGram: l.makingRatePerGram != null ? Number(l.makingRatePerGram) : undefined,
+    stones: stones?.map(({ amount: _amount, ...rest }) => rest),
   };
 }
 
@@ -145,10 +277,51 @@ function totalsData(t: ReturnType<typeof computeTotals>) {
     makingCharges: new Prisma.Decimal(t.makingCharges),
     stoneCharges: new Prisma.Decimal(t.stoneCharges),
     discountAmount: new Prisma.Decimal(t.discountAmount),
+    discountPercent: new Prisma.Decimal(t.discountPercent),
+    makingDiscountPercent: new Prisma.Decimal(t.discounts.making),
+    stoneDiscountPercent: new Prisma.Decimal(t.discounts.stone),
+    additionalDiscount: new Prisma.Decimal(t.discounts.additional),
     taxableAmount: new Prisma.Decimal(t.taxable),
     gstAmount: new Prisma.Decimal(t.gst),
     grandTotal: new Prisma.Decimal(t.grandTotal),
   };
+}
+
+/** The custom-order category an item type names: LADIES RING is a ring. */
+function orderCategory(description: string): ProductCategory {
+  const d = description.toUpperCase();
+  const words: [string, ProductCategory][] = [
+    ['EARRING', ProductCategory.earrings],
+    ['RING', ProductCategory.ring],
+    ['PENDANT', ProductCategory.pendant],
+    ['MANGALSUTRA', ProductCategory.pendant],
+    ['BANGLE', ProductCategory.bangle],
+    ['BRACELET', ProductCategory.bracelet],
+    ['NECKLACE', ProductCategory.necklace],
+    ['CHAIN', ProductCategory.chain],
+  ];
+  return words.find(([w]) => d.includes(w))?.[1] ?? ProductCategory.other;
+}
+
+/** What production needs to make the pieces: materials, weights, sizes. No prices. */
+function orderDetails(lines: any[]): string {
+  return lines
+    .map((l) => {
+      const stones = (l.stones as StoredStone[] | null) ?? [];
+      return [
+        l.description,
+        l.styleNumber && `style ${l.styleNumber}`,
+        l.size && `size ${l.size}`,
+        l.metalCode ?? (l.karat ? `${l.karat}K` : null),
+        Number(l.weightGrams) > 0 && `${Number(l.weightGrams).toFixed(3)} g`,
+        ...stones.map(
+          (x) => `${x.type} ${x.code}${x.size ? ` ${x.size}` : ''}${x.pieces ? ` ${x.pieces} pc` : ''} ${x.carats.toFixed(2)} ct`,
+        ),
+      ]
+        .filter(Boolean)
+        .join(' · ');
+    })
+    .join('\n');
 }
 
 function inr(amount: number): string {
@@ -368,7 +541,8 @@ export class QuotesService {
       isKaccha: q.isKaccha,
       remarks: q.remarks ?? '',
       lines: view.lines,
-      discountPercent: view.discountPercent,
+      makingDiscountPercent: view.makingDiscountPercent,
+      stoneDiscountPercent: view.stoneDiscountPercent,
       totals: view.totals,
       // Printed only when a decision was actually needed and given for this
       // revision; a quote that never needed one is not "approved".
@@ -416,27 +590,27 @@ export class QuotesService {
       where: { id, organisationId: user.organisationId },
       include: { lines: true },
     });
-    const lines: QuoteLineDto[] =
-      dto.lines ??
-      current.lines.map((l) => ({
-        productId: l.productId ?? undefined,
-        description: l.description,
-        karat: l.karat,
-        weightGrams: Number(l.weightGrams),
-        goldRatePerGram: Number(l.goldRatePerGram),
-        makingCharges: Number(l.makingCharges),
-        stoneCharges: Number(l.stoneCharges),
-        caratWeight: Number(l.caratWeight),
-        perCaratRate: l.perCaratRate != null ? Number(l.perCaratRate) : undefined,
-      }));
-    const discountPercent = dto.discountPercent ?? Number(current.discountPercent);
-    const t = computeTotals(lines, current.kind, discountPercent);
+    const lines: QuoteLineDto[] = dto.lines ?? current.lines.map(lineInput);
+    const t = computeTotals(
+      lines,
+      current.kind,
+      discountsFrom(dto, {
+        making: Number(current.makingDiscountPercent),
+        stone: Number(current.stoneDiscountPercent),
+        additional: Number(current.additionalDiscount),
+      }),
+    );
     if (current.isKaccha) {
       t.gst = 0;
       t.grandTotal = t.taxable;
     }
     // Touching the price makes it this person's price, judged against their caps.
-    const repriced = dto.lines !== undefined || dto.discountPercent !== undefined;
+    const repriced =
+      dto.lines !== undefined ||
+      dto.discountPercent !== undefined ||
+      dto.makingDiscountPercent !== undefined ||
+      dto.stoneDiscountPercent !== undefined ||
+      dto.additionalDiscount !== undefined;
     const reset = approvalResetFor(current.status);
 
     let updated;
@@ -449,7 +623,6 @@ export class QuotesService {
           ...reset,
           ...totalsData(t),
           revision: { increment: 1 },
-          discountPercent: new Prisma.Decimal(discountPercent),
           ...(repriced ? { pricedById: user.id, pricedByRole: user.role } : {}),
           ...(dto.validUntil !== undefined
             ? { validUntil: dto.validUntil ? new Date(dto.validUntil) : null }
@@ -481,7 +654,7 @@ export class QuotesService {
         previousStatus: current.status,
         previousTotal: current.grandTotal.toString(),
         total: updated.grandTotal.toString(),
-        discountPercent,
+        discountPercent: t.discountPercent,
         previousApproval: invalidated ? current.approvalSnapshot : null,
       },
     });
@@ -532,7 +705,7 @@ export class QuotesService {
     await this.scope.assertTradingStore(dto.storeId);
     const kind = dto.kind ?? QuoteKind.sale;
     const isKaccha = dto.isKaccha ?? false;
-    const t = computeTotals(dto.lines, kind, dto.discountPercent ?? 0);
+    const t = computeTotals(dto.lines, kind, discountsFrom(dto));
     // "@" kaccha provision: a rough estimate carries NO GST. Taxable (making +
     // metal + stones, per the sale/repair rule above) stays as computed; we just
     // force the tax to zero and make the grand total equal the taxable amount.
@@ -561,7 +734,6 @@ export class QuotesService {
           dto.grossWeightG != null ? new Prisma.Decimal(dto.grossWeightG) : null,
         validUntil: dto.validUntil ? new Date(dto.validUntil) : null,
         ...totalsData(t),
-        discountPercent: new Prisma.Decimal(dto.discountPercent ?? 0),
         // The discount is judged against THIS person's cap.
         pricedById: user.id,
         pricedByRole: user.role,
@@ -708,6 +880,9 @@ export class QuotesService {
     this.scope.assertStoreAllowed(user, q.storeId);
 
     const item = q.lines[0]?.description ?? 'Custom piece';
+    // The item type and size are on the quote now; the booking only fills a gap.
+    const category = orderCategory(item);
+    const itemSize = q.lines[0]?.size ?? null;
 
     // An advance cannot exceed the order value — a data-entry slip that would
     // otherwise persist a negative balance (mirrors the direct-booking guard).
@@ -742,13 +917,15 @@ export class QuotesService {
         customerName: q.customerName,
         value: q.grandTotal,
         item,
+        category,
+        details: orderDetails(q.lines) || null,
         stage: OrderStatus.booked,
         stageEnteredAt: now,
         ownerRole: 'salesperson',
         ownerName: user.name,
         bookedOn: now,
-        ringSize: dto.ringSize ?? null,
-        bangleSize: dto.bangleSize ?? null,
+        ringSize: dto.ringSize ?? (category === ProductCategory.ring ? itemSize : null),
+        bangleSize: dto.bangleSize ?? (category === ProductCategory.bangle ? itemSize : null),
         metalColor: dto.metalColor ?? null,
         advanceMode: dto.advanceMode ?? null,
         advanceReceived:
