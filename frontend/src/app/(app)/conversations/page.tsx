@@ -79,6 +79,7 @@ import {
 } from "@/lib/queries/crm";
 import { ChannelStatus } from "@/components/crm/channel-status";
 import { AssignConversationDialog } from "@/components/crm/assign-conversation-dialog";
+import { AuthedImage } from "@/components/ui/authed-image";
 import { IntentAnalysisPanel } from "@/components/crm/intent-analysis-panel";
 import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
@@ -452,7 +453,7 @@ function ConversationsContent() {
                           </span>
                         )}
                         <span className="text-[10px] text-muted-foreground truncate">
-                          {c.store?.name ?? "Surat Main"}
+                          {c.store?.name ?? "No store yet"}
                         </span>
                       </div>
 
@@ -616,7 +617,7 @@ function ThreadView({
                 <span className="shrink-0 inline-block h-1.5 w-1.5 rounded-full bg-[#25D366] animate-pulse" />
                 <span className="shrink-0 text-[#25D366] font-medium text-[11px]">Online</span>
                 <span className="shrink-0 text-muted-foreground/30">·</span>
-                <span className="truncate">{conversation.store?.name ?? "Surat Main"}</span>
+                <span className="truncate">{conversation.store?.name ?? "No store yet"}</span>
                 <span className="shrink-0 text-muted-foreground/30">·</span>
                 <span className="truncate">{conversation.assignedUser?.name ?? "Unassigned"}</span>
               </div>
@@ -771,7 +772,35 @@ function ThreadView({
                         </div>
                       )}
 
-                      <p className="whitespace-pre-wrap select-text">{m.body ?? "(attachment)"}</p>
+                      {/* An attachment the customer sent. Rendered through
+                          AuthedImage because the bytes are served from an
+                          authenticated route — a plain <img src> cannot carry
+                          the Authorization header, and these are the customer's
+                          own photographs rather than public files. */}
+                      {m.mediaUrl && (m.mediaType ?? "").startsWith("image/") && (
+                        <div className="mb-1.5 overflow-hidden rounded-lg">
+                          <AuthedImage
+                            src={`/crm/conversations/${id}/media/${m.id}`}
+                            alt={m.body ?? "Photo sent by the customer"}
+                            className="max-h-64 w-auto max-w-full object-cover"
+                          />
+                        </div>
+                      )}
+
+                      {/* Non-image attachments have nothing to show inline, so
+                          the label written at ingest is the message. */}
+                      {m.mediaUrl && !(m.mediaType ?? "").startsWith("image/") && (
+                        <span className="mb-1 flex items-center gap-1.5 text-[12px] opacity-80">
+                          <Paperclip className="h-3.5 w-3.5" />
+                          <span>{m.mediaType ?? "Attachment"}</span>
+                        </span>
+                      )}
+
+                      {m.body ? (
+                        <p className="whitespace-pre-wrap select-text">{m.body}</p>
+                      ) : !m.mediaUrl ? (
+                        <p className="whitespace-pre-wrap select-text opacity-70">(attachment)</p>
+                      ) : null}
 
                       <div className="mt-1 flex items-center justify-end gap-1 text-[10.5px] text-[#667781] dark:text-[#8696a0]">
                         <span>{timeStr}</span>
@@ -976,7 +1005,7 @@ function ThreadView({
                 <div>
                   <span className="text-muted-foreground block text-[11px]">Company name</span>
                   <span className="font-medium text-foreground">
-                    {conversation.store?.name ?? "Éclat Surat"}
+                    {conversation.store?.name ?? "No store yet"}
                   </span>
                 </div>
                 <div>

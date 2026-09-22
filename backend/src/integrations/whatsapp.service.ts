@@ -4,6 +4,13 @@ import { createHmac } from 'crypto';
 import { fetchJson, safeEqual } from './integrations.util';
 import { SenderRoute, WhatsAppCredentialsService } from './whatsapp-credentials.service';
 
+/**
+ * The largest inbound attachment we will store. WhatsApp caps most media
+ * well below this; the point is that nothing a stranger sends can fill the
+ * disk, since this path runs before any human has looked at the message.
+ */
+const MAX_INBOUND_MEDIA_BYTES = 16 * 1024 * 1024;
+
 export interface WhatsAppSendResult {
   /** Accepted by the WhatsApp Cloud API. */
   delivered: boolean;
@@ -309,6 +316,75 @@ export class WhatsAppService {
       },
       route,
     );
+  }
+
+  /**
+   * Fetch an inbound attachment from Meta.
+   *
+   * Two hops, both authenticated: `GET /{media_id}` returns a short-lived URL,
+   * and that URL needs the SAME bearer token to download — a detail that makes
+   * the second request look gratuitous and is the usual reason this returns 401
+   * when first written.
+   *
+   * Returns null rather than throwing. A customer's photograph failing to
+   * download must not fail the webhook: Meta would redeliver the message, the
+   * bot would answer it a second time, and the customer would get the same
+   * reply twice because a picture could not be saved.
+   */
+  async fetchInboundMedia(
+    organisationId: string,
+    mediaId: string,
+    route?: SenderRoute,
+  ): Promise<{ buffer: Buffer; mimeType: string } | null> {
+    const sender = await this.credentials.senderFor(organisationId, route);
+    if (!sender.usable || !sender.accessToken) {
+      this.logger.warn(`media ${mediaId} not fetched: ${sender.reason ?? 'no usable credential'}`);
+      return null;
+    }
+    try {
+      const lookup = await fetch(`${this.graphBase}/${this.apiVersion}/${mediaId}`, {
+        headers: { authorization: `Bearer ${sender.accessToken}` },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!lookup.ok) {
+        this.logger.warn(`media ${mediaId} lookup failed: HTTP ${lookup.status}`);
+        return null;
+      }
+      const meta = (await lookup.json()) as { url?: string; mime_type?: string; file_size?: number };
+      if (!meta.url) return null;
+
+      // Refused BEFORE the download when Meta tells us the size, so an
+      // oversized file costs one cheap request rather than a full transfer.
+      if (typeof meta.file_size === 'number' && meta.file_size > MAX_INBOUND_MEDIA_BYTES) {
+        this.logger.warn(`media ${mediaId} refused: ${meta.file_size} bytes exceeds the cap`);
+        return null;
+      }
+
+      const download = await fetch(meta.url, {
+        headers: { authorization: `Bearer ${sender.accessToken}` },
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!download.ok) {
+        this.logger.warn(`media ${mediaId} download failed: HTTP ${download.status}`);
+        return null;
+      }
+      const buffer = Buffer.from(await download.arrayBuffer());
+      // Checked again on the bytes actually received: `file_size` is Meta's
+      // claim, not a guarantee, and this is the number that reaches the disk.
+      if (buffer.byteLength > MAX_INBOUND_MEDIA_BYTES) {
+        this.logger.warn(`media ${mediaId} refused after download: ${buffer.byteLength} bytes`);
+        return null;
+      }
+      return {
+        buffer,
+        mimeType: meta.mime_type || download.headers.get('content-type') || 'application/octet-stream',
+      };
+    } catch (err) {
+      this.logger.warn(
+        `media ${mediaId} could not be fetched: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
   }
 
   private async send(

@@ -2,11 +2,13 @@
  * Upload folders the public static handler must never serve.
  *
  * `attendance` holds photographs of named employees' faces, `visits` holds
- * photographs of customers at a counter, and `exports` holds generated archives
- * — every catalogue photograph in one file. Each is read only through an
+ * photographs of customers at a counter, `exports` holds generated archives
+ * — every catalogue photograph in one file — and `messages` holds whatever a
+ * customer sent into a WhatsApp thread, which is their content and often a
+ * photograph of something they own. Each is read only through an
  * authenticated route that checks the caller.
  */
-const PRIVATE_MEDIA = /^\/uploads\/org\/[^/]+\/(attendance|visits|exports)\//i;
+const PRIVATE_MEDIA = /^\/uploads\/org\/[^/]+\/(attendance|visits|exports|messages)\//i;
 
 /**
  * Would the static handler, given this request path, reach a private folder?
