@@ -10,6 +10,7 @@
 //   head.office@caratsense.in      head_office   (all stores)
 import { Prisma, PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { seedModules } from "./seed-modules.mjs";
 
 const ORGANISATION_ID = "org_eclat";
 const basePrisma = new PrismaClient();
@@ -950,11 +951,16 @@ async function main() {
     },
   });
 
+  const modules = await seedModules(prisma);
+
   console.log("Seed complete:");
   console.log(`  ${userDefs.length} users (password: ${PASSWORD}), ${storeDefs.length} stores + 1 aggregate`);
   console.log(`  ${products.length} products, ${stock.length} stock items, ${leads.length} leads, ${quoteDefs.length} quotes`);
-  console.log(`  sales across 7 days, footfall check-ins, ${customOrders.length} custom orders, 2 discount requests, 2 scheme members`);
+  console.log(`  sales across 7 days, footfall check-ins, ${customOrders.length} custom orders, 2 discount requests`);
   console.log(`  Module 6: 2 shifts + week-off + holiday on Mumbai — Bandra, late-flag demo (Fatima 3x -> flagged)`);
+  // Counted by the writer, not typed here: the old line claimed two scheme
+  // members this seed had never created, and nobody noticed for months.
+  for (const [what, n] of Object.entries(modules)) console.log(`  ${n} ${what}`);
 }
 
 main()
