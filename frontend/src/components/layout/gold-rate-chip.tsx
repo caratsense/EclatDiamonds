@@ -34,6 +34,17 @@ export function GoldRateChip() {
   const rate = rateFor(22);
   if (!showsRates || isLoading || !rate) return null;
 
+  /*
+   * A rate that is not today's says so here as well as on the rates card and
+   * in the quote builder. The chip used to show the number alone, so the top of
+   * every screen looked current while the quote screen said the same rate was
+   * from an earlier day — the same figure telling two stories.
+   */
+  const asOf = rate.publishedOn ?? rate.effectiveFrom;
+  const asOfLabel = asOf
+    ? new Date(asOf).toLocaleDateString("en-GB", { day: "numeric", month: "short" })
+    : null;
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
@@ -57,6 +68,9 @@ export function GoldRateChip() {
           <Coins className="h-3.5 w-3.5 text-[var(--gold)]" />
           <span className="num">{formatINR(rate.ratePerGram)}</span>
           <span className="text-muted-foreground">/g 22K</span>
+          {rate.stale && asOfLabel ? (
+            <span className="text-[var(--warning)]">· {asOfLabel}</span>
+          ) : null}
         </button>
       </DialogTrigger>
 
