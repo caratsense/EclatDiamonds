@@ -82,6 +82,10 @@ function toView(q: any) {
       ...discountSplit(q),
       taxable: Number(q.taxableAmount),
       gst: Number(q.gstAmount),
+      // Half of the GST each, the way the invoice prints it within one state.
+      sgst: round2(Number(q.gstAmount) / 2),
+      cgst: round2(Number(q.gstAmount) / 2),
+      roundOff: round2(Number(q.grandTotal) - (Number(q.taxableAmount) + Number(q.gstAmount))),
       grandTotal: Number(q.grandTotal),
     },
   };
@@ -222,9 +226,14 @@ function computeTotals(
       : Math.max(discounts.making, discounts.stone);
   const taxable = metalValue + makingCharges + stoneCharges - discountAmount;
   const gst = taxable * GST_RATE;
+  // The bill is settled in whole rupees, as the shop's own invoice is: GST is
+  // 1.5% SGST + 1.5% CGST on the taxable value, and the difference to the
+  // rounded total is shown as the rounding line.
+  const grandTotal = Math.round(taxable + gst);
   return {
     metalValue, makingCharges, stoneCharges, discountAmount, discountPercent, discounts, taxable, gst,
-    grandTotal: taxable + gst,
+    roundOff: round2(grandTotal - (taxable + gst)),
+    grandTotal,
   };
 }
 
@@ -322,6 +331,28 @@ function orderDetails(lines: any[]): string {
         .join(' · ');
     })
     .join('\n');
+}
+
+/**
+ * The header lines a bill carries beyond name and address: the former trading
+ * name, PAN and the bank block. They live in Organisation.settings because they
+ * are the tenant's stationery, not Eclat's data model.
+ */
+function billHeader(settings: unknown) {
+  const s = (settings ?? {}) as Record<string, unknown>;
+  const bill = (s.billing ?? {}) as Record<string, unknown>;
+  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  const bank = (bill.bank ?? {}) as Record<string, unknown>;
+  return {
+    pan: str(bill.pan),
+    formerName: str(bill.formerName),
+    bank: {
+      accountName: str(bank.accountName),
+      bankName: str(bank.bankName),
+      accountNo: str(bank.accountNo),
+      ifsc: str(bank.ifsc),
+    },
+  };
 }
 
 function inr(amount: number): string {
@@ -511,14 +542,20 @@ export class QuotesService {
         where: { id: q.storeId, organisationId },
         select: {
           name: true, city: true, addressLine1: true, addressLine2: true, state: true,
-          pincode: true, phone: true, gstin: true,
+          pincode: true, phone: true, email: true, gstin: true,
         },
       }),
       this.prisma.organisation.findUnique({
         where: { id: organisationId },
-        select: { name: true, legalName: true, gstin: true },
+        select: { name: true, legalName: true, gstin: true, settings: true },
       }),
     ]);
+    const party = q.partyId
+      ? await this.prisma.party.findFirst({
+          where: { id: q.partyId, organisationId },
+          select: { addressLine1: true, addressLine2: true, city: true, state: true, gstin: true, pan: true },
+        })
+      : null;
     const view = toView(q);
     const buffer = await renderQuotePdf({
       business: {
@@ -530,13 +567,29 @@ export class QuotesService {
           [store?.city, store?.state, store?.pincode].filter(Boolean).join(', '),
         ].filter((line): line is string => !!line),
         phone: store?.phone ?? null,
+        email: store?.email ?? null,
         gstin: store?.gstin || org?.gstin || null,
+        // The bill's own header lines, when head office has filled them in
+        // (Settings → Configuration). Nothing is invented: a line the tenant
+        // has not given simply does not print.
+        ...billHeader(org?.settings),
       },
       ref: q.ref,
       revision: q.revision,
       createdAt: view.createdAt,
       validUntil: view.validUntil || null,
-      customer: { name: q.customerName, phone: q.phone ?? '' },
+      customer: {
+        name: q.customerName,
+        phone: q.phone ?? '',
+        ...(party
+          ? {
+              address: [party.addressLine1, party.addressLine2, party.city].filter(Boolean).join(', ') || null,
+              state: party.state ?? null,
+              gstin: party.gstin ?? null,
+              pan: party.pan ?? null,
+            }
+          : {}),
+      },
       kind: q.kind,
       isKaccha: q.isKaccha,
       remarks: q.remarks ?? '',
@@ -602,7 +655,8 @@ export class QuotesService {
     );
     if (current.isKaccha) {
       t.gst = 0;
-      t.grandTotal = t.taxable;
+      t.grandTotal = Math.round(t.taxable);
+      t.roundOff = round2(t.grandTotal - t.taxable);
     }
     // Touching the price makes it this person's price, judged against their caps.
     const repriced =
@@ -711,7 +765,8 @@ export class QuotesService {
     // force the tax to zero and make the grand total equal the taxable amount.
     if (isKaccha) {
       t.gst = 0;
-      t.grandTotal = t.taxable;
+      t.grandTotal = Math.round(t.taxable);
+      t.roundOff = round2(t.grandTotal - t.taxable);
     }
     // Sequence-backed, same reason as the order refs this service also mints.
     const seq = await this.sequence.next('QT:global');

@@ -45,27 +45,56 @@ export class MaterialsService {
     };
   }
 
-  /** A design's default materials, by its style number. */
+  /**
+   * A design's default materials, by its style number. A partial number that
+   * matches exactly one design loads that design: typing "778" and pressing
+   * Enter should do what picking `10778RG` from the list does.
+   */
   async style(user: AuthUser, styleCode: string) {
-    const bom = await this.prisma.styleBom.findFirst({
-      where: { organisationId: user.organisationId, styleCode: { equals: styleCode.trim(), mode: 'insensitive' } },
-      select: { styleCode: true, itemType: true, itemSize: true, lines: true },
+    const term = styleCode.trim();
+    const organisationId = user.organisationId;
+    const select = { styleCode: true, itemType: true, itemSize: true, lines: true };
+    const exact = await this.prisma.styleBom.findFirst({
+      where: { organisationId, styleCode: { equals: term, mode: 'insensitive' } },
+      select,
     });
-    if (!bom) throw new NotFoundException(`No style ${styleCode.trim()} in the item master`);
-    return bom;
+    if (exact) return exact;
+    const near = await this.prisma.styleBom.findMany({
+      where: { organisationId, styleCode: { contains: term, mode: 'insensitive' } },
+      take: 2,
+      select,
+    });
+    if (near.length === 1) return near[0];
+    if (near.length > 1) {
+      throw new NotFoundException(`More than one style matches "${term}" — pick one from the list`);
+    }
+    throw new NotFoundException(`No style ${term} in the item master`);
   }
 
-  /** Style numbers starting with what was typed, for the search box. */
+  /**
+   * Style numbers for the search box. A style code is matched anywhere in the
+   * string, not only at its start: the ERP's codes are mostly numeric
+   * (`10778RG`, `09987RG`), so a salesperson who remembers "778" or the "RG"
+   * tail would otherwise find nothing. A code that STARTS with the term is
+   * still offered first. One character is enough to search.
+   */
   async searchStyles(user: AuthUser, q: string) {
     const term = q.trim();
-    if (term.length < 2) return [];
+    if (!term) return [];
     const rows = await this.prisma.styleBom.findMany({
-      where: { organisationId: user.organisationId, styleCode: { startsWith: term, mode: 'insensitive' } },
+      where: { organisationId: user.organisationId, styleCode: { contains: term, mode: 'insensitive' } },
       orderBy: { styleCode: 'asc' },
-      take: 20,
-      select: { styleCode: true, itemType: true },
+      take: 50,
+      select: { styleCode: true, itemType: true, itemSize: true },
     });
-    return rows;
+    const starts = term.toLowerCase();
+    return rows
+      .sort((a, b) => {
+        const aFirst = a.styleCode.toLowerCase().startsWith(starts) ? 0 : 1;
+        const bFirst = b.styleCode.toLowerCase().startsWith(starts) ? 0 : 1;
+        return aFirst - bFirst || a.styleCode.localeCompare(b.styleCode);
+      })
+      .slice(0, 20);
   }
 
   /**

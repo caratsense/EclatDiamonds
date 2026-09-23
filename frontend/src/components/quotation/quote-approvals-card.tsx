@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ShieldCheck } from "lucide-react";
+import { Check, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -55,17 +55,29 @@ export function QuoteApprovalsCard() {
         </CardTitle>
         {settings.data && (
           <p className="text-xs text-muted-foreground">
-            {settings.data.valueThreshold == null
-              ? "Approval is off — quotes can be sent without a manager."
-              : settings.data.valueThreshold === 0
-                ? "Every quote needs a manager to approve the final amount."
-                : `Quotes of ${formatINR(settings.data.valueThreshold)} or more need a manager.`}
+            Now:{" "}
+            <span className="font-medium text-foreground">
+              {settings.data.valueThreshold == null
+                ? "no quote needs approval"
+                : settings.data.valueThreshold === 0
+                  ? "every quote needs a manager"
+                  : `${formatINR(settings.data.valueThreshold)} and above needs a manager`}
+            </span>
           </p>
         )}
       </CardHeader>
       <CardContent className="space-y-3">
+        <p className="text-sm text-muted-foreground">
+          A quote that needs a manager&apos;s yes waits here until someone
+          approves or rejects it, and until then it cannot be sent to the
+          customer. Below, you choose when that happens.{" "}
+          <span className="font-medium text-foreground">
+            A discount above a salesperson&apos;s own limit always needs approval,
+            whatever you choose here.
+          </span>
+        </p>
         {pending.isLoading ? null : rows.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Nothing waiting for a decision.</p>
+          <p className="text-sm text-muted-foreground">Nothing is waiting for a decision right now.</p>
         ) : (
           <ul className="divide-y rounded-lg border">
             {rows.map((r) => (
@@ -171,7 +183,12 @@ function PendingRow({ row }: { row: PendingQuoteApproval }) {
   );
 }
 
-/** Head office sets which quotes need a manager: every quote, above an amount, or none. */
+/**
+ * Head office chooses when a quote needs a manager: every quote, only from an
+ * amount upwards, or never. The three are mutually exclusive and the active one
+ * is named in words, because "Off" on its own read as a switch nobody could
+ * place.
+ */
 function ApprovalRule({ current }: { current: number | null }) {
   const save = useSaveQuoteApprovalSettings();
   const [amount, setAmount] = useState(current && current > 0 ? String(current) : "");
@@ -185,47 +202,62 @@ function ApprovalRule({ current }: { current: number | null }) {
       },
     );
 
+  const chosen = current === 0 ? "every" : current == null ? "never" : "amount";
+
   return (
-    <div className="flex flex-wrap items-end gap-2 border-t pt-3">
-      <Button
-        size="sm"
-        variant={current === 0 ? "default" : "outline"}
-        disabled={save.isPending}
-        onClick={() => apply(0, "Every quote now needs a manager’s approval")}
-      >
-        Every quote
-      </Button>
-      <div className="grid gap-1">
-        <Label htmlFor="approval-threshold" className="text-xs text-muted-foreground">
-          Or only quotes from (₹)
-        </Label>
+    <div className="space-y-2 border-t pt-3">
+      <p className="text-xs font-medium">When does a quote need a manager?</p>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <Button
+          size="sm"
+          className="justify-start"
+          variant={chosen === "every" ? "default" : "outline"}
+          disabled={save.isPending}
+          onClick={() => apply(0, "Every quote now needs a manager’s approval")}
+        >
+          {chosen === "every" ? <Check className="h-4 w-4" /> : null} Every quote
+        </Button>
         <div className="flex gap-2">
           <Input
             id="approval-threshold"
+            aria-label="Amount from which a quote needs a manager"
             inputMode="numeric"
             value={amount}
             onChange={(e) => setAmount(e.target.value.replace(/[^0-9]/g, ""))}
             placeholder="e.g. 200000"
-            className="h-9 w-32"
+            className="h-9 min-w-0 flex-1"
           />
           <Button
             size="sm"
-            variant={current != null && current > 0 ? "default" : "outline"}
+            variant={chosen === "amount" ? "default" : "outline"}
             disabled={save.isPending || !amount}
-            onClick={() => apply(Number(amount), `Quotes of ₹${Number(amount).toLocaleString("en-IN")} or more now need approval`)}
+            onClick={() =>
+              apply(
+                Number(amount),
+                `Quotes of ₹${Number(amount).toLocaleString("en-IN")} or more now need approval`,
+              )
+            }
           >
-            Set amount
+            {chosen === "amount" ? <Check className="h-4 w-4" /> : null} From this amount
           </Button>
         </div>
+        <Button
+          size="sm"
+          className="justify-start"
+          variant={chosen === "never" ? "default" : "outline"}
+          disabled={save.isPending}
+          onClick={() => apply(null, "Quotes no longer need approval")}
+        >
+          {chosen === "never" ? <Check className="h-4 w-4" /> : null} Never
+        </Button>
       </div>
-      <Button
-        size="sm"
-        variant={current == null ? "secondary" : "ghost"}
-        disabled={save.isPending}
-        onClick={() => apply(null, "Quote approval turned off")}
-      >
-        Off
-      </Button>
+      <p className="text-xs text-muted-foreground">
+        {chosen === "every"
+          ? "Every quote waits for a manager before it can be sent."
+          : chosen === "amount"
+            ? `Quotes of ${formatINR(current ?? 0)} and above wait for a manager; smaller ones go straight out.`
+            : "Quotes go straight out. Only a discount above the salesperson’s limit still needs a manager."}
+      </p>
     </div>
   );
 }
