@@ -228,6 +228,69 @@ describe('Eclat backend — legacy sync (e2e)', () => {
     ).toBe(0);
   });
 
+  it('a sale line adds up: metal + making + stone + exchange = the line total', async () => {
+    // The shape of a real bill from the 8 Jun 2026 backup, where
+    // MRP = TotMtlAmt + TotDiaAmt + TotCPFAmt + TotImiAmt + TotXchgAmt held on
+    // 3,275 of 3,275 lines. This ERP books the making charge as CPF and leaves
+    // TotHandlingAmt at zero on every row; reading making from TotHandlingAmt
+    // alone silently imported every line with no making charge.
+    const store = await prisma.store.findFirstOrThrow({
+      where: { organisationId, isAggregate: false },
+      select: { id: true },
+    });
+    const sale = await prisma.sale.create({
+      data: {
+        organisationId,
+        legacyId: 'ADDS-UP-1',
+        storeId: store.id,
+        docNo: 'ADDS-UP-1',
+        docDate: new Date('2026-06-01T00:00:00Z'),
+        totalAmount: '10000',
+      },
+      select: { id: true },
+    });
+
+    const res = await request(app.getHttpServer())
+      .post('/sync/sale-lines')
+      .set(asAgent())
+      .send({
+        records: [
+          {
+            JewelTransId: 'ADDS-UP-1',
+            JewelId: 'J1',
+            SrNo: 1,
+            NetWt: 3.2,
+            TotMtlAmt: 6000,
+            TotHandlingAmt: 0,
+            TotCPFAmt: 1500,
+            TotDiaAmt: 2000,
+            TotImiAmt: 250,
+            TotXchgAmt: 250,
+            MRP: 10000,
+          },
+        ],
+      });
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ entity: 'sale-lines', received: 1, upserted: 1, skipped: 0 });
+
+    const line = await prisma.saleLine.findFirstOrThrow({ where: { saleId: sale.id } });
+    expect(Number(line.metalAmount)).toBe(6000);
+    // Making is the handling charge AND the CPF: an install uses one or the
+    // other, never both, so adding them is right in either case.
+    expect(Number(line.makingAmount)).toBe(1500);
+    // Stones are diamond plus imitation, or the imitation value has no home.
+    expect(Number(line.stoneAmount)).toBe(2250);
+    expect(Number(line.exchangeAmount)).toBe(250);
+    expect(Number(line.lineTotal)).toBe(10000);
+
+    const parts =
+      Number(line.metalAmount) +
+      Number(line.makingAmount) +
+      Number(line.stoneAmount) +
+      Number(line.exchangeAmount);
+    expect(parts).toBe(Number(line.lineTotal));
+  });
+
   it('rejects unknown top-level body fields (mass-assignment guard)', async () => {
     const res = await request(app.getHttpServer())
       .post('/sync/parties')
