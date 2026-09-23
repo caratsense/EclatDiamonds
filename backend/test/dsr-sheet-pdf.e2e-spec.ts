@@ -144,34 +144,65 @@ describe('DSR sheet PDF (e2e)', () => {
     expect(text).toContain('Surat Main');
     expect(text).toContain('Tue 10 Mar 2026');
     expect(text).toContain('Bank Transfer|');
-    expect(text).toContain('22,222');
-    expect(text).toContain('23,222'); // Table B total: cash + bank
+    // The store's sheet prints figures plain, so a separator here is a regression.
+    expect(text).toContain('22222');
+    expect(text).not.toContain('22,222');
+    expect(text).toContain('23222'); // Table B total: cash + bank
+    expect(text).toContain('Remark:|');
     expect(text).toContain('Hallmark re-check pending');
   });
 
-  it('a week runs Monday to Sunday with a Total; the book opens on the first day and closes on the last', async () => {
+  it("the sheet is the store's own: two tables, their banners, its wording", async () => {
+    const res = await sheet('mgr', `storeId=${A.store}&period=week&date=2026-03-12`).expect(200);
+    const text = pdfText(res.body);
+    for (const label of [
+      'TABLE A - COUNTER SALE',
+      'Sale Type - Counter Sale|',
+      'TABLE B - CUSTOMISED SALE',
+      'Customised Items:|',
+      'Mode of Payment:|',
+      'Booking Value - For the Day|',
+      'Bookings Closed - Sale Completed|',
+      'Bank Transfer|',
+      'Remark:|',
+    ]) {
+      expect(text).toContain(label);
+    }
+    // Gold is a heading over Weight and Value, not one squashed label.
+    expect(text).toContain('Gold|');
+    expect(text).toContain('Weight|');
+    expect(text).not.toContain('Gold Weight (g)');
+  });
+
+  it('a week runs Monday to Sunday, and the book opens on the first day and closes on the last', async () => {
     const res = await sheet('mgr', `storeId=${A.store}&period=week&date=2026-03-12`).expect(200);
     expect(res.body.subarray(0, 4).toString()).toBe('%PDF');
     const page = (await PDFDocument.load(res.body)).getPage(0);
     expect(page.getWidth()).toBeGreaterThan(page.getHeight());
     const text = pdfText(res.body);
-    for (const d of ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun', 'Total', '9 Mar', '15 Mar']) expect(text).toContain(`${d}|`);
-    expect(text).toContain('66,666'); // 11,111 + 22,222 + 33,333
-    expect(text).toContain('|30|'); // walk-ins 10 + 12 + 8
-    // Summing the book instead would print 3,15,000 for both.
-    expect(text).not.toContain('3,15,000');
+    for (const d of ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']) {
+      expect(text).toContain(`${d}|`);
+    }
+    // Seven days and nothing else, as the store's copy is: no Total column.
+    expect(text).not.toContain('Sunday|Total');
+    expect(text).toContain('11111');
+    expect(text).toContain('22222');
+    // Summing the book instead would print 315000 for both.
+    expect(text).not.toContain('315000');
     expect(text).toContain('Mon 9 Mar  Sun 15 Mar 2026');
     expect(text).toContain('Tue 10: Hallmark re-check pending');
-    expect(text).not.toContain('44,444'); // 1 Mar is another week
+    expect(text).not.toContain('44444'); // 1 Mar is another week
   });
 
   it('a month runs week by week, clipped to the month', async () => {
     const res = await sheet('mgr', `storeId=${A.store}&period=month&date=2026-03-20`).expect(200);
     const text = pdfText(res.body);
     expect(text).toContain('Mar 2026');
-    for (const w of ['Week 1|', 'Week 6|', '1 Mar|', '30–31 Mar|']) expect(text).toContain(w.replace('–', '\x96'));
+    // A month's columns are weeks, a shape the paper sheet has no version of, so
+    // that one keeps the Total the owner would otherwise add by hand.
+    for (const w of ['Week 1|', 'Week 6|', 'Total|']) expect(text).toContain(w);
     expect(text).not.toContain('Week 7');
-    expect(text).toContain('1,11,110'); // every bank transfer in March
+    expect(text).toContain('111110'); // every bank transfer in March
     expect(text).toContain('|35|'); // walk-ins 5 + 10 + 12 + 8
     expect(res.body.length).toBeGreaterThan(1500);
   });
@@ -184,7 +215,7 @@ describe('DSR sheet PDF (e2e)', () => {
     await sheet('rep', `storeId=all&period=day`).expect(400);
   });
 
-  it('the same sheet as a workbook: real cells, real numbers, and a Total that adds up', async () => {
+  it("the same sheet as a workbook: the store's rows, real numbers, seven days", async () => {
     const res = await sheet(
       'mgr',
       `storeId=${A.store}&period=week&date=2026-03-12&format=xlsx`,
@@ -207,31 +238,34 @@ describe('DSR sheet PDF (e2e)', () => {
       }
       throw new Error(`no "${label}" row in the workbook`);
     };
-    // Mon 9 … Sun 15 plus Total: eight value columns after the labels.
-    const head = row('');
-    expect(head.getCell(2).value).toBe('Mon\n9 Mar');
-    expect(head.getCell(9).value).toBe('Total');
+    // Monday … Sunday: seven value columns and no eighth. The paper sheet the
+    // owner keeps has no Total column, so neither has this.
+    const head = row('Sale Type - Counter Sale');
+    expect(head.getCell(2).value).toBe('Monday');
+    expect(head.getCell(8).value).toBe('Sunday');
+    expect(head.getCell(9).value ?? null).toBeNull();
+    // Both tables repeat the day names under their own banner.
+    expect(row('Customised Items:').getCell(2).value).toBe('Monday');
 
     // Figures, not strings — the owner sums this file.
     const bank = row('Bank Transfer');
     expect(bank.getCell(2).value).toBe(11111); // Mon 9
     expect(bank.getCell(3).value).toBe(22222); // Tue 10
     expect(bank.getCell(4).value ?? null).toBeNull(); // Wed 11: nothing filed
-    expect(bank.getCell(9).value).toBe(66666);
-    expect(bank.getCell(9).numFmt).toBe('#,##,##0');
+    // Plain, the way the store's own sheet shows them.
+    expect(bank.getCell(2).numFmt).toBe('0');
 
-    // The Total column is the row's own columns added up, every row.
-    for (const label of ['Walkins', 'Bank Transfer', 'Amount Received']) {
-      const r = row(label);
-      const days = [2, 3, 4, 5, 6, 7, 8].map((c) => Number(r.getCell(c).value ?? 0));
-      expect(r.getCell(9).value).toBe(days.reduce((a, b) => a + b, 0));
-    }
-    expect(row('Walkins').getCell(9).value).toBe(30);
-    // Gold weight keeps its grams, to three decimals.
-    expect(row('Gold Weight (g)').getCell(9).numFmt).toBe('#,##,##0.000');
-    // The booking book is a balance: its Total is not the week's sum.
-    expect(row('Open Bookings').getCell(9).value).toBe(100000);
-    expect(String(ws.getCell(`A${ws.rowCount}`).value)).toContain('Hallmark re-check pending');
+    // "Amount Received" heads the modes below it; the figures are theirs.
+    const received = row('Amount Received');
+    for (let c = 2; c <= 8; c += 1) expect(received.getCell(c).value ?? null).toBeNull();
+    // Gold is a heading too; Weight and Value carry the figures, grams to three
+    // places.
+    const gold = row('Gold');
+    for (let c = 2; c <= 8; c += 1) expect(gold.getCell(c).value ?? null).toBeNull();
+    expect(row('Weight').getCell(2).numFmt).toBe('0.000');
+    // The booking book is a balance, not a flow.
+    expect(row('Open Bookings').getCell(2).value).toBe(100000);
+    expect(String(row('Remark:').getCell(2).value)).toContain('Hallmark re-check pending');
   });
 
   it('the sheet route still serves the PDF, and daily/pdf is the same file', async () => {
@@ -242,7 +276,7 @@ describe('DSR sheet PDF (e2e)', () => {
     ).expect(200);
     expect(res.headers['content-type']).toContain('application/pdf');
     expect(res.headers['content-disposition']).toContain('DSR-Surat-Main-day-2026-03-10.pdf');
-    expect(pdfText(res.body)).toContain('22,222');
+    expect(pdfText(res.body)).toContain('22222');
     await sheet('rep', `storeId=${A.store}&period=day&date=2026-03-10&format=xlsx`, 'daily/sheet')
       .expect(200);
     await sheet('rep', `storeId=${A.store}&period=day&date=2026-03-10&format=ods`, 'daily/sheet')

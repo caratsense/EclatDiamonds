@@ -219,6 +219,16 @@ function fmtISODateUTC(d: Date): string {
 }
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+/** The DSR sheet heads its columns in full, as the store's own copy does. */
+const DOW_FULL = [
+  'Sunday',
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+];
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /** "22 Sep" from a @db.Date value (UTC components — no timezone shift). */
@@ -982,11 +992,13 @@ export class ReportingService {
       else groups.push([d]);
     }
     const columns = groups.map((g, i) => ({
-      title: query.period === 'month' ? `Week ${i + 1}` : DOW[g[0].getUTCDay()],
-      sub: g.length > 1 ? `${g[0].getUTCDate()}–${dayMon(g[g.length - 1])}` : dayMon(g[0]),
+      title: query.period === 'month' ? `Week ${i + 1}` : DOW_FULL[g[0].getUTCDay()],
       values: sheetValues(g.flatMap((d) => byDay.get(fmtISODateUTC(d)) ?? [])),
     }));
-    if (query.period !== 'day') columns.push({ title: 'Total', sub: '', values: sheetValues(rows) });
+    // A week's sheet is seven days and nothing else, as the store's own copy is.
+    // A month's columns are weeks — a shape the paper sheet has no version of —
+    // so that one gets the Total the owner would otherwise add by hand.
+    if (query.period === 'month') columns.push({ title: 'Total', values: sheetValues(rows) });
 
     const year = toDayInclusive.getUTCFullYear();
     const periodLabel =
