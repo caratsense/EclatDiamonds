@@ -22,7 +22,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { cn, apiErrorMessage, isValidEmail, normalizeIndianMobile } from "@/lib/utils";
+import {
+  cn,
+  apiErrorMessage,
+  isValidEmail,
+  normalizeIndianMobile,
+  phoneInputValue,
+} from "@/lib/utils";
 import { ChannelStatusNotice } from "@/components/integrations/channel-status-notice";
 import {
   composeDailyReportText,
@@ -216,12 +222,13 @@ export function DailyReportSendDialog({
             <Input
               id="dsr-send-to"
               type={isEmail ? "email" : "tel"}
-              inputMode={isEmail ? "email" : "tel"}
+              inputMode={isEmail ? "email" : "numeric"}
+              maxLength={isEmail ? undefined : 10}
               placeholder={isEmail ? "reports@example.com" : "9876500000"}
               value={to}
               aria-invalid={recipientError}
               onChange={(e) => {
-                setTo(e.target.value);
+                setTo(isEmail ? e.target.value : phoneInputValue(e.target.value));
                 clearOutcome();
               }}
             />

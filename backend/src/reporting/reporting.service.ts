@@ -19,15 +19,19 @@ import {
 import { ratio } from '../management/kpi-window';
 import { WhatsAppService } from '../integrations/whatsapp.service';
 import { EmailService } from '../integrations/email.service';
-import { DSR_SUMMED, DsrSheetValues, renderDsrSheetPdf } from './dsr-pdf';
+import { renderDsrSheetPdf } from './dsr-pdf';
+import { renderDsrSheetXlsx } from './dsr-xlsx';
+import { DSR_SUMMED, DsrSheetData, DsrSheetValues } from './dsr-sheet';
 import {
   ComplianceQueryDto,
   CreateDailyReportDto,
   DailyReportQueryDto,
   DailySheetQueryDto,
+  DSR_SHEET_MIME,
   ReportChannel,
   ReportPeriod,
   SendDailyReportDto,
+  SendDailySheetDto,
   SendReportDto,
 } from './dto/reporting.dto';
 
@@ -944,11 +948,14 @@ export class ReportingService {
   }
 
   /**
-   * GET /reporting/daily/pdf — one store's filed DSRs laid out as the paper
-   * sheet it keeps: the day; its Mon–Sun week day by day; or its month week by
-   * week (Mon–Sun, clipped to the month). A week or a month adds a Total column.
+   * One store's filed DSRs laid out as the paper sheet it keeps: the day; its
+   * Mon–Sun week day by day; or its month week by week (Mon–Sun, clipped to the
+   * month). A week or a month adds a Total column.
+   *
+   * The model only — the PDF, the workbook and the send path all render THIS,
+   * so the figures on a printed sheet and on an exported one cannot drift.
    */
-  async dailySheetPdf(user: AuthUser, query: DailySheetQueryDto) {
+  private async dsrSheetModel(user: AuthUser, query: DailySheetQueryDto) {
     const storeId = query.storeId.trim();
     if (storeId === 'all') throw new BadRequestException('Select a store to download the DSR for');
     this.scope.assertStoreAllowed(user, storeId);
@@ -991,7 +998,7 @@ export class ReportingService {
     const now = new Date();
     const today = businessDate(now, tz);
 
-    const buffer = await renderDsrSheetPdf({
+    const data: DsrSheetData = {
       organisation: store.organisation.name,
       store: store.name,
       period: query.period,
@@ -1004,9 +1011,98 @@ export class ReportingService {
           day: `${DOW[r.reportDate.getUTCDay()]} ${r.reportDate.getUTCDate()}`,
           text: r.remark!.trim(),
         })),
-    });
+    };
     const slug = store.name.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '') || storeId;
-    return { buffer, filename: `DSR-${slug}-${query.period}-${dateOnly(base)}.pdf` };
+    return { data, stem: `DSR-${slug}-${query.period}-${dateOnly(base)}` };
+  }
+
+  /**
+   * GET /reporting/daily/sheet — the sheet as a file: the paper layout as a PDF,
+   * or the same grid as a workbook the owner can sort and total in Excel.
+   * `daily/pdf` is the same thing with the format fixed.
+   */
+  async dailySheet(user: AuthUser, query: DailySheetQueryDto) {
+    const format = query.format ?? 'pdf';
+    const { data, stem } = await this.dsrSheetModel(user, query);
+    const buffer =
+      format === 'xlsx' ? await renderDsrSheetXlsx(data) : await renderDsrSheetPdf(data);
+    return {
+      buffer,
+      filename: `${stem}.${format}`,
+      mimeType: DSR_SHEET_MIME[format],
+      // What a WhatsApp caption or an email subject says the file is.
+      summary: `${data.store} — Daily Sales Report — ${data.periodLabel}`,
+    };
+  }
+
+  /**
+   * POST /reporting/daily/sheet/send — the same file, delivered. WhatsApp takes
+   * it as a document, email as an attachment. Mirrors `daily/:id/send`: an
+   * unconfigured channel degrades to a no-op (sent=false, disabled=true) rather
+   * than throwing, and the summary always comes back as the preview.
+   */
+  async sendDailySheet(
+    user: AuthUser,
+    dto: SendDailySheetDto,
+  ): Promise<{
+    sent: boolean;
+    channel: ReportChannel;
+    disabled?: boolean;
+    preview: string;
+    filename: string;
+  }> {
+    const to = this.assertRecipient(dto.channel, dto.to);
+    const sheet = await this.dailySheet(user, dto);
+    const preview = sheet.summary;
+
+    let sent = false;
+    let disabled = false;
+    if (dto.channel === 'whatsapp') {
+      // The branch the sheet is ABOUT is the branch it should come from.
+      const result = await this.whatsapp.sendDocument(
+        user.organisationId,
+        to,
+        {
+          buffer: sheet.buffer,
+          filename: sheet.filename,
+          mimeType: sheet.mimeType,
+          caption: preview,
+        },
+        { storeId: dto.storeId.trim() },
+      );
+      sent = result.delivered;
+      disabled = result.dryRun;
+    } else if (this.email.enabled) {
+      sent = (
+        await this.email.send(to, preview, `${preview}\n\nThe sheet is attached.`, [
+          { filename: sheet.filename, content: sheet.buffer, contentType: sheet.mimeType },
+        ])
+      ).sent;
+    } else {
+      disabled = true;
+    }
+
+    // Same disclosure as the composed DSR: the sheet leaves the platform, so
+    // where it went goes in the trail, with the recipient masked.
+    await this.audit.record(user, {
+      action: 'report.send_dsr_sheet',
+      entityType: 'DailyReport',
+      entityId: sheet.filename,
+      storeId: dto.storeId.trim(),
+      summary: `Sent ${preview} via ${dto.channel} to ${maskRecipient(dto.to)}`,
+      metadata: {
+        channel: dto.channel,
+        to: maskRecipient(dto.to),
+        format: dto.format ?? 'pdf',
+        period: dto.period,
+        sent,
+        disabled,
+      },
+    });
+
+    return disabled
+      ? { sent: false, channel: dto.channel, disabled: true, preview, filename: sheet.filename }
+      : { sent, channel: dto.channel, preview, filename: sheet.filename };
   }
 
   /**

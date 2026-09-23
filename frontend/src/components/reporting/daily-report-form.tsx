@@ -29,7 +29,7 @@ import {
   type DailyReportInput,
 } from "@/lib/mock/reporting";
 import { useCreateDailyReport } from "@/lib/queries/reporting";
-import { cn } from "@/lib/utils";
+import { cn, positiveNumberInput } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
 /** Parse a numeric input; blank/invalid -> undefined. */
@@ -93,7 +93,7 @@ function NumberField({
           inputMode="decimal"
           placeholder={placeholder}
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => onChange(positiveNumberInput(e.target.value))}
           className={cn("num", prefix && "pl-7", suffix && "pr-9")}
         />
         {suffix ? (

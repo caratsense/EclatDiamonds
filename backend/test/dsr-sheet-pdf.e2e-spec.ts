@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import request = require('supertest');
 import * as bcrypt from 'bcryptjs';
 import { inflateSync } from 'node:zlib';
+import { Workbook } from 'exceljs';
 import { PDFDocument } from 'pdf-lib';
 
 import type { PrismaService } from '../src/prisma/prisma.service';
@@ -17,6 +18,9 @@ import { routeForPath } from '../src/auth/access';
  *     starts on a Sunday, so it has six); totals add flows but take the
  *     booking book's opening from the first day and closing from the last.
  *  3. A salesperson gets their own store's sheet and nobody else's.
+ *  4. The same sheet as a workbook (format=xlsx): real cells, real numbers,
+ *     and a Total column that adds up — and sent as a file, which degrades to
+ *     a no-op on a channel this deployment has not configured.
  */
 
 const PASSWORD = 'password123';
@@ -55,9 +59,9 @@ describe('DSR sheet PDF (e2e)', () => {
   const as = (who: string) => ({ Authorization: `Bearer ${t[who]}` });
   const file = (who: string, body: Record<string, unknown>) =>
     request(server()).post('/reporting/daily').set(as(who)).send({ storeId: A.store, ...body });
-  const sheet = (who: string, qs: string) =>
+  const sheet = (who: string, qs: string, route = 'daily/pdf') =>
     request(server())
-      .get(`/reporting/daily/pdf?${qs}`)
+      .get(`/reporting/${route}?${qs}`)
       .set(as(who))
       .buffer(true)
       .parse((res, cb) => {
@@ -84,6 +88,7 @@ describe('DSR sheet PDF (e2e)', () => {
       ['mgr', 'store_manager', A.store],
       ['rep', 'salesperson', A.store],
       ['rep2', 'salesperson', A.other],
+      ['mgr2', 'store_manager', A.other],
     ] as const) {
       await prisma.user.create({
         data: {
@@ -177,5 +182,111 @@ describe('DSR sheet PDF (e2e)', () => {
     await sheet('rep2', `storeId=${A.other}&period=month&date=2026-03-10`).expect(200);
     await sheet('rep', `storeId=${A.store}&period=year&date=2026-03-10`).expect(400);
     await sheet('rep', `storeId=all&period=day`).expect(400);
+  });
+
+  it('the same sheet as a workbook: real cells, real numbers, and a Total that adds up', async () => {
+    const res = await sheet(
+      'mgr',
+      `storeId=${A.store}&period=week&date=2026-03-12&format=xlsx`,
+      'daily/sheet',
+    ).expect(200);
+    expect(res.headers['content-type']).toContain(
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    expect(res.headers['content-disposition']).toContain('DSR-Surat-Main-week-2026-03-12.xlsx');
+    // A zip, not a CSV with the wrong extension.
+    expect(res.body.subarray(0, 2).toString()).toBe('PK');
+    expect(res.body.length).toBeGreaterThan(4000);
+
+    const wb = new Workbook();
+    await wb.xlsx.load(res.body);
+    const ws = wb.getWorksheet('DSR')!;
+    const row = (label: string) => {
+      for (let i = 1; i <= ws.rowCount; i += 1) {
+        if (String(ws.getRow(i).getCell(1).value ?? '').trim() === label) return ws.getRow(i);
+      }
+      throw new Error(`no "${label}" row in the workbook`);
+    };
+    // Mon 9 … Sun 15 plus Total: eight value columns after the labels.
+    const head = row('');
+    expect(head.getCell(2).value).toBe('Mon\n9 Mar');
+    expect(head.getCell(9).value).toBe('Total');
+
+    // Figures, not strings — the owner sums this file.
+    const bank = row('Bank Transfer');
+    expect(bank.getCell(2).value).toBe(11111); // Mon 9
+    expect(bank.getCell(3).value).toBe(22222); // Tue 10
+    expect(bank.getCell(4).value ?? null).toBeNull(); // Wed 11: nothing filed
+    expect(bank.getCell(9).value).toBe(66666);
+    expect(bank.getCell(9).numFmt).toBe('#,##,##0');
+
+    // The Total column is the row's own columns added up, every row.
+    for (const label of ['Walkins', 'Bank Transfer', 'Amount Received']) {
+      const r = row(label);
+      const days = [2, 3, 4, 5, 6, 7, 8].map((c) => Number(r.getCell(c).value ?? 0));
+      expect(r.getCell(9).value).toBe(days.reduce((a, b) => a + b, 0));
+    }
+    expect(row('Walkins').getCell(9).value).toBe(30);
+    // Gold weight keeps its grams, to three decimals.
+    expect(row('Gold Weight (g)').getCell(9).numFmt).toBe('#,##,##0.000');
+    // The booking book is a balance: its Total is not the week's sum.
+    expect(row('Open Bookings').getCell(9).value).toBe(100000);
+    expect(String(ws.getCell(`A${ws.rowCount}`).value)).toContain('Hallmark re-check pending');
+  });
+
+  it('the sheet route still serves the PDF, and daily/pdf is the same file', async () => {
+    const res = await sheet(
+      'rep',
+      `storeId=${A.store}&period=day&date=2026-03-10&format=pdf`,
+      'daily/sheet',
+    ).expect(200);
+    expect(res.headers['content-type']).toContain('application/pdf');
+    expect(res.headers['content-disposition']).toContain('DSR-Surat-Main-day-2026-03-10.pdf');
+    expect(pdfText(res.body)).toContain('22,222');
+    await sheet('rep', `storeId=${A.store}&period=day&date=2026-03-10&format=xlsx`, 'daily/sheet')
+      .expect(200);
+    await sheet('rep', `storeId=${A.store}&period=day&date=2026-03-10&format=ods`, 'daily/sheet')
+      .expect(400);
+  });
+
+  it('sending the sheet is a no-op on a channel this deployment has not configured', async () => {
+    for (const [channel, to] of [
+      ['email', 'owner@example.com'],
+      ['whatsapp', '9876500000'],
+    ] as const) {
+      const res = await request(server())
+        .post('/reporting/daily/sheet/send')
+        .set(as('mgr'))
+        .send({ storeId: A.store, period: 'week', date: '2026-03-12', format: 'xlsx', channel, to })
+        .expect(201);
+      expect(res.body).toMatchObject({ sent: false, disabled: true, channel });
+      expect(res.body.preview).toContain('Surat Main');
+      expect(res.body.filename).toBe('DSR-Surat-Main-week-2026-03-12.xlsx');
+    }
+    // Masked in the trail, and never the raw recipient.
+    const [log] = await prisma.auditLog.findMany({
+      where: {
+        organisationId: A.org,
+        action: 'report.send_dsr_sheet',
+        summary: { contains: 'via whatsapp' },
+      },
+    });
+    expect(log.summary).toContain('******0000');
+    expect(log.summary).not.toContain('9876500000');
+  });
+
+  it('sending is manager+ and stops at the store boundary, and the recipient is checked', async () => {
+    const send = (who: string, body: Record<string, unknown>) =>
+      request(server()).post('/reporting/daily/sheet/send').set(as(who)).send({
+        period: 'day',
+        date: '2026-03-10',
+        channel: 'whatsapp',
+        to: '9876500000',
+        ...body,
+      });
+    await send('mgr2', { storeId: A.store }).expect(403); // another branch's takings
+    await send('rep', { storeId: A.store }).expect(403); // a salesperson does not send
+    await send('mgr', { storeId: A.store, to: '12345' }).expect(400);
+    await send('mgr', { storeId: 'all' }).expect(400);
   });
 });

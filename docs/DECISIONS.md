@@ -283,7 +283,7 @@ Tracks scope decisions and unresolved questions so they don't get lost. Add a ro
 - **The quote builder is one form**: the Quick/Advanced split is gone, and so is the diamond pricing-reference upload. Style number + Enter loads the design's materials. Shortcuts: Alt+N item, Alt+D diamond, Alt+C colour stone, Ctrl+Enter save.
 - **No dialog closes on a background click**, app-wide; Close, Cancel and Esc still do.
 - **Sidebar "Find a screen" box** (desktop and the mobile More sheet). `/` focuses it, and Ctrl+K does too while record search stays switched off.
-- **DSR as the store's paper sheet**, downloadable for a day, a week (Mon–Sun + Total) or a month (weeks + Total): `GET /reporting/daily/pdf`. Table B gains **Bank Transfer**, and the sheet has a **Remark**. Bookings are a balance: a multi-day column opens at its first day's opening and closes at its last day's closing.
+- **DSR as the store's paper sheet**, downloadable for a day, a week (Mon–Sun + Total) or a month (weeks + Total): `GET /reporting/daily/sheet?format=pdf|xlsx` (`daily/pdf` still serves the PDF). Table B gains **Bank Transfer**, and the sheet has a **Remark**. Bookings are a balance: a multi-day column opens at its first day's opening and closes at its last day's closing. **The PDF and the workbook render one model** (`dsr-sheet.ts`), so the printed sheet and the exported one cannot disagree. `POST /reporting/daily/sheet/send` delivers the file itself — a WhatsApp document or an email attachment. **There is no head-office address on file**: a send picks the signed-in user, a typed email or a typed WhatsApp number.
 
 # 2026-09-22 — branch locations and imported-data holding store
 

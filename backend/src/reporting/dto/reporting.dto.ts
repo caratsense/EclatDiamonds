@@ -219,11 +219,19 @@ export class DailyReportQueryDto {
   storeId?: string;
 }
 
-/** The window a DSR sheet PDF covers: the day, its Mon–Sun week, or its month. */
+/** The window a DSR sheet covers: the day, its Mon–Sun week, or its month. */
 export type DsrSheetPeriod = 'day' | 'week' | 'month';
 export const DSR_SHEET_PERIODS: DsrSheetPeriod[] = ['day', 'week', 'month'];
 
-/** GET /reporting/daily/pdf?storeId=&period=&date= */
+/** The store's sheet to print, or the same grid to work on in Excel. */
+export type DsrSheetFormat = 'pdf' | 'xlsx';
+export const DSR_SHEET_FORMATS: DsrSheetFormat[] = ['pdf', 'xlsx'];
+export const DSR_SHEET_MIME: Record<DsrSheetFormat, string> = {
+  pdf: 'application/pdf',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+};
+
+/** GET /reporting/daily/sheet?storeId=&period=&date=&format= (and its `daily/pdf` alias) */
 export class DailySheetQueryDto {
   /** One store per sheet (must be in scope). */
   @IsString()
@@ -238,6 +246,23 @@ export class DailySheetQueryDto {
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'date must be in YYYY-MM-DD format' })
   date?: string;
+
+  /** Defaults to `pdf` — the layout the store already prints. */
+  @IsOptional()
+  @IsIn(DSR_SHEET_FORMATS)
+  format?: DsrSheetFormat;
+}
+
+/** POST /reporting/daily/sheet/send — the same sheet, delivered as a file. */
+export class SendDailySheetDto extends DailySheetQueryDto {
+  @IsIn(REPORT_CHANNELS)
+  channel!: ReportChannel;
+
+  /** Destination: a phone number for WhatsApp, an email address for email. */
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(255)
+  to!: string;
 }
 
 /** POST /reporting/daily/:id/send */

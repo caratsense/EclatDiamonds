@@ -11,6 +11,7 @@ import {
   DailySheetQueryDto,
   ReportSummaryQueryDto,
   SendDailyReportDto,
+  SendDailySheetDto,
   SendReportDto,
 } from './dto/reporting.dto';
 
@@ -104,24 +105,47 @@ export class ReportingController {
   }
 
   /**
-   * GET /reporting/daily/pdf?storeId=&period=day|week|month&date=YYYY-MM-DD —
-   * the store's DSRs as its paper sheet. Declared before `daily/:id`, which
-   * would otherwise take "pdf" for an id.
+   * GET /reporting/daily/sheet?storeId=&period=day|week|month&date=&format=pdf|xlsx
+   * — the store's DSRs as its paper sheet, to print or to work on in Excel.
+   * Declared before `daily/:id`, which would otherwise take "sheet" for an id.
    */
   @Roles('salesperson')
-  @Get('daily/pdf')
-  @Header('Content-Type', 'application/pdf')
+  @Get('daily/sheet')
   @Header('Cache-Control', 'private, no-store')
-  async dailyPdf(
+  async dailySheet(
     @CurrentUser() user: AuthUser,
     @Query() query: DailySheetQueryDto,
     @Res({ passthrough: true }) res: Response,
   ): Promise<StreamableFile> {
-    const { buffer, filename } = await this.reporting.dailySheetPdf(user, query);
+    const { buffer, filename, mimeType } = await this.reporting.dailySheet(user, query);
+    res.setHeader('Content-Type', mimeType);
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Length', String(buffer.byteLength));
     res.setHeader('X-Content-Type-Options', 'nosniff');
     return new StreamableFile(buffer);
+  }
+
+  /** GET /reporting/daily/pdf — the sheet with the format fixed. Kept for links already out there. */
+  @Roles('salesperson')
+  @Get('daily/pdf')
+  @Header('Cache-Control', 'private, no-store')
+  dailyPdf(
+    @CurrentUser() user: AuthUser,
+    @Query() query: DailySheetQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    return this.dailySheet(user, { ...query, format: 'pdf' }, res);
+  }
+
+  /**
+   * POST /reporting/daily/sheet/send — the sheet delivered as a file over
+   * WhatsApp or email. Manager+ like every other send: it ships a branch's
+   * takings to an arbitrary external recipient.
+   */
+  @Roles('store_manager', 'head_office')
+  @Post('daily/sheet/send')
+  sendDailySheet(@CurrentUser() user: AuthUser, @Body() dto: SendDailySheetDto) {
+    return this.reporting.sendDailySheet(user, dto);
   }
 
   /** GET /reporting/daily/:id — a single DSR, gated to the caller's store scope. */
