@@ -32,7 +32,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { cn, apiErrorMessage } from "@/lib/utils";
+import { cn, apiErrorMessage, positiveNumberInput } from "@/lib/utils";
 import { useStoresAdmin } from "@/lib/queries/stores";
 import {
   StoreScopeField,
@@ -760,7 +760,7 @@ function ShiftDialog({
               inputMode="numeric"
               placeholder="15"
               value={bufferMins}
-              onChange={(e) => setBufferMins(e.target.value)}
+              onChange={(e) => setBufferMins(positiveNumberInput(e.target.value))}
             />
             <p className="text-xs text-muted-foreground">
               Grace window after start before a check-in counts late.

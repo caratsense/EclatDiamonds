@@ -69,7 +69,7 @@ import {
   type ApiNewStoreProject,
   type ApiVendor,
 } from "@/lib/queries/new-store";
-import { apiErrorMessage, isRealName } from "@/lib/utils";
+import { apiErrorMessage, isRealName, positiveNumberInput } from "@/lib/utils";
 
 const CHECKLIST_STATUS_OPTIONS: { value: ChecklistStatus; label: string }[] = [
   { value: "todo", label: "To do" },
@@ -911,7 +911,7 @@ function AddVendorDialog({
                 value={amount}
                 aria-invalid={!!errors.amount}
                 onChange={(e) => {
-                  setAmount(e.target.value);
+                  setAmount(positiveNumberInput(e.target.value));
                   clearError("amount");
                 }}
               />

@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatINR } from "@/lib/format";
+import { positiveNumberInput } from "@/lib/utils";
 import { useSchemePlans } from "@/lib/queries/loyalty";
 import type { SchemePlan } from "@/lib/mock/loyalty";
 
@@ -97,7 +98,9 @@ export function MaturityCalculator() {
             min={0}
             step={500}
             value={installment}
-            onChange={(e) => setInstallment(Number(e.target.value) || 0)}
+            onChange={(e) =>
+              setInstallment(Number(positiveNumberInput(e.target.value)) || 0)
+            }
           />
         </div>
       </div>

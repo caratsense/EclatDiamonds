@@ -24,7 +24,12 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { formatINR } from "@/lib/format";
-import { cn, normalizeIndianMobile } from "@/lib/utils";
+import {
+  cn,
+  normalizeIndianMobile,
+  phoneInputValue,
+  positiveNumberInput,
+} from "@/lib/utils";
 import type { ChosenOption } from "@/lib/mock/returns";
 import {
   useCreateReturn,
@@ -309,11 +314,13 @@ export function ReturnCalculatorDialog({
               </Label>
               <Input
                 id="rc-phone"
-                placeholder="+91 …"
+                placeholder="10-digit mobile"
+                inputMode="numeric"
+                maxLength={10}
                 value={phone}
                 aria-invalid={!!errors.phone}
                 onChange={(e) => {
-                  setPhone(e.target.value);
+                  setPhone(phoneInputValue(e.target.value));
                   if (errors.phone) setErrors((p) => ({ ...p, phone: "" }));
                 }}
               />
@@ -347,7 +354,7 @@ export function ReturnCalculatorDialog({
                   min={0}
                   placeholder="0.000"
                   value={goldWtG}
-                  onChange={(e) => setGoldWtG(e.target.value)}
+                  onChange={(e) => setGoldWtG(positiveNumberInput(e.target.value))}
                 />
               </div>
               <div className="grid gap-1.5">
@@ -372,7 +379,7 @@ export function ReturnCalculatorDialog({
                   min={0}
                   placeholder="0"
                   value={goldRate}
-                  onChange={(e) => setGoldRate(e.target.value)}
+                  onChange={(e) => setGoldRate(positiveNumberInput(e.target.value))}
                 />
               </div>
             </div>
@@ -395,7 +402,7 @@ export function ReturnCalculatorDialog({
                   min={0}
                   placeholder="0.00"
                   value={diaCarat}
-                  onChange={(e) => setDiaCarat(e.target.value)}
+                  onChange={(e) => setDiaCarat(positiveNumberInput(e.target.value))}
                 />
               </div>
               <div className="grid gap-1.5">
@@ -428,7 +435,7 @@ export function ReturnCalculatorDialog({
                   min={0}
                   placeholder="0"
                   value={diaRate}
-                  onChange={(e) => setDiaRate(e.target.value)}
+                  onChange={(e) => setDiaRate(positiveNumberInput(e.target.value))}
                 />
               </div>
             </div>
@@ -444,7 +451,7 @@ export function ReturnCalculatorDialog({
               min={0}
               placeholder="0"
               value={making}
-              onChange={(e) => setMaking(e.target.value)}
+              onChange={(e) => setMaking(positiveNumberInput(e.target.value))}
             />
             <p className="text-[11px] text-muted-foreground">
               Recorded for reference — never returned.

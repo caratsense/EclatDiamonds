@@ -67,10 +67,11 @@ import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
 import {
   apiErrorMessage,
-  capIndianPhone,
   isRealName,
   isValidEmail,
   normalizeIndianMobile,
+  phoneInputValue,
+  positiveNumberInput,
 } from "@/lib/utils";
 
 const nav = getNavItem("settings/stores")!;
@@ -1091,7 +1092,7 @@ function EditStoreDialog({
                 min={25}
                 max={2000}
                 value={geofenceRadiusM}
-                onChange={(e) => setGeofenceRadiusM(e.target.value)}
+                onChange={(e) => setGeofenceRadiusM(positiveNumberInput(e.target.value))}
                 placeholder="150"
               />
               <div className="flex flex-wrap gap-1.5 mt-1">
@@ -1359,12 +1360,13 @@ function AddManagerDialog({
                 <Label htmlFor="mgr-phone">Phone</Label>
                 <Input
                   id="mgr-phone"
-                  placeholder="+91 ..."
-                  inputMode="tel"
+                  placeholder="10-digit mobile"
+                  inputMode="numeric"
+                  maxLength={10}
                   value={phone}
                   aria-invalid={!!errors.phone}
                   onChange={(e) => {
-                    setPhone(capIndianPhone(e.target.value));
+                    setPhone(phoneInputValue(e.target.value));
                     clearError("phone");
                   }}
                 />

@@ -44,10 +44,10 @@ import {
 import { useDebouncedValue } from "@/lib/queries/search";
 import {
   apiErrorMessage,
-  capIndianPhone,
   isRealName,
   isValidEmail,
   normalizeIndianMobile,
+  phoneInputValue,
 } from "@/lib/utils";
 
 const nav = getNavItem("customers")!;
@@ -335,12 +335,13 @@ function AddCustomerDialog({
             </Label>
             <Input
               id="cust-phone"
-              placeholder="+91 ..."
-              inputMode="tel"
+              placeholder="10-digit mobile"
+              inputMode="numeric"
+              maxLength={10}
               value={phone}
               aria-invalid={!!errors.phone}
               onChange={(e) => {
-                setPhone(capIndianPhone(e.target.value));
+                setPhone(phoneInputValue(e.target.value));
                 clearError("phone");
               }}
             />

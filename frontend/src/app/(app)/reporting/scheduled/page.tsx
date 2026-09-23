@@ -41,7 +41,7 @@ import {
   useUpdateScheduledReport,
   type ScheduledReport,
 } from "@/lib/queries/scheduled-reports";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, positiveNumberInput } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
 const DELIVERY_TONE: Record<string, PillTone> = {
@@ -219,7 +219,9 @@ export default function ScheduledReportsPage() {
                   id="rep-hour"
                   inputMode="numeric"
                   value={form.sendHour}
-                  onChange={(e) => setForm((f) => ({ ...f, sendHour: e.target.value }))}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, sendHour: positiveNumberInput(e.target.value) }))
+                  }
                 />
               </div>
               <div className="space-y-1.5">

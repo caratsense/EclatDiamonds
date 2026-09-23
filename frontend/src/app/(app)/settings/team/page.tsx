@@ -81,11 +81,11 @@ import {
 import { ROLE_LABELS, ROLE_RANK, type Role } from "@/lib/types";
 import {
   apiErrorMessage,
-  capIndianPhone,
   cn,
   isRealName,
   isValidEmail,
   normalizeIndianMobile,
+  phoneInputValue,
 } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
@@ -1425,9 +1425,10 @@ function AddStaffDialog({
               <Input
                 id="staff-phone"
                 inputMode="numeric"
+                maxLength={10}
                 placeholder="10-digit number"
                 value={phone}
-                onChange={(e) => setPhone(capIndianPhone(e.target.value))}
+                onChange={(e) => setPhone(phoneInputValue(e.target.value))}
                 aria-invalid={touched && phoneError}
               />
             </div>

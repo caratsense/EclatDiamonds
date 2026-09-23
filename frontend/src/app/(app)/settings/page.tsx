@@ -19,7 +19,7 @@ import { Label } from "@/components/ui/label";
 import { ROLE_LABELS } from "@/lib/types";
 import { useChangePassword, useUpdateMe } from "@/lib/queries/auth";
 import { useSession } from "@/store/use-session";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, phoneInputValue } from "@/lib/utils";
 
 export default function SettingsPage() {
   const { user, currentStore, stores } = useSession();
@@ -282,11 +282,12 @@ function ContactCard() {
             <Label htmlFor="my-phone">Mobile number</Label>
             <Input
               id="my-phone"
-              inputMode="tel"
+              inputMode="numeric"
+              maxLength={10}
               autoComplete="tel"
               placeholder="10-digit mobile"
               value={phone}
-              onChange={(e) => setPhone(e.target.value)}
+              onChange={(e) => setPhone(phoneInputValue(e.target.value))}
             />
           </div>
           <div className="space-y-2">

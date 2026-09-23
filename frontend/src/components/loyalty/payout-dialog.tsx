@@ -16,7 +16,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatINR } from "@/lib/format";
-import { apiErrorMessage, cn } from "@/lib/utils";
+import { apiErrorMessage, cn, positiveNumberInput } from "@/lib/utils";
 import {
   PAYOUT_TYPE_LABELS,
   type PayoutType,
@@ -181,7 +181,7 @@ export function PayoutDialog({ open, onOpenChange, code }: PayoutDialogProps) {
                   placeholder="0"
                   value={amount}
                   onChange={(e) => {
-                    setAmount(e.target.value);
+                    setAmount(positiveNumberInput(e.target.value));
                     setError(null);
                     if (fieldErrors.amount)
                       setFieldErrors((p) => ({ ...p, amount: "" }));

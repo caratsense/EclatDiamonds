@@ -57,7 +57,7 @@ import {
   StoreScopeField,
   useStoreScope,
 } from "@/components/common/store-scope-field";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, positiveNumberInput } from "@/lib/utils";
 
 const MODE_OPTIONS: { value: PaymentMode; label: string }[] = [
   { value: "cash", label: "Cash" },
@@ -526,7 +526,7 @@ function AddPaymentDialog({
               placeholder="0"
               value={amount}
               onChange={(e) => {
-                setAmount(e.target.value);
+                setAmount(positiveNumberInput(e.target.value));
                 if (errors.amount) setErrors((p) => ({ ...p, amount: "" }));
               }}
               aria-invalid={!!errors.amount}

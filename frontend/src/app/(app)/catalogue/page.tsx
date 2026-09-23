@@ -58,7 +58,7 @@ import {
   StoreScopeField,
   useStoreScope,
 } from "@/components/common/store-scope-field";
-import { apiErrorMessage, isRealName } from "@/lib/utils";
+import { apiErrorMessage, isRealName, positiveNumberInput } from "@/lib/utils";
 
 const nav = getNavItem("catalogue")!;
 
@@ -768,7 +768,7 @@ function AddProductDialog({
                 value={karat}
                 aria-invalid={!!errors.karat}
                 onChange={(e) => {
-                  setKarat(e.target.value);
+                  setKarat(positiveNumberInput(e.target.value));
                   clearError("karat");
                 }}
               />
@@ -789,7 +789,7 @@ function AddProductDialog({
                 value={weight}
                 aria-invalid={!!errors.weight}
                 onChange={(e) => {
-                  setWeight(e.target.value);
+                  setWeight(positiveNumberInput(e.target.value));
                   clearError("weight");
                 }}
               />
@@ -809,7 +809,7 @@ function AddProductDialog({
                 value={price}
                 aria-invalid={!!errors.price}
                 onChange={(e) => {
-                  setPrice(e.target.value);
+                  setPrice(positiveNumberInput(e.target.value));
                   clearError("price");
                 }}
               />

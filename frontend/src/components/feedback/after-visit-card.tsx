@@ -13,7 +13,7 @@ import {
   useFeedbackSettings,
   useUpdateFeedbackSettings,
 } from "@/lib/queries/feedback";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, positiveNumberInput } from "@/lib/utils";
 
 /**
  * The automatic "how was your visit?" after a walk-in that booked no follow-up.
@@ -64,7 +64,9 @@ export function AfterVisitCard() {
               min={1}
               max={60}
               value={v.delayDays}
-              onChange={(e) => set({ delayDays: Number(e.target.value) })}
+              onChange={(e) =>
+                set({ delayDays: Number(positiveNumberInput(e.target.value)) })
+              }
               className="h-9 w-[7rem]"
             />
           </div>

@@ -26,7 +26,7 @@ import {
   StoreScopeField,
   useStoreScope,
 } from "@/components/common/store-scope-field";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, phoneInputValue, positiveNumberInput } from "@/lib/utils";
 import { useResetOn } from "@/lib/use-reset-on";
 
 /** Parse a numeric input into a number, or undefined when blank/invalid. */
@@ -294,9 +294,11 @@ export function ApplyReferralDialog({
                 <Label htmlFor="ar-phone">Referee phone</Label>
                 <Input
                   id="ar-phone"
-                  placeholder="+91 …"
+                  placeholder="10-digit mobile"
+                  inputMode="numeric"
+                  maxLength={10}
                   value={refereePhone}
-                  onChange={(e) => setRefereePhone(e.target.value)}
+                  onChange={(e) => setRefereePhone(phoneInputValue(e.target.value))}
                 />
               </div>
             </div>
@@ -313,7 +315,7 @@ export function ApplyReferralDialog({
                 placeholder="0"
                 value={bill}
                 onChange={(e) => {
-                  setBill(e.target.value);
+                  setBill(positiveNumberInput(e.target.value));
                   if (fieldErrors.bill)
                     setFieldErrors((p) => ({ ...p, bill: "" }));
                 }}

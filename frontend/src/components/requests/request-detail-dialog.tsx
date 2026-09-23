@@ -30,7 +30,7 @@ import {
   useEscalateSpecialRequest,
   useSpecialRequest,
 } from "@/lib/queries/special-requests";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, positiveNumberInput } from "@/lib/utils";
 
 function prettyDateTime(iso: string): string {
   return new Date(iso).toLocaleString("en-IN", {
@@ -214,7 +214,7 @@ export function RequestDetailDialog({
                             : "Rate per carat"
                         }
                         value={approvedRate}
-                        onChange={(e) => setApprovedRate(e.target.value)}
+                        onChange={(e) => setApprovedRate(positiveNumberInput(e.target.value))}
                       />
                       <p className="text-[11px] text-muted-foreground">
                         Leave blank to approve exactly what was asked for. Setting
