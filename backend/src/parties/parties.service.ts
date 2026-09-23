@@ -194,6 +194,7 @@ export class PartiesService {
    */
   async create(user: AuthUser, dto: CreatePartyDto): Promise<PartyRow> {
     this.scope.assertStoreAllowed(user, dto.storeId);
+    await this.scope.assertTradingStore(dto.storeId);
 
     const name = dto.name?.trim();
     if (!name) throw new BadRequestException('Name is required');

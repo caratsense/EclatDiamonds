@@ -46,7 +46,7 @@ import {
   useWebhookDelivery,
 } from "@/lib/queries/loyalty-programme";
 import { formatINR, formatNumber } from "@/lib/format";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, positiveNumberInput } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
 /**
@@ -753,7 +753,7 @@ function Money({
         id={id}
         inputMode="decimal"
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => onChange(positiveNumberInput(e.target.value))}
         disabled={disabled}
       />
     </div>

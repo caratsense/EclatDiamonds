@@ -83,7 +83,7 @@ import {
   StoreScopeField,
   useStoreScope,
 } from "@/components/common/store-scope-field";
-import { apiErrorMessage, isRealName } from "@/lib/utils";
+import { apiErrorMessage, isRealName, positiveNumberInput } from "@/lib/utils";
 
 const STATUS_VARIANT: Record<
   StockStatus,
@@ -1039,7 +1039,7 @@ function StockEntryDialog({
                 value={karat}
                 aria-invalid={!!errors.karat}
                 onChange={(e) => {
-                  setKarat(e.target.value);
+                  setKarat(positiveNumberInput(e.target.value));
                   clearError("karat");
                 }}
               />
@@ -1058,7 +1058,7 @@ function StockEntryDialog({
                 value={grossWeight}
                 aria-invalid={!!errors.grossWeight}
                 onChange={(e) => {
-                  setGrossWeight(e.target.value);
+                  setGrossWeight(positiveNumberInput(e.target.value));
                   clearError("grossWeight");
                 }}
               />
@@ -1081,7 +1081,7 @@ function StockEntryDialog({
                 value={netWeight}
                 aria-invalid={!!errors.netWeight}
                 onChange={(e) => {
-                  setNetWeight(e.target.value);
+                  setNetWeight(positiveNumberInput(e.target.value));
                   clearError("netWeight");
                 }}
               />
@@ -1102,7 +1102,7 @@ function StockEntryDialog({
                 value={pureWeight}
                 aria-invalid={!!errors.pureWeight}
                 onChange={(e) => {
-                  setPureWeight(e.target.value);
+                  setPureWeight(positiveNumberInput(e.target.value));
                   clearError("pureWeight");
                 }}
               />
@@ -1126,7 +1126,7 @@ function StockEntryDialog({
                 value={diamondPieces}
                 aria-invalid={!!errors.diamondPieces}
                 onChange={(e) => {
-                  setDiamondPieces(e.target.value);
+                  setDiamondPieces(positiveNumberInput(e.target.value));
                   clearError("diamondPieces");
                 }}
               />
@@ -1147,7 +1147,7 @@ function StockEntryDialog({
                 value={diamondWeightCt}
                 aria-invalid={!!errors.diamondWeightCt}
                 onChange={(e) => {
-                  setDiamondWeightCt(e.target.value);
+                  setDiamondWeightCt(positiveNumberInput(e.target.value));
                   clearError("diamondWeightCt");
                 }}
               />
@@ -1168,7 +1168,7 @@ function StockEntryDialog({
                 value={stoneWeightCt}
                 aria-invalid={!!errors.stoneWeightCt}
                 onChange={(e) => {
-                  setStoneWeightCt(e.target.value);
+                  setStoneWeightCt(positiveNumberInput(e.target.value));
                   clearError("stoneWeightCt");
                 }}
               />
@@ -1191,7 +1191,7 @@ function StockEntryDialog({
                 value={tagPrice}
                 aria-invalid={!!errors.tagPrice}
                 onChange={(e) => {
-                  setTagPrice(e.target.value);
+                  setTagPrice(positiveNumberInput(e.target.value));
                   clearError("tagPrice");
                 }}
               />
@@ -1211,7 +1211,7 @@ function StockEntryDialog({
                 value={mrp}
                 aria-invalid={!!errors.mrp}
                 onChange={(e) => {
-                  setMrp(e.target.value);
+                  setMrp(positiveNumberInput(e.target.value));
                   clearError("mrp");
                 }}
               />

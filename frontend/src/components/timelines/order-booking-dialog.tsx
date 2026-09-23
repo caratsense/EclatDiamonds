@@ -38,7 +38,7 @@ import {
   useUploadOrderImage,
   useUploadReceipt,
 } from "@/lib/queries/timelines";
-import { cn } from "@/lib/utils";
+import { cn, positiveNumberInput } from "@/lib/utils";
 import {
   StoreScopeField,
   useStoreScope,
@@ -372,7 +372,7 @@ export function OrderBookingDialog({
                 min={1}
                 inputMode="numeric"
                 value={qty}
-                onChange={(e) => setQty(e.target.value)}
+                onChange={(e) => setQty(positiveNumberInput(e.target.value))}
               />
             </div>
           </div>
@@ -572,7 +572,7 @@ export function OrderBookingDialog({
                 inputMode="numeric"
                 placeholder="0"
                 value={advance}
-                onChange={(e) => setAdvance(e.target.value)}
+                onChange={(e) => setAdvance(positiveNumberInput(e.target.value))}
               />
             </div>
             <div className="grid gap-1.5">
@@ -584,7 +584,7 @@ export function OrderBookingDialog({
                 inputMode="numeric"
                 placeholder="0"
                 value={estimation}
-                onChange={(e) => setEstimation(e.target.value)}
+                onChange={(e) => setEstimation(positiveNumberInput(e.target.value))}
               />
             </div>
           </div>

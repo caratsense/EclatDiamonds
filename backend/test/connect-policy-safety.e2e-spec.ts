@@ -69,7 +69,14 @@ describe('Connect approved policy safety', () => {
     });
 
     expect(prisma.store.findFirst).toHaveBeenCalledWith({
-      where: { id: 'store-1', organisationId: 'org-1', isAggregate: false },
+      where: {
+        id: 'store-1',
+        organisationId: 'org-1',
+        isAggregate: false,
+        isHolding: false,
+        attendanceOnly: false,
+        status: { not: 'closed' },
+      },
       select: { id: true },
     });
     expect(savedConfig()).toEqual(

@@ -48,7 +48,7 @@ import {
   type StockClass,
 } from "@/lib/queries/dead-stock";
 import { formatINR } from "@/lib/format";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, positiveNumberInput } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
 /**
@@ -213,7 +213,7 @@ export default function DeadStockPage() {
                   className="w-32"
                   placeholder="180"
                   value={threshold}
-                  onChange={(e) => setThreshold(e.target.value)}
+                  onChange={(e) => setThreshold(positiveNumberInput(e.target.value))}
                 />
               </div>
               <div className="flex flex-col gap-1.5">
@@ -224,7 +224,7 @@ export default function DeadStockPage() {
                   className="w-32"
                   placeholder="Optional"
                   value={warn}
-                  onChange={(e) => setWarn(e.target.value)}
+                  onChange={(e) => setWarn(positiveNumberInput(e.target.value))}
                 />
               </div>
               <Button onClick={onSaveRule} disabled={setRule.isPending || !threshold.trim()}>

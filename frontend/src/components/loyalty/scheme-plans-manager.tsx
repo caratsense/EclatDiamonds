@@ -39,7 +39,7 @@ import {
   type SchemePlanInput,
 } from "@/lib/queries/loyalty";
 import type { SchemePlan } from "@/lib/mock/loyalty";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, positiveNumberInput } from "@/lib/utils";
 
 /**
  * Head-Office management for gold-savings scheme plans (Module 17).
@@ -373,7 +373,10 @@ export function SchemePlansManager() {
                   max={120}
                   value={form.tenureMonths}
                   onChange={(e) =>
-                    setForm({ ...form, tenureMonths: Number(e.target.value) })
+                    setForm({
+                      ...form,
+                      tenureMonths: Number(positiveNumberInput(e.target.value)),
+                    })
                   }
                 />
               </div>
@@ -386,7 +389,10 @@ export function SchemePlansManager() {
                   max={24}
                   value={form.bonusMonths ?? 0}
                   onChange={(e) =>
-                    setForm({ ...form, bonusMonths: Number(e.target.value) })
+                    setForm({
+                      ...form,
+                      bonusMonths: Number(positiveNumberInput(e.target.value)),
+                    })
                   }
                 />
               </div>
@@ -406,7 +412,9 @@ export function SchemePlansManager() {
                   setForm({
                     ...form,
                     defaultInstallment:
-                      e.target.value === "" ? undefined : Number(e.target.value),
+                      e.target.value === ""
+                        ? undefined
+                        : Number(positiveNumberInput(e.target.value)),
                   })
                 }
               />

@@ -69,6 +69,7 @@ export class SpecialRequestsService {
    */
   async create(user: AuthUser, dto: CreateSpecialRequestDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
+    await this.scope.assertTradingStore(dto.storeId);
 
     // A diamond-rate request without a spec and a number is not actionable —
     // the approver would have nothing to say yes to.

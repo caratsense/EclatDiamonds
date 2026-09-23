@@ -30,7 +30,7 @@ import {
   type RequestPriority,
   type SpecialRequestKind,
 } from "@/lib/queries/special-requests";
-import { apiErrorMessage, isRealName } from "@/lib/utils";
+import { apiErrorMessage, isRealName, positiveNumberInput } from "@/lib/utils";
 
 const PRIORITIES: RequestPriority[] = ["low", "medium", "high", "urgent"];
 
@@ -207,7 +207,7 @@ export function NewRequestDialog({
                   min={0}
                   placeholder="e.g. 48000"
                   value={rate}
-                  onChange={(e) => setRate(e.target.value)}
+                  onChange={(e) => setRate(positiveNumberInput(e.target.value))}
                 />
               </div>
             </div>
@@ -233,7 +233,7 @@ export function NewRequestDialog({
                 min={0}
                 placeholder="Optional"
                 value={amount}
-                onChange={(e) => setAmount(e.target.value)}
+                onChange={(e) => setAmount(positiveNumberInput(e.target.value))}
               />
               <p className="text-[11px] text-muted-foreground">
                 Higher values route further up.

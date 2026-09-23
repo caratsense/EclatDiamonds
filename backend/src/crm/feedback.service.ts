@@ -181,6 +181,12 @@ export class FeedbackService {
     const links = input.reviewLinks ?? current.reviewLinks;
     for (const [storeId, url] of Object.entries(links)) {
       this.scope.assertStoreAllowed(user, storeId);
+      // Do not make an unrelated settings edit fail because an old link belongs
+      // to a branch that has since closed. Newly submitted branch links, however,
+      // must point at a branch that can actually serve customers.
+      if (input.reviewLinks && Object.hasOwn(input.reviewLinks, storeId)) {
+        await this.scope.assertTradingStore(storeId);
+      }
       if (!/^https:\/\//i.test(url)) {
         // http:// and anything else is refused: this URL is handed to a customer
         // and a non-https link is both a downgrade and a phishing shape.
@@ -249,7 +255,10 @@ export class FeedbackService {
 
     const storeId =
       input.storeId ?? (user.storeIds.length === 1 ? user.storeIds[0] : party.storeId ?? null);
-    if (storeId) this.scope.assertStoreAllowed(user, storeId);
+    if (storeId) {
+      this.scope.assertStoreAllowed(user, storeId);
+      await this.scope.assertTradingStore(storeId);
+    }
 
     /*
      * One open ask at a time, per customer.

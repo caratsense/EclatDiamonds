@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { AuditService, SYSTEM_ACTORS, type SystemActor } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
 import { readableParty } from '../common/sales-scope';
+import { StoreScopeService } from '../common/store-scope.service';
 import { ConversationsService } from '../crm/conversations.service';
 import { ActivityService } from '../crm/activity.service';
 import { IdentityService } from '../crm/identity.service';
@@ -150,6 +151,7 @@ export class OmnichannelService implements OnModuleInit {
      */
     private readonly adapters: ChannelAdaptersService,
     private readonly identity: IdentityService,
+    private readonly scope: StoreScopeService,
     /** Reads a queued document's bytes at delivery time. */
     private readonly storage: StorageService,
   ) {}
@@ -548,11 +550,20 @@ export class OmnichannelService implements OnModuleInit {
       templateAssetId = asset.id;
     }
 
+    const targetStoreId = await this.resolveBareNumberStore(user, party?.storeId ?? null);
     const conversation = await this.findOrCreateContactThread(user, {
       normalized,
       partyId: party?.id ?? null,
-      storeId: party?.storeId ?? null,
+      storeId: targetStoreId,
     });
+    // A pre-existing thread may still point at a branch that has since closed,
+    // or at the import holding bucket created before that distinction existed.
+    // Starting a fresh outbound exchange there would turn historical routing
+    // metadata into a new operational write.
+    if (conversation.storeId) {
+      this.scope.assertStoreAllowed(user, conversation.storeId);
+      await this.scope.assertTradingStore(conversation.storeId);
+    }
 
     return this.queue(user, conversation.id, {
       purpose: input.purpose,
@@ -606,7 +617,7 @@ export class OmnichannelService implements OnModuleInit {
           channel: 'whatsapp',
           externalThreadId: input.normalized,
           partyId: input.partyId,
-          storeId: input.storeId ?? user.storeIds[0] ?? null,
+          storeId: input.storeId,
           handling: 'human',
           assignedUserId: user.id,
         },
@@ -617,6 +628,41 @@ export class OmnichannelService implements OnModuleInit {
       if (!raced) throw error;
       return raced;
     }
+  }
+
+  /**
+   * Pick an operational branch for an outbound-first, bare-number thread.
+   *
+   * A customer's branch wins. For an unknown number a single active physical
+   * branch in the caller's scope is unambiguous; broad users with several
+   * branches keep an organisation-level thread instead of silently using the
+   * first (which may be the import holding bucket).
+   */
+  private async resolveBareNumberStore(
+    user: AuthUser,
+    partyStoreId: string | null,
+  ): Promise<string | null> {
+    if (partyStoreId) {
+      this.scope.assertStoreAllowed(user, partyStoreId);
+      await this.scope.assertTradingStore(partyStoreId);
+      return partyStoreId;
+    }
+
+    if (!user.storeIds.length) return null;
+    const candidates = await this.prisma.store.findMany({
+      where: {
+        id: { in: user.storeIds },
+        organisationId: user.organisationId,
+        isAggregate: false,
+        isHolding: false,
+        attendanceOnly: false,
+        status: 'active',
+        isActive: true,
+      },
+      select: { id: true },
+      take: 2,
+    });
+    return candidates.length === 1 ? candidates[0].id : null;
   }
 
   /**
@@ -1074,7 +1120,16 @@ export class OmnichannelService implements OnModuleInit {
     if ('reason' in staff) return refuse('recipient_missing', staff.reason);
 
     const store = await this.prisma.store.findFirst({
-      where: { id: input.storeId, organisationId: org },
+      where: {
+        id: input.storeId,
+        organisationId: org,
+        isAggregate: false,
+        isHolding: false,
+        // This goes to a member of staff, not to a customer, so an
+        // attendance-only office sends its own people their digest; only the
+        // import bucket has nobody to send on behalf of.
+        status: { not: 'closed' },
+      },
       select: { id: true },
     });
     if (!store) {

@@ -60,9 +60,9 @@ import {
 import { useConfigBootstrap } from "@/lib/queries/tenant-config";
 import {
   apiErrorMessage,
-  capIndianPhone,
   isRealName,
   normalizeIndianMobile,
+  phoneInputValue,
 } from "@/lib/utils";
 import { useResetOn } from "@/lib/use-reset-on";
 
@@ -526,13 +526,14 @@ function UnifiedWalkinDialog({
               <Label htmlFor="ci-phone">Phone</Label>
               <Input
                 id="ci-phone"
-                placeholder={anonymous ? "Not provided" : "+91 ..."}
-                inputMode="tel"
+                placeholder={anonymous ? "Not provided" : "10-digit mobile"}
+                inputMode="numeric"
+                maxLength={10}
                 disabled={anonymous}
                 value={anonymous ? "" : phone}
                 aria-invalid={!!errors.phone}
                 onChange={(e) => {
-                  setPhone(capIndianPhone(e.target.value));
+                  setPhone(phoneInputValue(e.target.value));
                   clearError("phone");
                 }}
               />

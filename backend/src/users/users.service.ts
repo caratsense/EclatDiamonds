@@ -219,6 +219,9 @@ export class UsersService {
     if (store.isAggregate) {
       throw new BadRequestException('Cannot assign a user to the aggregate "All Stores" view');
     }
+    if (store.isHolding) {
+      throw new BadRequestException('Cannot assign a user to the unassigned import bucket');
+    }
 
     // Login ID: generated and unique, by the same renderer self-signup uses, so
     // every account however created follows this tenant's template (or the
@@ -309,6 +312,9 @@ export class UsersService {
     if (!store) throw new NotFoundException('Store not found');
     if (store.isAggregate) {
       throw new BadRequestException('Cannot assign a user to the aggregate "All Stores" view');
+    }
+    if (store.isHolding) {
+      throw new BadRequestException('Cannot assign a user to the unassigned import bucket');
     }
     // Destination store must be in the actor's scope.
     this.scope.assertStoreAllowed(actor, dto.storeId);
@@ -602,7 +608,12 @@ export class UsersService {
         throw new ForbiddenException('You can only grant roles below your own, in your own stores');
       }
       const store = await tx.store.findFirst({
-        where: { id: storeId, organisationId: actor.organisationId, isAggregate: false },
+        where: {
+          id: storeId,
+          organisationId: actor.organisationId,
+          isAggregate: false,
+          isHolding: false,
+        },
       });
       if (!store) throw new BadRequestException('Choose a valid store');
       if (store.status === 'closed' || !store.isActive) {

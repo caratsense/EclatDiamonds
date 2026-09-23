@@ -30,7 +30,7 @@ import {
   useSweepResponseSla,
   type ResponseSlaClock,
 } from "@/lib/queries/response-sla";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, positiveNumberInput } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
 const STATE: Record<ResponseSlaClock["status"], { label: string; tone: PillTone }> = {
@@ -157,7 +157,7 @@ export default function ResponseSlaPage() {
                   className="w-32"
                   placeholder="5"
                   value={target}
-                  onChange={(e) => setTarget(e.target.value)}
+                  onChange={(e) => setTarget(positiveNumberInput(e.target.value))}
                 />
               </div>
               <div className="space-y-1.5">
@@ -168,7 +168,7 @@ export default function ResponseSlaPage() {
                   className="w-40"
                   placeholder="Optional"
                   value={escalate}
-                  onChange={(e) => setEscalate(e.target.value)}
+                  onChange={(e) => setEscalate(positiveNumberInput(e.target.value))}
                 />
               </div>
               <Button onClick={onSave} disabled={save.isPending}>
@@ -337,7 +337,7 @@ export default function ResponseSlaPage() {
                   className="w-32"
                   placeholder={String(s.firstResponseMinutes ?? 5)}
                   value={target}
-                  onChange={(e) => setTarget(e.target.value)}
+                  onChange={(e) => setTarget(positiveNumberInput(e.target.value))}
                 />
               </div>
               <div className="space-y-1.5">
@@ -348,7 +348,7 @@ export default function ResponseSlaPage() {
                   className="w-40"
                   placeholder={s.escalateAfterMinutes ? String(s.escalateAfterMinutes) : "Never"}
                   value={escalate}
-                  onChange={(e) => setEscalate(e.target.value)}
+                  onChange={(e) => setEscalate(positiveNumberInput(e.target.value))}
                 />
               </div>
               <Button onClick={onSave} disabled={save.isPending}>

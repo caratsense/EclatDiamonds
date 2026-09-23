@@ -52,9 +52,10 @@ import {
 import { SchemePlansManager } from "@/components/loyalty/scheme-plans-manager";
 import {
   apiErrorMessage,
-  capIndianPhone,
   isRealName,
   normalizeIndianMobile,
+  phoneInputValue,
+  positiveNumberInput,
 } from "@/lib/utils";
 import { useResetOn } from "@/lib/use-reset-on";
 
@@ -224,12 +225,13 @@ export default function LoyaltyPage() {
                 <Label htmlFor="phone">Phone</Label>
                 <Input
                   id="phone"
-                  placeholder="+91 …"
-                  inputMode="tel"
+                  placeholder="10-digit mobile"
+                  inputMode="numeric"
+                  maxLength={10}
                   value={phone}
                   aria-invalid={!!errors.phone}
                   onChange={(e) => {
-                    setPhone(capIndianPhone(e.target.value));
+                    setPhone(phoneInputValue(e.target.value));
                     clearError("phone");
                   }}
                 />
@@ -273,7 +275,7 @@ export default function LoyaltyPage() {
                   value={installment}
                   aria-invalid={!!errors.installment}
                   onChange={(e) => {
-                    setInstallment(Number(e.target.value) || 0);
+                    setInstallment(Number(positiveNumberInput(e.target.value)) || 0);
                     clearError("installment");
                   }}
                 />

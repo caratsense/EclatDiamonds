@@ -333,8 +333,9 @@ export class AuthService {
   /**
    * The store a signup (or its preview) names, with its tenant — or null when it
    * cannot be joined. Another tenant's store, a closed one, the aggregate and a
-   * made-up id all come back the same null, so the answer never tells an
-   * applicant that some other organisation's store exists.
+   * pending/closed branch, attendance-only/holding location and made-up id all
+   * come back the same null, so the answer never tells an applicant that some
+   * other organisation's store exists.
    */
   private async signupStore(storeId: string, organisationCode?: string) {
     const code = organisationCode?.trim().toLowerCase();
@@ -342,6 +343,8 @@ export class AuthService {
       where: {
         id: storeId,
         isAggregate: false,
+        isHolding: false,
+        attendanceOnly: false,
         status: { not: 'closed' },
         ...(code ? { organisation: { OR: [{ slug: code }, { id: code }] } } : {}),
       },
@@ -893,9 +896,18 @@ export class AuthService {
     );
 
     // `storeIds` is already organisation-bounded (head_office => every store of the
-    // user's org, never global), so filtering by it is inherently org-safe.
+    // user's org, never global), so filtering by it is inherently org-safe. The
+    // holding bucket deliberately remains in backend StoreScope for unresolved
+    // imported rows, but it is not a physical branch and must not become a UI
+    // store/session choice.
     const stores = await this.prisma.store.findMany({
-      where: { id: { in: storeIds } },
+      where: {
+        id: { in: storeIds },
+        isHolding: false,
+        // A pending branch is a real shop whose review is outstanding. Dropping
+        // it here would leave its staff signed in with no store at all.
+        status: { not: 'closed' },
+      },
       orderBy: { name: 'asc' },
     });
 

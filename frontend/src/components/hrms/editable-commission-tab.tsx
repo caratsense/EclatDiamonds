@@ -26,7 +26,7 @@ import {
 import { formatINR, formatINRCompact, formatPercent } from "@/lib/format";
 import type { CommissionRow } from "@/lib/mock/hrms";
 import { useUpdateCommissionRate } from "@/lib/queries/hrms";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, positiveNumberInput } from "@/lib/utils";
 
 function AchievementBar({ pct }: { pct: number }) {
   const capped = Math.min(pct, 100);
@@ -119,7 +119,7 @@ function CommissionTableRow({
                 aria-label={`Commission rate for ${row.name} (percent)`}
                 className="num h-8 pr-5 text-right"
                 value={pct}
-                onChange={(e) => setPct(e.target.value)}
+                onChange={(e) => setPct(positiveNumberInput(e.target.value))}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") save();
                 }}

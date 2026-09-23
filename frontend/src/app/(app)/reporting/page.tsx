@@ -33,6 +33,7 @@ import { getNavItem } from "@/lib/navigation";
 import type { DsrResponse, ReportPeriod } from "@/lib/queries/reporting";
 import { useDsr, useMovers } from "@/lib/queries/reporting";
 import { ChannelStatusNotice } from "@/components/integrations/channel-status-notice";
+import { phoneInputValue } from "@/lib/utils";
 
 /** Build a plain-text DSR summary from the data already on the page. */
 function buildDsrSummary(dsr?: DsrResponse): string {
@@ -329,9 +330,10 @@ function GenerateDsrDialog({
             id="dsr-recipient"
             type="tel"
             inputMode="numeric"
+            maxLength={10}
             placeholder="e.g. 9876543210"
             value={recipient}
-            onChange={(e) => setRecipient(e.target.value)}
+            onChange={(e) => setRecipient(phoneInputValue(e.target.value))}
           />
         </div>
         <DialogFooter>

@@ -74,7 +74,7 @@ import {
   type CampaignType,
   type SharedAsset,
 } from "@/lib/mock/marketing";
-import { apiErrorMessage, isRealName } from "@/lib/utils";
+import { apiErrorMessage, isRealName, positiveNumberInput } from "@/lib/utils";
 
 /** Marketing delivery channels offered when targeting a campaign. */
 const CHANNEL_OPTIONS = [
@@ -695,7 +695,7 @@ function NewCampaignDialog({
               value={budget}
               aria-invalid={!!errors.budget}
               onChange={(e) => {
-                setBudget(e.target.value);
+                setBudget(positiveNumberInput(e.target.value));
                 clearError("budget");
               }}
             />

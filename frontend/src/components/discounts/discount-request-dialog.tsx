@@ -24,7 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatINR, formatPercent } from "@/lib/format";
-import { cn, apiErrorMessage, isRealName } from "@/lib/utils";
+import { cn, apiErrorMessage, isRealName, positiveNumberInput } from "@/lib/utils";
 import { ROLE_LABELS } from "@/lib/types";
 import {
   DISCOUNT_STATUS_LABELS,
@@ -261,7 +261,7 @@ export function DiscountRequestDialog({
                   placeholder="0"
                   value={diamond}
                   onChange={(e) => {
-                    setDiamond(e.target.value);
+                    setDiamond(positiveNumberInput(e.target.value));
                     if (errors.discount)
                       setErrors((p) => ({ ...p, discount: "" }));
                   }}
@@ -286,7 +286,7 @@ export function DiscountRequestDialog({
                   placeholder="0"
                   value={making}
                   onChange={(e) => {
-                    setMaking(e.target.value);
+                    setMaking(positiveNumberInput(e.target.value));
                     if (errors.discount)
                       setErrors((p) => ({ ...p, discount: "" }));
                   }}
@@ -308,7 +308,7 @@ export function DiscountRequestDialog({
               min={0}
               placeholder="0"
               value={selling}
-              onChange={(e) => setSelling(e.target.value)}
+              onChange={(e) => setSelling(positiveNumberInput(e.target.value))}
             />
           </div>
 

@@ -37,7 +37,7 @@ import {
   useCreateSale,
   useUploadSaleDoc,
 } from "@/lib/queries/sales";
-import { cn } from "@/lib/utils";
+import { cn, positiveNumberInput } from "@/lib/utils";
 import {
   StoreScopeField,
   useStoreScope,
@@ -337,7 +337,7 @@ export function DirectSaleDialog({
               placeholder="0"
               value={salesValue}
               onChange={(e) => {
-                setSalesValue(e.target.value);
+                setSalesValue(positiveNumberInput(e.target.value));
                 if (errors.salesValue)
                   setErrors((p) => ({ ...p, salesValue: "" }));
               }}
@@ -373,7 +373,7 @@ export function DirectSaleDialog({
                   placeholder="0"
                   value={diamondValue}
                   onChange={(e) => {
-                    setDiamondValue(e.target.value);
+                    setDiamondValue(positiveNumberInput(e.target.value));
                     if (errors.split) setErrors((p) => ({ ...p, split: "" }));
                   }}
                   aria-invalid={!!errors.split}
@@ -394,7 +394,7 @@ export function DirectSaleDialog({
                   className={cn(isCompletion && "bg-muted cursor-not-allowed")}
                   onChange={(e) => {
                     if (isCompletion) return;
-                    setDiamondPct(e.target.value);
+                    setDiamondPct(positiveNumberInput(e.target.value));
                     if (errors.diamondPct)
                       setErrors((p) => ({ ...p, diamondPct: "" }));
                   }}
@@ -422,7 +422,7 @@ export function DirectSaleDialog({
                   placeholder="0"
                   value={makingValue}
                   onChange={(e) => {
-                    setMakingValue(e.target.value);
+                    setMakingValue(positiveNumberInput(e.target.value));
                     if (errors.split) setErrors((p) => ({ ...p, split: "" }));
                   }}
                   aria-invalid={!!errors.split}
@@ -443,7 +443,7 @@ export function DirectSaleDialog({
                   className={cn(isCompletion && "bg-muted cursor-not-allowed")}
                   onChange={(e) => {
                     if (isCompletion) return;
-                    setMakingPct(e.target.value);
+                    setMakingPct(positiveNumberInput(e.target.value));
                     if (errors.makingPct)
                       setErrors((p) => ({ ...p, makingPct: "" }));
                   }}
@@ -500,7 +500,7 @@ export function DirectSaleDialog({
               placeholder="0"
               value={advance}
               onChange={(e) => {
-                setAdvance(e.target.value);
+                setAdvance(positiveNumberInput(e.target.value));
                 if (errors.advance) setErrors((p) => ({ ...p, advance: "" }));
               }}
               aria-invalid={!!errors.advance}

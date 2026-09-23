@@ -225,6 +225,7 @@ export class LoyaltyService {
   /** POST /loyalty/members — enroll a member and generate the installment schedule. */
   async enroll(user: AuthUser, dto: EnrollMemberDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
+    await this.scope.assertTradingStore(dto.storeId);
     const plan = await this.prisma.schemePlan.findFirst({
       where: { id: dto.planId, ...this.scope.orgFilter(user) },
     });
@@ -357,6 +358,7 @@ export class LoyaltyService {
   async createReferralCode(user: AuthUser, dto: CreateReferralCodeDto) {
     if (dto.storeId) {
       this.scope.assertStoreAllowed(user, dto.storeId);
+      await this.scope.assertTradingStore(dto.storeId);
     } else if (user.role !== 'head_office') {
       // A null-store code is company-wide — only head office may mint those.
       throw new ForbiddenException(
@@ -392,7 +394,10 @@ export class LoyaltyService {
    * bill into commissionBalance. Enforces the usage cap and updates atomically.
    */
   async createReferral(user: AuthUser, dto: CreateReferralDto) {
-    if (dto.storeId) this.scope.assertStoreAllowed(user, dto.storeId);
+    if (dto.storeId) {
+      this.scope.assertStoreAllowed(user, dto.storeId);
+      await this.scope.assertTradingStore(dto.storeId);
+    }
 
     // SECURITY: pct overrides are area_manager+ only. For lower roles the dto
     // fields are hard-ignored (inert) and the config defaults always apply —
@@ -416,6 +421,13 @@ export class LoyaltyService {
       if (!code) throw new NotFoundException('referral code not found');
       this.assertCodeAccess(user, code.storeId);
 
+      const effectiveStoreId = dto.storeId ?? code.storeId;
+      // A branch-bound code may outlive the branch. Keep it readable and
+      // payable, but do not use that historical branch for a new referral.
+      if (!dto.storeId && effectiveStoreId) {
+        await this.scope.assertTradingStore(effectiveStoreId);
+      }
+
       if (code.maxUses != null && code.uses >= code.maxUses) {
         throw new BadRequestException('code usage limit reached');
       }
@@ -425,7 +437,7 @@ export class LoyaltyService {
           codeId: code.id,
           refereeName: dto.refereeName,
           refereePhone: dto.refereePhone,
-          storeId: dto.storeId ?? code.storeId,
+          storeId: effectiveStoreId,
           billAmount: bill,
           diamondDiscountPct: new Prisma.Decimal(diamondDiscountPct),
           diamondDiscountAmount,

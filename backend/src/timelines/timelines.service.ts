@@ -289,6 +289,7 @@ export class TimelinesService {
    */
   async createWorkflow(user: AuthUser, dto: CreateWorkflowDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
+    await this.scope.assertTradingStore(dto.storeId);
     const now = new Date();
 
     const order = await this.prisma.customOrder.create({
@@ -319,6 +320,7 @@ export class TimelinesService {
    */
   async createOrder(user: AuthUser, dto: CreateOrderDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
+    await this.scope.assertTradingStore(dto.storeId);
 
     const kind: OrderKind = dto.kind ?? OrderKind.custom;
     const prefix = kind === OrderKind.stock ? 'SO' : 'CO';

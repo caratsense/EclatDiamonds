@@ -6,6 +6,7 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { REQUALIFY_JOB } from '../src/crm/requalification.service';
 import { OmnichannelService } from '../src/omnichannel/omnichannel.service';
 import { WhatsAppBotService } from '../src/whatsapp-bot/whatsapp-bot.service';
+import { CustomerBotService } from '../src/whatsapp-bot/customer-bot.service';
 import { ConversationAiGate } from '../src/crm/ai-responder';
 import {
   evaluateDeliveryPolicy,
@@ -72,7 +73,7 @@ describe('INT-01 opt-out before AI (e2e)', () => {
   let prisma: PrismaService;
   let bot: WhatsAppBotService;
   let omnichannel: OmnichannelService;
-  let gateCalls: number;
+  let assistantCalls: number;
 
   beforeAll(async () => {
     const mod = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -82,14 +83,23 @@ describe('INT-01 opt-out before AI (e2e)', () => {
     bot = app.get(WhatsAppBotService);
     omnichannel = app.get(OmnichannelService);
 
-    // Count every time the assistant is asked to consider a message. The
-    // ordering claim is "the AI is never reached for an opt-out", and the only
-    // honest way to assert that is to watch the call itself.
-    gateCalls = 0;
+    // There are now two assistant paths: the deterministic qualification bot
+    // handles an unowned inbound thread first, while the provider-backed gate
+    // is the fallback for threads the qualification bot cannot take. Count
+    // both. The ordering claim is that neither path is reached for an opt-out.
+    assistantCalls = 0;
+    const customerBot = app.get(CustomerBotService);
+    type Handle = CustomerBotService['handle'];
+    const originalHandle = customerBot.handle.bind(customerBot);
+    jest.spyOn(customerBot, 'handle').mockImplementation((async (...args: Parameters<Handle>) => {
+      assistantCalls += 1;
+      return originalHandle(...args);
+    }) as Handle);
+
     const gate = app.get(ConversationAiGate);
     type Consider = ConversationAiGate['consider'];
     jest.spyOn(gate, 'consider').mockImplementation((async () => {
-      gateCalls += 1;
+      assistantCalls += 1;
       return { outcome: 'skipped', reason: 'stubbed in test' };
     }) as unknown as Consider);
 
@@ -181,17 +191,22 @@ describe('INT-01 opt-out before AI (e2e)', () => {
   describe('ordering and persistence', () => {
     it('files an ordinary message and consults the assistant', async () => {
       await bot.ingest(inbound('wamid.ORDINARY1', 'do you open on Sunday?'));
-      await waitFor(async () => gateCalls >= 1);
+      await waitFor(async () =>
+        (await prisma.whatsAppEvent.findUnique({
+          where: { wamid: 'wamid.ORDINARY1' },
+          select: { status: true },
+        }))?.status === 'processed',
+      );
 
       const events = await prisma.activityEvent.findMany({
         where: { organisationId: ORG, type: 'consent.revoked' },
       });
       expect(events).toHaveLength(0);
-      expect(gateCalls).toBe(1);
+      expect(assistantCalls).toBe(1);
     }, 60_000);
 
     it('records the revocation and never reaches the assistant for a STOP', async () => {
-      const before = gateCalls;
+      const before = assistantCalls;
       await bot.ingest(inbound('wamid.STOP1', 'STOP'));
       await waitFor(async () =>
         (await prisma.activityEvent.count({
@@ -207,7 +222,7 @@ describe('INT-01 opt-out before AI (e2e)', () => {
       expect(revoked[0].sourceSystem).toBe('provider');
       // The ordering claim, stated as an observation: the assistant was not
       // consulted for this message at all.
-      expect(gateCalls).toBe(before);
+      expect(assistantCalls).toBe(before);
     }, 60_000);
 
     it('does not schedule re-qualification for an opted-out message', async () => {
@@ -278,9 +293,15 @@ describe('INT-01 opt-out before AI (e2e)', () => {
     }, 60_000);
 
     it('a later ordinary message does NOT restore consent', async () => {
-      const before = gateCalls;
+      const before = assistantCalls;
       await bot.ingest(inbound('wamid.AFTER1', 'actually, what are your prices?'));
-      await waitFor(async () => gateCalls > before);
+      await waitFor(async () =>
+        (await prisma.whatsAppEvent.findUnique({
+          where: { wamid: 'wamid.AFTER1' },
+          select: { status: true },
+        }))?.status === 'processed',
+      );
+      expect(assistantCalls).toBeGreaterThan(before);
 
       // Re-consent must be an explicit act. Inferring it from any inbound message
       // would mean a customer who said STOP and then asked one question is back

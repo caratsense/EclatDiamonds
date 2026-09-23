@@ -13,7 +13,7 @@ import {
   useFollowUpReminderSettings,
   useSaveFollowUpReminderSettings,
 } from "@/lib/queries/follow-up-reminders";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, positiveNumberInput } from "@/lib/utils";
 
 /**
  * When somebody books a follow-up and does not pick a reminder time, this is
@@ -61,7 +61,7 @@ export function ReminderDefaultsCard() {
             min={0}
             max={14}
             value={effectiveDays}
-            onChange={(e) => setDays(e.target.value)}
+            onChange={(e) => setDays(positiveNumberInput(e.target.value))}
             className="h-9 w-[6rem]"
           />
         </div>

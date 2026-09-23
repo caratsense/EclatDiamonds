@@ -55,14 +55,20 @@ export function useMaterials() {
   });
 }
 
-/** GET /materials/styles?q= — style numbers starting with what was typed. */
+/** GET /materials/styles?q= — style numbers containing what was typed. */
 export function useStyleSearch(q: string) {
   const term = q.trim();
   return useQuery({
     queryKey: ["materials", "styles", term.toUpperCase()],
     queryFn: async () =>
-      (await api.get<{ styleCode: string; itemType: string | null }[]>("/materials/styles", { params: { q: term } })).data,
-    enabled: term.length >= 2,
+      (
+        await api.get<{ styleCode: string; itemType: string | null; itemSize: string | null }[]>(
+          "/materials/styles",
+          { params: { q: term } },
+        )
+      ).data,
+    // The ERP's style codes are numeric, so one character is already a search.
+    enabled: term.length >= 1,
     staleTime: 5 * 60 * 1000,
   });
 }

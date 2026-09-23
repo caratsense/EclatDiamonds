@@ -386,6 +386,10 @@ export class SyncService {
           id: routing.defaultStoreId,
           organisationId: user.organisationId,
           isAggregate: false,
+          isHolding: false,
+          attendanceOnly: false,
+          status: 'active',
+          isActive: true,
         },
         select: { id: true },
       });
@@ -504,8 +508,8 @@ export class SyncService {
     const id = this.config.get<string>('SYNC_DEFAULT_STORE_ID');
     if (!id) {
       throw new BadRequestException(
-        'SYNC_DEFAULT_STORE_ID is not configured. Set it to the store that should own ' +
-          'unattributed rows (a real branch or a dedicated holding store) — the sync never assumes one.',
+        'SYNC_DEFAULT_STORE_ID is not configured. Set it to the active physical branch that should own ' +
+          'unattributed rows, or use holding mode — the sync never assumes one.',
       );
     }
     return id;
@@ -517,7 +521,17 @@ export class SyncService {
     // A process-wide fallback can point at another tenant, so ownership must be
     // checked before the id is attached to an organisation-owned row.
     const store = await this.prisma.store.findFirst({
-      where: { id, organisationId },
+      where: {
+        id,
+        organisationId,
+        isAggregate: false,
+        attendanceOnly: false,
+        // A dedicated holding row is a documented choice here, and a branch the
+        // sync itself has just created is pending until head office reviews it:
+        // requiring `active` would deadlock a tenant whose only branch arrives
+        // from the very sync that needs this store.
+        status: { not: 'closed' },
+      },
       select: { id: true },
     });
     if (!store) {
@@ -551,9 +565,10 @@ export class SyncService {
   /**
    * Upsert Gati branches on `legacyId`. New branches are created `pending`
    * (isActive=false, no geo/region — HO/AM fills those on activation). Known
-   * branches refresh their name/address/contact; their status, geo, region and
-   * manager are never touched, so an activated store can't be reverted by a
-   * re-sync.
+   * pending branches refresh their source identity/address/contact. Once head
+   * office has reviewed and activated a branch, those human-reviewed fields are
+   * preserved; only a branch first linked by this run receives the source
+   * identity once. Status, geo, region and manager are never touched.
    *
    * The response carries `missingGeo` because the legacy system holds no
    * coordinates at all. Geo-attendance silently refuses to work for a store
@@ -578,34 +593,8 @@ export class SyncService {
       // org now, so an org must never resolve another org's branch by it.
       let existing = await this.prisma.store.findFirst({
         where: { legacyId, organisationId: user.organisationId },
-        select: { id: true },
+        select: { id: true, status: true },
       });
-
-      // Not known by legacyId, but an existing Eclat branch is plainly the same
-      // shop — claim it rather than creating a second one. See planAdoptions().
-      const adopt = !existing ? adoptions.get(legacyId) : undefined;
-      if (adopt) {
-        const claimed = await this.prisma.store.update({
-          where: { id: adopt.storeId },
-          data: { legacyId },
-          select: { id: true },
-        });
-        existing = claimed;
-        adopted.push({
-          id: adopt.storeId,
-          legacyId,
-          name: r.name,
-          was: adopt.wasNamed,
-        });
-        await this.audit.record(user, {
-          action: 'store.linked_to_gati',
-          entityType: 'store',
-          entityId: adopt.storeId,
-          storeId: adopt.storeId,
-          summary: `Linked existing branch "${adopt.wasNamed}" to Gati branch "${r.name}"`,
-          metadata: { legacyId, matchedOn: adopt.why },
-        }, this.prisma);
-      }
 
       // `?? undefined` (not `?? null`) throughout: a field the source omits must
       // leave the stored value alone, not blank out something a manager typed in
@@ -621,22 +610,96 @@ export class SyncService {
         gstin: r.gstin ?? undefined,
       };
 
+      // Not known by legacyId, but an existing Eclat branch is plainly the same
+      // shop — claim it rather than creating a second one. See planAdoptions().
+      const adopt = !existing ? adoptions.get(legacyId) : undefined;
+      let adoptedIdentity: { id: string; name: string } | null = null;
+      if (adopt) {
+        // Claim + the one permitted source-identity refresh are one transaction.
+        // There is no interval in which HO can activate/edit the just-linked row
+        // and then have this first refresh overwrite that reviewed state.
+        const result = await this.prisma.$transaction(async (tx) => {
+          const claim = await tx.store.updateMany({
+            where: {
+              id: adopt.storeId,
+              organisationId: user.organisationId,
+              legacyId: null,
+            },
+            data: {
+              legacyId,
+              name: r.name,
+              city: r.city ?? undefined,
+              code: r.code ?? undefined,
+              ...details,
+            },
+          });
+
+          // Another sync may have won the adoption race. Reuse its authoritative
+          // link only when it is for this same incoming legacy branch; otherwise
+          // let this row arrive as a separate pending branch below.
+          if (claim.count === 0) {
+            const winner = await tx.store.findFirst({
+              where: { legacyId, organisationId: user.organisationId },
+              select: { id: true, status: true, name: true },
+            });
+            return winner ? { store: winner, didAdopt: false } : null;
+          }
+
+          const claimed = await tx.store.findFirstOrThrow({
+            where: { id: adopt.storeId, organisationId: user.organisationId, legacyId },
+            select: { id: true, status: true, name: true },
+          });
+          await this.audit.record(user, {
+            action: 'store.linked_to_gati',
+            entityType: 'store',
+            entityId: adopt.storeId,
+            storeId: adopt.storeId,
+            summary: `Linked existing branch "${adopt.wasNamed}" to Gati branch "${r.name}"`,
+            metadata: { legacyId, matchedOn: adopt.why },
+          }, tx);
+          return { store: claimed, didAdopt: true };
+        });
+        existing = result?.store ?? null;
+        if (result?.didAdopt) {
+          adoptedIdentity = result.store;
+          adopted.push({
+            id: adopt.storeId,
+            legacyId,
+            name: r.name,
+            was: adopt.wasNamed,
+          });
+        }
+      }
+
       if (existing) {
-        const store = await this.prisma.store.update({
-          where: {
-            organisationId_legacyId: {
+        // Active means a person has reviewed this branch. Do not let the next
+        // connector run undo a corrected name, city or office address. The
+        // status predicate is part of the WRITE, not based on the earlier read:
+        // if HO activates this row between those operations, updateMany claims
+        // zero rows and the unchanged reviewed profile is fetched below.
+        if (!adoptedIdentity) {
+          await this.prisma.store.updateMany({
+            where: {
+              id: existing.id,
               organisationId: user.organisationId,
               legacyId,
+              status: 'pending',
+              isActive: false,
             },
-          },
-          data: {
-            name: r.name,
-            city: r.city ?? undefined,
-            code: r.code ?? undefined,
-            ...details,
-          },
-          select: { id: true, name: true },
-        });
+            data: {
+              name: r.name,
+              city: r.city ?? undefined,
+              code: r.code ?? undefined,
+              ...details,
+            },
+          });
+        }
+        const store =
+          adoptedIdentity ??
+          (await this.prisma.store.findFirstOrThrow({
+            where: { id: existing.id, organisationId: user.organisationId, legacyId },
+            select: { id: true, name: true },
+          }));
         updated.push({ id: store.id, legacyId, name: store.name });
       } else {
         const store = await this.prisma.store.create({
@@ -648,6 +711,7 @@ export class SyncService {
             code: r.code ?? null,
             status: 'pending',
             isActive: false,
+            isHolding: false,
             ...details,
           },
           select: { id: true, name: true },
@@ -668,6 +732,7 @@ export class SyncService {
       where: {
         status: 'pending',
         isAggregate: false,
+        isHolding: false,
         organisationId: user.organisationId,
       },
     });
@@ -677,6 +742,7 @@ export class SyncService {
     const missingGeo = await this.prisma.store.findMany({
       where: {
         isAggregate: false,
+        isHolding: false,
         organisationId: user.organisationId,
         OR: [{ latitude: null }, { longitude: null }],
       },
@@ -748,7 +814,14 @@ export class SyncService {
 
     const candidates = (
       await this.prisma.store.findMany({
-        where: { legacyId: null, isAggregate: false, attendanceOnly: false, organisationId },
+        where: {
+          legacyId: null,
+          isAggregate: false,
+          isHolding: false,
+          attendanceOnly: false,
+          status: { not: 'closed' },
+          organisationId,
+        },
         select: { id: true, name: true },
       })
     ).map((s) => ({
@@ -1960,16 +2033,32 @@ export class SyncService {
         id: SyncService.LEGACY_UNASSIGNED_STORE_ID,
         organisationId,
       },
-      select: { id: true },
+      select: { id: true, isHolding: true },
     });
-    if (legacy) return legacy.id;
+    if (legacy) {
+      if (!legacy.isHolding) {
+        await this.prisma.store.update({
+          where: { id: legacy.id },
+          data: { isHolding: true, status: 'pending', isActive: false },
+        });
+      }
+      return legacy.id;
+    }
 
     const id = SyncService.unassignedStoreIdFor(organisationId);
     const existing = await this.prisma.store.findFirst({
       where: { id, organisationId },
-      select: { id: true },
+      select: { id: true, isHolding: true },
     });
-    if (existing) return existing.id;
+    if (existing) {
+      if (!existing.isHolding) {
+        await this.prisma.store.update({
+          where: { id: existing.id },
+          data: { isHolding: true, status: 'pending', isActive: false },
+        });
+      }
+      return existing.id;
+    }
 
     // Deliberately has no legacyId: it is ours, not a branch of theirs, so the
     // demo purge treats it as non-imported and the sync never tries to update it.
@@ -1982,6 +2071,7 @@ export class SyncService {
           city: '',
           status: 'pending',
           isActive: false,
+          isHolding: true,
         },
       });
     } catch (error) {
@@ -1990,9 +2080,15 @@ export class SyncService {
       // still surfaced rather than swallowed.
       const winner = await this.prisma.store.findFirst({
         where: { id, organisationId },
-        select: { id: true },
+        select: { id: true, isHolding: true },
       });
       if (!winner) throw error;
+      if (!winner.isHolding) {
+        await this.prisma.store.update({
+          where: { id: winner.id },
+          data: { isHolding: true, status: 'pending', isActive: false },
+        });
+      }
     }
     this.logger.warn(
       'Created the "Unassigned" holding store: some imported rows name no branch ' +

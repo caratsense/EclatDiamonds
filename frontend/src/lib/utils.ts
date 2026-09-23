@@ -40,6 +40,31 @@ export function normalizeIndianMobile(raw: string): string | null {
   return digits;
 }
 
+/**
+ * What a phone box may hold WHILE IT IS BEING TYPED: digits only, at most ten,
+ * with a pasted +91 / 91 / leading 0 dropped as it arrives. An Indian mobile is
+ * ten digits, so a box that keeps accepting a twentieth one is only collecting
+ * a number nobody can call. Validation still belongs to
+ * `normalizeIndianMobile` on submit; this just stops the impossible input.
+ */
+export function phoneInputValue(raw: string): string {
+  const digits = (raw ?? "").replace(/\D/g, "");
+  const local =
+    digits.length > 10 && digits.startsWith("91")
+      ? digits.slice(2)
+      : digits.replace(/^0+/, "");
+  return local.slice(0, 10);
+}
+
+/**
+ * What a quantity box may hold while it is being typed: digits and one decimal
+ * point. A weight, a rate, a discount or a carat cannot be negative, so the
+ * minus sign never reaches the field.
+ */
+export function positiveNumberInput(raw: string): string {
+  return (raw ?? "").replace(/[^0-9.]/g, "").replace(/(\..*)\./g, "$1");
+}
+
 /** Conservative email check (single @, a dot in the domain, no spaces). */
 export function isValidEmail(raw: string): boolean {
   const v = (raw ?? "").trim();

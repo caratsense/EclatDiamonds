@@ -386,6 +386,7 @@ export class InStoreService {
       throw new BadRequestException('Choose which branch this visit happened at.');
     }
     this.scope.assertStoreAllowed(user, storeId);
+    await this.scope.assertTradingStore(storeId);
 
     const enquiries = (input.enquiries ?? []).slice(0, 20);
     // One query for the whole basket. This used to be one round trip per

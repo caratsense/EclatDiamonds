@@ -38,6 +38,7 @@ import {
   type SignupRole,
 } from "@/lib/queries/auth";
 import { useDebouncedValue } from "@/lib/queries/search";
+import { phoneInputValue } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 
@@ -298,9 +299,10 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
           <Label className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">Mobile phone number *</Label>
           <input
             inputMode="numeric"
+            maxLength={10}
             className={inputCls}
             value={phone}
-            onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
+            onChange={(e) => setPhone(phoneInputValue(e.target.value))}
             placeholder="10-digit mobile number"
             required
           />
@@ -575,11 +577,12 @@ function OrganisationSignupCard({
             Phone <span className="text-slate-400 dark:text-[#f8fafc]/40">(optional)</span>
           </Label>
           <input
-            inputMode="tel"
+            inputMode="numeric"
+            maxLength={10}
             className={inputCls}
             value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            placeholder="+91..."
+            onChange={(e) => setPhone(phoneInputValue(e.target.value))}
+            placeholder="10-digit mobile number"
           />
         </div>
       </div>

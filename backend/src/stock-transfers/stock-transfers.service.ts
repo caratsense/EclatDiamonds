@@ -94,7 +94,11 @@ export class StockTransfersService {
     this.assertStoreOperator(user);
     // Authoritative: the source must be in the caller's scope, never trust the body alone.
     this.scope.assertStoreAllowed(user, dto.fromStoreId);
-    await this.scope.assertTradingStore(dto.fromStoreId);
+    // Emptying a branch is exactly what you do when it closes, and draining the
+    // holding bucket is the only way its pieces ever reach a real shop, so the
+    // SOURCE only has to be a physical location. The destination must be one a
+    // customer can buy from.
+    await this.scope.assertTradingStore(dto.fromStoreId, 'physical');
     await this.scope.assertTradingStore(dto.toStoreId);
 
     if (dto.fromStoreId === dto.toStoreId) {

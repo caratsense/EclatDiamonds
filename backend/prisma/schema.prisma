@@ -736,6 +736,10 @@ model Store {
   status         String       @default("active")
   /// true only for the synthetic "All Stores" aggregate the UI shows to broad roles.
   isAggregate    Boolean      @default(false)
+  /// A non-physical reconciliation bucket for imported rows whose source branch
+  /// cannot yet be resolved. It stays inside backend store scope so the rows are
+  /// never lost, but must never be presented or operated as a real branch.
+  isHolding      Boolean      @default(false)
   /// An attendance-only location (e.g. Head Office): staff are rostered and
   /// punch here, but it is not a trading branch — no sales, stock, targets,
   /// footfall or DSR, and it is left out of store KPIs.
@@ -833,6 +837,7 @@ model Store {
   @@unique([organisationId, code])
   @@index([regionId])
   @@index([organisationId])
+  @@index([organisationId, isHolding, status])
 }
 
 /// Application user (staff login). Legacy: SPM_Users (logins only).

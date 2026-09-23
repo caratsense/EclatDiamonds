@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -111,6 +112,8 @@ type Db = PrismaService | Prisma.TransactionClient;
  */
 @Injectable()
 export class AdvancedCrmService {
+  private readonly logger = new Logger(AdvancedCrmService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
@@ -723,6 +726,19 @@ export class AdvancedCrmService {
     const storeIds = input.stores.map((s) => s.storeId);
     if (new Set(storeIds).size !== storeIds.length) throw new BadRequestException('Each location may appear only once.');
     for (const id of storeIds) this.scope.assertStoreAllowed(user, id);
+    const physicalStores = await this.prisma.store.count({
+      where: {
+        id: { in: storeIds },
+        organisationId: user.organisationId,
+        isAggregate: false,
+        isHolding: false,
+        attendanceOnly: false,
+        status: { not: 'closed' },
+      },
+    });
+    if (physicalStores !== storeIds.length) {
+      throw new BadRequestException('Round-robin may only use physical store locations.');
+    }
 
     for (const store of input.stores) {
       if (!store.eligibleUserIds?.length) continue;
@@ -848,6 +864,24 @@ export class AdvancedCrmService {
       if (!target) throw new NotFoundException(`${entity === 'lead' ? 'Lead' : 'Conversation'} not found`);
       if (!target.storeId) throw new BadRequestException('Choose a location before assigning this record.');
       if (actor) this.scope.assertStoreAllowed(actor, target.storeId);
+      const physicalStore = await tx.store.findFirst({
+        where: {
+          id: target.storeId,
+          organisationId,
+          isAggregate: false,
+          isHolding: false,
+          attendanceOnly: false,
+          status: { not: 'closed' },
+        },
+        select: { id: true },
+      });
+      if (!physicalStore) {
+        this.logger.warn(
+          `Round robin skipped: store ${target.storeId} is closed or not a physical branch, so the ` +
+            'lead stays unassigned.',
+        );
+        return null;
+      }
       if (target.assignedUserId) {
         return {
           entity, entityId, storeId: target.storeId, assignedUserId: target.assignedUserId,
@@ -947,7 +981,14 @@ export class AdvancedCrmService {
   async issueLeadQr(user: AuthUser, input: IssueLeadQrDto) {
     this.scope.assertStoreAllowed(user, input.storeId);
     const store = await this.prisma.store.findFirst({
-      where: { id: input.storeId, organisationId: user.organisationId, isAggregate: false },
+      where: {
+        id: input.storeId,
+        organisationId: user.organisationId,
+        isAggregate: false,
+        isHolding: false,
+        attendanceOnly: false,
+        status: { not: 'closed' },
+      },
       select: { id: true, name: true },
     });
     if (!store) throw new NotFoundException('Location not found');
@@ -982,6 +1023,9 @@ export class AdvancedCrmService {
     const store = await this.prisma.store.findFirst({
       where: {
         id: payload.storeId, organisationId: payload.organisationId, isAggregate: false,
+        isHolding: false,
+        attendanceOnly: false,
+        status: { not: 'closed' },
         organisation: { status: { in: ['active', 'onboarding'] } },
       },
       select: { id: true, timezone: true, organisation: { select: { country: true } } },

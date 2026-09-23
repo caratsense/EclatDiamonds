@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/table";
 import { formatINR } from "@/lib/format";
 import { useAddDiamondRate, useDiamondRates } from "@/lib/queries/returns";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, positiveNumberInput } from "@/lib/utils";
 
 interface DiamondRatesDialogProps {
   open: boolean;
@@ -108,7 +108,7 @@ export function DiamondRatesDialog({
                 min={0}
                 placeholder="0"
                 value={rate}
-                onChange={(e) => setRate(e.target.value)}
+                onChange={(e) => setRate(positiveNumberInput(e.target.value))}
               />
             </div>
             <Button onClick={add} disabled={addRate.isPending}>

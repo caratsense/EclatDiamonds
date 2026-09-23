@@ -242,6 +242,7 @@ export class WhatsAppConversationService {
   private async saveDsr(user: BotUser, storeId: string, draft: Record<string, any>) {
     const actor = await this.asAuthUser(user);
     this.scope.assertStoreAllowed(actor, storeId);
+    await this.scope.assertTradingStore(storeId);
 
     const store = await this.prisma.store.findUniqueOrThrow({
       where: { id: storeId },

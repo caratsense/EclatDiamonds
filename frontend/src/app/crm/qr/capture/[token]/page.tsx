@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { CheckCircle2, Loader2 } from "lucide-react";
 
 import { CaptureError, captureLead } from "@/lib/queries/lead-qr";
+import { phoneInputValue } from "@/lib/utils";
 
 /**
  * The visitor's screen. Reached only by scanning a printed code, so it is
@@ -179,13 +180,13 @@ export default function QrCapturePage() {
             <input
               id="phone"
               type="tel"
-              inputMode="tel"
+              inputMode="numeric"
               value={phone}
-              onChange={(e) => setPhone(e.target.value)}
+              onChange={(e) => setPhone(phoneInputValue(e.target.value))}
               autoComplete="tel"
               required
-              minLength={8}
-              maxLength={32}
+              minLength={10}
+              maxLength={10}
               className="h-11 w-full rounded-md border border-border bg-card px-3 text-base outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
             <p className="text-xs text-muted-foreground">

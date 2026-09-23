@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Download } from "lucide-react";
+import { Download, Send } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -9,6 +9,7 @@ import {
   todayLocal,
 } from "@/components/reporting/daily-report-form";
 import { DailyReportsTable } from "@/components/reporting/daily-reports-table";
+import { DsrSheetSendDialog } from "@/components/reporting/dsr-sheet-send-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -20,14 +21,16 @@ import {
 } from "@/components/ui/select";
 import {
   useDownloadDsrSheet,
+  type DsrSheetFormat,
   type DsrSheetPeriod,
 } from "@/lib/queries/reporting";
 import { apiErrorMessage } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
 /**
- * Download the filed DSRs as the store's paper sheet — the day, its Mon–Sun
- * week or its month. One store per sheet, so on "All Stores" pick one.
+ * Download or send the filed DSRs as the store's paper sheet — the day, its
+ * Mon–Sun week or its month, to print (PDF) or to work on (Excel). One store
+ * per sheet, so on "All Stores" pick one.
  */
 function DsrSheetDownload() {
   const { currentStore, stores } = useSession();
@@ -35,11 +38,13 @@ function DsrSheetDownload() {
   const storeId = currentStore.isAggregate ? pickedStoreId : currentStore.id;
   const [period, setPeriod] = useState<DsrSheetPeriod>("day");
   const [date, setDate] = useState(todayLocal());
+  const [format, setFormat] = useState<DsrSheetFormat>("xlsx");
+  const [sending, setSending] = useState(false);
   const download = useDownloadDsrSheet();
 
   const onDownload = () =>
     download.mutate(
-      { storeId, period, date },
+      { storeId, period, date, format },
       {
         onError: (e) =>
           toast.error(apiErrorMessage(e, "Could not download the DSR sheet.")),
@@ -85,6 +90,18 @@ function DsrSheetDownload() {
         value={date}
         onChange={(e) => setDate(e.target.value)}
       />
+      <Select
+        value={format}
+        onValueChange={(v) => setFormat(v as DsrSheetFormat)}
+      >
+        <SelectTrigger className="h-9 w-28" aria-label="Format">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="xlsx">Excel</SelectItem>
+          <SelectItem value="pdf">PDF</SelectItem>
+        </SelectContent>
+      </Select>
       <Button
         variant="outline"
         size="sm"
@@ -92,8 +109,22 @@ function DsrSheetDownload() {
         onClick={onDownload}
       >
         <Download className="h-4 w-4" />
-        {download.isPending ? "Preparing…" : "Download sheet"}
+        {download.isPending ? "Preparing…" : "Download"}
       </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={!storeId || !date}
+        onClick={() => setSending(true)}
+      >
+        <Send className="h-4 w-4" />
+        Send
+      </Button>
+      <DsrSheetSendDialog
+        sheet={{ storeId, period, date, format }}
+        open={sending}
+        onOpenChange={setSending}
+      />
     </div>
   );
 }

@@ -46,7 +46,7 @@ import {
   useEditLeaveBalance,
 } from "@/lib/queries/hrms-ops";
 import { useStaff } from "@/lib/queries/users";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, positiveNumberInput } from "@/lib/utils";
 import { ApplyLeaveDialog } from "@/components/hrms/apply-leave-dialog";
 import { ReasonDialog } from "@/components/hrms/attendance-edit-dialog";
 import { useSession } from "@/store/use-session";
@@ -423,7 +423,7 @@ function BalanceDialog({
                 step={0.5}
                 inputMode="decimal"
                 value={allocated}
-                onChange={(e) => setAllocated(e.target.value)}
+                onChange={(e) => setAllocated(positiveNumberInput(e.target.value))}
               />
             </div>
             {edit.row ? (
@@ -436,7 +436,7 @@ function BalanceDialog({
                   step={0.5}
                   inputMode="decimal"
                   value={used}
-                  onChange={(e) => setUsed(e.target.value)}
+                  onChange={(e) => setUsed(positiveNumberInput(e.target.value))}
                 />
               </div>
             ) : null}

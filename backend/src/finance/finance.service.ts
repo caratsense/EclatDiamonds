@@ -56,6 +56,7 @@ export class FinanceService {
   /** POST /finance/ledger — record a new AP/AR ledger entry against an allowed store. */
   async createEntry(user: AuthUser, dto: CreateLedgerEntryDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
+    await this.scope.assertTradingStore(dto.storeId);
     const created = await this.prisma.ledgerEntry.create({
       data: {
         organisationId: user.organisationId,

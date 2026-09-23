@@ -44,7 +44,7 @@ import {
 import { useMetalRates } from "@/lib/queries/integrations";
 import { useMaterials } from "@/lib/queries/materials";
 import { staleNote } from "@/components/rates/metal-rates-widget";
-import { apiErrorMessage, cn, normalizeIndianMobile } from "@/lib/utils";
+import { apiErrorMessage, cn, normalizeIndianMobile, phoneInputValue } from "@/lib/utils";
 import {
   StoreScopeField,
   useStoreScope,
@@ -610,12 +610,14 @@ export function QuoteBuilderDialog({
               <Input
                 id="qb-phone"
                 value={phone}
+                inputMode="numeric"
+                maxLength={10}
                 aria-invalid={!!errors.phone}
                 onChange={(e) => {
-                  setPhone(e.target.value);
+                  setPhone(phoneInputValue(e.target.value));
                   setErrors((p) => ({ ...p, phone: "" }));
                 }}
-                placeholder="+91 ..."
+                placeholder="10-digit mobile"
               />
               {errors.phone ? (
                 <p className="mt-1 text-xs text-destructive">{errors.phone}</p>

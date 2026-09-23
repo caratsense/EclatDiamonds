@@ -255,7 +255,7 @@ export class HrmsService {
    * time rendered five and a half hours early.
    */
   private async storeCtx(storeId: string): Promise<StoreCtx> {
-    const store = await this.prisma.store.findUnique({ where: { id: storeId } });
+    const store = await this.prisma.store.findFirst({ where: { id: storeId, isHolding: false } });
     if (!store) throw new NotFoundException('Store not found');
     return {
       id: store.id,
@@ -1175,7 +1175,7 @@ export class HrmsService {
   async shifts(user: AuthUser, headerStore?: string) {
     const where = this.scope.storeFilter(user, headerStore);
     const rows = await this.prisma.shift.findMany({
-      where,
+      where: { ...where, store: { isHolding: false } },
       orderBy: [{ storeId: 'asc' }, { startTime: 'asc' }],
     });
     return rows.map(toShiftView);
@@ -1184,6 +1184,7 @@ export class HrmsService {
   /** POST /hrms/shifts — create a store shift/batch (manager+). */
   async createShift(user: AuthUser, dto: CreateShiftDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
+    await this.storeCtx(dto.storeId);
     const scheduled = shiftDurationMins(dto.startTime, dto.endTime);
     if (dto.fullDayMins != null && dto.fullDayMins > scheduled) {
       throw new BadRequestException(
@@ -1215,7 +1216,7 @@ export class HrmsService {
   async holidays(user: AuthUser, headerStore?: string) {
     const where = this.scope.storeFilter(user, headerStore);
     const rows = await this.prisma.storeHoliday.findMany({
-      where,
+      where: { ...where, store: { isHolding: false } },
       orderBy: { date: 'asc' },
     });
     return rows.map(toHolidayView);
@@ -1224,6 +1225,7 @@ export class HrmsService {
   /** POST /hrms/holidays — configure a per-store holiday (manager+). */
   async createHoliday(user: AuthUser, dto: CreateHolidayDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
+    await this.storeCtx(dto.storeId);
     const date = parseDateOnly(dto.date);
     await assertMonthOpen(this.prisma, user.organisationId, date);
     const row = await this.prisma.storeHoliday.upsert({
@@ -1237,15 +1239,14 @@ export class HrmsService {
   /** PATCH /hrms/week-off — set a store's weekly off day (HO/area only). */
   async setWeekOff(user: AuthUser, dto: SetWeekOffDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
-    const existing = await this.prisma.store.findUnique({ where: { id: dto.storeId } });
-    if (!existing) throw new NotFoundException('Store not found');
+    const existing = await this.storeCtx(dto.storeId);
     // Old locked payroll periods must not make the branch setting immutable
     // forever. The setting takes effect now, so protect the current local
     // payroll month; historical issued slips are already frozen.
     await assertMonthOpen(
       this.prisma,
       user.organisationId,
-      businessDate(new Date(), resolveTz(existing.timezone)),
+      businessDate(new Date(), existing.tz),
     );
     const store = await this.prisma.store.update({
       where: { id: dto.storeId },
@@ -1269,7 +1270,12 @@ export class HrmsService {
     const storeIds = this.scope.effectiveStoreIds(user, headerStore);
     const [stores, offs, holidays] = await Promise.all([
       this.prisma.store.findMany({
-        where: { id: { in: storeIds }, isAggregate: false, isActive: true },
+        where: {
+          id: { in: storeIds },
+          isAggregate: false,
+          isHolding: false,
+          isActive: true,
+        },
         select: {
           id: true,
           name: true,
@@ -1326,7 +1332,11 @@ export class HrmsService {
   async confirmAttendanceRules(user: AuthUser, dto: ConfirmAttendanceRulesDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
     const store = await this.prisma.store.findFirst({
-      where: { id: dto.storeId, organisationId: user.organisationId },
+      where: {
+        id: dto.storeId,
+        organisationId: user.organisationId,
+        isHolding: false,
+      },
       select: { id: true, name: true, attendanceRulesConfirmedThrough: true, _count: { select: { shifts: true } } },
     });
     if (!store) throw new NotFoundException('Store not found');

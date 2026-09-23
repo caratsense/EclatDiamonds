@@ -1676,6 +1676,7 @@ export class EmployeesService {
         id: { in: storeIds },
         organisationId: user.organisationId,
         isAggregate: false,
+        isHolding: false,
       },
       select: { id: true, name: true },
     });
@@ -1689,6 +1690,7 @@ export class EmployeesService {
         id: storeId,
         organisationId: user.organisationId,
         isAggregate: false,
+        isHolding: false,
       },
     });
     if (!ok) throw new BadRequestException(`Unknown store ${storeId}`);

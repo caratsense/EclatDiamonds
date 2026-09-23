@@ -4,6 +4,7 @@ import { useState } from "react";
 import {
   Check,
   Copy,
+  Database,
   KeyRound,
   Lock,
   Mail,
@@ -28,6 +29,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -43,12 +51,15 @@ import {
   useActivateStore,
   useAddStoreManager,
   useCloseStore,
+  useCreateRegion,
   useCreateStore,
   usePendingStores,
+  useRegions,
   useStoresAdmin,
   useUpdateStore,
   type AdminStore,
   type PendingStore,
+  type StoreRegion,
   type StoreManager,
   type StoreStatus,
 } from "@/lib/queries/stores";
@@ -56,13 +67,15 @@ import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
 import {
   apiErrorMessage,
-  capIndianPhone,
   isRealName,
   isValidEmail,
   normalizeIndianMobile,
+  phoneInputValue,
+  positiveNumberInput,
 } from "@/lib/utils";
 
 const nav = getNavItem("settings/stores")!;
+const NO_REGION_VALUE = "__no_region__";
 
 /** Pull a human message out of a Nest 400/403 error payload. */
 function serverMessage(err: unknown): string | undefined {
@@ -90,9 +103,11 @@ function StatusBadge({ status }: { status: StoreStatus }) {
 }
 
 export default function StoreSetupPage() {
-  const { role, user, stores: sessionStores } = useSession();
+  const { role, stores: sessionStores } = useSession();
   const isHeadOffice = role === "head_office";
   const [addOpen, setAddOpen] = useState(false);
+  const reopen = useActivateStore();
+  const [regionOpen, setRegionOpen] = useState(false);
   const [editStore, setEditStore] = useState<AdminStore | null>(null);
   const [managerStore, setManagerStore] = useState<AdminStore | null>(null);
   const [closeStore, setCloseStore] = useState<AdminStore | null>(null);
@@ -100,6 +115,7 @@ export default function StoreSetupPage() {
 
   const { data: stores = [], isLoading, isError, refetch } = useStoresAdmin();
   const { data: pending = [] } = usePendingStores();
+  const { data: regions = [] } = useRegions();
 
   // Store settings are managed by store managers, area managers, and Head Office.
   if (ROLE_RANK[role] < ROLE_RANK.store_manager) {
@@ -120,13 +136,18 @@ export default function StoreSetupPage() {
     );
   }
 
-  // The synthetic "All Stores" aggregate is a view, not a branch to manage.
+  // Aggregates are views and holding rows are import quarantine buckets. Neither
+  // is a physical location that Head Office should configure as a branch.
   const manageable = stores.filter(
     (s) =>
       !s.isAggregate &&
       (isHeadOffice || role === "area_manager" || sessionStores.some((ss) => ss.id === s.id)),
   );
-  const activeCount = manageable.filter((s) => s.status === "active").length;
+  const holdingStores = manageable.filter((s) => s.isHolding);
+  const physicalStores = manageable.filter((s) => !s.isHolding);
+  const pendingBranches = pending.filter((s) => !s.isHolding);
+  const activeCount = physicalStores.filter((s) => s.status === "active").length;
+  const attendanceLocationCount = physicalStores.filter((s) => s.attendanceOnly).length;
 
   /** Open the edit dialog for a pending branch so HO can set geo + region. */
   function openEditById(id: string) {
@@ -139,24 +160,38 @@ export default function StoreSetupPage() {
       <SectionHeader
         title={nav.title}
         purpose={nav.purpose}
-        primaryAction={nav.primaryAction}
-        onPrimaryAction={() => setAddOpen(true)}
+        primaryAction={isHeadOffice ? nav.primaryAction : undefined}
+        onPrimaryAction={isHeadOffice ? () => setAddOpen(true) : undefined}
       />
 
-      {pending.length > 0 ? (
+      {isHeadOffice ? (
+        <div className="mb-4 flex justify-end">
+          <Button variant="outline" size="sm" onClick={() => setRegionOpen(true)}>
+            <MapPin className="h-4 w-4" /> Add region
+          </Button>
+        </div>
+      ) : null}
+
+      {pendingBranches.length > 0 ? (
         <PendingReviewSection
-          pending={pending}
+          pending={pendingBranches}
           isHeadOffice={isHeadOffice}
           onFixDetails={openEditById}
         />
       ) : null}
 
+      {holdingStores.length > 0 ? <HoldingStoreNotice stores={holdingStores} /> : null}
+
       <p className="mb-4 text-sm text-muted-foreground">
         {isLoading
           ? "Loading stores…"
-          : `${manageable.length} ${
-              manageable.length === 1 ? "store" : "stores"
-            } provisioned · ${activeCount} active`}
+          : `${physicalStores.length} physical ${
+              physicalStores.length === 1 ? "location" : "locations"
+            } provisioned · ${activeCount} active${
+              attendanceLocationCount > 0
+                ? ` · ${attendanceLocationCount} attendance-only`
+                : ""
+            }`}
       </p>
 
       {isLoading ? (
@@ -194,9 +229,16 @@ export default function StoreSetupPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {stores.map((store) => (
+              {physicalStores.map((store) => (
                 <TableRow key={store.id}>
-                  <TableCell className="font-medium">{store.name}</TableCell>
+                  <TableCell className="font-medium">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span>{store.name}</span>
+                      {store.attendanceOnly ? (
+                        <Badge variant="outline">Attendance only</Badge>
+                      ) : null}
+                    </div>
+                  </TableCell>
                   <TableCell>{store.city}</TableCell>
                   <TableCell>
                     {store.code ? (
@@ -251,40 +293,62 @@ export default function StoreSetupPage() {
                     )}
                   </TableCell>
                   <TableCell className="text-right">
-                    {store.isAggregate || !isHeadOffice ? (
-                      <span className="text-muted-foreground">—</span>
-                    ) : (
-                      <div className="flex items-center justify-end gap-2">
-                        {store.status === "active" ? (
+                    <div className="flex items-center justify-end gap-2">
+                      {isHeadOffice ? (
+                        <>
+                          {store.status === "active" ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-destructive hover:text-destructive"
+                              onClick={() => setCloseStore(store)}
+                            >
+                              <Power className="h-4 w-4" /> Close
+                            </Button>
+                          ) : null}
+                          {/* Closing is a soft close, so a branch shut for a
+                              refit or a season comes back the same way it went
+                              live: readiness is re-checked on the server. */}
+                          {store.status === "closed" ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={reopen.isPending}
+                              onClick={() =>
+                                reopen.mutate(store.id, {
+                                  onSuccess: () => toast.success(`${store.name} is open again`),
+                                  onError: (err) =>
+                                    toast.error(
+                                      serverMessage(err) ||
+                                        "Could not reopen this branch — check its geofence and region.",
+                                    ),
+                                })
+                              }
+                            >
+                              <Power className="h-4 w-4" /> Reopen
+                            </Button>
+                          ) : null}
                           <Button
-                            variant="ghost"
+                            variant="outline"
                             size="sm"
-                            className="text-destructive hover:text-destructive"
-                            onClick={() => setCloseStore(store)}
+                            onClick={() => setManagerStore(store)}
                           >
-                            <Power className="h-4 w-4" /> Close
+                            <UserPlus className="h-4 w-4" /> Add manager
                           </Button>
-                        ) : null}
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setManagerStore(store)}
-                        >
-                          <UserPlus className="h-4 w-4" /> Add manager
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setEditStore(store)}
-                        >
-                          <Pencil className="h-4 w-4" /> Edit
-                        </Button>
-                      </div>
-                    )}
+                        </>
+                      ) : null}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setEditStore(store)}
+                      >
+                        <Pencil className="h-4 w-4" /> Edit
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
-              {stores.length === 0 ? (
+              {physicalStores.length === 0 ? (
                 <TableRow>
                   <TableCell
                     colSpan={6}
@@ -299,9 +363,16 @@ export default function StoreSetupPage() {
         </div>
       )}
 
-      <AddStoreDialog open={addOpen} onOpenChange={setAddOpen} />
+      <AddStoreDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        regions={regions}
+      />
+      <CreateRegionDialog open={regionOpen} onOpenChange={setRegionOpen} />
       <EditStoreDialog
         store={editStore}
+        regions={regions}
+        canChangeRegion={isHeadOffice}
         onOpenChange={(open) => !open && setEditStore(null)}
       />
       <AddManagerDialog
@@ -317,6 +388,43 @@ export default function StoreSetupPage() {
         onOpenChange={(open) => !open && setResetUser(null)}
       />
     </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Import holding area                                                 */
+/* ------------------------------------------------------------------ */
+
+function HoldingStoreNotice({ stores }: { stores: AdminStore[] }) {
+  return (
+    <section className="mb-6 rounded-xl border border-dashed bg-muted/20 p-4">
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted">
+          <Database className="h-4 w-4 text-muted-foreground" />
+        </div>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-sm font-semibold">Import holding area</h2>
+            <Badge variant="secondary" className="num">
+              {stores.length}
+            </Badge>
+          </div>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            These are system buckets for imported records whose branch could not
+            be identified. They are not physical stores, so they do not need a
+            geofence, region, manager, or activation. Reconcile the imported rows
+            with their correct branch instead.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {stores.map((store) => (
+              <Badge key={store.id} variant="outline">
+                {store.name}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -445,15 +553,116 @@ function PendingReviewSection({
 }
 
 /* ------------------------------------------------------------------ */
+/* Region master (head office)                                        */
+/* ------------------------------------------------------------------ */
+
+function CreateRegionDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const createRegion = useCreateRegion();
+  const [name, setName] = useState("");
+  const [code, setCode] = useState("");
+  const [error, setError] = useState("");
+
+  function reset() {
+    setName("");
+    setCode("");
+    setError("");
+  }
+
+  function save() {
+    if (!name.trim() || !isRealName(name)) {
+      setError("Enter a region name using letters, for example West India.");
+      return;
+    }
+    createRegion.mutate(
+      {
+        name: name.trim(),
+        code: code.trim().toUpperCase() || undefined,
+      },
+      {
+        onSuccess: (region) => {
+          toast.success(`${region.name} region added`);
+          reset();
+          onOpenChange(false);
+        },
+        onError: (err) =>
+          toast.error(serverMessage(err) || "Could not create the region."),
+      },
+    );
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) reset();
+        onOpenChange(next);
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add region</DialogTitle>
+          <DialogDescription>
+            Regions group branches for setup, reporting, and manager scope.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-1.5">
+            <Label htmlFor="region-name">
+              Region name <span className="text-destructive">*</span>
+            </Label>
+            <Input
+              id="region-name"
+              value={name}
+              placeholder="e.g. West India"
+              aria-invalid={!!error}
+              onChange={(event) => {
+                setName(event.target.value);
+                if (error) setError("");
+              }}
+            />
+            {error ? <p className="text-xs text-destructive">{error}</p> : null}
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="region-code">Code</Label>
+            <Input
+              id="region-code"
+              value={code}
+              placeholder="e.g. WEST"
+              onChange={(event) => setCode(event.target.value)}
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={createRegion.isPending}>
+            {createRegion.isPending ? "Adding…" : "Add region"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Add store                                                          */
 /* ------------------------------------------------------------------ */
 
 function AddStoreDialog({
   open,
   onOpenChange,
+  regions,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  regions: StoreRegion[];
 }) {
   const createStore = useCreateStore();
   const [name, setName] = useState("");
@@ -586,12 +795,25 @@ function AddStoreDialog({
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="store-region">Region</Label>
-            <Input
-              id="store-region"
-              placeholder="e.g. west-gujarat"
-              value={regionId}
-              onChange={(e) => setRegionId(e.target.value)}
-            />
+            <Select
+              value={regionId || NO_REGION_VALUE}
+              onValueChange={(value) =>
+                setRegionId(value === NO_REGION_VALUE ? "" : value)
+              }
+            >
+              <SelectTrigger id="store-region" className="w-full">
+                <SelectValue placeholder="Select a region" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_REGION_VALUE}>No region yet</SelectItem>
+                {regions.map((region) => (
+                  <SelectItem key={region.id} value={region.id}>
+                    {region.name}
+                    {region.code ? ` (${region.code})` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="grid gap-1.5">
@@ -639,9 +861,13 @@ function AddStoreDialog({
 function EditStoreDialog({
   store,
   onOpenChange,
+  regions,
+  canChangeRegion,
 }: {
   store: AdminStore | null;
   onOpenChange: (open: boolean) => void;
+  regions: StoreRegion[];
+  canChangeRegion: boolean;
 }) {
   const updateStore = useUpdateStore();
   const [name, setName] = useState("");
@@ -651,7 +877,6 @@ function EditStoreDialog({
   const [longitude, setLongitude] = useState("");
   const [geofenceRadiusM, setGeofenceRadiusM] = useState("150");
   const [locating, setLocating] = useState(false);
-  const [isActive, setIsActive] = useState(true);
   // Inline validation errors, keyed by field. Cleared per-field on change.
   const [errors, setErrors] = useState<Record<string, string>>({});
   // Re-seed the form whenever a different store is opened.
@@ -664,7 +889,6 @@ function EditStoreDialog({
     setLatitude(store.latitude != null ? String(store.latitude) : "");
     setLongitude(store.longitude != null ? String(store.longitude) : "");
     setGeofenceRadiusM(store.geofenceRadiusM != null ? String(store.geofenceRadiusM) : "150");
-    setIsActive(store.isActive);
     setErrors({});
   }
 
@@ -711,17 +935,23 @@ function EditStoreDialog({
     if (lat === null) return;
     const lng = parseCoord(longitude, "Longitude");
     if (lng === null) return;
+    const radius = Number(geofenceRadiusM);
+    if (!Number.isInteger(radius) || radius < 25 || radius > 2000) {
+      toast.error("Geofence radius must be a whole number from 25 to 2,000 metres.");
+      return;
+    }
 
     updateStore.mutate(
       {
         id: store.id,
         name: name.trim(),
         city: city.trim(),
-        regionId: regionId.trim() || undefined,
+        // An empty value is a removal, not "unchanged" — the server reads it
+        // that way, and it is the only way to take a branch out of a region.
+        ...(canChangeRegion ? { regionId: regionId.trim() } : {}),
         latitude: lat,
         longitude: lng,
-        geofenceRadiusM: Number(geofenceRadiusM) || 150,
-        isActive,
+        geofenceRadiusM: radius,
       },
       {
         onSuccess: () => {
@@ -784,12 +1014,29 @@ function EditStoreDialog({
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="edit-region">Region</Label>
-            <Input
-              id="edit-region"
-              placeholder="e.g. west-gujarat"
-              value={regionId}
-              onChange={(e) => setRegionId(e.target.value)}
-            />
+            <Select
+              value={regionId || NO_REGION_VALUE}
+              onValueChange={(value) => setRegionId(value === NO_REGION_VALUE ? "" : value)}
+              disabled={!canChangeRegion}
+            >
+              <SelectTrigger id="edit-region" className="w-full">
+                <SelectValue placeholder="Select a region" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_REGION_VALUE}>No region yet</SelectItem>
+                {regions.map((region) => (
+                  <SelectItem key={region.id} value={region.id}>
+                    {region.name}
+                    {region.code ? ` (${region.code})` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {!canChangeRegion ? (
+              <p className="text-xs text-muted-foreground">
+                Head Office controls region assignments because they determine area-manager access.
+              </p>
+            ) : null}
           </div>
 
           {/* Geofence GPS Coordinates */}
@@ -842,10 +1089,10 @@ function EditStoreDialog({
               <Input
                 id="edit-radius"
                 type="number"
-                min={10}
-                max={5000}
+                min={25}
+                max={2000}
                 value={geofenceRadiusM}
-                onChange={(e) => setGeofenceRadiusM(e.target.value)}
+                onChange={(e) => setGeofenceRadiusM(positiveNumberInput(e.target.value))}
                 placeholder="150"
               />
               <div className="flex flex-wrap gap-1.5 mt-1">
@@ -868,34 +1115,6 @@ function EditStoreDialog({
                 ))}
               </div>
             </div>
-          </div>
-          <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/30 px-4 py-3">
-            <div>
-              <p className="text-sm font-medium">Active</p>
-              <p className="text-xs text-muted-foreground">
-                {isActive
-                  ? "Store is live and available in the switcher."
-                  : "Store is hidden from day-to-day operations."}
-              </p>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={isActive}
-              aria-label="Toggle store active"
-              onClick={() => setIsActive((v) => !v)}
-              className={
-                "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring " +
-                (isActive ? "bg-primary" : "bg-input")
-              }
-            >
-              <span
-                className={
-                  "inline-block h-5 w-5 transform rounded-full bg-background shadow-sm transition-transform " +
-                  (isActive ? "translate-x-5" : "translate-x-0.5")
-                }
-              />
-            </button>
           </div>
         </div>
         <DialogFooter>
@@ -1141,12 +1360,13 @@ function AddManagerDialog({
                 <Label htmlFor="mgr-phone">Phone</Label>
                 <Input
                   id="mgr-phone"
-                  placeholder="+91 ..."
-                  inputMode="tel"
+                  placeholder="10-digit mobile"
+                  inputMode="numeric"
+                  maxLength={10}
                   value={phone}
                   aria-invalid={!!errors.phone}
                   onChange={(e) => {
-                    setPhone(capIndianPhone(e.target.value));
+                    setPhone(phoneInputValue(e.target.value));
                     clearError("phone");
                   }}
                 />

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { AuditService } from '../common/audit.service';
@@ -62,6 +62,8 @@ export interface AdSetRoutingDecision {
 /** Tenant-owned rules for routing an ad response before it reaches the inbox. */
 @Injectable()
 export class AdSetRulesService {
+  private readonly logger = new Logger(AdSetRulesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
@@ -109,7 +111,14 @@ export class AdSetRulesService {
     const storeIds = [...new Set(rules.map((rule) => rule.storeId).filter(Boolean))] as string[];
     if (storeIds.length) {
       const found = await this.prisma.store.count({
-        where: { organisationId: user.organisationId, id: { in: storeIds }, isAggregate: false },
+        where: {
+          organisationId: user.organisationId,
+          id: { in: storeIds },
+          isAggregate: false,
+          isHolding: false,
+          attendanceOnly: false,
+          status: { not: 'closed' },
+        },
       });
       if (found !== storeIds.length) throw new BadRequestException('A destination store is not part of this organisation.');
     }
@@ -156,6 +165,29 @@ export class AdSetRulesService {
   async resolve(organisationId: string, context?: AdSetRoutingContext): Promise<AdSetRoutingDecision | null> {
     if (!context) return null;
     const rule = resolveAdSetRule(await this.list(organisationId), context);
+    if (rule?.storeId) {
+      const physicalStore = await this.prisma.store.findFirst({
+        where: {
+          id: rule.storeId,
+          organisationId,
+          isAggregate: false,
+          isHolding: false,
+          attendanceOnly: false,
+          status: { not: 'closed' },
+        },
+        select: { id: true },
+      });
+      // Old settings may predate the holding-store boundary. Treat that stale
+      // destination as no matching route rather than filing new CRM records in
+      // an import quarantine bucket.
+      if (!physicalStore) {
+        this.logger.warn(
+          `Ad-set rule ${rule.id} points at store ${rule.storeId}, which is closed or not a physical ` +
+            'branch; treating the lead as unrouted.',
+        );
+        return null;
+      }
+    }
     return rule
       ? {
           ruleId: rule.id,

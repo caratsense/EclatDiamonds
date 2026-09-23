@@ -152,7 +152,7 @@ describe('Item master + item-level quote pricing (e2e)', () => {
     expect(style.lines).toHaveLength(2);
     await request(server()).get('/materials/styles/NOPE-1').set(as('rep')).expect(404);
     const found = (await request(server()).get('/materials/styles?q=ALR').set(as('rep')).expect(200)).body;
-    expect(found).toEqual([{ styleCode: 'ALR-0006', itemType: 'ALR' }]);
+    expect(found).toEqual([{ styleCode: 'ALR-0006', itemType: 'ALR', itemSize: 'IND 13' }]);
   });
 
   let quoteId = '';
@@ -170,7 +170,9 @@ describe('Item master + item-level quote pricing (e2e)', () => {
     // 480 off making + 365 off stones + 500 = 1,345; taxable 29,955; GST 898.65.
     expect(res.body.totals).toMatchObject({
       metalValue: 19200, makingCharges: 4800, stoneCharges: 7300, discount: 1345,
-      makingDiscount: 480, stoneDiscount: 365, additionalDiscount: 500, taxable: 29955, gst: 898.65, grandTotal: 30853.65,
+      makingDiscount: 480, stoneDiscount: 365, additionalDiscount: 500, taxable: 29955, gst: 898.65,
+      // Settled in whole rupees, like the shop's own bill: 30,853.65 + 0.35.
+      roundOff: 0.35, grandTotal: 30854,
     });
 
     // An edit that sends only the additional discount keeps the percentages.
@@ -199,18 +201,27 @@ describe('Item master + item-level quote pricing (e2e)', () => {
     await quote({ lines: [{ ...ITEM, karat: 12, size: '16 inch' }], additionalDiscount: 12100 }).expect(201);
   });
 
-  it('the PDF itemises by code, prints the rate with the multiplier in, the size, discounts and words', async () => {
+  it('the PDF is the shop bill: codes, size, per-line discount, the tax split and the words', async () => {
     const file = await request(server()).get(`/quotes/${quoteId}/pdf`).set(as('rep')).buffer(true).parse(binary).expect(200);
     const text = (await pdfParse(file.body as Buffer)).text;
     for (const s of [
-      'LADIES RING', 'Style ALR-0006', 'Size 12', 'G14YG', 'LG-RND-VVS-E-F', 'LG-RB-OVL', '30,000.00',
-      'making discount 10%', 'diamond discount 5%', 'additional discount',
-      'Rupees Thirty Thousand Eight Hundred Fifty Three and Sixty Five Paise Only',
+      'Quotation',
+      'Details of the Receiver (Billed To)',
+      'Details of Consignee (Shipped To)',
+      'LADIES RING', 'StyleCode : ALR-0006', 'Size : 12', 'G14YG', 'LG-RND-VVS-E-F', 'LG-RB-OVL',
+      '30,000.00', // the rate the customer sees: 20,000 x the 1.5 multiplier
+      '-10%', '-5%', // making and diamond discount, per line, as the bill shows it
+      'Less : Discount', '1.5% SGST', '1.5% CGST', 'Rounding', 'Total',
+      'RUPEES THIRTY THOUSAND EIGHT HUNDRED FIFTY FOUR ONLY',
+      'Balance Payment',
+      'This is a quotation and not a tax invoice',
+      'Customer Signature', 'Authorized Signature',
     ]) {
       expect(text).toContain(s);
     }
-    // The staff's base rate is not what the customer is shown.
+    // The staff's base rate and the multiplier are not what the customer is shown.
     expect(text).not.toContain('20,000.00');
+    expect(text).not.toMatch(/multiplier/i);
   });
 
   it('writes amounts in words the Indian way', () => {

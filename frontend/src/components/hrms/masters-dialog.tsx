@@ -32,7 +32,7 @@ import {
   type Department,
   type Designation,
 } from "@/lib/queries/hrms-employees";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, positiveNumberInput } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
 const NONE = "__none";
@@ -247,7 +247,7 @@ function MasterRow({ kind, item, others }: { kind: Kind; item: Item; others: Ite
           aria-label="Sort order"
           inputMode="numeric"
           value={sortOrder}
-          onChange={(e) => setSortOrder(e.target.value)}
+          onChange={(e) => setSortOrder(positiveNumberInput(e.target.value))}
           className="num w-16"
         />
         <label className="flex min-h-10 items-center gap-1.5 text-xs">

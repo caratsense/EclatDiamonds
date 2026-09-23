@@ -83,7 +83,7 @@ import {
   StoreScopeField,
   useStoreScope,
 } from "@/components/common/store-scope-field";
-import { apiErrorMessage, normalizeIndianMobile } from "@/lib/utils";
+import { apiErrorMessage, normalizeIndianMobile, phoneInputValue } from "@/lib/utils";
 import { useDownloadLeadExport } from "@/lib/queries/lead-export";
 import { ROLE_RANK } from "@/lib/types";
 
@@ -973,17 +973,13 @@ function AddLeadDialog({
             </Label>
             <Input
               id="phone"
-              placeholder="+91 ..."
-              inputMode="tel"
-              maxLength={13}
+              placeholder="10-digit mobile"
+              inputMode="numeric"
+              maxLength={10}
               value={phone}
               aria-invalid={!!errors.phone}
               onChange={(e) => {
-                // Cap digits: 10 for a bare number, 12 when prefixed with "+91".
-                const raw = e.target.value;
-                const hasPlus = raw.trimStart().startsWith("+");
-                const digits = raw.replace(/\D/g, "").slice(0, hasPlus ? 12 : 10);
-                setPhone((hasPlus ? "+" : "") + digits);
+                setPhone(phoneInputValue(e.target.value));
                 clearError("phone");
               }}
             />

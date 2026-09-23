@@ -24,7 +24,7 @@ import {
   useDigestSettings,
   useSaveDigestSettings,
 } from "@/lib/queries/staff-digest";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, positiveNumberInput } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
 /**
@@ -114,7 +114,12 @@ export default function StaffDigestPage() {
                     className="w-24"
                     inputMode="numeric"
                     value={value("sendHourLocal", settings.data?.sendHourLocal)}
-                    onChange={(e) => setForm((f) => ({ ...f, sendHourLocal: e.target.value }))}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        sendHourLocal: positiveNumberInput(e.target.value),
+                      }))
+                    }
                     onBlur={() => {
                       if (!("sendHourLocal" in form)) return;
                       const n = Number(form.sendHourLocal);

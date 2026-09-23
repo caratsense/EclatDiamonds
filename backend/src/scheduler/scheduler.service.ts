@@ -153,7 +153,7 @@ export class SchedulerService {
     return this.prisma.store.findMany({
       // The "All Stores" aggregate is a UI convenience with no staff and no
       // attendance of its own; closing a day against it would be meaningless.
-      where: { isActive: true, isAggregate: false },
+      where: { isActive: true, isAggregate: false, isHolding: false },
       select: { id: true, name: true, timezone: true, organisationId: true },
     });
   }

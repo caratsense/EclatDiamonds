@@ -73,7 +73,14 @@ export class LeadFormsService {
   async create(user: AuthUser, dto: CreateLeadFormDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
     const store = await this.prisma.store.findFirst({
-      where: { id: dto.storeId, organisationId: user.organisationId, isAggregate: false },
+      where: {
+        id: dto.storeId,
+        organisationId: user.organisationId,
+        isAggregate: false,
+        isHolding: false,
+        attendanceOnly: false,
+        status: { not: 'closed' },
+      },
       select: { id: true, name: true },
     });
     if (!store) throw new BadRequestException('Choose a branch that belongs to this organisation.');
@@ -118,7 +125,14 @@ export class LeadFormsService {
     if (dto.storeId) {
       this.scope.assertStoreAllowed(user, dto.storeId);
       const target = await this.prisma.store.findFirst({
-        where: { id: dto.storeId, organisationId: user.organisationId, isAggregate: false },
+        where: {
+          id: dto.storeId,
+          organisationId: user.organisationId,
+          isAggregate: false,
+          isHolding: false,
+          attendanceOnly: false,
+          status: { not: 'closed' },
+        },
         select: { id: true },
       });
       if (!target) throw new BadRequestException('Choose a branch that belongs to this organisation.');
@@ -231,6 +245,11 @@ export class LeadFormsService {
         // A suspended or cancelled tenant's forms stop accepting enquiries, the
         // same way its people stop being able to sign in.
         organisation: { status: { in: ['active', 'onboarding'] } },
+        store: {
+          isHolding: false,
+          attendanceOnly: false,
+          status: { not: 'closed' },
+        },
       },
       select: {
         id: true, organisationId: true, storeId: true, name: true,

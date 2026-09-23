@@ -221,7 +221,9 @@ export function QuoteItemEditor({
   onFocus,
 }: ItemEditorProps) {
   const [loading, setLoading] = useState(false);
+  const [styleOpen, setStyleOpen] = useState(false);
   const styles = useStyleSearch(item.styleNumber);
+  const matches = styles.data ?? [];
   const metal = lists.metals.find((m) => m.code === item.metalCode);
   const auto = metal?.karat ? autoRate(metal.karat) : null;
   const goldRate = num(item.manualRate) ?? auto?.rate ?? 0;
@@ -233,9 +235,9 @@ export function QuoteItemEditor({
     !s.code.trim() || !(s.type === "D" ? lists.diamonds : lists.stones).length ||
     (s.type === "D" ? lists.diamonds : lists.stones).some((m) => m.code === s.code.trim());
 
-  async function loadStyle() {
-    const code = item.styleNumber.trim();
+  async function loadStyle(code = item.styleNumber.trim()) {
     if (!code || loading) return;
+    setStyleOpen(false);
     setLoading(true);
     try {
       const bom = await fetchStyle(code);
@@ -329,25 +331,53 @@ export function QuoteItemEditor({
         <div className="grid gap-1.5">
           <Label htmlFor={`qb-style-${item.id}`}>Style no.</Label>
           <div className="flex gap-1.5">
-            <Input
-              id={`qb-style-${item.id}`}
-              list={`qb-styles-${item.id}`}
-              value={item.styleNumber}
-              onChange={(e) => set({ styleNumber: e.target.value })}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  void loadStyle();
-                }
-              }}
-              placeholder="e.g. ALR-0006"
-              autoComplete="off"
-            />
-            <datalist id={`qb-styles-${item.id}`}>
-              {(styles.data ?? []).map((s) => (
-                <option key={s.styleCode} value={s.styleCode} />
-              ))}
-            </datalist>
+            <div className="relative flex-1">
+              <Input
+                id={`qb-style-${item.id}`}
+                value={item.styleNumber}
+                onChange={(e) => {
+                  set({ styleNumber: e.target.value });
+                  setStyleOpen(true);
+                }}
+                onFocus={() => setStyleOpen(true)}
+                // A click inside the list is a mousedown first; closing on blur
+                // immediately would eat it, so let the click land.
+                onBlur={() => window.setTimeout(() => setStyleOpen(false), 150)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void loadStyle(matches.length === 1 ? matches[0].styleCode : undefined);
+                  } else if (e.key === "Escape") {
+                    setStyleOpen(false);
+                  }
+                }}
+                placeholder="Search e.g. 10778 or RG"
+                autoComplete="off"
+              />
+              {styleOpen && item.styleNumber.trim() ? (
+                <div className="absolute z-50 mt-1 max-h-60 w-full overflow-y-auto rounded-md border bg-popover p-1 shadow-md">
+                  {matches.length === 0 ? (
+                    <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                      {styles.isFetching ? "Searching…" : "No style matches that."}
+                    </p>
+                  ) : (
+                    matches.map((s) => (
+                      <button
+                        key={s.styleCode}
+                        type="button"
+                        onClick={() => void loadStyle(s.styleCode)}
+                        className="flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted"
+                      >
+                        <span className="font-medium">{s.styleCode}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {[s.itemType, s.itemSize].filter(Boolean).join(" · ")}
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              ) : null}
+            </div>
             <Button
               type="button"
               variant="outline"
@@ -368,7 +398,11 @@ export function QuoteItemEditor({
               id={`qb-size-${item.id}`}
               value={item.size}
               maxLength={24}
-              onChange={(e) => set({ size: e.target.value.replace(/[^A-Za-z0-9 ./-]/g, "") })}
+              // A hyphen inside a size is a range ("3.5-4"); a leading one is a
+              // minus sign, and no ring is minus twelve.
+              onChange={(e) =>
+                set({ size: e.target.value.replace(/[^A-Za-z0-9 ./-]/g, "").replace(/^-+/, "") })
+              }
               placeholder="12, 2.6, IND 13"
             />
             <select

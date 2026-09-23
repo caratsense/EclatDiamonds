@@ -36,7 +36,7 @@ import {
   type EmploymentType,
 } from "@/lib/queries/hrms-employees";
 import { ROLE_LABELS, type Role, ACTIVE_ROLES } from "@/lib/types";
-import { apiErrorMessage, normalizeIndianMobile } from "@/lib/utils";
+import { apiErrorMessage, normalizeIndianMobile, phoneInputValue } from "@/lib/utils";
 import { useResetOn } from "@/lib/use-reset-on";
 import { useSession } from "@/store/use-session";
 
@@ -395,9 +395,10 @@ export function EmployeeFormDialog({
             <Field label="Mobile" error={shown.phone}>
               <Input
                 type="tel"
-                inputMode="tel"
+                inputMode="numeric"
+                maxLength={10}
                 value={form.phone}
-                onChange={(e) => set("phone", e.target.value)}
+                onChange={(e) => set("phone", phoneInputValue(e.target.value))}
                 placeholder="98xxxxxxxx"
               />
             </Field>

@@ -284,13 +284,14 @@ describe('Quote discount approval + quote PDF (e2e)', () => {
 
     const parsed = await pdfParse(bytes);
     expect(parsed.text).toContain(held.ref);
-    expect(parsed.text).toContain('Approved total');
+    // The bill carries the approval as a line of its own under the signatures.
+    expect(parsed.text).toMatch(/Approved by a manager/);
     expect(parsed.text).toContain('Rs. 90,228.00');
     expect(parsed.text).toContain('Maison qd-a');
     expect(parsed.text).toContain('24ABCDE1234F1Z5');
     expect(parsed.text).toContain('Solitaire ring');
-    expect(parsed.text).toContain('making discount 8%');
-    expect(parsed.text).toContain('diamond discount 8%');
+    // The bill shows each line's own discount in the Dis% column.
+    expect(parsed.text).toContain('-8%');
     expect(parsed.text).toContain('2026-10-15');
   });
 
@@ -532,6 +533,7 @@ describe('quote PDF delivery (worker + provider shape)', () => {
       {} as never,
       whatsapp as never,
       { deliverability: async () => ({ state: 'live', reason: 'Fixture.' }) } as never,
+      {} as never,
       {} as never,
       storage as never,
     );

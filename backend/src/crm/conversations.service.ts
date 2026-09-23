@@ -139,6 +139,30 @@ export class ConversationsService {
           }
         : undefined;
     const route = await this.adSetRules.resolve(organisationId, routingContext);
+    let inboundStoreId = msg.storeId ?? null;
+    if (inboundStoreId) {
+      const physicalStore = await this.prisma.store.findFirst({
+        where: {
+          id: inboundStoreId,
+          organisationId,
+          isAggregate: false,
+          isHolding: false,
+          attendanceOnly: false,
+          status: { not: 'closed' },
+        },
+        select: { id: true },
+      });
+      // The inbound number mapping may be older than the store lifecycle
+      // boundary. Preserve the message, but leave it centrally unassigned
+      // instead of filing it into a closed office or import holding bucket.
+      if (!physicalStore) {
+        this.logger.warn(
+          `Inbound message mapped to store ${inboundStoreId}, which is closed or not a physical ` +
+            'branch; filing it without a branch. Re-point the number mapping.',
+        );
+        inboundStoreId = null;
+      }
+    }
 
     if (msg.externalId) {
       const seen = await this.prisma.message.findUnique({
@@ -256,7 +280,7 @@ export class ConversationsService {
         channel: msg.channel,
         externalThreadId: threadKey,
         partyId: holder?.partyId ?? null,
-        storeId: route?.storeId ?? msg.storeId ?? null,
+        storeId: route?.storeId ?? inboundStoreId,
         integrationId: msg.integrationId ?? null,
         status: 'open',
         handling: route?.handling ?? 'unassigned',
@@ -664,13 +688,18 @@ export class ConversationsService {
       );
     }
     this.scope.assertStoreAllowed(user, storeId);
-    if (input.storeId) {
-      const target = await this.prisma.store.findFirst({
-        where: { id: input.storeId, organisationId: user.organisationId, isAggregate: false },
-        select: { id: true },
-      });
-      if (!target) throw new BadRequestException('Choose a branch that belongs to this organisation.');
-    }
+    const target = await this.prisma.store.findFirst({
+      where: {
+        id: storeId,
+        organisationId: user.organisationId,
+        isAggregate: false,
+        isHolding: false,
+        attendanceOnly: false,
+        status: { not: 'closed' },
+      },
+      select: { id: true },
+    });
+    if (!target) throw new BadRequestException('Choose an active physical store in this organisation.');
 
     const interest = input.interest.trim();
     if (!interest) throw new BadRequestException('Say what this customer is interested in.');
@@ -929,6 +958,22 @@ export class ConversationsService {
     // can narrow the caller's scope; it can never widen it.
     const targetStoreId = input.storeId !== undefined ? input.storeId : conversation.storeId;
     if (targetStoreId) this.scope.assertStoreAllowed(user, targetStoreId);
+    if (targetStoreId) {
+      const physicalStore = await this.prisma.store.findFirst({
+        where: {
+          id: targetStoreId,
+          organisationId: user.organisationId,
+          isAggregate: false,
+          isHolding: false,
+          attendanceOnly: false,
+          status: { not: 'closed' },
+        },
+        select: { id: true },
+      });
+      if (!physicalStore) {
+        throw new BadRequestException('Choose an active physical store for this conversation.');
+      }
+    }
 
     if (input.assignedUserId) {
       const assignee = await this.prisma.user.findFirst({

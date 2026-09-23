@@ -24,7 +24,7 @@ import {
   StoreScopeField,
   useStoreScope,
 } from "@/components/common/store-scope-field";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, phoneInputValue, positiveNumberInput } from "@/lib/utils";
 
 /** Parse a numeric input into a positive integer, or undefined when blank. */
 function toMaxUses(v: string): number | undefined {
@@ -153,9 +153,11 @@ export function CreateReferralCodeDialog({
             <Label htmlFor="rc-phone">Phone</Label>
             <Input
               id="rc-phone"
-              placeholder="+91 …"
+              placeholder="10-digit mobile"
+              inputMode="numeric"
+              maxLength={10}
               value={phone}
-              onChange={(e) => setPhone(e.target.value)}
+              onChange={(e) => setPhone(phoneInputValue(e.target.value))}
             />
           </div>
 
@@ -169,7 +171,7 @@ export function CreateReferralCodeDialog({
               step={1}
               placeholder="Unlimited"
               value={maxUses}
-              onChange={(e) => setMaxUses(e.target.value)}
+              onChange={(e) => setMaxUses(positiveNumberInput(e.target.value))}
             />
             <p className="text-[11px] text-muted-foreground">
               Optional cap so a shared code can’t be used endlessly — leave blank

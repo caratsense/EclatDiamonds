@@ -35,7 +35,7 @@ import {
   type MetalKind,
 } from "@/lib/queries/integrations";
 import { ROLE_RANK } from "@/lib/types";
-import { apiErrorMessage, cn } from "@/lib/utils";
+import { apiErrorMessage, cn, positiveNumberInput } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
 import { MetalRatesWidget, staleNote } from "@/components/rates/metal-rates-widget";
@@ -175,7 +175,7 @@ export default function RatesPage() {
                     inputMode="decimal"
                     placeholder="e.g. 6600"
                     value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
+                    onChange={(e) => setAmount(positiveNumberInput(e.target.value))}
                     onKeyDown={(e) => e.key === "Enter" && submit()}
                   />
                 </div>

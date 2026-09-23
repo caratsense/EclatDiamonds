@@ -152,6 +152,7 @@ export class DiscountsService {
    */
   async create(user: AuthUser, dto: CreateDiscountRequestDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
+    await this.scope.assertTradingStore(dto.storeId);
 
     const caps = await this.loadCaps(user.organisationId, dto.storeId);
     const diamondPercent = dto.diamondPercent ?? dto.percent ?? 0;
@@ -395,7 +396,10 @@ export class DiscountsService {
   /** head_office: set/override a global or store-scoped role cap. */
   async setLimit(user: AuthUser, dto: SetDiscountLimitDto) {
     const storeId = dto.storeId ?? null;
-    if (storeId) this.scope.assertStoreAllowed(user, storeId);
+    if (storeId) {
+      this.scope.assertStoreAllowed(user, storeId);
+      await this.scope.assertTradingStore(storeId);
+    }
     const organisationId = user.organisationId;
     const existing = await this.prisma.discountLimit.findFirst({
       where: { role: dto.role, storeId, organisationId },

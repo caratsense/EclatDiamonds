@@ -303,6 +303,10 @@ export class ReturnsService {
 
   async create(user: AuthUser, dto: CreateReturnDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
+    // A customer may return goods bought at a branch that has since closed, or
+    // at a piece still parked in the holding bucket; the return belongs to that
+    // branch, not to whichever shop happens to be open today.
+    await this.scope.assertTradingStore(dto.storeId, 'physical');
 
     // Round 2: By-Invoice intake must carry the source invoice number.
     if (dto.entryMode === 'invoice' && !dto.invoiceNo?.trim()) {

@@ -216,25 +216,29 @@ export function useSendDailyReport() {
 }
 
 export type DsrSheetPeriod = "day" | "week" | "month";
+export type DsrSheetFormat = "pdf" | "xlsx";
 
 export interface DsrSheetInput {
   storeId: string;
   period: DsrSheetPeriod;
   /** Any day in the period (YYYY-MM-DD). */
   date: string;
+  /** Defaults to the printable PDF. */
+  format?: DsrSheetFormat;
 }
 
 /**
- * GET /reporting/daily/pdf — the store's DSRs laid out as its paper sheet,
- * saved as a file. Through axios, not a plain link, so the bearer token and the
- * `/_api` proxy apply; `responseType: "blob"` keeps the PDF bytes intact.
+ * GET /reporting/daily/sheet — the store's DSRs laid out as its paper sheet,
+ * saved as a file (PDF to print, XLSX to work on). Through axios, not a plain
+ * link, so the bearer token and the `/_api` proxy apply; `responseType: "blob"`
+ * keeps the bytes intact.
  */
 export function useDownloadDsrSheet() {
   return useMutation({
     mutationFn: async (input: DsrSheetInput) => {
       let res;
       try {
-        res = await api.get<Blob>("/reporting/daily/pdf", {
+        res = await api.get<Blob>("/reporting/daily/sheet", {
           params: input,
           responseType: "blob",
         });
@@ -252,7 +256,7 @@ export function useDownloadDsrSheet() {
       const disposition = String(res.headers?.["content-disposition"] ?? "");
       const filename =
         /filename="?([^";]+)"?/i.exec(disposition)?.[1] ??
-        `DSR-${input.storeId}-${input.period}-${input.date}.pdf`;
+        `DSR-${input.storeId}-${input.period}-${input.date}.${input.format ?? "pdf"}`;
       const url = URL.createObjectURL(res.data);
       try {
         const a = document.createElement("a");
@@ -263,6 +267,30 @@ export function useDownloadDsrSheet() {
         URL.revokeObjectURL(url);
       }
       return { filename };
+    },
+  });
+}
+
+export interface SendDsrSheetInput extends DsrSheetInput {
+  channel: ReportChannel;
+  /** Phone number (WhatsApp) or email address. */
+  to: string;
+}
+
+export interface SendDsrSheetResult extends SendDailyReportResult {
+  /** The file that was attached, as the recipient sees it named. */
+  filename: string;
+}
+
+/** POST /reporting/daily/sheet/send — the sheet as a file, over WhatsApp/email. */
+export function useSendDsrSheet() {
+  return useMutation({
+    mutationFn: async (input: SendDsrSheetInput) => {
+      const { data } = await api.post<SendDsrSheetResult>(
+        "/reporting/daily/sheet/send",
+        input,
+      );
+      return data;
     },
   });
 }

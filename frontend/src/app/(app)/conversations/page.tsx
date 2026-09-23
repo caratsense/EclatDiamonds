@@ -83,7 +83,7 @@ import { AuthedImage } from "@/components/ui/authed-image";
 import { IntentAnalysisPanel } from "@/components/crm/intent-analysis-panel";
 import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, positiveNumberInput } from "@/lib/utils";
 
 const QUEUES = [
   { key: "open", label: "Inbox", countKey: "open" },
@@ -1249,8 +1249,9 @@ function ThreadView({
             <div className="space-y-1">
               <Label className="text-xs">Estimated Value (₹)</Label>
               <Input
+                inputMode="decimal"
                 value={dealAmount}
-                onChange={(e) => setDealAmount(e.target.value)}
+                onChange={(e) => setDealAmount(positiveNumberInput(e.target.value))}
               />
             </div>
           </div>
