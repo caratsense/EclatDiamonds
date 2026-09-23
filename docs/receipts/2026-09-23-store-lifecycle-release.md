@@ -36,9 +36,21 @@ warnings), `next build` compiled.
   exit there fails the deployment and the new instance never boots. The
   deployment reported success and the new code is serving, so
   `20260922160000_store_location_repair` applied.
-- Frontend: Vercel production (commit `9b6c7cc`) **success**, 11:59:47.
-- Smoke, 13:11:45: `/health` 200; `GET /reporting/daily/sheet?…&format=xlsx`
-  **401**, not 404 — the route added in `ec16646` exists and requires sign-in.
+  Railway's own record for the production `backend` service: deployment
+  `4c1630e8`, commit `9b6c7cc`, branch `main`, **SUCCESS**, 11:58:48.
+- Frontend: Vercel production (commit `9b6c7cc`) **success**, 11:59:47, at
+  `https://eclat-diamonds-6j2lv3z3u-carat-sense-s-projects.vercel.app`. (The
+  docs name `app.caratsense.in`, which does not resolve — NXDOMAIN from a public
+  resolver, so not a local network fault. `eclat.vercel.app` is a placeholder
+  page and `eclat-diamonds.vercel.app` is the storefront site; neither is this
+  app.)
+- Smoke, 13:11:45 direct against the backend: `/health` 200;
+  `GET /reporting/daily/sheet?…&format=xlsx` **401**, not 404 — the route added
+  in `ec16646` exists and requires sign-in.
+- Smoke through the deployed frontend and its `/_api` proxy: `/` 200, `/login`
+  200 and titled "CaratOS", `/_api/health` 200, `/_api/reporting/daily/sheet`
+  401. So the browser path a member of staff actually uses is serving the new
+  build and reaching the new backend.
 
 ## Data written by this release
 
@@ -57,16 +69,24 @@ called out here so the next person knows the deploy moved data.
 
 ## Not verified
 
-Two checks from the usual post-deploy list could not be run, for the same
-access denial as above:
+Two checks from the usual post-deploy list could not be run. Both are
+read-only, and both were attempted and refused by the agent's own permission
+layer — `railway link` as sensitive remote exec, then
+`railway run -s Postgres -e production -- …` as a production read.
 
 1. Reading the five branches, the head-office location and the holding bucket
    back out of production to confirm the migration's result.
 2. Rendering one real quotation PDF from production to see the new bill layout
    against live data.
 
-Both are read-only. The first is `scratchpad/stores_snapshot.cjs`, run as
-`railway run -s <postgres> -e production -- node stores_snapshot.cjs`.
+The first is `scratchpad/stores_snapshot.cjs`; `backend/` is already linked to
+this project's production environment, so it runs as
+`railway run -s Postgres -e production -- node stores_snapshot.cjs`.
+
+What this leaves: the migration is known to have **executed** (a failing
+pre-deploy step fails the deployment, and the deployment succeeded), but its
+**result** has not been looked at. Nobody has yet seen the five branch rows as
+they now stand.
 
 ## How to reverse
 
