@@ -209,11 +209,18 @@ describe('Item master + item-level quote pricing (e2e)', () => {
       'Details of the Receiver (Billed To)',
       'Details of Consignee (Shipped To)',
       'LADIES RING', 'StyleCode : ALR-0006', 'Size : 12', 'G14YG', 'LG-RND-VVS-E-F', 'LG-RB-OVL',
+      // The bill's own four labels, in its order. HUID and the lab certificate
+      // belong to a piece that has been made, so on a quotation they print as
+      // empty fields rather than being dropped off the form.
+      'HUID :', 'HSN No :', 'J_Certi :',
       '30,000.00', // the rate the customer sees: 20,000 x the 1.5 multiplier
       '-10%', '-5%', // making and diamond discount, per line, as the bill shows it
       'Less : Discount', '1.5% SGST', '1.5% CGST', 'Rounding', 'Total',
-      'RUPEES THIRTY THOUSAND EIGHT HUNDRED FIFTY FOUR ONLY',
-      'Balance Payment',
+      'INR THIRTY THOUSAND EIGHT HUNDRED FIFTY FOUR ONLY',
+      // The bank block and the payment block, as the shop's bill lays them out.
+      'A/C Name', 'Bank Name', 'Bank Address', 'Bank A/C No', 'Bank IFSC', 'Remarks',
+      'Payment', 'Received', 'Balance Payment :',
+      'Invoice Issued Under Section 31 (1) of the GST Act',
       'This is a quotation and not a tax invoice',
       'Customer Signature', 'Authorized Signature',
     ]) {
@@ -225,10 +232,11 @@ describe('Item master + item-level quote pricing (e2e)', () => {
   });
 
   it('writes amounts in words the Indian way', () => {
-    expect(rupeesInWords(0)).toBe('Rupees Zero Only');
-    expect(rupeesInWords(100000)).toBe('Rupees One Lakh Only');
+    // "INR", not "Rupees": the prefix the shop's own bill carries on this line.
+    expect(rupeesInWords(0)).toBe('INR Zero Only');
+    expect(rupeesInWords(100000)).toBe('INR One Lakh Only');
     expect(rupeesInWords(12345678.9)).toBe(
-      'Rupees One Crore Twenty Three Lakh Forty Five Thousand Six Hundred Seventy Eight and Ninety Paise Only',
+      'INR One Crore Twenty Three Lakh Forty Five Thousand Six Hundred Seventy Eight and Ninety Paise Only',
     );
   });
 

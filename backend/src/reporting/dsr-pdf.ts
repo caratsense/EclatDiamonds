@@ -6,12 +6,19 @@ const MARGIN = 40;
 const INK = rgb(0.1, 0.1, 0.12);
 const MUTED = rgb(0.42, 0.42, 0.46);
 const RULE = rgb(0.82, 0.82, 0.85);
-const SHADE = rgb(0.95, 0.95, 0.96);
 const LABEL_W = 175;
-const ROW_H = 14;
+const ROW_H_MAX = 14;
+const GAP_H = 8;
+/** Room left for the grid once the four header lines are drawn. */
+const HEADER_H = 47;
 
-const rupees = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 });
-const grams = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 3 });
+// Plain, as the store's own sheet prints them: 1603822, not 16,03,822.
+const rupees = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0, useGrouping: false });
+const grams = new Intl.NumberFormat('en-IN', {
+  minimumFractionDigits: 3,
+  maximumFractionDigits: 3,
+  useGrouping: false,
+});
 
 /**
  * The DSR as the store's own sheet: one value column for a day, Monday to
@@ -38,14 +45,28 @@ export async function renderDsrSheetPdf(data: DsrSheetData): Promise<Buffer> {
 
   // A week or a month is too wide for portrait.
   const pageSize: [number, number] = data.period === 'day' ? A4 : [A4[1], A4[0]];
-  let page: PDFPage = pdf.addPage(pageSize);
+  const page: PDFPage = pdf.addPage(pageSize);
   let y = pageSize[1] - MARGIN;
+
+  // The sheet is one page, always: a DSR split across two is a DSR nobody can
+  // read side by side. The rows are the same rows whatever the period, so the
+  // row height is what gives — squeezed only as far as the page needs.
+  const gridRows = DSR_ROWS.filter((r) => !r.gap).length;
+  const gaps = DSR_ROWS.length - gridRows;
+  const room = pageSize[1] - 2 * MARGIN - HEADER_H - gaps * GAP_H;
+  const ROW_H = Math.min(ROW_H_MAX, room / gridRows);
   const right = pageSize[0] - MARGIN;
 
   const text = (
     value: string,
     x: number,
-    opts: { size?: number; font?: PDFFont; color?: typeof INK; align?: 'left' | 'right'; width?: number } = {},
+    opts: {
+      size?: number;
+      font?: PDFFont;
+      color?: typeof INK;
+      align?: 'left' | 'right' | 'center';
+      width?: number;
+    } = {},
   ) => {
     const size = opts.size ?? 8.5;
     const font = opts.font ?? regular;
@@ -54,7 +75,8 @@ export async function renderDsrSheetPdf(data: DsrSheetData): Promise<Buffer> {
       while (s.length > 1 && font.widthOfTextAtSize(s, size) > opts.width) s = `${s.slice(0, -2)}…`;
     }
     const w = font.widthOfTextAtSize(s, size);
-    page.drawText(s, { x: opts.align === 'right' ? x - w : x, y, size, font, color: opts.color ?? INK });
+    const x0 = opts.align === 'right' ? x - w : opts.align === 'center' ? x - w / 2 : x;
+    page.drawText(s, { x: x0, y, size, font, color: opts.color ?? INK });
   };
   const hline = () =>
     page.drawLine({ start: { x: MARGIN, y }, end: { x: right, y }, thickness: 0.5, color: RULE });
@@ -70,12 +92,6 @@ export async function renderDsrSheetPdf(data: DsrSheetData): Promise<Buffer> {
     }
     return line ? [...lines, line] : lines;
   };
-  const ensure = (height: number) => {
-    if (y - height >= MARGIN) return;
-    page = pdf.addPage(pageSize);
-    y = pageSize[1] - MARGIN;
-  };
-
   /* -------------------------------------------------------------- header */
   text(data.organisation, MARGIN, { size: 14, font: bold, width: right - MARGIN - 200 });
   text('DAILY SALES REPORT', right, { size: 14, font: bold, align: 'right' });
@@ -83,36 +99,85 @@ export async function renderDsrSheetPdf(data: DsrSheetData): Promise<Buffer> {
   text(data.store, MARGIN, { size: 10, width: right - MARGIN - 200 });
   text(data.periodLabel, right, { size: 10, font: bold, align: 'right' });
   y -= 12;
-  text('Amounts in Rs. (rounded), gold weight in grams.', MARGIN, { size: 7.5, color: MUTED });
+  text('Amounts in Rs., gold weight in grams.', MARGIN, { size: 7.5, color: MUTED });
   text(`Generated ${data.generatedAt}`, right, { size: 7.5, color: MUTED, align: 'right' });
   y -= 14;
 
   /* --------------------------------------------------------------- table */
   const colW = (right - MARGIN - LABEL_W) / data.columns.length;
   const colRight = (i: number) => MARGIN + LABEL_W + (i + 1) * colW - 5;
-  const top = y;
-  hline();
-  y -= 11;
-  data.columns.forEach((c, i) => text(c.title, colRight(i), { font: bold, align: 'right', width: colW - 8 }));
-  y -= 9;
-  data.columns.forEach((c, i) =>
-    text(c.sub, colRight(i), { size: 7, color: MUTED, align: 'right', width: colW - 8 }),
-  );
-  y -= 6;
-  hline();
+  const verticals = [MARGIN, MARGIN + LABEL_W, ...data.columns.map((_, i) => colRight(i) + 5)];
+  const centre = MARGIN + (right - MARGIN) / 2;
 
-  const lastCol = data.columns.length - 1;
+  // The sheet is two grids with a gap between them, not one long one, so the
+  // verticals are drawn per band once each band's height is known.
+  const bands: { top: number; bottom: number }[] = [];
+  let bandTop: number | null = null;
+  const openBand = () => {
+    if (bandTop !== null) return;
+    bandTop = y;
+    hline();
+  };
+  const closeBand = () => {
+    if (bandTop === null) return;
+    bands.push({ top: bandTop, bottom: y });
+    bandTop = null;
+  };
+
   for (const row of DSR_ROWS) {
-    if (row.bold && !row.get) page.drawRectangle({ x: MARGIN, y: y - ROW_H, width: right - MARGIN, height: ROW_H, color: SHADE });
+    if (row.gap) {
+      closeBand();
+      y -= GAP_H;
+      continue;
+    }
+    openBand();
+
+    if (row.banner) {
+      y -= 10;
+      text(row.label, centre, { font: bold, align: 'center' });
+      y -= ROW_H - 10;
+      hline();
+      continue;
+    }
+
+    if (row.head) {
+      y -= 10;
+      text(row.label, MARGIN + 5, { font: bold, width: LABEL_W - 10 });
+      data.columns.forEach((c, i) =>
+        text(c.title, colRight(i), { font: bold, align: 'right', width: colW - 8 }),
+      );
+      y -= ROW_H - 10;
+      hline();
+      continue;
+    }
+
+    if (row.remark) {
+      const joined = data.remarks.map((r) => `${r.day}: ${r.text}`).join('   |   ');
+      const lines = joined ? wrap(joined, right - MARGIN - LABEL_W - 10) : [''];
+      y -= 10;
+      text(row.label, MARGIN + 5, { font: bold, width: LABEL_W - 10 });
+      lines.forEach((l, i) => {
+        if (i) y -= 11;
+        text(l, MARGIN + LABEL_W + 5);
+      });
+      y -= ROW_H - 10;
+      hline();
+      continue;
+    }
+
+    if (row.blank) {
+      y -= ROW_H;
+      hline();
+      continue;
+    }
+
     y -= 10;
-    text(row.label, MARGIN + 5 + (row.indent ?? 0) * 10, { font: row.bold ? bold : regular, width: LABEL_W - 10 });
+    text(row.label, MARGIN + 5, { font: row.bold ? bold : regular, width: LABEL_W - 10 });
     if (row.get) {
       data.columns.forEach((c, i) => {
         if (!c.values) return;
-        const n = row.get!(c.values);
-        const isTotal = data.period !== 'day' && i === lastCol;
-        text((row.grams ? grams : rupees).format(n), colRight(i), {
-          font: row.bold || isTotal ? bold : regular,
+        text((row.grams ? grams : rupees).format(row.get!(c.values)), colRight(i), {
+          font: row.bold ? bold : regular,
           align: 'right',
           width: colW - 8,
         });
@@ -121,35 +186,11 @@ export async function renderDsrSheetPdf(data: DsrSheetData): Promise<Buffer> {
     y -= ROW_H - 10;
     hline();
   }
+  closeBand();
 
-  // A day's remark sits in its own row; a week's or a month's are listed below.
-  if (data.period === 'day') {
-    const lines = wrap(data.remarks[0]?.text ?? '', colW - 10);
-    y -= 10;
-    text('Remark', MARGIN + 5);
-    lines.forEach((l, i) => {
-      if (i) y -= 11;
-      text(l, MARGIN + LABEL_W + 5);
-    });
-    y -= ROW_H - 10;
-    hline();
-  }
-
-  // The grid's verticals, now that its height is known.
-  for (const x of [MARGIN, MARGIN + LABEL_W, ...data.columns.map((_, i) => colRight(i) + 5)]) {
-    page.drawLine({ start: { x, y: top }, end: { x, y }, thickness: 0.5, color: RULE });
-  }
-
-  if (data.period !== 'day' && data.remarks.length) {
-    y -= 22;
-    ensure(12);
-    text('Remarks', MARGIN, { font: bold });
-    for (const r of data.remarks) {
-      for (const l of wrap(`${r.day}: ${r.text}`, right - MARGIN)) {
-        y -= 12;
-        ensure(0);
-        text(l, MARGIN);
-      }
+  for (const band of bands) {
+    for (const x of verticals) {
+      page.drawLine({ start: { x, y: band.top }, end: { x, y: band.bottom }, thickness: 0.5, color: RULE });
     }
   }
 

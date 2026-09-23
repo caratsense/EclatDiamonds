@@ -12,7 +12,13 @@ export interface QuotePdfData {
     email?: string | null;
     pan?: string | null;
     formerName?: string | null;
-    bank?: { accountName?: string | null; bankName?: string | null; accountNo?: string | null; ifsc?: string | null } | null;
+    bank?: {
+      accountName?: string | null;
+      bankName?: string | null;
+      address?: string | null;
+      accountNo?: string | null;
+      ifsc?: string | null;
+    } | null;
   };
   ref: string;
   revision: number;
@@ -34,6 +40,10 @@ export interface QuotePdfData {
     styleNumber: string | null;
     size: string | null;
     metalCode: string | null;
+    /** Only a made piece carries these; a quotation prints the labels empty. */
+    huid?: string | null;
+    hsn?: string | null;
+    certificateNo?: string | null;
     makingRatePerGram: number | null;
     stones: {
       type: 'D' | 'C';
@@ -65,6 +75,8 @@ export interface QuotePdfData {
     grandTotal: number;
   };
   /** Present when a manager approved this revision. */
+  /** What has already been paid against this quotation, by mode. */
+  payments?: { mode: string; amount: number }[];
   approval: { approvedTotal: number; decidedAt: string | null } | null;
   generatedAt: Date;
 }
@@ -104,12 +116,15 @@ function words(n: number): string {
   return '';
 }
 
-/** "Rupees One Lakh Twenty Three Thousand … and Fifty Paise Only", as a bill says it. */
+/**
+ * "INR One Lakh Twenty Three Thousand … and Fifty Paise Only" — the prefix the
+ * shop's own bill carries on this line, not "Rupees".
+ */
 export function rupeesInWords(amount: number): string {
   const paiseTotal = Math.round(Math.abs(amount) * 100);
   const rupees = Math.floor(paiseTotal / 100);
   const paise = paiseTotal % 100;
-  return `Rupees ${words(rupees) || 'Zero'}${paise ? ` and ${words(paise)} Paise` : ''} Only`;
+  return `INR ${words(rupees) || 'Zero'}${paise ? ` and ${words(paise)} Paise` : ''} Only`;
 }
 
 /** A material row of the item table: what it is, how much, at what rate. */
@@ -350,11 +365,18 @@ export async function renderQuotePdf(data: QuotePdfData): Promise<Buffer> {
 
   data.lines.forEach((l, i) => {
     const { rows, grossWeight, total } = materialRows(l, data);
+    // The bill's own four labels, in its order, then the size the owner asked to
+    // see here. HUID and the lab certificate belong to a piece that has been
+    // made; on a quotation they print as empty fields, exactly as the blank
+    // GSTIN and PAN fields above them do, rather than being dropped from the
+    // form and leaving a page that no longer looks like the shop's bill.
     const details = [
-      l.styleNumber ? `StyleCode : ${l.styleNumber}` : '',
+      `HUID : ${l.huid ?? ''}`,
+      `HSN No : ${l.hsn ?? ''}`,
+      `StyleCode : ${l.styleNumber ?? ''}`,
+      `J_Certi : ${l.certificateNo ?? ''}`,
       l.size ? `Size : ${l.size}` : '',
-      l.karat ? `Purity : ${l.karat}KT` : '',
-    ].filter(Boolean);
+    ];
     const blockRows = Math.max(rows.length, details.length, 1);
     const blockHeight = blockRows * 10 + 6;
     const top = y;
@@ -435,41 +457,70 @@ export async function renderQuotePdf(data: QuotePdfData): Promise<Buffer> {
 
   /* ------------------------------------------------- bank and payment block */
   const bankTop = y;
-  const bankHeight = 62;
+  const bankHeight = 70;
   const payX = right - 190;
+  const remarkX = MARGIN + 205;
   box(MARGIN, bankTop, width, bankHeight);
   line(payX, bankTop, payX, bankTop - bankHeight);
   const bank = data.business.bank ?? {};
   [
     ['A/C Name', bank.accountName ?? data.business.name],
     ['Bank Name', bank.bankName ?? ''],
+    ['Bank Address', bank.address ?? ''],
     ['Bank A/C No', bank.accountNo ?? ''],
     ['Bank IFSC', bank.ifsc ?? ''],
   ].forEach(([label, value], i) => {
     const at = bankTop - 11 - i * 11;
     text(`${label} :`, MARGIN + 4, { size: 7, at });
-    text(String(value), MARGIN + 70, { size: 7, at, width: payX - MARGIN - 80 });
+    text(String(value), MARGIN + 62, { size: 7, at, width: remarkX - MARGIN - 70 });
   });
+  // The bill keeps a Remarks column beside the bank details; it stays on the
+  // form whether or not anything is written in it.
+  line(remarkX, bankTop, remarkX, bankTop - bankHeight);
+  text('Remarks', remarkX + 4, { size: 7, at: bankTop - 11 });
 
+  // Payment, laid out as the bill lays it out: each mode that has paid, their
+  // Total, then what is still owed. A quotation usually has none of the first,
+  // so the line reads Received 0.00 and the balance is the whole amount.
+  const received = data.payments ?? [];
+  const receivedTotal = received.reduce((sum, p) => sum + p.amount, 0);
   text('Payment', payX + 4, { size: 7, font: bold, at: bankTop - 11 });
   text('Amount', right - 4, { size: 7, font: bold, align: 'right', at: bankTop - 11 });
   line(payX, bankTop - 15, right, bankTop - 15);
-  text('Received', payX + 4, { size: 7, at: bankTop - 26 });
-  text(num(0, 2), right - 4, { size: 7, align: 'right', at: bankTop - 26 });
-  line(payX, bankTop - 30, right, bankTop - 30);
-  text('Balance Payment', payX + 4, { size: 7, font: bold, at: bankTop - 41 });
-  text(num(t.grandTotal, 2), right - 4, { size: 7, font: bold, align: 'right', at: bankTop - 41 });
+  const payRows: [string, number][] = received.length
+    ? received.map((p) => [p.mode, p.amount] as [string, number])
+    : [['Received', 0]];
+  payRows.forEach(([label, amount], i) => {
+    const at = bankTop - 26 - i * 11;
+    text(label, payX + 4, { size: 7, at });
+    text(num(amount, 2), right - 4, { size: 7, align: 'right', at });
+  });
+  const payTotalAt = bankTop - 26 - payRows.length * 11;
+  text('Total', payX + 4, { size: 7, at: payTotalAt });
+  text(num(receivedTotal, 2), right - 4, { size: 7, align: 'right', at: payTotalAt });
+  line(payX, payTotalAt - 4, right, payTotalAt - 4);
+  text('Balance Payment :', payX + 4, { size: 7, font: bold, at: payTotalAt - 15 });
+  text(num(t.grandTotal - receivedTotal, 2), right - 4, {
+    size: 7,
+    font: bold,
+    align: 'right',
+    at: payTotalAt - 15,
+  });
   y = bankTop - bankHeight;
 
   /* ---------------------------------------------------- declaration + terms */
   const termsTop = y;
   const terms = [
-    'The Diamond herein quoted have been purchased from legitimate sources not involved in funding conflict & in compliance with',
-    'United Nations Resolutions. The Seller hereby guarantees that these diamonds are conflict free, based on personal knowledge',
-    'and/or written guarantees provided by the supplier of these diamonds.',
+    'The Diamond herein invoiced have been purchased from legitimate sources not involved in funding conflict & in compliance with',
+    'nations Resolutions. The Seller hereby guarantees that these diamonds are conflict free, based on personal knowledge',
+    'and/ or written guarantees provided by the supplier of these diamonds.',
     '',
-    'This is a quotation and not a tax invoice. Gold is priced at the rate on the quote date and may change until the order is confirmed;',
-    data.validUntil ? `prices hold until ${data.validUntil}.` : 'prices may change until the order is confirmed.',
+    'Invoice Issued Under Section 31 (1) of the GST Act 217r/w 1 of the GST Invoice Rule 2017 AND/OR Invoices Issued under',
+    'Section 31 (2) of the GST Act r/w Rule 1 of the GST Invoice Rule 2017',
+    '',
+    data.validUntil
+      ? `This is a quotation and not a tax invoice. Gold is priced at the rate on the quote date; prices hold until ${data.validUntil}.`
+      : 'This is a quotation and not a tax invoice. Gold is priced at the rate on the quote date.',
     '',
     'Term and Condition:',
     'Subject to Mumbai Jurisdiction only',

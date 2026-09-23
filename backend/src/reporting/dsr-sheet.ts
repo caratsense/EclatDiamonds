@@ -45,52 +45,87 @@ export interface DsrSheetData {
   period: DsrSheetPeriod;
   periodLabel: string;
   generatedAt: string;
-  /** Left to right. `values` is null when nothing was filed: printed blank, not as zeros. */
-  columns: { title: string; sub: string; values: DsrSheetValues | null }[];
+  /**
+   * Left to right, headed the way the sheet heads them: Monday…Sunday. `values`
+   * is null when nothing was filed, so the column prints blank rather than a
+   * confident zero.
+   */
+  columns: { title: string; values: DsrSheetValues | null }[];
   /** Each filed day's remark in date order, labelled like "Mon 22". */
   remarks: { day: string; text: string }[];
 }
 
 export type DsrSheetRow = {
   label: string;
-  indent?: number;
   bold?: boolean;
-  /** No getter: a heading row, nothing in the value cells. */
+  /** The table's own title, centred across the whole width. */
+  banner?: boolean;
+  /** Repeats the day columns under a banner, the way the sheet does. */
+  head?: boolean;
+  /** An empty row inside the grid — the sheet's own breathing space. */
+  blank?: boolean;
+  /** A gap between the tables, outside the grid: no border, no fill. */
+  gap?: boolean;
+  /** The last row: the day's remarks, written across the value columns. */
+  remark?: boolean;
   get?: (v: DsrSheetValues) => number;
   grams?: boolean;
 };
 
-/** The store's paper sheet, row for row. */
+/**
+ * The store's sheet, row for row and word for word, from the copy the owner
+ * sent ("Dsr format to be generated at eow"). The labels, their order, the
+ * blank rows and the two table banners are the sheet's, not ours: this is the
+ * page they already read every Monday, so anything renamed here — "Gold Weight
+ * (g)" for the sheet's "Gold" over "Weight" — is a page they have to re-learn.
+ *
+ * Both tables repeat the day columns under their banner, and "Amount Received"
+ * is a heading with nothing in it: the modes below it are the figures, and the
+ * Total at the foot is their sum.
+ */
 export const DSR_ROWS: DsrSheetRow[] = [
+  { label: '', head: true },
   { label: 'Walkins', get: (v) => v.walkIns },
   { label: 'Serious enquiries', get: (v) => v.seriousEnquiries },
   { label: 'Conversion', get: (v) => v.conversions },
-  { label: 'TABLE A  Counter Sale', bold: true },
-  { label: 'Sale Value', indent: 1, get: (v) => v.deliveredBilled },
-  { label: 'Mode of payment', indent: 1 },
-  { label: 'Cash', indent: 2, get: (v) => v.cash },
-  { label: 'Card', indent: 2, get: (v) => v.card },
-  { label: 'UPI', indent: 2, get: (v) => v.upi },
-  { label: 'Gold Weight (g)', indent: 2, get: (v) => v.oldGoldWtG, grams: true },
-  { label: 'Gold Value', indent: 2, get: (v) => v.oldGoldValue },
-  { label: 'Total', indent: 1, bold: true, get: (v) => v.cash + v.card + v.upi + v.oldGoldValue },
-  { label: 'TABLE B  Customised Sale', bold: true },
-  { label: 'Booking Value for the Day', indent: 1, get: (v) => v.bookingsNew },
-  { label: 'Open Bookings', indent: 1, get: (v) => v.bookingsOpen },
-  { label: 'Bookings Closed – Sale Completed', indent: 1, get: (v) => v.bookingsClosed },
-  { label: 'Closing Booking', indent: 1, get: (v) => v.bookingsClosing },
-  { label: 'Amount Received', indent: 1, get: (v) => v.advanceReceived },
-  { label: 'Cash', indent: 2, get: (v) => v.customCash },
-  { label: 'Card', indent: 2, get: (v) => v.customCard },
-  { label: 'UPI', indent: 2, get: (v) => v.customUpi },
-  { label: 'Gold Weight (g)', indent: 2, get: (v) => v.customGoldWtG, grams: true },
-  { label: 'Gold Value', indent: 2, get: (v) => v.customGoldValue },
-  { label: 'Bank Transfer', indent: 2, get: (v) => v.customBankTransfer },
+  { label: '', gap: true },
+
+  { label: 'TABLE A - COUNTER SALE', banner: true },
+  { label: 'Sale Type - Counter Sale', head: true },
+  { label: 'Sale Value', get: (v) => v.deliveredBilled },
+  { label: '', blank: true },
+  { label: 'Mode of Payment:', bold: true },
+  { label: 'Cash', get: (v) => v.cash },
+  { label: 'Card', get: (v) => v.card },
+  { label: 'UPI', get: (v) => v.upi },
+  { label: 'Gold', bold: true },
+  { label: 'Weight', get: (v) => v.oldGoldWtG, grams: true },
+  { label: 'Value', get: (v) => v.oldGoldValue },
+  { label: '', blank: true },
+  { label: 'Total', bold: true, get: (v) => v.cash + v.card + v.upi + v.oldGoldValue },
+  { label: '', gap: true },
+
+  { label: 'TABLE B - CUSTOMISED SALE', banner: true },
+  { label: 'Customised Items:', head: true },
+  { label: 'Booking Value - For the Day', get: (v) => v.bookingsNew },
+  { label: 'Open Bookings', get: (v) => v.bookingsOpen },
+  { label: 'Bookings Closed - Sale Completed', get: (v) => v.bookingsClosed },
+  { label: 'Closing Booking', get: (v) => v.bookingsClosing },
+  { label: '', blank: true },
+  { label: 'Amount Received', bold: true },
+  { label: 'Mode of Payment:', bold: true },
+  { label: 'Cash', get: (v) => v.customCash },
+  { label: 'Card', get: (v) => v.customCard },
+  { label: 'UPI', get: (v) => v.customUpi },
+  { label: 'Gold', bold: true },
+  { label: 'Weight', get: (v) => v.customGoldWtG, grams: true },
+  { label: 'Value', get: (v) => v.customGoldValue },
+  { label: 'Bank Transfer', get: (v) => v.customBankTransfer },
   {
     label: 'Total',
-    indent: 1,
     bold: true,
     get: (v) =>
       v.customCash + v.customCard + v.customUpi + v.customGoldValue + v.customBankTransfer,
   },
+  { label: 'Remark:', bold: true, remark: true },
 ];
