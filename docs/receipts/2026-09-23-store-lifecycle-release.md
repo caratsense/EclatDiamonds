@@ -38,9 +38,13 @@ warnings), `next build` compiled.
   `20260922160000_store_location_repair` applied.
   Railway's own record for the production `backend` service: deployment
   `4c1630e8`, commit `9b6c7cc`, branch `main`, **SUCCESS**, 11:58:48.
-- Frontend: Vercel production (commit `9b6c7cc`) **success**, 11:59:47, at
-  `https://eclat-diamonds-6j2lv3z3u-carat-sense-s-projects.vercel.app`. (The
-  docs name `app.caratsense.in`, which does not resolve — NXDOMAIN from a public
+- Frontend: Vercel production (commit `9b6c7cc`) **success**, 11:59:47. The
+  app is at **`https://eclat-diamonds-pi.vercel.app`** — the stable alias, which
+  is what staff open and what did not change. The long
+  `eclat-diamonds-6j2lv3z3u-carat-sense-s-projects.vercel.app` is the same
+  build under its immutable per-deployment name, which is what the GitHub
+  deployment status reports; the two serve byte-identical HTML. (The docs name
+  `app.caratsense.in`, which does not resolve — NXDOMAIN from a public
   resolver, so not a local network fault. `eclat.vercel.app` is a placeholder
   page and `eclat-diamonds.vercel.app` is the storefront site; neither is this
   app.)
