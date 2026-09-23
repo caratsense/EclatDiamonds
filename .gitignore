@@ -66,3 +66,6 @@ Thumbs.db
 docs/zithara-analysis/screenshots/
 # (the 18 screenshots the written analysis actually embeds are tracked
 #  anyway — a rule here cannot untrack them, and the doc needs them.)
+
+# Extracts are business data, not source.
+synceclatcaratsense/bak_export/*.json

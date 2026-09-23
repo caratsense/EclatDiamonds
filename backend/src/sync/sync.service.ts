@@ -2560,13 +2560,29 @@ export class SyncService {
         continue;
       }
       const legacyId = `${r.JewelTransId}:${r.JewelId}:${r.SrNo ?? 0}`;
+      // What the legacy bill adds up to. Checked against the 8 Jun 2026 backup:
+      // MRP = TotMtlAmt + TotDiaAmt + TotCPFAmt + TotImiAmt + TotXchgAmt on
+      // 3,275 of 3,275 lines. Reading making from TotHandlingAmt alone
+      // reconciled 13 of them: on this ERP the making charge is booked as CPF
+      // and TotHandlingAmt is zero on every row, so every synced line was
+      // importing with no making charge at all and Rs 1.65 crore of labour and
+      // imitation-stone value landed in no column. Both columns are added
+      // rather than swapped, because an install that does use TotHandlingAmt
+      // leaves CPF at zero and vice versa.
+      const money = (...columns: unknown[]): string | undefined => {
+        if (columns.every((v) => v == null)) return undefined;
+        let total = 0;
+        for (const v of columns) total += Number(v) || 0;
+        return total.toFixed(2);
+      };
       const data = {
         saleId,
         stockItemId: stockByLegacy.get(String(r.JewelId)) ?? null,
         netWeight: dec(r.NetWt),
         metalAmount: dec(r.TotMtlAmt),
-        makingAmount: dec(r.TotHandlingAmt),
-        stoneAmount: dec(r.TotDiaAmt),
+        makingAmount: money(r.TotHandlingAmt, r.TotCPFAmt),
+        stoneAmount: money(r.TotDiaAmt, r.TotImiAmt),
+        exchangeAmount: dec(r.TotXchgAmt),
         discountAmount: dec(r.DiscountAmt),
         lineTotal: dec(r.MRP) ?? '0',
       };

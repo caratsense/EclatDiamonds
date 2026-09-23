@@ -2445,6 +2445,10 @@ model SaleLine {
   metalAmount    Decimal? @db.Decimal(14, 2)
   makingAmount   Decimal? @db.Decimal(14, 2)
   stoneAmount    Decimal? @db.Decimal(14, 2)
+  /// Old gold taken in part-exchange against this line. The legacy bill carries
+  /// it as a component of the line total, so without a column of its own the
+  /// line does not add up: metal + making + stone + exchange = lineTotal.
+  exchangeAmount Decimal? @db.Decimal(14, 2)
   discountAmount Decimal? @db.Decimal(14, 2)
   lineTotal      Decimal  @default(0) @db.Decimal(14, 2)
 
