@@ -153,13 +153,20 @@ export class RazorpayService {
 
     // Org comes from the store the payment is attributed to — never from the
     // webhook notes.
-    const store = await this.prisma.store.findUnique({
-      where: { id: storeId },
+    const store = await this.prisma.store.findFirst({
+      where: {
+        id: storeId,
+        isAggregate: false,
+        isHolding: false,
+        attendanceOnly: false,
+      },
       select: { organisationId: true },
     });
     if (!store) {
-      this.logger.warn(`Razorpay payment ${payment.id} references unknown store ${storeId}.`);
-      return { handled: false, reason: 'unknown store' };
+      this.logger.warn(
+        `Razorpay payment ${payment.id} references an unknown or non-trading store ${storeId}.`,
+      );
+      return { handled: false, reason: 'unknown or non-trading store' };
     }
     const organisationId = store.organisationId;
 

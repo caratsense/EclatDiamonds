@@ -79,6 +79,7 @@ export class MarketingService {
     const storeIds = [...new Set(dto.storeIds ?? [])];
     for (const storeId of storeIds) {
       this.scope.assertStoreAllowed(user, storeId);
+      await this.scope.assertTradingStore(storeId);
     }
 
     const campaign = await this.prisma.marketingCampaign.create({

@@ -533,6 +533,7 @@ describe('quote PDF delivery (worker + provider shape)', () => {
       whatsapp as never,
       { deliverability: async () => ({ state: 'live', reason: 'Fixture.' }) } as never,
       {} as never,
+      {} as never,
       storage as never,
     );
     service.onModuleInit();

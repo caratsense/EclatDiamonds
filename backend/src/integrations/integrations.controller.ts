@@ -261,8 +261,9 @@ export class IntegrationsController {
 
   /** Create a hosted payment link for a collection / scheme installment. */
   @Post('razorpay/payment-link')
-  createPaymentLink(@Body() dto: CreatePaymentLinkDto, @CurrentUser() user: AuthUser) {
+  async createPaymentLink(@Body() dto: CreatePaymentLinkDto, @CurrentUser() user: AuthUser) {
     this.scope.assertStoreAllowed(user, dto.storeId);
+    await this.scope.assertTradingStore(dto.storeId);
     return this.razorpay.createPaymentLink(dto);
   }
 

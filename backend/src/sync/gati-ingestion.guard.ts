@@ -251,7 +251,17 @@ export class GatiIngestionGuard implements CanActivate {
   private async assertConfiguredStore(organisationId: string, storeId: string | null | undefined): Promise<void> {
     if (!storeId) return;
     const store = await this.prisma.store.findFirst({
-      where: { id: storeId, organisationId, isAggregate: false },
+      where: {
+        id: storeId,
+        organisationId,
+        isAggregate: false,
+        isHolding: false,
+        attendanceOnly: false,
+        // A branch Gati has only just revealed is still pending review here.
+        // Refusing every request from the agent over that would stop the whole
+        // data lifeline for a configuration that was valid an hour ago.
+        status: { not: 'closed' },
+      },
       select: { id: true },
     });
     if (!store) {

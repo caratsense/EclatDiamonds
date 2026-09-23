@@ -46,7 +46,7 @@ export class StoreScopeService {
     // actually belong to their organisation (defence-in-depth against a stray
     // cross-org assignment).
     const assignments = await this.prisma.userStore.findMany({
-      where: { userId, store: { organisationId } },
+      where: { userId, store: { organisationId, isHolding: false } },
       select: { storeId: true, store: { select: { regionId: true } } },
     });
     const direct = assignments.map((a) => a.storeId);
@@ -59,7 +59,12 @@ export class StoreScopeService {
       ];
       const regionStores = regionIds.length
         ? await this.prisma.store.findMany({
-            where: { regionId: { in: regionIds }, isAggregate: false, organisationId },
+            where: {
+              regionId: { in: regionIds },
+              isAggregate: false,
+              isHolding: false,
+              organisationId,
+            },
             select: { id: true },
           })
         : [];
@@ -162,16 +167,44 @@ export class StoreScopeService {
   }
 
   /**
-   * Refuse a sales-side write (sale, quote, lead, footfall, stock, target, DSR)
-   * at an attendance-only location such as Head Office.
+   * Refuse a store a piece of work may not use.
+   *
+   * `trading` (the default) is a NEW customer-facing write — sale, quote, lead,
+   * footfall, target, DSR, stock intake. It refuses the holding bucket, an
+   * attendance-only office and a closed branch. A `pending` branch is allowed
+   * on purpose: Gati creates every branch it discovers as pending, and that
+   * shop is already selling; pending means "head office has not reviewed its
+   * geofence and region yet", not "not trading".
+   *
+   * `physical` is work against a location that already holds something — stock
+   * leaving it, or a return of goods sold there. A closed branch and the
+   * holding bucket are allowed, because emptying them is exactly how they stop
+   * holding stock; only an attendance-only office is refused.
    */
-  async assertTradingStore(storeId: string): Promise<void> {
+  async assertTradingStore(storeId: string, use: 'trading' | 'physical' = 'trading'): Promise<void> {
     const store = await this.prisma.store.findUnique({
       where: { id: storeId },
-      select: { name: true, attendanceOnly: true },
+      select: {
+        name: true,
+        attendanceOnly: true,
+        isHolding: true,
+        status: true,
+      },
     });
-    if (store?.attendanceOnly) {
+    if (!store) {
+      throw new BadRequestException('Choose an existing store branch.');
+    }
+    if (store.attendanceOnly) {
       throw new BadRequestException(`${store.name} is an attendance-only location — choose a store branch.`);
+    }
+    if (use === 'physical') return;
+    if (store.isHolding) {
+      throw new BadRequestException(
+        `${store.name} is an import holding area — choose a physical store branch.`,
+      );
+    }
+    if (store.status === 'closed') {
+      throw new BadRequestException(`${store.name} is closed — choose an open store branch.`);
     }
   }
 }

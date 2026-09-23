@@ -159,6 +159,8 @@ describe('omnichannel durable worker', () => {
       // Identity resolution is only used by the send-to-a-bare-number path,
       // which this harness never exercises.
       {} as any,
+      // Store scope is only used by the send-to-a-bare-number path.
+      {} as any,
       // Storage is only read for a queued document, which this harness never queues.
       {} as any,
     );

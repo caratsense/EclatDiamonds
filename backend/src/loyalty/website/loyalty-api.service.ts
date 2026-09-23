@@ -485,7 +485,9 @@ export class LoyaltyApiService implements OnModuleInit {
     input: { phone: string; name?: string; storeId?: string; tier?: string },
   ) {
     const phone = this.requirePhone(input.phone);
-    if (input.storeId) await this.assertStoreInOrg(auth.organisationId, input.storeId);
+    if (input.storeId) {
+      await this.assertActivePhysicalStoreInOrg(auth.organisationId, input.storeId);
+    }
 
     const existing = await this.prisma.loyaltyAccount.findUnique({
       where: { organisationId_phone: { organisationId: auth.organisationId, phone } },
@@ -502,6 +504,13 @@ export class LoyaltyApiService implements OnModuleInit {
       select: { id: true, storeId: true },
       orderBy: { createdAt: 'asc' },
     });
+    const storeId = input.storeId ?? party?.storeId ?? null;
+    // An inherited CRM branch is still an assignment. Validate it exactly as
+    // an explicitly supplied branch so a customer quarantined in the import
+    // holding bucket cannot silently make that bucket a loyalty counter.
+    if (storeId && !input.storeId) {
+      await this.assertActivePhysicalStoreInOrg(auth.organisationId, storeId);
+    }
 
     const account = await this.prisma.loyaltyAccount.create({
       data: {
@@ -509,7 +518,7 @@ export class LoyaltyApiService implements OnModuleInit {
         phone,
         name: input.name?.trim() || null,
         partyId: party?.id ?? null,
-        storeId: input.storeId ?? party?.storeId ?? null,
+        storeId,
         tier: input.tier?.trim() || null,
       },
     });
@@ -637,6 +646,13 @@ export class LoyaltyApiService implements OnModuleInit {
       );
     }
 
+    // A caller retrying a reversal it already completed gets the committed
+    // movement back. In particular, closing the original branch between the
+    // first response and this retry must not turn an idempotent request into a
+    // failure.
+    const replay = await this.findByKey(auth.organisationId, input.idempotencyKey);
+    if (replay) return { idempotent: true as const, ...replay };
+
     const original = await this.prisma.loyaltyLedgerEntry.findFirst({
       where: {
         organisationId: auth.organisationId,
@@ -702,6 +718,9 @@ export class LoyaltyApiService implements OnModuleInit {
       // exact negation of the entry being reversed. Nothing else in this service
       // may overdraw.
       allowNegative: true,
+      // A cancellation compensates a historical transaction. The branch must
+      // still belong to this tenant, but it need not still be trading.
+      storeValidation: 'historical',
     });
   }
 
@@ -729,18 +748,29 @@ export class LoyaltyApiService implements OnModuleInit {
       reversesId?: string;
       /** Only a reversal may drive the balance below zero. See `reverse`. */
       allowNegative?: boolean;
+      /** Reversals preserve history; every other branch-backed movement is new trade. */
+      storeValidation?: 'active' | 'historical';
       /** Set when a person inside CaratOS is doing this, not the website. */
       actor?: { type: 'user'; id: string };
     },
   ) {
     const phone = this.requirePhone(input.phone);
-    if (input.storeId) await this.assertStoreInOrg(auth.organisationId, input.storeId);
 
     // A replay is answered BEFORE anything moves, so the common retry costs one
-    // indexed read rather than a rolled-back transaction.
+    // indexed read rather than a rolled-back transaction. It deliberately
+    // precedes current-store validation: an already committed purchase remains
+    // the same purchase after its branch closes.
     if (input.idempotencyKey) {
       const replay = await this.findByKey(auth.organisationId, input.idempotencyKey);
       if (replay) return { idempotent: true as const, ...replay };
+    }
+
+    if (input.storeId) {
+      if (input.storeValidation === 'historical') {
+        await this.assertHistoricalStoreInOrg(auth.organisationId, input.storeId);
+      } else {
+        await this.assertActivePhysicalStoreInOrg(auth.organisationId, input.storeId);
+      }
     }
 
     const account = await this.prisma.loyaltyAccount.findUnique({
@@ -882,7 +912,7 @@ export class LoyaltyApiService implements OnModuleInit {
       storeId?: string;
     },
   ) {
-    if (input.storeId) this.scope.assertStoreAllowed(user, input.storeId);
+    const storeId = await this.resolveManualMovementStore(user, input.storeId);
     const integration = await this.prisma.integration.findFirst({
       where: { organisationId: user.organisationId, providerCode: LOYALTY_API_PROVIDER_CODE },
       select: { id: true, config: true },
@@ -944,7 +974,7 @@ export class LoyaltyApiService implements OnModuleInit {
       amount: input.amount,
       reason: input.reason,
       reference: input.reference,
-      storeId: input.storeId ?? user.storeIds[0],
+      storeId,
       actor: { type: 'user', id: user.id },
     });
 
@@ -952,7 +982,7 @@ export class LoyaltyApiService implements OnModuleInit {
       action: `loyalty.points_${input.kind}`,
       entityType: 'LoyaltyLedgerEntry',
       entityId: result.entryId,
-      storeId: input.storeId ?? null,
+      storeId,
       summary: `${points > 0 ? '+' : ''}${points} points for ${input.phone}${
         input.reason ? ` — ${input.reason}` : ''
       }`,
@@ -1437,12 +1467,75 @@ export class LoyaltyApiService implements OnModuleInit {
    * organisation. Without this a website key could file a movement against
    * another tenant's branch.
    */
-  private async assertStoreInOrg(organisationId: string, storeId: string) {
+  private async assertActivePhysicalStoreInOrg(organisationId: string, storeId: string) {
+    const store = await this.prisma.store.findFirst({
+      where: {
+        id: storeId,
+        organisationId,
+        isAggregate: false,
+        isHolding: false,
+        attendanceOnly: false,
+        status: { not: 'closed' },
+      },
+      select: { id: true },
+    });
+    if (!store) {
+      throw new BadRequestException(
+        'That branch does not belong to this organisation or is not an active physical branch.',
+      );
+    }
+  }
+
+  /**
+   * Compensating entries refer to where the original transaction happened.
+   * That historical branch need only remain a member of this tenant; requiring
+   * it to still be open would make a later cancellation impossible.
+   */
+  private async assertHistoricalStoreInOrg(organisationId: string, storeId: string) {
     const store = await this.prisma.store.findFirst({
       where: { id: storeId, organisationId },
       select: { id: true },
     });
-    if (!store) throw new BadRequestException('That branch does not belong to this organisation.');
+    if (!store) {
+      throw new BadRequestException('That branch does not belong to this organisation.');
+    }
+  }
+
+  /**
+   * A counter movement must have one unambiguous live branch. Lower roles often
+   * have exactly one; head office must choose when several are in scope instead
+   * of inheriting whichever id happened to be first in the JWT.
+   */
+  private async resolveManualMovementStore(
+    user: AuthUser,
+    requestedStoreId?: string,
+  ): Promise<string> {
+    if (requestedStoreId) {
+      this.scope.assertStoreAllowed(user, requestedStoreId);
+      await this.assertActivePhysicalStoreInOrg(user.organisationId, requestedStoreId);
+      return requestedStoreId;
+    }
+
+    const stores = await this.prisma.store.findMany({
+      where: {
+        id: { in: user.storeIds },
+        organisationId: user.organisationId,
+        isAggregate: false,
+        isHolding: false,
+        attendanceOnly: false,
+        status: { not: 'closed' },
+      },
+      select: { id: true },
+      orderBy: { id: 'asc' },
+      take: 2,
+    });
+    if (stores.length !== 1) {
+      throw new BadRequestException(
+        'Send storeId: this account reaches more than one branch, and a points ' +
+          'movement filed against an arbitrary one cannot be explained later.',
+      );
+    }
+    return stores[0].id;
   }
 
   private async requireIntegration(organisationId: string) {

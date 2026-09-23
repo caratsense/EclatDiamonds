@@ -93,7 +93,23 @@ export class ConnectService {
         `${descriptor.name} does not use an on-premise Connect agent.`,
       );
     }
-    if (input.storeId) this.scope.assertStoreAllowed(user, input.storeId);
+    if (input.storeId) {
+      this.scope.assertStoreAllowed(user, input.storeId);
+      const store = await this.prisma.store.findFirst({
+        where: {
+          id: input.storeId,
+          organisationId: user.organisationId,
+          isAggregate: false,
+          isHolding: false,
+        },
+        select: { id: true },
+      });
+      if (!store) {
+        throw new BadRequestException(
+          'A Connect agent can only be assigned to a physical store.',
+        );
+      }
+    }
 
     const existing = await this.prisma.connectAgent.findFirst({
       where: { organisationId: user.organisationId, name: input.name.trim() },
@@ -234,12 +250,15 @@ export class ConnectService {
           id: validated.defaultStoreId,
           organisationId: user.organisationId,
           isAggregate: false,
+          isHolding: false,
+          attendanceOnly: false,
+          status: { not: 'closed' },
         },
         select: { id: true },
       });
       if (!store) {
         throw new BadRequestException(
-          'config.defaultStoreId must identify a non-aggregate store in this organisation.',
+          'config.defaultStoreId must identify a physical store in this organisation.',
         );
       }
     }

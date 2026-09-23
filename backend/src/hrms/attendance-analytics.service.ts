@@ -279,7 +279,11 @@ export class AttendanceAnalyticsService {
     const storeIds = this.scope.effectiveStoreIds(user, q.storeId);
     const storeRows = storeIds.length
       ? await this.prisma.store.findMany({
-          where: { id: { in: storeIds }, organisationId: user.organisationId },
+          where: {
+            id: { in: storeIds },
+            organisationId: user.organisationId,
+            isHolding: false,
+          },
           select: { id: true, name: true, timezone: true, latitude: true, longitude: true, geofenceRadiusM: true },
         })
       : [];

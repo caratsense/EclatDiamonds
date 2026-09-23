@@ -81,6 +81,9 @@ export class MessagingRoutesService {
           organisationId: user.organisationId,
           // An aggregate row is a reporting rollup, not a place with a phone.
           isAggregate: false,
+          isHolding: false,
+          attendanceOnly: false,
+          status: { not: 'closed' },
           ...(user.allStores ? {} : { id: { in: user.storeIds } }),
         },
         orderBy: { name: 'asc' },
@@ -162,12 +165,35 @@ export class MessagingRoutesService {
 
     const store = await this.prisma.store.findFirst({
       where: { id: input.storeId, organisationId: user.organisationId },
-      select: { id: true, name: true, isAggregate: true },
+      select: {
+        id: true,
+        name: true,
+        isAggregate: true,
+        isHolding: true,
+        attendanceOnly: true,
+        status: true,
+        isActive: true,
+      },
     });
     if (!store) throw new NotFoundException('That branch does not exist in this organisation.');
     if (store.isAggregate) {
       throw new BadRequestException(
         'An aggregate row is a reporting rollup, not a branch that sends messages.',
+      );
+    }
+    if (store.isHolding) {
+      throw new BadRequestException(
+        'The unassigned import bucket cannot own a messaging sender.',
+      );
+    }
+    if (store.attendanceOnly) {
+      throw new BadRequestException(
+        'An attendance-only office cannot own a customer messaging sender.',
+      );
+    }
+    if (store.status !== 'active' || !store.isActive) {
+      throw new BadRequestException(
+        'Activate the physical branch before assigning a messaging sender.',
       );
     }
 

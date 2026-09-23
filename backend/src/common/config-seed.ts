@@ -30,12 +30,10 @@ export async function seedConfig(prisma: PrismaService): Promise<void> {
   // Scoped to THIS organisation's stores. The previous `findFirst` with no
   // filter would, on a multi-tenant database, happily pick another tenant's
   // branch and hang Eclat's demo config off it.
-  const store =
-    (await prisma.store.findFirst({
-      where: { organisationId, isAggregate: false },
-      select: { id: true },
-    })) ??
-    (await prisma.store.findFirst({ where: { organisationId }, select: { id: true } }));
+  const store = await prisma.store.findFirst({
+    where: { organisationId, isAggregate: false, isHolding: false },
+    select: { id: true },
+  });
   const storeId = store?.id ?? null;
 
   // ── M15 discount caps (split diamond/making %) ──────────────────────────────

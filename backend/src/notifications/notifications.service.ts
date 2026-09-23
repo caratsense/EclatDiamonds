@@ -436,6 +436,7 @@ export class NotificationsService {
         where: {
           status: 'pending',
           isAggregate: false,
+          isHolding: false,
           // storeIds is organisation-bounded for every role (head_office
           // included), so this is the tenant boundary — never an unfiltered {}
           // that would count another organisation's pending branches.
@@ -461,6 +462,7 @@ export class NotificationsService {
         where: {
           isAggregate: false,
           isActive: true,
+          isHolding: false,
           attendanceOnly: false,
           id: { in: user.storeIds },
         },

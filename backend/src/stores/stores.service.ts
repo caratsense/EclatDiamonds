@@ -69,6 +69,8 @@ export class StoresService {
       status: store.status,
       isActive: store.isActive,
       isAggregate: store.isAggregate,
+      isHolding: store.isHolding,
+      attendanceOnly: store.attendanceOnly,
       /// Which branch in the client's own system this is — the link head office
       /// needs to reconcile an Eclat branch against Gati. Null for branches
       /// created directly in Eclat.
@@ -109,8 +111,14 @@ export class StoresService {
       // head_office => every store OF THEIR ORGANISATION (never global); lower roles
       // => their assignments (already organisation-bounded via resolveScope).
       where: user.allStores
-        ? { isAggregate: false, organisationId: user.organisationId }
-        : { id: { in: user.storeIds } },
+        ? {
+            isAggregate: false,
+            organisationId: user.organisationId,
+          }
+        : {
+            id: { in: user.storeIds },
+            organisationId: user.organisationId,
+          },
       orderBy: { name: 'asc' },
       include: STORE_INCLUDE,
     });
@@ -158,6 +166,8 @@ export class StoresService {
       where: {
         organisationId,
         isAggregate: false,
+        isHolding: false,
+        attendanceOnly: false,
         status: { not: 'closed' },
       },
       orderBy: { name: 'asc' },
@@ -174,19 +184,23 @@ export class StoresService {
   async create(user: AuthUser, dto: CreateStoreDto) {
     await this.assertCanCreateInRegion(user, dto.regionId);
 
-    let slug: string;
+    let code: string;
     if (dto.code && dto.code.trim()) {
-      slug = slugify(dto.code);
+      code = slugify(dto.code);
       const clash = await this.prisma.store.findFirst({
-        where: { OR: [{ id: slug }, { code: slug }] },
+        where: { organisationId: user.organisationId, code },
         select: { id: true },
       });
-      if (clash) throw new ConflictException(`Store code "${slug}" already exists`);
+      if (clash) throw new ConflictException(`Store code "${code}" already exists`);
     } else {
-      slug = await this.uniqueSlug(slugify(dto.name));
+      code = await this.uniqueCode(user.organisationId, slugify(dto.name));
     }
+    // Store ids are globally unique for historical FK compatibility, while
+    // human branch codes are unique only inside a tenant. Another tenant using
+    // the same code gets a distinct internal id, not a false conflict.
+    const id = await this.uniqueId(code);
 
-    await this.assertRegion(dto.regionId);
+    await this.assertRegion(user.organisationId, dto.regionId);
 
     // A store may only go live with geofence coords + a region set — the same
     // invariant activate() enforces. If the creator supplied everything it's
@@ -196,8 +210,8 @@ export class StoresService {
     const ready = hasGeo && !!dto.regionId;
     const store = await this.prisma.store.create({
       data: {
-        id: slug,
-        code: slug,
+        id,
+        code,
         // A store a manager provisions belongs to that manager's organisation.
         organisationId: user.organisationId,
         name: dto.name,
@@ -205,6 +219,7 @@ export class StoresService {
         regionId: dto.regionId || null,
         status: ready ? 'active' : 'pending',
         isActive: ready,
+        isHolding: false,
         latitude: dto.latitude != null ? String(dto.latitude) : null,
         longitude: dto.longitude != null ? String(dto.longitude) : null,
       },
@@ -222,36 +237,68 @@ export class StoresService {
   }
 
   /**
-   * PATCH /stores/:id/activate (area_manager+, in scope) — flip a pending branch
-   * to active. Geofence coordinates and a region MUST be set first (attendance
-   * geofencing and area rollups depend on them).
+   * PATCH /stores/:id/activate (area_manager+, in scope) — take a branch live.
+   * Geofence coordinates and a region MUST be set first (attendance geofencing
+   * and area rollups depend on them).
+   *
+   * It reopens a closed branch as well as activating a pending one. A shop shut
+   * for a refit or a season comes back, and `close()` is deliberately a soft
+   * close, so the way back has to exist here rather than in the database.
    */
   async activate(user: AuthUser, id: string) {
     const store = await this.prisma.store.findUnique({ where: { id } });
     if (!store) throw new NotFoundException('Store not found');
+    // Authorize before describing the target. Otherwise a caller could probe a
+    // foreign id and distinguish an aggregate/holding row by its error message.
+    this.scope.assertStoreAllowed(user, store.id);
     if (store.isAggregate) {
       throw new BadRequestException('The aggregate "All Stores" view cannot be activated');
     }
-    this.scope.assertStoreAllowed(user, store.id);
+    if (store.isHolding) {
+      throw new BadRequestException('The unassigned import bucket is not a physical branch');
+    }
+    if (store.isActive || store.status === 'active') {
+      throw new ConflictException('This branch is already active');
+    }
 
     const missing: string[] = [];
     if (store.latitude == null || store.longitude == null) missing.push('geofence coordinates');
-    if (!store.regionId) missing.push('region');
+    if (!store.attendanceOnly && !store.regionId) missing.push('region');
     if (missing.length) {
       throw new BadRequestException(`Cannot activate: set ${missing.join(' and ')} first`);
     }
 
-    const updated = await this.prisma.store.update({
-      where: { id },
-      data: { status: 'active', isActive: true },
-      include: STORE_INCLUDE,
-    });
-    await this.audit.record(user, {
-      action: 'store.activate',
-      entityType: 'store',
-      entityId: updated.id,
-      storeId: updated.id,
-      summary: `Activated branch ${updated.name}`,
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.store.updateMany({
+        where: {
+          id,
+          organisationId: user.organisationId,
+          status: { in: ['pending', 'closed'] },
+          isActive: false,
+          isHolding: false,
+          latitude: { not: null },
+          longitude: { not: null },
+          ...(store.attendanceOnly ? {} : { regionId: { not: null } }),
+        },
+        data: { status: 'active', isActive: true },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException(
+          'Branch details changed while it was being activated. Review and try again.',
+        );
+      }
+      const saved = await tx.store.findFirstOrThrow({
+        where: { id, organisationId: user.organisationId },
+        include: STORE_INCLUDE,
+      });
+      await this.audit.record(user, {
+        action: 'store.activate',
+        entityType: 'store',
+        entityId: saved.id,
+        storeId: saved.id,
+        summary: `${store.status === 'closed' ? 'Reopened' : 'Activated'} branch ${saved.name}`,
+      }, tx);
+      return saved;
     });
     return this.toView(updated);
   }
@@ -267,6 +314,12 @@ export class StoresService {
     this.scope.assertOrgAllowed(user, store.organisationId);
     if (store.isAggregate) {
       throw new BadRequestException('The aggregate "All Stores" view cannot be closed');
+    }
+    if (store.isHolding) {
+      throw new BadRequestException('The unassigned import bucket is not a physical branch');
+    }
+    if (store.status === 'closed' && !store.isActive) {
+      throw new ConflictException('This branch is already closed');
     }
 
     const updated = await this.prisma.store.update({
@@ -294,6 +347,7 @@ export class StoresService {
       where: {
         status: 'pending',
         isAggregate: false,
+        isHolding: false,
         // storeIds is organisation-bounded for every role (head_office too — it
         // is the org's full store set, pending branches included), so this is the
         // tenant boundary. Never an unfiltered {} that would list another
@@ -343,17 +397,25 @@ export class StoresService {
     // @Roles('head_office') alone is org-blind — an HO of another tenant would edit
     // this branch's name/address/GSTIN. Bind the mutation to the caller's org.
     this.scope.assertOrgAllowed(user, store.organisationId);
-    if (user.role === 'store_manager' && !user.storeIds.includes(id)) {
-      throw new ForbiddenException('Store managers can only update their assigned store.');
+    if (!user.allStores) {
+      this.scope.assertStoreAllowed(user, id);
     }
     if (store.isAggregate) {
       throw new BadRequestException('The aggregate "All Stores" view cannot be edited');
+    }
+    if (store.isHolding) {
+      throw new BadRequestException('The unassigned import bucket is managed by reconciliation');
     }
 
     const data: any = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.city !== undefined) data.city = dto.city;
-    if (dto.isActive !== undefined) data.isActive = dto.isActive;
+    // Lifecycle is a two-column invariant. A generic edit used to change only
+    // isActive and could leave `status=active,isActive=false` (or the reverse).
+    // The dedicated Activate/Close endpoints enforce readiness, authorization
+    // and audit, so this one ignores the field: a browser still holding the
+    // previous bundle sends it on every save, and failing that save would make
+    // the deploy window look like a broken screen.
     if (dto.latitude !== undefined) {
       data.latitude = dto.latitude != null ? String(dto.latitude) : null;
     }
@@ -362,10 +424,40 @@ export class StoresService {
       data.longitude = dto.longitude != null ? String(dto.longitude) : null;
     }
     if (dto.regionId !== undefined) {
+      // Area-manager scope is derived from the regions of their directly
+      // assigned stores. Letting a scoped manager move that anchor to another
+      // region would silently grant access to every branch in the new region
+      // on the next request. Region membership is therefore an HO-only change.
+      if (user.role !== 'head_office') {
+        throw new ForbiddenException('Only Head Office can change a branch region.');
+      }
       const regionId = dto.regionId || null;
-      await this.assertRegion(regionId);
+      await this.assertRegion(user.organisationId, regionId);
       data.regionId = regionId;
     }
+
+    // A live branch may be relocated, but it may not be left in a state the
+    // activation endpoint itself would reject. Check the effective post-patch
+    // values so one request can fill a legacy gap, while explicit runtime nulls
+    // and an empty region are treated as removals rather than as "not supplied".
+    if (store.status === 'active' || store.isActive) {
+      const nextLatitude =
+        dto.latitude !== undefined ? dto.latitude : store.latitude;
+      const nextLongitude =
+        dto.longitude !== undefined ? dto.longitude : store.longitude;
+      const nextRegionId =
+        dto.regionId !== undefined ? dto.regionId || null : store.regionId;
+      const missing: string[] = [];
+      if (nextLatitude == null) missing.push('latitude');
+      if (nextLongitude == null) missing.push('longitude');
+      if (!store.attendanceOnly && !nextRegionId) missing.push('region');
+      if (missing.length) {
+        throw new BadRequestException(
+          `An active branch must keep ${missing.join(', ')} configured`,
+        );
+      }
+    }
+
     // Address/contact: an explicitly-sent empty string clears the field, while an
     // omitted key leaves it alone — so a manager can delete a wrong value without
     // every partial edit wiping the rest.
@@ -385,7 +477,7 @@ export class StoresService {
       const newCode = dto.code ? slugify(dto.code) : null;
       if (newCode && newCode !== store.code) {
         const clash = await this.prisma.store.findFirst({
-          where: { code: newCode, NOT: { id } },
+          where: { organisationId: user.organisationId, code: newCode, NOT: { id } },
           select: { id: true },
         });
         if (clash) throw new ConflictException(`Store code "${newCode}" already exists`);
@@ -393,10 +485,38 @@ export class StoresService {
       data.code = newCode;
     }
 
-    const updated = await this.prisma.store.update({
-      where: { id },
-      data,
-      include: STORE_INCLUDE,
+    const updated = await this.prisma.$transaction(async (tx) => {
+      // Bind the write to the lifecycle state validated above. If activation or
+      // closure wins the race, a stale pending edit cannot clear readiness
+      // fields underneath the newly-live branch.
+      const written = await tx.store.updateMany({
+        where: {
+          id,
+          organisationId: user.organisationId,
+          status: store.status,
+          isActive: store.isActive,
+          isHolding: false,
+        },
+        data,
+      });
+      if (written.count !== 1) {
+        throw new ConflictException(
+          'Branch status changed while it was being edited. Reload and try again.',
+        );
+      }
+      const saved = await tx.store.findFirstOrThrow({
+        where: { id, organisationId: user.organisationId },
+        include: STORE_INCLUDE,
+      });
+      await this.audit.record(user, {
+        action: 'store.update',
+        entityType: 'store',
+        entityId: saved.id,
+        storeId: saved.id,
+        summary: `Updated branch ${saved.name}`,
+        metadata: { changedFields: Object.keys(data).sort() },
+      }, tx);
+      return saved;
     });
     return this.toView(updated);
   }
@@ -413,10 +533,20 @@ export class StoresService {
     // being staffed MUST be the caller's org, or an HO could provision a login
     // into another tenant's branch.
     this.scope.assertOrgAllowed(actor, store.organisationId);
+    if (store.isHolding) {
+      throw new BadRequestException('Managers cannot be assigned to the unassigned import bucket');
+    }
 
     const email = dto.email.toLowerCase();
     let user = await this.prisma.user.findUnique({ where: { email } });
     const isNew = !user;
+
+    if (user && user.organisationId !== store.organisationId) {
+      throw new ConflictException('That login belongs to a different organisation');
+    }
+    if (user && user.role !== 'store_manager') {
+      throw new ConflictException('That login already exists with a different role');
+    }
 
     if (!user) {
       const passwordHash = await bcrypt.hash(dto.password, 10);
@@ -440,6 +570,15 @@ export class StoresService {
       where: { userId_storeId: { userId: user.id, storeId } },
       update: {},
       create: { userId: user.id, storeId, isPrimary: isNew },
+    });
+
+    await this.audit.record(actor, {
+      action: 'store.manager.assign',
+      entityType: 'store',
+      entityId: store.id,
+      storeId: store.id,
+      summary: `Assigned ${user.name} as manager of ${store.name}`,
+      metadata: { userId: user.id, createdLogin: isNew },
     });
 
     return { userId: user.id, name: user.name, email: user.email, storeId };
@@ -474,23 +613,38 @@ export class StoresService {
   }
 
   /** Ensure a referenced region exists (avoids opaque FK 500s). */
-  private async assertRegion(regionId?: string | null): Promise<void> {
+  private async assertRegion(
+    organisationId: string,
+    regionId?: string | null,
+  ): Promise<void> {
     if (!regionId) return;
-    const region = await this.prisma.region.findUnique({ where: { id: regionId } });
+    const region = await this.prisma.region.findFirst({
+      where: { id: regionId, organisationId },
+      select: { id: true },
+    });
     if (!region) throw new BadRequestException('Region not found');
   }
 
-  /** Find a store id/code slug not already taken by any existing store. */
-  private async uniqueSlug(base: string): Promise<string> {
-    const stores = await this.prisma.store.findMany({ select: { id: true, code: true } });
-    const taken = new Set<string>();
-    for (const s of stores) {
-      taken.add(s.id);
-      if (s.code) taken.add(s.code);
-    }
-    let slug = base;
+  /** Find a human branch code not already used inside this organisation. */
+  private async uniqueCode(organisationId: string, base: string): Promise<string> {
+    const stores = await this.prisma.store.findMany({
+      where: { organisationId },
+      select: { code: true },
+    });
+    const taken = new Set(stores.flatMap((s) => (s.code ? [s.code] : [])));
+    let code = base;
     let n = 2;
-    while (taken.has(slug)) slug = `${base}-${n++}`;
-    return slug;
+    while (taken.has(code)) code = `${base}-${n++}`;
+    return code;
+  }
+
+  /** Store ids remain globally unique even though visible codes are tenant-scoped. */
+  private async uniqueId(base: string): Promise<string> {
+    const rows = await this.prisma.store.findMany({ select: { id: true } });
+    const taken = new Set(rows.map((s) => s.id));
+    let id = base;
+    let n = 2;
+    while (taken.has(id)) id = `${base}-${n++}`;
+    return id;
   }
 }

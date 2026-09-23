@@ -37,7 +37,13 @@ describe('legacy sync tenant-owned fallback stores', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
 
     expect(findFirst).toHaveBeenCalledWith({
-      where: { id: 'foreign-store', organisationId: 'org_b' },
+      where: {
+        id: 'foreign-store',
+        organisationId: 'org_b',
+        isAggregate: false,
+        attendanceOnly: false,
+        status: { not: 'closed' },
+      },
       select: { id: true },
     });
   });
@@ -67,7 +73,7 @@ describe('legacy sync tenant-owned fallback stores', () => {
         where.id === 'unassigned:org_b' &&
         where.organisationId === 'org_b'
       ) {
-        return Promise.resolve({ id: 'unassigned:org_b' });
+        return Promise.resolve({ id: 'unassigned:org_b', isHolding: true });
       }
       return Promise.resolve(null);
     });
@@ -95,6 +101,7 @@ describe('legacy sync tenant-owned fallback stores', () => {
       id: 'unassigned:org_b',
       organisationId: 'org_b',
       isActive: false,
+      isHolding: true,
     });
   });
 });

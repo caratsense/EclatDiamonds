@@ -104,13 +104,23 @@ export class LeadIntakeService {
     }
 
     const store = await this.prisma.store.findFirst({
-      where: { id: input.storeId, organisationId },
+      where: {
+        id: input.storeId,
+        organisationId,
+        isAggregate: false,
+        isHolding: false,
+        attendanceOnly: false,
+        status: { not: 'closed' },
+      },
       select: { id: true, timezone: true },
     });
     if (!store) {
-      // A caller that reached here with a foreign or missing store has a bug.
-      // Failing loudly beats filing the lead against nothing.
-      throw new Error(`Store ${input.storeId} is not part of organisation ${organisationId}.`);
+      // This is the final boundary shared by form, import, conversation and
+      // telephony intake. A stale caller-side rule must not turn a quarantine
+      // bucket, office or closed branch into a customer-facing location.
+      throw new BadRequestException(
+        'Choose an active physical store before creating a lead.',
+      );
     }
 
     /*

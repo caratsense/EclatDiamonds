@@ -68,6 +68,7 @@ export class PaymentsService {
    */
   async create(user: AuthUser, dto: CreatePaymentDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
+    await this.scope.assertTradingStore(dto.storeId);
 
     const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
     // A small grace window absorbs clock skew between a store tablet and the

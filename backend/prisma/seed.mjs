@@ -116,7 +116,7 @@ async function main() {
 
   const storeDefs = [
     { id: "surat-main", code: "surat-main", name: "Surat — Main", city: "Surat", latitude: "21.1859000", longitude: "72.8081000", geofenceRadiusM: 75 },
-    { id: "mumbai-bandra", code: "mumbai-bandra", name: "Mumbai — Bandra", city: "Mumbai", latitude: "19.0606000", longitude: "72.8362000", geofenceRadiusM: 60 },
+    { id: "mumbai-bandra", code: "mumbai-bandra", name: "Mumbai — Bandra", city: "Mumbai", latitude: "19.0651400", longitude: "72.8307538", geofenceRadiusM: 60 },
     { id: "ahmedabad-cg", code: "ahmedabad-cg", name: "Ahmedabad — C.G. Road", city: "Ahmedabad", latitude: "23.0298000", longitude: "72.5616000", geofenceRadiusM: 80 },
   ];
   for (const s of storeDefs) {
@@ -545,8 +545,8 @@ async function main() {
     { id: "att-04", storeId: "surat-main", staffId: "s-104", staffName: "Vikram Joshi", status: "present", checkInAt: at(9, 38), checkInLat: "21.1860000", checkInLng: "72.8079000", geoVerified: true },
     { id: "att-05", storeId: "surat-main", staffId: "s-105", staffName: "Karan Mehta", status: "late", checkInAt: at(10, 41), checkInLat: "21.1872000", checkInLng: "72.8094000", geoVerified: false },
     { id: "att-06", storeId: "surat-main", staffId: "s-106", staffName: "Sneha Iyer", status: "on_leave", checkInAt: null, geoVerified: false },
-    { id: "att-07", storeId: "mumbai-bandra", staffId: "s-201", staffName: "Aditya Nair", status: "present", checkInAt: at(10, 55), checkInLat: "19.0607000", checkInLng: "72.8361000", geoVerified: true },
-    { id: "att-08", storeId: "mumbai-bandra", staffId: "s-202", staffName: "Fatima Shaikh", status: "late", checkInAt: at(11, 9), checkInLat: "19.0605000", checkInLng: "72.8363000", geoVerified: true },
+    { id: "att-07", storeId: "mumbai-bandra", staffId: "s-201", staffName: "Aditya Nair", status: "present", checkInAt: at(10, 55), checkInLat: "19.0652000", checkInLng: "72.8307000", geoVerified: true },
+    { id: "att-08", storeId: "mumbai-bandra", staffId: "s-202", staffName: "Fatima Shaikh", status: "late", checkInAt: at(11, 9), checkInLat: "19.0651000", checkInLng: "72.8308000", geoVerified: true },
     { id: "att-09", storeId: "mumbai-bandra", staffId: "s-203", staffName: "Deepak Rao", status: "absent", checkInAt: null, geoVerified: false },
     { id: "att-10", storeId: "ahmedabad-cg", staffId: "s-301", staffName: "Meera Trivedi", status: "present", checkInAt: at(10, 12), checkInLat: "23.0299000", checkInLng: "72.5617000", geoVerified: true },
     { id: "att-11", storeId: "ahmedabad-cg", staffId: "s-302", staffName: "Harsh Solanki", status: "present", checkInAt: at(10, 25), checkInLat: "23.0297000", checkInLng: "72.5615000", geoVerified: true },

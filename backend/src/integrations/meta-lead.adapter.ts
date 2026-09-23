@@ -371,7 +371,13 @@ export class MetaLeadAdapter implements MetaLeadSink, OnModuleInit {
    */
   private async defaultStoreId(organisationId: string): Promise<string | null> {
     const stores = await this.prisma.store.findMany({
-      where: { organisationId, isAggregate: false, status: { not: 'closed' } },
+      where: {
+        organisationId,
+        isAggregate: false,
+        isHolding: false,
+        attendanceOnly: false,
+        status: { not: 'closed' },
+      },
       select: { id: true },
       take: 2,
     });

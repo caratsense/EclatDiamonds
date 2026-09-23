@@ -783,7 +783,7 @@ export class AttendanceOpsService {
 
   private async stores(orgId: string, storeIds: string[]) {
     const rows = await this.prisma.store.findMany({
-      where: { id: { in: storeIds }, organisationId: orgId },
+      where: { id: { in: storeIds }, organisationId: orgId, isHolding: false },
       select: { id: true, name: true, timezone: true },
       orderBy: { name: 'asc' },
     });
@@ -926,7 +926,7 @@ export class AttendanceOpsService {
     prisma: Db = this.prisma,
   ) {
     const storeRow = await prisma.store.findFirst({
-      where: { id: storeId, organisationId: orgId },
+      where: { id: storeId, organisationId: orgId, isHolding: false },
       select: { id: true, timezone: true },
     });
     if (!storeRow) throw new NotFoundException('Store not found');
@@ -1494,7 +1494,12 @@ export class AttendanceOpsService {
 
   private async shiftInScope(user: AuthUser, id: string) {
     const shift = await this.prisma.shift.findFirst({
-      where: { id, organisationId: user.organisationId, storeId: { in: user.storeIds } },
+      where: {
+        id,
+        organisationId: user.organisationId,
+        storeId: { in: user.storeIds },
+        store: { isHolding: false },
+      },
     });
     if (!shift) throw new NotFoundException('Shift not found');
     return shift;
@@ -1648,7 +1653,12 @@ export class AttendanceOpsService {
 
   private async holidayInScope(user: AuthUser, id: string) {
     const h = await this.prisma.storeHoliday.findFirst({
-      where: { id, organisationId: user.organisationId, storeId: { in: user.storeIds } },
+      where: {
+        id,
+        organisationId: user.organisationId,
+        storeId: { in: user.storeIds },
+        store: { isHolding: false },
+      },
     });
     if (!h) throw new NotFoundException('Holiday not found');
     return h;

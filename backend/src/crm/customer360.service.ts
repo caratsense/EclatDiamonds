@@ -325,7 +325,10 @@ export class Customer360Service {
     // row beats a confidently wrong one.
     const storeId =
       input.storeId ?? (user.storeIds.length === 1 ? user.storeIds[0] : null);
-    if (storeId) this.scope.assertStoreAllowed(user, storeId);
+    if (storeId) {
+      this.scope.assertStoreAllowed(user, storeId);
+      await this.scope.assertTradingStore(storeId);
+    }
 
     // Every referenced record must belong to the caller's organisation. Checked
     // explicitly rather than trusting the id, since these arrive from a client.

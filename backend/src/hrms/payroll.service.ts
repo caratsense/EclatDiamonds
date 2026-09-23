@@ -116,7 +116,7 @@ export class PayrollService {
       },
     });
     const stores = await this.prisma.store.findMany({
-      where: { id: { in: storeIds } },
+      where: { id: { in: storeIds }, isHolding: false },
       select: { id: true, name: true, weekOffDay: true },
     });
     const storeById = new Map(stores.map((s) => [s.id, s]));
@@ -170,7 +170,7 @@ export class PayrollService {
       throw new BadRequestException('Staff is not assigned to this store.');
     }
     const store = await this.prisma.store.findFirst({
-      where: { id: storeId, organisationId: user.organisationId },
+      where: { id: storeId, organisationId: user.organisationId, isHolding: false },
       select: { timezone: true },
     });
     if (!store) throw new NotFoundException('Store not found.');
@@ -240,7 +240,7 @@ export class PayrollService {
     if (own.length) return new Set(own.map((o) => o.dayOfWeek));
     if (!storeId) return new Set();
     const store = await this.prisma.store.findUnique({
-      where: { id: storeId },
+      where: { id: storeId, isHolding: false },
       select: { weekOffDay: true },
     });
     return store?.weekOffDay != null ? new Set([store.weekOffDay]) : new Set();
@@ -385,7 +385,12 @@ export class PayrollService {
     parsePeriod(input.periodKey);
     const storeIds = this.scope.effectiveStoreIds(user, input.storeId);
     const stores = await this.prisma.store.findMany({
-      where: { id: { in: storeIds }, organisationId: user.organisationId, isAggregate: false },
+      where: {
+        id: { in: storeIds },
+        organisationId: user.organisationId,
+        isAggregate: false,
+        isHolding: false,
+      },
       orderBy: { name: 'asc' },
       select: { id: true, name: true, organisationId: true },
     });
@@ -889,7 +894,7 @@ export class PayrollService {
    */
   async sweepMonthEnd(now = new Date()): Promise<{ due: number; ran: number }> {
     const stores = await this.prisma.store.findMany({
-      where: { isActive: true, isAggregate: false },
+      where: { isActive: true, isAggregate: false, isHolding: false },
       select: { id: true, name: true, timezone: true, organisationId: true },
     });
     let due = 0;
@@ -938,7 +943,12 @@ export class PayrollService {
     }
     this.scope.assertStoreAllowed(user, input.storeId);
     const store = await this.prisma.store.findFirst({
-      where: { id: input.storeId, organisationId: user.organisationId, isAggregate: false },
+      where: {
+        id: input.storeId,
+        organisationId: user.organisationId,
+        isAggregate: false,
+        isHolding: false,
+      },
       select: { id: true, name: true, organisationId: true },
     });
     if (!store) throw new NotFoundException('No such branch here.');

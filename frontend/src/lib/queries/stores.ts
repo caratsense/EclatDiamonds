@@ -54,6 +54,10 @@ export interface AdminStore {
   isActive: boolean;
   /** true for the synthetic "All Stores" aggregate — not editable. */
   isAggregate: boolean;
+  /** true for a system quarantine bucket used by imports, never a physical branch. */
+  isHolding: boolean;
+  /** true for a physical attendance location that does not trade or hold stock. */
+  attendanceOnly: boolean;
   /** Configured weekly off (0 = Sunday). Null when none has been set. */
   weekOffDay?: number | null;
   managers: StoreManager[];
@@ -67,6 +71,10 @@ export interface PendingStore {
   code?: string | null;
   regionId?: string | null;
   status: StoreStatus;
+  /** Holding buckets are informational and must never enter branch activation flows. */
+  isHolding: boolean;
+  /** Attendance locations are physical, but are not trading branches. */
+  attendanceOnly: boolean;
   /** Geofence (lat/lng) still missing — blocks activation. */
   needsGeo: boolean;
   /** Region assignment still missing — blocks activation. */
@@ -90,11 +98,22 @@ export interface UpdateStoreInput {
   name?: string;
   city?: string;
   code?: string;
-  isActive?: boolean;
   regionId?: string;
   latitude?: number;
   longitude?: number;
   geofenceRadiusM?: number;
+}
+
+/** Optional geographical/management grouping returned by GET /regions. */
+export interface StoreRegion {
+  id: string;
+  name: string;
+  code?: string | null;
+}
+
+export interface CreateRegionInput {
+  name: string;
+  code?: string;
 }
 
 export interface AddStoreManagerInput {
@@ -141,6 +160,33 @@ export function usePendingStores() {
   });
 }
 
+/** GET /regions — valid region choices for store create/edit forms. */
+export function useRegions() {
+  const role = useSession((s) => s.role);
+  return useQuery({
+    queryKey: ["regions"],
+    enabled: ROLE_RANK[role] >= ROLE_RANK.store_manager,
+    queryFn: async () => {
+      const { data } = await api.get<StoreRegion[]>("/regions");
+      return data;
+    },
+  });
+}
+
+/** POST /regions — head office creates an organisation-scoped region option. */
+export function useCreateRegion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: CreateRegionInput) => {
+      const { data } = await api.post<StoreRegion>("/regions", input);
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["regions"] });
+    },
+  });
+}
+
 /** POST /stores — provision a new store branch. */
 export function useCreateStore() {
   const qc = useQueryClient();
@@ -156,7 +202,7 @@ export function useCreateStore() {
   });
 }
 
-/** PATCH /stores/:id — rename, relocate, set geo/region or (de)activate. */
+/** PATCH /stores/:id — rename, relocate, or set geo/region details. */
 export function useUpdateStore() {
   const qc = useQueryClient();
   return useMutation({

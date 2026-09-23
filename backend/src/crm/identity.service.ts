@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
+import { StoreScopeService } from '../common/store-scope.service';
 import { isSalesScoped, readableParty } from '../common/sales-scope';
 import { normalizeIndianMobile, isValidEmail } from '../common/contact.util';
 
@@ -53,6 +54,7 @@ export class IdentityService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly scope: StoreScopeService,
   ) {}
 
   /**
@@ -151,7 +153,13 @@ export class IdentityService {
         'A name is required to create a customer. Resolve without creating if the name is unknown.',
       );
     }
-    if (input.storeId) this.assertStore(user, input.storeId);
+    if (input.storeId) {
+      this.assertStore(user, input.storeId);
+      // Only the signed-in, human-created path is gated here. Provider webhooks
+      // and import reconciliation use resolveInbound/createPartyOwning and must
+      // retain their ability to attach source data to the holding store.
+      await this.scope.assertTradingStore(input.storeId);
+    }
 
     const created = await this.createPartyOwning(organisationId, {
       kind: input.kind,

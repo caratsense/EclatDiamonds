@@ -393,7 +393,14 @@ export class TelephonyService {
         const store = await this.prisma.store.findFirst({
           // Scoped to the tenant even though the id came from their own
           // settings: a mapping is data, and data is never a permission.
-          where: { id: storeId, organisationId, isAggregate: false },
+          where: {
+            id: storeId,
+            organisationId,
+            isAggregate: false,
+            isHolding: false,
+            attendanceOnly: false,
+            status: { not: 'closed' },
+          },
           select: { id: true, name: true, timezone: true },
         });
         if (store) return store;
@@ -401,7 +408,14 @@ export class TelephonyService {
     }
 
     const candidates = await this.prisma.store.findMany({
-      where: { organisationId, isAggregate: false, phone: { not: null } },
+      where: {
+        organisationId,
+        isAggregate: false,
+        isHolding: false,
+        attendanceOnly: false,
+        status: { not: 'closed' },
+        phone: { not: null },
+      },
       select: { id: true, name: true, timezone: true, phone: true },
     });
     return candidates.find((s) => sameNumber(digits(s.phone ?? ''), dialled)) ?? null;
