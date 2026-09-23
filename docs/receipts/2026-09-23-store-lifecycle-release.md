@@ -87,10 +87,25 @@ The first is `scratchpad/stores_snapshot.cjs`; `backend/` is already linked to
 this project's production environment, so it runs as
 `railway run -s Postgres -e production -- node stores_snapshot.cjs`.
 
-What this leaves: the migration is known to have **executed** (a failing
-pre-deploy step fails the deployment, and the deployment succeeded), but its
-**result** has not been looked at. Nobody has yet seen the five branch rows as
-they now stand.
+### Resolved later the same day
+
+Head office credentials were supplied, and the rows were read back through
+`GET /stores`. The migration did what it was written to do:
+
+- **Ten branches**, codes A001 to A010, each carrying its real branch code, its
+  name and its coordinates, all `active`. (The codes and coordinates are not
+  reproduced here; read them from `GET /stores` when you need them.)
+- **HEAD OFFICE** is `attendanceOnly` and has its coordinates.
+- **"Unassigned - needs a branch"** exists, `isHolding`, `pending` - the import
+  holding bucket, empty and waiting.
+
+Nothing landed in the wrong shape, and no real branch was claimed by the holding
+match.
+
+**One thing that should not be there:** a store with the id `surat-main`, named
+"Surat - Main", is live alongside the real branches. That id is the development
+seed's (`prisma/seed.mjs`), not a branch of this business. Somebody should decide
+whether to close it or remove it.
 
 ## How to reverse
 
