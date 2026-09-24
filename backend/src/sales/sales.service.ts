@@ -482,6 +482,10 @@ export class SalesService {
       (s.payments ?? []).find((p: any) => p.receiptUrl)?.receiptUrl ?? null;
     return {
       id: s.id,
+      // What kind of document this is. A branch transfer and a sale both live in
+      // this table, and without this the two are indistinguishable from outside,
+      // which is how a transfer can be read as revenue and nobody can tell.
+      docType: s.docType,
       docNo: s.docNo,
       invoiceNo: s.docNo,
       customer: s.customerName ?? s.party?.name ?? 'Walk-in',
