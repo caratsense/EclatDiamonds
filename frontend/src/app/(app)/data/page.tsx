@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ImportWizard } from "@/components/data/import-wizard";
 import { SourcePanel } from "@/components/data/source-panel";
 import { ConnectAgents } from "@/components/data/connect-agents";
+import { RemoveDemoData } from "@/components/data/remove-demo-data";
 import { KnowledgePanel } from "@/components/data/knowledge-panel";
 import { useImportHistory, type FileImportOrigin } from "@/lib/queries/imports";
 import {
@@ -66,6 +67,10 @@ export default function DataPage() {
               tab because "is my data arriving?" and "is the agent running?" are
               the same question asked twice. */}
           <ConnectAgents />
+
+          {/* Going live is the other half of "is my data arriving?": once it has
+              arrived, the samples the system was set up with should go. */}
+          <RemoveDemoData />
         </TabsContent>
 
         <TabsContent value="import" className="mt-4">
