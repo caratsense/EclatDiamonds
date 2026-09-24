@@ -129,7 +129,7 @@ export function configuredOrgSlug(
   raw: string | undefined = process.env.NEXT_PUBLIC_DEFAULT_ORG_SLUG,
 ): string {
   const slug = normaliseOrgSlug(raw);
-  return isUsableOrgSlug(slug) ? slug : "eclat";
+  return isUsableOrgSlug(slug) ? slug : "";
 }
 
 /**
@@ -139,18 +139,15 @@ export function configuredOrgSlug(
  * store/area manager approves salespeople in their store. The backend grants no
  * access until then.
  */
-const DEFAULT_STORES = [
-  { id: "mumbai-bandra", name: "Mumbai — Bandra", city: "Mumbai" },
-  { id: "surat-main", name: "Surat — Main", city: "Surat" },
-  { id: "ahmedabad-cg", name: "Ahmedabad — C.G. Road", city: "Ahmedabad" },
-];
-
 function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
   const signup = useSignup();
   const slug = configuredOrgSlug();
   const storesQuery = useSignupStores(slug);
-  const fetchedStores = storesQuery.data ?? [];
-  const stores = fetchedStores.length > 0 ? fetchedStores : DEFAULT_STORES;
+  // Only the organisation's own branches, never a fallback list. A hardcoded
+  // list stood here — one jeweller's three shops — and it was offered to every
+  // deployment whose directory came back empty, so a stranger could request
+  // access to a branch belonging to a business they had never heard of.
+  const stores = storesQuery.data ?? [];
 
   const [name, setName] = React.useState("");
   const [contactEmail, setContactEmail] = React.useState("");
@@ -334,9 +331,13 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
           required
         >
           <option value="" className="bg-white text-slate-900 dark:bg-[#090b10] dark:text-[#f8fafc]">
-            {storesQuery.isLoading
-              ? "Loading stores from database…"
-              : "Select your store"}
+            {!slug
+              ? "Ask your head office which organisation to join"
+              : storesQuery.isLoading
+                ? "Loading your branches…"
+                : stores.length === 0
+                  ? "No branches found for this organisation"
+                  : "Select your store"}
           </option>
           {stores.map((s) => (
             <option key={s.id} value={s.id} className="bg-white text-slate-900 dark:bg-[#090b10] dark:text-[#f8fafc]">
