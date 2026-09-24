@@ -62,7 +62,10 @@ export interface Qualification {
   /** False when no score could be produced. `unavailableReason` says why. */
   available: boolean;
   unavailableReason: string | null;
-  /** 'ai' when a provider extracted the signals, 'rules' when phrases matched. */
+  /**
+   * 'ai' when a provider extracted the signals, 'rules' when phrases matched,
+   * 'human' when a person set the score themselves.
+   */
   method: string;
   /** Null, never zero, when nothing could be assessed — zero would mean "cold". */
   score: number | null;
@@ -83,6 +86,9 @@ export interface Qualification {
   model: string | null;
   messagesConsidered: number;
   createdAt: string;
+  createdById: string | null;
+  /** Who set it, when a person did. Null for anything the assistant produced. */
+  authorName: string | null;
 }
 
 export interface QualificationSetup {
@@ -179,6 +185,31 @@ export function useAssessLead() {
   return useMutation({
     mutationFn: async (leadId: string) =>
       (await api.post<Qualification>(`/crm/qualification/leads/${leadId}`)).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["crm", "qualification"] }),
+  });
+}
+
+/**
+ * Record a person's own score over the assistant's.
+ *
+ * This does not edit the existing assessment — the server APPENDS a new one and
+ * returns it, so the assistant's stays readable underneath. The panel shows the
+ * newest, which is now the person's.
+ */
+export function useScoreByHand() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      conversationId?: string;
+      leadId?: string;
+      score: number;
+      reason: string;
+    }) => {
+      const path = input.conversationId
+        ? `/crm/qualification/conversations/${input.conversationId}/manual`
+        : `/crm/qualification/leads/${input.leadId}/manual`;
+      return (await api.post<Qualification>(path, { score: input.score, reason: input.reason })).data;
+    },
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["crm", "qualification"] }),
   });
 }

@@ -288,6 +288,35 @@ export interface SignalResult {
 }
 
 /**
+ * The band a score falls in, under this policy.
+ *
+ * Shared by the signal path and the manual path, so a 70 typed by a store
+ * manager lands in exactly the band a 70 from the assistant would. Two
+ * implementations of this would drift, and the day they disagreed the product
+ * would be showing the same number under two different labels.
+ *
+ * `negative` is its own case rather than a low score: "we know they said no" and
+ * "we know nothing" are different facts about a customer, and only the signal
+ * path can tell them apart.
+ */
+export function bandForScore(
+  policy: QualificationPolicy,
+  score: number,
+  negative = false,
+): QualificationBand | null {
+  if (negative) {
+    return (
+      policy.bands.find((b) => b.key === 'negative') ??
+      [...policy.bands].sort((a, b) => a.minScore - b.minScore)[0] ??
+      null
+    );
+  }
+  return (
+    [...policy.bands].sort((a, b) => b.minScore - a.minScore).find((b) => score >= b.minScore) ?? null
+  );
+}
+
+/**
  * Score a set of signal results against the policy.
  *
  * Scoring is deliberately simple and total: sum the weights of what fired, clamp
@@ -312,12 +341,7 @@ export function scoreSignals(
   const negative = raw < 0;
   const score = Math.max(0, Math.min(100, raw));
 
-  const band = negative
-    ? (policy.bands.find((b) => b.key === 'negative') ??
-      [...policy.bands].sort((a, b) => a.minScore - b.minScore)[0] ??
-      null)
-    : ([...policy.bands].sort((a, b) => b.minScore - a.minScore).find((b) => score >= b.minScore) ??
-      null);
+  const band = bandForScore(policy, score, negative);
 
   const handoffSignal = fired.find((r) => policy.handoffSignals.includes(r.key));
   const byScore = policy.handoffAtScore != null && !negative && score >= policy.handoffAtScore;

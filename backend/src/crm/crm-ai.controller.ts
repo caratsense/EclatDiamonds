@@ -8,7 +8,9 @@ import {
   IsOptional,
   IsString,
   Max,
+  MaxLength,
   Min,
+  MinLength,
 } from 'class-validator';
 
 import { Roles } from '../auth/roles.decorator';
@@ -29,6 +31,26 @@ export class SaveAiSettingsDto {
 export class SaveAdSetRulesDto {
   @IsArray()
   rules!: AdSetAutomationRule[];
+}
+
+/**
+ * A person's own score for a lead.
+ *
+ * The reason is REQUIRED, and that is a product decision rather than an
+ * oversight: a number with no argument behind it cannot be reviewed, disputed or
+ * learned from, and "why is this a 90?" is the first question anybody asks of a
+ * score somebody typed.
+ */
+export class ManualScoreDto {
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  score!: number;
+
+  @IsString()
+  @MinLength(3)
+  @MaxLength(500)
+  reason!: string;
 }
 
 export class SavePolicyDto {
@@ -176,6 +198,34 @@ export class CrmQualificationController {
   @Post('leads/:id')
   assessLead(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.qualification.assessLead(user, id);
+  }
+
+  /*
+   * A person's own score, over the top of the assistant's.
+   *
+   * Store manager and above. Who exactly may overrule the assistant is an open
+   * client decision (see the 2026-09-22 meeting note), so this fails closed at
+   * the same rank as the rest of the qualification management surface. Widening
+   * it to salespeople later is this one decorator.
+   */
+  @Roles('store_manager')
+  @Post('conversations/:id/manual')
+  scoreConversationByHand(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() body: ManualScoreDto,
+  ) {
+    return this.qualification.setManualScore(user, { conversationId: id }, body);
+  }
+
+  @Roles('store_manager')
+  @Post('leads/:id/manual')
+  scoreLeadByHand(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() body: ManualScoreDto,
+  ) {
+    return this.qualification.setManualScore(user, { leadId: id }, body);
   }
 
   /** The latest assessment for a subject. `null` means nobody has assessed it. */

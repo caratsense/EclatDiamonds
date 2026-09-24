@@ -412,6 +412,94 @@ export class Customer360Service {
     return interaction;
   }
 
+  /* ------------------------------------------------------ customer notes */
+
+  /**
+   * What this business knows about a person, in its own words.
+   *
+   * Returns notes written ABOUT the customer and notes written on any of their
+   * leads, newest first — one list, because "what do we make of her?" is one
+   * question, and nobody asking it cares which record a colleague happened to
+   * have open when they typed the answer.
+   *
+   * Reachability is `readableParty`, the same rule the profile uses: a
+   * salesperson reads customers they work with, everyone else reads their
+   * organisation's.
+   */
+  async notesFor(user: AuthUser, partyId: string, limit = 50) {
+    const party = await this.prisma.party.findFirst({
+      where: { id: partyId, ...readableParty(user) },
+      select: { id: true },
+    });
+    if (!party) throw new NotFoundException('Customer not found');
+
+    const rows = await this.prisma.leadNote.findMany({
+      // Either key reaching this customer qualifies. The lead branch is what
+      // makes a note left on an opportunity also show up on the person.
+      where: { OR: [{ partyId }, { lead: { partyId } }] },
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(Math.max(limit, 1), 200),
+      select: {
+        id: true,
+        kind: true,
+        text: true,
+        createdAt: true,
+        authorName: true,
+        leadId: true,
+      },
+    });
+
+    return rows.map((r) => ({
+      ...r,
+      /** True when this was written against one opportunity, not the person. */
+      onLead: r.leadId != null,
+    }));
+  }
+
+  /**
+   * Record what somebody makes of this customer.
+   *
+   * Deliberately NOT attached to a lead: a view of the person outlives any one
+   * opportunity, and what Éclat asked for — what the branch thinks of this
+   * customer — is not a fact about a sale that may never happen.
+   */
+  async addNote(user: AuthUser, partyId: string, input: { text: string; kind: string }) {
+    const party = await this.prisma.party.findFirst({
+      where: { id: partyId, ...readableParty(user) },
+      select: { id: true, storeId: true },
+    });
+    if (!party) throw new NotFoundException('Customer not found');
+
+    const note = await this.prisma.leadNote.create({
+      data: {
+        organisationId: user.organisationId,
+        partyId,
+        leadId: null,
+        authorId: user.id,
+        // Denormalised beside authorId, as the lead path already does, so a note
+        // still says who wrote it after that person has left the business.
+        authorName: user.name,
+        kind: input.kind,
+        text: input.text.trim(),
+      },
+    });
+
+    // Best effort, like every other activity write: the note is already saved
+    // and a timeline failure must not undo it.
+    this.activity
+      .recordFor(user, {
+        type: 'customer.note',
+        summary: `Note added — ${note.text.length > 80 ? `${note.text.slice(0, 77)}…` : note.text}`,
+        partyId,
+        storeId: party.storeId ?? undefined,
+        entityType: 'LeadNote',
+        entityId: note.id,
+      })
+      .catch(() => undefined);
+
+    return note;
+  }
+
   private async assertOwned(
     model: 'party' | 'lead' | 'product',
     id: string,

@@ -250,3 +250,21 @@ export class BackfillIdentityDto {
   @Max(5000)
   limit?: number;
 }
+
+/**
+ * A note about a customer.
+ *
+ * `kind` reuses the lead note's own vocabulary rather than introducing a second
+ * one: a visit logged against a person and a visit logged against a lead are the
+ * same event, and two spellings of it would split every later report.
+ */
+export class CreateCustomerNoteDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(2000)
+  text!: string;
+
+  @IsOptional()
+  @IsIn(['note', 'call', 'visit', 'whatsapp'])
+  kind?: string;
+}

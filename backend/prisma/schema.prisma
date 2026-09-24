@@ -500,6 +500,7 @@ model Organisation {
   productImages                ProductImage[]
   similaritySearchFeedbacks    SimilaritySearchFeedback[]
   leads                        Lead[]
+  leadNotes                    LeadNote[]
   quotes                       Quote[]
   stockItems                   StockItem[]
   stockTransfers               StockTransfer[]
@@ -1245,6 +1246,7 @@ model Party {
   store               Store?               @relation(fields: [storeId], references: [id])
   user                User?
   leads               Lead[]
+  notes               LeadNote[]
   quotes              Quote[]
   sales               Sale[]
   manufacturingOrders ManufacturingOrder[]
@@ -1605,9 +1607,39 @@ model StaffDigestRun {
   @@index([organisationId, businessDate])
 }
 
+/// A note about a customer, or about one opportunity with them.
+///
+/// Originally keyed to a Lead alone, which meant the only people who could be
+/// written about were those who had already become an opportunity — so a
+/// WhatsApp thread from someone not yet converted had nowhere to record "wants
+/// rose gold, husband decides, back after Diwali".
+///
+/// Both keys are now nullable and AT LEAST ONE is always set. That rule is
+/// enforced in the service rather than by a CHECK constraint, because Prisma
+/// does not model CHECKs and one added by hand here would have to be
+/// re-asserted in every future migration that touches this table.
+///
+/// A note written on a lead ALSO carries that lead's `partyId`, so a customer's
+/// notes list is complete without a union query. The reverse does not hold: a
+/// note about the person is not a note about any particular opportunity.
 model LeadNote {
-  id         String   @id @default(cuid())
-  leadId     String
+  /// Its OWN tenancy, rather than tenancy inherited through the lead.
+  ///
+  /// Required, because this table no longer has one guaranteed parent. The
+  /// destructive go-live operations scope a parentless child table by walking
+  /// its shortest to-one relation to an org-bearing ancestor; with `leadId`
+  /// nullable that walk resolves to `{ lead: { organisationId } }`, which
+  /// silently skips every note attached only to a customer — so a purge would
+  /// leave demo notes sitting on real customers. An org column of its own makes
+  /// the scope direct, and the omission impossible.
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  id String @id @default(cuid())
+  /// The opportunity this note is about. Null for a note about the person.
+  leadId String?
+  /// The customer this note is about. Null only for a lead with no identity yet.
+  partyId    String?
   authorId   String?
   authorName String?
   /// Activity kind: 'note' | 'call' | 'visit' | 'whatsapp' (validated in DTO).
@@ -1615,10 +1647,13 @@ model LeadNote {
   text       String
   createdAt  DateTime @default(now())
 
-  lead   Lead  @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  author User? @relation(fields: [authorId], references: [id])
+  lead   Lead?  @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  party  Party? @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  author User?  @relation(fields: [authorId], references: [id])
 
   @@index([leadId])
+  @@index([partyId, createdAt])
+  @@index([organisationId])
 }
 
 model OccasionReminder {

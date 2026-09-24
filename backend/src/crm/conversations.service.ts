@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -44,6 +45,35 @@ import type { AdReferral } from '../integration/contracts/ad-referral';
 const HANDLING = ['ai', 'human', 'unassigned'];
 const STATUSES = ['open', 'snoozed', 'closed'];
 
+/**
+ * Put the sender's name on a reply typed in the dashboard.
+ *
+ * ## Why the customer needs it
+ *
+ * Every reply leaves from ONE business number — the assistant's answers and
+ * four different branch managers' answers all arrive in the same chat bubble.
+ * Without a name the customer cannot tell whether they are still talking to a
+ * machine, and cannot address the person who actually helped them last week.
+ *
+ * ## Why the name is stored, not added at delivery
+ *
+ * The signed text is what goes into `Message.body`, so the thread is a record
+ * of what the customer actually received. Signing later — at the provider call
+ * — would make the dashboard show something the customer never saw, and a
+ * transcript that differs from reality is worse than no transcript.
+ *
+ * ## Why only WhatsApp
+ *
+ * `*name*` is WhatsApp's bold markup. On a channel that does not parse it the
+ * asterisks would be shown literally, so every other channel is left alone
+ * until it has a format of its own. Media with no caption is left alone too:
+ * there is no text to sign, and a bare name would read as a message.
+ */
+function signAsAgent(body: string | null, agentName: string, channel: string): string | null {
+  if (!body || channel !== 'whatsapp') return body;
+  return `*${agentName}*\n${body}`;
+}
+
 export interface InboundMessage {
   organisationId: string;
   channel: string;
@@ -54,6 +84,15 @@ export interface InboundMessage {
   /** How the sender identifies on this channel. */
   senderKind: ContactKind;
   senderValue: string;
+  /**
+   * The name the sender shows on this channel — WhatsApp's profile name.
+   *
+   * Their own words for who they are, and the only name available before anyone
+   * has spoken to them. Used ONLY when creating a customer: it never overwrites
+   * a name a colleague has already typed, because a WhatsApp profile can say
+   * "Jewellery Lover 💍" and the branch's own record should win.
+   */
+  senderName?: string | null;
   body?: string;
   mediaUrl?: string;
   mediaType?: string;
@@ -179,6 +218,10 @@ export class ConversationsService {
       const resolved = await this.identity.resolveInbound(organisationId, {
         kind: msg.senderKind,
         value: msg.senderValue,
+        // Their WhatsApp profile name, so a branch manager opening this sees a
+        // person rather than a phone number. `resolveInbound` falls back to the
+        // normalised number when the provider sent none.
+        name: msg.senderName ?? null,
         storeId: route?.storeId ?? null,
         source: 'ctwa',
       });
@@ -1327,6 +1370,17 @@ export class ConversationsService {
       ['review', { routingReviewRequired: true }],
       ['unknown', { partyId: null }],
       ['closed', { status: 'closed' }],
+      /*
+       * Traffic no ad paid for.
+       *
+       * Head office only, and simply ABSENT for everyone else rather than
+       * present as a number they cannot act on — a store manager must not be
+       * told how many conversations sit in a queue they may not open. That is
+       * the rule the storeless central queue already follows.
+       */
+      ...(user.role === 'head_office'
+        ? ([['non_ad', { sourceAdId: null }]] as [string, Prisma.ConversationWhereInput][])
+        : []),
     ];
 
     // One round trip for the whole tab bar rather than eight.
@@ -1354,6 +1408,15 @@ export class ConversationsService {
        * rather than that branch's inbox.
        */
       partyId?: string;
+      /**
+       * Queue: conversations no ad brought in. HEAD OFFICE ONLY.
+       *
+       * These are the threads the routing rules could not place with a branch,
+       * so no store manager owns them and none should be reading them. The
+       * restriction is enforced here rather than by hiding the tab, because a
+       * hidden tab is a suggestion and a query parameter is a request.
+       */
+      nonAd?: boolean;
     } = {},
   ) {
     const take = Math.min(Math.max(opts.limit ?? 50, 1), 200);
@@ -1361,6 +1424,9 @@ export class ConversationsService {
     // substituted for it — a filter must not become a way to read another
     // store's inbox.
     if (opts.storeId) this.scope.assertStoreAllowed(user, opts.storeId);
+    if (opts.nonAd && user.role !== 'head_office') {
+      throw new ForbiddenException('Only head office can read conversations no ad brought in.');
+    }
     const rows = await this.prisma.conversation.findMany({
       where: {
         organisationId: user.organisationId,
@@ -1371,6 +1437,9 @@ export class ConversationsService {
         ...(opts.routingReview ? { routingReviewRequired: true } : {}),
         ...(opts.unidentified ? { partyId: null } : {}),
         ...(opts.partyId ? { partyId: opts.partyId } : {}),
+        // "No ad told us where this came from" — never inferred from a missing
+        // store, which can also mean a rule simply has not been written yet.
+        ...(opts.nonAd ? { sourceAdId: null } : {}),
         // AND, not a sibling OR: a top-level `storeId` alongside an `OR` that
         // admits `storeId: null` is contradictory, and Prisma would AND them
         // into something nobody intended.
@@ -1499,7 +1568,7 @@ export class ConversationsService {
       organisationId: user.organisationId,
       conversationId,
       authorUserId: user.id,
-      body: input.body?.trim() ?? null,
+      body: signAsAgent(input.body?.trim() ?? null, user.name, conversation.channel),
       mediaUrl: input.mediaUrl ?? null,
       mediaType: input.mediaType ?? null,
     });
@@ -1577,6 +1646,34 @@ export class ConversationsService {
           input.handling === 'human'
             ? `Handed to a person${input.handoffReason ? ` — ${input.handoffReason}` : ''}`
             : `Handling set to ${input.handling}`,
+        partyId: updated.partyId,
+        storeId: updated.storeId,
+        channel: updated.channel,
+        entityType: 'Conversation',
+        entityId: conversationId,
+      });
+    }
+
+    /*
+     * Closing takes a thread out of everybody's working queue, so it belongs on
+     * the timeline exactly as a handoff does. Without this, a customer's history
+     * shows a conversation that simply stops, with nothing to say that a person
+     * decided it was finished, or when.
+     *
+     * A reopen is recorded too, and deliberately reads differently from the
+     * automatic one: a closed thread also reopens on its own when the customer
+     * writes again (see the `update` branch of `ingestInbound`), and "somebody
+     * reopened this" is a different fact from "they came back".
+     */
+    if (input.status && input.status !== conversation.status) {
+      await this.activity.recordFor(user, {
+        type: 'conversation.status',
+        summary:
+          input.status === 'closed'
+            ? 'Closed by a person'
+            : input.status === 'open' && conversation.status === 'closed'
+              ? 'Reopened by a person'
+              : `Marked ${input.status}`,
         partyId: updated.partyId,
         storeId: updated.storeId,
         channel: updated.channel,

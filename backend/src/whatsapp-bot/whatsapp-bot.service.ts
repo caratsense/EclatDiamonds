@@ -86,8 +86,28 @@ export class WhatsAppBotService {
             ? String(value.metadata.phone_number_id)
             : null;
 
+        /*
+         * The name the sender shows in WhatsApp.
+         *
+         * Meta puts it in `value.contacts`, one level ABOVE the message, so it
+         * was being dropped here — every ad lead then became a customer named
+         * after their own phone number, which is a record a branch manager
+         * cannot recognise. Keyed by `wa_id` because one envelope can carry
+         * messages from several people.
+         */
+        const profileNames = new Map<string, string>();
+        for (const c of value.contacts ?? []) {
+          const waId = c?.wa_id != null ? String(c.wa_id) : null;
+          const name = typeof c?.profile?.name === 'string' ? c.profile.name.trim() : '';
+          if (waId && name) profileNames.set(waId, name);
+        }
+
         for (const m of value.messages ?? []) {
-          const stored = await this.persist(m, businessPhoneNumberId);
+          const stored = await this.persist(
+            m,
+            businessPhoneNumberId,
+            profileNames.get(String(m?.from ?? '')) ?? null,
+          );
           if (stored) received++;
           else duplicates++;
         }
@@ -104,7 +124,11 @@ export class WhatsAppBotService {
   }
 
   /** Store one message. Returns false when Meta has already delivered it. */
-  private async persist(message: any, businessPhoneNumberId: string | null): Promise<boolean> {
+  private async persist(
+    message: any,
+    businessPhoneNumberId: string | null,
+    profileName: string | null,
+  ): Promise<boolean> {
     try {
       await this.prisma.whatsAppEvent.create({
         data: {
@@ -118,7 +142,10 @@ export class WhatsAppBotService {
           // database, after this request has already returned 200 to Meta).
           // Kept in the JSON rather than a new column: it is provider-shaped
           // routing metadata, not a field the app queries.
-          payload: { ...(message ?? {}), caratosMeta: { businessPhoneNumberId } } as Prisma.InputJsonValue,
+          payload: {
+            ...(message ?? {}),
+            caratosMeta: { businessPhoneNumberId, profileName },
+          } as Prisma.InputJsonValue,
         },
       });
       return true;
@@ -336,6 +363,8 @@ export class WhatsAppBotService {
           externalId: event.wamid ?? undefined,
           senderKind: 'whatsapp',
           senderValue: from,
+          // The name they show in WhatsApp, kept from the envelope by `persist`.
+          senderName: profileNameOf(event.payload),
           body: filedBody ?? undefined,
           mediaUrl: stored?.key,
           mediaType: stored?.mimeType,
@@ -471,26 +500,14 @@ export class WhatsAppBotService {
               await this.recordBotReply(organisationId, result.conversationId, reply.text, sent);
             }
             if (reply.outcome?.kind === 'handoff') {
-              /*
-               * Handed to a person, and the thread STAYS on this number. The
-               * branch manager answers from the CRM inbox; the customer sees
-               * the same chat they have been in all along. Assignment itself is
-               * left to the queue rather than picked here — this service knows
-               * the conversation, not who is on shift.
-               */
-              await this.prisma.conversation.update({
-                where: { id: result.conversationId },
-                data: {
-                  handling: 'human',
-                  handoffReason:
-                    reply.outcome.reason === 'gave_up'
-                      ? 'The customer could not be understood twice; handed to a person.'
-                      : 'The customer asked to speak to someone.',
-                },
-              });
-              if (reply.handoffNote) {
-                this.logger.log('  bot handoff logged for conversation ' + result.conversationId);
-              }
+              await this.handToAPerson(
+                organisationId,
+                result.conversationId,
+                reply.outcome.reason === 'gave_up'
+                  ? 'The customer could not be understood twice; handed to a person.'
+                  : 'The customer asked to speak to someone.',
+                reply.handoffNote,
+              );
             }
             this.logger.log(
               `  bot replied${reply.outcome ? ` (${reply.outcome.kind}: ${reply.outcome.reason})` : ''}`,
@@ -517,15 +534,15 @@ export class WhatsAppBotService {
                 result.conversationId,
               );
               if (scored?.handoff) {
-                await this.prisma.conversation.update({
-                  where: { id: result.conversationId },
-                  data: {
-                    handling: 'human',
-                    handoffReason:
-                      scored.reason ??
-                      `Qualified at ${scored.score}/100${scored.band ? ` (${scored.band})` : ''} — handed to a person.`,
-                  },
-                });
+                // Same door as an explicit "call me": a thread escalated by its
+                // score still has to reach a named person, not a queue nobody
+                // owns.
+                await this.handToAPerson(
+                  organisationId,
+                  result.conversationId,
+                  scored.reason ??
+                    `Qualified at ${scored.score}/100${scored.band ? ` (${scored.band})` : ''} — handed to a person.`,
+                );
                 this.logger.log(
                   `  intent handoff on ${result.conversationId}: score ${scored.score}${scored.band ? ` (${scored.band})` : ''}`,
                 );
@@ -651,6 +668,107 @@ export class WhatsAppBotService {
       );
       return null;
     }
+  }
+
+  /**
+   * Hand a thread to the manager of the branch the ad routed it to.
+   *
+   * THE THREAD STAYS ON THE SAME NUMBER. The manager answers from the CRM
+   * inbox and the customer sees the one chat they have been in all along —
+   * there is no transfer the customer can perceive.
+   *
+   * ## Why the store manager, and not a queue
+   *
+   * An unowned thread is everybody's and therefore nobody's, and — because a
+   * salesperson's inbox is "threads assigned to me" — an unassigned thread is
+   * invisible to every salesperson at the branch. Naming an owner is what makes
+   * the lead land somewhere a person is accountable for it.
+   *
+   * ## Which manager
+   *
+   * The active `store_manager` at the conversation's store, oldest account
+   * first so the choice is STABLE: a branch with two managers always routes to
+   * the same one until somebody reassigns, which is a rule people can learn.
+   * Rotating silently between them would make "why didn't I get that lead?"
+   * unanswerable.
+   *
+   * ## When there is no store
+   *
+   * Nothing is assigned, deliberately. No store means no ad rule matched, so
+   * the business has not said which branch owns this customer — and guessing a
+   * branch is worse than leaving it in the head-office queue where the non-ad
+   * tab surfaces it. The thread still becomes `human`, so the assistant stops.
+   */
+  private async handToAPerson(
+    organisationId: string,
+    conversationId: string,
+    reason: string,
+    handoffNote?: string,
+  ): Promise<void> {
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { id: conversationId, organisationId },
+      select: { id: true, storeId: true, partyId: true, assignedUserId: true },
+    });
+    if (!conversation) return;
+
+    const manager = conversation.storeId
+      ? await this.prisma.user.findFirst({
+          where: {
+            organisationId,
+            isActive: true,
+            role: 'store_manager',
+            userStores: { some: { storeId: conversation.storeId } },
+          },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          select: { id: true, name: true },
+        })
+      : null;
+
+    await this.prisma.conversation.update({
+      where: { id: conversationId },
+      data: {
+        handling: 'human',
+        handoffReason: reason,
+        // Never steal a thread somebody has already taken: a manager who picked
+        // this up by hand outranks the automatic choice.
+        ...(manager && !conversation.assignedUserId ? { assignedUserId: manager.id } : {}),
+      },
+    });
+
+    /*
+     * What the bot collected, where the manager will actually look.
+     *
+     * NOT written as a Message: every outbound Message is a real send, so the
+     * summary would be delivered to the customer — who has just been told a
+     * person is coming and does not need their own answers read back. A note
+     * against the customer is the right home, and it is the same list that
+     * shows in the thread's Notes panel.
+     *
+     * `authorId` is null because nobody typed it. The bot is named in
+     * `authorName` instead, so the note never claims a person wrote it.
+     */
+    if (handoffNote && conversation.partyId) {
+      await this.prisma.leadNote
+        .create({
+          data: {
+            organisationId,
+            partyId: conversation.partyId,
+            leadId: null,
+            authorId: null,
+            authorName: 'Qualification bot',
+            kind: 'whatsapp',
+            text: handoffNote,
+          },
+        })
+        .catch((e) =>
+          this.logger.warn(`  handoff summary not stored: ${e instanceof Error ? e.message : String(e)}`),
+        );
+    }
+
+    this.logger.log(
+      `  handed to a person on ${conversationId}` +
+        (manager ? ` → ${manager.name}` : ' (no branch yet — stays in the head-office queue)'),
+    );
   }
 
   private async handMediaToAPerson(
@@ -787,11 +905,27 @@ export class WhatsAppBotService {
        * referral is the provider's evidence that they chose to start again, so
        * the thread reopens and the flow restarts from the first question.
        */
-      if (!freshReferral || convo.assignedUserId) return false;
+      if (!freshReferral) return false;
+      /*
+       * "A person owns it" is measured by whether a person has actually SPOKEN,
+       * not by whether one is nominated.
+       *
+       * Handoff now names the branch manager automatically, so `assignedUserId`
+       * is set on every handed-off thread — and testing that alone would mean a
+       * customer who returns months later through a new ad is met with silence
+       * for the life of the account. An agent message is the honest signal that
+       * somebody is mid-conversation and must not be talked over.
+       */
+      const agentHasReplied = await this.prisma.message.count({
+        where: { conversationId, direction: 'outbound', authorType: 'agent' },
+      });
+      if (agentHasReplied > 0) return false;
 
+      // The automatic owner goes with the old enquiry. A new ad click is a new
+      // enquiry, and it routes to whichever branch THIS ad belongs to.
       await this.prisma.conversation.update({
         where: { id: conversationId },
-        data: { handling: 'unassigned', handoffReason: null },
+        data: { handling: 'unassigned', handoffReason: null, assignedUserId: null },
       });
       // The old half-finished answers belong to the previous enquiry. Keeping
       // them would skip questions this customer never answered about this ad.
@@ -883,6 +1017,20 @@ function extensionFor(mimeType: string): string {
       'application/pdf': '.pdf',
     }[base] ?? '.bin'
   );
+}
+
+/**
+ * The sender's WhatsApp profile name, as kept by `persist`.
+ *
+ * Read from the stored envelope rather than looked up: Meta has already told us
+ * who this is, and the Contacts endpoint would be a second network call for a
+ * fact we were given for free. Absent for messages filed before this was
+ * captured, which is why every caller treats it as optional.
+ */
+function profileNameOf(payload: unknown): string | null {
+  const meta = (payload as { caratosMeta?: { profileName?: string | null } } | null)?.caratosMeta;
+  const name = typeof meta?.profileName === 'string' ? meta.profileName.trim() : '';
+  return name || null;
 }
 
 function describeMedia(messageType: string, payload: unknown): string | null {

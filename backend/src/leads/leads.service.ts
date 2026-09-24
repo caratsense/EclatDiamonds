@@ -393,7 +393,12 @@ export class LeadsService {
     if (dto.remark && dto.remark.trim()) {
       await this.prisma.leadNote.create({
         data: {
+          organisationId: lead.organisationId,
           leadId: lead.id,
+          // Carried so the note also reaches the CUSTOMER's notes list. Null
+          // when the lead has no identity yet, which is correct: there is no
+          // person to attach it to.
+          partyId,
           authorId: user.id,
           authorName: user.name,
           text: dto.remark,
@@ -491,7 +496,11 @@ export class LeadsService {
 
     await this.prisma.leadNote.create({
       data: {
+        organisationId: lead.organisationId,
         leadId,
+        // See the note in `create`: this is what puts a logged call or visit on
+        // the customer's own notes list, not just on this one opportunity.
+        partyId: lead.partyId,
         authorId: user.id,
         authorName: user.name,
         kind: dto.kind,
@@ -667,7 +676,10 @@ export class LeadsService {
     if (dto.note && dto.note.trim()) {
       await this.prisma.leadNote.create({
         data: {
+          organisationId: updated.lead.organisationId,
           leadId: existing.leadId,
+          // As in `create` and `addActivity`: reaches the customer's list too.
+          partyId: updated.lead.partyId,
           authorId: user.id,
           authorName: user.name,
           text: dto.note,
