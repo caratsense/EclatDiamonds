@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { Roles } from '../auth/roles.decorator';
-import { DashboardService } from './dashboard.service';
+import { DashboardService, dashboardPeriod } from './dashboard.service';
 import {
   CreateHandoffDto,
   CreateTaskDto,
@@ -17,15 +17,23 @@ export class DashboardController {
   // Management information: store manager and above, never a salesperson.
   @Roles('store_manager')
   @Get('kpis')
-  kpis(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
-    return this.dashboard.kpis(user, store);
+  kpis(
+    @CurrentUser() user: AuthUser,
+    @StoreHeader() store?: string,
+    @Query('period') period?: string,
+  ) {
+    return this.dashboard.kpis(user, store, dashboardPeriod(period));
   }
 
   // Management information: store manager and above, never a salesperson.
   @Roles('store_manager')
   @Get('charts')
-  charts(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
-    return this.dashboard.charts(user, store);
+  charts(
+    @CurrentUser() user: AuthUser,
+    @StoreHeader() store?: string,
+    @Query('period') period?: string,
+  ) {
+    return this.dashboard.charts(user, store, dashboardPeriod(period));
   }
 
   @Get('tasks')

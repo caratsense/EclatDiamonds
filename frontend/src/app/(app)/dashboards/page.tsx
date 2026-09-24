@@ -47,6 +47,8 @@ import { useSession } from "@/store/use-session";
 import {
   useKpis,
   useCharts,
+  DASHBOARD_PERIODS,
+  type DashboardPeriod,
   useTasks,
   useCreateTask,
   useUpdateTaskStatus,
@@ -84,10 +86,14 @@ export default function DashboardsPage() {
   const item = getNavItem("dashboards");
   const { role, currentStore } = useSession();
   const [taskOpen, setTaskOpen] = useState(false);
+  // Today by default, so the dashboard still opens on the day's trading. The
+  // wider windows are what makes a shop's own history visible at all: nothing
+  // was sold today, but crores were sold this year.
+  const [period, setPeriod] = useState<DashboardPeriod>("today");
 
   // KPIs + charts come live from the API, store-scoped via X-Store-Id.
-  const kpisQuery = useKpis();
-  const chartsQuery = useCharts();
+  const kpisQuery = useKpis(period);
+  const chartsQuery = useCharts(period);
   const tasksQuery = useTasks();
   const kpis = kpisQuery.data ?? [];
   const tasks = tasksQuery.data ?? [];
@@ -105,6 +111,21 @@ export default function DashboardsPage() {
         primaryAction={item?.primaryAction}
         onPrimaryAction={() => setTaskOpen(true)}
       />
+
+      <div className="mb-3 flex flex-wrap items-center gap-1">
+        <span className="mr-1 text-xs text-muted-foreground">Showing</span>
+        {DASHBOARD_PERIODS.map((p) => (
+          <Button
+            key={p.value}
+            size="sm"
+            variant={period === p.value ? "default" : "outline"}
+            className="h-7 px-2.5 text-xs"
+            onClick={() => setPeriod(p.value)}
+          >
+            {p.label}
+          </Button>
+        ))}
+      </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {kpisQuery.isLoading

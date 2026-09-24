@@ -48,6 +48,35 @@ function hhmm(d: Date, tz: string): string {
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+/**
+ * How far back the tiles look. Rolling windows, not calendar ones: "this month"
+ * drops to zero every 1st, which is the same way of looking empty that this is
+ * meant to fix.
+ */
+export const DASHBOARD_PERIODS = {
+  today: { days: 1, label: 'Today', suffix: 'Today', compare: 'yesterday' },
+  week: { days: 7, label: 'Last 7 days', suffix: '7d', compare: 'the previous 7 days' },
+  month: { days: 30, label: 'Last 30 days', suffix: '30d', compare: 'the previous 30 days' },
+  quarter: { days: 90, label: 'Last 90 days', suffix: '90d', compare: 'the previous 90 days' },
+  year: { days: 365, label: 'Last 12 months', suffix: '12m', compare: 'the previous 12 months' },
+} as const;
+
+export type DashboardPeriod = keyof typeof DASHBOARD_PERIODS;
+
+export function dashboardPeriod(value: unknown): DashboardPeriod {
+  return value != null && String(value) in DASHBOARD_PERIODS
+    ? (String(value) as DashboardPeriod)
+    : 'today';
+}
+
+/** The window, and the equal-length window before it to compare against. */
+function windowFor(tz: string, period: DashboardPeriod) {
+  const { days } = DASHBOARD_PERIODS[period];
+  const from = dayStartInTz(tz, days - 1);
+  const priorFrom = dayStartInTz(tz, days * 2 - 1);
+  return { from, priorFrom, priorTo: from };
+}
+
 @Injectable()
 export class DashboardService {
   constructor(
@@ -58,13 +87,13 @@ export class DashboardService {
   ) {}
 
   /** GET /dashboard/kpis — role/store-scoped aggregates computed from the DB. */
-  async kpis(user: AuthUser, headerStore?: string) {
+  async kpis(user: AuthUser, headerStore?: string, period: DashboardPeriod = 'today') {
     const storeIds = this.scope.effectiveStoreIds(user, headerStore);
     if (storeIds.length === 0) return [];
     const storeWhere = { storeId: { in: storeIds } };
     const tz = await this.scope.resolveTimezone(user, headerStore);
-    const todayStart = dayStartInTz(tz, 0);
-    const yestStart = dayStartInTz(tz, 1);
+    const { from: todayStart, priorFrom: yestStart, priorTo: yestEnd } = windowFor(tz, period);
+    const { suffix } = DASHBOARD_PERIODS[period];
     const isBroad = ROLE_RANK[user.role] >= ROLE_RANK.store_manager;
 
     // Party/product counts scoped exactly like the pages the tiles link to, so
@@ -98,7 +127,7 @@ export class DashboardService {
             ...storeWhere,
             isCancelled: false,
             docType: 'sale',
-            docDate: { gte: yestStart, lt: todayStart },
+            docDate: { gte: yestStart, lt: yestEnd },
           },
         }),
         this.prisma.checkIn.count({ where: { ...storeWhere, timeIn: { gte: todayStart } } }),
@@ -136,12 +165,18 @@ export class DashboardService {
     const kpis: any[] = [
       {
         id: 'sales',
-        label: 'Sales Today',
+        label: period === 'today' ? 'Sales Today' : `Sales · ${suffix}`,
         value: sales,
         format: 'inr',
         delta: salesDelta == null ? null : round(salesDelta),
       },
-      { id: 'footfall', label: 'Footfall', value: footfall, format: 'number', delta: null },
+      {
+        id: 'footfall',
+        label: period === 'today' ? 'Footfall' : `Footfall · ${suffix}`,
+        value: footfall,
+        format: 'number',
+        delta: null,
+      },
       {
         id: 'pending',
         label: 'Pending Orders',
@@ -162,7 +197,7 @@ export class DashboardService {
     } else {
       kpis.push({
         id: 'my-sales',
-        label: 'My Sales Today',
+        label: period === 'today' ? 'My Sales Today' : `My Sales · ${suffix}`,
         value: num(mySalesToday._sum.totalAmount),
         format: 'inr',
         delta: null,
@@ -180,7 +215,7 @@ export class DashboardService {
   }
 
   /** GET /dashboard/charts — sales trend + store comparison, store-scoped. */
-  async charts(user: AuthUser, headerStore?: string) {
+  async charts(user: AuthUser, headerStore?: string, period: DashboardPeriod = 'today') {
     const storeIds = this.scope.effectiveStoreIds(user, headerStore);
     if (storeIds.length === 0) return { salesTrend: [], storeComparison: [] };
 
@@ -208,6 +243,10 @@ export class DashboardService {
     }
 
     const monthStart = dayStartInTz(tz, td - 1); // store-midnight on the 1st of this month
+    // The comparison follows the tiles' window. Left on the calendar month it
+    // shows every shop at zero for the first days of a month, and on a tenant
+    // whose sales are historical it shows zero for good.
+    const comparisonFrom = period === 'today' ? monthStart : windowFor(tz, period).from;
     const yearAgo = dayStartInTz(tz, 366); // safely covers the 12 buckets
 
     const [salesRows, monthTargets] = await Promise.all([
@@ -236,7 +275,7 @@ export class DashboardService {
       target: targetByMonth.get(mo.key) ?? 0,
     }));
 
-    // ── This-month revenue by store ──────────────────────────────────────────
+    // ── Revenue by store, over the chosen window ─────────────────────────────
     // (today alone is empty until billing; the month is the useful comparison.)
     const currentPeriod = `${ty}-${String(tm).padStart(2, '0')}`;
     const [stores, storeMonthTargets] = await Promise.all([
@@ -254,7 +293,7 @@ export class DashboardService {
       stores.map(async (st) => {
         const agg = await this.prisma.sale.aggregate({
           _sum: { totalAmount: true },
-          where: { storeId: st.id, isCancelled: false, docType: 'sale', docDate: { gte: monthStart } },
+          where: { storeId: st.id, isCancelled: false, docType: 'sale', docDate: { gte: comparisonFrom } },
         });
         return {
           // Label bars by store NAME (unique per store); two stores can share a

@@ -120,25 +120,42 @@ export function useAssignableUsers() {
   });
 }
 
-/** GET /dashboard/kpis — store-scoped KPI snapshot. */
-export function useKpis() {
+/**
+ * How far back the dashboard looks. The tiles counted only today, so a shop
+ * whose history came from the old ERP saw crores on the twelve-month chart and
+ * zero on every tile above it.
+ */
+export const DASHBOARD_PERIODS = [
+  { value: "today", label: "Today" },
+  { value: "week", label: "7 days" },
+  { value: "month", label: "30 days" },
+  { value: "quarter", label: "90 days" },
+  { value: "year", label: "12 months" },
+] as const;
+
+export type DashboardPeriod = (typeof DASHBOARD_PERIODS)[number]["value"];
+
+/** GET /dashboard/kpis — store-scoped KPI snapshot over the chosen window. */
+export function useKpis(period: DashboardPeriod = "today") {
   const storeId = useStoreKey();
   return useQuery({
-    queryKey: ["dashboard", "kpis", storeId],
+    queryKey: ["dashboard", "kpis", storeId, period],
     queryFn: async () => {
-      const { data } = await api.get<Kpi[]>("/dashboard/kpis");
+      const { data } = await api.get<Kpi[]>("/dashboard/kpis", { params: { period } });
       return data;
     },
   });
 }
 
 /** GET /dashboard/charts — sales trend + store comparison. */
-export function useCharts() {
+export function useCharts(period: DashboardPeriod = "today") {
   const storeId = useStoreKey();
   return useQuery({
-    queryKey: ["dashboard", "charts", storeId],
+    queryKey: ["dashboard", "charts", storeId, period],
     queryFn: async () => {
-      const { data } = await api.get<DashboardCharts>("/dashboard/charts");
+      const { data } = await api.get<DashboardCharts>("/dashboard/charts", {
+        params: { period },
+      });
       return data;
     },
   });
