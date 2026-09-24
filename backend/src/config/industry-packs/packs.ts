@@ -371,6 +371,7 @@ const JEWELLERY: IndustryPack = {
   fieldPolicies: [],
   onboarding: {
     enabledNavigation: eclatNavigation(
+      'activity',
       'store-comparison',
       'quotation',
       'returns',

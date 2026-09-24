@@ -36,6 +36,17 @@ export class DashboardController {
     return this.dashboard.charts(user, store, dashboardPeriod(period));
   }
 
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
+  @Get('activity')
+  activity(
+    @CurrentUser() user: AuthUser,
+    @StoreHeader() store?: string,
+    @Query('period') period?: string,
+  ) {
+    return this.dashboard.activity(user, store, dashboardPeriod(period));
+  }
+
   @Get('tasks')
   tasks(
     @CurrentUser() user: AuthUser,

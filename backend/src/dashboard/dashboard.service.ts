@@ -214,6 +214,161 @@ export class DashboardService {
     return kpis;
   }
 
+  /**
+   * GET /dashboard/activity — what actually happened in the window.
+   *
+   * The tiles answer "how much". This answers the three questions that follow
+   * and that the tiles cannot: WHEN it came in (a day-by-day flow), WHICH
+   * documents it came from (with their dates, types and stores, so a branch
+   * transfer is never mistaken for a sale), and WHAT IS STILL SITTING - because
+   * a shop that only ever sees what sold cannot see the stock that is aging on
+   * the shelf, which is the half that costs money.
+   */
+  async activity(user: AuthUser, headerStore?: string, period: DashboardPeriod = 'month') {
+    const storeIds = this.scope.effectiveStoreIds(user, headerStore);
+    const empty = {
+      period,
+      from: null as string | null,
+      flow: [] as { date: string; label: string; sales: number; bills: number }[],
+      documents: [] as unknown[],
+      sold: { pieces: 0, value: 0, top: [] as unknown[] },
+      unsold: { pieces: 0, value: 0, buckets: [] as unknown[] },
+    };
+    if (storeIds.length === 0) return empty;
+
+    const tz = await this.scope.resolveTimezone(user, headerStore);
+    const { days } = DASHBOARD_PERIODS[period];
+    const from = dayStartInTz(tz, days - 1);
+    const storeWhere = { storeId: { in: storeIds } };
+
+    const [docs, stores, soldLines, stock] = await Promise.all([
+      // Every document in the window, not only the ones that count as revenue:
+      // seeing the transfers and proformas beside the sales is how you tell that
+      // a big month was a big month of selling.
+      this.prisma.sale.findMany({
+        where: { ...storeWhere, docDate: { gte: from } },
+        select: {
+          id: true,
+          docNo: true,
+          docType: true,
+          docDate: true,
+          totalAmount: true,
+          isCancelled: true,
+          storeId: true,
+          party: { select: { name: true } },
+        },
+        orderBy: { docDate: 'desc' },
+        take: 500,
+      }),
+      this.prisma.store.findMany({
+        where: { id: { in: storeIds } },
+        select: { id: true, name: true },
+      }),
+      // What sold, by design, so "what is moving" is answerable by name.
+      this.prisma.saleLine.findMany({
+        where: {
+          sale: { ...storeWhere, isCancelled: false, docType: 'sale', docDate: { gte: from } },
+        },
+        select: {
+          lineTotal: true,
+          product: { select: { name: true } },
+          stockItem: { select: { name: true, category: true } },
+        },
+        take: 5000,
+      }),
+      // What did not. Aging is the point: a piece is not a problem on day one.
+      this.prisma.stockItem.findMany({
+        where: { ...storeWhere, status: { in: ['in_stock', 'aging', 'dead_stock'] } },
+        select: { mrp: true, ageDays: true, inwardDate: true },
+      }),
+    ]);
+
+    const storeName = new Map(stores.map((st) => [st.id, st.name]));
+
+    // ── Day by day, so the window has a shape and not just a total ──────────
+    const byDay = new Map<string, { sales: number; bills: number }>();
+    for (const d of docs) {
+      if (d.isCancelled || d.docType !== 'sale') continue;
+      const key = dateOnly(businessDate(d.docDate, tz));
+      const cur = byDay.get(key) ?? { sales: 0, bills: 0 };
+      cur.sales += num(d.totalAmount);
+      cur.bills += 1;
+      byDay.set(key, cur);
+    }
+    // Every day in the window appears, including the empty ones - a gap in a
+    // trading week is information, and a chart that silently skips it lies.
+    const flow: { date: string; label: string; sales: number; bills: number }[] = [];
+    for (let i = days - 1; i >= 0; i -= 1) {
+      const day = businessDate(dayStartInTz(tz, i), tz);
+      const key = dateOnly(day);
+      const cur = byDay.get(key) ?? { sales: 0, bills: 0 };
+      flow.push({
+        date: key,
+        label: `${day.getUTCDate()} ${MONTHS[day.getUTCMonth()]}`,
+        sales: cur.sales,
+        bills: cur.bills,
+      });
+    }
+
+    // ── What sold ───────────────────────────────────────────────────────────
+    const byName = new Map<string, { pieces: number; value: number }>();
+    let soldValue = 0;
+    for (const l of soldLines) {
+      const name = l.product?.name ?? l.stockItem?.name ?? l.stockItem?.category ?? 'Unnamed';
+      const cur = byName.get(name) ?? { pieces: 0, value: 0 };
+      cur.pieces += 1;
+      cur.value += num(l.lineTotal);
+      soldValue += num(l.lineTotal);
+      byName.set(name, cur);
+    }
+    const top = [...byName.entries()]
+      .map(([name, v]) => ({ name, ...v }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 10);
+
+    // ── What did not ────────────────────────────────────────────────────────
+    const BUCKETS = [
+      { label: 'Under 30 days', max: 30 },
+      { label: '30 to 90 days', max: 90 },
+      { label: '90 to 180 days', max: 180 },
+      { label: 'Over 180 days', max: Infinity },
+    ];
+    const buckets = BUCKETS.map((b) => ({ label: b.label, pieces: 0, value: 0 }));
+    let unsoldValue = 0;
+    const now = Date.now();
+    for (const it of stock) {
+      // Prefer the recorded age; fall back to the inward date, because a piece
+      // synced from the old ERP may carry one and not the other.
+      const age =
+        it.ageDays ??
+        (it.inwardDate ? Math.floor((now - it.inwardDate.getTime()) / 86_400_000) : 0);
+      const value = num(it.mrp);
+      unsoldValue += value;
+      const idx = BUCKETS.findIndex((b) => age < b.max);
+      const target = buckets[idx === -1 ? buckets.length - 1 : idx];
+      target.pieces += 1;
+      target.value += value;
+    }
+
+    return {
+      period,
+      from: from.toISOString(),
+      flow,
+      documents: docs.slice(0, 200).map((d) => ({
+        id: d.id,
+        docNo: d.docNo,
+        docType: d.docType,
+        docDate: d.docDate.toISOString(),
+        store: storeName.get(d.storeId) ?? '',
+        customer: d.party?.name ?? '',
+        amount: num(d.totalAmount),
+        isCancelled: d.isCancelled,
+      })),
+      sold: { pieces: soldLines.length, value: soldValue, top },
+      unsold: { pieces: stock.length, value: unsoldValue, buckets },
+    };
+  }
+
   /** GET /dashboard/charts — sales trend + store comparison, store-scoped. */
   async charts(user: AuthUser, headerStore?: string, period: DashboardPeriod = 'today') {
     const storeIds = this.scope.effectiveStoreIds(user, headerStore);

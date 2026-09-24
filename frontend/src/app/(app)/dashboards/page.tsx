@@ -64,7 +64,10 @@ function kpiHref(id: string): string | undefined {
   switch (id) {
     case "sales":
     case "my-sales":
-      return "/reporting";
+      // Business Activity, not Reporting: the question after "how much" is when,
+      // which bills, and what is still unsold, and that is the page that answers
+      // it. Reporting is where you go to file the day's DSR.
+      return "/activity";
     case "footfall":
       return "/checkins";
     case "pending":
@@ -77,6 +80,8 @@ function kpiHref(id: string): string | undefined {
       return "/catalogue";
     case "stock":
       return "/inventory";
+    case "sold":
+      return "/activity";
     default:
       return undefined;
   }

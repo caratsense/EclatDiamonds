@@ -1,4 +1,5 @@
 import {
+  Activity,
   type LucideIcon,
   Users,
   FileText,
@@ -134,6 +135,19 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Automated daily sales reports and store analytics.",
     primaryAction: "Generate DSR",
     icon: BarChart3,
+    group: "Overview & Analytics",
+    roles: ["store_manager", "area_manager", "head_office"],
+  },
+  {
+    // The drill-down behind the dashboard tiles: when the money came in, which
+    // documents it came from, and what is still sitting unsold. A tile that only
+    // changes its number cannot answer any of those.
+    module: 10,
+    slug: "activity",
+    title: "Business Activity",
+    purpose: "When it sold, what sold, and what is still sitting.",
+    primaryAction: "",
+    icon: Activity,
     group: "Overview & Analytics",
     roles: ["store_manager", "area_manager", "head_office"],
   },

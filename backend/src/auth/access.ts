@@ -23,7 +23,7 @@ export type AccessMap = Record<string, AccessLevel>;
 
 export const MODULES = [
   // Overview & Analytics
-  'dashboards', 'reporting', 'store-comparison', 'management', 'reporting/scheduled',
+  'dashboards', 'activity', 'reporting', 'store-comparison', 'management', 'reporting/scheduled',
   // CRM
   'conversations', 'crm', 'calling', 'reminders', 'customers', 'feedback', 'tasks',
   'conversations/sla', 'customers/archived',

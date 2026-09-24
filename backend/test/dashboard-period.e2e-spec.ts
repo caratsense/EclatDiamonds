@@ -148,6 +148,83 @@ describe('Dashboard period window (e2e)', () => {
     expect(labelOf(res.body, 'sales')).toBe('Sales Today');
   });
 
+  it('activity shows every document but counts only what sold', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/dashboard/activity?period=quarter')
+      .set(auth())
+      .set('X-Store-Id', SURAT)
+      .expect(200);
+
+    // One entry per day in the window, including the days nothing happened - a
+    // chart that drops empty days hides exactly the gaps worth seeing.
+    expect(res.body.flow).toHaveLength(90);
+    expect(new Set(res.body.flow.map((d: { date: string }) => d.date)).size).toBe(90);
+
+    // The fixtures are sales, so they are in the flow and in the documents.
+    const flowTotal = res.body.flow.reduce((n: number, d: { sales: number }) => n + d.sales, 0);
+    expect(flowTotal).toBeGreaterThan(0);
+    const refs = res.body.documents.map((d: { docNo: string }) => d.docNo);
+    expect(refs).toEqual(expect.arrayContaining(['PERIOD-20D', 'PERIOD-3D']));
+
+    // Every document carries its own date and its kind, so a transfer between
+    // two of the shop's own branches can never be read as revenue.
+    for (const d of res.body.documents) {
+      expect(typeof d.docDate).toBe('string');
+      expect(Number.isNaN(Date.parse(d.docDate))).toBe(false);
+      expect(typeof d.docType).toBe('string');
+    }
+
+    // Both halves of the stock question are answered, not just the sold half.
+    expect(res.body.sold).toEqual(
+      expect.objectContaining({ pieces: expect.any(Number), value: expect.any(Number) }),
+    );
+    expect(res.body.unsold.buckets.map((b: { label: string }) => b.label)).toEqual([
+      'Under 30 days',
+      '30 to 90 days',
+      '90 to 180 days',
+      'Over 180 days',
+    ]);
+  });
+
+  it('a branch transfer is listed as a document but never as revenue', async () => {
+    const organisationId = (
+      await prisma.store.findUniqueOrThrow({
+        where: { id: SURAT },
+        select: { organisationId: true },
+      })
+    ).organisationId;
+    await prisma.sale.upsert({
+      where: { organisationId_legacyId: { organisationId, legacyId: 'PERIOD-XFER' } },
+      update: {},
+      create: {
+        organisationId,
+        legacyId: 'PERIOD-XFER',
+        storeId: SURAT,
+        docNo: 'PERIOD-XFER',
+        docDate: daysAgo(5),
+        totalAmount: 9_000_000,
+        docType: 'branch_transfer',
+      },
+    });
+
+    const res = await request(app.getHttpServer())
+      .get('/dashboard/activity?period=month')
+      .set(auth())
+      .set('X-Store-Id', SURAT)
+      .expect(200);
+
+    const xfer = res.body.documents.find((d: { docNo: string }) => d.docNo === 'PERIOD-XFER');
+    expect(xfer).toBeDefined();
+    expect(xfer.docType).toBe('branch_transfer');
+
+    // Ninety lakh of stock moved between the shop's own branches. None of it is
+    // money the shop earned, so none of it may reach the flow or the tiles.
+    const flowTotal = res.body.flow.reduce((n: number, d: { sales: number }) => n + d.sales, 0);
+    expect(flowTotal).toBeLessThan(9_000_000);
+    const kpis = await sales('month').expect(200);
+    expect(valueOf(kpis.body, 'sales')).toBeLessThan(9_000_000);
+  });
+
   it('the store comparison follows the window too', async () => {
     const today = await request(app.getHttpServer())
       .get('/dashboard/charts?period=today')
