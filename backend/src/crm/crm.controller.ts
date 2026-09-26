@@ -22,6 +22,7 @@ import { IdentityService, ContactKind } from './identity.service';
 import { PipelinesService } from './pipelines.service';
 import {
   BackfillIdentityDto,
+  CreateCustomerNoteDto,
   CreatePipelineDto,
   LinkContactDto,
   LookupCustomerDto,
@@ -83,6 +84,26 @@ export class CrmCustomersController {
     });
   }
 
+  /**
+   * What the branch makes of this customer.
+   *
+   * Includes notes left on any of their leads, so this is the whole picture and
+   * not only the notes somebody happened to write from this screen.
+   */
+  @Get(':id/notes')
+  notes(@CurrentUser() user: AuthUser, @Param('id') id: string, @Query('limit') limit?: string) {
+    return this.customers.notesFor(user, id, limit ? Number(limit) : undefined);
+  }
+
+  @Post(':id/notes')
+  addNote(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() body: CreateCustomerNoteDto,
+  ) {
+    return this.customers.addNote(user, id, { text: body.text, kind: body.kind ?? 'note' });
+  }
+
   @Get(':id/contacts')
   contacts(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.identity.contactPointsFor(user, id);
@@ -138,13 +159,23 @@ export class CrmIdentityController {
 
 /** The unified inbox (Phase A3). Channel-neutral. */
 
+/*
+ * `@IsNotEmpty` on both ids, because "" is not a way of saying "nobody".
+ *
+ * An empty string satisfied `@IsString()`, was then read as falsy by the
+ * service's `if (input.assignedUserId)` guard — so it skipped the
+ * store-membership check entirely — and was finally written to the column,
+ * where the foreign key rejected it as a 500. Clearing an owner or a branch is
+ * spelled `null`, which `@ValidateIf` still lets through; "" now fails at the
+ * door with a 400 that says which field was wrong.
+ */
 export class AssignConversationDto {
   /** null clears the store (returns the thread to the central queue). */
-  @IsOptional() @ValidateIf((o) => o.storeId !== null) @IsString()
+  @IsOptional() @ValidateIf((o) => o.storeId !== null) @IsString() @IsNotEmpty()
   storeId?: string | null;
 
   /** null unassigns. Explicitly nullable - the old @IsString() made unassigning impossible. */
-  @IsOptional() @ValidateIf((o) => o.assignedUserId !== null) @IsString()
+  @IsOptional() @ValidateIf((o) => o.assignedUserId !== null) @IsString() @IsNotEmpty()
   assignedUserId?: string | null;
 
   @IsOptional() @IsIn(['ai', 'human', 'unassigned'])
@@ -201,9 +232,11 @@ export class CrmConversationsController {
     @Query('unidentified') unidentified?: string,
     @Query('storeId') storeId?: string,
     @Query('partyId') partyId?: string,
+    @Query('nonAd') nonAd?: string,
   ) {
     // Every one of these narrows the caller's own scope; none widens it. The
-    // store filter is asserted against their allowed stores in the service.
+    // store filter is asserted against their allowed stores in the service, and
+    // `nonAd` is refused there for anyone below head office.
     return this.conversations.list(user, {
       status,
       handling,
@@ -211,6 +244,7 @@ export class CrmConversationsController {
       assignedToMe: mine === 'true',
       routingReview: routingReview === 'true',
       unidentified: unidentified === 'true',
+      nonAd: nonAd === 'true',
       storeId: storeId || undefined,
       partyId: partyId || undefined,
       limit: limit ? Number(limit) : undefined,

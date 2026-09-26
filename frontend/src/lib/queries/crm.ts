@@ -238,6 +238,43 @@ export function useLinkContact(partyId: string) {
   });
 }
 
+/* --------------------------------------------------------- Customer notes */
+
+export interface CustomerNote {
+  id: string;
+  kind: string;
+  text: string;
+  createdAt: string;
+  /** Denormalised at write time, so it survives the author leaving. */
+  authorName: string | null;
+  leadId: string | null;
+  /** True when it was written against one opportunity rather than the person. */
+  onLead: boolean;
+}
+
+/** Notes about this customer, including any left on their leads. Newest first. */
+export function useCustomerNotes(partyId: string | null) {
+  return useQuery({
+    queryKey: ["crm", "customer-notes", partyId],
+    enabled: !!partyId,
+    queryFn: async () =>
+      (await api.get<CustomerNote[]>(`/crm/customers/${partyId}/notes`)).data,
+  });
+}
+
+export function useAddCustomerNote(partyId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { text: string; kind?: string }) =>
+      (await api.post<CustomerNote>(`/crm/customers/${partyId}/notes`, input)).data,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["crm", "customer-notes", partyId] });
+      // The note also lands on the customer's timeline.
+      void qc.invalidateQueries({ queryKey: ["crm", "customer360", partyId] });
+    },
+  });
+}
+
 /* --------------------------------------------------------------- Inbox */
 
 export interface ConversationRow {
@@ -294,6 +331,8 @@ export function useConversations(params: {
   routingReview?: boolean;
   /** Inbound traffic not yet linked to a customer. */
   unidentified?: boolean;
+  /** Conversations no ad brought in. Head office only; the server refuses others. */
+  nonAd?: boolean;
   storeId?: string;
   /** Every thread belonging to one customer, newest first. */
   partyId?: string;
@@ -311,6 +350,7 @@ export function useConversations(params: {
             mine: params.mine ? "true" : undefined,
             routingReview: params.routingReview ? "true" : undefined,
             unidentified: params.unidentified ? "true" : undefined,
+            nonAd: params.nonAd ? "true" : undefined,
             storeId: params.storeId,
             partyId: params.partyId,
           },

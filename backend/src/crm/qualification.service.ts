@@ -10,6 +10,7 @@ import { ActivityService } from './activity.service';
 import { CrmAiProvider } from './crm-ai.provider';
 import {
   DEFAULT_QUALIFICATION_POLICY,
+  bandForScore,
   matchSignals,
   resolvePolicy,
   scoreSignals,
@@ -435,6 +436,153 @@ export class QualificationService {
     return this.toView(row, policy, false);
   }
 
+  /* ---------------------------------------------------- a person's score */
+
+  /**
+   * Record a person's own judgement of a lead, over the top of the assistant's.
+   *
+   * THE ASSISTANT'S ROW IS NOT TOUCHED. This appends, exactly as every other
+   * assessment does, and the panel shows the newest — so the manager's score
+   * becomes the current one while the machine's stays underneath it. Overwriting
+   * would destroy the only evidence of what the business was told at the moment
+   * it acted, and would let a bad score be quietly tidied away by the person it
+   * embarrassed.
+   *
+   * It also leaves the question open, permanently and cheaply: with both rows
+   * kept, whether the branch or the model reads customers better is something
+   * the data can answer in six months. Overwrite, and nobody can ever ask.
+   *
+   * What is deliberately NOT recorded:
+   *
+   *   - `confidence` stays null. A person's certainty is not a measured
+   *     quantity, and a hard-coded 1.0 would be a fabricated claim sitting in
+   *     the same column as the model's real ones.
+   *   - `signals` is empty. Nothing fired; somebody decided. The reason they
+   *     give is the evidence, and it is stored as the summary.
+   *   - `messagesConsidered` is 0. We know what they were shown, not what they
+   *     read, and the panel omits the line for a human score rather than
+   *     claiming a number.
+   */
+  async setManualScore(
+    user: AuthUser,
+    target: { conversationId?: string; leadId?: string },
+    input: { score: number; reason: string },
+  ) {
+    if (!target.conversationId && !target.leadId) {
+      throw new BadRequestException('Score a conversation or a lead.');
+    }
+
+    // Reach the subject under the SAME rule that governs opening it, so this
+    // cannot become a side door onto another branch's customers.
+    const subject = target.conversationId
+      ? await this.prisma.conversation.findFirst({
+          where: {
+            id: target.conversationId,
+            organisationId: user.organisationId,
+            ...this.readableConversation(user),
+          },
+          select: { id: true, partyId: true, storeId: true },
+        })
+      : await this.prisma.lead.findFirst({
+          where: {
+            id: target.leadId,
+            organisationId: user.organisationId,
+            storeId: { in: user.storeIds },
+            ...(isSalesScoped(user) ? { ownerId: user.id } : {}),
+          },
+          select: { id: true, partyId: true, storeId: true },
+        });
+    if (!subject) {
+      throw new NotFoundException(target.conversationId ? 'Conversation not found' : 'Lead not found');
+    }
+
+    const policy = await this.policyFor(user.organisationId);
+    const score = Math.max(0, Math.min(100, Math.round(input.score)));
+    const band = bandForScore(policy, score);
+    const reason = input.reason.trim();
+
+    // The same escalation rule the signal path uses. A band that asks for a
+    // person still asks for one when a person set the score — otherwise the
+    // tenant's own escalation policy would mean two different things depending
+    // on who typed the number.
+    const handoffByScore = policy.handoffAtScore != null && score >= policy.handoffAtScore;
+
+    // A conversation carries its own lead, so the score attaches to the funnel
+    // record a salesperson actually works from — the same link `assess` makes.
+    const leadId = target.leadId
+      ? subject.id
+      : subject.partyId
+        ? ((
+            await this.prisma.lead.findFirst({
+              where: { organisationId: user.organisationId, partyId: subject.partyId, outcome: 'open' },
+              orderBy: { createdAt: 'desc' },
+              select: { id: true },
+            })
+          )?.id ?? null)
+        : null;
+
+    const row = await this.prisma.leadQualification.create({
+      data: {
+        organisationId: user.organisationId,
+        partyId: subject.partyId,
+        leadId,
+        conversationId: target.conversationId ?? null,
+        method: 'human',
+        score,
+        confidence: null,
+        band: band?.key ?? null,
+        recommendedAction: band?.recommendedAction ?? null,
+        handoffRequested: handoffByScore || !!band?.requestHandoff,
+        handoffReason: handoffByScore
+          ? `Score ${score} is at or above the escalation threshold of ${policy.handoffAtScore}.`
+          : band?.requestHandoff
+            ? `The “${band.label}” band asks for a person.`
+            : null,
+        signals: [] as unknown as Prisma.InputJsonValue,
+        requirements: {} as Prisma.InputJsonValue,
+        summary: reason,
+        policyVersion: policy.version,
+        provider: null,
+        model: null,
+        messagesConsidered: 0,
+        createdById: user.id,
+      },
+    });
+
+    // An override is a management action on a customer record, so it is audited
+    // as well as put on the timeline — the timeline is a working view and can be
+    // filtered; the audit log is the one nobody can curate.
+    await this.audit.record(user, {
+      action: 'crm.qualification_scored_by_hand',
+      entityType: 'LeadQualification',
+      entityId: row.id,
+      summary: `Scored ${score}/100 by hand${band ? ` (${band.label})` : ''} — ${reason}`,
+      metadata: {
+        score,
+        band: band?.key ?? null,
+        conversationId: target.conversationId ?? null,
+        leadId,
+      },
+    });
+
+    if (subject.partyId) {
+      this.activity
+        .recordFor(user, {
+          type: 'lead.qualified',
+          partyId: subject.partyId,
+          leadId: leadId ?? undefined,
+          storeId: subject.storeId ?? undefined,
+          summary: `Scored ${score}/100 by hand — ${band?.label ?? 'unbanded'}`,
+          entityType: 'LeadQualification',
+          entityId: row.id,
+          metadata: { score, band: band?.key ?? null, method: 'human', reason },
+        })
+        .catch((e) => this.log.warn(`manual qualification activity not recorded: ${e.message}`));
+    }
+
+    return this.toView(row, policy, false, user.name);
+  }
+
   /* ------------------------------------------------------------- reads */
 
   /** The latest assessment for a customer or lead, with its policy context. */
@@ -454,7 +602,8 @@ export class QualificationService {
     });
     if (!row) return null;
     const policy = await this.policyFor(user.organisationId);
-    return this.toView(row, policy, false);
+    const names = await this.authorNames([row.createdById]);
+    return this.toView(row, policy, false, row.createdById ? (names.get(row.createdById) ?? null) : null);
   }
 
   /** History for one subject — how an assessment moved as a conversation went on. */
@@ -470,7 +619,10 @@ export class QualificationService {
       take: Math.min(limit, 100),
     });
     const policy = await this.policyFor(user.organisationId);
-    return rows.map((r) => this.toView(r, policy, false));
+    const names = await this.authorNames(rows.map((r) => r.createdById));
+    return rows.map((r) =>
+      this.toView(r, policy, false, r.createdById ? (names.get(r.createdById) ?? null) : null),
+    );
   }
 
   /** Threads this caller may read — the inbox rule. */
@@ -521,12 +673,19 @@ export class QualificationService {
       unavailableReason: string | null;
       messagesConsidered: number;
       createdAt: Date;
+      createdById: string | null;
       partyId: string | null;
       leadId: string | null;
       conversationId: string | null;
     },
     policy: QualificationPolicy,
     lowConfidence: boolean,
+    /**
+     * Who set it, when a person did. Resolved by the caller rather than joined:
+     * `LeadQualification.createdById` carries no FK, so there is no relation to
+     * include, and adding one for a label is not worth a migration.
+     */
+    authorName: string | null = null,
   ) {
     const signals = (Array.isArray(row.signals) ? row.signals : []) as unknown as SignalResult[];
     const bandDef = policy.bands.find((b) => b.key === row.band) ?? null;
@@ -560,6 +719,26 @@ export class QualificationService {
       model: row.model,
       messagesConsidered: row.messagesConsidered,
       createdAt: row.createdAt,
+      createdById: row.createdById,
+      /** Null for anything the assistant produced on its own. */
+      authorName,
     };
+  }
+
+  /**
+   * Display names for the people who set these scores.
+   *
+   * One query for the whole set, and a missing user resolves to null rather
+   * than to a placeholder: a deactivated account should read as "scored by
+   * hand" with no name, not as somebody who still works here.
+   */
+  private async authorNames(ids: (string | null)[]): Promise<Map<string, string>> {
+    const wanted = [...new Set(ids.filter((id): id is string => !!id))];
+    if (!wanted.length) return new Map();
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: wanted } },
+      select: { id: true, name: true },
+    });
+    return new Map(users.map((u) => [u.id, u.name]));
   }
 }

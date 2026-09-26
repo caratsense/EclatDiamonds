@@ -201,7 +201,15 @@ export class IdentityService {
           types: ['customer'],
           // Keep the legacy denormalised snapshot in step for the many existing
           // screens that read Party.phone directly.
-          ...(input.kind === 'phone' ? { phone: input.value.trim() } : {}),
+          //
+          // A WhatsApp id fills `phone` as well as `whatsapp`, because it IS a
+          // phone number and `phone` is the field the screens a branch manager
+          // uses to ring somebody actually read. Leaving it null gave every ad
+          // lead a customer record with no number on it — reachable only by
+          // opening the thread, which is exactly the lead nobody calls.
+          ...(input.kind === 'phone' || input.kind === 'whatsapp'
+            ? { phone: input.value.trim() }
+            : {}),
           ...(input.kind === 'whatsapp' ? { whatsapp: input.value.trim() } : {}),
           ...(input.kind === 'email' ? { email: input.value.trim() } : {}),
         },

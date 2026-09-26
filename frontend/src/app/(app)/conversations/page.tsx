@@ -19,7 +19,6 @@ import {
   ExternalLink,
   FileText,
   Filter,
-  FolderDown,
   Inbox,
   Mail,
   MapPin,
@@ -32,6 +31,7 @@ import {
   Phone,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   Send,
   SlidersHorizontal,
@@ -71,8 +71,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  useAddCustomerNote,
   useConversationThread,
   useConversations,
+  useCustomerNotes,
   useQueueCounts,
   useSendReply,
   useUpdateConversation,
@@ -94,7 +96,35 @@ const QUEUES = [
   { key: "snoozed", label: "Snoozed", icon: Clock },
   { key: "follow_up", label: "Follow Up", icon: Calendar },
   { key: "closed", label: "Closed", countKey: "closed" },
+  /*
+   * Traffic no ad paid for, and therefore traffic no branch owns.
+   *
+   * Head office only — `headOfficeOnly` hides the tab, and the server refuses
+   * the query outright for anyone else, so hiding it is a courtesy rather than
+   * the control.
+   */
+  { key: "non_ad", label: "Non-ad", countKey: "non_ad", headOfficeOnly: true },
 ];
+
+/**
+ * Render WhatsApp's `*bold*` the way WhatsApp does.
+ *
+ * The thread stores exactly what the customer was sent, asterisks and all — the
+ * assistant's questions use them, and so does the sender's name on a reply typed
+ * here. Showing the raw markup would mean the dashboard renders the one thing
+ * the customer never sees.
+ *
+ * Bold only, deliberately: it is what the product actually sends. A fuller
+ * markdown parser would invent formatting nobody asked for, and would have to
+ * guess at the stray asterisk in "3*4mm".
+ */
+function whatsappText(body: string): React.ReactNode {
+  const parts = body.split(/\*([^*\n]+)\*/g);
+  // split() with one capture group alternates: plain, bold, plain, bold, …
+  return parts.map((part, i) =>
+    i % 2 === 1 ? <strong key={i}>{part}</strong> : <span key={i}>{part}</span>,
+  );
+}
 
 export default function ConversationsPage() {
   return (
@@ -129,6 +159,10 @@ function ConversationsContent() {
   const queue = searchParams.get("queue") ?? "open";
   const partyId = searchParams.get("partyId");
 
+  // Whether the Non-ad queue is offered at all. The server refuses it for
+  // everyone else regardless, so this only keeps a dead tab off the screen.
+  const isHeadOffice = useSession((s) => s.role) === "head_office";
+
   const navigate = (next: {
     queue?: string | null;
     partyId?: string | null;
@@ -160,7 +194,11 @@ function ConversationsContent() {
         ? { handling: "ai" as const }
         : queue === "closed"
           ? { status: "closed" as const }
-          : { status: "open" as const };
+          : queue === "non_ad"
+            ? // Deliberately NOT also filtered to open: the point of this queue is
+              // to account for every conversation no ad paid for.
+              { nonAd: true }
+            : { status: "open" as const };
 
   const list = useConversations(partyId ? { partyId } : serverQueueParams);
   const counts = useQueueCounts();
@@ -234,7 +272,7 @@ function ConversationsContent() {
       {/* ── TOP TABS BAR (Exact Zithara Header: Inbox, Starred, Unread, Closed, Snoozed) ── */}
       <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-2">
         <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none">
-          {QUEUES.map((q) => {
+          {QUEUES.filter((q) => !q.headOfficeOnly || isHeadOffice).map((q) => {
             const isCurrent = queue === q.key;
             const Icon = q.icon;
             const count =
@@ -524,6 +562,15 @@ function ThreadView({
   const { data, isLoading, isError, error, refetch } = useConversationThread(id);
   const send = useSendReply(id);
   const update = useUpdateConversation(id);
+
+  /*
+   * Read here rather than further down beside `party`, because the early returns
+   * for loading and error sit between the two and a hook cannot be called after
+   * them. Null while the thread loads, which both hooks treat as "not enabled".
+   */
+  const notesPartyId = data?.conversation.party?.id ?? null;
+  const notes = useCustomerNotes(notesPartyId);
+  const addNote = useAddCustomerNote(notesPartyId);
   const [draft, setDraft] = useState("");
   const [showRightCrm, setShowRightCrm] = useState(true);
 
@@ -636,18 +683,59 @@ function ThreadView({
               <Star className={`h-3.5 w-3.5 ${isStarred ? "fill-amber-400 text-amber-400" : ""}`} />
             </Button>
 
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 w-7 p-0 text-muted-foreground hover:text-[#25D366]"
-              title="Mark resolved & closed"
-              onClick={() => {
-                update.mutate({ status: "closed" });
-                toast.success("Marked resolved & closed");
-              }}
-            >
-              <CheckCircle2 className="h-3.5 w-3.5" />
-            </Button>
+            {/*
+              Closing takes the thread out of the active list; it stays readable
+              under the Closed tab, and reopens by itself if the customer writes
+              again.
+
+              Both branches AWAIT the mutation. The version this replaces fired
+              `toast.success` next to an un-awaited `mutate`, so a refused close
+              — another branch's thread, an expired session — still told the user
+              it had worked, and the thread stayed in their queue contradicting
+              the message they had just been shown.
+            */}
+            {conversation.status === "closed" ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                title="Reopen this conversation"
+                disabled={update.isPending}
+                onClick={async () => {
+                  try {
+                    await update.mutateAsync({ status: "open" });
+                    toast.success("Reopened", {
+                      description: "It is back in the active list.",
+                    });
+                  } catch (e) {
+                    toast.error(apiErrorMessage(e, "Could not reopen it."));
+                  }
+                }}
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 w-7 p-0 text-muted-foreground hover:text-[#25D366]"
+                title="Close this conversation"
+                disabled={update.isPending}
+                onClick={async () => {
+                  try {
+                    await update.mutateAsync({ status: "closed" });
+                    toast.success("Closed", {
+                      description:
+                        "It leaves the active list and stays under Closed. It reopens if they message again.",
+                    });
+                  } catch (e) {
+                    toast.error(apiErrorMessage(e, "Could not close it."));
+                  }
+                }}
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" />
+              </Button>
+            )}
 
             {party?.phone && (
               <Button
@@ -688,10 +776,14 @@ function ThreadView({
                   <AlarmClock className="h-3.5 w-3.5 text-muted-foreground" />
                   Snooze until tomorrow
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => toast.success("Conversation archived")} className="gap-2 text-xs">
-                  <FolderDown className="h-3.5 w-3.5 text-muted-foreground" />
-                  Archive conversation
-                </DropdownMenuItem>
+                {/*
+                  "Archive conversation" was here and did nothing but raise a
+                  success toast. It is removed rather than reimplemented: there
+                  is no archive state in the model — a thread is open, snoozed or
+                  closed — so it could only ever have duplicated Close, and two
+                  controls that claim to do different things while doing the same
+                  one is worse than either alone.
+                */}
               </DropdownMenuContent>
             </DropdownMenu>
 
@@ -797,7 +889,7 @@ function ThreadView({
                       )}
 
                       {m.body ? (
-                        <p className="whitespace-pre-wrap select-text">{m.body}</p>
+                        <p className="whitespace-pre-wrap select-text">{whatsappText(m.body)}</p>
                       ) : !m.mediaUrl ? (
                         <p className="whitespace-pre-wrap select-text opacity-70">(attachment)</p>
                       ) : null}
@@ -1093,6 +1185,13 @@ function ThreadView({
                 <span className="font-medium flex items-center gap-1.5">
                   <FileText className="h-3.5 w-3.5 text-muted-foreground" />
                   Notes
+                  {/* The real count, so a thread with history says so before it
+                      is opened. Omitted rather than shown as 0 while loading. */}
+                  {notes.data?.length ? (
+                    <span className="num text-[10px] text-muted-foreground">
+                      ({notes.data.length})
+                    </span>
+                  ) : null}
                 </span>
                 <button
                   type="button"
@@ -1150,13 +1249,22 @@ function ThreadView({
       )}
 
       {/* ── Dialogs for Zithara Accordions ── */}
-      {/* 1. Add Note Dialog */}
+      {/*
+        1. Add Note.
+
+        This dialog previously raised "Note added to customer profile" and threw
+        the text away — nothing was ever sent anywhere. It now writes a real note
+        against the customer, and refuses honestly when the thread has no
+        customer to attach one to.
+      */}
       <Dialog open={noteDialogOpen} onOpenChange={setNoteDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-base">Add Customer Note</DialogTitle>
+            <DialogTitle className="text-base">Add customer note</DialogTitle>
             <DialogDescription className="text-xs">
-              Record customer preferences or showroom conversation details.
+              {party
+                ? `Recorded against ${party.name}, and visible on every conversation with them.`
+                : "This thread is not linked to a customer yet, so there is nobody to attach a note to."}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-2">
@@ -1165,7 +1273,27 @@ function ThreadView({
               value={noteText}
               onChange={(e) => setNoteText(e.target.value)}
               rows={3}
+              maxLength={2000}
+              disabled={!party}
             />
+            {notes.data?.length ? (
+              <div className="space-y-1.5 border-t border-border pt-3">
+                <p className="text-[11px] font-medium text-muted-foreground">
+                  Already on record
+                </p>
+                <ul className="max-h-40 space-y-1.5 overflow-y-auto">
+                  {notes.data.slice(0, 8).map((n) => (
+                    <li key={n.id} className="rounded-md border border-border bg-muted/30 p-2 text-xs">
+                      <p className="leading-relaxed">{n.text}</p>
+                      <p className="mt-1 text-[10px] text-muted-foreground">
+                        {n.authorName ?? "Someone"} · {new Date(n.createdAt).toLocaleDateString()}
+                        {n.onLead ? " · on a lead" : ""}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </div>
           <DialogFooter>
             <Button variant="outline" size="sm" onClick={() => setNoteDialogOpen(false)}>
@@ -1173,13 +1301,19 @@ function ThreadView({
             </Button>
             <Button
               size="sm"
-              onClick={() => {
-                toast.success("Note added to customer profile");
-                setNoteText("");
-                setNoteDialogOpen(false);
+              disabled={!party || !noteText.trim() || addNote.isPending}
+              onClick={async () => {
+                try {
+                  await addNote.mutateAsync({ text: noteText.trim() });
+                  setNoteText("");
+                  setNoteDialogOpen(false);
+                  toast.success("Note saved");
+                } catch (e) {
+                  toast.error(apiErrorMessage(e, "Could not save the note."));
+                }
               }}
             >
-              Save Note
+              {addNote.isPending ? "Saving…" : "Save note"}
             </Button>
           </DialogFooter>
         </DialogContent>

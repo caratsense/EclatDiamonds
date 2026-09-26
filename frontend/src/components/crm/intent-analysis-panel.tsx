@@ -1,10 +1,12 @@
 "use client";
 
+import { useState } from "react";
 import {
   ArrowRight,
   CheckCircle2,
   HelpCircle,
   Lightbulb,
+  PencilLine,
   RefreshCw,
   Sparkles,
   TrendingUp,
@@ -15,14 +17,20 @@ import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import { StatusPill, type PillTone } from "@/components/ui/status-pill";
 import {
   useAssessConversation,
   useAssessLead,
   useLatestQualification,
+  useScoreByHand,
 } from "@/lib/queries/crm-ai";
+import { ROLE_RANK } from "@/lib/types";
 import { apiErrorMessage } from "@/lib/utils";
+import { useSession } from "@/store/use-session";
 
 /**
  * What the qualification engine actually concluded about this conversation.
@@ -79,8 +87,18 @@ export function IntentAnalysisPanel({
   });
   const assessConversation = useAssessConversation();
   const assessLead = useAssessLead();
+  const scoreByHand = useScoreByHand();
   const isAssessing = assessConversation.isPending || assessLead.isPending;
   const canAssess = Boolean(conversationId || leadId);
+
+  const role = useSession((s) => s.role);
+  /*
+   * Store manager and above, mirroring the server's own gate. This hides a
+   * control the caller would only be refused — it is NOT the security boundary,
+   * which lives on the endpoint.
+   */
+  const canScoreByHand = canAssess && ROLE_RANK[role] >= ROLE_RANK.store_manager;
+  const [editing, setEditing] = useState(false);
 
   const handleAssess = async () => {
     try {
@@ -89,6 +107,17 @@ export function IntentAnalysisPanel({
       await refetch();
     } catch (e) {
       toast.error(apiErrorMessage(e, "Could not run the assessment."));
+    }
+  };
+
+  const handleScoreByHand = async (score: number, reason: string) => {
+    try {
+      await scoreByHand.mutateAsync({ conversationId, leadId, score, reason });
+      await refetch();
+      setEditing(false);
+      toast.success("Your score was recorded");
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Could not record your score."));
     }
   };
 
@@ -138,37 +167,161 @@ export function IntentAnalysisPanel({
         <p className="text-sm text-muted-foreground">
           {apiErrorMessage(error, "Could not read the assessment.")}
         </p>
+      ) : editing ? (
+        <ManualScoreForm
+          initialScore={data?.score ?? null}
+          busy={scoreByHand.isPending}
+          onCancel={() => setEditing(false)}
+          onSave={handleScoreByHand}
+        />
       ) : !data ? (
-        <NotAssessed onAssess={canAssess ? handleAssess : undefined} busy={isAssessing} />
+        <NotAssessed
+          onAssess={canAssess ? handleAssess : undefined}
+          onScoreByHand={canScoreByHand ? () => setEditing(true) : undefined}
+          busy={isAssessing}
+        />
       ) : !data.available || data.score === null ? (
         <Unavailable
           reason={data.unavailableReason}
           considered={data.messagesConsidered}
           onAssess={canAssess ? handleAssess : undefined}
+          onScoreByHand={canScoreByHand ? () => setEditing(true) : undefined}
           busy={isAssessing}
         />
       ) : (
-        <Assessed data={data} onApplyAction={onApplyAction} />
+        <Assessed
+          data={data}
+          onApplyAction={onApplyAction}
+          onScoreByHand={canScoreByHand ? () => setEditing(true) : undefined}
+        />
       )}
     </div>
   );
 }
 
+/* --------------------------------------------------------- scoring by hand */
+
+/**
+ * A person's own score.
+ *
+ * The reason is required by the server and required here, so the refusal is
+ * explained before the request is made rather than after. A score somebody
+ * cannot justify is one nobody can review later — including the person who set
+ * it, three months on.
+ */
+function ManualScoreForm({
+  initialScore,
+  busy,
+  onCancel,
+  onSave,
+}: {
+  initialScore: number | null;
+  busy: boolean;
+  onCancel: () => void;
+  onSave: (score: number, reason: string) => void;
+}) {
+  const [score, setScore] = useState(String(initialScore ?? 50));
+  const [reason, setReason] = useState("");
+
+  const parsed = Number(score);
+  const scoreValid = Number.isInteger(parsed) && parsed >= 0 && parsed <= 100;
+  const reasonValid = reason.trim().length >= 3;
+
+  return (
+    <form
+      className="space-y-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (scoreValid && reasonValid) onSave(parsed, reason.trim());
+      }}
+    >
+      <p className="text-xs text-muted-foreground">
+        {/* Says plainly what will happen to the existing score, because "edit"
+            normally means "replace" and here it does not. */}
+        Your score is added on top — the assistant&rsquo;s stays on the record underneath it.
+      </p>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="manual-score" className="text-xs">
+          Score out of 100
+        </Label>
+        <Input
+          id="manual-score"
+          type="number"
+          inputMode="numeric"
+          min={0}
+          max={100}
+          step={1}
+          value={score}
+          onChange={(e) => setScore(e.target.value)}
+          className="num h-9 w-24"
+          autoFocus
+        />
+        {!scoreValid && score.trim() !== "" ? (
+          <p className="text-xs text-rose-600 dark:text-rose-400">
+            Enter a whole number between 0 and 100.
+          </p>
+        ) : null}
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="manual-reason" className="text-xs">
+          Why
+        </Label>
+        <Textarea
+          id="manual-reason"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          maxLength={500}
+          rows={3}
+          placeholder="Visited the Bandra store on Saturday and asked about financing."
+          className="text-sm"
+        />
+      </div>
+
+      <div className="flex items-center gap-2">
+        <Button type="submit" size="sm" disabled={busy || !scoreValid || !reasonValid}>
+          {busy ? "Saving…" : "Save score"}
+        </Button>
+        <Button type="button" size="sm" variant="ghost" onClick={onCancel} disabled={busy}>
+          Cancel
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 /* ------------------------------------------------------------ empty states */
 
-function NotAssessed({ onAssess, busy }: { onAssess?: () => void; busy: boolean }) {
+function NotAssessed({
+  onAssess,
+  onScoreByHand,
+  busy,
+}: {
+  onAssess?: () => void;
+  onScoreByHand?: () => void;
+  busy: boolean;
+}) {
   return (
     <div className="space-y-3">
       <p className="text-sm text-muted-foreground">
         Not assessed yet. Nothing has been scored for this conversation, so there is no
         number to show — a score is calibrated from the messages as they arrive.
       </p>
-      {onAssess ? (
-        <Button size="sm" variant="outline" onClick={onAssess} disabled={busy}>
-          <Sparkles className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-          {busy ? "Assessing…" : "Assess now"}
-        </Button>
-      ) : null}
+      <div className="flex flex-wrap gap-2">
+        {onAssess ? (
+          <Button size="sm" variant="outline" onClick={onAssess} disabled={busy}>
+            <Sparkles className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+            {busy ? "Assessing…" : "Assess now"}
+          </Button>
+        ) : null}
+        {onScoreByHand ? (
+          <Button size="sm" variant="ghost" onClick={onScoreByHand} disabled={busy}>
+            <PencilLine className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+            Score it yourself
+          </Button>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -177,11 +330,13 @@ function Unavailable({
   reason,
   considered,
   onAssess,
+  onScoreByHand,
   busy,
 }: {
   reason: string | null;
   considered: number;
   onAssess?: () => void;
+  onScoreByHand?: () => void;
   busy: boolean;
 }) {
   return (
@@ -194,12 +349,22 @@ function Unavailable({
       <p className="text-xs text-muted-foreground">
         {considered === 1 ? "1 message" : `${considered} messages`} were considered.
       </p>
-      {onAssess ? (
-        <Button size="sm" variant="outline" onClick={onAssess} disabled={busy}>
-          <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${busy ? "animate-spin" : ""}`} aria-hidden />
-          Try again
-        </Button>
-      ) : null}
+      <div className="flex flex-wrap gap-2">
+        {onAssess ? (
+          <Button size="sm" variant="outline" onClick={onAssess} disabled={busy}>
+            <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${busy ? "animate-spin" : ""}`} aria-hidden />
+            Try again
+          </Button>
+        ) : null}
+        {/* The most useful place for this: the assistant could not read the
+            thread, but a person who has spoken to them can still say. */}
+        {onScoreByHand ? (
+          <Button size="sm" variant="ghost" onClick={onScoreByHand} disabled={busy}>
+            <PencilLine className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+            Score it yourself
+          </Button>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -209,11 +374,14 @@ function Unavailable({
 function Assessed({
   data,
   onApplyAction,
+  onScoreByHand,
 }: {
   data: NonNullable<ReturnType<typeof useLatestQualification>["data"]>;
   onApplyAction?: (text: string) => void;
+  onScoreByHand?: () => void;
 }) {
   const score = data.score as number;
+  const byHand = data.method === "human";
   const tone = toneForScore(score);
   const radius = 38;
   const circumference = 2 * Math.PI * radius;
@@ -268,7 +436,7 @@ function Assessed({
                 invents a phrase like "Easy to Convert" for a number. */}
             <StatusPill tone={tone}>{data.bandLabel ?? data.band ?? "Scored"}</StatusPill>
             <Badge variant="outline" className="text-[10px] uppercase tracking-wider">
-              {data.method === "ai" ? "Model" : "Rules"}
+              {byHand ? "By hand" : data.method === "ai" ? "Model" : "Rules"}
             </Badge>
             {data.lowConfidence ? (
               <Badge variant="outline" className="text-[10px]">
@@ -276,28 +444,51 @@ function Assessed({
               </Badge>
             ) : null}
           </div>
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            {/* Confidence is omitted when the server did not report one, rather
-                than filled in with a plausible-looking percentage. */}
-            {data.confidence !== null ? (
-              <>
-                Confidence{" "}
-                <strong className="text-foreground">
-                  {Math.round(data.confidence * 100)}%
-                </strong>
-                {" · "}
-              </>
-            ) : null}
-            from {data.messagesConsidered === 1 ? "1 message" : `${data.messagesConsidered} messages`}
-          </p>
+          {/* A human score carries neither a confidence nor a message count —
+              the server records neither, so there is nothing truthful to put
+              here. The footer names who set it instead. */}
+          {byHand ? null : (
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {/* Confidence is omitted when the server did not report one, rather
+                  than filled in with a plausible-looking percentage. */}
+              {data.confidence !== null ? (
+                <>
+                  Confidence{" "}
+                  <strong className="text-foreground">
+                    {Math.round(data.confidence * 100)}%
+                  </strong>
+                  {" · "}
+                </>
+              ) : null}
+              from{" "}
+              {data.messagesConsidered === 1 ? "1 message" : `${data.messagesConsidered} messages`}
+            </p>
+          )}
+          {onScoreByHand ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="-ml-2 h-7 px-2 text-xs"
+              onClick={onScoreByHand}
+            >
+              <PencilLine className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+              {byHand ? "Change it" : "Score it yourself"}
+            </Button>
+          ) : null}
         </div>
       </div>
 
       {data.summary ? (
         <section className="space-y-1.5">
           <h4 className="flex items-center gap-1.5 text-xs font-medium">
-            <Sparkles className="h-3.5 w-3.5" aria-hidden />
-            Summary
+            {byHand ? (
+              <PencilLine className="h-3.5 w-3.5" aria-hidden />
+            ) : (
+              <Sparkles className="h-3.5 w-3.5" aria-hidden />
+            )}
+            {/* For a human score the summary IS the reason they gave, so it is
+                labelled as such rather than presented as a machine summary. */}
+            {byHand ? "Why this score" : "Summary"}
           </h4>
           <p className="rounded-lg border border-border bg-background p-3 text-xs leading-relaxed text-muted-foreground">
             {data.summary}
@@ -359,10 +550,14 @@ function Assessed({
       <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2.5 text-[11px] text-muted-foreground">
         <span className="flex items-center gap-1">
           <HelpCircle className="h-3 w-3" aria-hidden />
-          {/* What actually produced this, named exactly. */}
-          {data.method === "ai" && data.provider
-            ? `${data.provider}${data.model ? ` · ${data.model}` : ""}`
-            : "Keyword rules"}
+          {/* What actually produced this, named exactly. A person is named; an
+              account that no longer exists reads as "a person" rather than as
+              somebody who still works here. */}
+          {byHand
+            ? `Set by ${data.authorName ?? "a person"}`
+            : data.method === "ai" && data.provider
+              ? `${data.provider}${data.model ? ` · ${data.model}` : ""}`
+              : "Keyword rules"}
           {` · policy v${data.policyVersion}`}
         </span>
         <span>{new Date(data.createdAt).toLocaleString()}</span>
