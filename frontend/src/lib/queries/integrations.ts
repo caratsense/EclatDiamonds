@@ -135,6 +135,37 @@ export function useRefreshGoldRate() {
   });
 }
 
+/** What the automatic refresh last did. Null fields mean "never run". */
+export interface GoldRateHealth {
+  lastRunAt: string | null;
+  lastRunStatus: string | null;
+  lastRunUpdated: boolean | null;
+  ageHours: number | null;
+  /** The automatic pull is not keeping up, or has never run at all. */
+  overdue: boolean;
+  source: "ibja" | "custom";
+}
+
+/**
+ * GET /integrations/gold-rate/health — is anything still pulling?
+ *
+ * Distinct from the rates themselves: a price's age is on every row already,
+ * but age alone cannot tell a quiet market from a scheduler that stopped. Only
+ * managers can read it, matching the endpoint.
+ */
+export function useGoldRateHealth(enabled = true) {
+  return useQuery({
+    queryKey: ["integrations", "gold-rate", "health"],
+    queryFn: async () => {
+      const { data } = await api.get<GoldRateHealth>("/integrations/gold-rate/health");
+      return data;
+    },
+    enabled,
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+}
+
 /** GET /integrations/status — deployment-wide, so it is cached for the session. */
 export function useIntegrationStatus() {
   return useQuery({

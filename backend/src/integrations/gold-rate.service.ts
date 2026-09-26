@@ -8,6 +8,36 @@ import { IBJA_URL, parseIbja } from './ibja-rates';
 
 const TROY_OUNCE_GRAMS = 31.1035;
 
+/**
+ * The scheduled refresh's name in the run ledger.
+ *
+ * Named here rather than typed as a literal in both places: the scheduler writes
+ * the row and this service reads it back to report whether the automatic pull is
+ * alive. A typo in either string would make the screen say "never run" about a
+ * job that runs hourly.
+ */
+export const GOLD_RATE_JOB = 'pricing.gold-rate-refresh';
+
+/**
+ * Whether a run's stored detail says it wrote new prices.
+ *
+ * `ScheduledJobRun.detail` is a string holding JSON. Null on anything we cannot
+ * read — an older row, a different shape, a truncated write. "We do not know"
+ * and "it found nothing newer" are different statements and the screen says
+ * different things about them.
+ */
+function readUpdatedFlag(detail: string | null): boolean | null {
+  if (!detail) return null;
+  try {
+    const parsed: unknown = JSON.parse(detail);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const updated = (parsed as Record<string, unknown>).updated;
+    return typeof updated === 'boolean' ? updated : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Sent on every feed request — providers (and good manners) reject a UA-less call. */
 const FEED_USER_AGENT = 'Eclat-CaratSense/1.0 (+gold-rate)';
 
@@ -87,6 +117,57 @@ export class GoldRateService {
     const refresh = Number(this.config.get<string>('GOLD_RATE_REFRESH_HOURS'));
     const refreshHours = Number.isFinite(refresh) && refresh > 0 ? refresh : 12;
     return refreshHours * 1.5;
+  }
+
+  /**
+   * Is the AUTOMATIC refresh actually running?
+   *
+   * The rates screen could say how old a price was and nothing about why. Those
+   * are different failures with the same appearance: a feed that returned
+   * nothing this morning looks exactly like a scheduler that has not run since
+   * the last deploy, and only one of them is fixed by pressing "Pull from feed".
+   *
+   * A stale rate with a healthy refresh means the market has not moved or the
+   * source is quiet. A stale rate with no run in days means nothing is pulling
+   * at all — an environment problem no amount of pressing buttons will fix, and
+   * one that is otherwise invisible until somebody quotes off a week-old price.
+   *
+   * Read from the run ledger the scheduler already writes, so this reports what
+   * happened rather than asking the feed again.
+   */
+  async refreshHealth(organisationId: string) {
+    const last = await this.prisma.scheduledJobRun.findFirst({
+      where: { organisationId, job: GOLD_RATE_JOB },
+      orderBy: { startedAt: 'desc' },
+      select: { startedAt: true, status: true, detail: true },
+    });
+
+    const expectedEveryHours = this.staleAfterHours;
+    const ageHours = last ? (Date.now() - last.startedAt.getTime()) / 3_600_000 : null;
+
+    return {
+      /** Null when the job has never run for this tenant — a real answer, not zero. */
+      lastRunAt: last?.startedAt?.toISOString() ?? null,
+      lastRunStatus: last?.status ?? null,
+      /**
+       * Did the most recent run actually write new prices, or find nothing to do?
+       *
+       * `detail` is a STRING column holding the run's JSON, so it is parsed
+       * rather than read as an object. Null when it cannot be read: an
+       * unparseable detail means we do not know, and guessing `false` would
+       * report "the source had nothing newer" about a run we cannot see.
+       */
+      lastRunUpdated: readUpdatedFlag(last?.detail ?? null),
+      ageHours: ageHours == null ? null : Math.round(ageHours * 10) / 10,
+      /**
+       * The automatic pull is not keeping up. True when it has never run, or has
+       * not run within the window a rate is allowed to age — the same threshold
+       * that marks a rate stale, so the two readings cannot disagree.
+       */
+      overdue: ageHours == null || ageHours > expectedEveryHours,
+      /** Where prices come from, for the screen to name. Never the API key. */
+      source: this.spotFeedUrl ? 'custom' : 'ibja',
+    };
   }
 
   /**
