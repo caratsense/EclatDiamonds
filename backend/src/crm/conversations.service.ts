@@ -74,6 +74,38 @@ function signAsAgent(body: string | null, agentName: string, channel: string): s
   return `*${agentName}*\n${body}`;
 }
 
+/** How long an inbox preview may run before it is cut. */
+const PREVIEW_MAX = 120;
+
+/**
+ * One line describing a thread's newest message, for the inbox list.
+ *
+ * Media with no caption carries no text, so it is described by its kind rather
+ * than previewing as a blank row.
+ *
+ * An agent's stored body still carries the `*Name*` signature `signAsAgent`
+ * added. The sender travels beside the preview as `authorName`, so the
+ * signature is dropped here — without this every staff reply would preview as
+ * the sender's own name instead of what they said.
+ */
+function previewOf(m: {
+  body: string | null;
+  mediaType: string | null;
+  authorType: string;
+  authorUser?: { name: string } | null;
+}): string {
+  let text = m.body?.trim() ?? '';
+  const signature = m.authorUser?.name ? `*${m.authorUser.name}*\n` : null;
+  if (m.authorType === 'agent' && signature && text.startsWith(signature)) {
+    text = text.slice(signature.length).trim();
+  }
+  if (!text) {
+    if (!m.mediaType) return '';
+    return m.mediaType.startsWith('image/') ? 'Photo' : 'Attachment';
+  }
+  return text.length > PREVIEW_MAX ? `${text.slice(0, PREVIEW_MAX - 1)}…` : text;
+}
+
 export interface InboundMessage {
   organisationId: string;
   channel: string;
@@ -1455,6 +1487,28 @@ export class ConversationsService {
         assignedUser: { select: { id: true, name: true } },
         store: { select: { id: true, name: true } },
         _count: { select: { messages: true } },
+        /*
+         * The newest message, for the list preview.
+         *
+         * The inbox used to print a hardcoded sentence here, so every thread
+         * showed the same words and the preview told the reader nothing about
+         * the thread they were about to open.
+         *
+         * One nested read per row rather than a second query: `take: 1` on an
+         * ordered relation is what `(conversationId, sentAt)` — already indexed
+         * — exists for, and the page caps at 200 rows.
+         */
+        messages: {
+          orderBy: { sentAt: 'desc' },
+          take: 1,
+          select: {
+            body: true,
+            direction: true,
+            authorType: true,
+            mediaType: true,
+            authorUser: { select: { name: true } },
+          },
+        },
       },
     });
 
@@ -1468,8 +1522,21 @@ export class ConversationsService {
       }
     }
 
-    return rows.map((row) => ({
+    return rows.map(({ messages, ...row }) => ({
       ...row,
+      /**
+       * The newest message, flattened for the list. Null on a thread with no
+       * messages yet — which the UI must render as such, not as a placeholder
+       * sentence.
+       */
+      lastMessage: messages[0]
+        ? {
+            preview: previewOf(messages[0]),
+            direction: messages[0].direction,
+            authorType: messages[0].authorType,
+            authorName: messages[0].authorUser?.name ?? null,
+          }
+        : null,
       /** The rule that routed this, by name. Null when the rule was since deleted. */
       matchedRuleName: row.matchedRuleId ? names.get(row.matchedRuleId) ?? null : null,
       /**

@@ -1,4 +1,4 @@
-import { Global, Module } from '@nestjs/common';
+﻿import { Global, Module } from '@nestjs/common';
 import { IntegrationsController } from './integrations.controller';
 import { WhatsAppService } from './whatsapp.service';
 import { WhatsAppCredentialsService } from './whatsapp-credentials.service';
@@ -9,6 +9,7 @@ import { EmailService } from './email.service';
 import { WhatsAppBotModule } from '../whatsapp-bot/whatsapp-bot.module';
 import { IntegrationModule } from '../integration/integration.module';
 import { MetaAssetOwnershipService } from './meta-asset-ownership.service';
+import { MetaAdMetadataService } from './meta-ad-metadata.service';
 import { MetaGraphClient } from './meta-graph.client';
 import { MetaLeadAdsService } from './meta-lead-ads.service';
 import { MetaWebhookService } from './meta-webhook.service';
@@ -32,7 +33,7 @@ import { MessagingRoutesService } from './messaging-routes.service';
  * can inject these services directly without re-importing the module.
  *
  * Imports WhatsAppBotModule so the inbound webhook can route messages to the bot.
- * (WhatsAppBotModule injects WhatsAppService via the global export above — the
+ * (WhatsAppBotModule injects WhatsAppService via the global export above â€” the
  * import edge is one-directional, so there is no module cycle.)
  */
 @Global()
@@ -48,6 +49,9 @@ import { MessagingRoutesService } from './messaging-routes.service';
     EmailService,
     MetaAssetOwnershipService,
     MetaGraphClient,
+    // Resolves a CTWA ad id to its ad set and campaign, so one rule per showroom
+    // routes every ad that showroom runs. Injected by ConversationsService.
+    MetaAdMetadataService,
     MetaLeadAdsService,
     MetaWebhookService,
     // Registers itself with MetaWebhookService on init and forwards verified
@@ -60,7 +64,7 @@ import { MessagingRoutesService } from './messaging-routes.service';
     MetaLeadAdapter,
     MetaHealthService,
     // Injects IdentityService and LeadIntakeService, which CrmModule exports
-    // as @Global — the same edge MetaLeadAdapter already relies on, and it
+    // as @Global â€” the same edge MetaLeadAdapter already relies on, and it
     // runs one way only (integrations reach into CRM; CRM never reaches back).
     TelephonyService,
     MessagingRoutesService,
@@ -83,6 +87,9 @@ import { MessagingRoutesService } from './messaging-routes.service';
     EmailService,
     MetaAssetOwnershipService,
     MetaGraphClient,
+    // Resolves a CTWA ad id to its ad set and campaign, so one rule per showroom
+    // routes every ad that showroom runs. Injected by ConversationsService.
+    MetaAdMetadataService,
     MetaLeadAdsService,
     MetaWebhookService,
     TelephonyService,
