@@ -13,8 +13,10 @@ import { QualificationService } from '../crm/qualification.service';
 import { StorageService } from '../storage/storage.service';
 import { WhatsAppIdentityService } from './whatsapp-identity.service';
 import { CustomerBotService } from './customer-bot.service';
+import { MetaAdMetadataService } from '../integrations/meta-ad-metadata.service';
 import { extractMetaReferral } from '../integrations/meta-referral';
 import { ConversationAiGate } from '../crm/ai-responder';
+import { NotificationsService } from '../notifications/notifications.service';
 import { OmnichannelService } from '../omnichannel/omnichannel.service';
 import { isUnambiguousOptOut } from '../omnichannel/omnichannel-policy';
 
@@ -61,6 +63,8 @@ export class WhatsAppBotService {
     private readonly crmIdentity: IdentityService,
     private readonly qualification: QualificationService,
     private readonly storage: StorageService,
+    private readonly notifications: NotificationsService,
+    private readonly adMetadata: MetaAdMetadataService,
   ) {}
 
   /**
@@ -354,6 +358,30 @@ export class WhatsAppBotService {
       const stored = mediaLabel
         ? await this.storeInboundMedia(organisationId, event.messageType, event.payload, replyRoute)
         : null;
+
+      /*
+       * Turn the one id Meta sent into something a rule can be written against.
+       *
+       * A Click-to-WhatsApp referral carries the AD id and nothing else — no ad
+       * set, no campaign, no geography. Routing on the ad id alone means a rule
+       * per ad, and a showroom launches a new ad for every collection, so the
+       * rules go stale weekly and the failure is silent.
+       *
+       * Resolving the ad to its ad set lets ONE rule per showroom cover every ad
+       * that showroom will ever run, matched on the name the marketing team
+       * already uses ("Lead Campaign Kala Ghoda").
+       *
+       * Safe to do here: this runs in the background pass, long after the
+       * webhook was acknowledged, so a slow Graph call cannot cause a Meta
+       * retry. A failed lookup returns null and no name rule fires — the thread
+       * waits in the head-office queue rather than being sent to a guessed
+       * branch.
+       */
+      const referral = extractMetaReferral(event.payload);
+      const adMeta = referral?.adId
+        ? await this.adMetadata.resolve(organisationId, referral.adId)
+        : null;
+
       try {
         const result = await this.crmConversations.ingestInbound({
           optOut,
@@ -379,7 +407,21 @@ export class WhatsAppBotService {
           // that `persist()` has been storing all along. Only the first message
           // of an ad-originated thread carries one; null everywhere else, and a
           // null is NOT evidence of organic traffic.
-          adReferral: extractMetaReferral(event.payload),
+          adReferral: referral,
+          // What the ad id resolved to. `ingestInbound` layers the referral's
+          // own ids ON TOP of this, so a measured id always beats a looked-up
+          // one. Omitted entirely when the lookup found nothing, so an absent
+          // name can never match a rule.
+          ...(adMeta
+            ? {
+                routing: {
+                  ...(adMeta.adSetId ? { adSetId: adMeta.adSetId } : {}),
+                  ...(adMeta.adSetName ? { adSetName: adMeta.adSetName } : {}),
+                  ...(adMeta.campaignId ? { campaignId: adMeta.campaignId } : {}),
+                  ...(adMeta.campaignName ? { campaignName: adMeta.campaignName } : {}),
+                },
+              }
+            : {}),
         });
         // NO automatic reply. The existing rule that a wrong number never gets an
         // unsolicited message holds for customers too — a person answers from the
@@ -707,7 +749,13 @@ export class WhatsAppBotService {
   ): Promise<void> {
     const conversation = await this.prisma.conversation.findFirst({
       where: { id: conversationId, organisationId },
-      select: { id: true, storeId: true, partyId: true, assignedUserId: true },
+      select: {
+        id: true,
+        storeId: true,
+        partyId: true,
+        assignedUserId: true,
+        party: { select: { name: true } },
+      },
     });
     if (!conversation) return;
 
@@ -763,6 +811,44 @@ export class WhatsAppBotService {
         .catch((e) =>
           this.logger.warn(`  handoff summary not stored: ${e instanceof Error ? e.message : String(e)}`),
         );
+    }
+
+    /*
+     * Tell the person who now owns it.
+     *
+     * Assigning a thread and not saying so is the same as not assigning it: the
+     * manager learns about the lead whenever they next happen to open the inbox,
+     * which on a busy counter is hours. The bell is the only thing that reaches
+     * them while the customer is still holding their phone.
+     *
+     * WHO: the owner AFTER this handoff — the manager just named, or whoever
+     * already held the thread (the bot stops talking either way, so a
+     * pre-existing owner needs telling just as much). Exactly one person, never
+     * the branch: a notification sent to everyone is one nobody treats as theirs.
+     *
+     * WHO NOT: when no ad rule matched there is no store, so nothing was
+     * assigned and there is no right recipient. Inventing one — the nearest
+     * branch, every manager — is the guess `handToAPerson` refuses to make above.
+     * Head office finds these in the Non-ad queue, which exists for this case.
+     *
+     * Best-effort by contract, and emitted after the writes have committed.
+     */
+    const owner = conversation.assignedUserId ?? manager?.id ?? null;
+    if (owner) {
+      const who = conversation.party?.name?.trim() || 'A customer';
+      await this.notifications.emit([owner], {
+        kind: 'reminder',
+        title: `${who} is waiting for a person on WhatsApp`,
+        body: reason,
+        href: `/conversations?thread=${conversationId}`,
+        storeId: conversation.storeId,
+        entityType: 'Conversation',
+        entityId: conversationId,
+        priority: 'high',
+        // Re-firing refreshes the one row and marks it unread again, which is
+        // what a second handoff on the same thread actually means.
+        dedupeKey: `crm:handoff:${conversationId}`,
+      });
     }
 
     this.logger.log(

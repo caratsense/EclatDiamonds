@@ -458,7 +458,10 @@ export class ResponseSlaService {
     const who = clock.conversation.party?.name ?? 'A customer';
     const title = `${who} has been waiting ${clock.targetMinutes}+ minutes`;
     const body = `No reply yet on ${clock.conversation.channel}. They messaged at ${clock.startedAt.toISOString()}.`;
-    const href = `/conversations?id=${clock.conversationId}`;
+    // `thread`, not `id` — the inbox reads `?thread=` to select a conversation
+    // (conversations/page.tsx). With `id` the bell opened the list and selected
+    // nothing, which reads as "the notification is broken".
+    const href = `/conversations?thread=${clock.conversationId}`;
 
     /*
      * The calling queue, because that is where a shop already looks for work it
@@ -665,7 +668,7 @@ export class ResponseSlaService {
         body: `${who} messaged on ${clock.conversation.channel}${
           clock.store ? ` at ${clock.store.name}` : ''
         } and nobody has replied.`,
-        href: `/conversations?id=${clock.conversationId}`,
+        href: `/conversations?thread=${clock.conversationId}`,
         storeId: clock.storeId,
         entityType: 'Conversation',
         entityId: clock.conversationId,

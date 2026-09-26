@@ -126,11 +126,17 @@ export interface AdSetAutomationRule {
   enabled: boolean;
   priority: number;
   /**
-   * `ad_id` is the only field a Click-to-WhatsApp click can satisfy today —
-   * Meta sends the ad id in the referral and nothing else. The ad-set fields
-   * stay available for a Marketing API adapter that can supply them.
+   * Meta sends only the ad id on a Click-to-WhatsApp click, but the server now
+   * resolves that id to its ad set and campaign, so the NAME fields match too.
+   *
+   * Name matching is the setup to prefer: one rule per showroom covers every ad
+   * that showroom runs. `ad_id` and `ad_set_id` pin a single ad somewhere
+   * different from its name — an exception, not the pattern.
+   *
+   * Where two name rules both match, the longer match wins ("bandra broadway"
+   * beats "bandra"), so overlapping showroom names need no priority juggling.
    */
-  matchField: "ad_id" | "ad_set_id" | "ad_set_name" | "tag";
+  matchField: "ad_id" | "ad_set_id" | "ad_set_name" | "campaign_name" | "tag";
   matchValue: string;
   storeId: string | null;
   assignedUserId: string | null;

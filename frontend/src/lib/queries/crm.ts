@@ -290,6 +290,18 @@ export interface ConversationRow {
   assignedUser: { id: string; name: string } | null;
   store?: { id: string; name: string } | null;
   _count?: { messages: number };
+  /**
+   * The newest message in the thread, for the list preview. Null when nothing
+   * has been said yet — render that as "No messages yet", never as filler.
+   */
+  lastMessage?: {
+    /** Already truncated and de-signed by the server. May be empty. */
+    preview: string;
+    direction: string;
+    authorType: string;
+    /** The staff member who sent it, when a person did. */
+    authorName: string | null;
+  } | null;
   /** Set when a later ad would have routed this thread elsewhere. */
   routingReviewRequired?: boolean;
   /** The automation rule that routed this, by name. Null if it was deleted. */

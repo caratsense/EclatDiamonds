@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+﻿import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { JobsService } from '../jobs/jobs.service';
@@ -16,7 +16,7 @@ import { AuthUser } from '../common/auth-user';
 import { businessDate, dateOnly, resolveTz, zonedParts } from '../common/tz.util';
 import { HrmsService } from '../hrms/hrms.service';
 import { PayrollService } from '../hrms/payroll.service';
-import { GoldRateService } from '../integrations/gold-rate.service';
+import { GOLD_RATE_JOB, GoldRateService } from '../integrations/gold-rate.service';
 import { JobRunnerService } from './job-runner.service';
 import { packMaintainsMetalRates } from '../config/entitlements';
 import { OmnichannelService } from '../omnichannel/omnichannel.service';
@@ -27,7 +27,7 @@ import { TEMPLATE_SYNC_JOB, TemplateSyncService } from '../omnichannel/template-
  *
  * `dayClose` takes an AuthUser because a human normally triggers it, and it uses
  * that for the store-scope check. There is no human here, so the scheduler acts
- * as head office over every store — the same authority an HO user already has,
+ * as head office over every store â€” the same authority an HO user already has,
  * not a new one. It is a real id (not a random string) so anything the close
  * writes with attribution points somewhere meaningful in the audit trail.
  */
@@ -35,7 +35,7 @@ import { TEMPLATE_SYNC_JOB, TemplateSyncService } from '../omnichannel/template-
  * Build the scheduler's principal for ONE store. Multi-tenant-safe: the actor is
  * scoped to that store's own organisation and only that store, so store-scope and
  * organisation checks pass for exactly the store being processed and nothing in
- * another tenant. Not `allStores` — background work never gets global authority.
+ * another tenant. Not `allStores` â€” background work never gets global authority.
  */
 function systemActorForStore(store: { id: string; organisationId: string }): AuthUser {
   return {
@@ -55,7 +55,7 @@ function systemActorForStore(store: { id: string; organisationId: string }): Aut
  * ## Why an hourly tick rather than one nightly cron
  *
  * Cron expressions run on the SERVER's clock. Stores have their own timezones
- * (`Store.timezone`), and the whole attendance layer is built store-locally — a
+ * (`Store.timezone`), and the whole attendance layer is built store-locally â€” a
  * single `0 2 * * *` would close each store at 02:00 UTC, which is 07:30 in the
  * morning in India, mid-shift. So this ticks every hour and asks each store what
  * time it is *there*, firing only for the ones whose local hour matches. Adding a
@@ -93,7 +93,7 @@ export class SchedulerService {
    * Every minute rather than on a longer cron: an import a user just started
    * should begin within a minute, not on the hour. `drain` is self-guarded
    * against overlap and claims rows with FOR UPDATE SKIP LOCKED, so several
-   * replicas ticking together take different jobs instead of colliding — which
+   * replicas ticking together take different jobs instead of colliding â€” which
    * is why this needs none of the run-claim machinery the hourly jobs use.
    */
   @Cron(CronExpression.EVERY_MINUTE, { name: 'jobs.drain' })
@@ -123,7 +123,7 @@ export class SchedulerService {
         );
       }
     } catch (e) {
-      // The queue draining must never take the scheduler down with it — the
+      // The queue draining must never take the scheduler down with it â€” the
       // hourly attendance and rate jobs are unrelated and still have to run.
       this.logger.error(`Job drain failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -142,7 +142,7 @@ export class SchedulerService {
 
   /**
    * How often the gold-rate source is read, in hours. Default 3, so IBJA's AM
-   * and PM publications both land within hours. Clamped to 1–24h.
+   * and PM publications both land within hours. Clamped to 1â€“24h.
    */
   private get goldRateRefreshHours(): number {
     const raw = Number(this.config.get<string>('GOLD_RATE_REFRESH_HOURS'));
@@ -173,7 +173,7 @@ export class SchedulerService {
     const now = new Date();
 
     for (const store of await this.rosteredStores()) {
-      // A store must belong to an organisation to be processed — never run a job
+      // A store must belong to an organisation to be processed â€” never run a job
       // with an unattributable/global principal.
       if (!store.organisationId) continue;
       const tz = resolveTz(store.timezone);
@@ -211,7 +211,7 @@ export class SchedulerService {
    *
    * Not wrapped in `runOnce`: the unique claim on PayrollRun is the guard, and
    * unlike an in-process run key it holds across a restart part-way through a
-   * run. Drafts only — nothing here issues or pays.
+   * run. Drafts only â€” nothing here issues or pays.
    */
   @Cron(CronExpression.EVERY_HOUR, { name: 'hrms.payroll-month-end' })
   async draftMonthEndPayroll(): Promise<void> {
@@ -231,11 +231,11 @@ export class SchedulerService {
    * the rate in each morning.
    *
    * Quotes fall back to the last stored rate when the feed is absent, and a
-   * fallback rate looks identical to a live one on the total — so a quiet feed is
+   * fallback rate looks identical to a live one on the total â€” so a quiet feed is
    * a pricing error waiting to happen. The tick is hourly, and the run key is an
    * HOURLY bucket so `runOnce` fires one attempt per hour (deduped across
    * instances). The feed is only actually hit when the stored rate is older than
-   * GOLD_RATE_REFRESH_HOURS (`refreshIfStale`), so a fresh rate costs nothing —
+   * GOLD_RATE_REFRESH_HOURS (`refreshIfStale`), so a fresh rate costs nothing â€”
    * but a FAILED pull is retried the next hour instead of leaving the price stale
    * for the whole interval. A manager can still pull an intraday rate on demand
    * (POST /gold-rate/refresh) or override it by hand.
@@ -243,14 +243,14 @@ export class SchedulerService {
    * Stored rates are per-organisation config, so the refresh runs ONCE PER ORG
    * (each writes/reads only its own MetalRate rows). The dedup scope is the org id,
    * so orgs don't block each other and each is retried independently. The spot
-   * feed itself is global, so N orgs = N feed hits per stale window — fine at
+   * feed itself is global, so N orgs = N feed hits per stale window â€” fine at
    * today's tenant count; if that grows, fetch spot once and fan the write out.
    */
   /**
    * The morning call list.
    *
    * Hourly rather than on a fixed cron time, because the hour that matters is
-   * each STORE's local one — a chain across two timezones wants nine in the
+   * each STORE's local one â€” a chain across two timezones wants nine in the
    * morning where the staff are, not nine where head office is. The service
    * checks the local hour itself and returns 'not-the-hour' for the other 23.
    *
@@ -264,7 +264,7 @@ export class SchedulerService {
    * EVERY MINUTE, and deliberately not wrapped in `runOnce`. A five-minute
    * promise measured on an hourly tick is not a promise, and there is no run key
    * a minute-granular sweep could sensibly dedupe on. It needs none: the sweep
-   * is idempotent by construction — a reply already recorded is skipped, and the
+   * is idempotent by construction â€” a reply already recorded is skipped, and the
    * breach and the escalation are each claimed by a conditional UPDATE, so two
    * replicas sweeping the same second produce one alert between them.
    *
@@ -360,7 +360,7 @@ export class SchedulerService {
    * Reports that send themselves.
    *
    * Hourly, and the "is it the 1st at 07:00" question is asked per report in ITS
-   * branch's timezone rather than written into a cron expression — a cron fires
+   * branch's timezone rather than written into a cron expression â€” a cron fires
    * on the server's clock, and month-end has to mean month-end where the staff
    * are.
    *
@@ -392,7 +392,7 @@ export class SchedulerService {
    *
    * Sending, retrying, backoff and the dead state all belong to the job queue
    * now (`loyalty.webhook`, drained every minute). This only catches a movement
-   * whose announcement was never queued — a restart between the movement
+   * whose announcement was never queued â€” a restart between the movement
    * committing and its queue insert. A movement announced zero times is a wrong
    * number in front of a customer.
    *
@@ -416,7 +416,7 @@ export class SchedulerService {
     }
   }
 
-  @Cron(CronExpression.EVERY_HOUR, { name: 'pricing.gold-rate-refresh' })
+  @Cron(CronExpression.EVERY_HOUR, { name: GOLD_RATE_JOB })
   async refreshGoldRate(): Promise<void> {
     if (!this.enabled || !this.goldRate.enabled) return;
 
@@ -426,7 +426,7 @@ export class SchedulerService {
     const hourBucket = Math.floor(Date.now() / 3_600_000);
     const runKey = `hourly-${hourBucket}`;
 
-    // Distinct organisations that actually operate a store — the only ones whose
+    // Distinct organisations that actually operate a store â€” the only ones whose
     // rates matter. Never a global refresh with no tenant attribution.
     const orgRows = await this.prisma.store.findMany({
       where: { isActive: true, isAggregate: false },
@@ -444,11 +444,11 @@ export class SchedulerService {
        * This loop selected every organisation owning a store, so a pharmacy or a
        * clinic accrued four gold prices an hour, for ever, from the moment it
        * added its first branch. Hiding the chip in the top bar did not stop that
-       * — the rows were real, and a tenant that never sells gold was quietly
+       * â€” the rows were real, and a tenant that never sells gold was quietly
        * accumulating a price history of it.
        */
       if (!packMaintainsMetalRates(organisation?.industryPackCode)) continue;
-      await this.runner.runOnce(organisationId, 'pricing.gold-rate-refresh', organisationId, runKey, async () => {
+      await this.runner.runOnce(organisationId, GOLD_RATE_JOB, organisationId, runKey, async () => {
         const res = await this.goldRate.refreshIfStale(hours, organisationId);
         if (res.updated)
           this.logger.log(`Gold rates refreshed (${organisationId}): ${JSON.stringify(res.rates)}`);
@@ -515,7 +515,7 @@ export class SchedulerService {
    *
    * Every fifteen minutes: often enough that a broken token is noticed within a
    * lunch break, rare enough that the alert channel is not itself the noise.
-   * Deduplication lives in JobAlertsService — this only decides when to look.
+   * Deduplication lives in JobAlertsService â€” this only decides when to look.
    */
   @Cron(CronExpression.EVERY_30_MINUTES, { name: 'jobs.dead-alerts' })
   async alertOnDeadJobs(): Promise<void> {

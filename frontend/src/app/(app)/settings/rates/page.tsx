@@ -28,6 +28,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { getNavItem } from "@/lib/navigation";
 import { formatINR } from "@/lib/format";
 import {
+  useGoldRateHealth,
   useIntegrationStatus,
   useMetalRates,
   useRefreshGoldRate,
@@ -57,12 +58,24 @@ function ageLabel(ageHours: number): string {
   return `${Math.round(ageHours / 24)}d ago`;
 }
 
+/** How long ago the scheduled refresh ran, in a sentence. */
+function refreshAge(ageHours: number | null): string {
+  if (ageHours === null) return "at an unknown time";
+  if (ageHours < 1) return "less than an hour ago";
+  if (ageHours < 24) return `${Math.round(ageHours)} hours ago`;
+  const days = Math.round(ageHours / 24);
+  return days === 1 ? "yesterday" : `${days} days ago`;
+}
+
 export default function RatesPage() {
   const role = useSession((s) => s.role);
   const canEdit = ROLE_RANK[role] >= ROLE_RANK.store_manager;
 
   const { data: rates, isLoading } = useMetalRates();
   const { data: status } = useIntegrationStatus();
+  // Managers only — the endpoint refuses anyone below, and asking would just
+  // put a 403 in the console on a page a salesperson is allowed to read.
+  const { data: health } = useGoldRateHealth(canEdit);
   const setRate = useSetGoldRate();
   const refresh = useRefreshGoldRate();
 
@@ -204,6 +217,46 @@ export default function RatesPage() {
                   ? "A live feed is connected — it refreshes from the market on its own through the day. Setting a rate here overrides it until the next pull."
                   : "No live feed is connected yet, so the rate won't move on its own. Set it here, or connect a feed for automatic updates."}
               </p>
+
+              {/*
+                Whether anything is actually pulling.
+                A price's age is already on every row, but age alone cannot tell
+                a quiet market from a refresh that stopped running — and those
+                need opposite responses. Pressing "Pull from feed" fixes the
+                first and does nothing for the second.
+              */}
+              {health ? (
+                <p
+                  className={cn(
+                    "text-xs",
+                    health.overdue ? "text-[var(--warning)]" : "text-muted-foreground",
+                  )}
+                >
+                  {health.lastRunAt === null ? (
+                    <>
+                      <strong>The automatic refresh has never run here.</strong> Rates
+                      will only change when someone sets them by hand. If that is
+                      unexpected, the scheduler is not running on this environment.
+                    </>
+                  ) : health.overdue ? (
+                    <>
+                      <strong>
+                        Automatic refresh last ran {refreshAge(health.ageHours)}
+                      </strong>{" "}
+                      — longer ago than it should. Rates are not updating on their
+                      own; check that the scheduler is running.
+                    </>
+                  ) : (
+                    <>
+                      Automatic refresh ran {refreshAge(health.ageHours)}
+                      {health.lastRunUpdated === false
+                        ? " — the source had nothing newer."
+                        : "."}{" "}
+                      Source: {health.source === "ibja" ? "IBJA" : "custom feed"}.
+                    </>
+                  )}
+                </p>
+              ) : null}
             </CardContent>
           </Card>
         ) : (

@@ -9,13 +9,28 @@ import { updateOrgSettings } from '../config/org-settings';
 /**
  * What a rule matches on.
  *
- * `ad_id` is the one a Click-to-WhatsApp click can actually satisfy today: Meta
- * puts the AD id in the referral and nothing else, so a tenant pasting ad ids
- * from Ads Manager gets correct routing with no app review. `ad_set_id` and
- * `ad_set_name` stay supported for a Lead Ads / Marketing API adapter that can
- * supply them — until then they simply never match, which is the honest result.
+ * Meta puts the AD id in a Click-to-WhatsApp referral and nothing else, so
+ * `ad_id` was for a long time the only field a click could satisfy.
+ *
+ * That made routing unusable at any real advertising volume: a showroom runs a
+ * new ad for every collection, and every one of them would need its id pasted
+ * into a rule by hand before its leads reached a branch. Miss one and those
+ * customers land in the head-office queue.
+ *
+ * `MetaAdMetadataService` now resolves the ad id to its ad set and campaign, so
+ * **`ad_set_name` and `campaign_name` are the fields to configure**: one rule per
+ * SHOWROOM, matched on the name the marketing team already uses. Every future ad
+ * inside that ad set routes with no further configuration.
+ *
+ * `ad_id` and `ad_set_id` remain for pinning a single ad somewhere different
+ * from its name — an exception, not the pattern.
  */
-export type AdSetMatchField = 'ad_id' | 'ad_set_id' | 'ad_set_name' | 'tag';
+export type AdSetMatchField =
+  | 'ad_id'
+  | 'ad_set_id'
+  | 'ad_set_name'
+  | 'campaign_name'
+  | 'tag';
 
 /**
  * Prompt size limits, shared by the write guard and the defensive read slice.
@@ -44,8 +59,11 @@ export interface AdSetAutomationRule {
 export interface AdSetRoutingContext {
   /** Provider ad id — the only identifier a CTWA referral supplies. */
   adId?: string;
+  /** The rest are RESOLVED from the ad id, never sent by Meta on a click. */
   adSetId?: string;
   adSetName?: string;
+  campaignId?: string;
+  campaignName?: string;
   tags?: string[];
 }
 
@@ -202,16 +220,71 @@ export class AdSetRulesService {
   }
 }
 
+/**
+ * An exact identifier match. Ranked above every name match, and above any
+ * priority number, because an id names one ad and cannot mean two showrooms.
+ */
+const EXACT_MATCH = Number.MAX_SAFE_INTEGER;
+
+/**
+ * Which rule wins when several match.
+ *
+ * Specificity first, `priority` second — and specificity is DERIVED from the
+ * match rather than typed by anyone.
+ *
+ * ## Why longest match, not priority
+ *
+ * Éclat runs showrooms at Bandra and at Bandra Broadway. A rule matching
+ * "bandra" also matches the ad set named "Lead Campaign - bandra broadway",
+ * so with priority alone the correct routing depends on somebody remembering
+ * to rank Broadway above Bandra. That is the class of configuration which is
+ * right on the day it is written and silently wrong a year later, when a
+ * colleague adds a showroom and the leads for it quietly go to the wrong
+ * branch — with no error anywhere.
+ *
+ * Scoring a name match by the LENGTH of the text it matched makes
+ * "bandra broadway" beat "bandra" structurally. The more specific rule wins
+ * because it is more specific, not because of a number.
+ *
+ * `priority` still decides genuine ties, so a tenant keeps a manual override
+ * for two rules of equal specificity.
+ */
 export function resolveAdSetRule(rules: AdSetAutomationRule[], context: AdSetRoutingContext) {
-  const byPriority = [...rules].filter((rule) => rule.enabled).sort((a, b) => b.priority - a.priority);
   const tags = (context.tags ?? []).map(normalise);
-  return byPriority.find((rule) => {
+  const matched: { rule: AdSetAutomationRule; specificity: number }[] = [];
+
+  for (const rule of rules) {
+    if (!rule.enabled) continue;
     const expected = normalise(rule.matchValue);
-    if (rule.matchField === 'ad_id') return normalise(context.adId) === expected;
-    if (rule.matchField === 'ad_set_id') return normalise(context.adSetId) === expected;
-    if (rule.matchField === 'ad_set_name') return normalise(context.adSetName).includes(expected);
-    return tags.includes(expected);
-  }) ?? null;
+    // An empty match value would `includes()` into everything and route all
+    // traffic to one branch.
+    if (!expected) continue;
+
+    switch (rule.matchField) {
+      case 'ad_id':
+        if (normalise(context.adId) === expected) matched.push({ rule, specificity: EXACT_MATCH });
+        break;
+      case 'ad_set_id':
+        if (normalise(context.adSetId) === expected) matched.push({ rule, specificity: EXACT_MATCH });
+        break;
+      case 'tag':
+        if (tags.includes(expected)) matched.push({ rule, specificity: EXACT_MATCH });
+        break;
+      case 'ad_set_name':
+        if (normalise(context.adSetName).includes(expected)) {
+          matched.push({ rule, specificity: expected.length });
+        }
+        break;
+      case 'campaign_name':
+        if (normalise(context.campaignName).includes(expected)) {
+          matched.push({ rule, specificity: expected.length });
+        }
+        break;
+    }
+  }
+
+  matched.sort((a, b) => b.specificity - a.specificity || b.rule.priority - a.rule.priority);
+  return matched[0]?.rule ?? null;
 }
 
 function normaliseRules(value: unknown): AdSetAutomationRule[] {
@@ -223,7 +296,11 @@ function normaliseRules(value: unknown): AdSetAutomationRule[] {
     const name = typeof rule.name === 'string' ? rule.name.trim() : '';
     const matchValue = typeof rule.matchValue === 'string' ? rule.matchValue.trim() : '';
     if (!id || !name || !matchValue || seen.has(id)) return [];
-    if (!['ad_id', 'ad_set_id', 'ad_set_name', 'tag'].includes(rule.matchField ?? '')) return [];
+    if (
+      !['ad_id', 'ad_set_id', 'ad_set_name', 'campaign_name', 'tag'].includes(rule.matchField ?? '')
+    ) {
+      return [];
+    }
     if (!['ai', 'human'].includes(rule.handling ?? '')) return [];
     seen.add(id);
     return [{
