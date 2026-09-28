@@ -13,8 +13,9 @@ Not emitted, because the source has no value: email (UserEmailAddress is NULL on
 all 15 rows), phone (no column), designation (RoleId is 1 for everyone with no
 role master; the only department is "Self").
 """
+import os
 import sys
-sys.path.insert(0, r'C:/Users/Shrey/AppData/Local/Temp/claude/c--Users-Shrey-OneDrive-Desktop-Eclat/b57205d8-d1f2-4b9a-b580-57dc0e6f81d1/scratchpad/bakexport')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _reader
 
 

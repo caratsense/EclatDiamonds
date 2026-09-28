@@ -13,9 +13,10 @@ overlap at all, and the 8 referenced ids are the 8 shops (A001..A008).
 
 Read-only. Writes bakexport/stores.json and nothing else.
 """
+import os
 import sys
 
-sys.path.insert(0, r'C:/Users/Shrey/AppData/Local/Temp/claude/c--Users-Shrey-OneDrive-Desktop-Eclat/b57205d8-d1f2-4b9a-b580-57dc0e6f81d1/scratchpad/bakexport')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _reader
 
 # Same probes as push_stores(). JewelTrans.BranchNo and a few others simply do
