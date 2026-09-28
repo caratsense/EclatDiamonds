@@ -812,6 +812,12 @@ export class QuotesService {
         select: { partyId: true },
       });
       partyId = lead?.partyId ?? null;
+      // A quote is the quotation stage. Only forward: a lead already at order
+      // placed, or closed, is never pulled back by a new quote.
+      await this.prisma.lead.updateMany({
+        where: { id: dto.leadId, organisationId: user.organisationId, stage: 'inquiry', outcome: 'open' },
+        data: { stage: 'quotation', lastActivity: new Date() },
+      });
     }
     if (!partyId) {
       const identity = await this.identity.resolveForRecord(user, {
