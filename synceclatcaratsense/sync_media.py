@@ -340,6 +340,35 @@ def collect_targets(cur):
     return targets
 
 
+def collect_targets_csv(csv_dir):
+    """The same targets, read from a SJEP_Master_Export `all_data` folder.
+
+    For when there is an export but no SQL Server to query — the 4 Aug 2026
+    export carries StyleMst and Inward with their ImageName columns, and its
+    SJEP_Images_Export folder holds the photographs themselves.
+    """
+    import csv
+    csv.field_size_limit(10**8)
+    targets = []
+    for table, key, kind in [("StyleMst", "StyleId", "product"), ("Inward", "JewelId", "stock")]:
+        path = os.path.join(csv_dir, f"{table}.csv")
+        if not os.path.exists(path):
+            continue
+        n = 0
+        with open(path, encoding="utf-8-sig", newline="") as fh:
+            for r in csv.DictReader(fh):
+                name = (r.get("ImageName") or "").strip()
+                if not name:
+                    continue
+                e = (r.get("ImageExt") or "").strip()
+                if e and not name.lower().endswith(tuple(IMAGE_EXTS)):
+                    name = name + (e if e.startswith(".") else "." + e)
+                targets.append({"kind": kind, "legacyId": str(r[key]).strip(), "filename": name})
+                n += 1
+        log.info(f"  {table}.csv: {n} rows name an image")
+    return targets
+
+
 def _folder_filters():
     """Which folders to take photos from, and which to leave alone.
 
@@ -625,13 +654,18 @@ def _main():
 
     provider, client = check_config()
 
-    conn = connect_sql()
-    try:
-        cur = conn.cursor()
-        log.info("Reading image references from SQL Server...")
-        targets = collect_targets(cur)
-    finally:
-        conn.close()
+    csv_dir = os.getenv("SJEP_CSV_DIR", "").strip().strip('"')
+    if csv_dir:
+        log.info(f"Reading image references from the export in {csv_dir}...")
+        targets = collect_targets_csv(csv_dir)
+    else:
+        conn = connect_sql()
+        try:
+            cur = conn.cursor()
+            log.info("Reading image references from SQL Server...")
+            targets = collect_targets(cur)
+        finally:
+            conn.close()
     if not targets:
         log.info("No image references found. Nothing to do.")
         return 0
