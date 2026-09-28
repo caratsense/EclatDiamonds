@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { Suspense, useState } from "react";
 import Link from "next/link";
@@ -99,7 +99,7 @@ const QUEUES = [
   /*
    * Traffic no ad paid for, and therefore traffic no branch owns.
    *
-   * Head office only â€” `headOfficeOnly` hides the tab, and the server refuses
+   * Head office only — `headOfficeOnly` hides the tab, and the server refuses
    * the query outright for anyone else, so hiding it is a courtesy rather than
    * the control.
    */
@@ -109,7 +109,7 @@ const QUEUES = [
 /**
  * Render WhatsApp's `*bold*` the way WhatsApp does.
  *
- * The thread stores exactly what the customer was sent, asterisks and all â€” the
+ * The thread stores exactly what the customer was sent, asterisks and all — the
  * assistant's questions use them, and so does the sender's name on a reply typed
  * here. Showing the raw markup would mean the dashboard renders the one thing
  * the customer never sees.
@@ -120,14 +120,14 @@ const QUEUES = [
  */
 function whatsappText(body: string): React.ReactNode {
   const parts = body.split(/\*([^*\n]+)\*/g);
-  // split() with one capture group alternates: plain, bold, plain, bold, â€¦
+  // split() with one capture group alternates: plain, bold, plain, bold, …
   return parts.map((part, i) =>
     i % 2 === 1 ? <strong key={i}>{part}</strong> : <span key={i}>{part}</span>,
   );
 }
 
 /**
- * An agent's reply is STORED signed â€” `queueOutbound` puts `*Name*\n` in front
+ * An agent's reply is STORED signed — `queueOutbound` puts `*Name*\n` in front
  * of the body so a customer receiving answers from the assistant and four branch
  * managers on one number can tell who is speaking.
  *
@@ -135,7 +135,7 @@ function whatsappText(body: string): React.ReactNode {
  * `authorUser` (the logged-in sender the server recorded). Printing the leading
  * signature line as well would state the same name twice.
  *
- * Only an EXACT match is removed, and only for display â€” the stored body is
+ * Only an EXACT match is removed, and only for display — the stored body is
  * untouched, so the transcript is still what the customer received. When the
  * signature and the recorded author DISAGREE the line is left alone: that
  * mismatch is exactly what an admin verifying who sent what needs to see.
@@ -165,7 +165,7 @@ const PANE_HEIGHT = "h-[calc(100vh-13rem)] min-h-[520px] max-h-[900px]";
 /**
  * Who spoke last, as a short prefix on the list preview.
  *
- * The customer's own words carry no prefix â€” they are the default voice in an
+ * The customer's own words carry no prefix — they are the default voice in an
  * inbox. Everything the business sent is labelled, and a person is named, so a
  * manager scanning the list can tell a customer nobody has answered from one
  * the bot has already replied to.
@@ -305,14 +305,14 @@ function ConversationsContent() {
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/80 bg-card px-3 py-2 text-sm shadow-xs">
           <Badge variant="secondary">Customer</Badge>
           <span className="font-semibold text-foreground">
-            {partyName ?? (list.isLoading ? "Loadingâ€¦" : "This customer")}
+            {partyName ?? (list.isLoading ? "Loading…" : "This customer")}
           </span>
           <span className="text-xs text-muted-foreground">
             {list.isLoading
               ? ""
               : list.data?.length
-                ? `Â· ${list.data.length} thread${list.data.length === 1 ? "" : "s"}`
-                : "Â· no conversations yet"}
+                ? `· ${list.data.length} thread${list.data.length === 1 ? "" : "s"}`
+                : "· no conversations yet"}
           </span>
           <Button
             size="sm"
@@ -325,7 +325,7 @@ function ConversationsContent() {
         </div>
       )}
 
-      {/* â”€â”€ TOP TABS BAR (Exact Zithara Header: Inbox, Starred, Unread, Closed, Snoozed) â”€â”€ */}
+      {/* ── TOP TABS BAR (Exact Zithara Header: Inbox, Starred, Unread, Closed, Snoozed) ── */}
       <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-2">
         <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none">
           {QUEUES.filter((q) => !q.headOfficeOnly || isHeadOffice).map((q) => {
@@ -351,7 +351,7 @@ function ConversationsContent() {
                    quirk and a colleague wondering where their stars went. */
                 title={
                   q.key === "starred" || q.key === "snoozed"
-                    ? `${q.label} is saved in this browser only â€” it will not appear on another device.`
+                    ? `${q.label} is saved in this browser only — it will not appear on another device.`
                     : undefined
                 }
                 className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all whitespace-nowrap ${
@@ -407,7 +407,7 @@ function ConversationsContent() {
         </div>
       </div>
 
-      {/* â”€â”€ 3-PANE ZITHARA ARCHITECTURE: Contacts | Chat | Darrell CRM â”€â”€ */}
+      {/* ── 3-PANE ZITHARA ARCHITECTURE: Contacts | Chat | Darrell CRM ── */}
       <div className="grid gap-3 lg:grid-cols-[280px_1fr] xl:grid-cols-[285px_1fr]">
         {/* LEFT PANE: Contacts List */}
         <Card className={`flex flex-col ${PANE_HEIGHT} overflow-hidden border-border/80 shadow-sm`}>
@@ -456,7 +456,7 @@ function ConversationsContent() {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search or start a new chatâ€¦"
+                placeholder="Search or start a new chat…"
                 className="w-full rounded-lg bg-muted/60 pl-8 pr-7 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-[#25D366]"
               />
               <Filter className="absolute right-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground cursor-pointer" />
@@ -540,8 +540,8 @@ function ConversationsContent() {
 
                       {/* Facts from the row, and nothing else.
                           The chips here used to be picked by the row's POSITION
-                          in the list â€” index 1 was "Pending", everything else
-                          was "Happy Users" â€” so they described nothing and were
+                          in the list — index 1 was "Pending", everything else
+                          was "Happy Users" — so they described nothing and were
                           identical on every refresh. What a manager needs to see
                           is which branch owns the thread and who is on it. */}
                       <div className="mt-1 flex items-center gap-1.5 flex-wrap">
@@ -557,7 +557,7 @@ function ConversationsContent() {
                         )}
                         <span className="text-[10px] text-muted-foreground truncate">
                           {c.store?.name ?? "No store yet"}
-                          {c.assignedUser ? ` Â· ${c.assignedUser.name}` : ""}
+                          {c.assignedUser ? ` · ${c.assignedUser.name}` : ""}
                         </span>
                       </div>
 
@@ -566,7 +566,7 @@ function ConversationsContent() {
                           and the preview was worse than none. */}
                       <p className="mt-1 text-[11px] text-muted-foreground truncate">
                         {c.lastMessage
-                          ? `${previewPrefix(c.lastMessage)}${c.lastMessage.preview || "â€”"}`
+                          ? `${previewPrefix(c.lastMessage)}${c.lastMessage.preview || "—"}`
                           : "No messages yet"}
                       </p>
                     </div>
@@ -576,7 +576,7 @@ function ConversationsContent() {
                         tracks per-user read state on a Conversation, so there is
                         no honest number to show and the badge is gone. Bringing
                         it back means storing when each user last opened each
-                        thread â€” a real feature, not a display detail. */}
+                        thread — a real feature, not a display detail. */}
                   </button>
                 );
               })
@@ -687,7 +687,7 @@ function ThreadView({
         // 24-hour window). The note says which, so never soften it here.
         result.delivery?.state === "queued"
           ? "Sending on WhatsApp"
-          : "Saved â€” not sent",
+          : "Saved — not sent",
         { description: result.delivery?.note },
       );
     } catch (e) {
@@ -697,7 +697,7 @@ function ThreadView({
 
   return (
     <div className={`grid gap-3 ${showRightCrm ? "xl:grid-cols-[1fr_290px]" : "grid-cols-1"} items-start`}>
-      {/* â”€â”€ CENTER COLUMN: WhatsApp Web Chat Window â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── CENTER COLUMN: WhatsApp Web Chat Window ───────────────────── */}
       <Card className={`flex flex-col ${PANE_HEIGHT} overflow-hidden border-border/80 shadow-sm`}>
         {/* WhatsApp Header + Zithara Quick Action Icons */}
         <CardHeader className="flex-row items-center justify-between border-b border-border/60 bg-card px-3.5 py-2.5 space-y-0 gap-2">
@@ -729,9 +729,9 @@ function ThreadView({
               <div className="flex items-center gap-1 text-[11px] text-muted-foreground mt-0.5 min-w-0 truncate">
                 <span className="shrink-0 inline-block h-1.5 w-1.5 rounded-full bg-[#25D366] animate-pulse" />
                 <span className="shrink-0 text-[#25D366] font-medium text-[11px]">Online</span>
-                <span className="shrink-0 text-muted-foreground/30">Â·</span>
+                <span className="shrink-0 text-muted-foreground/30">·</span>
                 <span className="truncate">{conversation.store?.name ?? "No store yet"}</span>
-                <span className="shrink-0 text-muted-foreground/30">Â·</span>
+                <span className="shrink-0 text-muted-foreground/30">·</span>
                 <span className="truncate">{conversation.assignedUser?.name ?? "Unassigned"}</span>
               </div>
             </div>
@@ -756,7 +756,7 @@ function ThreadView({
 
               Both branches AWAIT the mutation. The version this replaces fired
               `toast.success` next to an un-awaited `mutate`, so a refused close
-              â€” another branch's thread, an expired session â€” still told the user
+              — another branch's thread, an expired session — still told the user
               it had worked, and the thread stayed in their queue contradicting
               the message they had just been shown.
             */}
@@ -845,8 +845,8 @@ function ThreadView({
                 {/*
                   "Archive conversation" was here and did nothing but raise a
                   success toast. It is removed rather than reimplemented: there
-                  is no archive state in the model â€” a thread is open, snoozed or
-                  closed â€” so it could only ever have duplicated Close, and two
+                  is no archive state in the model — a thread is open, snoozed or
+                  closed — so it could only ever have duplicated Close, and two
                   controls that claim to do different things while doing the same
                   one is worse than either alone.
                 */}
@@ -931,7 +931,7 @@ function ThreadView({
                       )}
 
                       {/* Who actually typed it. Read from the recorded sender,
-                          not from the message text â€” this is the line an admin
+                          not from the message text — this is the line an admin
                           checks to see which manager answered which customer,
                           and it has to survive a reply with no text at all.
                           A different colour from the bot/AI green so a human
@@ -945,7 +945,7 @@ function ThreadView({
 
                       {/* An attachment the customer sent. Rendered through
                           AuthedImage because the bytes are served from an
-                          authenticated route â€” a plain <img src> cannot carry
+                          authenticated route — a plain <img src> cannot carry
                           the Authorization header, and these are the customer's
                           own photographs rather than public files. */}
                       {m.mediaUrl && (m.mediaType ?? "").startsWith("image/") && (
@@ -1040,7 +1040,7 @@ function ThreadView({
               type="button"
               onClick={() =>
                 setDraft(
-                  "Our Surat showroom is at: Ã‰clat Diamonds, Ring Road, Surat. Store hours: 10:30 AM to 8:30 PM.",
+                  "Our Surat showroom is at: Éclat Diamonds, Ring Road, Surat. Store hours: 10:30 AM to 8:30 PM.",
                 )
               }
               className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/50 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted hover:border-[#25D366]/40 transition-colors whitespace-nowrap"
@@ -1095,7 +1095,7 @@ function ThreadView({
                     onSend();
                   }
                 }}
-                placeholder="Type a messageâ€¦"
+                placeholder="Type a message…"
                 rows={draft.includes("\n") ? 3 : 1}
                 className="w-full resize-none rounded-xl border border-input bg-background/80 px-3.5 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#25D366] transition-all min-h-[38px]"
               />
@@ -1127,14 +1127,14 @@ function ThreadView({
           <div className="flex items-center justify-between text-[10.5px] text-muted-foreground px-1 pt-0.5">
             <span className="flex items-center gap-1">
               <span className="h-1.5 w-1.5 rounded-full bg-[#25D366]" />
-              WhatsApp Cloud API Â· End-to-end encrypted
+              WhatsApp Cloud API · End-to-end encrypted
             </span>
-            <span>Enter to send Â· Shift + Enter for new line</span>
+            <span>Enter to send · Shift + Enter for new line</span>
           </div>
         </div>
       </Card>
 
-      {/* â”€â”€ RIGHT COLUMN: Darrell Steward Style Customer Profile & Accordions â”€â”€ */}
+      {/* ── RIGHT COLUMN: Darrell Steward Style Customer Profile & Accordions ── */}
       {showRightCrm && (
         <div className={`${PANE_HEIGHT} space-y-3 overflow-y-auto pr-1`}>
           {/* Customer Profile Card */}
@@ -1144,7 +1144,7 @@ function ThreadView({
                 <span className="font-semibold text-sm">
                   {party?.name ?? "Customer"}
                 </span>
-                <span className="text-amber-500 font-bold">âš¡</span>
+                <span className="text-amber-500 font-bold">⚡</span>
               </div>
               <div className="flex items-center gap-1">
                 <Link
@@ -1203,7 +1203,7 @@ function ThreadView({
                 <div>
                   <span className="text-muted-foreground block text-[11px]">Lifecycle stage</span>
                   <span className="font-medium text-foreground">
-                    Marketing qualifiedâ€¦
+                    Marketing qualified…
                   </span>
                 </div>
               </div>
@@ -1333,12 +1333,12 @@ function ThreadView({
         </div>
       )}
 
-      {/* â”€â”€ Dialogs for Zithara Accordions â”€â”€ */}
+      {/* ── Dialogs for Zithara Accordions ── */}
       {/*
         1. Add Note.
 
         This dialog previously raised "Note added to customer profile" and threw
-        the text away â€” nothing was ever sent anywhere. It now writes a real note
+        the text away — nothing was ever sent anywhere. It now writes a real note
         against the customer, and refuses honestly when the thread has no
         customer to attach one to.
       */}
@@ -1371,8 +1371,8 @@ function ThreadView({
                     <li key={n.id} className="rounded-md border border-border bg-muted/30 p-2 text-xs">
                       <p className="leading-relaxed">{n.text}</p>
                       <p className="mt-1 text-[10px] text-muted-foreground">
-                        {n.authorName ?? "Someone"} Â· {new Date(n.createdAt).toLocaleDateString()}
-                        {n.onLead ? " Â· on a lead" : ""}
+                        {n.authorName ?? "Someone"} · {new Date(n.createdAt).toLocaleDateString()}
+                        {n.onLead ? " · on a lead" : ""}
                       </p>
                     </li>
                   ))}
@@ -1398,7 +1398,7 @@ function ThreadView({
                 }
               }}
             >
-              {addNote.isPending ? "Savingâ€¦" : "Save note"}
+              {addNote.isPending ? "Saving…" : "Save note"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1466,7 +1466,7 @@ function ThreadView({
               <Input defaultValue="Solitaire Ring 0.50 ct VS" />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Estimated Value (â‚¹)</Label>
+              <Label className="text-xs">Estimated Value (₹)</Label>
               <Input
                 value={dealAmount}
                 onChange={(e) => setDealAmount(e.target.value)}

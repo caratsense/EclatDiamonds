@@ -1,4 +1,4 @@
-﻿import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request = require('supertest');
 import * as bcrypt from 'bcryptjs';
@@ -15,7 +15,7 @@ import { GOLD_RATE_JOB } from '../src/integrations/gold-rate.service';
  * deploy, and only one of them is fixed by pressing "Pull from feed".
  *
  * This pins the reading the screen depends on, including the case that started
- * it â€” a tenant whose automatic refresh has never run at all.
+ * it — a tenant whose automatic refresh has never run at all.
  */
 const PASSWORD = 'password123';
 const ORG = 'org_grh';
@@ -49,7 +49,7 @@ describe('Gold rate refresh health (e2e)', () => {
     await teardown(prisma);
     const hash = await bcrypt.hash(PASSWORD, 10);
 
-    // A jewellery tenant â€” the only industry whose pack maintains metal rates.
+    // A jewellery tenant — the only industry whose pack maintains metal rates.
     await prisma.organisation.create({
       data: { id: ORG, name: 'Gold Health', slug: 'grh', industryPackCode: 'jewellery' },
     });
@@ -83,7 +83,7 @@ describe('Gold rate refresh health (e2e)', () => {
       .set(auth(token.manager))
       .expect(200);
 
-    // Null, not a zero timestamp and not "just now" â€” the difference between
+    // Null, not a zero timestamp and not "just now" — the difference between
     // "nothing has pulled here" and "it pulled and found nothing".
     expect(res.body.lastRunAt).toBeNull();
     expect(res.body.ageHours).toBeNull();

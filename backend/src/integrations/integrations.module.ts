@@ -1,4 +1,4 @@
-﻿import { Global, Module } from '@nestjs/common';
+import { Global, Module } from '@nestjs/common';
 import { IntegrationsController } from './integrations.controller';
 import { WhatsAppService } from './whatsapp.service';
 import { WhatsAppCredentialsService } from './whatsapp-credentials.service';
@@ -33,7 +33,7 @@ import { MessagingRoutesService } from './messaging-routes.service';
  * can inject these services directly without re-importing the module.
  *
  * Imports WhatsAppBotModule so the inbound webhook can route messages to the bot.
- * (WhatsAppBotModule injects WhatsAppService via the global export above â€” the
+ * (WhatsAppBotModule injects WhatsAppService via the global export above — the
  * import edge is one-directional, so there is no module cycle.)
  */
 @Global()
@@ -64,7 +64,7 @@ import { MessagingRoutesService } from './messaging-routes.service';
     MetaLeadAdapter,
     MetaHealthService,
     // Injects IdentityService and LeadIntakeService, which CrmModule exports
-    // as @Global â€” the same edge MetaLeadAdapter already relies on, and it
+    // as @Global — the same edge MetaLeadAdapter already relies on, and it
     // runs one way only (integrations reach into CRM; CRM never reaches back).
     TelephonyService,
     MessagingRoutesService,
