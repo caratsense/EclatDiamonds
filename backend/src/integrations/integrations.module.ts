@@ -9,6 +9,7 @@ import { EmailService } from './email.service';
 import { WhatsAppBotModule } from '../whatsapp-bot/whatsapp-bot.module';
 import { IntegrationModule } from '../integration/integration.module';
 import { MetaAssetOwnershipService } from './meta-asset-ownership.service';
+import { MetaAdMetadataService } from './meta-ad-metadata.service';
 import { MetaGraphClient } from './meta-graph.client';
 import { MetaLeadAdsService } from './meta-lead-ads.service';
 import { MetaWebhookService } from './meta-webhook.service';
@@ -48,6 +49,9 @@ import { MessagingRoutesService } from './messaging-routes.service';
     EmailService,
     MetaAssetOwnershipService,
     MetaGraphClient,
+    // Resolves a CTWA ad id to its ad set and campaign, so one rule per showroom
+    // routes every ad that showroom runs. Injected by ConversationsService.
+    MetaAdMetadataService,
     MetaLeadAdsService,
     MetaWebhookService,
     // Registers itself with MetaWebhookService on init and forwards verified
@@ -83,6 +87,9 @@ import { MessagingRoutesService } from './messaging-routes.service';
     EmailService,
     MetaAssetOwnershipService,
     MetaGraphClient,
+    // Resolves a CTWA ad id to its ad set and campaign, so one rule per showroom
+    // routes every ad that showroom runs. Injected by ConversationsService.
+    MetaAdMetadataService,
     MetaLeadAdsService,
     MetaWebhookService,
     TelephonyService,

@@ -321,6 +321,20 @@ export class IntegrationsController {
     return this.goldRate.currentRates(user.organisationId, store);
   }
 
+  /**
+   * Is the automatic refresh alive?
+   *
+   * Separate from the rates themselves because it answers a different question.
+   * "How old is this price" is on every rate already; this says whether anything
+   * is still pulling — the difference between a quiet market and a scheduler
+   * that has not run since the last deploy, which look identical on screen.
+   */
+  @Roles('store_manager', 'head_office')
+  @Get('gold-rate/health')
+  goldRateHealth(@CurrentUser() user: AuthUser) {
+    return this.goldRate.refreshHealth(user.organisationId);
+  }
+
   /** Pull a fresh rate from the configured feed (managers and above). */
   @Roles('store_manager', 'head_office')
   @Post('gold-rate/refresh')

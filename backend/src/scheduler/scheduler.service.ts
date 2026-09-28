@@ -16,7 +16,7 @@ import { AuthUser } from '../common/auth-user';
 import { businessDate, dateOnly, resolveTz, zonedParts } from '../common/tz.util';
 import { HrmsService } from '../hrms/hrms.service';
 import { PayrollService } from '../hrms/payroll.service';
-import { GoldRateService } from '../integrations/gold-rate.service';
+import { GOLD_RATE_JOB, GoldRateService } from '../integrations/gold-rate.service';
 import { JobRunnerService } from './job-runner.service';
 import { packMaintainsMetalRates } from '../config/entitlements';
 import { OmnichannelService } from '../omnichannel/omnichannel.service';
@@ -416,7 +416,7 @@ export class SchedulerService {
     }
   }
 
-  @Cron(CronExpression.EVERY_HOUR, { name: 'pricing.gold-rate-refresh' })
+  @Cron(CronExpression.EVERY_HOUR, { name: GOLD_RATE_JOB })
   async refreshGoldRate(): Promise<void> {
     if (!this.enabled || !this.goldRate.enabled) return;
 
@@ -448,7 +448,7 @@ export class SchedulerService {
        * accumulating a price history of it.
        */
       if (!packMaintainsMetalRates(organisation?.industryPackCode)) continue;
-      await this.runner.runOnce(organisationId, 'pricing.gold-rate-refresh', organisationId, runKey, async () => {
+      await this.runner.runOnce(organisationId, GOLD_RATE_JOB, organisationId, runKey, async () => {
         const res = await this.goldRate.refreshIfStale(hours, organisationId);
         if (res.updated)
           this.logger.log(`Gold rates refreshed (${organisationId}): ${JSON.stringify(res.rates)}`);

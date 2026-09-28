@@ -40,7 +40,9 @@ function AdSetRulesEditor({ initialRules }: { initialRules: AdSetAutomationRule[
       name: "New routing rule",
       enabled: true,
       priority: 100,
-      matchField: "ad_id",
+      // Name matching by default: it is the setup that does not need revisiting
+      // every time marketing launches an ad.
+      matchField: "ad_set_name",
       matchValue: "",
       storeId: null,
       assignedUserId: null,
@@ -147,9 +149,14 @@ function AdSetRulesEditor({ initialRules }: { initialRules: AdSetAutomationRule[
             <div className="grid gap-3 md:grid-cols-4">
               <Field label="Match using">
                 <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={rule.matchField} onChange={(event) => update(rule.id, { matchField: event.target.value as AdSetAutomationRule["matchField"] })}>
-                  <option value="ad_id">Exact ad ID (works with Click-to-WhatsApp today)</option>
-                  <option value="ad_set_name">Ad-set name contains (needs Meta Marketing API)</option>
-                  <option value="ad_set_id">Exact ad-set ID (needs Meta Marketing API)</option>
+                  {/* Name matching is the one to reach for: one rule per
+                      showroom covers every ad that showroom runs, now and in
+                      future. Ad-ID matching still works and is still offered,
+                      but it needs a new rule for every new ad. */}
+                  <option value="ad_set_name">Ad-set name contains — one rule per showroom</option>
+                  <option value="campaign_name">Campaign name contains — one rule per showroom</option>
+                  <option value="ad_id">Exact ad ID — pins a single ad</option>
+                  <option value="ad_set_id">Exact ad-set ID — pins a single ad set</option>
                   <option value="tag">Customer/ad tag</option>
                 </select>
               </Field>
