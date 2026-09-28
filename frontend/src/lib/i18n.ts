@@ -25,15 +25,15 @@ import { useConfigBootstrap } from "@/lib/queries/tenant-config";
  */
 export const DICT: Record<string, string> = {
   // Sidebar / mobile section headers
-  "group.Overview & Analytics": "Overview & Analytics",
-  "group.CRM": "CRM",
-  "group.Showroom Floor": "Showroom Floor",
-  "group.Commerce & Orders": "Commerce & Orders",
-  "group.Inventory & Supply": "Inventory & Supply",
-  "group.Marketing & Inbound": "Marketing & Inbound",
-  "group.HRM": "HRM",
-  "group.Back-office & Approvals": "Back-office & Approvals",
-  "group.Administration": "Administration",
+  "group.Today": "Today",
+  "group.People": "People",
+  "group.Showroom": "Showroom",
+  "group.Selling": "Selling",
+  "group.After the sale": "After the sale",
+  "group.Stock": "Stock",
+  "group.Team": "Team",
+  "group.Reports": "Reports",
+  "group.Setup": "Setup",
 
   // Words a screen has to say inline, not just as a heading. Kept as keys so a
   // pack's lexicon can substitute them the same way it substitutes nav labels.

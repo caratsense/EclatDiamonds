@@ -64,18 +64,21 @@ import type { AccessMap, Role } from "@/lib/types";
  * loyalty scheme and the leaderboard — seven different jobs done by four
  * different people. At fourteen items nobody scans a list; they hunt it.
  *
- * Nine sections, none longer than seven, each one a role's actual working day.
+ * Ordered as the customer's journey runs: what needs you today, the people,
+ * the showroom, the sale, what follows the sale, stock, the team, reports,
+ * then setup. Putting Payments, Loyalty and Targets side by side under "After
+ * the sale" makes it visible at a glance that one event feeds all of them.
  */
 export const NAV_GROUP_ORDER = [
-  "Overview & Analytics",
-  "CRM",
-  "Showroom Floor",
-  "Commerce & Orders",
-  "Inventory & Supply",
-  "Marketing & Inbound",
-  "HRM",
-  "Back-office & Approvals",
-  "Administration",
+  "Today",
+  "People",
+  "Showroom",
+  "Selling",
+  "After the sale",
+  "Stock",
+  "Team",
+  "Reports",
+  "Setup",
 ] as const;
 
 export type NavGroupLabel = (typeof NAV_GROUP_ORDER)[number];
@@ -93,6 +96,11 @@ export interface NavItem {
   icon: LucideIcon;
   /** Which sidebar section this belongs to. */
   group: NavGroupLabel;
+  /**
+   * Off the sidebar, still a real page: its header, its route and the access
+   * matrix keep it. For screens nothing feeds yet; they come back with data.
+   */
+  hidden?: boolean;
   /**
    * Roles allowed to see this item. Undefined = visible to everyone.
    * Drives role-aware nav visibility (never hardcode per-screen).
@@ -125,7 +133,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Your store's key numbers and shared team tasks.",
     primaryAction: "New Task",
     icon: LayoutDashboard,
-    group: "Overview & Analytics",
+    group: "Today",
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -135,7 +143,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Automated daily sales reports and store analytics.",
     primaryAction: "Generate DSR",
     icon: BarChart3,
-    group: "Overview & Analytics",
+    group: "Reports",
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -148,7 +156,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "When it sold, what sold, and what is still sitting.",
     primaryAction: "",
     icon: Activity,
-    group: "Overview & Analytics",
+    group: "Today",
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -158,7 +166,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Revenue, orders and staff across all stores, side by side.",
     primaryAction: "",
     icon: GitCompare,
-    group: "Overview & Analytics",
+    group: "Reports",
     roles: ["store_manager", "area_manager", "head_office"],
   },
 
@@ -172,7 +180,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Every customer message, on every channel, in one place.",
     primaryAction: "",
     icon: Inbox,
-    group: "CRM",
+    group: "People",
   },
   {
     module: 1,
@@ -181,7 +189,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Leads and follow-ups for every customer enquiry.",
     primaryAction: "New Lead",
     icon: Users,
-    group: "CRM",
+    group: "People",
   },
   {
     module: 1,
@@ -191,7 +199,7 @@ export const NAV_ITEMS: NavItem[] = [
       "Every follow-up owed to a customer, oldest first, with the history on one screen before you dial.",
     primaryAction: "",
     icon: PhoneCall,
-    group: "CRM",
+    group: "People",
     roles: ["salesperson", "store_manager", "area_manager", "head_office"],
   },
   {
@@ -201,7 +209,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Today's and overdue lead follow-ups.",
     primaryAction: "",
     icon: BellRing,
-    group: "CRM",
+    group: "People",
   },
   {
     module: 1,
@@ -211,7 +219,7 @@ export const NAV_ITEMS: NavItem[] = [
       "Your store's customer directory — contacts, purchase history and key dates.",
     primaryAction: "",
     icon: Contact,
-    group: "CRM",
+    group: "People",
   },
   {
     module: 1,
@@ -221,7 +229,7 @@ export const NAV_ITEMS: NavItem[] = [
       "Ask a customer how it went; an unhappy answer reaches a person, not a public review page.",
     primaryAction: "",
     icon: MessageSquareHeart,
-    group: "CRM",
+    group: "People",
     roles: ["store_manager", "area_manager", "head_office"],
   },
 
@@ -234,7 +242,7 @@ export const NAV_ITEMS: NavItem[] = [
       "Find a walk-in, see what they came for, and record the visit from a phone.",
     primaryAction: "",
     icon: Smartphone,
-    group: "Showroom Floor",
+    group: "Showroom",
     roles: ["salesperson", "store_manager", "area_manager", "head_office"],
   },
   {
@@ -244,7 +252,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Log walk-ins and assign each customer to a sales rep.",
     primaryAction: "Log Check-in",
     icon: DoorOpen,
-    group: "Showroom Floor",
+    group: "Showroom",
   },
 
   /* ------------------------------------------- Commerce & Orders */
@@ -255,7 +263,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Browse products across stores; search by photo.",
     primaryAction: "Add Product",
     icon: Gem,
-    group: "Commerce & Orders",
+    group: "Showroom",
   },
   {
     module: 2,
@@ -265,7 +273,7 @@ export const NAV_ITEMS: NavItem[] = [
       "Build quotes and custom orders; custom orders route to production.",
     primaryAction: "New Quote",
     icon: FileText,
-    group: "Commerce & Orders",
+    group: "Selling",
   },
   {
     module: 8,
@@ -274,7 +282,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Every order being made, booked here or imported from the factory, and its stage.",
     primaryAction: "New Order",
     icon: Route,
-    group: "Commerce & Orders",
+    group: "Selling",
   },
   {
     module: 12,
@@ -284,7 +292,7 @@ export const NAV_ITEMS: NavItem[] = [
       "Record sales with advance and balance, and track collections and bank reconciliation.",
     primaryAction: "New Sale",
     icon: Receipt,
-    group: "Commerce & Orders",
+    group: "After the sale",
     // Store-level collections ledger + reconciliation is a manager view
     // (matches Finance/Reporting/Targets gating). If salespeople need to
     // record direct sales at the counter, widen this — open product decision.
@@ -297,7 +305,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Request and approve discounts with live margin checks.",
     primaryAction: "Request Discount",
     icon: Percent,
-    group: "Commerce & Orders",
+    group: "Selling",
   },
   {
     module: 14,
@@ -306,7 +314,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Returns, exchanges, buyback, repairs and old-gold trade-ins.",
     primaryAction: "New Intake",
     icon: RotateCcw,
-    group: "Commerce & Orders",
+    group: "Selling",
   },
   {
     module: 17,
@@ -315,7 +323,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Gold-savings schemes and the customer referral wallet.",
     primaryAction: "Enroll Customer",
     icon: PiggyBank,
-    group: "Commerce & Orders",
+    group: "After the sale",
   },
 
   /* ------------------------------------------- Inventory & Supply */
@@ -326,7 +334,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Stock levels, aging lines and scrap recovery.",
     primaryAction: "Stock Entry",
     icon: Boxes,
-    group: "Inventory & Supply",
+    group: "Stock",
     // Store managers see their own store's stock; area/HO see all stores.
     roles: ["store_manager", "area_manager", "head_office"],
   },
@@ -338,7 +346,7 @@ export const NAV_ITEMS: NavItem[] = [
       "Move stock between branches — request, Head-Office approval, dispatch and receipt.",
     primaryAction: "New Transfer",
     icon: ArrowLeftRight,
-    group: "Inventory & Supply",
+    group: "Stock",
     // Salespeople have no actions here; store managers run the movements,
     // area/HO oversee + approve.
     roles: ["store_manager", "area_manager", "head_office"],
@@ -359,7 +367,7 @@ export const NAV_ITEMS: NavItem[] = [
       "Send one approved message to a group of customers, with consent checked per person.",
     primaryAction: "New Campaign",
     icon: Send,
-    group: "Marketing & Inbound",
+    group: "Setup",
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -370,7 +378,7 @@ export const NAV_ITEMS: NavItem[] = [
       "Publish a form for your own website that files enquiries straight into a branch.",
     primaryAction: "Publish Form",
     icon: Globe,
-    group: "Marketing & Inbound",
+    group: "Setup",
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -380,7 +388,8 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Plan campaigns and track agency deliverables.",
     primaryAction: "New Campaign",
     icon: Megaphone,
-    group: "Marketing & Inbound",
+    group: "Setup",
+    hidden: true,
     roles: ["store_manager", "area_manager", "head_office"],
   },
 
@@ -392,7 +401,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Add staff, assign roles and stores within your scope.",
     primaryAction: "Add Staff",
     icon: UsersRound,
-    group: "HRM",
+    group: "Team",
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -402,7 +411,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Geo-attendance, rosters, leave and regularization.",
     primaryAction: "Mark Attendance",
     icon: Fingerprint,
-    group: "HRM",
+    group: "Team",
   },
   {
     module: 6,
@@ -411,7 +420,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Sales leaderboard, commission and incentives.",
     primaryAction: "",
     icon: Trophy,
-    group: "HRM",
+    group: "After the sale",
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -421,7 +430,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Set monthly sales targets per store and track achievement.",
     primaryAction: "",
     icon: Target,
-    group: "HRM",
+    group: "After the sale",
     roles: ["store_manager", "area_manager", "head_office"],
   },
 
@@ -433,7 +442,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Discount, return and leave requests awaiting your approval.",
     primaryAction: "",
     icon: ClipboardCheck,
-    group: "Back-office & Approvals",
+    group: "Today",
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -447,7 +456,7 @@ export const NAV_ITEMS: NavItem[] = [
       "Ask your manager, area office or head office for a decision — diamond rates, price overrides, transfers and more.",
     primaryAction: "New Request",
     icon: MessageSquarePlus,
-    group: "Back-office & Approvals",
+    group: "Today",
   },
   {
     module: 13,
@@ -456,7 +465,8 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Raise and track operational issues with the back office.",
     primaryAction: "New Ticket",
     icon: LifeBuoy,
-    group: "Back-office & Approvals",
+    group: "Setup",
+    hidden: true,
   },
   {
     module: 4,
@@ -465,7 +475,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Ledgers, budgets, cash flow and expansion costs.",
     primaryAction: "Add Entry",
     icon: Banknote,
-    group: "Back-office & Approvals",
+    group: "Reports",
     roles: ["store_manager", "area_manager", "head_office"],
   },
 
@@ -479,7 +489,7 @@ export const NAV_ITEMS: NavItem[] = [
       "What is set up and what is left — industry, locations, team, data and channels.",
     primaryAction: "",
     icon: ListChecks,
-    group: "Administration",
+    group: "Setup",
     roles: ["head_office"],
   },
   {
@@ -489,7 +499,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Choose, person by person, which screens they can open and how far.",
     primaryAction: "",
     icon: ShieldCheck,
-    group: "Administration",
+    group: "Setup",
     roles: ["head_office"],
   },
   {
@@ -504,7 +514,7 @@ export const NAV_ITEMS: NavItem[] = [
       "Add branches, review the ones a connected system has sent through, and assign logins.",
     primaryAction: "Add Store",
     icon: Store,
-    group: "Administration",
+    group: "Setup",
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -522,7 +532,8 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Tasks and timelines for opening new stores.",
     primaryAction: "New Project",
     icon: Building2,
-    group: "Administration",
+    group: "Setup",
+    hidden: true,
     roles: ["head_office"],
   },
   {
@@ -534,7 +545,7 @@ export const NAV_ITEMS: NavItem[] = [
       "Your industry, what your business calls things, and which fields your team fills in.",
     primaryAction: "",
     icon: SlidersHorizontal,
-    group: "Administration",
+    group: "Setup",
     roles: ["head_office"],
   },
   {
@@ -545,7 +556,7 @@ export const NAV_ITEMS: NavItem[] = [
       "The live gold rate every new quote is priced from — auto-updates from the market; override it here if needed.",
     primaryAction: "",
     icon: Coins,
-    group: "Administration",
+    group: "Setup",
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -556,7 +567,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Connect the systems and channels your business already uses.",
     primaryAction: "",
     icon: Plug,
-    group: "Administration",
+    group: "Setup",
     roles: ["head_office"],
   },
   {
@@ -570,7 +581,7 @@ export const NAV_ITEMS: NavItem[] = [
       "Import your existing records and check what each connected system has delivered.",
     primaryAction: "",
     icon: Database,
-    group: "Administration",
+    group: "Setup",
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -581,7 +592,7 @@ export const NAV_ITEMS: NavItem[] = [
       "A record of approvals, role changes and other sensitive actions.",
     primaryAction: "",
     icon: ScrollText,
-    group: "Administration",
+    group: "Setup",
     roles: ["store_manager", "area_manager", "head_office"],
   },
 
@@ -605,7 +616,7 @@ export const NAV_ITEMS: NavItem[] = [
       "Leads, conversations, follow-ups, the floor, quotes and feedback across every branch, over a period you choose.",
     primaryAction: "",
     icon: BarChart3,
-    group: "Overview & Analytics",
+    group: "Reports",
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -615,7 +626,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Reports that send themselves at month-end, and what happened to the last one.",
     primaryAction: "New schedule",
     icon: CalendarClock,
-    group: "Overview & Analytics",
+    group: "Reports",
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -626,7 +637,7 @@ export const NAV_ITEMS: NavItem[] = [
       "The promise to answer within five minutes, measured — who is late, and who was told.",
     primaryAction: "",
     icon: Timer,
-    group: "CRM",
+    group: "People",
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -637,7 +648,8 @@ export const NAV_ITEMS: NavItem[] = [
       "People taken out of the working lists. Their consent history is kept, which is what stops them being messaged again.",
     primaryAction: "",
     icon: Archive,
-    group: "CRM",
+    group: "People",
+    hidden: true,
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -647,7 +659,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Everything owed to a customer or a colleague, in one list.",
     primaryAction: "New Task",
     icon: ListTodo,
-    group: "CRM",
+    group: "People",
   },
   {
     module: 9,
@@ -657,7 +669,7 @@ export const NAV_ITEMS: NavItem[] = [
       "Pieces that have not moved, against thresholds you set per category rather than one number for everything.",
     primaryAction: "",
     icon: PackageX,
-    group: "Inventory & Supply",
+    group: "Stock",
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -668,7 +680,7 @@ export const NAV_ITEMS: NavItem[] = [
       "What a purchase earns, what a point is worth, and the key your own website signs in with.",
     primaryAction: "",
     icon: Gift,
-    group: "Commerce & Orders",
+    group: "After the sale",
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -679,7 +691,7 @@ export const NAV_ITEMS: NavItem[] = [
       "Each person's own weekly off, and a payslip counted from the attendance register.",
     primaryAction: "",
     icon: ReceiptIcon,
-    group: "HRM",
+    group: "Team",
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -690,7 +702,8 @@ export const NAV_ITEMS: NavItem[] = [
       "The message that tells somebody what they owe a customer today, and exactly what it would say.",
     primaryAction: "",
     icon: BellRing,
-    group: "Administration",
+    group: "Setup",
+    hidden: true,
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -700,7 +713,8 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Your own labels for a lead, and what they mean.",
     primaryAction: "New tag",
     icon: Tags,
-    group: "Administration",
+    group: "Setup",
+    hidden: true,
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -711,7 +725,8 @@ export const NAV_ITEMS: NavItem[] = [
       "Match a folder of photographs to the products you already have, and reuse the column mapping you worked out last month.",
     primaryAction: "",
     icon: Images,
-    group: "Administration",
+    group: "Setup",
+    hidden: true,
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -722,7 +737,8 @@ export const NAV_ITEMS: NavItem[] = [
       "Which of your numbers each branch answers on, so a customer is replied to by the shop they wrote to.",
     primaryAction: "",
     icon: Route,
-    group: "Administration",
+    group: "Setup",
+    hidden: true,
     roles: ["head_office"],
   },
   {
@@ -733,7 +749,8 @@ export const NAV_ITEMS: NavItem[] = [
       "What can actually reach a customer today, and what is missing where it cannot.",
     primaryAction: "",
     icon: Radio,
-    group: "Administration",
+    group: "Setup",
+    hidden: true,
     roles: ["store_manager", "area_manager", "head_office"],
   },
 ];
@@ -820,7 +837,10 @@ export function visibleNavGroups(
   return NAV_GROUPS.map((group) => ({
     ...group,
     items: group.items.filter(
-      (item) => canSeeNavItem(item, role, access) && (!enabled || enabled.has(item.slug)),
+      (item) =>
+        !item.hidden &&
+        canSeeNavItem(item, role, access) &&
+        (!enabled || enabled.has(item.slug)),
     ),
   })).filter((group) => group.items.length > 0);
 }
