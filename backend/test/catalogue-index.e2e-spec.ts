@@ -93,12 +93,15 @@ const mock = {
   versions: { dino: 'd1', siglip: 's1', preprocessing: 'pp1' },
   indexCalls: 0,
   searchCalls: 0,
+  /** Live /health asks — each one wakes a sleeping inference service. */
+  healthCalls: 0,
   /** Behave like an older inference build that returns no thumbnail. */
   noThumb: false,
   searchVec: e(0),
   /** When set, searches wait here — to hold slots open for the 429 test. */
   gate: null as Promise<void> | null,
   async currentVersions() {
+    this.healthCalls++;
     return this.versions;
   },
   cachedVersions() {
@@ -483,5 +486,27 @@ describe('Catalogue index + search (e2e)', () => {
     const m = await image(id);
     expect(m.embeddingStatus).toBe('indexed');
     expect(m.thumbUrl).toBe('/uploads/org/x/catalogue-thumbs/kept-grid.webp');
+  });
+
+  it('the sweep wakes the inference service only when a new picture is waiting', async () => {
+    process.env.SCHEDULER_ENABLED = 'true';
+    try {
+      await index.sweep(); // queue anything still waiting from earlier tests
+      await jobs.drain(50);
+      const before = mock.healthCalls;
+      await index.sweep();
+      expect(mock.healthCalls).toBe(before); // nothing new: no wake
+
+      await addImage(P[4], vecUrl(e(7), 'new-arrival'), { source: 'website' });
+      await prisma.productImage.updateMany({
+        where: { organisationId: ORG, url: { contains: 'new-arrival' } },
+        data: { embeddingStatus: 'pending' },
+      });
+      await index.sweep();
+      expect(mock.healthCalls).toBeGreaterThan(before);
+    } finally {
+      process.env.SCHEDULER_ENABLED = 'false';
+      await jobs.drain(50);
+    }
   });
 });

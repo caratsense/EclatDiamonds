@@ -299,7 +299,14 @@ export class CatalogueIndexService implements OnModuleInit {
       }),
     );
     if (!this.inference.available) return;
-    const version = await this.currentVersion();
+    // Asking the inference service wakes it, and a wake is a full model load.
+    // Only ask when a new picture is waiting; otherwise compare against the
+    // version the last search or index job saw, which costs nothing. A model
+    // upgrade still re-indexes: the first search after it refreshes that.
+    const waiting = await this.prisma.productImage.count({
+      where: { status: 'active', embeddingStatus: 'pending' },
+    });
+    const version = waiting ? await this.currentVersion() : this.cachedVersion();
     if (!version) return;
     const orgs = await this.prisma.productImage.groupBy({
       by: ['organisationId'],
