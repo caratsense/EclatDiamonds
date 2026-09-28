@@ -113,11 +113,17 @@ export function karatFromMetal(metal: string): number | null {
 export function docTypeFromTranType(tt: unknown): string {
   const t = String(tt ?? '').toUpperCase();
   if (t === 'JWSL') return 'sale';
+  if (t === 'JWSR') return 'sale_return';
   if (t === 'BJWSL') return 'branch_transfer';
   if (t === 'JWPH' || t === 'BJWPH') return 'purchase';
   if (t === 'JWPRM') return 'proforma';
   if (t.includes('BA')) return 'branch_transfer'; // JWBAP / JWBAI
-  return 'sale';
+  // JWAP (goods sent to a customer on approval) and any type nobody has mapped
+  // yet: a priced document that is not a sale. The old default was 'sale',
+  // which let every unrecognised document — a return, an approval memo — add
+  // to revenue without anyone noticing. Under-counting until a type is mapped
+  // is visible; over-counting is not.
+  return 'proforma';
 }
 
 /**

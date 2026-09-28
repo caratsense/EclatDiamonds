@@ -193,8 +193,12 @@ describe('After the sale (e2e)', () => {
     expect(pending?.value).toBe(1);
   });
 
-  it('a branch invoice is a transfer, not a sale', () => {
-    expect(docTypeFromTranType('BJWSL')).toBe('branch_transfer');
+  it('only a customer invoice counts as a sale', () => {
     expect(docTypeFromTranType('JWSL')).toBe('sale');
+    expect(docTypeFromTranType('BJWSL')).toBe('branch_transfer');
+    expect(docTypeFromTranType('JWSR')).toBe('sale_return');
+    expect(docTypeFromTranType('JWAP')).toBe('proforma');
+    // A type nobody has mapped must never become revenue.
+    expect(docTypeFromTranType('ZZNEW')).not.toBe('sale');
   });
 });

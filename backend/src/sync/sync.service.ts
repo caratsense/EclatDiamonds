@@ -3083,6 +3083,13 @@ export class SyncService {
       BJWPH: 'expense',
       MPH: 'expense',
       VCH: 'asset',
+      // Seen from Aug 2026: branch metal sale/purchase mirror MSL/MPH; a sale
+      // return (JWSR) takes money back out of income; branch job work (BDJOB)
+      // is a cost. Unmapped types still fall to 'asset' below.
+      BMSL: 'income',
+      BMPH: 'expense',
+      JWSR: 'expense',
+      BDJOB: 'expense',
     };
     const parties = await this.idMap(
       'party',
