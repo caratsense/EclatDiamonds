@@ -131,9 +131,16 @@ export class DashboardService {
           },
         }),
         this.prisma.checkIn.count({ where: { ...storeWhere, timeIn: { gte: todayStart } } }),
-        this.prisma.customOrder.count({
-          where: { ...storeWhere, stage: { notIn: ['delivered', 'cancelled'] } },
-        }),
+        // Orders booked in Eclat AND orders imported from the shop's factory
+        // system — the Timelines page lists both, so the tile counts both.
+        Promise.all([
+          this.prisma.customOrder.count({
+            where: { ...storeWhere, stage: { notIn: ['delivered', 'cancelled'] } },
+          }),
+          this.prisma.manufacturingOrder.count({
+            where: { ...storeWhere, status: { notIn: ['delivered', 'cancelled'] } },
+          }),
+        ]).then(([booked, imported]) => booked + imported),
         this.prisma.ledgerEntry.aggregate({
           _sum: { amount: true },
           where: { ...storeWhere, kind: 'AR', status: 'open' },

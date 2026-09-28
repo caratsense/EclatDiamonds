@@ -11,6 +11,7 @@ import { ROLE_RANK } from '../common/role.util';
 import { StoreScopeService } from '../common/store-scope.service';
 import { StorageService } from '../storage/storage.service';
 import { DiscountsService } from '../discounts/discounts.service';
+import { LoyaltyApiService } from '../loyalty/website/loyalty-api.service';
 import { CancelSaleDto, CreateSaleDto, SalesQueryDto } from './dto/sales.dto';
 
 function num(v: Prisma.Decimal | number | null | undefined): number {
@@ -44,6 +45,7 @@ export class SalesService {
     private readonly identity: IdentityService,
     private readonly activity: ActivityService,
     private readonly attribution: AttributionService,
+    private readonly loyalty: LoyaltyApiService,
   ) {}
 
   /**
@@ -301,7 +303,77 @@ export class SalesService {
       },
     });
 
+    // The customer has bought. Everything that was waiting on that happens now,
+    // each step best-effort like attribution above: money has changed hands and
+    // a CRM or points failure must never unwind the invoice.
+    if (partyId) await this.closeLeadsAsWon(user, partyId, dto.invoiceNo);
+    if (dto.phone) await this.earnPoints(user, dto, Number(total));
+
     return this.get(user, saleId);
+  }
+
+  /**
+   * Every open lead for this customer becomes Won, and the follow-ups chasing
+   * them stop.
+   *
+   * Without this a customer who has just bought keeps getting "are you still
+   * interested?" calls, and the funnel never records a single conversion.
+   * Follow-ups are marked done with the reason rather than deleted, so the lead's
+   * history still shows what was scheduled and why it stopped.
+   */
+  private async closeLeadsAsWon(user: AuthUser, partyId: string, invoiceNo: string) {
+    try {
+      const leads = await this.prisma.lead.findMany({
+        where: { organisationId: user.organisationId, partyId, outcome: 'open' },
+        select: { id: true, followUps: { where: { done: false }, select: { id: true, note: true } } },
+      });
+      if (!leads.length) return;
+      const now = new Date();
+      const reason = `Not needed: customer bought (sale ${invoiceNo})`;
+      await this.prisma.$transaction([
+        this.prisma.lead.updateMany({
+          where: { id: { in: leads.map((l) => l.id) }, outcome: 'open' },
+          data: { stage: 'order_placed', outcome: 'won', closedAt: now, lastActivity: now },
+        }),
+        ...leads.flatMap((l) =>
+          l.followUps.map((f) =>
+            this.prisma.leadFollowUp.update({
+              where: { id: f.id },
+              // Appended, so a note somebody wrote on the follow-up is kept.
+              data: { done: true, doneAt: now, note: f.note ? `${f.note} · ${reason}` : reason },
+            }),
+          ),
+        ),
+      ]);
+    } catch (e) {
+      this.logger.warn(
+        `Sale ${invoiceNo}: leads not closed — ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
+  /**
+   * A loyalty member earns points on a counter sale, on the same ledger and at
+   * the same rate as a website purchase.
+   *
+   * Quietly skipped when the customer is not a member or no earn rate is set:
+   * both are ordinary states for a shop, not errors in the sale.
+   */
+  private async earnPoints(user: AuthUser, dto: CreateSaleDto, total: number) {
+    try {
+      await this.loyalty.manualMovement(user, {
+        phone: dto.phone!,
+        kind: 'earn',
+        amount: total,
+        reference: dto.invoiceNo,
+        reason: `Sale ${dto.invoiceNo}`,
+        storeId: dto.storeId,
+      });
+    } catch (e) {
+      this.logger.log(
+        `Sale ${dto.invoiceNo}: no points earned — ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
   }
 
   /**
@@ -379,6 +451,7 @@ export class SalesService {
         party: true,
         store: true,
         payments: { orderBy: { paidAt: 'desc' } },
+        lines: { orderBy: { id: 'asc' } },
       },
     });
     if (!sale) throw new NotFoundException('Sale not found');
@@ -387,6 +460,19 @@ export class SalesService {
       storeId: sale.storeId,
       storeName: sale.store?.name ?? '',
       isManual: sale.isManual,
+      // The pieces on the bill and what each cost, so an imported bill's making
+      // and stone charges can finally be checked by someone.
+      lines: sale.lines.map((l) => ({
+        id: l.id,
+        description: l.description ?? null,
+        netWeight: l.netWeight != null ? num(l.netWeight) : null,
+        metalRate: l.metalRate != null ? num(l.metalRate) : null,
+        metalAmount: l.metalAmount != null ? num(l.metalAmount) : null,
+        makingAmount: l.makingAmount != null ? num(l.makingAmount) : null,
+        stoneAmount: l.stoneAmount != null ? num(l.stoneAmount) : null,
+        discountAmount: l.discountAmount != null ? num(l.discountAmount) : null,
+        lineTotal: num(l.lineTotal),
+      })),
       payments: sale.payments.map((p) => ({
         id: p.id,
         mode: p.mode,

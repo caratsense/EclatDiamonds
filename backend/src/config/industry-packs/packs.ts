@@ -374,6 +374,9 @@ const JEWELLERY: IndustryPack = {
       'activity',
       'store-comparison',
       'quotation',
+      // Orders being made. The page existed and held 121 real factory orders;
+      // its only door was a dashboard tile that counted none of them.
+      'timelines',
       'returns',
       'discounts',
       'loyalty',

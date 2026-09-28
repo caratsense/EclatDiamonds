@@ -43,7 +43,19 @@ export interface SalePayment {
   reference?: string;
 }
 
-export type SaleDetail = Sale & { payments: SalePayment[] };
+/** One piece on a bill (GET /sales/:id). Amounts are null where the source had none. */
+export interface SaleLineRow {
+  id: string;
+  description: string | null;
+  netWeight: number | null;
+  metalAmount: number | null;
+  makingAmount: number | null;
+  stoneAmount: number | null;
+  discountAmount: number | null;
+  lineTotal: number;
+}
+
+export type SaleDetail = Sale & { payments: SalePayment[]; lines?: SaleLineRow[] };
 
 /** GET /sales/:id — one sale plus its payment history. */
 export function useSaleDetail(id: string | null) {

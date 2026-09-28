@@ -100,10 +100,20 @@ export function karatFromMetal(metal: string): number | null {
   return k[metal] ?? null;
 }
 
-/** Legacy JewelTrans.TranType -> Eclat SaleDocType. */
+/**
+ * Legacy JewelTrans.TranType -> Eclat SaleDocType.
+ *
+ * BJWSL is a branch invoice: head office (or a branch) billing ANOTHER OF ITS
+ * OWN BRANCHES for stock it sends over. It is GST-invoiced, but it is not a sale
+ * to a customer — in the 8 Jun backup all 24 went to the business's own
+ * branches (₹2.20 cr against ₹1.03 cr of real customer sales). Counting it as a
+ * sale inflated every sales total about threefold, and the same piece would be
+ * counted again when the branch sold it.
+ */
 export function docTypeFromTranType(tt: unknown): string {
   const t = String(tt ?? '').toUpperCase();
-  if (t === 'JWSL' || t === 'BJWSL') return 'sale';
+  if (t === 'JWSL') return 'sale';
+  if (t === 'BJWSL') return 'branch_transfer';
   if (t === 'JWPH' || t === 'BJWPH') return 'purchase';
   if (t === 'JWPRM') return 'proforma';
   if (t.includes('BA')) return 'branch_transfer'; // JWBAP / JWBAI

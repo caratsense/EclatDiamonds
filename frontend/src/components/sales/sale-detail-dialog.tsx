@@ -150,6 +150,52 @@ export function SaleDetailDialog({
 
             <Separator />
 
+            {/* The pieces on the bill — imported bills carry these from the shop system. */}
+            {sale.lines && sale.lines.length > 0 ? (
+              <>
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Pieces ({sale.lines.length})</p>
+                  <div className="overflow-x-auto rounded-lg border">
+                    <table className="w-full text-xs">
+                      <thead className="bg-muted/50 text-muted-foreground">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-medium">Piece</th>
+                          <th className="px-3 py-2 text-right font-medium">Net wt</th>
+                          <th className="px-3 py-2 text-right font-medium">Metal</th>
+                          <th className="px-3 py-2 text-right font-medium">Making</th>
+                          <th className="px-3 py-2 text-right font-medium">Stones</th>
+                          <th className="px-3 py-2 text-right font-medium">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {sale.lines.map((l) => (
+                          <tr key={l.id}>
+                            <td className="px-3 py-2">{l.description ?? "—"}</td>
+                            <td className="num px-3 py-2 text-right">
+                              {l.netWeight != null ? `${l.netWeight.toFixed(3)} g` : "—"}
+                            </td>
+                            <td className="num px-3 py-2 text-right">
+                              {l.metalAmount != null ? formatINR(l.metalAmount) : "—"}
+                            </td>
+                            <td className="num px-3 py-2 text-right">
+                              {l.makingAmount != null ? formatINR(l.makingAmount) : "—"}
+                            </td>
+                            <td className="num px-3 py-2 text-right">
+                              {l.stoneAmount != null ? formatINR(l.stoneAmount) : "—"}
+                            </td>
+                            <td className="num px-3 py-2 text-right font-medium">
+                              {formatINR(l.lineTotal)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                <Separator />
+              </>
+            ) : null}
+
             {/* Counter photos */}
             <div className="space-y-2">
               <p className="text-sm font-medium">Documents</p>

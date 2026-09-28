@@ -268,6 +268,15 @@ export const NAV_ITEMS: NavItem[] = [
     group: "Commerce & Orders",
   },
   {
+    module: 8,
+    slug: "timelines",
+    title: "Orders in Production",
+    purpose: "Every order being made, booked here or imported from the factory, and its stage.",
+    primaryAction: "New Order",
+    icon: Route,
+    group: "Commerce & Orders",
+  },
+  {
     module: 12,
     slug: "payments",
     title: "Sales & Payments",
