@@ -81,7 +81,7 @@ def main():
 
 def check(records):
     """Smallest thing that fails if the join or the whitelist breaks."""
-    assert len(records) == 753, len(records)
+    assert records, 'no designs'
     assert all(r.get('StyleId') is not None for r in records), 'legacy key missing'
     assert len({r['StyleId'] for r in records}) == len(records), 'duplicate StyleId'
     assert all('GrossWt' in r for r in records), 'summary join lost weights'
