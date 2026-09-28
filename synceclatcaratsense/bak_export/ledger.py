@@ -87,7 +87,7 @@ def demo():
     assert len({r['Id'] for r in recs}) == len(recs), 'duplicate legacy Id'
     assert all(isinstance(r['Amount'], float) for r in recs)
     # TranType drives the income/expense split in syncLedger; unknown -> 'asset'.
-    known = {'JWSL', 'BJWSL', 'MSL', 'JWPH', 'BJWPH', 'MPH', 'VCH'}
+    known = {'JWSL', 'BJWSL', 'MSL', 'JWPH', 'BJWPH', 'MPH', 'VCH', 'BMSL', 'BMPH', 'JWSR', 'BDJOB'}
     assert {r.get('TranType') for r in recs} <= known, 'unmapped TranType'
     assert all(r.get('DrAccountNo') and r.get('CrAccountNo') for r in recs)
     assert all(str(r.get('Jdate', '')).startswith('20') for r in recs)
