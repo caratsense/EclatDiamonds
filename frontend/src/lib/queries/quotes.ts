@@ -9,7 +9,7 @@ import { AxiosError } from "axios";
 
 import { api } from "@/lib/api";
 import { useStoreKey } from "@/lib/queries/keys";
-import type { Quote, QuoteKind, QuoteLine } from "@/lib/mock/quotation";
+import type { Quote, QuoteBillTo, QuoteKind, QuoteLine, QuotePayment } from "@/lib/mock/quotation";
 import type { Role } from "@/lib/types";
 
 export interface CreateQuoteInput {
@@ -97,6 +97,19 @@ export function useUploadQuotePhoto() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["quotes"] });
     },
+  });
+}
+
+/**
+ * PATCH /quotes/:id/details — address and payments after the quote is saved.
+ * Not the price: the revision and any approval stay as they are.
+ */
+export function useUpdateQuoteDetails() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, ...body }: { id: string; billTo?: QuoteBillTo; payments?: QuotePayment[] }) =>
+      (await api.patch<Quote>(`/quotes/${id}/details`, body)).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["quotes"] }),
   });
 }
 

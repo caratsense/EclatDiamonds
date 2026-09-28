@@ -300,6 +300,70 @@ export class UpdateQuoteDto {
   remarks?: string;
 }
 
+export const QUOTE_PAYMENT_MODES = ['cash', 'card', 'upi', 'bank', 'cheque'] as const;
+
+/** Who the bill is made out to. Each field is printed as given; empty clears it. */
+export class QuoteBillToDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  address?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  state?: string;
+
+  @IsOptional()
+  @Matches(/^([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z])?$/, { message: 'GSTIN must be 15 characters, like 27ABCDE1234F1Z5' })
+  gstin?: string;
+
+  @IsOptional()
+  @Matches(/^([A-Z]{5}[0-9]{4}[A-Z])?$/, { message: 'PAN must be 10 characters, like ABCDE1234F' })
+  pan?: string;
+}
+
+/** One amount received against a quote: how, how much, and the slip or UTR number. */
+export class QuotePaymentDto {
+  @IsIn(QUOTE_PAYMENT_MODES)
+  mode!: (typeof QUOTE_PAYMENT_MODES)[number];
+
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.01)
+  amount!: number;
+
+  /** Transaction id, UTR, card slip or cheque number. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  reference?: string;
+
+  /** yyyy-mm-dd the money came in. */
+  @IsOptional()
+  @Matches(/^(\d{4}-\d{2}-\d{2})?$/)
+  date?: string;
+}
+
+/**
+ * Body for PATCH /quotes/:id/details — the address and payments, after the
+ * quote is saved. The price is not here: that is PATCH /quotes/:id, which
+ * bumps the revision. A field left out is left as it is.
+ */
+export class UpdateQuoteDetailsDto {
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => QuoteBillToDto)
+  billTo?: QuoteBillToDto;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => QuotePaymentDto)
+  payments?: QuotePaymentDto[];
+}
+
 /**
  * Body for POST /quotes/:id/send-pdf. Both optional: without a template the
  * PDF goes as a plain document, which WhatsApp only allows inside the 24-hour

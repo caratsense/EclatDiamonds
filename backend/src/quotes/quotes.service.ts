@@ -26,10 +26,18 @@ import {
   QuoteLineDto,
   QuoteStoneDto,
   SendQuotePdfDto,
+  UpdateQuoteDetailsDto,
   UpdateQuoteDto,
 } from './dto/quote.dto';
 
 const GST_RATE = 0.03;
+
+interface QuoteBillTo { address?: string; state?: string; gstin?: string; pan?: string }
+interface QuotePayment { mode: string; amount: number; reference?: string; date?: string }
+
+const PAYMENT_LABEL: Record<string, string> = {
+  cash: 'Cash', card: 'Card', upi: 'UPI', bank: 'Bank transfer', cheque: 'Cheque',
+};
 
 function toView(q: any) {
   return {
@@ -49,6 +57,8 @@ function toView(q: any) {
     isKaccha: q.isKaccha ?? false,
     remarks: q.remarks ?? '',
     grossWeightG: q.grossWeightG == null ? null : Number(q.grossWeightG),
+    billTo: (q.billTo as QuoteBillTo | null) ?? null,
+    payments: (q.payments as QuotePayment[] | null) ?? [],
     createdAt: q.createdAt.toISOString().slice(0, 10),
     validUntil: q.validUntil ? q.validUntil.toISOString().slice(0, 10) : '',
     assignedRep: q.assignedRep?.name ?? '',
@@ -589,7 +599,13 @@ export class QuotesService {
               pan: party.pan ?? null,
             }
           : {}),
+        // What was typed on the quote wins, field by field.
+        ...(view.billTo ?? {}),
       },
+      payments: view.payments.map((p) => ({
+        mode: [PAYMENT_LABEL[p.mode] ?? p.mode, p.reference].filter(Boolean).join(' '),
+        amount: p.amount,
+      })),
       kind: q.kind,
       isKaccha: q.isKaccha,
       remarks: q.remarks ?? '',
@@ -713,6 +729,50 @@ export class QuotesService {
       },
     });
 
+    return toView(updated);
+  }
+
+  /**
+   * PATCH /quotes/:id/details — the address and payments, after the quote is
+   * saved. Not the price: no revision bump, no approval withdrawn, and allowed
+   * after the quote became an order, since money often comes in after that.
+   */
+  async updateDetails(user: AuthUser, id: string, dto: UpdateQuoteDetailsDto) {
+    const view = await this.get(user, id); // same visibility as the quote screen
+    this.scope.assertStoreAllowed(user, view.originStoreId);
+    const paid = (dto.payments ?? []).reduce((sum, p) => sum + p.amount, 0);
+    if (dto.payments && round2(paid) > view.totals.grandTotal) {
+      throw new BadRequestException(
+        `Payments add up to ${round2(paid)}, more than the quote total of ${view.totals.grandTotal}.`,
+      );
+    }
+    const trimmed = (o: object) =>
+      Object.fromEntries(
+        Object.entries(o)
+          .map(([k, v]) => [k, typeof v === 'string' ? v.trim() : v])
+          .filter(([, v]) => v !== '' && v != null),
+      );
+    const updated = await this.prisma.quote.update({
+      where: { id },
+      data: {
+        ...(dto.billTo ? { billTo: trimmed(dto.billTo) } : {}),
+        ...(dto.payments ? { payments: dto.payments.map(trimmed) as Prisma.InputJsonValue } : {}),
+      },
+      include: { assignedRep: true, lines: true, redeemableStores: true, photos: true },
+    });
+    await this.audit.record(user, {
+      action: 'quotes.details_edited',
+      entityType: 'Quote',
+      entityId: id,
+      storeId: view.originStoreId,
+      summary: `Quote ${view.ref}: address / payments edited`,
+      metadata: {
+        previousBillTo: view.billTo,
+        previousPayments: view.payments,
+        billTo: updated.billTo,
+        payments: updated.payments,
+      },
+    });
     return toView(updated);
   }
 

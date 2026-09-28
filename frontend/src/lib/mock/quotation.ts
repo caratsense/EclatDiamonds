@@ -139,6 +139,34 @@ export interface Quote {
   totals?: QuoteTotals;
   /** Content revision; every edit bumps it and withdraws approval. */
   revision?: number;
+  /** Who the bill is made out to, when typed on the quote; else the customer record. */
+  billTo?: QuoteBillTo | null;
+  /** Money already taken against the quote. Not part of the price. */
+  payments?: QuotePayment[];
+}
+
+export interface QuoteBillTo {
+  address?: string;
+  state?: string;
+  gstin?: string;
+  pan?: string;
+}
+
+export const PAYMENT_MODES = {
+  cash: "Cash",
+  card: "Card",
+  upi: "UPI",
+  bank: "Bank transfer",
+  cheque: "Cheque",
+} as const;
+
+export interface QuotePayment {
+  mode: keyof typeof PAYMENT_MODES;
+  amount: number;
+  /** Transaction id, UTR, card slip or cheque number. */
+  reference?: string;
+  /** yyyy-mm-dd */
+  date?: string;
 }
 
 /** Per-line gold metal value. */

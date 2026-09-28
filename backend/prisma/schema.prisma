@@ -1726,6 +1726,14 @@ model Quote {
   /// Round 2: gross weight in grams for a repair quote (making-only).
   grossWeightG Decimal? @db.Decimal(10, 3)
 
+  /// Who the bill is made out to, as typed on the quote: {address, state, gstin,
+  /// pan}. Empty means the PDF reads the customer's own record.
+  billTo   Json?
+  /// Money already taken against this quote: [{mode, amount, reference, date}].
+  /// Neither is part of the price, so editing them bumps no revision and
+  /// withdraws no approval.
+  payments Json?
+
   /// "@" kaccha provision: rough no-GST estimate. Hidden from the normal quote
   /// list and only reachable by head_office. Lightweight flag, not a separate DB.
   isKaccha Boolean @default(false)

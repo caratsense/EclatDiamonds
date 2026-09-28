@@ -35,6 +35,7 @@ import {
 import { useSession } from "@/store/use-session";
 import { ChannelStatusNotice } from "@/components/integrations/channel-status-notice";
 import { QuoteApprovalPanel } from "@/components/quotation/quote-approval-panel";
+import { QuoteDetailsPanel } from "@/components/quotation/quote-details-panel";
 import {
   useDownloadQuotePdf,
   useQuoteApproval,
@@ -411,6 +412,8 @@ export function QuoteDetailDialog({
             <Row label="Grand total" value={formatINR(grandShown)} bold />
           </dl>
         </div>
+
+        <QuoteDetailsPanel key={quote.id} quote={quote} />
 
         <div>
           <p className="mb-1.5 text-xs text-muted-foreground">Redeemable at</p>

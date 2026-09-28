@@ -456,8 +456,17 @@ export async function renderQuotePdf(data: QuotePdfData): Promise<Buffer> {
   y -= wordsHeight;
 
   /* ------------------------------------------------- bank and payment block */
+  // Payment, laid out as the bill lays it out: each mode that has paid, their
+  // Total, then what is still owed. A quotation usually has none of the first,
+  // so the line reads Received 0.00 and the balance is the whole amount.
+  const received = data.payments ?? [];
+  const receivedTotal = received.reduce((sum, p) => sum + p.amount, 0);
+  const payRows: [string, number][] = received.length
+    ? received.map((p) => [p.mode, p.amount] as [string, number])
+    : [['Received', 0]];
   const bankTop = y;
-  const bankHeight = 70;
+  // Tall enough for every payment row, the total and the balance.
+  const bankHeight = Math.max(70, 48 + payRows.length * 11);
   const payX = right - 190;
   const remarkX = MARGIN + 205;
   box(MARGIN, bankTop, width, bankHeight);
@@ -479,20 +488,12 @@ export async function renderQuotePdf(data: QuotePdfData): Promise<Buffer> {
   line(remarkX, bankTop, remarkX, bankTop - bankHeight);
   text('Remarks', remarkX + 4, { size: 7, at: bankTop - 11 });
 
-  // Payment, laid out as the bill lays it out: each mode that has paid, their
-  // Total, then what is still owed. A quotation usually has none of the first,
-  // so the line reads Received 0.00 and the balance is the whole amount.
-  const received = data.payments ?? [];
-  const receivedTotal = received.reduce((sum, p) => sum + p.amount, 0);
   text('Payment', payX + 4, { size: 7, font: bold, at: bankTop - 11 });
   text('Amount', right - 4, { size: 7, font: bold, align: 'right', at: bankTop - 11 });
   line(payX, bankTop - 15, right, bankTop - 15);
-  const payRows: [string, number][] = received.length
-    ? received.map((p) => [p.mode, p.amount] as [string, number])
-    : [['Received', 0]];
   payRows.forEach(([label, amount], i) => {
     const at = bankTop - 26 - i * 11;
-    text(label, payX + 4, { size: 7, at });
+    text(label, payX + 4, { size: 7, at, width: 120 });
     text(num(amount, 2), right - 4, { size: 7, align: 'right', at });
   });
   const payTotalAt = bankTop - 26 - payRows.length * 11;

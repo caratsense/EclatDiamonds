@@ -23,6 +23,7 @@ import {
   CreateQuoteDto,
   QuotePhotoDto,
   SendQuotePdfDto,
+  UpdateQuoteDetailsDto,
   UpdateQuoteDto,
 } from './dto/quote.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
@@ -61,6 +62,16 @@ export class QuotesController {
   @Patch(':id')
   update(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateQuoteDto) {
     return this.quotes.update(user, id, dto);
+  }
+
+  /** Address and payments after saving. Not the price: no revision, no approval change. */
+  @Patch(':id/details')
+  updateDetails(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateQuoteDetailsDto,
+  ) {
+    return this.quotes.updateDetails(user, id, dto);
   }
 
   /**
