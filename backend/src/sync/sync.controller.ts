@@ -4,7 +4,7 @@ import { HumansOnly, OrganisationWideMachineOnly } from '../auth/machine.decorat
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { SyncService } from './sync.service';
 import { RateLimit } from '../common/rate-limit';
-import { PurgeDemoDto, RawSyncDto, SyncBatchDto, SyncStaffDto, SyncStoresDto } from './dto/sync.dto';
+import { PurgeDemoDto, RawKeepDto, RawSyncDto, ReconcileDto, SyncBatchDto, SyncStaffDto, SyncStoresDto } from './dto/sync.dto';
 import { CurrentGatiIngestion, GatiIngestion, GatiIngestionContext } from './gati-ingestion.guard';
 import { WebsiteCatalogueService } from '../catalogue/website/website-catalogue.service';
 import { WebsiteRawDto } from '../catalogue/website/website.dto';
@@ -237,6 +237,32 @@ export class SyncController {
   ) {
     return this.sync.runGatiIngestion(user, generation, 'rates', body.records.length, () =>
       this.sync.syncRates(user.organisationId, body.records),
+    );
+  }
+
+  /** Remove what Gati no longer has: the complete Gati key list of one entity. */
+  @GatiIngestion()
+  @Post('reconcile')
+  reconcile(
+    @CurrentUser() user: AuthUser,
+    @CurrentGatiIngestion() generation: GatiIngestionContext,
+    @Body() body: ReconcileDto,
+  ) {
+    return this.sync.runGatiIngestion(user, generation, 'reconcile', body.legacyIds.length, () =>
+      this.sync.reconcileRemoved(user.organisationId, body.entity, body.legacyIds),
+    );
+  }
+
+  /** Drop mirror rows Gati deleted: the complete key list of one Gati table. */
+  @GatiIngestion()
+  @Post('raw-keep')
+  rawKeep(
+    @CurrentUser() user: AuthUser,
+    @CurrentGatiIngestion() generation: GatiIngestionContext,
+    @Body() body: RawKeepDto,
+  ) {
+    return this.sync.runGatiIngestion(user, generation, 'raw-keep', body.rowKeys.length, () =>
+      this.sync.rawKeep(user.organisationId, body.table, body.rowKeys, body.allowEmpty === true),
     );
   }
 

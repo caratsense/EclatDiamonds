@@ -1,6 +1,8 @@
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
+  IsIn,
   IsOptional,
   IsString,
   MinLength,
@@ -159,4 +161,30 @@ export class RawSyncDto {
   @IsArray()
   @ArrayMaxSize(5000)
   records!: Record<string, unknown>[];
+}
+
+/** The complete list of one entity's keys as Gati has them now (POST /sync/reconcile). */
+export class ReconcileDto {
+  @IsIn(['sale-lines', 'stock-movements', 'order-items', 'bags', 'ledger', 'sales', 'stock', 'orders', 'products', 'parties'])
+  entity!: string;
+
+  @IsArray()
+  @ArrayMaxSize(500000)
+  @IsString({ each: true })
+  legacyIds!: string[];
+}
+
+/** The complete key list of one Gati table, to drop mirror rows Gati deleted (POST /sync/raw-keep). */
+export class RawKeepDto {
+  @IsString()
+  table!: string;
+
+  @IsArray()
+  @ArrayMaxSize(500000)
+  @IsString({ each: true })
+  rowKeys!: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  allowEmpty?: boolean;
 }

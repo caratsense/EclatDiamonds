@@ -1705,6 +1705,75 @@ def _row_hash(row):
     return hashlib.md5(blob.encode("utf-8")).hexdigest()
 
 
+# Gati key of each mapped entity, exactly as the backend builds its legacyId.
+# Children first: a sale's lines go before the sale, an order's bags before it.
+RECONCILE_KEYS = (
+    ("sale-lines", "JewelTransInward", ("JewelTransId", "JewelId", "SrNo")),
+    ("stock-movements", "InwardHistory", ("Id",)),
+    ("order-items", "SPM_MfgOrderItem", ("OrderItemId",)),
+    ("bags", "SPM_BagMaster", ("BagId",)),
+    ("ledger", "Journal", ("Id",)),
+    ("sales", "JewelTrans", ("JewelTransId",)),
+    ("stock", "Inward", ("JewelId",)),
+    ("orders", "Spm_MfgOrder", ("OrderId",)),
+    ("products", "StyleMst", ("StyleId",)),
+    ("parties", "PartyMst", ("PartyNo",)),
+)
+
+
+def _js_key(v):
+    """The key as the backend's String() sees it after the JSON round trip."""
+    if isinstance(v, (Decimal, float)) and v == int(v):
+        return str(int(v))
+    return str(v)
+
+
+def _post_json(base_url, route, body):
+    hdrs = sync_headers(base_url)
+    r = requests.post(f"{base_url}/sync/{route}", headers=hdrs,
+                      data=json.dumps(body, default=_json_default),
+                      timeout=180, allow_redirects=False)
+    if not (200 <= r.status_code < 300):
+        raise ValueError(f"{r.status_code}: {r.text[:200]}")
+    return r.json()
+
+
+def reconcile_mapped(cursor, token, base_url):
+    """Send each mapped entity's COMPLETE Gati key list to /sync/reconcile, so
+    CaratOS drops (or, where its own records depend on them, marks) the rows
+    Gati no longer has. The backend refuses an empty list or a removal of more
+    than 30% of an entity; either is logged and fails the run."""
+    all_ok = True
+    for entity, table, cols in RECONCILE_KEYS:
+        tcols = table_columns(cursor, table)
+        if not tcols or cols[0].lower() not in tcols:
+            continue
+        present = [c for c in cols if c.lower() in tcols]
+        try:
+            cursor.execute("SELECT " + ", ".join(f"[{tcols[c.lower()]}]" for c in present) + f" FROM [{table}]")
+            keys = []
+            for row in cursor.fetchall():
+                vals = dict(zip(present, row))
+                if vals.get(cols[0]) is None:
+                    continue
+                if entity == "sale-lines":
+                    sr = vals.get("SrNo")
+                    keys.append(f"{_js_key(vals['JewelTransId'])}:{_js_key(vals['JewelId'])}:{_js_key(sr if sr is not None else 0)}")
+                else:
+                    keys.append(_js_key(vals[cols[0]]))
+            if not keys:
+                log.warning(f"  reconcile {entity}: Gati has no rows — not sent (refused by design)")
+                continue
+            res = _post_json(base_url, "reconcile", {"entity": entity, "legacyIds": keys})
+            if res.get("removed") or res.get("marked") or res.get("kept"):
+                log.info(f"  reconcile {entity}: gati={len(keys)} removed={res.get('removed')} "
+                         f"marked={res.get('marked')} kept={res.get('kept')}")
+        except Exception as e:
+            log.error(f"  reconcile {entity}: {e}")
+            all_ok = False
+    return all_ok
+
+
 def mirror_changed(cursor, token, base_url):
     """Send every Gati table's new and changed rows to /sync/raw (-> LegacyRow)."""
     import time
@@ -1753,9 +1822,24 @@ def mirror_changed(cursor, token, base_url):
             current.add(key)
             if acked.get(key) != h:
                 changed.append((key, h, r))
-        gone = len(set(acked) - current)
-        pending_deletes += gone
+        gone_keys = set(acked) - current
+        gone = len(gone_keys)
         table_ok = True
+        # First time this table is mirrored, or rows vanished in Gati: send the
+        # table's full key list so the backend drops mirror rows Gati deleted
+        # (including rows left from older imports this agent never sent).
+        if gone or prev is None:
+            try:
+                res = _post_json(base_url, "raw-keep",
+                                 {"table": tbl, "rowKeys": sorted(current), "allowEmpty": not current})
+                if gone_keys:
+                    db.executemany("DELETE FROM row_hash WHERE tbl = ? AND k = ?",
+                                   [(tbl, k) for k in gone_keys])
+                    db.commit()
+                pending_deletes += int(res.get("removed") or 0)
+            except Exception as e:
+                log.error(f"    mirror {tbl}: removing deleted rows failed: {e}")
+                table_ok = all_ok = False
         i = 0
         while i < len(changed):
             if time.monotonic() - started > MIRROR_BUDGET_SEC:
@@ -1789,7 +1873,7 @@ def mirror_changed(cursor, token, base_url):
             db.commit()
     db.close()
     log.info(f"  [{base_url}] mirror: {len(tables)} tables, {changed_tables} changed, "
-             f"{sent_rows} row(s) sent, {pending_deletes} row(s) deleted in Gati (not removed), "
+             f"{sent_rows} row(s) sent, {pending_deletes} row(s) removed (deleted in Gati), "
              f"{deferred} table(s) deferred to next cycle (budget {MIRROR_BUDGET_SEC}s)")
     return all_ok
 
@@ -2255,6 +2339,14 @@ def sync_once():
             #
             #   sync_sjep.py --no-mirror     one run
             #   set SJEP_SKIP_MIRROR=1       every run
+            # Remove from CaratOS what Gati deleted (complete key lists).
+            try:
+                if not DRY_RUN and not controlled and not ONLY and not LIMIT:
+                    base_ok = reconcile_mapped(cursor, token, base_url) and base_ok
+            except Exception as e:
+                log.error(f"  [{base_url}] reconcile error: {e}")
+                base_ok = False
+
             skip_mirror = ("--no-mirror" in sys.argv
                            or os.getenv("SJEP_SKIP_MIRROR", "").strip().lower()
                            in ("1", "true", "yes"))

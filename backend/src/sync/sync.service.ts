@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 
-import { BadRequestException, ForbiddenException, Injectable, Logger, Optional } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, Optional } from '@nestjs/common';
 import { MetalKind, Prisma } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
@@ -103,6 +103,23 @@ interface LockedGatiAgent {
  * Store id (SyncState has no Store FK); organisationId remains the tenant key.
  */
 export const SYNC_STATE_ORGANISATION_SENTINEL = '__organisation__';
+
+/** Gati entity (its /sync route) -> the CaratOS table its rows land in. */
+const RECONCILE_TABLES: Record<string, string> = {
+  'sale-lines': 'SaleLine',
+  'stock-movements': 'StockMovement',
+  'order-items': 'ManufacturingOrderItem',
+  bags: 'ProductionBag',
+  ledger: 'LedgerEntry',
+  sales: 'Sale',
+  stock: 'StockItem',
+  orders: 'ManufacturingOrder',
+  products: 'Product',
+  parties: 'Party',
+};
+export const RECONCILE_ENTITIES = Object.keys(RECONCILE_TABLES);
+/** The most of one entity a single reconcile pass may remove. */
+const RECONCILE_MAX_REMOVE_SHARE = 0.3;
 
 const GATI_SOURCE_TABLE_BY_ROUTE: Record<string, string> = {
   // Use the source's own table names, not CaratOS endpoint names. Several routes
@@ -2757,6 +2774,174 @@ export class SyncService {
       skipped,
       watermark,
     };
+  }
+
+  /**
+   * Make the mirror of one Gati table match Gati's current key set: delete the
+   * LegacyRow rows of that table whose rowKey Gati no longer has. The agent
+   * sends the table's complete key list when it sees rows disappear. An empty
+   * list (the table was emptied in Gati) is accepted only with `allowEmpty`.
+   */
+  async rawKeep(
+    organisationId: string,
+    table: string,
+    rowKeys: string[],
+    allowEmpty: boolean,
+  ): Promise<SyncResult & { removed: number }> {
+    if (!rowKeys.length && !allowEmpty) {
+      throw new BadRequestException('An empty key list removes the whole table; send allowEmpty to confirm.');
+    }
+    const keep = [...new Set(rowKeys.map(String))];
+    const removed = await this.prisma.$executeRaw(Prisma.sql`
+      DELETE FROM "LegacyRow"
+      WHERE "organisationId" = ${organisationId}
+        AND "sourceTable" = ${table}
+        AND NOT ("rowKey" = ANY(${keep}::text[]))
+    `);
+    this.logger.log(`sync raw-keep:${table}: kept=${keep.length} removed=${removed}`);
+    return { entity: `raw-keep:${table}`, received: rowKeys.length, upserted: rowKeys.length, skipped: 0, watermark: null, removed };
+  }
+
+  /**
+   * Remove from CaratOS what Gati no longer has.
+   *
+   * The sync upserts and never deleted, so a row deleted in Gati lived on here:
+   * on 2026-09-29, 1,058 stock pieces, 84 sales and 10 styles from the June and
+   * August backup imports no longer existed in Gati and every stock total read
+   * high. The agent sends the COMPLETE list of an entity's Gati keys each cycle;
+   * every Gati-sourced row (legacyId set; for products not a WEB- design) whose
+   * key is not in it is gone from Gati:
+   *
+   *  - Gati-only detail (sale lines, stock movements, order items, bags, ledger)
+   *    is deleted.
+   *  - A sale with a CaratOS payment or return is kept and marked cancelled;
+   *    any other is deleted (its lines go with it).
+   *  - A stock piece in a CaratOS stock transfer is kept; any other is deleted,
+   *    and sale lines that pointed at it lose the link.
+   *  - A manufacturing order that still has bags is kept; any other is deleted.
+   *  - A style used by stock, a quote or a sale line, or linked to a website
+   *    listing, is kept; any other is deleted with its images and prices.
+   *  - A party is never deleted (leads, quotes and conversations hang off it);
+   *    it is archived.
+   *
+   * Refuses an empty list, and refuses to remove more than 30% of an entity in
+   * one pass: a wrong key query must fail loudly, not empty the shop.
+   */
+  async reconcileRemoved(
+    organisationId: string,
+    entity: string,
+    legacyIds: string[],
+  ): Promise<SyncResult & { target: string; removed: number; marked: number; kept: number }> {
+    const table = RECONCILE_TABLES[entity];
+    if (!table) throw new BadRequestException(`Unknown entity to reconcile: ${entity}`);
+    if (!legacyIds.length) throw new BadRequestException(`Refusing to reconcile ${entity} against an empty key list.`);
+    const keep = [...new Set(legacyIds.map(String))];
+    const t = Prisma.raw(`"${table}"`);
+    const notWebsite = entity === 'products' ? Prisma.sql`AND "legacyId" NOT LIKE 'WEB-%'` : Prisma.empty;
+    const [{ total }] = await this.prisma.$queryRaw<{ total: number }[]>(Prisma.sql`
+      SELECT count(*)::int AS total FROM ${t}
+      WHERE "organisationId" = ${organisationId} AND "legacyId" IS NOT NULL ${notWebsite}
+    `);
+    const ids = (
+      await this.prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
+        SELECT "id" FROM ${t}
+        WHERE "organisationId" = ${organisationId} AND "legacyId" IS NOT NULL ${notWebsite}
+          AND NOT ("legacyId" = ANY(${keep}::text[]))
+      `)
+    ).map((r) => r.id);
+
+    const out = {
+      entity: 'reconcile',
+      target: entity,
+      received: legacyIds.length,
+      upserted: legacyIds.length,
+      skipped: 0,
+      watermark: null,
+      removed: 0,
+      marked: 0,
+      kept: 0,
+    };
+    if (!ids.length) return out;
+    if (ids.length > Math.max(50, Math.floor(total * RECONCILE_MAX_REMOVE_SHARE))) {
+      throw new ConflictException(
+        `Refusing to remove ${ids.length} of ${total} ${entity}: more than ${RECONCILE_MAX_REMOVE_SHARE * 100}% in one pass. Check the key query first.`,
+      );
+    }
+    const del = (tbl: string, only: string[]) =>
+      only.length
+        ? this.prisma.$executeRaw(Prisma.sql`DELETE FROM ${Prisma.raw(`"${tbl}"`)} WHERE "id" = ANY(${only}::text[])`)
+        : Promise.resolve(0);
+    const pick = async (sql: Prisma.Sql) =>
+      new Set((await this.prisma.$queryRaw<{ id: string }[]>(sql)).map((r) => r.id));
+
+    switch (entity) {
+      case 'sale-lines':
+      case 'stock-movements':
+      case 'order-items':
+      case 'bags':
+      case 'ledger':
+        out.removed = await del(table, ids);
+        break;
+      case 'sales': {
+        const referenced = await pick(Prisma.sql`
+          SELECT s."id" FROM "Sale" s WHERE s."id" = ANY(${ids}::text[])
+            AND (EXISTS (SELECT 1 FROM "Payment" p WHERE p."saleId" = s."id")
+              OR EXISTS (SELECT 1 FROM "ReturnRecord" r WHERE r."saleId" = s."id"))
+        `);
+        if (referenced.size) {
+          out.marked = await this.prisma.$executeRaw(Prisma.sql`
+            UPDATE "Sale" SET "isCancelled" = true, "cancelledAt" = COALESCE("cancelledAt", now())
+            WHERE "id" = ANY(${[...referenced]}::text[])
+          `);
+        }
+        out.removed = await del('Sale', ids.filter((id) => !referenced.has(id)));
+        break;
+      }
+      case 'stock': {
+        const referenced = await pick(Prisma.sql`
+          SELECT DISTINCT "stockItemId" AS "id" FROM "StockTransferItem" WHERE "stockItemId" = ANY(${ids}::text[])
+        `);
+        const removable = ids.filter((id) => !referenced.has(id));
+        if (removable.length) {
+          await this.prisma.$executeRaw(Prisma.sql`
+            UPDATE "SaleLine" SET "stockItemId" = NULL WHERE "stockItemId" = ANY(${removable}::text[])
+          `);
+        }
+        out.removed = await del('StockItem', removable);
+        out.kept = referenced.size;
+        break;
+      }
+      case 'orders': {
+        const referenced = await pick(Prisma.sql`
+          SELECT DISTINCT "orderId" AS "id" FROM "ProductionBag" WHERE "orderId" = ANY(${ids}::text[])
+        `);
+        out.removed = await del('ManufacturingOrder', ids.filter((id) => !referenced.has(id)));
+        out.kept = referenced.size;
+        break;
+      }
+      case 'products': {
+        const referenced = await pick(Prisma.sql`
+          SELECT p."id" FROM "Product" p WHERE p."id" = ANY(${ids}::text[])
+            AND (p."websiteCode" IS NOT NULL
+              OR EXISTS (SELECT 1 FROM "StockItem" s WHERE s."productId" = p."id")
+              OR EXISTS (SELECT 1 FROM "QuoteLine" q WHERE q."productId" = p."id")
+              OR EXISTS (SELECT 1 FROM "SaleLine" l WHERE l."productId" = p."id"))
+        `);
+        out.removed = await del('Product', ids.filter((id) => !referenced.has(id)));
+        out.kept = referenced.size;
+        break;
+      }
+      case 'parties':
+        out.marked = await this.prisma.$executeRaw(Prisma.sql`
+          UPDATE "Party" SET "archivedAt" = now() WHERE "id" = ANY(${ids}::text[]) AND "archivedAt" IS NULL
+        `);
+        out.kept = ids.length - out.marked;
+        break;
+    }
+    this.logger.log(
+      `sync reconcile:${entity}: gati=${keep.length} caratos=${total} gone=${ids.length} removed=${out.removed} marked=${out.marked} kept=${out.kept}`,
+    );
+    return out;
   }
 
   /**

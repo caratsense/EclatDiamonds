@@ -47,6 +47,8 @@ _PROFILE_CONTRACT = {
         "products",
         "rates",
         "raw",
+        "raw-keep",
+        "reconcile",
         "sale-lines",
         "sales",
         "staff",

@@ -132,9 +132,11 @@ denied INSERT/UPDATE/DELETE/EXECUTE/ALTER, and it only ever pushes outward.
       checkpointed and the same rows are re-sent next cycle.
    8. Watermarks are saved (`acknowledged mapped checkpoints saved`), and the
       log ends with `Sync complete` (or `Sync incomplete`, exit 1).
-3. **Mirror of every table** (§4a): only new and changed rows, within a time
-   budget.
-4. **`sync_media.py`** — photos (only if step 2 succeeded): reads `ImageName`
+3. **Removals** (§4b): for each mapped entity the complete list of keys Gati
+   has now goes to `POST /sync/reconcile`; CaratOS drops what Gati deleted.
+4. **Mirror of every table** (§4a): only new and changed rows, within a time
+   budget; rows Gati deleted are dropped from the mirror.
+5. **`sync_media.py`** — photos (only if the whole data sync succeeded): reads `ImageName`
    for styles and pieces, finds the file under `SJEP_IMAGE_ROOT` (allowed
    folders only), uploads new files to R2, then `POST /sync/product-images`
    with the public URL. It remembers what is uploaded and linked, so a quiet
@@ -149,7 +151,7 @@ attributed / 277 unassigned, orders 22 / 237, ledger 1,410 / 452.
 
 **The backend upserts on `(organisationId, legacyId)`**, where `legacyId` is
 Gati's own primary key (`StyleId`, `JewelId`, …). Re-sending is always safe.
-Nothing is ever deleted by the sync (see §8).
+A row Gati deletes is removed (or marked) by the reconcile step, §4b.
 
 ---
 
@@ -194,6 +196,11 @@ How only new and changed rows are sent (`mirror_changed` in `sync_sjep.py`):
    Railway, which is what the old full mirror did in July.
 5. What was acknowledged is kept in `mirror_<backend>.sqlite`; a chunk that fails
    is re-sent next cycle.
+6. **Deletions**: the first time a table is mirrored, and whenever a row the
+   mirror had sent is gone from Gati, the table's complete key list goes to
+   `POST /sync/raw-keep`, which deletes that table's `LegacyRow` rows whose key
+   Gati no longer has (this also clears rows left by the old July mirror). A
+   table emptied in Gati is cleared with `allowEmpty: true`.
 
 Using it later — no agent change needed, only backend code or SQL:
 
@@ -210,6 +217,42 @@ ORDER BY "legacyUpdatedAt" DESC LIMIT 50;
 The mapped entities (§3) remain the typed, business-ready models; `LegacyRow` is
 the complete raw copy to build new features from. Changing how a mapped entity is
 modelled is a backend change that can read `LegacyRow` — it never needs the agent.
+
+## 4b. Removals: CaratOS drops what Gati deleted
+
+Upserts alone never remove anything, so before 2026-09-29 a row deleted in Gati
+lived on in CaratOS (1,058 stock pieces, 84 sales and 10 styles from the June and
+August backup imports, which made every stock total read high).
+
+Each cycle the agent (`reconcile_mapped` in `sync_sjep.py`) reads the **complete**
+key list of every mapped entity — keys only, cheap — and sends it to
+`POST /sync/reconcile` (`SyncService.reconcileRemoved`). Every Gati-sourced
+CaratOS row (legacyId set; for styles, not a `WEB-` website design) whose key is
+not in the list is gone from Gati, and is handled, children first:
+
+| Entity | Gati key → legacyId | What happens to a row Gati deleted |
+|---|---|---|
+| sale-lines | `JewelTransInward` `JewelTransId:JewelId:SrNo` | deleted |
+| stock-movements | `InwardHistory.Id` | deleted |
+| order-items | `SPM_MfgOrderItem.OrderItemId` | deleted |
+| bags | `SPM_BagMaster.BagId` | deleted |
+| ledger | `Journal.Id` | deleted |
+| sales | `JewelTrans.JewelTransId` | kept and **marked cancelled** if CaratOS has a payment or return against it; otherwise deleted with its lines |
+| stock | `Inward.JewelId` | **kept** if it is in a CaratOS stock transfer; otherwise deleted (sale lines that pointed at it lose the link) |
+| orders | `Spm_MfgOrder.OrderId` | kept while bags still point at it; otherwise deleted |
+| products (styles) | `StyleMst.StyleId` | **kept** if stock, a quote or a sale line uses it, or it is linked to a website listing; otherwise deleted with its images and prices |
+| parties | `PartyMst.PartyNo` | never deleted (leads, quotes, conversations hang off it): **archived** |
+
+**Website designs (`WEB-…`) and their images are never touched**, and a Gati style
+linked to the website keeps its images.
+
+Safety: the backend refuses an empty key list, and refuses to remove more than
+**30%** of an entity in one pass (HTTP 409, logged as `reconcile <entity>: 409`).
+A refusal leaves everything as it was and fails the cycle, so it is visible —
+check the key query before raising the limit (`RECONCILE_MAX_REMOVE_SHARE`).
+
+The log shows each pass that changed something, e.g.
+`reconcile stock: gati=4908 removed=1058 marked=0 kept=0`.
 
 ## 5. Metal rates (the top-bar gold rate)
 
@@ -336,7 +379,9 @@ backend instead, revoke the agent in `/data`.
 
 ## 8. Known limits
 
-- **Deletions in Gati are not propagated yet.** The sync only inserts and updates; the mirror counts rows deleted in Gati ("N row(s) deleted in Gati (not removed)" in the log) but does not remove them. The removal step (`/sync/reconcile`, and dropping mirror rows) is designed but not built: it deletes production data and is waiting for explicit sign-off.
+- **Removals are key-based.** A row Gati deletes disappears from CaratOS within one cycle (§4b), except where CaratOS's own records depend on it (kept or marked, never silently lost).
+- **Mirror first pass**: the first pass over all ~1,136 tables spreads over several cycles (8-minute budget each); `… deferred to next cycle` in the log is normal until it completes.
+- **A 502 "Application failed to respond"** from Railway on one upload fails that cycle (and skips the photo step); the rows retry next cycle.
   On 2026-09-29, 1,058 stock pieces, 84 sales and 10 styles that came from the
   June/August backup imports no longer exist in Gati but are still in CaratOS,
   so CaratOS stock totals are higher than Gati's. They need a decided clean-up
@@ -364,3 +409,4 @@ backend instead, revoke the agent in `/data`.
 | 2026-09-23 / 09-28 | Manual imports of the 8 Jun `.bak` and the 4 Aug CSV export (data up to those dates). |
 | **2026-09-29** | Old folders and tasks archived and removed. Gati daily rates added (`/sync/rates`, `GOLD_RATE_SOURCE=gati`). Installed at `C:\CaratOS\GatiConnect` as `svc_caratos`, task every 15 min, photos in the same cycle. Fixed on the way: `setup_runtime.ps1` ($LASTEXITCODE under StrictMode), `require_runtime.bat` (trailing-backslash path), and the SQL `DENY CONTROL` that blocked the read-only login. First run 18:35 IST: full backfill of 909 parties, 1,042 styles, 4,908 stock, 880 sales (6,321 lines), 259 orders (2,842 items), 2,148 bags, 1,862 ledger rows, 14,939 movements and the day's rates, zero rows skipped. |
 | 2026-09-29 (evening) | Mirror of every Gati table re-enabled as a change-only mirror (fingerprint + row hash, 500-row chunks, 480 s budget per cycle); `/sync/raw` made a single bulk statement. |
+| 2026-09-29 (night) | Removals: `/sync/reconcile` (mapped entities) and `/sync/raw-keep` (mirror) drop what Gati deleted, marking instead of deleting where CaratOS records depend on a row. |
