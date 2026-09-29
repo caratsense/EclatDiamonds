@@ -5,7 +5,7 @@ if not exist "%~dp0verify_install_security.ps1" (
   echo [SECURITY STOP] verify_install_security.ps1 is missing.
   exit /b 20
 )
-powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0verify_install_security.ps1" -InstallPath "%~dp0" >nul
+powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0verify_install_security.ps1" -InstallPath "%~dp0." >nul
 if errorlevel 1 (
   echo [SECURITY STOP] This Gati package is not in a private, safe install folder.
   exit /b 20
