@@ -10,6 +10,9 @@
 
 It is **not greenfield**. It is layered on / migrating from an existing jewelry ERP called **APRS-SJEP** (SQL Server). Eclat extends and modernizes that system.
 
+## Gati → CaratOS sync
+The live sync of Gati's SQL Server (styles, stock, sales, orders, bags, ledger, parties, daily metal rates, photos) runs from `synceclatcaratsense/` on APPSERVER. **Source of truth: [GATI_DB_SYNC.md](GATI_DB_SYNC.md)** (installed 2026-09-29); older sync docs are history.
+
 ## Existing system (do not delete — reference only)
 - `SJEP DATA/` — live SQL Server DB (`APRSLog.mdf`, `APRSLog_log.ldf`).
 - `SJEP BACKUP/` — dated `.bak` backups of `APRS`, `SJEPlus`, `APRSSJEP` databases (March 2026). Source of historical schema + data.
@@ -55,4 +58,4 @@ Full spec in [docs/MODULES.md](docs/MODULES.md). Summary:
 ## Open questions to resolve before deep build
 1. Tech stack / target architecture for Eclat (new app? extend APRS?) — not yet specified.
 2. Module 8 timeline: customer-facing or internal-only.
-3. Pricing engine source of truth (gold rate feed, making charges) for Module 2.
+3. ~~Pricing engine source of truth (gold rate feed, making charges) for Module 2.~~ **Resolved:** `MetalRate`, fed from Gati's Daily Rate master since 2026-09-29 (see [GATI_DB_SYNC.md](GATI_DB_SYNC.md) §5 and `docs/DECISIONS.md`).

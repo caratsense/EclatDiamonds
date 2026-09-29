@@ -1,5 +1,13 @@
 # Eclat / CaratSense — connecting your jewellery system to the dashboard
 
+> **Installed on APPSERVER (2026-09-29).** This package runs at Eclat head
+> office on `APPSERVER` (192.168.1.254) from `C:\CaratOS\GatiConnect`, as the
+> local non-admin user `svc_caratos` (Windows-auth read-only SQL login), via the
+> stored-password task `\CaratOS Gati Sync` every 15 minutes. How it is
+> installed, checked and changed there: [GATI_DB_SYNC.md](../GATI_DB_SYNC.md).
+> The steps below are the generic install for an attended office PC; on
+> APPSERVER `install_scheduler.bat` was **not** used (see step 6).
+
 This folder holds a small program that runs on the office computer where your
 jewellery software (SJE Plus / APRS) keeps its data.
 
@@ -65,6 +73,11 @@ reviewed wheelhouse and pass `-Wheelhouse D:\path\to\wheelhouse`.
 **One thing to ask your IT person for.** The file `create_readonly_login.sql` in
 this folder creates a database account that can only read, never write. Ask them
 to run it and give you the username and password.
+
+> **Do not add `CONTROL` to the `DENY` line.** A database-level `DENY CONTROL`
+> also denies CONNECT and SELECT, so the login can no longer read anything.
+> `DENY INSERT, UPDATE, DELETE, EXECUTE, ALTER` plus `db_datareader` is the
+> intended grant.
 
 > **Prefer the dedicated read-only SQL login.** A blank login uses the exact
 > Windows account that owns the scheduled task. It can work, but IT must grant
@@ -176,11 +189,25 @@ complete”. On a machine that must sync with nobody signed in, provision a
 dedicated non-admin service identity and a reviewed secret-storage design; do
 not change this task to SYSTEM/HIGHEST as a shortcut.
 
+> **Unattended server (APPSERVER, 2026-09-29).** `install_scheduler.bat` /
+> `register_scheduler.ps1` are for an attended, interactive PC: the task they
+> create only runs while that user is signed in, which on a server nobody signs
+> in to means never. On APPSERVER the task `\CaratOS Gati Sync` was registered
+> directly with `Register-ScheduledTask` as the non-admin local user
+> `APPSERVER\svc_caratos` with a **stored password** ("Log on as a batch job"),
+> RunLevel Limited, every 15 minutes. Still never SYSTEM, never highest. See
+> [GATI_DB_SYNC.md](../GATI_DB_SYNC.md) §7 "Re-register the task".
+
 ---
 
 ## Photographs
 
 Do this after the data sync is working.
+
+Since 2026-09-29 `run_sync.bat` (the scheduled cycle) runs `sync_media.py`
+straight after a successful `sync_sjep.py`, so new photos go up every 15 minutes
+with the data. The steps below are for choosing folders and the first bulk
+upload; `sync_media.bat` is still available for a manual run.
 
 1. Put the photo folder path from step 1 into `eclat_config.bat`
    (`SJEP_IMAGE_ROOT`).
@@ -220,12 +247,15 @@ computer to the storage service; they do not pass through the Eclat servers.
 ## Day to day
 
 Leave the designated sync user signed in. It runs on its own in that user's
-interactive, limited-privilege session.
+interactive, limited-privilege session. (On APPSERVER no sign-in is needed: the
+task is `\CaratOS Gati Sync` with a stored password; see
+[GATI_DB_SYNC.md](../GATI_DB_SYNC.md) §7 for checking, running and stopping it.)
 
 - **Check it is working:** open `logs\auto_sync.log`. Each run adds a line;
   "Sync complete" means success.
 - **Run one now:** double-click `run_sync.bat` normally, never elevated.
-- **See the schedule:** Windows Task Scheduler, look for `EclatSync`.
+- **See the schedule:** Windows Task Scheduler, look for `EclatSync` (the name
+  `install_scheduler.bat` uses; on APPSERVER it is `CaratOS Gati Sync`).
 
 **Turn it off** (a normal Command Prompt as the task owner):
 
@@ -279,6 +309,11 @@ maintenance session. Do not run the agent scripts from that session.
   the process is permanently fenced until it exits and a clean run starts.
 - Records are upserted on their original id, so re-sending refreshes rather than
   duplicating. The sync never deletes anything in Eclat.
+- **Metal rates** (since 2026-09-29): each cycle `push_rates` reads Gati's Daily
+  Rate master (`RateDailyMst` + `RawMst`, `GOLD` and `SILVER` sale rates only;
+  `OLD GOLD` and cost rates are never sent) and posts them to `POST /sync/rates`,
+  which writes `MetalRate`. With `GOLD_RATE_SOURCE=gati` on the backend this is
+  the only gold-rate source. See [GATI_DB_SYNC.md](../GATI_DB_SYNC.md) §5.
 - **Item master for quotes** (metals, diamonds, colour stones, stone sizes,
   item types, style BOMs, sale-rate charts): `bak_item_master.py` builds the
   `PUT /materials` file from an `APRSSJEP.bak` without SQL Server —

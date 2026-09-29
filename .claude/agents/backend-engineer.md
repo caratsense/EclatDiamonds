@@ -22,7 +22,7 @@ You build the **Eclat / CaratSense** backend. Read `CLAUDE.md`, `docs/MODULES.md
 5. Migrations are versioned and reversible. Never hand-edit production schema.
 
 ## Legacy awareness
-The legacy ERP hubs are `PartyMst` (all parties) and `Inward`/`InwardSummary` (per-piece stock); sales = `JewelTrans`. When a feature mirrors legacy data, align field semantics so the sync agent (`data_sync/EclatSync/sync_sjep.py`) and backfill ETL stay consistent.
+The legacy ERP hubs are `PartyMst` (all parties) and `Inward`/`InwardSummary` (per-piece stock); sales = `JewelTrans`. When a feature mirrors legacy data, align field semantics so the sync agent (`synceclatcaratsense/sync_sjep.py`; installed setup in `GATI_DB_SYNC.md`) and backfill ETL stay consistent.
 
 ## Output
 Working, tested code that matches surrounding conventions. Note any new decision in `docs/DECISIONS.md`. Hand schema changes to `database-architect` if non-trivial; hand auth-sensitive changes to `security-auditor` for review.

@@ -5,6 +5,10 @@
 > `SyncService`. **Nothing here is invented** — mappings that cannot be
 > established without live Gati access are marked **BLOCKED / CLIENT INPUT
 > REQUIRED**. See [MULTI_STORE.md](MULTI_STORE.md) for store attribution rules.
+>
+> **2026-09-29:** how the sync is installed and operated (APPSERVER,
+> `svc_caratos`, 15-minute task, rates, known limits) is in
+> [GATI_DB_SYNC.md](../GATI_DB_SYNC.md). This file stays the field-level mapping.
 
 ## Architecture
 **ONE Gati SQL Server / ONE database (`APRSSJEP`) containing all stores.** Stores
@@ -28,6 +32,11 @@ skipped (never guessed).
 | FirmCity, PartyCode | city, code | | | | | opt |
 | FirmAdd1/2/3, FirmState, PinCode, FirmCountry, phone/mobile, FirmEmail, AccGst | address…, gstin | | | | add3 folds into line2 | opt; keeps stored value if omitted |
 New branch → `status:'pending', isActive:false`; coordinates absent in Gati (`missingGeo`).
+**Which parties are branches:** every `PartyMst` id referenced as a `BranchNo`
+by the data (stock, `BookMaster`, …) — 10 on 2026-09-29. The
+`IsLocation`/`IsFactory` flags are **only a fallback** when no id is referenced at
+all; on Eclat's database `IsLocation` marks suppliers and a test row, so it is not
+used (`push_stores` in `sync_sjep.py`).
 
 ## 2. Staff — `PartyMst WHERE IsSalesMan=1` → `User`
 | Gati field | Eclat field | id key | store attr | transform | null/fail |
@@ -139,6 +148,22 @@ A `kind=product` picture is also registered as a `ProductImage source gati_cad`
 (upsert by `sourceUrl`; a new URL tombstones the previous CAD; other sources
 untouched), then `applyImageOrder` recomputes cover/order (Product.imageUrl) and
 the picture is queued for visual-search indexing after the batch commits.
+
+## 12a. Metal rates — `RateDailyMst` + `RawMst` → `MetalRate` (since 2026-09-29)
+Gati staff key the day's rate in **Masters → Daily Rate**. The agent
+(`push_rates`) sends a full pull every cycle, no watermark, to
+**`POST /sync/rates`**; the backend (`backend/src/integrations/gati-rates.ts`)
+writes `MetalRate` rows.
+| Gati field | Eclat field | transform | null/fail |
+|---|---|---|---|
+| `RawMst.RawName` (via `RawNo`) | metal | only `GOLD` and `SILVER`; **`OLD GOLD` (buy-back) excluded** in the agent | other names not sent |
+| `RateDailyMst.SaleRate` | rate (INR/g) | `GOLD` → `gold_24k`; 22K/18K/rose 18K/14K/12K/10K/9K derived × 0.916/0.75/0.585/0.5/0.417/0.375; `SILVER` → `silver` | `SaleRate > 0` only |
+| `RateDailyMst_LogMain.RateDate` (latest) | rate day (in `legacyId` `gati:<day>:<metal>:<rate>[:derived]`) | | |
+| `RateDailyMst_LogMain.UpdateDate` (else `EntryDate`) | rate day fallback | used only when `RateDate` is missing | |
+| (sync time) | `effectiveFrom` | unchanged rate → renewed each cycle; new rate → new live row | shown stale after 18 h unconfirmed |
+**`CostRate` is never sent.** With the backend variable `GOLD_RATE_SOURCE=gati`
+this is the only gold-rate source (IBJA pulls disabled). See
+[GATI_DB_SYNC.md](../GATI_DB_SYNC.md) §5.
 
 ## 13. Custom-order linkage — **BLOCKED / CLIENT PROCESS INPUT REQUIRED** (OP-25)
 `CustomOrder` is Eclat-native (no `legacyId`, no relation to

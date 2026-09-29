@@ -10,7 +10,8 @@ Step-by-step to take Eclat from this repo to a live system. **Path A** stack
 - **Object storage** for jewellery images / return photos → **Cloudflare R2** (or
   Railway volume / Cloudinary). Postgres stores **URLs only**.
 - **On-site sync agent** → Windows Task Scheduler on the client's office PC
-  (see `data_sync/EclatSync/README.md`).
+  (package `synceclatcaratsense/`; as installed at Eclat on 2026-09-29, see
+  [GATI_DB_SYNC.md](../GATI_DB_SYNC.md)).
 
 > Status: this repo is **deploy-ready (config only)**. No hosting accounts are
 > connected yet. Sections below marked **[GO-LIVE]** are the manual steps to run
@@ -139,6 +140,14 @@ image transforms (thumbnails for the catalogue grid).
 ---
 
 ## 5. On-site sync agent (per store)  **[GO-LIVE]**
+
+> **2026-09-29 — superseded.** The summary below (a human "sync user" login,
+> `setup.bat` as administrator, `data_sync/EclatSync`) is obsolete. At Eclat one
+> agent on APPSERVER covers all branches: `synceclatcaratsense/` at
+> `C:\CaratOS\GatiConnect`, enrolled agent token (no human login), non-admin
+> user `svc_caratos`, stored-password task `\CaratOS Gati Sync` every 15 min
+> (`setup.bat` is retired; the package refuses to run elevated). See
+> [GATI_DB_SYNC.md](../GATI_DB_SYNC.md).
 Install on the office PC that hosts SJE Plus / APRS SQL Server. Full operator
 instructions: `data_sync/EclatSync/README.md`. Summary:
 1. Create a **read-only** SQL login on their SQL Server for the agent.
@@ -180,7 +189,8 @@ Never test-restore over production. Document the first successful restore test i
 ## 8. Observability
 - **Backend logs:** Railway service logs (boot line + request errors).
 - **Sync health:** each agent writes `auto_sync.log`; a stuck sync = stale
-  dashboards. Add an alert when no successful sync has occurred in > ~45 min
+  dashboards. (Since 2026-09 the agent heartbeats: `/data` → On-site agents →
+  "Last check-in"; see [GATI_DB_SYNC.md](../GATI_DB_SYNC.md) §7.) Add an alert when no successful sync has occurred in > ~45 min
   (e.g. agent heartbeat → `SyncState`, dashboard banner if stale). Track as a
   follow-up.
 - **Frontend:** Vercel deployment + runtime logs.

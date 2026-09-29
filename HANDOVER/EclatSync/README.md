@@ -1,5 +1,13 @@
 # Eclat / CaratSense — connecting your jewellery system to the dashboard
 
+> **OBSOLETE COPY — DO NOT INSTALL (2026-09-29).** This is the old
+> `EclatSync` agent (head-office email/password login, `EclatSync` tasks). The
+> backend has refused it (403) since September 2026, and the copies that ran on
+> APPSERVER (`D:\EclatSync`, `D:\Tally\EclatSync`) were archived and removed on
+> 2026-09-29. The live agent is the repo's `synceclatcaratsense/` package,
+> installed at `C:\CaratOS\GatiConnect` on APPSERVER — see
+> [GATI_DB_SYNC.md](../../GATI_DB_SYNC.md). Kept for history only.
+
 This folder holds a small program that runs on the office computer where your
 jewellery software (SJE Plus / APRS) keeps its data.
 

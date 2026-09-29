@@ -5,6 +5,14 @@ Status vocabulary: **DONE** (built + verified locally) · **VERIFIED** (audited,
 **BLOCKED** · **CLIENT INPUT REQUIRED** · **ON-SITE REQUIRED** (needs the live Gati
 machine) · **NOT STARTED**.
 
+> **2026-09-29 update:** the on-site agent is installed and live on APPSERVER
+> (`synceclatcaratsense/` at `C:\CaratOS\GatiConnect`, non-admin `svc_caratos`,
+> stored-password task every 15 min, enrolled agent token), with a full backfill
+> at 18:35 IST and zero rows skipped; branch attribution and Gati daily metal
+> rates are live. §11 blocker "Live sync" and the §21 install step are done; see
+> [GATI_DB_SYNC.md](../GATI_DB_SYNC.md). Open: Gati deletions are not propagated
+> (orphan rows from backup imports; GATI_DB_SYNC.md §8).
+
 ## 1. Executive status
 The Eclat application is **feature-complete and internally consistent** for
 go-live: multi-store isolation, inventory + stock-transfer + source-of-truth,
@@ -156,7 +164,7 @@ extractor's raw SQL (ingestion path, separate concern).
 | 8 | AI **embedding provider + key** | CREDENTIAL |
 | 9 | **pgvector** installed on prod Postgres | INFRA |
 | 10 | **ANTHROPIC_API_KEY** (metadata enrichment) | CREDENTIAL |
-| 11 | Live sync / reconciliation | ON-SITE |
+| 11 | Live sync / reconciliation | ON-SITE — **live sync DONE 2026-09-29** (GATI_DB_SYNC.md); reconciliation open |
 
 ## 20. Exact client inputs required
 1. Gati topology: one DB for all stores, or one DB per store?
@@ -170,7 +178,7 @@ extractor's raw SQL (ingestion path, separate concern).
 9. `SPM_Users` — if staff designation import is wanted.
 
 ## 21. Exact on-site steps
-1. Install the agent on the Gati machine; copy `eclat_config.example.bat` → `eclat_config.bat`, fill real values (SQL server/db, `ECLAT_BASE_URL`, `SYNC_DEFAULT_STORE_ID` = the store that owns unattributed rows, `SJEP_IMAGE_ROOT`, R2 creds).
+1. Install the agent on the Gati machine; copy `eclat_config.example.bat` → `eclat_config.bat`, fill real values (SQL server/db, `ECLAT_BASE_URL`, `SYNC_DEFAULT_STORE_ID` = the store that owns unattributed rows, `SJEP_IMAGE_ROOT`, R2 creds). **Done 2026-09-29, differently:** agent token + approved hashes instead of a login, unattributed rows go to "Unassigned — needs a branch" (`unattributedMode: holding`); see [GATI_DB_SYNC.md](../GATI_DB_SYNC.md) §2.
 2. Run `discover.bat` → review `reports/discovery_report.txt` (incl. the per-store×entity matrix) and `reports/stage_map.suggested.json`.
 3. Confirm branch columns, BookMaster-per-branch, and the `OrderStatus`/`DepartmentId` codes; save the confirmed map as `stage_map.json`.
 4. Set `SYNC_BRANCH_COLUMNS` if discover shows a different authoritative branch column.

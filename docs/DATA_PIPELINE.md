@@ -2,6 +2,15 @@
 
 How data gets from the client's existing jewelry ERP (**Gatisofttech SJE Plus / APRS-SJEP**, SQL Server) into Eclat. Modeled on the **proven** Busy→CaratSense sync built for the Ashish Textile client (`auto_sync_busy.py`). This is the reference implementation — repointed from MS Access to SQL Server.
 
+> **2026-09-29 — live and installed.** The live sync now runs from the repo's
+> `synceclatcaratsense/` package (not `data_sync/EclatSync`) on APPSERVER, as the
+> non-admin user `svc_caratos` with a Windows-auth read-only login, via the
+> stored-password task `\CaratOS Gati Sync` every 15 minutes. It pushes to the
+> real `POST /sync/*` routes with an enrolled agent token (no head-office
+> password), attributes rows per branch, and also sends Gati's daily metal
+> rates. The 2026-06 status below is history; current setup:
+> [GATI_DB_SYNC.md](../GATI_DB_SYNC.md).
+
 ## The decision
 **Hybrid pipeline** = one-time historical backfill + continuous live sync.
 
@@ -47,11 +56,11 @@ CLIENT OFFICE PC (where SJE Plus + SQL Server run)
 ## Status — implemented (2026-06-17)
 
 ### 1. Live-sync extract queries — DONE
-`data_sync/EclatSync/sync_sjep.py` now has **real SQL** in every `extract_*()` (no more `TODO(schema)`), validated against the restored copy `APRSSJEP_eclat` on `localhost\SQLEXPRESS`:
+`data_sync/EclatSync/sync_sjep.py` (now `synceclatcaratsense/sync_sjep.py`) now has **real SQL** in every `extract_*()` (no more `TODO(schema)`), validated against the restored copy `APRSSJEP_eclat` on `localhost\SQLEXPRESS`:
 
 | Extractor | Legacy source | Watermark | Rows (restored copy) |
 |---|---|---|---|
-| `push_stores` | `PartyMst` where `IsLocation`/`IsFactory` | none — full idempotent pull each run | branch/location rows |
+| `push_stores` | `PartyMst` ids referenced as a `BranchNo` by the data (flags only a fallback — see note below) | none — full idempotent pull each run | branch/location rows |
 | `extract_parties` | `PartyMst` | `UpdateDate`/`EntryDate` | 564 |
 | `extract_items` | `StyleMst` + `StyleMstSummary` + `ToneMst` | `UpdateDate`/`EntryDate` | 753 |
 | `extract_stock` | `Inward` + `InwardSummary` + `ToneMst` | `UpdateDate`/`EntryDate` | 2,690 |
@@ -64,6 +73,14 @@ CLIENT OFFICE PC (where SJE Plus + SQL Server run)
 The watermark predicate is `UpdateDate > @since OR (UpdateDate IS NULL AND EntryDate > @since)`, with `@since=''` meaning full backfill. Each extractor returns clean `list[dict]` records.
 
 **Store/branch ingestion (`push_stores`) — added.** Runs FIRST in each per-target cycle (before parties/stock/sales) so a new branch created in the client's Gati exists in Eclat before its transactions arrive. It pulls `PartyMst` rows flagged as a location/branch (`IsLocation`/`IsFactory`), maps each to `{legacyId, name, city?, code?}`, and POSTs `{records:[…]}` to `POST /sync/stores` (head_office / sync-token gated, same auth as the other `/sync/*` pushes). The backend upserts on `legacyId`: new stores land **pending** (awaiting HO/AM activation), existing ones refresh name/city/code. No watermark — the catalog is tiny and pulled in full every run; fully idempotent; non-fatal (a failure logs and the cycle continues). **`# LIVE-DB:`** the branch-detection predicate (which `PartyMst` flag marks a sellable branch vs an internal factory/godown) and the source column names must be confirmed against the client's live schema before first run. Per-row `LocationId → storeId` stamping on transaction rows remains the NEXT step; today transactions still ride the single backend `defaultStoreId`.
+
+> **Superseded (2026-09-29):** branches are now the `PartyMst` ids referenced as
+> `BranchNo` by the data (10 at Eclat); `IsLocation`/`IsFactory` are only a
+> fallback when nothing is referenced (on Eclat's DB `IsLocation` marks
+> suppliers). Transactions are stamped per branch (stock by `BranchNo`; sales,
+> orders and ledger via `BookNo` → `BookMaster.BranchNo`), and rows with no branch
+> go to "Unassigned — needs a branch", not a default store. See
+> [GATI_DB_SYNC.md](../GATI_DB_SYNC.md) §3.
 
 **Production sink correction:** the original skeleton POSTed Excel to `/upload/excel` — that route **does not exist** in the Eclat NestJS backend. The module header in `sync_sjep.py` now documents the real target: either (a) a per-entity bulk-upsert **Eclat REST API** route keyed on `legacyId`, or (b) a **direct Postgres load** (same upsert-on-`legacyId` logic as the backfill below). The `/upload/excel` code is retained only as a reference shape and is **not** wired in.
 
@@ -87,6 +104,11 @@ The watermark predicate is `UpdateDate > @since OR (UpdateDate IS NULL AND Entry
 **Connection quirk (local only):** the local `SQLEXPRESS` has **TCP/IP disabled** (shared-memory/named-pipes only) and SQL Browser stopped, so the `mssql`/tedious npm driver cannot reach it without reconfiguring the service (disallowed — originals are read-only). The backfill therefore reads the legacy DB via the working **`Invoke-Sqlcmd`** path (SqlServer PowerShell module) as a JSON-returning child process. `mssql` stays installed for the production agent, where the client's server has TCP enabled.
 
 ## What still requires the client's LIVE SQL Server
+
+> **2026-09-29:** items 1 and 2 are done — the agent runs on APPSERVER against the
+> live `APRSSJEP` on the same machine (`SJEP_SQL_SERVER=localhost`, Windows auth,
+> so no SQL port or firewall opening is needed) and pushes to the `/sync/*` REST routes with
+> zero-skip acknowledgements. See [GATI_DB_SYNC.md](../GATI_DB_SYNC.md).
 1. **Live-sync deployment.** The Python agent must run on the client's office PC against the live `APRSSJEP` DB (not the restored `APRSSJEP_eclat` copy). The SELECTs are identical; only `SJEP_SQL_DB`/`SJEP_SQL_SERVER` change. The agent needs a least-privilege read-only login and TCP/IP enabled (or run through the same `Invoke-Sqlcmd` bridge).
 2. **Wire the production sink.** Build the Eclat REST bulk-upsert routes (or point the agent at the direct Postgres load) and advance the watermark only after a confirmed 200/commit.
 3. **Code decodes to confirm on the live data** (marked `# LIVE-DB:` in `sync_sjep.py`):

@@ -61,6 +61,11 @@ All four degrade to a logged `dryRun` until their keys are set — so the app al
 4. Captured payments auto-record as `Payment` rows (attributed via the `notes` set at link creation).
 
 ### 2c. Gold-rate feed
+
+> **2026-09-29 (Eclat):** the gold rate now comes from Gati's Daily Rate master via
+> the on-site agent (`POST /sync/rates` → `MetalRate`). Railway backend variable
+> `GOLD_RATE_SOURCE=gati` disables the external/IBJA pulls below, so no feed
+> subscription is needed for Eclat. See [GATI_DB_SYNC.md](../GATI_DB_SYNC.md) §5.
 1. Subscribe to **goldapi.io** or **metals.dev** (or any JSON endpoint returning INR/gram or per-ounce gold).
 2. Set env: `GOLD_RATE_API_URL` (+ `GOLD_RATE_API_KEY` if required — sent as `x-access-token`, goldapi.io style).
 3. Pull a rate: `POST /integrations/gold-rate/refresh` (manager+). Schedule it daily (Railway cron / the routine scheduler) — it upserts `MetalRate` per purity.
@@ -72,6 +77,16 @@ All four degrade to a logged `dryRun` until their keys are set — so the app al
 ---
 
 ## 3. On-site live sync (the client's office PC)
+
+> **2026-09-29 — done, and done differently.** Steps A–C below describe the
+> original design and are obsolete. The agent is the repo's `synceclatcaratsense/`
+> package on APPSERVER (`C:\CaratOS\GatiConnect`), authenticating with an
+> enrolled Gati Connect **agent token** (`cxa_…`, no head-office email/password),
+> reading SQL Server on the same machine as the non-admin Windows user
+> `svc_caratos` (`db_datareader` + DENY INSERT/UPDATE/DELETE/EXECUTE/ALTER, no
+> SQL password, **no TCP/IP or port 1433 firewall opening**), scheduled as the
+> stored-password task `\CaratOS Gati Sync` every 15 min (not `setup.bat`). Current
+> setup and operations: [GATI_DB_SYNC.md](../GATI_DB_SYNC.md).
 
 Goal: the Python agent (`data_sync/EclatSync/sync_sjep.py`) reads the live `APRSSJEP` SQL Server read-only and pushes changes to `POST /sync/*` every 15 min. Detail in `DATA_PIPELINE.md` + `data_sync/EclatSync/README.md`.
 

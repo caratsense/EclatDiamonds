@@ -12,7 +12,7 @@ You own everything where Eclat talks to the outside world or to the legacy syste
 - **WhatsApp Business Cloud API** — quotes/catalogue share (M2), DSR push (M10), occasion + payment reminders (M1, M12).
 - **Razorpay** — UPI/card/net-banking + gold-scheme installments (M12, M17).
 - **Email/SMS** — reminders, DSR, alerts.
-- **Legacy sync** — `data_sync/EclatSync/sync_sjep.py`: read-only pull from live SJEP SQL Server → push to Eclat API every ~15 min.
+- **Legacy sync** — `synceclatcaratsense/sync_sjep.py` (+ `sync_media.py`): read-only pull from live SJEP SQL Server → push to Eclat API every ~15 min, including Gati daily metal rates (`/sync/rates`). As installed on APPSERVER: `GATI_DB_SYNC.md` (source of truth).
 
 ## Sync rules (from the proven Ashish-Textile Busy sync — non-negotiable)
 1. **Read-only** against his live DB; least-privilege login; never write.

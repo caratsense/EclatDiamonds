@@ -9,6 +9,30 @@
 > This captures the full project state so work can continue exactly where it stopped.
 > **Last updated: 2026-09-15.**
 
+## 2026-09-29 update — Gati sync live again, rates from Gati
+
+- **The Gati → CaratOS sync is live again.** Nothing had reached CaratOS between
+  2026-07-31 and 2026-09-29: the old agent (`D:\EclatSync`, head-office
+  email/password) got 403 on every upload after `/sync/*` moved to enrolled-agent
+  tokens. The repo's `synceclatcaratsense/` package is now installed on APPSERVER
+  at `C:\CaratOS\GatiConnect`, running as the non-admin local user `svc_caratos`
+  (Windows-auth read-only SQL login) from the stored-password task
+  `\CaratOS Gati Sync` every 15 min, with agent token `cxa_…` (ConnectAgent
+  "ECLAT  AGENT"). Old folders/tasks archived and removed. First run 18:35 IST was
+  a full backfill (909 parties, 1,042 styles, 4,908 stock, 880 sales, 259 orders,
+  2,148 bags, 1,862 ledger, 14,939 movements), zero rows skipped. Photos are in
+  the same cycle.
+- **Metal rates now come from Gati's Daily Rate master** (`RateDailyMst` +
+  `RawMst` → `POST /sync/rates` → `MetalRate`; other karats derived by
+  fineness). Railway variable `GOLD_RATE_SOURCE=gati` disables IBJA pulls.
+- **Where it is documented:** [GATI_DB_SYNC.md](../GATI_DB_SYNC.md) (repo root) is
+  the source of truth for the sync; older sync notes in this file and elsewhere
+  are history.
+- **Open decision:** Gati deletions are not propagated. 1,058 stock pieces, 84
+  sales and 10 styles from the June/August backup imports no longer exist in Gati
+  but remain in CaratOS (stock totals read high). Needs an owner decision:
+  delete or mark (GATI_DB_SYNC.md §8).
+
 ## 2026-09-15 — CURRENT STATE (read this first)
 
 Feature coding for the parity programme is closed. What remains is credentials,
@@ -448,6 +472,8 @@ Lead Ads ingestion, ROAS reporting, routing-review UI, draft-approval UI.
 1. The on-site sync agent still logs in as a **head_office user** (`sync@caratsense.in`),
    so a password in a `.bat` file on a shop PC reaches `/sync/reset` and `/sync/purge-demo`.
    The ConnectAgent machine-credential path is built and tested but **not adopted**.
+   **Resolved 2026-09-29:** the agent now uses the ConnectAgent token; no human
+   password is on the server (GATI_DB_SYNC.md).
 2. **No verified database backup** — nothing in the repo, no restore ever drilled.
 3. Committed bcrypt hashes for the two most privileged accounts, seeded into every fresh DB.
 4. Cross-tenant media key collisions: the sync agent writes flat `catalogue/{legacyId}`

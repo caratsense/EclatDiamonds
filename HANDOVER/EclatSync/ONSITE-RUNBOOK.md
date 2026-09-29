@@ -1,5 +1,13 @@
 # On-site runbook — bringing the client's data into Eclat
 
+> **OBSOLETE COPY — DO NOT INSTALL (2026-09-29).** This is the old
+> `EclatSync` agent (head-office email/password login, `EclatSync` tasks). The
+> backend has refused it (403) since September 2026, and the copies that ran on
+> APPSERVER (`D:\EclatSync`, `D:\Tally\EclatSync`) were archived and removed on
+> 2026-09-29. The live agent is the repo's `synceclatcaratsense/` package,
+> installed at `C:\CaratOS\GatiConnect` on APPSERVER — see
+> [GATI_DB_SYNC.md](../../GATI_DB_SYNC.md). Kept for history only.
+
 For the **Eclat engineer** driving the client's PC over AnyDesk.
 The operator-facing instructions are in `README.md`; this is the order of
 operations and what to do when something is not as expected.

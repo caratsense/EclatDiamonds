@@ -1,5 +1,12 @@
 # On-site runbook — bringing the client's data into Eclat
 
+> **Installed on APPSERVER (2026-09-29).** At Eclat this package is installed on
+> `APPSERVER` (192.168.1.254) at `C:\CaratOS\GatiConnect`, runs as the local
+> non-admin user `svc_caratos` from the stored-password task `\CaratOS Gati Sync`
+> (every 15 min: data, rates, then photos), with `SJEP_SKIP_MIRROR=1`. That
+> install, and how to check or change it, is documented in
+> [GATI_DB_SYNC.md](../GATI_DB_SYNC.md), which wins where this runbook differs.
+
 For the **Eclat engineer** driving the client's PC over AnyDesk.
 The operator-facing instructions are in `README.md`; this is the order of
 operations and what to do when something is not as expected.
@@ -14,7 +21,7 @@ or locks the client's live database.
 | Their system | Becomes in Eclat |
 |---|---|
 | `PartyMst` | Customers, suppliers, salespeople, branches |
-| `PartyMst` (`IsLocation`/`IsFactory`) | **Branches**, with address, phone, email, GSTIN |
+| `PartyMst` ids referenced as `BranchNo` by the data | **Branches**, with address, phone, email, GSTIN (the `IsLocation`/`IsFactory` flags are only a fallback; on Eclat's database `IsLocation` marks suppliers) |
 | `PartyMst` (`IsSalesMan`) | **Staff** — imported inactive, cannot sign in until activated |
 | `StyleMst` | Catalogue products (the design master) |
 | `Inward` | Stock — every physical piece |
@@ -22,8 +29,9 @@ or locks the client's live database.
 | `Spm_MfgOrder` (+ items) | Manufacturing orders — *what is on order* |
 | `SPM_BagMaster` + `SPM_DepartmentMst` | **The manufacturing timeline — where each piece has got to** |
 | `Journal` | Payments / ledger |
+| `RateDailyMst` + `RawMst` (Masters → Daily Rate) | **Metal rates** (`GOLD`/`SILVER` sale rates → `MetalRate` via `POST /sync/rates`; since 2026-09-29) |
 | `ImageName` files on disk | Catalogue photographs (via Cloudflare R2) |
-| *every other table* | Mirrored verbatim into `LegacyRow` via `/sync/raw` |
+| *every other table* | Mirrored verbatim into `LegacyRow` via `/sync/raw` (switched off at Eclat with `SJEP_SKIP_MIRROR=1`: in July it took Railway down) |
 
 That last row matters: the full mirror means nothing is lost even for tables we
 have not modelled yet, so a field the client asks about in three months is
@@ -136,7 +144,11 @@ agent itself from the elevated session.
    R2 keys blank for now.
 
 For SQL Server, prefer a **read-only login** (`create_readonly_login.sql` creates
-one). Windows auth works too — leave `SJEP_SQL_USER` blank.
+one). Windows auth works too — leave `SJEP_SQL_USER` blank. (APPSERVER uses
+Windows auth: login `APPSERVER\svc_caratos`, `db_datareader`.) **Never add
+`CONTROL` to the `DENY` line:** a database-level `DENY CONTROL` also denies
+CONNECT and SELECT, so the login cannot read at all. Deny only
+INSERT/UPDATE/DELETE/EXECUTE/ALTER.
 
 ### Step 2 — DISCOVERY (always first)
 ```
@@ -184,6 +196,13 @@ user with `InteractiveToken` + `Limited` settings. It does not run a full sync.
 The task runs every 15 minutes while that user is signed in and once at sign-in;
 it never runs as SYSTEM/HIGHEST.
 
+That interactive task suits an attended PC only. On an **unattended server**
+nobody stays signed in, so it would never run. On APPSERVER (2026-09-29) the
+installer was not used: `\CaratOS Gati Sync` was registered directly with
+`Register-ScheduledTask` as `APPSERVER\svc_caratos` with a stored password
+("Log on as a batch job" right), `-RunLevel Limited`, every 15 minutes, running
+`run_sync.bat`. See [GATI_DB_SYNC.md](../GATI_DB_SYNC.md) §7.
+
 ### Step 4 — photos
 Fill in `SJEP_IMAGE_ROOT` and the R2 keys in `eclat_config.bat`, then
 **start small**:
@@ -219,6 +238,11 @@ Sign in to Eclat as head office and confirm:
 ---
 
 ## Scheduling the photo sync (optional)
+
+> **Superseded 2026-09-29:** `run_sync.bat` now runs `sync_media.py` after every
+> successful `sync_sjep.py`, so the scheduled 15-minute cycle already includes
+> photos and no separate photo task is needed. The paragraph below is kept for
+> history.
 
 Photos change far less often. For the MVP, run `sync_media.bat` manually as the
 same non-admin Windows user after checking a small batch. Do not recreate the old
@@ -302,6 +326,12 @@ with the single sync-target store (`SYNC_DEFAULT_STORE_ID`, default
 `surat-main`), which is itself a seeded branch. Deleting it would take every
 record that just synced with it, so the purge refuses and reports it as kept.
 Rename it to the client's real branch name rather than expecting it to disappear.
+
+> **Eclat, 2026-09-29:** the enrolled agent attributes rows per branch (stock by
+> `BranchNo`; sales, orders and ledger via `BookNo` → `BookMaster.BranchNo`), and
+> anything without a branch goes to "Unassigned — needs a branch"
+> (`unattributedMode: holding`), not to `surat-main`. See
+> [GATI_DB_SYNC.md](../GATI_DB_SYNC.md) §3.
 
 It also **refuses to run at all** until real data exists — purging first would
 leave the client staring at an empty system.

@@ -35,7 +35,9 @@ GO
 -- ---- 3) Grant ONLY read, then explicitly DENY every write (belt + suspenders). ----
 ALTER ROLE [db_datareader] ADD MEMBER [eclat_readonly];   -- SELECT on all tables
 GO
-DENY INSERT, UPDATE, DELETE, EXECUTE, ALTER, CONTROL TO [eclat_readonly];
+-- Not CONTROL: DENY CONTROL on the database also denies CONNECT and SELECT
+-- (CONTROL implies every permission), which locks the login out entirely.
+DENY INSERT, UPDATE, DELETE, EXECUTE, ALTER TO [eclat_readonly];
 GO
 
 -- ---- 4) Verify (optional): should show db_datareader and no write roles. ----

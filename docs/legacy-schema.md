@@ -217,7 +217,7 @@ Notable: `JewelTransInwardDetail` carries a **composite PK (JewelDetailID, Jewel
 
 ## 5. Watermark columns for incremental sync
 
-For `data_sync/EclatSync/sync_sjep.py` pulling new/changed rows every 15 min. All transaction tables have an **identity bigint PK** (monotonic — best for *new* rows) and `EntryDate`/`UpdateDate` datetimes (populated; for *changed* rows). Use **`UpdateDate` where present, else `EntryDate`**, plus the identity PK as a tie-breaker. Recommended pattern: `WHERE UpdateDate > @lastWatermark OR (UpdateDate IS NULL AND EntryDate > @lastWatermark)` and track `MAX(<identityPK>)`.
+For `synceclatcaratsense/sync_sjep.py` (formerly `data_sync/EclatSync/`) pulling new/changed rows every 15 min. All transaction tables have an **identity bigint PK** (monotonic — best for *new* rows) and `EntryDate`/`UpdateDate` datetimes (populated; for *changed* rows). Use **`UpdateDate` where present, else `EntryDate`**, plus the identity PK as a tie-breaker. Recommended pattern: `WHERE UpdateDate > @lastWatermark OR (UpdateDate IS NULL AND EntryDate > @lastWatermark)` and track `MAX(<identityPK>)`.
 
 | Transaction table | Identity PK (new-row watermark) | Created col | Modified col | Document number |
 |---|---|---|---|---|

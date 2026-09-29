@@ -6,7 +6,7 @@ This is the **clean, self-contained working copy** of the Eclat project, kept on
 - `frontend/` — Next.js 16 app (run: `cd frontend && npm run dev` → http://localhost:3000)
 - `backend/`  — NestJS API + Prisma (run: `cd backend && npm run start:dev` → http://localhost:4000)
 - `docs/`     — all project docs. **Start with `docs/HANDOFF.md`.**
-- `data_sync/`— the on-site SJEP→Eclat sync agent (`EclatSync/sync_sjep.py`)
+- `synceclatcaratsense/` — the on-site Gati (SJEP) → Eclat sync agent (`sync_sjep.py`, `sync_media.py`). How it is installed and run on APPSERVER: **[GATI_DB_SYNC.md](GATI_DB_SYNC.md)**. (`data_sync/EclatSync` and `HANDOVER/EclatSync` are obsolete.)
 - `.claude/`  — agent definitions
 - `CLAUDE.md` — agent context (read first)
 

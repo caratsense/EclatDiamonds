@@ -1,5 +1,29 @@
 # Gati sync agent — upgrade runbook (APPSERVER)
 
+> **DONE / SUPERSEDED — 2026-09-29.** This upgrade was carried out on
+> 2026-09-29. The installed setup is documented in
+> [GATI_DB_SYNC.md](../../GATI_DB_SYNC.md), which is now the source of truth;
+> keep this runbook as history only. What was done differently from the steps
+> below:
+>
+> - **Install path** is `C:\CaratOS\GatiConnect` (inheritance off; only
+>   `svc_caratos`, SYSTEM, Administrators), not
+>   `%LOCALAPPDATA%\CaratOS\GatiConnect`.
+> - **Scheduled task** `\CaratOS Gati Sync` was registered directly with
+>   `Register-ScheduledTask` as `APPSERVER\svc_caratos` with a stored password,
+>   RunLevel Limited, every 15 min, running `run_sync.bat` (data, rates, then
+>   photos). `install_scheduler.bat` (steps 11–12) was not used.
+> - **No `DENY CONTROL`** in the SQL grant (step 2): at database level it also
+>   denies CONNECT and SELECT, so the login could not read. The SQL below is
+>   corrected.
+> - **Python** 3.14 was copied to `C:\Program Files\Python314` (step 3) and the
+>   `.venv` built from it as `svc_caratos`.
+> - **Token rotated** (step 13) after install.
+> - The old `EclatSync` / `EclatSync_Boot` tasks and `D:\EclatSync`,
+>   `D:\Tally\EclatSync` were archived to `C:\Users\Administrator\CaratOS-archive`
+>   and removed. The first run (18:35 IST) was a full backfill, not the
+>   six-week figures in step 9.
+
 **For:** whoever is at the console on APPSERVER (192.168.1.254).
 **Takes:** about an hour, most of it the first full sync.
 **Result:** the deployed site stops showing data that ends on 31 July 2026.
@@ -51,7 +75,8 @@ CREATE LOGIN [APPSERVER\svc_caratos] FROM WINDOWS WITH DEFAULT_DATABASE=[APRSSJE
 USE [APRSSJEP];
 CREATE USER [APPSERVER\svc_caratos] FOR LOGIN [APPSERVER\svc_caratos];
 ALTER ROLE [db_datareader] ADD MEMBER [APPSERVER\svc_caratos];
-DENY INSERT, UPDATE, DELETE, EXECUTE, ALTER, CONTROL TO [APPSERVER\svc_caratos];
+-- No CONTROL: DENY CONTROL at database level also denies CONNECT and SELECT.
+DENY INSERT, UPDATE, DELETE, EXECUTE, ALTER TO [APPSERVER\svc_caratos];
 ```
 
 Run it with `sqlcmd -S localhost -d master -E -i <file>.sql`.

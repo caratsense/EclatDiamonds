@@ -1,5 +1,13 @@
 # Sync safety — why the client's live data can never be changed
 
+> **OBSOLETE COPY — DO NOT INSTALL (2026-09-29).** This is the old
+> `EclatSync` agent (head-office email/password login, `EclatSync` tasks). The
+> backend has refused it (403) since September 2026, and the copies that ran on
+> APPSERVER (`D:\EclatSync`, `D:\Tally\EclatSync`) were archived and removed on
+> 2026-09-29. The live agent is the repo's `synceclatcaratsense/` package,
+> installed at `C:\CaratOS\GatiConnect` on APPSERVER — see
+> [GATI_DB_SYNC.md](../../GATI_DB_SYNC.md). Kept for history only.
+
 The Eclat sync **only reads**. Here are the layers that guarantee it, strongest first.
 Show this to the client/IT team if they ask.
 
@@ -8,7 +16,8 @@ Show this to the client/IT team if they ask.
 1. **Read-only database account.**
    The agent logs in as `eclat_readonly` (see `create_readonly_login.sql`), which is
    granted `db_datareader` (SELECT) and then **explicitly DENIED** INSERT / UPDATE /
-   DELETE / EXECUTE / ALTER / CONTROL. Even if something tried to write, **SQL Server
+   DELETE / EXECUTE / ALTER (not CONTROL: a database-level DENY CONTROL also denies
+   CONNECT and SELECT). Even if something tried to write, **SQL Server
    itself rejects it.** This is the hard guarantee.
 
 2. **Read-only connection intent.**
