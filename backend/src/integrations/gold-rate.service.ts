@@ -76,6 +76,15 @@ export class GoldRateService {
   private get feedUrl(): string {
     return this.spotFeedUrl || IBJA_URL;
   }
+  /**
+   * `GOLD_RATE_SOURCE=gati`: the shop's own Daily Rate in Gati is the price.
+   * The on-site agent pushes it every cycle (POST /sync/rates), so no feed is
+   * pulled here — an IBJA or spot pull would overwrite the shop's rate with a
+   * different number between two agent runs.
+   */
+  get fromGati(): boolean {
+    return this.config.get<string>('GOLD_RATE_SOURCE')?.trim().toLowerCase() === 'gati';
+  }
   private get apiKey(): string {
     return this.config.get<string>('GOLD_RATE_API_KEY') ?? '';
   }
@@ -136,6 +145,7 @@ export class GoldRateService {
    * happened rather than asking the feed again.
    */
   async refreshHealth(organisationId: string) {
+    if (this.fromGati) return this.gatiHealth(organisationId);
     const last = await this.prisma.scheduledJobRun.findFirst({
       where: { organisationId, job: GOLD_RATE_JOB },
       orderBy: { startedAt: 'desc' },
@@ -167,6 +177,28 @@ export class GoldRateService {
       overdue: ageHours == null || ageHours > expectedEveryHours,
       /** Where prices come from, for the screen to name. Never the API key. */
       source: this.spotFeedUrl ? 'custom' : 'ibja',
+    };
+  }
+
+  /**
+   * Health when Gati is the source: the last time the agent confirmed a rate.
+   * Every sync renews the rows' effectiveFrom, so its age is how long the agent
+   * has been silent — not how long ago the shop typed the rate.
+   */
+  private async gatiHealth(organisationId: string) {
+    const last = await this.prisma.metalRate.findFirst({
+      where: { organisationId, metal: MetalKind.gold_24k, legacyId: { startsWith: 'gati:' } },
+      orderBy: { effectiveFrom: 'desc' },
+      select: { effectiveFrom: true },
+    });
+    const ageHours = last ? (Date.now() - last.effectiveFrom.getTime()) / 3_600_000 : null;
+    return {
+      lastRunAt: last?.effectiveFrom.toISOString() ?? null,
+      lastRunStatus: last ? 'ok' : null,
+      lastRunUpdated: null,
+      ageHours: ageHours == null ? null : Math.round(ageHours * 10) / 10,
+      overdue: ageHours == null || ageHours > this.staleAfterHours,
+      source: 'gati' as const,
     };
   }
 
@@ -212,9 +244,9 @@ export class GoldRateService {
       effectiveFrom: string;
       ageHours: number;
       stale: boolean;
-      /** ibja | manual | feed (a spot provider, or a row older than sources). */
-      source: 'ibja' | 'manual' | 'feed';
-      /** The IBJA publication day this rate is from, when source is ibja. */
+      /** ibja | gati | manual | feed (a spot provider, or a row older than sources). */
+      source: 'ibja' | 'gati' | 'manual' | 'feed';
+      /** The IBJA publication day, or the Gati rate day, this rate is from. */
       publishedOn: string | null;
       /** Not published by the source; derived from the 999 rate by fineness. */
       derived: boolean;
@@ -234,14 +266,17 @@ export class GoldRateService {
         const effectiveFrom = row!.effectiveFrom ?? row!.createdAt;
         const ageHours = Math.max(0, (now - effectiveFrom.getTime()) / 3_600_000);
         const tag = row!.legacyId?.split(':')[0];
-        const publishedOn = tag === 'ibja' && row!.legacyUpdatedAt ? dateOnly(row!.legacyUpdatedAt) : null;
+        const publishedOn =
+          (tag === 'ibja' || tag === 'gati') && row!.legacyUpdatedAt ? dateOnly(row!.legacyUpdatedAt) : null;
         return {
           metal,
           ratePerGram: Number(row!.ratePerGram),
           effectiveFrom: effectiveFrom.toISOString(),
           ageHours: Math.round(ageHours * 10) / 10,
-          stale: publishedOn ? publishedOn !== today : ageHours > this.staleAfterHours,
-          source: tag === 'ibja' || tag === 'manual' ? tag : ('feed' as const),
+          // A Gati rate is current while the agent keeps confirming it: the
+          // shop does not re-key an unchanged rate every day.
+          stale: tag === 'ibja' && publishedOn ? publishedOn !== today : ageHours > this.staleAfterHours,
+          source: tag === 'ibja' || tag === 'gati' || tag === 'manual' ? tag : ('feed' as const),
           publishedOn,
           derived: row!.legacyId?.endsWith(':derived') ?? false,
         };
@@ -258,6 +293,12 @@ export class GoldRateService {
     if (!this.enabled) {
       this.logger.log('[dry-run] gold-rate feed not configured — keeping last stored rates.');
       return { updated: false, dryRun: true };
+    }
+    // Gati is the source: its agent writes the rate (POST /sync/rates), so a
+    // pull here — scheduled or the "Pull from feed" button — changes nothing.
+    if (this.fromGati) {
+      this.logger.log('Gold rate comes from Gati (GOLD_RATE_SOURCE=gati) — no feed pulled.');
+      return { updated: false, dryRun: false };
     }
     if (!this.spotFeedUrl) return this.refreshFromIbja(organisationId);
 

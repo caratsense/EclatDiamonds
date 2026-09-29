@@ -15,6 +15,7 @@ import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
 import { ProvenanceService } from '../common/provenance.service';
 import { StaffSyncRowDto, StoreSyncRowDto } from './dto/sync.dto';
+import { gatiRateRows } from '../integrations/gati-rates';
 import { GatiIngestionContext, GatiRoutingPolicy, parseGatiRoutingPolicy } from './gati-ingestion.guard';
 import {
   bool,
@@ -119,6 +120,7 @@ const GATI_SOURCE_TABLE_BY_ROUTE: Record<string, string> = {
   bags: 'SPM_BagMaster',
   ledger: 'Journal',
   'stock-movements': 'InwardHistory',
+  rates: 'RateDailyMst',
   // These two are not SQL tables. Their source names are explicit so nobody
   // mistakes them for a Gati database watermark.
   'product-images': 'GatiMediaFiles',
@@ -2265,6 +2267,33 @@ export class SyncService {
   }
 
   // ── StyleMst (+Summary) -> Product ───────────────────────────────────────────
+  /**
+   * Gati's Daily Rate master -> MetalRate. The agent sends the current
+   * RateDailyMst rows (fine GOLD and SILVER, INR/g) every cycle; each maps to
+   * the purities derived from it (gati-rates.ts). An unchanged rate only has its
+   * effectiveFrom renewed, so the newest confirmation stays the live rate; a
+   * changed rate adds a row, which keeps the history.
+   */
+  async syncRates(organisationId: string, records: Rec[]): Promise<SyncResult> {
+    const { rows, used } = gatiRateRows(records);
+    const now = new Date();
+    for (const row of rows) {
+      await this.prisma.metalRate.upsert({
+        where: { organisationId_legacyId: { organisationId, legacyId: row.legacyId } },
+        create: {
+          organisationId,
+          metal: row.metal,
+          ratePerGram: row.ratePerGram,
+          effectiveFrom: now,
+          legacyId: row.legacyId,
+          legacyUpdatedAt: row.rateDate,
+        },
+        update: { effectiveFrom: now },
+      });
+    }
+    return this.result('rates', records, used, records.length - used);
+  }
+
   async syncProducts(organisationId: string, records: Rec[]): Promise<SyncResult> {
     const branch = await this.branchResolver('products', organisationId);
     let upserted = 0;

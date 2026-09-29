@@ -1229,6 +1229,37 @@ def push_chunked(token, base_url, entity, records, label="sync"):
     return all_ok, watermark if all_ok else None
 
 
+def push_rates(cursor, token, base_url):
+    """Push today's metal rates from Gati's Daily Rate master to POST /sync/rates.
+
+    `RateDailyMst` holds the rate the shop keys every morning (INR per gram of
+    fine GOLD and SILVER), `RateDailyMst_Log`/`_LogMain` its dated history. The
+    current rows are tiny, so like the store catalog this is a full pull every
+    cycle with no watermark: the backend renews an unchanged rate and adds a row
+    for a changed one. Sale rate only — cost rate is never sent. OLD GOLD (the
+    buy-back rate) is not a selling price and is filtered here, so every row sent
+    is one the backend accepts (the ack is zero-skip strict).
+    """
+    if not table_columns(cursor, "RateDailyMst") or not table_columns(cursor, "RawMst"):
+        log.warning(f"  [{base_url}] rates: RateDailyMst/RawMst not found — skipping")
+        return True
+    cursor.execute(
+        "SELECT r.RawNo, UPPER(LTRIM(RTRIM(m.RawName))) AS RawName, r.SaleRate, "
+        "  (SELECT TOP 1 lm.RateDate FROM RateDailyMst_LogMain lm "
+        "    ORDER BY lm.RateDate DESC, lm.RateDailyMst_LogId DESC) AS RateDate, "
+        "  (SELECT TOP 1 COALESCE(lm.UpdateDate, lm.EntryDate) FROM RateDailyMst_LogMain lm "
+        "    ORDER BY lm.RateDate DESC, lm.RateDailyMst_LogId DESC) AS UpdateDate "
+        "FROM RateDailyMst r JOIN RawMst m ON m.RawNo = r.RawNo "
+        "WHERE UPPER(LTRIM(RTRIM(m.RawName))) IN ('GOLD', 'SILVER') AND r.SaleRate > 0"
+    )
+    recs = rows(cursor)
+    for r in recs:
+        log.info(f"  [{base_url}] rate {r.get('RawName')}: {r.get('SaleRate')}/g "
+                 f"(rate day {r.get('RateDate')})")
+    ok, _ = push_chunked(token, base_url, "rates", recs, label=f"[{base_url}] rates")
+    return ok
+
+
 def push_stores(cursor, token, base_url):
     """Push the store/branch CATALOG to POST /sync/stores so a new branch created in
     the client's Gati (APRS-SJEP) flows into Eclat automatically: new legacyIds land
@@ -1827,6 +1858,14 @@ def sync_once():
                     base_ok = push_staff(cursor, token, base_url) and base_ok
             except Exception as e:
                 log.error(f"  [{base_url}] staff push error: {e}")
+                base_ok = False
+
+            # Metal rates: Gati's Daily Rate master is the price every quote uses.
+            try:
+                if not DRY_RUN and not controlled:
+                    base_ok = push_rates(cursor, token, base_url) and base_ok
+            except Exception as e:
+                log.error(f"  [{base_url}] rates push error: {e}")
                 base_ok = False
 
             extraction_ok = {}

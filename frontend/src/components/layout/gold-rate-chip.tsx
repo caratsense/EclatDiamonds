@@ -56,7 +56,7 @@ export function GoldRateChip() {
           title={
             rate.stale
               ? `22K gold · ${staleNote(rate)} (click for all rates)`
-              : `22K gold · ${rate.source === "ibja" ? "IBJA benchmark, excl. GST" : "current rate"} (click for all rates)`
+              : `22K gold · ${rate.source === "ibja" ? "IBJA benchmark, excl. GST" : rate.source === "gati" ? "Gati daily rate" : "current rate"} (click for all rates)`
           }
         >
           <span

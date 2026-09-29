@@ -41,6 +41,7 @@ export function staleNote(r: MetalRate | null | undefined): string | null {
 export function rateSourceLabel(r: MetalRate | null | undefined): string {
   if (!r) return "No rate on record yet";
   if (r.source === "ibja") return `IBJA benchmark (ibjarates.com) · excl. GST${r.publishedOn ? ` · published ${day(r.publishedOn)}` : ""}`;
+  if (r.source === "gati") return `Gati daily rate${r.publishedOn ? ` · rate of ${day(r.publishedOn)}` : ""}`;
   if (r.source === "manual") return `Entered by hand · ${day(r.effectiveFrom)}`;
   return `Market feed · ${day(r.effectiveFrom)}`;
 }

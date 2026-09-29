@@ -49,7 +49,7 @@ export interface MetalRate {
   /** True once the rate is older than the server's stale window. */
   stale: boolean;
   /** ibja (the IBJA benchmark), manual (entered by hand) or feed (another provider). */
-  source?: "ibja" | "manual" | "feed";
+  source?: "ibja" | "gati" | "manual" | "feed";
   /** The IBJA publication day (YYYY-MM-DD) when source is ibja. */
   publishedOn?: string | null;
   /** Not published by the source; derived from the 999 rate by purity. */
@@ -145,7 +145,7 @@ export interface GoldRateHealth {
   ageHours: number | null;
   /** The automatic pull is not keeping up, or has never run at all. */
   overdue: boolean;
-  source: "ibja" | "custom";
+  source: "ibja" | "gati" | "custom";
 }
 
 /**

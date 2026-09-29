@@ -45,6 +45,7 @@ _PROFILE_CONTRACT = {
         "parties",
         "product-images",
         "products",
+        "rates",
         "raw",
         "sale-lines",
         "sales",

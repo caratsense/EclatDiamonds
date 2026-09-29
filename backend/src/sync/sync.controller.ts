@@ -227,6 +227,19 @@ export class SyncController {
     return result;
   }
 
+  /** Gati's Daily Rate master (RateDailyMst): the metal rates every quote is priced from. */
+  @GatiIngestion()
+  @Post('rates')
+  rates(
+    @CurrentUser() user: AuthUser,
+    @CurrentGatiIngestion() generation: GatiIngestionContext,
+    @Body() body: SyncBatchDto,
+  ) {
+    return this.sync.runGatiIngestion(user, generation, 'rates', body.records.length, () =>
+      this.sync.syncRates(user.organisationId, body.records),
+    );
+  }
+
   /** Auto-ingest Gati branches: new legacyIds become `pending` stores for HO/AM to set up. */
   @GatiIngestion()
   @Post('stores')

@@ -252,7 +252,7 @@ export default function RatesPage() {
                       {health.lastRunUpdated === false
                         ? " — the source had nothing newer."
                         : "."}{" "}
-                      Source: {health.source === "ibja" ? "IBJA" : "custom feed"}.
+                      Source: {health.source === "ibja" ? "IBJA" : health.source === "gati" ? "Gati, pushed by the on-site agent" : "custom feed"}.
                     </>
                   )}
                 </p>
