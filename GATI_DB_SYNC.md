@@ -63,7 +63,7 @@ denied INSERT/UPDATE/DELETE/EXECUTE/ALTER, and it only ever pushes outward.
 | Task command | `cmd.exe /d /c C:\CaratOS\GatiConnect\run_sync.bat >> C:\CaratOS\GatiConnect\logs\task_output.log 2>&1` |
 | Config | `C:\CaratOS\GatiConnect\eclat_config.bat` (secrets: agent token, R2 keys). Never commit it or copy it off the server. |
 | Logs | `logs\task_output.log` (everything the task prints), `logs\auto_sync.log` (data sync), `logs\media_sync.log` (photos) |
-| Checkpoints | `sync_state.json` in the install folder: one watermark per source, per backend and config revision |
+| Checkpoints | `sync_state.json` in the install folder: one watermark per source, per backend and config revision. `mirror_<backend>.sqlite`: per-table fingerprint and per-row hash of what the mirror has sent (§4a). |
 | Backend | `https://backend-production-89dd.up.railway.app` (Railway project "Eclat Diamonds", service `backend`, branch `main`) |
 | CaratOS agent | `ConnectAgent` `cmu4080tk00uznv01ybh7q7te` "ECLAT  AGENT", source `gati`, whole organisation |
 | Archive of the old setup | `C:\Users\Administrator\CaratOS-archive\` (zips of `D:\EclatSync` and `D:\Tally\EclatSync`, their task XML). Contains the old head-office password; delete once no longer needed. |
@@ -76,7 +76,8 @@ denied INSERT/UPDATE/DELETE/EXECUTE/ALTER, and it only ever pushes outward.
 | `CARATOS_AGENT_TOKEN` | `cxa_…` machine token of the agent above (only its SHA-256 is stored server-side) |
 | `SJEP_SQL_SERVER` / `SJEP_SQL_DB` | `localhost` / `APRSSJEP`. **Do not change**: the approved `sourceInstanceHash` is computed from exactly these strings. |
 | `SJEP_SQL_USER` / `SJEP_SQL_PASS` | blank = Windows login of the task account |
-| `SJEP_SKIP_MIRROR` | `1`. The raw "mirror every table" upload took Railway down in July; the mapped data does not need it. |
+| `SJEP_SKIP_MIRROR` | blank = the every-table mirror (§4a) runs each cycle. `1` switches it off. |
+| `SJEP_MIRROR_BUDGET_SEC` | optional; seconds the mirror may spend per cycle (default 480). The rest resumes next cycle. |
 | `SJEP_SKIP_STAFF` | blank: Gati staff (PartyMst `IsSalesMan=1`) are imported as inactive users, by the owner's choice |
 | `SJEP_IMAGE_ROOT` | `D:\GATISOFTTECH\SJEP IMAGES` |
 | `SJEP_IMAGE_ONLY_FOLDERS` | `ALR,AER,APD,ABR,AGR,ANK` (customer-facing photo folders only) |
@@ -131,7 +132,9 @@ denied INSERT/UPDATE/DELETE/EXECUTE/ALTER, and it only ever pushes outward.
       checkpointed and the same rows are re-sent next cycle.
    8. Watermarks are saved (`acknowledged mapped checkpoints saved`), and the
       log ends with `Sync complete` (or `Sync incomplete`, exit 1).
-3. **`sync_media.py`** — photos (only if step 2 succeeded): reads `ImageName`
+3. **Mirror of every table** (§4a): only new and changed rows, within a time
+   budget.
+4. **`sync_media.py`** — photos (only if step 2 succeeded): reads `ImageName`
    for styles and pieces, finds the file under `SJEP_IMAGE_ROOT` (allowed
    folders only), uploads new files to R2, then `POST /sync/product-images`
    with the public URL. It remembers what is uploaded and linked, so a quiet
@@ -160,6 +163,53 @@ the file is in an allowed image folder. On 2026-09-29 Gati had **1,042 styles**
 and all 1,042 were synced.
 
 ---
+
+## 4a. Every Gati table: the mirror (`LegacyRow`)
+
+So that any Gati data can be used in CaratOS **without changing the agent**,
+every table of `APRSSJEP` (about 1,136, of which ~260 hold rows) is copied into
+the CaratOS table **`LegacyRow`**, one row per source row:
+
+| Column | Holds |
+|---|---|
+| `sourceTable` | the Gati table name, e.g. `RateDailyMst_Log`, `SPM_BagTransaction` |
+| `rowKey` | the row's primary-key values joined with `\|` (an MD5 of the row when the table has no primary key) |
+| `data` | the whole source row as **jsonb**, every column, Gati's own column names |
+| `legacyUpdatedAt` | the row's `UpdateDate`, else `EntryDate`, when it has one |
+| `syncedAt` | when CaratOS last received it |
+
+How only new and changed rows are sent (`mirror_changed` in `sync_sjep.py`):
+
+1. Per table, a cheap fingerprint: `COUNT_BIG(*)` and
+   `CHECKSUM_AGG(BINARY_CHECKSUM(*))`. Unchanged since last cycle → skipped.
+2. A changed table is read, each row hashed (MD5 of its JSON), and only rows
+   whose hash differs from what the backend already acknowledged are sent.
+3. Once every 24 h every table is re-hashed anyway (`BINARY_CHECKSUM` ignores
+   `text`/`ntext`/`image`/`xml` columns, so an edit only there is caught by the
+   daily pass).
+4. Rows go up 500 at a time (max ~2 MB) to `POST /sync/raw`, which stores a batch
+   with one `INSERT … ON CONFLICT` statement. The pass stops after
+   `SJEP_MIRROR_BUDGET_SEC` (480 s) and resumes next cycle — the first pass over
+   the whole database (~350k rows) spreads over a few cycles instead of flooding
+   Railway, which is what the old full mirror did in July.
+5. What was acknowledged is kept in `mirror_<backend>.sqlite`; a chunk that fails
+   is re-sent next cycle.
+
+Using it later — no agent change needed, only backend code or SQL:
+
+```sql
+-- today's rate history as Gati keeps it
+SELECT data->>'RateDailyMst_LogId' AS log_id, data->>'RawNo' AS raw, data->>'SaleRate' AS rate
+FROM "LegacyRow" WHERE "organisationId" = 'org_eclat' AND "sourceTable" = 'RateDailyMst_Log';
+
+-- every bag movement (a table the mapped sync does not model)
+SELECT data FROM "LegacyRow" WHERE "sourceTable" = 'SPM_BagTransaction'
+ORDER BY "legacyUpdatedAt" DESC LIMIT 50;
+```
+
+The mapped entities (§3) remain the typed, business-ready models; `LegacyRow` is
+the complete raw copy to build new features from. Changing how a mapped entity is
+modelled is a backend change that can read `LegacyRow` — it never needs the agent.
 
 ## 5. Metal rates (the top-bar gold rate)
 
@@ -280,13 +330,13 @@ backend instead, revoke the agent in `/data`.
 | `Login failed for user 'APPSERVER\svc_caratos'` / `Cannot open database` | SQL access lost. **Do not add `DENY CONTROL`**: at database level it also denies CONNECT and SELECT. |
 | task result `0x41303`, nothing in the log | "Log on as a batch job" right missing for `svc_caratos` |
 | `REJECTED acknowledgement: server skipped N row(s)` | the backend refused rows; they retry every cycle until fixed — read the backend log for the entity |
-| `Application failed to respond` | the raw mirror ran; `SJEP_SKIP_MIRROR=1` is missing |
+| `mirror: … deferred to next cycle` | normal while the mirror catches up; not an error |
 
 ---
 
 ## 8. Known limits
 
-- **Deletions in Gati are not propagated.** The sync only inserts and updates.
+- **Deletions in Gati are not propagated yet.** The sync only inserts and updates; the mirror counts rows deleted in Gati ("N row(s) deleted in Gati (not removed)" in the log) but does not remove them. The removal step (`/sync/reconcile`, and dropping mirror rows) is designed but not built: it deletes production data and is waiting for explicit sign-off.
   On 2026-09-29, 1,058 stock pieces, 84 sales and 10 styles that came from the
   June/August backup imports no longer exist in Gati but are still in CaratOS,
   so CaratOS stock totals are higher than Gati's. They need a decided clean-up
@@ -313,3 +363,4 @@ backend instead, revoke the agent in `/data`.
 | 2026-09-16 | Agent "ECLAT  AGENT" enrolled and its config approved, but never installed. |
 | 2026-09-23 / 09-28 | Manual imports of the 8 Jun `.bak` and the 4 Aug CSV export (data up to those dates). |
 | **2026-09-29** | Old folders and tasks archived and removed. Gati daily rates added (`/sync/rates`, `GOLD_RATE_SOURCE=gati`). Installed at `C:\CaratOS\GatiConnect` as `svc_caratos`, task every 15 min, photos in the same cycle. Fixed on the way: `setup_runtime.ps1` ($LASTEXITCODE under StrictMode), `require_runtime.bat` (trailing-backslash path), and the SQL `DENY CONTROL` that blocked the read-only login. First run 18:35 IST: full backfill of 909 parties, 1,042 styles, 4,908 stock, 880 sales (6,321 lines), 259 orders (2,842 items), 2,148 bags, 1,862 ledger rows, 14,939 movements and the day's rates, zero rows skipped. |
+| 2026-09-29 (evening) | Mirror of every Gati table re-enabled as a change-only mirror (fingerprint + row hash, 500-row chunks, 480 s budget per cycle); `/sync/raw` made a single bulk statement. |
