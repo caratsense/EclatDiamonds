@@ -2713,9 +2713,13 @@ export class SyncService {
   // sends `_rowKey` (the source PK) + optional `_updatedAt`. This is the
   // "extract-everything-once" sink: future needs read LegacyRow, no code change.
   async syncRaw(organisationId: string, table: string, records: Rec[]): Promise<SyncResult> {
-    let upserted = 0;
     let skipped = 0;
     let watermark: string | null = null;
+    // One statement per batch. A per-row upsert made a wide table (72,830 rows
+    // of Const_PortCode) slow enough to time Railway out in July; this is a
+    // single INSERT .. ON CONFLICT over a JSON array. A key repeated inside the
+    // batch keeps its last row (ON CONFLICT cannot touch one row twice).
+    const byKey = new Map<string, { k: string; d: Record<string, unknown>; u: string | null }>();
     for (const r of records) {
       const rowKey = r._rowKey != null ? String(r._rowKey) : null;
       if (!table || rowKey === null) {
@@ -2730,28 +2734,21 @@ export class SyncService {
       const { _rowKey, _updatedAt, ...data } = r;
       void _rowKey;
       void _updatedAt;
-      // The DB unique is now [organisationId, sourceTable, rowKey], so the upsert
-      // is keyed on the acting org — two tenants mirroring the same source table
-      // with the same rowKey get two independent rows, never a cross-tenant clash.
-      await this.prisma.legacyRow.upsert({
-        where: {
-          organisationId_sourceTable_rowKey: {
-            organisationId,
-            sourceTable: table,
-            rowKey,
-          },
-        },
-        create: {
-          organisationId,
-          sourceTable: table,
-          rowKey,
-          data: data as any,
-          legacyUpdatedAt,
-        },
-        update: { data: data as any, legacyUpdatedAt, syncedAt: new Date() },
-      });
-      upserted++;
+      byKey.set(rowKey, { k: rowKey, d: data, u: legacyUpdatedAt?.toISOString() ?? null });
     }
+    if (byKey.size) {
+      // Keyed on the acting org: two tenants mirroring the same source table
+      // with the same rowKey get two independent rows.
+      await this.prisma.$executeRaw(Prisma.sql`
+        INSERT INTO "LegacyRow" ("id", "organisationId", "sourceTable", "rowKey", "data", "legacyUpdatedAt", "syncedAt")
+        SELECT gen_random_uuid()::text, ${organisationId}, ${table}, x.k, x.d,
+               (x.u)::timestamptz AT TIME ZONE 'UTC', now()
+        FROM jsonb_to_recordset(${JSON.stringify([...byKey.values()])}::jsonb) AS x(k text, d jsonb, u text)
+        ON CONFLICT ("organisationId", "sourceTable", "rowKey")
+        DO UPDATE SET "data" = EXCLUDED."data", "legacyUpdatedAt" = EXCLUDED."legacyUpdatedAt", "syncedAt" = now()
+      `);
+    }
+    const upserted = records.length - skipped;
     this.logger.log(`sync raw:${table}: received=${records.length} upserted=${upserted} skipped=${skipped}`);
     return {
       entity: `raw:${table}`,

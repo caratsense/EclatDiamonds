@@ -1674,6 +1674,126 @@ def push_raw(token, base_url, table, records, chunk_size=1500):
     return all_ok, watermark if all_ok else None
 
 
+# ── Change-only mirror of EVERY Gati table -> LegacyRow ──────────────────────
+# Every table the shop's database has, sent once, then only what changed:
+#  1. a cheap fingerprint per table (row count + CHECKSUM_AGG(BINARY_CHECKSUM(*)))
+#     skips every table that has not changed since the last cycle;
+#  2. a changed table is read, each row hashed, and only rows whose hash differs
+#     from what the backend already acknowledged are sent;
+#  3. once a day every table is re-hashed regardless of its fingerprint
+#     (BINARY_CHECKSUM ignores text/ntext/image/xml columns);
+#  4. rows go up in small chunks, and the whole pass stops at a time budget and
+#     resumes next cycle, so a first run of ~350k rows never floods the backend.
+# What was acknowledged is kept in mirror_<backend>.sqlite next to this file.
+MIRROR_BUDGET_SEC = int(os.getenv("SJEP_MIRROR_BUDGET_SEC", "480") or 480)
+MIRROR_FULL_HOURS = 24
+MIRROR_CHUNK_ROWS = 500
+MIRROR_CHUNK_BYTES = 2_000_000
+
+
+def _mirror_db(base_url):
+    import sqlite3
+    name = "mirror_" + hashlib.sha256(base_url.encode("utf-8")).hexdigest()[:12] + ".sqlite"
+    db = sqlite3.connect(os.path.join(os.path.dirname(os.path.abspath(__file__)), name))
+    db.execute("CREATE TABLE IF NOT EXISTS fp (tbl TEXT PRIMARY KEY, cnt INTEGER, chk INTEGER, full_at REAL)")
+    db.execute("CREATE TABLE IF NOT EXISTS row_hash (tbl TEXT, k TEXT, h TEXT, PRIMARY KEY (tbl, k))")
+    return db
+
+
+def _row_hash(row):
+    blob = json.dumps(row, default=_json_default, sort_keys=True)
+    return hashlib.md5(blob.encode("utf-8")).hexdigest()
+
+
+def mirror_changed(cursor, token, base_url):
+    """Send every Gati table's new and changed rows to /sync/raw (-> LegacyRow)."""
+    import time
+    started = time.monotonic()
+    db = _mirror_db(base_url)
+    cursor.execute(
+        "SELECT t.name, SUM(p.rows) FROM sys.tables t JOIN sys.partitions p "
+        "ON p.object_id = t.object_id AND p.index_id IN (0, 1) "
+        "WHERE t.is_ms_shipped = 0 GROUP BY t.name ORDER BY t.name"
+    )
+    tables = [(r[0], int(r[1] or 0)) for r in cursor.fetchall()]
+    known = {r[0]: (r[1], r[2], r[3] or 0) for r in db.execute("SELECT tbl, cnt, chk, full_at FROM fp")}
+    all_ok, sent_rows, changed_tables, pending_deletes, deferred = True, 0, 0, 0, 0
+    for tbl, approx in tables:
+        if time.monotonic() - started > MIRROR_BUDGET_SEC:
+            deferred += 1
+            continue
+        prev = known.get(tbl)
+        if approx == 0 and prev is None:
+            continue
+        try:
+            cursor.execute(f"SELECT COUNT_BIG(*), CHECKSUM_AGG(BINARY_CHECKSUM(*)) FROM [{tbl}]")
+            cnt, chk = cursor.fetchone()
+            cnt, chk = int(cnt or 0), int(chk or 0)
+        except Exception as e:
+            log.warning(f"    mirror {tbl}: fingerprint failed ({str(e)[:90]})")
+            all_ok = False
+            continue
+        full_due = prev is None or (time.time() - prev[2]) > MIRROR_FULL_HOURS * 3600
+        if prev is not None and (cnt, chk) == (prev[0], prev[1]) and not full_due:
+            continue
+        heartbeat(base_url, "extracting", entity="raw", entitiesChecked=changed_tables)
+        try:
+            cursor.execute(f"SELECT * FROM [{tbl}]")
+            recs = rows(cursor)
+            pks = pk_columns(cursor, tbl)
+        except Exception as e:
+            log.warning(f"    mirror {tbl}: read failed ({str(e)[:90]})")
+            all_ok = False
+            continue
+        acked = {k: h for k, h in db.execute("SELECT k, h FROM row_hash WHERE tbl = ?", (tbl,))}
+        current, changed = set(), []
+        for r in recs:
+            key = _row_key(r, pks)
+            h = _row_hash(r)
+            current.add(key)
+            if acked.get(key) != h:
+                changed.append((key, h, r))
+        gone = len(set(acked) - current)
+        pending_deletes += gone
+        table_ok = True
+        i = 0
+        while i < len(changed):
+            if time.monotonic() - started > MIRROR_BUDGET_SEC:
+                table_ok = False
+                deferred += 1
+                break
+            chunk, size = [], 0
+            while i < len(changed) and len(chunk) < MIRROR_CHUNK_ROWS and size < MIRROR_CHUNK_BYTES:
+                key, h, r = changed[i]
+                rec = dict(r)
+                rec["_rowKey"] = key
+                rec["_updatedAt"] = r.get("UpdateDate") or r.get("EntryDate")
+                size += len(json.dumps(rec, default=_json_default))
+                chunk.append((key, h, rec))
+                i += 1
+            ok, _ = push_raw(token, base_url, tbl, [c[2] for c in chunk], chunk_size=len(chunk))
+            if not ok:
+                table_ok = all_ok = False
+                break
+            db.executemany("INSERT OR REPLACE INTO row_hash (tbl, k, h) VALUES (?, ?, ?)",
+                           [(tbl, k, h) for k, h, _ in chunk])
+            db.commit()
+            sent_rows += len(chunk)
+        if changed:
+            changed_tables += 1
+            log.info(f"    mirror {tbl}: {len(changed)} new/changed row(s) of {cnt}"
+                     + (f", {gone} gone from Gati" if gone else ""))
+        if table_ok:
+            db.execute("INSERT OR REPLACE INTO fp (tbl, cnt, chk, full_at) VALUES (?, ?, ?, ?)",
+                       (tbl, cnt, chk, time.time() if full_due else (prev[2] if prev else time.time())))
+            db.commit()
+    db.close()
+    log.info(f"  [{base_url}] mirror: {len(tables)} tables, {changed_tables} changed, "
+             f"{sent_rows} row(s) sent, {pending_deletes} row(s) deleted in Gati (not removed), "
+             f"{deferred} table(s) deferred to next cycle (budget {MIRROR_BUDGET_SEC}s)")
+    return all_ok
+
+
 def dump_all(cursor, token, base_url, state, extraction_until=None):
     """Mirror EVERY table to LegacyRow via /sync/raw — the extract-everything-once
     sink. Incremental per-table (state key 'raw::<base>::<table>'). Errors per table
@@ -2144,9 +2264,7 @@ def sync_once():
                              f"shop data above is complete; the mirror is the "
                              f"keep-everything backup and can run any time.")
                 elif not DRY_RUN and not ONLY and not LIMIT and not STORE and not SAMPLE:
-                    base_ok = dump_all(
-                        cursor, token, base_url, state, extraction_until
-                    ) and base_ok
+                    base_ok = mirror_changed(cursor, token, base_url) and base_ok
             except Exception as e:
                 log.error(f"  [{base_url}] full mirror error: {e}")
                 base_ok = False
