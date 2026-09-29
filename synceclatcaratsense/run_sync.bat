@@ -48,4 +48,12 @@ if errorlevel 1 (
 
 "%PYEXE%" sync_sjep.py
 set "SYNC_EXIT=%ERRORLEVEL%"
+
+REM Catalogue photos in the same cycle, once the data has landed: a new style's
+REM picture reaches the catalogue within 15 minutes. Incremental and
+REM checkpointed (log: media_sync.log), so a quiet cycle uploads nothing.
+if "%SYNC_EXIT%"=="0" (
+  "%PYEXE%" sync_media.py
+  if errorlevel 1 set "SYNC_EXIT=1"
+)
 endlocal & exit /b %SYNC_EXIT%
