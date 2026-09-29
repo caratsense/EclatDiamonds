@@ -18,6 +18,9 @@ $runtimePython = Join-Path $venv 'Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $securityCheck -PathType Leaf)) {
     throw 'verify_install_security.ps1 is missing.'
 }
+# A script that passes returns without `exit`, which leaves $LASTEXITCODE unset
+# in a fresh session (a scheduled task) — and StrictMode throws on reading it.
+$global:LASTEXITCODE = 0
 & $securityCheck -InstallPath $root
 if ($LASTEXITCODE -ne 0) {
     throw 'Move this package to a private local per-user directory before setup.'
