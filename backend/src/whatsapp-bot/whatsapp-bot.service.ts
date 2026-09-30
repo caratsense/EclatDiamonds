@@ -948,15 +948,32 @@ export class WhatsAppBotService {
       select: { draft: true },
     });
     if (!session) return;
-    const draft = (session.draft ?? {}) as Record<string, unknown>;
-    const answersOnly: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(draft)) {
-      if (!k.startsWith('_')) answersOnly[k] = v;
-    }
+
+    /*
+     * A NEW AD CLICK IS A NEW ENQUIRY. The slate is wiped, answers included.
+     *
+     * This used to keep the answers and clear only the bookkeeping, on the
+     * reasoning that somebody who gave their budget last week should not be
+     * asked twice. In practice it produced the opposite of a fresh start: the
+     * flow called `firstUnanswered`, found every question already answered from
+     * a previous visit, and opened with "Would a quick call work?" — skipping
+     * the three questions the whole qualification exists to ask.
+     *
+     * A customer who taps a NEW advertisement is telling us their intent has
+     * changed: a different collection, a different occasion, very likely a
+     * different budget. Carrying last month's answers forward does not save
+     * them time, it files stale facts against a live lead and scores it on
+     * them.
+     *
+     * The courtesy that mattered is kept elsewhere and is the one worth having:
+     * `known` still skips any question the LEAD FORM already answered on this
+     * click, because that is this enquiry's own data rather than a memory of an
+     * older one.
+     */
     await this.prisma.whatsAppSession
       .update({
         where: { phoneE164 },
-        data: { draft: answersOnly as Prisma.InputJsonValue },
+        data: { draft: {} as Prisma.InputJsonValue },
       })
       .catch(() => undefined);
   }

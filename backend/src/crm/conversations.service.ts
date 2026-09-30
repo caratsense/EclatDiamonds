@@ -21,6 +21,7 @@ import { isSalesScoped } from '../common/sales-scope';
 import { ActivityService } from './activity.service';
 import { IdentityService, ContactKind } from './identity.service';
 import { AdSetRulesService, type AdSetRoutingContext } from './adset-rules.service';
+import { platformFromSourceUrl } from '../integrations/meta-referral';
 import { AttributionService } from './attribution.service';
 import { RequalificationService } from './requalification.service';
 import { AdvancedCrmService } from './advanced-crm.service';
@@ -370,6 +371,10 @@ export class ConversationsService {
         sourceAdSetId: ref?.adSetId ?? null,
         sourceCampaignId: ref?.campaignId ?? null,
         sourceClickId: ref?.clickId ?? null,
+        // Instagram or Facebook, read from the referral's own source_url — the
+        // same signal WhatsApp uses to label the thread "Instagram ad". Null
+        // when the host says nothing recognisable, never defaulted.
+        sourcePlatform: platformFromSourceUrl(ref?.sourceUrl ?? null),
         matchedRuleId: route?.ruleId ?? null,
       },
       update: {
@@ -1077,6 +1082,25 @@ export class ConversationsService {
       handling: conversation.handling,
     };
 
+    /*
+     * Handing a thread back to nobody must also forget the rule that placed it.
+     *
+     * `ingestInbound` only applies routing when the thread is OPERATIONALLY
+     * UNASSIGNED — no store, no assignee, handling 'unassigned', and no matched
+     * rule. Clearing the first three but keeping `matchedRuleId` left threads in
+     * a state that can never be routed again: a later ad click would arrive,
+     * find a rule id still set, decline to apply its own decision, and the
+     * conversation would sit with no branch for ever.
+     *
+     * That is exactly what happened to a thread released for testing — the next
+     * ad click landed with the correct rule matching and no store applied,
+     * looking like the routing had broken.
+     *
+     * The rule id is a record of a decision the store field carries. Undoing the
+     * decision has to undo both, or the pair disagree.
+     */
+    const clearingStore = input.storeId !== undefined && !input.storeId;
+
     // One write: store, owner and handling move together or not at all.
     const updated = await this.prisma.conversation.update({
       where: { id: conversationId },
@@ -1085,6 +1109,7 @@ export class ConversationsService {
         ...(input.assignedUserId !== undefined ? { assignedUserId: input.assignedUserId } : {}),
         ...(input.handling ? { handling: input.handling } : {}),
         ...(input.reason !== undefined ? { handoffReason: input.reason || null } : {}),
+        ...(clearingStore ? { matchedRuleId: null } : {}),
       },
     });
 
@@ -1650,6 +1675,8 @@ export class ConversationsService {
         adSetId: row.sourceAdSetId,
         campaignId: row.sourceCampaignId,
         clickId: row.sourceClickId ? true : false, // presence only; never the value
+        /** 'instagram' | 'facebook' | 'messenger', or null for genuinely unknown. */
+        platform: row.sourcePlatform,
         evidence: row.sourceAdId || row.sourceClickId ? ('measured' as const) : null,
       },
     }));

@@ -35,6 +35,38 @@ import type { AdReferral } from '../integration/contracts/ad-referral';
  * exists to supply it.
  */
 
+/**
+ * Which Meta surface the advert was tapped on.
+ *
+ * WhatsApp itself renders "Instagram ad" above a CTWA thread, so the platform
+ * IS carried — in `source_url`, which points back at the post that was tapped.
+ * Reading the host is the same signal WhatsApp uses to draw that label.
+ *
+ * Returns null when the host says nothing recognisable, and that null is
+ * load-bearing: Meta does NOT send `publisher_platform` on a referral (it
+ * exists only in aggregate insights), so a lead with an unreadable source is
+ * genuinely of unknown origin. Defaulting it to Facebook because most ads are
+ * would put a fact on a lead that nobody established — and a manager reading
+ * "Facebook" has no way to tell it was a guess.
+ *
+ * For a split that is certain rather than inferred, give each platform its own
+ * ad set and put it in the name: the ad-set name arrives through
+ * `MetaAdMetadataService` and is matched exactly.
+ */
+export function platformFromSourceUrl(sourceUrl: string | null): string | null {
+  if (!sourceUrl) return null;
+  let host: string;
+  try {
+    host = new URL(sourceUrl).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+  if (host.includes('instagram') || host === 'ig.me') return 'instagram';
+  if (host.includes('facebook') || host === 'fb.me' || host === 'fb.com') return 'facebook';
+  if (host.includes('messenger') || host === 'm.me') return 'messenger';
+  return null;
+}
+
 function str(value: unknown): string | null {
   if (typeof value === 'string') {
     const trimmed = value.trim();

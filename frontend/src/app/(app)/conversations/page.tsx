@@ -241,12 +241,31 @@ function chipsFor(c: ConversationRow): RowChip[] {
   }
 
   if (c.source?.adId) {
+    /*
+     * Name the platform when Meta told us which one, because "where did this
+     * lead come from" is the question the chip exists to answer and "an ad" is
+     * only half of it. Falls back to "Ad Lead" when the referral's source_url
+     * said nothing recognisable — an honest half-answer beats a guessed whole
+     * one, and a manager cannot tell a defaulted platform from a real one.
+     */
+    const platform = c.source.platform;
     chips.push({
       key: "ad",
-      label: "Ad Lead",
+      label:
+        platform === "instagram"
+          ? "Instagram Ad"
+          : platform === "facebook"
+            ? "Facebook Ad"
+            : platform === "messenger"
+              ? "Messenger Ad"
+              : "Ad Lead",
       icon: Megaphone,
       tone:
-        "bg-[#6366f1]/15 text-[#6366f1] dark:text-[#818cf8] border border-[#6366f1]/30",
+        platform === "instagram"
+          ? "bg-[#E1306C]/15 text-[#C13584] dark:text-[#F08CB4] border border-[#E1306C]/30"
+          : platform === "facebook"
+            ? "bg-[#1877F2]/15 text-[#1877F2] dark:text-[#7CB0F7] border border-[#1877F2]/30"
+            : "bg-[#6366f1]/15 text-[#6366f1] dark:text-[#818cf8] border border-[#6366f1]/30",
     });
   }
 

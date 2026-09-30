@@ -5,7 +5,7 @@ import * as bcrypt from 'bcryptjs';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { ConversationsService } from '../src/crm/conversations.service';
-import { extractMetaReferral } from '../src/integrations/meta-referral';
+import { extractMetaReferral, platformFromSourceUrl } from '../src/integrations/meta-referral';
 import { resolveAdSetRule } from '../src/crm/adset-rules.service';
 
 /**
@@ -120,6 +120,30 @@ describe('CTWA ad routing and measured attribution (e2e)', () => {
     expect(ref!.campaignId).toBeNull();
     // Unknown provider fields survive rather than being dropped.
     expect(ref!.raw.media_type).toBe('image');
+  });
+
+  /*
+   * WhatsApp draws "Instagram ad" above a CTWA thread, so the platform IS
+   * carried — in source_url. Reading the host is the same signal, and it
+   * answers the question a branch manager actually asks about a lead.
+   */
+  it('reads the platform from the referral source url', () => {
+    expect(platformFromSourceUrl('https://www.instagram.com/p/DdwKr6isgcO/')).toBe('instagram');
+    expect(platformFromSourceUrl('https://instagram.com/reel/abc')).toBe('instagram');
+    expect(platformFromSourceUrl('https://fb.me/2AbCdEfGh')).toBe('facebook');
+    expect(platformFromSourceUrl('https://www.facebook.com/123/posts/456')).toBe('facebook');
+    expect(platformFromSourceUrl('https://m.me/eclat')).toBe('messenger');
+  });
+
+  it('says UNKNOWN rather than defaulting to Facebook', () => {
+    // Meta does not send `publisher_platform` on a referral, so a source we
+    // cannot read is genuinely of unknown origin. Defaulting it would put a
+    // fact on the lead that nobody established, and a manager reading
+    // "Facebook" would have no way to tell it was a guess.
+    expect(platformFromSourceUrl(null)).toBeNull();
+    expect(platformFromSourceUrl('')).toBeNull();
+    expect(platformFromSourceUrl('not a url at all')).toBeNull();
+    expect(platformFromSourceUrl('https://example.com/whatever')).toBeNull();
   });
 
   it('returns null for an ordinary message, and null is not "organic"', () => {

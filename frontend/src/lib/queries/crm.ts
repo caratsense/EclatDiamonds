@@ -326,6 +326,11 @@ export interface ConversationRow {
     campaignId: string | null;
     /** Presence only. The click id itself is never sent to the browser. */
     clickId: boolean;
+    /**
+     * Which Meta surface the ad was tapped on. Null is genuinely unknown —
+     * render nothing rather than defaulting to Facebook.
+     */
+    platform?: "instagram" | "facebook" | "messenger" | null;
     evidence: "measured" | null;
   };
 }

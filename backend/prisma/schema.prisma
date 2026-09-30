@@ -4403,6 +4403,15 @@ model Conversation {
   sourceAdSetId         String?
   sourceCampaignId      String?
   sourceClickId         String?
+  /// Which Meta surface the advert was tapped on: 'instagram' | 'facebook' |
+  /// 'messenger'. Read from the referral's `source_url` host — the same signal
+  /// WhatsApp uses to draw "Instagram ad" above the thread.
+  ///
+  /// NULL means unknown, never "Facebook by default". Meta does not send
+  /// `publisher_platform` on a referral; it exists only in aggregate insights.
+  /// So an unreadable source genuinely is of unknown origin, and a manager
+  /// shown a guessed platform has no way to tell it was guessed.
+  sourcePlatform        String?
   /// The ad-set automation rule that produced this routing, for audit and UI.
   matchedRuleId         String?
   /// Set when a LATER ad on this thread would have routed somewhere else. The
