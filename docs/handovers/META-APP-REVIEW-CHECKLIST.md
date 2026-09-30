@@ -133,7 +133,7 @@ Per-permission, what the screencast has to show:
    journey already works end to end.
 4. **Submit the Pages and Instagram set together.** They share a screencast and
    a reviewer will ask why one is requested without the other.
-6. **Only then publish the app.**
+5. **Only then publish the app.**
 
 ## Two things that will surprise you
 
