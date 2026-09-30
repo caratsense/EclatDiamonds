@@ -1528,7 +1528,38 @@ export class ConversationsService {
       orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }],
       take,
       include: {
-        party: { select: { id: true, name: true, phone: true } },
+        /*
+         * The customer, plus whatever the branch has tagged them.
+         *
+         * Tags hang off a LEAD, not a conversation, so the path is
+         * party -> leads -> assignments -> tag. That is deliberate in the data
+         * model — a tag describes an enquiry the business is working, and one
+         * customer can have several — but it means the inbox cannot read a tag
+         * off the conversation row without this hop.
+         *
+         * Scoped to OPEN leads: a tag from a purchase closed last year says
+         * nothing useful about the message that just arrived, and showing it
+         * would make the chip row grow forever.
+         */
+        party: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            leads: {
+              // `closedAt` is the open/closed fact — `stage` is where in the
+              // funnel it sits, which is a different question.
+              where: { closedAt: null },
+              select: {
+                tagAssignments: {
+                  select: {
+                    tag: { select: { id: true, name: true, colour: true, isActive: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
         assignedUser: { select: { id: true, name: true } },
         store: { select: { id: true, name: true } },
         _count: { select: { messages: true } },
@@ -1567,8 +1598,33 @@ export class ConversationsService {
       }
     }
 
-    return rows.map(({ messages, ...row }) => ({
+    return rows.map(({ messages, party, ...row }) => ({
       ...row,
+      /*
+       * The customer, with the nested lead/tag hop flattened away.
+       *
+       * The raw shape carries `leads[].tagAssignments[].tag`, which is a
+       * three-level walk no caller should have to repeat. Deduplicated by tag
+       * id because two open leads can carry the same tag and the inbox must
+       * show it once; retired tags are dropped so a tag somebody stopped using
+       * does not keep appearing on old threads.
+       */
+      party: party
+        ? {
+            id: party.id,
+            name: party.name,
+            phone: party.phone,
+            tags: [
+              ...new Map(
+                party.leads
+                  .flatMap((lead) => lead.tagAssignments)
+                  .map((a) => a.tag)
+                  .filter((tag) => tag.isActive)
+                  .map((tag) => [tag.id, { id: tag.id, name: tag.name, colour: tag.colour }]),
+              ).values(),
+            ],
+          }
+        : null,
       /**
        * The newest message, flattened for the list. Null on a thread with no
        * messages yet — which the UI must render as such, not as a placeholder

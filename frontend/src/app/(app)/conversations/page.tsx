@@ -104,11 +104,21 @@ const CHANNEL_LABELS: Record<string, string> = {
   webchat: "Website chat",
 };
 
+/**
+ * `primary: true` earns a pill on the bar; everything else lives behind "More
+ * filters".
+ *
+ * Nine tabs competing for one strip meant the three a manager actually opens
+ * every morning were no easier to reach than the six they rarely touch. The
+ * split is by frequency of use, not by importance — a queue in the overflow is
+ * still one click away, and the current one is always promoted onto the bar so
+ * you can see where you are.
+ */
 const QUEUES = [
-  { key: "open", label: "Inbox", countKey: "open" },
+  { key: "open", label: "Inbox", countKey: "open", primary: true },
+  { key: "unread", label: "Unread", countKey: "needs_person", primary: true },
+  { key: "assigned", label: "Assigned to me", countKey: "assigned", primary: true },
   { key: "starred", label: "Starred", icon: Star },
-  { key: "unread", label: "Unread", countKey: "needs_person" },
-  { key: "assigned", label: "Assigned to me", countKey: "assigned" },
   { key: "with_assistant", label: "With assistant", countKey: "with_assistant" },
   { key: "snoozed", label: "Snoozed", icon: Clock },
   { key: "follow_up", label: "Follow Up", icon: Calendar },
@@ -191,15 +201,44 @@ const PANE_HEIGHT = "h-[calc(100vh-13rem)] min-h-[520px] max-h-[900px]";
  * it does not render. A row with nothing worth saying shows no chip, which is
  * honest; an invented chip is the defect that was just removed.
  *
- * Customer-authored `LeadTag`s ("New Enquiry", "Follow Up") belong here too,
- * but a Conversation has no `leadId` — the join runs party → lead → tag and
- * needs an additive include on the list endpoint. Until that lands these are
- * the facts the row already carries.
+ * Two kinds appear here. DERIVED chips describe the thread's own state and are
+ * computed below. AUTHORED chips are `LeadTag`s somebody at the branch applied
+ * to this customer's open leads — those carry the tag's own colour token, so a
+ * tenant's vocabulary stays legible when the theme changes underneath it.
  */
 type RowChip = { key: string; label: string; tone: string; icon?: typeof Megaphone };
 
+/**
+ * A tag's stored colour token → classes, in both themes.
+ *
+ * `LeadTag.colour` holds a token NAME rather than a hex value precisely so the
+ * palette stays the product's. An unrecognised or absent token falls back to
+ * the neutral chip instead of vanishing: a tag someone took the trouble to
+ * apply should still be readable.
+ */
+const TAG_TONES: Record<string, string> = {
+  emerald: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30",
+  amber: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30",
+  rose: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30",
+  indigo: "bg-[#6366f1]/15 text-[#6366f1] dark:text-[#818cf8] border border-[#6366f1]/30",
+  sky: "bg-sky-500/15 text-sky-700 dark:text-sky-400 border border-sky-500/30",
+  violet: "bg-violet-500/15 text-violet-700 dark:text-violet-400 border border-violet-500/30",
+  slate: "bg-muted text-muted-foreground border border-border",
+};
+const TAG_TONE_FALLBACK = TAG_TONES.slate;
+
 function chipsFor(c: ConversationRow): RowChip[] {
   const chips: RowChip[] = [];
+
+  // Authored first: what a person deliberately said about this customer
+  // outranks anything the system worked out for itself.
+  for (const tag of c.party?.tags ?? []) {
+    chips.push({
+      key: `tag:${tag.id}`,
+      label: tag.name,
+      tone: (tag.colour && TAG_TONES[tag.colour]) || TAG_TONE_FALLBACK,
+    });
+  }
 
   if (c.source?.adId) {
     chips.push({
@@ -442,6 +481,17 @@ function ConversationsContent() {
     });
   };
 
+  /*
+   * Which queues get a pill, and which hide behind "More filters".
+   *
+   * The queue you are IN is always promoted, whatever its `primary` flag — a
+   * tab bar that does not show where you are is worse than one with an extra
+   * pill on it.
+   */
+  const visibleQueues = QUEUES.filter((q) => !q.headOfficeOnly || isHeadOffice);
+  const pinnedQueues = visibleQueues.filter((q) => q.primary || q.key === queue);
+  const overflowQueues = visibleQueues.filter((q) => !q.primary && q.key !== queue);
+
   // Client-side filtering for search & special queues (starred / snoozed)
   const threads = (list.data ?? []).filter((c) => {
     if (queue === "starred" && !starredIds.has(c.id)) return false;
@@ -491,10 +541,10 @@ function ConversationsContent() {
         </div>
       )}
 
-      {/* ── TOP TABS BAR (Exact Zithara Header: Inbox, Starred, Unread, Closed, Snoozed) ── */}
+      {/* The queue bar: the three queues opened daily, then everything else. */}
       <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-2">
         <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none">
-          {QUEUES.filter((q) => !q.headOfficeOnly || isHeadOffice).map((q) => {
+          {pinnedQueues.map((q) => {
             const isCurrent = queue === q.key;
             const Icon = q.icon;
             const count =
@@ -542,14 +592,50 @@ function ConversationsContent() {
               </button>
             );
           })}
-          <button
-            type="button"
-            onClick={() => toast.info("Custom Filter Tab", { description: "Add tags or saved queue filters" })}
-            className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-muted/40 text-muted-foreground hover:text-foreground hover:bg-muted"
-            title="Add Custom Filter"
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </button>
+          {/* The rest of the queues. Was a "+" that opened a toast promising
+              saved filters that do not exist — this opens the queues that do. */}
+          {overflowQueues.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 rounded-full bg-muted/40 px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground border border-transparent whitespace-nowrap"
+                >
+                  <Filter className="h-3 w-3" />
+                  More filters
+                  <ChevronDown className="h-3 w-3" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-52">
+                {overflowQueues.map((q) => {
+                  const Icon = q.icon;
+                  const count =
+                    q.key === "starred"
+                      ? starredIds.size
+                      : q.key === "snoozed"
+                        ? snoozedIds.size
+                        : q.countKey
+                          ? counts.data?.[q.countKey]
+                          : undefined;
+                  return (
+                    <DropdownMenuItem
+                      key={q.key}
+                      onClick={() => navigate({ queue: q.key })}
+                      className="text-xs"
+                    >
+                      {Icon && <Icon className="h-3 w-3 mr-1.5" />}
+                      <span>{q.label}</span>
+                      {typeof count === "number" && (
+                        <span className="ml-auto text-[10px] font-semibold text-muted-foreground">
+                          {count}
+                        </span>
+                      )}
+                    </DropdownMenuItem>
+                  );
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
 
         <div className="hidden sm:flex items-center gap-2">

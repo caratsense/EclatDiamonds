@@ -286,7 +286,17 @@ export interface ConversationRow {
   lastMessageAt: string | null;
   lastInboundAt: string | null;
   handoffReason: string | null;
-  party?: { id: string; name: string; phone: string | null } | null;
+  party?: {
+    id: string;
+    name: string;
+    phone: string | null;
+    /**
+     * Tags the branch has put on this customer's OPEN leads, deduplicated and
+     * with retired tags dropped. Empty when nobody has tagged them — which is
+     * rendered as no chip, never as a placeholder.
+     */
+    tags?: { id: string; name: string; colour: string | null }[];
+  } | null;
   assignedUser: { id: string; name: string } | null;
   store?: { id: string; name: string } | null;
   _count?: { messages: number };
