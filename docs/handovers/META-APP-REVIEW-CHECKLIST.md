@@ -18,22 +18,44 @@ Submission is the App Dashboard only — screencasts, written use cases and a
 test user, uploaded by hand. Budget days of Meta's time after submitting, not
 hours.
 
-## Fix these two first, or it will be rejected on sight
+## Three blockers, all verified against the live app and site
 
-Read from the app just now:
-
-| Field | Current value | Problem |
+| What | Current state | Why it fails |
 |---|---|---|
-| `terms_of_service_url` | `https://www.facebook.com/` | A placeholder pointing at Meta itself. Reviewers check this. |
-| `category` | *(empty)* | Required before submission. "Business and Pages" fits. |
-| `app_domains` | *(none)* | Needed once a redirect or webhook domain is declared. |
+| **Privacy policy** | 200, but **53 characters of visible text** | A JS shell. A reviewer's crawler sees only the site title. |
+| **Terms of service** | `https://www.facebook.com/` | A placeholder pointing at Meta itself. `/terms`, `/terms-and-conditions` and `/terms-of-service` all 404 — Éclat has no terms page at all. |
+| **Category** | *(empty)* | Required before a submission can be opened. |
 
-`privacy_policy_url` is set to `https://eclatdiamonds.in/privacy-policy` and
-returns 200 — but it is JS-rendered, and a reviewer whose crawler sees an empty
-page will fail it. Open it with JavaScript disabled before submitting.
+The privacy policy is the serious one. Stripping scripts and tags from
+`eclatdiamonds.in/privacy-policy` leaves:
 
-`contact_email` is `snehachouksey@caratsense.in`, which is fine — but note the
-reviewer's questions go there, and an unanswered question is a rejection.
+```
+Eclat Diamonds | Lab Grown Diamond Jewellery in India
+```
+
+That is the whole document as a crawler sees it. The policy text is rendered by
+JavaScript and Meta's reviewer will not run it. **This fails on its own**,
+before any permission is considered — and it is a client-side fix: the policy
+needs to be server-rendered, or published at a static URL.
+
+The terms page does not exist and has to be written. Pointing the field at a
+404 is not better than pointing it at Facebook.
+
+`app_domains` is also empty; needed once a redirect or webhook domain is
+declared. `contact_email` is `snehachouksey@caratsense.in` and is fine — but
+reviewer questions go there, and an unanswered one is a rejection.
+
+## These cannot be set by API either
+
+Attempting to write `category` returned:
+
+> *(#10) Changing app settings through API calls has been disabled for this
+> app. Go to your app's advanced settings to enable this.*
+
+Meta disables settings-by-API by default. It **can** be switched on in Advanced
+Settings — but do not, for this. Leaving a permanent write channel open on a
+production app to save two dashboard fields is a bad trade, and both fields
+take under a minute by hand.
 
 ## What is already granted, and what is not
 
@@ -92,9 +114,11 @@ Per-permission, what the screencast has to show:
 
 ## Order of work
 
-1. **Fix the terms-of-service URL and set the category.** Ten minutes; blocks
-   everything else.
-2. **Verify the privacy policy renders without JavaScript.**
+1. **Ask Éclat to fix the privacy policy so it renders without JavaScript**, and
+   to publish a terms page. Client-side work, on their website, and the longest
+   pole — nothing can be submitted until it is done. Raise it today.
+2. **Set the category and the terms URL** in Settings → Basic, once the terms
+   page exists. Under a minute, by hand.
 3. **Submit `leads_retrieval` on its own.** It is the highest value — Meta lead
    forms are ~2,400 leads a month — and it is the easiest to film, because the
    journey already works end to end.
