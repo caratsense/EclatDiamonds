@@ -70,6 +70,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import type { ConversationRow } from "@/lib/queries/crm";
 import {
   useAddCustomerNote,
   useConversationThread,
@@ -86,6 +87,22 @@ import { IntentAnalysisPanel } from "@/components/crm/intent-analysis-panel";
 import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
 import { apiErrorMessage, positiveNumberInput } from "@/lib/utils";
+
+/**
+ * Platform names as a customer would recognise them.
+ *
+ * Anything not listed falls back to the stored channel value rather than being
+ * hidden or prettified into a guess — a channel this release has no name for is
+ * still a real place a customer wrote from.
+ */
+const CHANNEL_LABELS: Record<string, string> = {
+  whatsapp: "WhatsApp",
+  instagram: "Instagram",
+  email: "Email",
+  voice: "Phone",
+  sms: "SMS",
+  webchat: "Website chat",
+};
 
 const QUEUES = [
   { key: "open", label: "Inbox", countKey: "open" },
@@ -163,6 +180,79 @@ function stripAgentSignature(body: string, authorName?: string | null): string {
 const PANE_HEIGHT = "h-[calc(100vh-13rem)] min-h-[520px] max-h-[900px]";
 
 /**
+ * The chips on a conversation row.
+ *
+ * Every one is DERIVED FROM A FIELD ON THAT ROW. The chips this replaces were
+ * chosen by the row's position in the list — index 1 was "Pending", everything
+ * else "Happy Users" — so they were identical on every refresh and described
+ * nothing. They survived months of demos because they looked plausible.
+ *
+ * The rule for anything added here: if it cannot be read off the conversation,
+ * it does not render. A row with nothing worth saying shows no chip, which is
+ * honest; an invented chip is the defect that was just removed.
+ *
+ * Customer-authored `LeadTag`s ("New Enquiry", "Follow Up") belong here too,
+ * but a Conversation has no `leadId` — the join runs party → lead → tag and
+ * needs an additive include on the list endpoint. Until that lands these are
+ * the facts the row already carries.
+ */
+type RowChip = { key: string; label: string; tone: string; icon?: typeof Megaphone };
+
+function chipsFor(c: ConversationRow): RowChip[] {
+  const chips: RowChip[] = [];
+
+  if (c.source?.adId) {
+    chips.push({
+      key: "ad",
+      label: "Ad Lead",
+      icon: Megaphone,
+      tone:
+        "bg-[#6366f1]/15 text-[#6366f1] dark:text-[#818cf8] border border-[#6366f1]/30",
+    });
+  }
+
+  // A later ad wanted a different branch. A person has to decide, so it is the
+  // loudest thing on the row.
+  if (c.routingReviewRequired) {
+    chips.push({
+      key: "routing",
+      label: "Routing check",
+      icon: AlertCircle,
+      tone:
+        "bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30",
+    });
+  }
+
+  if (c.status === "closed") {
+    chips.push({
+      key: "closed",
+      label: "Closed",
+      tone: "bg-muted text-muted-foreground border border-border",
+    });
+  } else if (c.handling === "ai") {
+    chips.push({
+      key: "ai",
+      label: "With assistant",
+      icon: Sparkles,
+      tone:
+        "bg-[#25D366]/15 text-[#128C7E] dark:text-[#25D366] border border-[#25D366]/30",
+    });
+  } else if (c.handling === "unassigned") {
+    // Nobody owns this and the assistant is not on it either — the state most
+    // worth surfacing in a list a manager scans for what needs them.
+    chips.push({
+      key: "needs",
+      label: "Needs a person",
+      icon: AlertCircle,
+      tone:
+        "bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30",
+    });
+  }
+
+  return chips;
+}
+
+/**
  * Who spoke last, as a short prefix on the list preview.
  *
  * The customer's own words carry no prefix — they are the default voice in an
@@ -216,6 +306,8 @@ function ConversationsContent() {
   const partyId = searchParams.get("partyId");
   /** Which branch's leads to show. Empty means every branch this user can read. */
   const storeFilter = searchParams.get("store") ?? "";
+  /** Which platform the lead arrived on. Empty means all of them. */
+  const channelFilter = searchParams.get("channel") ?? "";
 
   // Whether the Non-ad queue is offered at all. The server refuses it for
   // everyone else regardless, so this only keeps a dead tab off the screen.
@@ -241,6 +333,7 @@ function ConversationsContent() {
     partyId?: string | null;
     thread?: string | null;
     store?: string | null;
+    channel?: string | null;
   }) => {
     const params = new URLSearchParams(searchParams.toString());
     if (next.queue !== undefined) {
@@ -263,6 +356,11 @@ function ConversationsContent() {
       // The open thread belongs to the branch being filtered away, so keeping
       // it selected would show a conversation the list no longer contains.
       params.delete("thread");
+    }
+    if (next.channel !== undefined) {
+      if (next.channel) params.set("channel", next.channel);
+      else params.delete("channel");
+      params.delete("thread"); // same reason as the branch filter above
     }
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   };
@@ -292,11 +390,38 @@ function ConversationsContent() {
   const list = useConversations(
     partyId
       ? { partyId }
-      : storeFilter
-        ? { ...serverQueueParams, storeId: storeFilter }
-        : serverQueueParams,
+      : {
+          ...serverQueueParams,
+          ...(storeFilter ? { storeId: storeFilter } : {}),
+          ...(channelFilter ? { channel: channelFilter } : {}),
+        },
   );
   const counts = useQueueCounts();
+
+  /*
+   * Which platforms actually appear in this inbox.
+   *
+   * Derived from the conversations themselves rather than from the provider
+   * catalogue: a provider code (`whatsapp_cloud`) is not a conversation channel
+   * (`whatsapp`), and listing a platform nobody has ever written in from would
+   * be a menu of empty rooms.
+   *
+   * The consequence is the right one — when the first Instagram lead arrives,
+   * Instagram appears here on its own, with no configuration.
+   *
+   * Read from the UNFILTERED result when a channel is selected, so choosing
+   * WhatsApp does not remove every other option from the menu that chose it.
+   */
+  const [seenChannels, setSeenChannels] = useState<string[]>([]);
+  const listedChannels = [
+    ...new Set((list.data ?? []).map((c) => c.channel).filter(Boolean)),
+  ];
+  if (!channelFilter && listedChannels.join("|") !== seenChannels.join("|")) {
+    setSeenChannels(listedChannels);
+  }
+  const channelOptions = channelFilter
+    ? [...new Set([...seenChannels, channelFilter])]
+    : listedChannels;
 
   const selected =
     searchParams.get("thread") ?? (partyId ? (list.data?.[0]?.id ?? null) : null);
@@ -333,9 +458,11 @@ function ConversationsContent() {
 
   return (
     <div className="space-y-4">
+      {/* Named for what a manager comes here to do, not for the architecture
+          or the competitor it was benchmarked against. */}
       <SectionHeader
-        title="WhatsApp & Omnichannel CRM"
-        purpose="Zithara-caliber 3-pane WhatsApp inbox, real-time intent telemetry, and unified contact CRM."
+        title="Conversations"
+        purpose="Manage customer conversations and sales enquiries across all your stores."
       />
 
       <ChannelStatus />
@@ -434,6 +561,30 @@ function ConversationsContent() {
             answers "how is Bandra doing this week" without opening each thread.
             Offered only to someone who can see more than one branch.
           */}
+          {/* Which platform the lead came in on. Hidden while only one exists —
+              a selector with a single option is furniture, not a control. */}
+          {channelOptions.length > 1 && (
+            <div className="flex items-center gap-1.5">
+              <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
+              <select
+                aria-label="Filter conversations by platform"
+                value={channelFilter}
+                onChange={(e) => navigate({ channel: e.target.value || null })}
+                className={`h-8 rounded-md border bg-background px-2 text-xs font-medium ${
+                  channelFilter
+                    ? "border-[#25D366]/40 text-[#128C7E] dark:text-[#25D366]"
+                    : "border-border text-muted-foreground"
+                }`}
+              >
+                <option value="">All platforms</option>
+                {channelOptions.map((ch) => (
+                  <option key={ch} value={ch}>
+                    {CHANNEL_LABELS[ch] ?? ch}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           {showStoreFilter && (
             <div className="flex items-center gap-1.5">
               <MapPin className="h-3.5 w-3.5 text-muted-foreground" />
@@ -637,16 +788,18 @@ function ConversationsContent() {
                           identical on every refresh. What a manager needs to see
                           is which branch owns the thread and who is on it. */}
                       <div className="mt-1 flex items-center gap-1.5 flex-wrap">
-                        {c.source?.adId && (
-                          <span className="inline-flex items-center gap-1 rounded bg-[#6366f1]/15 text-[#6366f1] dark:text-[#818cf8] px-1.5 py-0.2 text-[9px] font-semibold border border-[#6366f1]/30">
-                            <Megaphone className="h-2.5 w-2.5" /> Ad Lead
-                          </span>
-                        )}
-                        {c.routingReviewRequired && (
-                          <span className="inline-flex items-center gap-1 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 px-1.5 py-0.2 text-[9px] font-semibold border border-amber-500/30">
-                            <AlertCircle className="h-2.5 w-2.5" /> Routing check
-                          </span>
-                        )}
+                        {chipsFor(c).map((chip) => {
+                          const ChipIcon = chip.icon;
+                          return (
+                            <span
+                              key={chip.key}
+                              className={`inline-flex items-center gap-1 rounded px-1.5 py-0.2 text-[9px] font-semibold ${chip.tone}`}
+                            >
+                              {ChipIcon && <ChipIcon className="h-2.5 w-2.5" />}
+                              {chip.label}
+                            </span>
+                          );
+                        })}
                         <span className="text-[10px] text-muted-foreground truncate">
                           {c.store?.name ?? "No store yet"}
                           {c.assignedUser ? ` · ${c.assignedUser.name}` : ""}
