@@ -18,32 +18,40 @@ Submission is the App Dashboard only — screencasts, written use cases and a
 test user, uploaded by hand. Budget days of Meta's time after submitting, not
 hours.
 
-## Three blockers, all verified against the live app and site
+## One blocker, and two things that are fine
 
-| What | Current state | Why it fails |
+| What | State | Verdict |
 |---|---|---|
-| **Privacy policy** | 200, but **53 characters of visible text** | A JS shell. A reviewer's crawler sees only the site title. |
-| **Terms of service** | `https://www.facebook.com/` | A placeholder pointing at Meta itself. `/terms`, `/terms-and-conditions` and `/terms-of-service` all 404 — Éclat has no terms page at all. |
-| **Category** | *(empty)* | Required before a submission can be opened. |
+| **Category** | *(empty)* | **Blocks submission.** Set it in Settings → Basic. |
+| **Privacy policy** | real policy, client-rendered | Fine. See below. |
+| **Terms of service** | `https://www.facebook.com/` | Sloppy, not fatal. Worth tidying. |
 
-The privacy policy is the serious one. Stripping scripts and tags from
-`eclatdiamonds.in/privacy-policy` leaves:
+### The privacy policy is fine — an earlier note here said otherwise
 
-```
-Eclat Diamonds | Lab Grown Diamond Jewellery in India
-```
+Stripping tags from `eclatdiamonds.in/privacy-policy` leaves 53 characters, and
+that looks alarming. It is a measurement artefact: the page is Next.js, the
+policy lives inside the hydration payload, and the strip removed the `<script>`
+blocks it lives in.
 
-That is the whole document as a crawler sees it. The policy text is rendered by
-JavaScript and Meta's reviewer will not run it. **This fails on its own**,
-before any permission is considered — and it is a client-side fix: the policy
-needs to be server-rendered, or published at a static URL.
+The text is genuinely present — "personal information" ×12, "privacy" ×47,
+"cookies" ×16, "retention" ×7 across 72 KB. A browser renders it; a human
+reviewer reads it. Meta also already accepts this URL on ~497 live lead forms,
+which is its own evidence.
 
-The terms page does not exist and has to be written. Pointing the field at a
-404 is not better than pointing it at Facebook.
+No action needed.
 
-`app_domains` is also empty; needed once a redirect or webhook domain is
-declared. `contact_email` is `snehachouksey@caratsense.in` and is fine — but
-reviewer questions go there, and an unanswered one is a rejection.
+### Terms of service
+
+The field points at `https://www.facebook.com/`, and `/terms`,
+`/terms-and-conditions` and `/terms-of-service` all 404 — Éclat has no terms
+page. Meta does not require a separate ToS for the permissions listed below, so
+this is not a blocker. It is still a placeholder aimed at Meta's own homepage,
+which reads as carelessness on an app asking for customer-messaging access.
+Point it at the privacy policy, or leave it until Éclat publishes terms.
+
+`app_domains` is empty; needed only once a redirect or webhook domain is
+declared. `contact_email` is `snehachouksey@caratsense.in` — reviewer questions
+go there, and an unanswered one is a rejection.
 
 ## These cannot be set by API either
 
@@ -114,17 +122,16 @@ Per-permission, what the screencast has to show:
 
 ## Order of work
 
-1. **Ask Éclat to fix the privacy policy so it renders without JavaScript**, and
-   to publish a terms page. Client-side work, on their website, and the longest
-   pole — nothing can be submitted until it is done. Raise it today.
-2. **Set the category and the terms URL** in Settings → Basic, once the terms
-   page exists. Under a minute, by hand.
+1. **Set the app category** in Settings → Basic. Under a minute, and it is the
+   only thing actually blocking a submission from being opened. Tidy the terms
+   URL at the same time.
+2. **Create the test user** with seeded conversations. A reviewer who logs in to
+   an empty CRM rejects for "could not verify the use case", and this is the
+   step most often left to last.
 3. **Submit `leads_retrieval` on its own.** It is the highest value — Meta lead
    forms are ~2,400 leads a month — and it is the easiest to film, because the
    journey already works end to end.
-4. **Create the test user** with seeded conversations before submitting
-   anything.
-5. **Submit the Pages and Instagram set together.** They share a screencast and
+4. **Submit the Pages and Instagram set together.** They share a screencast and
    a reviewer will ask why one is requested without the other.
 6. **Only then publish the app.**
 
