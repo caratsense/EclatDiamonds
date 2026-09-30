@@ -214,15 +214,33 @@ function ConversationsContent() {
 
   const queue = searchParams.get("queue") ?? "open";
   const partyId = searchParams.get("partyId");
+  /** Which branch's leads to show. Empty means every branch this user can read. */
+  const storeFilter = searchParams.get("store") ?? "";
 
   // Whether the Non-ad queue is offered at all. The server refuses it for
   // everyone else regardless, so this only keeps a dead tab off the screen.
   const isHeadOffice = useSession((s) => s.role) === "head_office";
 
+  /*
+   * The branches this person may read, straight from the session.
+   *
+   * The aggregate "All Stores" row is dropped: it is a UI convenience on the
+   * store switcher, not a place a conversation can belong to, and filtering by
+   * it would silently return nothing.
+   *
+   * The control only appears when there is a real choice to make. A manager who
+   * runs one branch already sees exactly their own leads — offering them a
+   * one-option filter would imply they might be missing something.
+   */
+  const stores = useSession((s) => s.stores);
+  const filterableStores = (stores ?? []).filter((s) => !s.isAggregate);
+  const showStoreFilter = filterableStores.length > 1;
+
   const navigate = (next: {
     queue?: string | null;
     partyId?: string | null;
     thread?: string | null;
+    store?: string | null;
   }) => {
     const params = new URLSearchParams(searchParams.toString());
     if (next.queue !== undefined) {
@@ -238,6 +256,13 @@ function ConversationsContent() {
     if (next.thread !== undefined) {
       if (next.thread) params.set("thread", next.thread);
       else params.delete("thread");
+    }
+    if (next.store !== undefined) {
+      if (next.store) params.set("store", next.store);
+      else params.delete("store");
+      // The open thread belongs to the branch being filtered away, so keeping
+      // it selected would show a conversation the list no longer contains.
+      params.delete("thread");
     }
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   };
@@ -256,7 +281,21 @@ function ConversationsContent() {
               { nonAd: true }
             : { status: "open" as const };
 
-  const list = useConversations(partyId ? { partyId } : serverQueueParams);
+  /*
+   * The branch filter NARROWS the queue; it never replaces it.
+   *
+   * The server intersects `storeId` with the caller's own visibility, so this
+   * can only ever show fewer conversations than the tab already would — asking
+   * for a branch you cannot read returns nothing rather than that branch's
+   * inbox. Not applied to a party lookup, which is already one customer.
+   */
+  const list = useConversations(
+    partyId
+      ? { partyId }
+      : storeFilter
+        ? { ...serverQueueParams, storeId: storeFilter }
+        : serverQueueParams,
+  );
   const counts = useQueueCounts();
 
   const selected =
@@ -387,6 +426,36 @@ function ConversationsContent() {
         </div>
 
         <div className="hidden sm:flex items-center gap-2">
+          {/*
+            Which branch a lead came from.
+
+            The routing rules stamp every ad lead with the showroom its campaign
+            was run for, so this reads that stamp back — it is how head office
+            answers "how is Bandra doing this week" without opening each thread.
+            Offered only to someone who can see more than one branch.
+          */}
+          {showStoreFilter && (
+            <div className="flex items-center gap-1.5">
+              <MapPin className="h-3.5 w-3.5 text-muted-foreground" />
+              <select
+                aria-label="Filter conversations by branch"
+                value={storeFilter}
+                onChange={(e) => navigate({ store: e.target.value || null })}
+                className={`h-8 rounded-md border bg-background px-2 text-xs font-medium ${
+                  storeFilter
+                    ? "border-[#25D366]/40 text-[#128C7E] dark:text-[#25D366]"
+                    : "border-border text-muted-foreground"
+                }`}
+              >
+                <option value="">All branches</option>
+                {filterableStores.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <Button
             size="sm"
             variant="outline"
@@ -481,8 +550,31 @@ function ConversationsContent() {
             ) : threads.length === 0 ? (
               <div className="p-6 text-center text-xs text-muted-foreground">
                 <MessageSquare className="h-8 w-8 mx-auto mb-2 text-muted-foreground/40" />
-                <p className="font-medium text-foreground">No conversations</p>
-                <p className="mt-1">Inbound WhatsApp chats will appear here.</p>
+                {/* An empty list because of a filter is a different fact from
+                    an empty inbox, and it has a different remedy — so it says
+                    which branch is empty, and offers the way back. */}
+                {storeFilter ? (
+                  <>
+                    <p className="font-medium text-foreground">
+                      Nothing at{" "}
+                      {filterableStores.find((s) => s.id === storeFilter)?.name ?? "this branch"}
+                    </p>
+                    <p className="mt-1">No conversations here in this queue.</p>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="mt-2 text-xs"
+                      onClick={() => navigate({ store: null })}
+                    >
+                      Show all branches
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <p className="font-medium text-foreground">No conversations</p>
+                    <p className="mt-1">Inbound WhatsApp chats will appear here.</p>
+                  </>
+                )}
               </div>
             ) : (
               threads.map((c) => {
