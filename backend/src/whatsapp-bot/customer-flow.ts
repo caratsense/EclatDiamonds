@@ -188,30 +188,117 @@ export function firstUnanswered(
 }
 
 /**
+ * Words a customer actually types that mean an option, beyond its label.
+ *
+ * Keyed by option VALUE so a label can be reworded without silently breaking
+ * what the bot understands. Deliberately narrow: every entry here is a phrase
+ * that can only mean one thing in the context of its own question, because a
+ * synonym that matches two options is worse than one that matches none — the
+ * first stores a guess, the second re-asks.
+ */
+const SYNONYMS: Record<string, string[]> = {
+  engagement_ring: ['engagement', 'proposal', 'propose', 'solitaire', 'ring'],
+  wedding_jewellery: ['wedding', 'bridal', 'marriage', 'shaadi'],
+  daily_wear: ['daily', 'everyday', 'office', 'regular'],
+  other: ['other', 'something else', 'not sure'],
+
+  myself: ['myself', 'me', 'self', 'my own'],
+  partner: ['partner', 'wife', 'husband', 'fiance', 'fiancee', 'girlfriend', 'boyfriend'],
+  family: ['family', 'mother', 'mom', 'mum', 'father', 'dad', 'sister', 'brother'],
+  gift: ['gift', 'present', 'friend'],
+
+  under_50k: ['under 50', 'below 50', 'less than 50', '50k', '40k', '30k'],
+  '50k_1l': ['50 to 1', '50-1', '1 lakh', '1l', '75k'],
+  '1l_2l': ['1 to 2', '1-2', '2 lakh', '2l', '1.5'],
+  above_2l: ['above 2', 'more than 2', 'over 2', '3 lakh', '5 lakh'],
+
+  within_7_days: ['this week', 'week', 'urgent', 'asap', 'soon', '7 days'],
+  this_month: ['this month', 'month'],
+  '1_3_months': ['few months', '2 months', '3 months'],
+  exploring: ['exploring', 'just looking', 'browsing', 'no hurry', 'not decided'],
+
+  call_now: ['yes', 'yeah', 'sure', 'ok', 'okay', 'please call', 'call me'],
+  call_later: ['later', 'not now but', 'afterwards'],
+  not_now: ['no', 'nope', 'not interested', 'dont call', "don't call"],
+
+  later_today: ['today', 'this evening'],
+  tomorrow_am: ['tomorrow morning', 'morning'],
+  tomorrow_pm: ['tomorrow evening', 'tomorrow night'],
+  weekend: ['weekend', 'saturday', 'sunday'],
+  i_will_message: ['i will message', 'ill message', 'i will text', 'let me message'],
+};
+
+/** Strip everything that is not a letter or digit, for comparison. */
+const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+/**
  * Read one answer.
  *
- * Accepts the position ("2", "2.", "2)"), the label ("oval"), or an unambiguous
- * prefix of it. Returns null when it cannot be read, so the caller re-asks
- * rather than storing a guess — a misread budget is a mis-scored lead.
+ * Customers do not answer a question with a number. They write "engagement
+ * ring", "for my wife", "around 1 lakh", "yes please call me" — and the flow
+ * was reading none of it, so a perfectly clear reply got "Sorry, I didn't quite
+ * catch that" and two of those hand the lead to a person who then has to start
+ * the conversation again.
+ *
+ * Four passes, most confident first:
+ *
+ *   1. a bare position        "2", "2.", "2)"
+ *   2. the label, or its value
+ *   3. the label as a PREFIX  "enga" -> Engagement Ring
+ *   4. the label or a synonym appearing anywhere in the sentence
+ *
+ * Every pass requires EXACTLY ONE match. An ambiguous sentence returns null and
+ * is re-asked, because a misread budget is a mis-scored lead — and the customer
+ * is still there to clarify, which they are not once the wrong answer is filed.
  */
 export function parseChoice(step: FlowStep, raw: string): string | null {
   const s = raw.trim().toLowerCase().replace(/[.)\]]+$/, '');
   if (!s) return null;
 
+  // 1 — a number on its own. NOT a number inside a sentence: "1 lakh" is a
+  // budget, not option one.
   if (/^\d+$/.test(s)) {
     const idx = Number(s) - 1;
     return step.options[idx]?.value ?? null;
   }
 
-  const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]/g, '');
   const target = norm(s);
   if (!target) return null;
 
+  // 2 — the whole message is the label, or the stored value.
   const exact = step.options.filter((o) => norm(o.label) === target || o.value === s);
   if (exact.length === 1) return exact[0].value;
 
+  // 3 — the message is the start of exactly one label.
   const prefix = step.options.filter((o) => norm(o.label).startsWith(target));
-  return prefix.length === 1 ? prefix[0].value : null;
+  if (prefix.length === 1) return prefix[0].value;
+
+  /*
+   * 4 — a real sentence. Match the label or a known synonym anywhere inside it,
+   * against the normalised text so "₹1L–₹2L" is reachable from "1 to 2 lakh".
+   *
+   * Scored by the LENGTH of the matched phrase so a longer, more specific
+   * phrase wins: "tomorrow morning" must beat the bare "morning", exactly as
+   * the ad-set rules prefer the longer showroom name.
+   */
+  let best: { value: string; length: number } | null = null;
+  let tied = false;
+
+  for (const option of step.options) {
+    const phrases = [option.label, ...(SYNONYMS[option.value] ?? [])];
+    for (const phrase of phrases) {
+      const needle = norm(phrase);
+      if (!needle || !target.includes(needle)) continue;
+      if (!best || needle.length > best.length) {
+        best = { value: option.value, length: needle.length };
+        tied = false;
+      } else if (needle.length === best.length && best.value !== option.value) {
+        tied = true;
+      }
+    }
+  }
+
+  return best && !tied ? best.value : null;
 }
 
 /** The label for a stored value, for summaries and handoff notes. */
@@ -222,15 +309,21 @@ export function labelFor(stepKey: string, value: string): string | undefined {
 /**
  * The question as the customer sees it.
  *
- * A numbered list, because `sendText` is what exists today. When interactive
- * messages land, this becomes the only function that changes.
+ * The options are still listed — they tell somebody what kind of answer is
+ * useful, and a person who wants to tap a number still can. What changed is
+ * the instruction underneath: it used to read "Reply with a number", which
+ * taught customers the bot could not read words. It can (see `parseChoice`),
+ * and being told otherwise made a conversation feel like a form.
+ *
+ * The numbers are kept as a convenience, not as the contract. When interactive
+ * messages land this stays the only function that changes.
  */
 export function promptFor(step: FlowStep): string {
   const lines = [`*${step.prompt}*`];
   if (step.hint) lines.push(`_${step.hint}_`);
   lines.push('');
   step.options.forEach((o, i) => lines.push(`${i + 1} — ${o.label}`));
-  lines.push('', '_Reply with a number._');
+  lines.push('', '_Just reply in your own words, or send a number._');
   return lines.join('\n');
 }
 
@@ -335,7 +428,7 @@ export function reprompt(): string {
   return [
     "Sorry, I didn't quite catch that.",
     '',
-    'You can reply with the number of an option above — or say *call me* and I will connect you with someone.',
+    'You can answer in your own words, or send the number of an option above — or say *call me* and I will connect you with someone.',
   ].join('\n');
 }
 

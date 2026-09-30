@@ -1,4 +1,4 @@
-/**
+﻿/**
  * The customer qualification flow, exercised without a database or WhatsApp.
  *
  * Named `.e2e-spec.ts` only because that is what the runner matches; nothing
@@ -26,6 +26,70 @@ const step = (k: string) => {
   if (!s) throw new Error(`no step ${k}`);
   return s;
 };
+
+/**
+ * Customers do not answer a question with a number.
+ *
+ * Every string below is a plausible WhatsApp reply. Before this, each one was
+ * unreadable and got "Sorry, I didn't quite catch that" — and two of those in a
+ * row hand the lead to a person who must then start the conversation again.
+ */
+describe('customer flow — a real sentence, not a number', () => {
+  it('reads what someone is shopping for', () => {
+    expect(parseChoice(step('looking_for'), 'I am looking for an engagement ring')).toBe('engagement_ring');
+    expect(parseChoice(step('looking_for'), 'need something for my wedding')).toBe('wedding_jewellery');
+    expect(parseChoice(step('looking_for'), 'just daily wear pieces')).toBe('daily_wear');
+  });
+
+  it('reads who it is for, including how people actually say it', () => {
+    expect(parseChoice(step('who_for'), "it's for my wife")).toBe('partner');
+    expect(parseChoice(step('who_for'), 'for my fiancee')).toBe('partner');
+    expect(parseChoice(step('who_for'), 'buying it for myself')).toBe('myself');
+    expect(parseChoice(step('who_for'), 'a gift for a friend')).toBe('gift');
+  });
+
+  it('reads a budget written as money rather than as a bracket', () => {
+    expect(parseChoice(step('budget'), 'around 1 lakh')).toBe('50k_1l');
+    expect(parseChoice(step('budget'), 'under 50k please')).toBe('under_50k');
+    expect(parseChoice(step('budget'), 'more than 2 lakh')).toBe('above_2l');
+  });
+
+  it('reads a timeline in ordinary words', () => {
+    expect(parseChoice(step('timeline'), 'need it this week')).toBe('within_7_days');
+    expect(parseChoice(step('timeline'), 'just exploring for now')).toBe('exploring');
+  });
+
+  it('reads yes and no on the call question', () => {
+    expect(parseChoice(step('call'), 'yes please')).toBe('call_now');
+    expect(parseChoice(step('call'), 'no thanks')).toBe('not_now');
+  });
+
+  it('prefers the longer phrase when two could match', () => {
+    // "morning" alone means tomorrow_morning; "tomorrow evening" must not be
+    // read as "evening" -> later_today. Same rule as the ad-set matcher.
+    expect(parseChoice(step('call_time'), 'tomorrow evening works')).toBe('tomorrow_pm');
+    expect(parseChoice(step('call_time'), 'later today is fine')).toBe('later_today');
+  });
+
+  it('does NOT read a number buried in a sentence as an option', () => {
+    // "1 lakh" is a budget, not option one. Reading it positionally would file
+    // "Under ₹50K" for a customer who just said the opposite.
+    expect(parseChoice(step('budget'), 'around 1 lakh')).not.toBe('under_50k');
+  });
+
+  it('still refuses a genuinely unreadable answer rather than guessing', () => {
+    expect(parseChoice(step('looking_for'), 'hmm let me think about it')).toBeNull();
+    expect(parseChoice(step('budget'), 'whatever it costs')).toBeNull();
+  });
+
+  it('no longer tells the customer that only numbers work', () => {
+    const prompt = promptFor(step('looking_for'));
+    expect(prompt).not.toMatch(/Reply with a number\./);
+    expect(prompt).toMatch(/your own words/i);
+    // The numbered list stays — it shows what kind of answer is useful.
+    expect(prompt).toMatch(/1 — Engagement Ring/);
+  });
+});
 
 describe('customer flow — reading an answer', () => {
   it('reads a position', () => {
@@ -123,7 +187,10 @@ describe('customer flow — what the customer sees', () => {
     const text = promptFor(step('looking_for'));
     expect(text).toContain('1 — Engagement Ring');
     expect(text).toContain('4 — Other Jewellery');
-    expect(text).toContain('Reply with a number');
+    // Was "Reply with a number", which taught customers the bot could not read
+    // words. It can — so the instruction now offers both, numbers included.
+    expect(text).toContain('your own words');
+    expect(text).toContain('send a number');
   });
 
   it('keeps every option short enough to become a WhatsApp list row', () => {
