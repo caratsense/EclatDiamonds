@@ -1,10 +1,12 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { json, urlencoded } from 'express';
 import { isAbsolute, join } from 'path';
 import { AppModule } from './app.module';
+import { listedAttendanceOnlyOrgs } from './auth/access';
+import { PrismaService } from './prisma/prisma.service';
 import { isPrivateUploadPath } from './storage/private-media';
 
 async function bootstrap() {
@@ -99,6 +101,18 @@ async function bootstrap() {
     jwtSecret === 'eclat-dev-secret-change-in-prod'
   ) {
     throw new Error('JWT_SECRET is still the dev placeholder in production. Set a real secret.');
+  }
+
+  // Say where sales staff start with attendance only (auth/access.ts), and which
+  // listed ids match nothing: for those the rule is off and every salesperson
+  // there keeps the usual sales screens. Never a reason not to start.
+  const attendanceOnly = await listedAttendanceOnlyOrgs(app.get(PrismaService)).catch(() => null);
+  const startup = new Logger('Bootstrap');
+  if (attendanceOnly?.on.length) {
+    startup.log(`Sales staff start with attendance only in: ${attendanceOnly.on.join(', ')}`);
+  }
+  for (const id of attendanceOnly?.unknown ?? []) {
+    startup.warn(`ATTENDANCE_ONLY_SALES_ORGS lists ${JSON.stringify(id)}, which is not an organisation here.`);
   }
 
   // Validate + strip unknown fields at the edge (CLAUDE.md rule #3).

@@ -116,9 +116,27 @@ export const ACTIVE_ROLES: Role[] = ['salesperson', 'store_manager', 'marketing'
  * cannot disagree about it.
  */
 export function startsAttendanceOnly(role: Role, organisationId: string | null | undefined): boolean {
-  if (role !== 'salesperson' || !organisationId) return false;
-  const listed = (process.env.ATTENDANCE_ONLY_SALES_ORGS ?? '').split(',').map((id) => id.trim());
-  return listed.includes(organisationId);
+  return role === 'salesperson' && !!organisationId && listedOrganisationIds().includes(organisationId);
+}
+
+/** The ids the variable lists, as written. */
+function listedOrganisationIds(): string[] {
+  return (process.env.ATTENDANCE_ONLY_SALES_ORGS ?? '').split(',').map((id) => id.trim()).filter(Boolean);
+}
+
+/**
+ * For the log at startup: the listed ids that are organisations here, and the
+ * ones that are not. An id that matches nothing (mistyped, or pasted with its
+ * quotes) leaves the rule off for that workspace, and nothing else would say so.
+ */
+export async function listedAttendanceOnlyOrgs(
+  db: Pick<Prisma.TransactionClient, 'organisation'>,
+): Promise<{ on: string[]; unknown: string[] }> {
+  const listed = [...new Set(listedOrganisationIds())];
+  if (!listed.length) return { on: [], unknown: [] };
+  const found = await db.organisation.findMany({ where: { id: { in: listed } }, select: { id: true } });
+  const known = new Set(found.map((o) => o.id));
+  return { on: listed.filter((id) => known.has(id)), unknown: listed.filter((id) => !known.has(id)) };
 }
 
 /** What a role starts with in this organisation, before head office's changes for one person. */
@@ -157,7 +175,10 @@ export function canOpen(
   return screen in effectiveAccess(person.role, person.accessOverrides, person.organisationId);
 }
 
-/** The same question about a person known only by id. Nobody found: no. */
+/**
+ * The same question about a person known only by id. Nobody found: no. Somebody
+ * who has left, or was never approved: no, because they cannot sign in at all.
+ */
 export async function canOpenById(
   db: Pick<Prisma.TransactionClient, 'user'>,
   organisationId: string,
@@ -165,10 +186,37 @@ export async function canOpenById(
   screen: ModuleSlug,
 ): Promise<boolean> {
   const person = await db.user.findFirst({
-    where: { id: userId, organisationId },
+    where: { id: userId, organisationId, isActive: true, approvalStatus: 'approved' },
     select: { role: true, accessOverrides: true, organisationId: true },
   });
   return !!person && canOpen(person, screen);
+}
+
+/**
+ * Head office's changes for one person, carried over to a new role.
+ *
+ * A screen switched on at `own` for somebody whose old role did not have it at
+ * store level was a gift. Where the new role gives that screen at store level,
+ * keeping the entry would hold the person below everybody else in the role: a
+ * salesperson given CRM back and then made store manager would see only their
+ * own leads. Those entries are dropped. A screen head office switched off, or
+ * narrowed on purpose, stays as it is.
+ */
+export function overridesForNewRole(
+  overrides: unknown,
+  from: Role,
+  to: Role,
+  organisationId: string | null | undefined,
+): { kept: Record<string, AccessOverride>; dropped: string[] } {
+  const before = roleDefaults(from, organisationId);
+  const after = roleDefaults(to, organisationId);
+  const entries = Object.entries(
+    overrides && typeof overrides === 'object' ? (overrides as Record<string, AccessOverride>) : {},
+  );
+  const dropped = entries
+    .filter(([slug, level]) => level === 'own' && after[slug] === 'store' && before[slug] !== 'store')
+    .map(([slug]) => slug);
+  return { kept: Object.fromEntries(entries.filter(([slug]) => !dropped.includes(slug))), dropped };
 }
 
 /**

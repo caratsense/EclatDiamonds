@@ -11,6 +11,7 @@ import {
   MODULES,
   canOpen,
   effectiveAccess,
+  overridesForNewRole,
   roleDefaults,
   startsAttendanceOnly,
 } from '../auth/access';
@@ -285,9 +286,20 @@ export class UsersService {
     this.assertCanManage(actor, existing.role, storeId);
     this.assertAssignableRole(actor, dto.role);
 
+    // A screen given at `own` must not hold the person below their new role.
+    // Only head office edits access, so a manager's role change leaves it alone.
+    const { kept, dropped } = overridesForNewRole(
+      actor.role === 'head_office' ? existing.accessOverrides : null,
+      existing.role,
+      dto.role,
+      actor.organisationId,
+    );
     const user = await this.prisma.user.update({
       where: { id },
-      data: { role: dto.role },
+      data: {
+        role: dto.role,
+        ...(dropped.length ? { accessOverrides: Object.keys(kept).length ? kept : Prisma.DbNull } : {}),
+      },
       include: USER_INCLUDE,
     });
 
@@ -298,7 +310,7 @@ export class UsersService {
         entityId: id,
         storeId: null,
         summary: `Changed ${user.name} role: ${existing.role} → ${dto.role}`,
-        metadata: { from: existing.role, to: dto.role },
+        metadata: { from: existing.role, to: dto.role, ...(dropped.length ? { accessDropped: dropped } : {}) },
       });
     }
     return this.toView(user);
@@ -407,17 +419,21 @@ export class UsersService {
       } else if (!actor.allStores) {
         throw new ForbiddenException('Reassignment target is not in your scope');
       }
-      // The leads move to the recipient, who has to be able to open them.
-      if (!canOpen(recipient, 'crm')) {
-        throw new BadRequestException(
-          `${recipient.name} cannot open CRM & Leads, so open leads cannot be handed to them.`,
-        );
-      }
 
       // Only move work in stores the actor controls (HO = unfiltered). Prevents a
       // scoped manager's offboarding from rewriting ownership in a store outside
       // their scope (for a user assigned to multiple stores).
       const scopeWhere = actor.allStores ? {} : { storeId: { in: actor.storeIds } };
+      // The leads move to the recipient, who has to be able to open them. With
+      // no leads to move there is nothing to refuse.
+      if (
+        !canOpen(recipient, 'crm') &&
+        (await this.prisma.lead.count({ where: { ownerId: id, ...scopeWhere } })) > 0
+      ) {
+        throw new BadRequestException(
+          `${recipient.name} cannot open CRM & Leads, so open leads cannot be handed to them.`,
+        );
+      }
       const [leads, checkIns] = await this.prisma.$transaction([
         this.prisma.lead.updateMany({
           where: { ownerId: id, ...scopeWhere },
