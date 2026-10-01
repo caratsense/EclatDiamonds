@@ -705,6 +705,13 @@ describe('Attendance operations (e2e)', () => {
       .set(as(U.mgr))
       .send({ bufferMins: 20 })
       .expect(409);
+    // A weekly off is not dated: it applies from today, so what refuses it is
+    // a lock on today's month. On the 1st and 2nd, P is still in last month,
+    // and a lock on last month alone must not freeze the roster.
+    const thisMonth = dateOnly(today).slice(0, 7);
+    if (thisMonth !== month) {
+      await request(server()).post('/hrms/payroll-locks').set(as(U.ho)).send({ month: thisMonth }).expect(201);
+    }
     await request(server())
       .patch('/hrms/week-off')
       .set(as(U.ho))
