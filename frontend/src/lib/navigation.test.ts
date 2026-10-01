@@ -144,6 +144,16 @@ describe("navigation", () => {
       expect(homeForRole("salesperson")).toBe("/crm");
     });
 
+    it("starts someone who lost their usual home but kept other screens on attendance, as before", () => {
+      // CRM off, catalogue and quotes kept. That is not attendance only: they
+      // punch and go on to work, so the punch screen is not where they live.
+      expect(
+        homeForRole("salesperson", null, { hrms: "own", catalogue: "own", quotation: "own" }),
+      ).toBe("/hrms");
+      // A manager with only Dashboards switched off.
+      expect(homeForRole("store_manager", null, { hrms: "store", crm: "store" })).toBe("/hrms");
+    });
+
     it("drops a section entirely when the pack disables every item in it", () => {
       // A tenant whose pack enables only CRM keeps one section, not nine empty
       // headings.

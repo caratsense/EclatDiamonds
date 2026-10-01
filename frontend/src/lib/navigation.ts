@@ -900,8 +900,12 @@ export function homeForRole(
         : enabledNavigation?.length && !enabledNavigation.includes("dashboards")
           ? "/crm"
           : "/dashboards";
-  // Someone whose access leaves out their role's usual home (sales staff set to
-  // attendance only) lives on the punch screen: Check in, then Check out. Leave
-  // and regularisation stay one link away, under HRMS.
-  return access && !(home.slice(1) in access) ? "/check-in" : home;
+  if (!access || home.slice(1) in access) return home;
+  // Their access leaves out the role's usual home. Someone set to attendance
+  // only (People & Access switches off every screen but HRMS) lives on the
+  // punch screen: Check in, then Check out, with leave and regularisation one
+  // link away. Anyone who still has other screens starts on attendance, the
+  // one screen everybody keeps, and goes on from there as before.
+  const slugs = Object.keys(access);
+  return slugs.length === 1 && slugs[0] === "hrms" ? "/check-in" : "/hrms";
 }
