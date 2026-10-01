@@ -21,6 +21,7 @@ import { isSalesScoped } from '../common/sales-scope';
 import { ActivityService } from './activity.service';
 import { IdentityService, ContactKind } from './identity.service';
 import { AdSetRulesService, type AdSetRoutingContext } from './adset-rules.service';
+import { platformFromSourceUrl } from '../integrations/meta-referral';
 import { AttributionService } from './attribution.service';
 import { RequalificationService } from './requalification.service';
 import { AdvancedCrmService } from './advanced-crm.service';
@@ -370,6 +371,10 @@ export class ConversationsService {
         sourceAdSetId: ref?.adSetId ?? null,
         sourceCampaignId: ref?.campaignId ?? null,
         sourceClickId: ref?.clickId ?? null,
+        // Instagram or Facebook, read from the referral's own source_url — the
+        // same signal WhatsApp uses to label the thread "Instagram ad". Null
+        // when the host says nothing recognisable, never defaulted.
+        sourcePlatform: platformFromSourceUrl(ref?.sourceUrl ?? null),
         matchedRuleId: route?.ruleId ?? null,
       },
       update: {
@@ -1077,6 +1082,25 @@ export class ConversationsService {
       handling: conversation.handling,
     };
 
+    /*
+     * Handing a thread back to nobody must also forget the rule that placed it.
+     *
+     * `ingestInbound` only applies routing when the thread is OPERATIONALLY
+     * UNASSIGNED — no store, no assignee, handling 'unassigned', and no matched
+     * rule. Clearing the first three but keeping `matchedRuleId` left threads in
+     * a state that can never be routed again: a later ad click would arrive,
+     * find a rule id still set, decline to apply its own decision, and the
+     * conversation would sit with no branch for ever.
+     *
+     * That is exactly what happened to a thread released for testing — the next
+     * ad click landed with the correct rule matching and no store applied,
+     * looking like the routing had broken.
+     *
+     * The rule id is a record of a decision the store field carries. Undoing the
+     * decision has to undo both, or the pair disagree.
+     */
+    const clearingStore = input.storeId !== undefined && !input.storeId;
+
     // One write: store, owner and handling move together or not at all.
     const updated = await this.prisma.conversation.update({
       where: { id: conversationId },
@@ -1085,6 +1109,7 @@ export class ConversationsService {
         ...(input.assignedUserId !== undefined ? { assignedUserId: input.assignedUserId } : {}),
         ...(input.handling ? { handling: input.handling } : {}),
         ...(input.reason !== undefined ? { handoffReason: input.reason || null } : {}),
+        ...(clearingStore ? { matchedRuleId: null } : {}),
       },
     });
 
@@ -1528,7 +1553,38 @@ export class ConversationsService {
       orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }],
       take,
       include: {
-        party: { select: { id: true, name: true, phone: true } },
+        /*
+         * The customer, plus whatever the branch has tagged them.
+         *
+         * Tags hang off a LEAD, not a conversation, so the path is
+         * party -> leads -> assignments -> tag. That is deliberate in the data
+         * model — a tag describes an enquiry the business is working, and one
+         * customer can have several — but it means the inbox cannot read a tag
+         * off the conversation row without this hop.
+         *
+         * Scoped to OPEN leads: a tag from a purchase closed last year says
+         * nothing useful about the message that just arrived, and showing it
+         * would make the chip row grow forever.
+         */
+        party: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            leads: {
+              // `closedAt` is the open/closed fact — `stage` is where in the
+              // funnel it sits, which is a different question.
+              where: { closedAt: null },
+              select: {
+                tagAssignments: {
+                  select: {
+                    tag: { select: { id: true, name: true, colour: true, isActive: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
         assignedUser: { select: { id: true, name: true } },
         store: { select: { id: true, name: true } },
         _count: { select: { messages: true } },
@@ -1567,8 +1623,33 @@ export class ConversationsService {
       }
     }
 
-    return rows.map(({ messages, ...row }) => ({
+    return rows.map(({ messages, party, ...row }) => ({
       ...row,
+      /*
+       * The customer, with the nested lead/tag hop flattened away.
+       *
+       * The raw shape carries `leads[].tagAssignments[].tag`, which is a
+       * three-level walk no caller should have to repeat. Deduplicated by tag
+       * id because two open leads can carry the same tag and the inbox must
+       * show it once; retired tags are dropped so a tag somebody stopped using
+       * does not keep appearing on old threads.
+       */
+      party: party
+        ? {
+            id: party.id,
+            name: party.name,
+            phone: party.phone,
+            tags: [
+              ...new Map(
+                party.leads
+                  .flatMap((lead) => lead.tagAssignments)
+                  .map((a) => a.tag)
+                  .filter((tag) => tag.isActive)
+                  .map((tag) => [tag.id, { id: tag.id, name: tag.name, colour: tag.colour }]),
+              ).values(),
+            ],
+          }
+        : null,
       /**
        * The newest message, flattened for the list. Null on a thread with no
        * messages yet — which the UI must render as such, not as a placeholder
@@ -1594,6 +1675,8 @@ export class ConversationsService {
         adSetId: row.sourceAdSetId,
         campaignId: row.sourceCampaignId,
         clickId: row.sourceClickId ? true : false, // presence only; never the value
+        /** 'instagram' | 'facebook' | 'messenger', or null for genuinely unknown. */
+        platform: row.sourcePlatform,
         evidence: row.sourceAdId || row.sourceClickId ? ('measured' as const) : null,
       },
     }));

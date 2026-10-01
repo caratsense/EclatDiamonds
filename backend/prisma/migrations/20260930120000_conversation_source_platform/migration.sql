@@ -1,0 +1,12 @@
+-- Which Meta surface an ad lead was tapped on: 'instagram' | 'facebook' |
+-- 'messenger'. Read from the CTWA referral's `source_url` host, the same signal
+-- WhatsApp uses to draw "Instagram ad" above the thread.
+--
+-- Nullable with no default and no backfill, deliberately. NULL means unknown,
+-- and every conversation that already exists genuinely is: the referral was
+-- stored verbatim but the host was never read, so inventing a value for old
+-- rows would put a fact on them that nobody established.
+--
+-- Additive: one nullable column, no index, no rewrite. Safe to apply while the
+-- API is serving.
+ALTER TABLE "Conversation" ADD COLUMN "sourcePlatform" TEXT;

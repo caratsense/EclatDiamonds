@@ -4,8 +4,6 @@ import { Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useT } from "@/lib/i18n";
-import { ROLE_LABELS } from "@/lib/types";
-import { useSession } from "@/store/use-session";
 
 interface SectionHeaderProps {
   title: string;
@@ -34,10 +32,6 @@ export function SectionHeader({
   primaryAction,
   onPrimaryAction,
 }: SectionHeaderProps) {
-  const { currentStore } = useSession();
-  // The person and the role they hold, not the level this page serves them at.
-  const role = useSession((s) => s.baseRole);
-  const userName = useSession((s) => s.user.name);
   const t = useT();
 
   return (
@@ -50,16 +44,17 @@ export function SectionHeader({
           <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
             {t(purpose, purpose)}
           </p>
-          <div className="flex flex-wrap items-center gap-2 pt-1">
-            <span className="inline-flex items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs font-medium text-foreground shadow-xs">
-              <span className="h-1.5 w-1.5 rounded-full bg-[var(--gold)]" />
-              {currentStore.name}
-            </span>
-            <span className="inline-flex items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs font-medium text-muted-foreground shadow-xs">
-              <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-              {userName} · {ROLE_LABELS[role]}
-            </span>
-          </div>
+          {/*
+            The active store and the signed-in role used to be repeated here as
+            two chips. The top bar carries both already — `StoreSwitcher` and
+            `RoleBadge` sit above every page in the (app) layout — so this was
+            the same two facts stated twice, a few centimetres apart, on all 17
+            sections.
+
+            Removed rather than restyled: a second copy of a control you cannot
+            act on is not reassurance, it is noise, and it pushed the content
+            every screen exists to show further down the page.
+          */}
         </div>
 
         {primaryAction ? (
