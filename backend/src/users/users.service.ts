@@ -197,8 +197,10 @@ export class UsersService {
   /**
    * POST /users — a manager onboards a staff member strictly below their rank
    * (default salesperson) and links them to a store IN THEIR SCOPE as primary.
-   * They then sign in via WhatsApp OTP with their phone (matched on the last 10
-   * digits) — the generated password is only a placeholder so the row is valid.
+   * Given a password, the person signs in straight away with their mobile number
+   * or the Login ID. Without one they sign in via WhatsApp OTP with their phone
+   * (matched on the last 10 digits) — the generated password is only a
+   * placeholder so the row is valid.
    */
   async create(actor: AuthUser, dto: CreateUserDto) {
     const role: Role = dto.role ?? 'salesperson';
@@ -239,8 +241,10 @@ export class UsersService {
     const policy = readSignupPolicy(store.organisation.settings);
     const subject = { name: dto.name, storeName: store.name, organisationSlug: store.organisation.slug };
 
-    // Random password — the user logs in via OTP, or a manager resets it to share one.
-    const passwordHash = await bcrypt.hash(randomBytes(24).toString('hex'), 10);
+    // The password the manager chose, hashed the way a reset hashes it. Without
+    // one: a random password — the user logs in via OTP, or a manager resets it
+    // to share one.
+    const passwordHash = await bcrypt.hash(dto.password || randomBytes(24).toString('hex'), 10);
 
     const user = await allocateLoginId(
       (n) => renderLoginId(policy.loginIdTemplate, subject, n),
@@ -272,6 +276,7 @@ export class UsersService {
       entityId: user.id,
       storeId: dto.storeId,
       summary: `Provisioned ${user.name} as ${role}`,
+      // Named fields only, never the whole dto: it can carry the password.
       metadata: { role, storeId: dto.storeId },
     });
 

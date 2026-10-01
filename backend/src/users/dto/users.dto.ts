@@ -50,6 +50,16 @@ export class CreateUserDto {
   @IsOptional()
   @IsIn(ASSIGNABLE_ROLES)
   role?: Role;
+
+  /**
+   * The password the manager hands this person, so the login works from the
+   * first day. Held to the same rule as a manager's reset (ResetPasswordDto).
+   * Left out, the account gets a random one nobody knows, as before.
+   */
+  @IsOptional()
+  @IsString()
+  @MinLength(8)
+  password?: string;
 }
 
 /**

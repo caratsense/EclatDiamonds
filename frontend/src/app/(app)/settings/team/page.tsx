@@ -1303,6 +1303,7 @@ function AddStaffDialog({
   const [email, setEmail] = useState("");
   const [storeId, setStoreId] = useState("");
   const [role, setRole] = useState<StaffRole>("salesperson");
+  const [password, setPassword] = useState("");
   const [touched, setTouched] = useState(false);
 
   function reset() {
@@ -1311,6 +1312,7 @@ function AddStaffDialog({
     setEmail("");
     setStoreId("");
     setRole("salesperson");
+    setPassword("");
     setTouched(false);
   }
 
@@ -1322,6 +1324,8 @@ function AddStaffDialog({
   const phoneError = normalizedPhone == null;
   const emailError = !isValidEmail(email);
   const storeError = !storeId;
+  // Optional, but if given it must pass the same rule as Reset password.
+  const passwordError = password.length > 0 && password.length < 8;
 
   function save() {
     setTouched(true);
@@ -1353,6 +1357,10 @@ function AddStaffDialog({
       toast.error("Select a store.");
       return;
     }
+    if (passwordError) {
+      toast.error("Password must be at least 8 characters.");
+      return;
+    }
 
     createStaff.mutate(
       {
@@ -1361,10 +1369,16 @@ function AddStaffDialog({
         phone: normalizedPhone ?? undefined,
         email: email.trim(),
         role,
+        password: password || undefined,
       },
       {
         onSuccess: (created) => {
-          toast.success(`Staff added — their Login ID is ${created.email}`);
+          toast.success(`${created.name} added`, {
+            description: password
+              ? `They sign in with their mobile number (or Login ID ${created.email}) and the password you set.`
+              : `Their Login ID is ${created.email}. They have no password yet, so they cannot sign in. Set one with Reset password on their row.`,
+            duration: 10_000,
+          });
           reset();
           onOpenChange(false);
         },
@@ -1391,10 +1405,10 @@ function AddStaffDialog({
         <DialogHeader>
           <DialogTitle>Add staff</DialogTitle>
           <DialogDescription>
-            New staff default to Salesperson. We generate a unique Login ID
-            for them in your organisation’s Login ID format, and show it to you
-            once they are added; a phone also lets them sign in with a WhatsApp OTP.
-            You can promote them later.
+            New staff default to Salesperson. Give them a password and they can
+            sign in straight away with their mobile number. We also generate a
+            unique Login ID for them in your organisation’s Login ID format, and
+            show it to you once they are added. You can promote them later.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
@@ -1457,8 +1471,8 @@ function AddStaffDialog({
             </p>
           ) : (
             <p className="text-xs text-muted-foreground">
-              Phone and email are both required. The phone also enables WhatsApp
-              OTP sign-in.
+              Phone and email are both required. The phone number is also what
+              they sign in with.
             </p>
           )}
           <div className="grid gap-3 sm:grid-cols-2">
@@ -1506,6 +1520,28 @@ function AddStaffDialog({
                 </Select>
               )}
             </div>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="staff-password">Password</Label>
+            <Input
+              id="staff-password"
+              type="password"
+              autoComplete="new-password"
+              placeholder="At least 8 characters"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              aria-invalid={touched && passwordError}
+            />
+            {touched && passwordError ? (
+              <p className="text-xs text-destructive">
+                Password must be at least 8 characters.
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Share it with them privately; they can change it later in
+                Settings. Leave it blank to set one later with Reset password.
+              </p>
+            )}
           </div>
         </div>
         <DialogFooter>

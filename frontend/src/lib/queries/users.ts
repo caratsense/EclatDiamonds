@@ -58,6 +58,9 @@ export interface CreateStaffInput {
   phone?: string;
   email?: string;
   role?: StaffRole;
+  /** The password they sign in with from day one. Left out, they have none
+   *  until a manager uses Reset password. */
+  password?: string;
 }
 
 const USERS_KEY = ["users"] as const;
