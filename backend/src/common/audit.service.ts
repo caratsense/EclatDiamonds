@@ -40,6 +40,8 @@ export const SYSTEM_ACTORS = {
   payroll_month_end: 'Month-end payroll',
   /** A member of the public asking to join a tenant through staff self-signup. */
   self_signup: 'Staff self-signup',
+  /** scripts/backfill-conversation-platform.mjs recording an older ad lead's platform. */
+  ad_platform_backfill: 'Ad platform backfill',
 } as const;
 
 export type SystemActor = keyof typeof SYSTEM_ACTORS;

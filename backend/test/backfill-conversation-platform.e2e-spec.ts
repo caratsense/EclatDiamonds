@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { ConversationsService } from '../src/crm/conversations.service';
+import { SYSTEM_ACTORS } from '../src/common/audit.service';
 import { extractMetaReferral } from '../src/integrations/meta-referral';
 
 /**
@@ -131,6 +132,15 @@ describe('Backfill of the platform an ad lead came from (e2e)', () => {
 
   const platforms = async () =>
     Object.fromEntries(Object.entries(await threads()).map(([name, row]) => [name, row.sourcePlatform]));
+
+  /** The audit rows the script has written, by the name each conversation has in `ids`. */
+  async function onRecord() {
+    const rows = await prisma.auditLog.findMany({
+      where: { organisationId: { in: [A.org, B.org] }, action: 'conversation.platform_backfilled' },
+    });
+    const nameOf = (id: string) => Object.keys(ids).find((name) => ids[name] === id) ?? id;
+    return Object.fromEntries(rows.map((row) => [nameOf(row.entityId), row]));
+  }
 
   beforeAll(async () => {
     const mod = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -281,6 +291,24 @@ describe('Backfill of the platform an ad lead came from (e2e)', () => {
     );
 
     expect(await threads()).toEqual(before);
+    expect(await onRecord()).toEqual({});
+  });
+
+  it('refuses to write to a database that is not on this machine until its host is typed out', () => {
+    // Refused before anything is read, so nothing here connects anywhere.
+    const hosted = (...args: string[]) =>
+      spawnSync(process.execPath, [SCRIPT, '--apply', '--organisation', A.slug, ...args], {
+        cwd: BACKEND,
+        env: { ...process.env, DATABASE_URL: 'postgresql://bcp_user:bcp-hosted-secret@db.bcp.invalid:6543/railway' },
+        encoding: 'utf8',
+      });
+
+    for (const child of [hosted(), hosted('--host', 'db.bcp.invalid'), hosted('--host')]) {
+      expect(child.status).toBe(1);
+      expect(child.stderr).toContain('needs --host db.bcp.invalid:6543, typed out');
+      expect(child.stdout + child.stderr).not.toContain('bcp-hosted-secret');
+      expect(child.stdout + child.stderr).not.toContain('bcp_user');
+    }
   });
 
   it('prints no database user or password, even when the database refuses the login', () => {
@@ -346,6 +374,29 @@ describe('Backfill of the platform an ad lead came from (e2e)', () => {
       expect(applied.out).not.toContain(ids.alreadySet);
     });
 
+    it('puts each write on the audit trail, and nothing it left alone', async () => {
+      const trail = await onRecord();
+      expect(Object.keys(trail).sort()).toEqual(['noCustomer', 'routed', 'routedLater', 'twin', 'unrouted']);
+
+      const { routed, noCustomer, unrouted } = trail;
+      expect(routed).toMatchObject({
+        organisationId: A.org,
+        // The script cannot load the app's list of automations, so it carries
+        // its own entry; this is what holds the two together.
+        systemActorId: 'ad_platform_backfill',
+        actorName: SYSTEM_ACTORS.ad_platform_backfill,
+        actorId: null,
+        machineActorId: null,
+        entityType: 'Conversation',
+        storeId: A.store,
+        metadata: { platform: 'facebook' },
+      });
+      expect(routed.summary).toContain('facebook');
+      expect(noCustomer.metadata).toEqual({ platform: 'messenger' });
+      // No branch yet, so the row is the organisation's and no store's.
+      expect(unrouted.storeId).toBeNull();
+    });
+
     it('says why each thread it left alone was left alone', () => {
       expect(lineFor(applied.out, ids.ambiguous)).toContain('left alone: 2 touches fit and they disagree');
       expect(lineFor(applied.out, ids.laterTapOnly)).toContain('left alone: no touch on file');
@@ -370,6 +421,7 @@ describe('Backfill of the platform an ad lead came from (e2e)', () => {
       expect(again.status).toBe(0);
       expect(again.out).toContain('Written 0 of 4.');
       expect(await threads()).toEqual(before);
+      expect(Object.keys(await onRecord())).toHaveLength(5);
     });
 
     it('does not overwrite a platform somebody records while it is running', async () => {
@@ -411,6 +463,8 @@ describe('Backfill of the platform an ad lead came from (e2e)', () => {
       expect(out).toContain('Conversations left alone were not written by this run.');
       expect(out).not.toContain('keep sourcePlatform NULL');
       expect((await platforms()).setMeanwhile).toBe('facebook');
+      // Left alone, so nothing about it is on the trail.
+      expect(await onRecord()).not.toHaveProperty('setMeanwhile');
     });
   });
 });

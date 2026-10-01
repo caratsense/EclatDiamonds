@@ -22,11 +22,18 @@
  *
  * DRY RUN BY DEFAULT. Writes only with --apply, so the mapping can be inspected
  * on real data before any row changes. --apply also needs --organisation: one
- * run writes to one organisation.
+ * run writes to one organisation. On a database that is not on this machine it
+ * needs --host as well, typed as the first line of the report prints it, so a
+ * DATABASE_URL left over from other work is not written to by mistake.
+ *
+ * ON THE RECORD. Each conversation written gets an audit row in the same
+ * transaction (action `conversation.platform_backfilled`, by "Ad platform
+ * backfill"), so what a run changed can be listed afterwards, and undone.
  *
  *   node scripts/backfill-conversation-platform.mjs                               # report only, every organisation
  *   node scripts/backfill-conversation-platform.mjs --organisation <slug or id>   # report only, one organisation
- *   node scripts/backfill-conversation-platform.mjs --apply --organisation <slug or id>   # write
+ *   node scripts/backfill-conversation-platform.mjs --apply --organisation <slug or id>   # write, local database
+ *   node scripts/backfill-conversation-platform.mjs --apply --organisation <slug or id> --host <host:port>   # write, hosted database
  *
  * Needs Node 22.18 or newer, which loads the TypeScript import below as it is.
  */
@@ -43,6 +50,16 @@ const prisma = new PrismaClient();
 const APPLY = process.argv.includes('--apply');
 const orgFlag = process.argv.indexOf('--organisation');
 const ORGANISATION = orgFlag > -1 ? process.argv[orgFlag + 1] : null;
+const hostFlag = process.argv.indexOf('--host');
+const HOST = hostFlag > -1 ? process.argv[hostFlag + 1] : null;
+
+/**
+ * Who the audit trail says did this: the script's entry in SYSTEM_ACTORS
+ * (src/common/audit.service.ts), written out here because that file loads only
+ * inside the app. The spec holds the two together. The role is what every
+ * automation is filed under; `systemActorId` is what marks the row as one.
+ */
+const ACTOR = { systemActorId: 'ad_platform_backfill', actorName: 'Ad platform backfill', actorRole: 'head_office' };
 
 /**
  * How soon after a thread is created its opening tap's touch must have been
@@ -100,6 +117,12 @@ async function main() {
   if (APPLY && !ORGANISATION) {
     throw new Error('--apply needs --organisation <slug or id>: one run writes to one organisation.');
   }
+  // Before anything is read: a hosted database is written to only by somebody
+  // who has typed its host, not by whoever still has its URL in their shell.
+  const onThisMachine = ['localhost', '127.0.0.1', '[::1]'].includes(db.hostname);
+  if (APPLY && !onThisMachine && HOST !== db.host) {
+    throw new Error(`--apply on a database that is not on this machine needs --host ${db.host}, typed out.`);
+  }
 
   let organisation = null;
   if (ORGANISATION) {
@@ -123,6 +146,7 @@ async function main() {
     select: {
       id: true,
       organisationId: true,
+      storeId: true,
       sourceAdId: true,
       sourceClickId: true,
       createdAt: true,
@@ -190,11 +214,34 @@ async function main() {
     if (APPLY) {
       // Only while it is still empty: a platform set since the read above is
       // somebody else's answer and is not overwritten. The line is printed
-      // after the write, so a line that says written was written.
-      const { count } = await prisma.conversation.updateMany({
-        where: { id: row.id, sourcePlatform: null },
-        data: { sourcePlatform: platform },
-      });
+      // after the write, so a line that says written was written. The audit
+      // row is in the same transaction: written and on the record, or neither.
+      const count = await prisma.$transaction(
+        async (tx) => {
+          const { count } = await tx.conversation.updateMany({
+            where: { id: row.id, sourcePlatform: null },
+            data: { sourcePlatform: platform },
+          });
+          if (count) {
+            await tx.auditLog.create({
+              data: {
+                ...ACTOR,
+                organisationId: row.organisationId,
+                action: 'conversation.platform_backfilled',
+                entityType: 'Conversation',
+                entityId: row.id,
+                storeId: row.storeId,
+                summary: `Platform of the ad lead recorded as ${platform}, read from the referral on file`,
+                metadata: { platform },
+              },
+            });
+          }
+          return count;
+        },
+        // The update waits for anybody writing the same thread; the default
+        // five seconds would turn a slow colleague into a failed run.
+        { timeout: 30_000 },
+      );
       if (!count) {
         tally(leftAlone, 'set meanwhile');
         say('left alone: a platform was set while this ran');
