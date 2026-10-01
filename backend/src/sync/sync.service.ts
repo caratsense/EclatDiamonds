@@ -2219,11 +2219,15 @@ export class SyncService {
     entity: string,
     report: ReturnType<Awaited<ReturnType<SyncService['branchResolver']>>['report']>,
   ) {
-    if (report.fellBackToDefault > 0 || report.unknownBranchIds.length > 0) {
+    // Only a branch id with no Store here is worth a warning: a branch that has
+    // not synced yet, or a mapping that is wrong. A row that names no branch at
+    // all is expected every cycle. In Gati it is head office's own stock or
+    // voucher, and a design belongs to no branch. The summary line already
+    // counts those as `default=`; warning about them each cycle sent someone to
+    // look for a fault that is not there.
+    if (report.unknownBranchIds.length > 0) {
       this.logger.warn(
-        `sync ${entity}: ${report.fellBackToDefault} row(s) had no usable branch and ` +
-          `went to the default store` +
-          (report.unknownBranchIds.length ? `; unknown branch ids: ${report.unknownBranchIds.join(', ')}` : '') +
+        `sync ${entity}: no store here for branch id(s) ${report.unknownBranchIds.join(', ')}` +
           ` (columns tried: ${report.branchColumns.join(' -> ')})`,
       );
     }

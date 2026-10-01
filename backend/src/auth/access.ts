@@ -1,4 +1,4 @@
-import { Role } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 
 /**
  * Who may open which screen, and how far.
@@ -15,6 +15,10 @@ import { Role } from '@prisma/client';
  * and a screen given at `store` level really works — the person is treated as
  * a store manager for that screen's API only, still inside their own stores.
  * Head office always has everything; overrides never apply to it.
+ *
+ * A workspace can start its sales staff on attendance only instead of the
+ * salesperson defaults (`startsAttendanceOnly`); head office's changes for one
+ * person then apply on top of that.
  */
 
 export type AccessLevel = 'own' | 'store';
@@ -79,7 +83,7 @@ const MARKETING: AccessMap = {
   ...at('own', ['hrms', 'tasks']),
 };
 
-export const ROLE_ACCESS: Record<Role, AccessMap> = {
+const ROLE_ACCESS: Record<Role, AccessMap> = {
   salesperson: at('own', SALESPERSON),
   store_manager: at('store', STORE_MANAGER),
   marketing: MARKETING,
@@ -101,9 +105,55 @@ export const HEAD_OFFICE_ONLY: ModuleSlug[] = [
 /** The roles in use. Area manager and storeperson are retired: nobody can be given them. */
 export const ACTIVE_ROLES: Role[] = ['salesperson', 'store_manager', 'marketing', 'head_office'];
 
-/** What this person may open: their role's defaults with head office's changes applied. */
-export function effectiveAccess(role: Role, overrides: unknown): AccessMap {
-  const base = { ...ROLE_ACCESS[role] };
+/**
+ * A workspace's own rule: its sales staff start with attendance only (Check in
+ * / Check out, leave, regularisation) instead of the salesperson defaults. It
+ * covers staff added later, which setting each person by hand could not.
+ *
+ * Switched on per organisation by ATTENDANCE_ONLY_SALES_ORGS, a comma-separated
+ * list of organisation ids; unset or empty is off everywhere. Read here and
+ * nowhere else, so sign-in, the API guard, People & Access and assignment
+ * cannot disagree about it.
+ */
+export function startsAttendanceOnly(role: Role, organisationId: string | null | undefined): boolean {
+  return role === 'salesperson' && !!organisationId && listedOrganisationIds().includes(organisationId);
+}
+
+/** The ids the variable lists, as written. */
+function listedOrganisationIds(): string[] {
+  return (process.env.ATTENDANCE_ONLY_SALES_ORGS ?? '').split(',').map((id) => id.trim()).filter(Boolean);
+}
+
+/**
+ * For the log at startup: the listed ids that are organisations here, and the
+ * ones that are not. An id that matches nothing (mistyped, or pasted with its
+ * quotes) leaves the rule off for that workspace, and nothing else would say so.
+ */
+export async function listedAttendanceOnlyOrgs(
+  db: Pick<Prisma.TransactionClient, 'organisation'>,
+): Promise<{ on: string[]; unknown: string[] }> {
+  const listed = [...new Set(listedOrganisationIds())];
+  if (!listed.length) return { on: [], unknown: [] };
+  const found = await db.organisation.findMany({ where: { id: { in: listed } }, select: { id: true } });
+  const known = new Set(found.map((o) => o.id));
+  return { on: listed.filter((id) => known.has(id)), unknown: listed.filter((id) => !known.has(id)) };
+}
+
+/** What a role starts with in this organisation, before head office's changes for one person. */
+export function roleDefaults(role: Role, organisationId: string | null | undefined): AccessMap {
+  const usual = ROLE_ACCESS[role];
+  if (!startsAttendanceOnly(role, organisationId)) return { ...usual };
+  // Picked out of the role's own screens, so the rule can take screens away but never give one.
+  return Object.fromEntries(Object.entries(usual).filter(([slug]) => slug === 'hrms'));
+}
+
+/** What this person may open: what their role starts with here, with head office's changes applied. */
+export function effectiveAccess(
+  role: Role,
+  overrides: unknown,
+  organisationId: string | null | undefined,
+): AccessMap {
+  const base = roleDefaults(role, organisationId);
   if (role === 'head_office' || !overrides || typeof overrides !== 'object') return base;
   for (const [slug, v] of Object.entries(overrides as Record<string, unknown>)) {
     if (!(MODULES as readonly string[]).includes(slug)) continue;
@@ -111,6 +161,62 @@ export function effectiveAccess(role: Role, overrides: unknown): AccessMap {
     else if (v === 'own' || v === 'store') base[slug] = v;
   }
   return base;
+}
+
+/**
+ * Whether this person can open a screen at all. Asked before a lead or a
+ * conversation is given to somebody, so work never sits with a person who
+ * cannot see it.
+ */
+export function canOpen(
+  person: { role: Role; accessOverrides: unknown; organisationId: string },
+  screen: ModuleSlug,
+): boolean {
+  return screen in effectiveAccess(person.role, person.accessOverrides, person.organisationId);
+}
+
+/**
+ * The same question about a person known only by id. Nobody found: no. Somebody
+ * who has left, or was never approved: no, because they cannot sign in at all.
+ */
+export async function canOpenById(
+  db: Pick<Prisma.TransactionClient, 'user'>,
+  organisationId: string,
+  userId: string,
+  screen: ModuleSlug,
+): Promise<boolean> {
+  const person = await db.user.findFirst({
+    where: { id: userId, organisationId, isActive: true, approvalStatus: 'approved' },
+    select: { role: true, accessOverrides: true, organisationId: true },
+  });
+  return !!person && canOpen(person, screen);
+}
+
+/**
+ * Head office's changes for one person, carried over to a new role.
+ *
+ * A screen switched on at `own` for somebody whose old role did not have it at
+ * store level was a gift. Where the new role gives that screen at store level,
+ * keeping the entry would hold the person below everybody else in the role: a
+ * salesperson given CRM back and then made store manager would see only their
+ * own leads. Those entries are dropped. A screen head office switched off, or
+ * narrowed on purpose, stays as it is.
+ */
+export function overridesForNewRole(
+  overrides: unknown,
+  from: Role,
+  to: Role,
+  organisationId: string | null | undefined,
+): { kept: Record<string, AccessOverride>; dropped: string[] } {
+  const before = roleDefaults(from, organisationId);
+  const after = roleDefaults(to, organisationId);
+  const entries = Object.entries(
+    overrides && typeof overrides === 'object' ? (overrides as Record<string, AccessOverride>) : {},
+  );
+  const dropped = entries
+    .filter(([slug, level]) => level === 'own' && after[slug] === 'store' && before[slug] !== 'store')
+    .map(([slug]) => slug);
+  return { kept: Object.fromEntries(entries.filter(([slug]) => !dropped.includes(slug))), dropped };
 }
 
 /**

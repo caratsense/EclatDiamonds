@@ -18,6 +18,8 @@ import { useSetUserAccess, useUserAccess, type AccessOverride, type UserAccess }
 import { ROLE_LABELS } from "@/lib/types";
 import { apiErrorMessage, cn } from "@/lib/utils";
 
+import { bulkAttendanceOnlyPrompt, startingPointLine } from "./wording";
+
 /** Screens only head office can use; never given to anyone else. */
 const HEAD_OFFICE_ONLY = new Set([
   "settings/onboarding",
@@ -55,16 +57,11 @@ export default function AccessPage() {
   const [bulkBusy, setBulkBusy] = useState(false);
 
   const salesStaff = (staff.data ?? []).filter((u) => u.isActive && u.role === "salesperson");
+  // Where sales staff start is the same for all of them, so one person's answer words the question below.
+  const oneOfThem = useUserAccess(salesStaff[0]?.id ?? null);
   /** The same audited save as one person, once for each of the sales staff. */
   async function allSalesStaffAttendanceOnly() {
-    if (
-      !window.confirm(
-        `Set all ${salesStaff.length} sales staff to attendance only?
-
-After signing in they will see Check in / Check out and nothing else. Undo it for any one person with "Role defaults".`,
-      )
-    )
-      return;
+    if (!window.confirm(bulkAttendanceOnlyPrompt(salesStaff.length, !!oneOfThem.data?.startsAttendanceOnly))) return;
     setBulkBusy(true);
     let done = 0;
     try {
@@ -111,7 +108,7 @@ After signing in they will see Check in / Check out and nothing else. Undo it fo
               variant="outline"
               size="sm"
               className="w-full"
-              disabled={bulkBusy || salesStaff.length === 0}
+              disabled={bulkBusy || salesStaff.length === 0 || oneOfThem.isLoading}
               onClick={allSalesStaffAttendanceOnly}
             >
               <Clock className="h-3.5 w-3.5" />
@@ -211,7 +208,7 @@ function PersonAccess({ userId }: { userId: string }) {
             {data.name} · {ROLE_LABELS[data.role]}
           </CardTitle>
           <CardDescription>
-            Starts from what a {ROLE_LABELS[data.role].toLowerCase()} gets. Changes apply to {data.name} only.
+            {startingPointLine(data)}
             {changedCount ? ` ${changedCount} screen${changedCount === 1 ? " differs" : "s differ"} from the role.` : ""}
           </CardDescription>
         </div>

@@ -637,7 +637,10 @@ export class AuthService {
   }
 
   async login(email: string, password: string) {
-    const key = email.trim().toLowerCase();
+    // One person, one handle: a mobile number counts as the same handle however
+    // it is typed (+91, a leading 0, spaces, dashes), or five wrong passwords on
+    // one spelling could be followed by five more on the next.
+    const key = normalizeIndianMobile(email) ?? email.trim().toLowerCase();
     // Checked BEFORE the DB lookup, and failures are recorded for unknown handles
     // too, so lockout behaviour never reveals which handles are real accounts.
     if (this.lockout.isLocked(key)) {
@@ -887,12 +890,18 @@ export class AuthService {
 
   /**
    * POST /auth/reset-password — a manager sets a new password for a user in
-   * their scope (store overlap; head_office = anyone). A caller may only reset
-   * users ranked BELOW their own role — never peers or superiors.
+   * their scope (store overlap; head_office = anyone in THEIR organisation). A
+   * caller may only reset users ranked BELOW their own role — never peers or
+   * superiors.
    */
   async resetPassword(actor: AuthUser, userId: string, newPassword: string) {
-    const target = await this.prisma.user.findUnique({
-      where: { id: userId },
+    // Inside the caller's own organisation, always. This looked the person up by
+    // id alone, and head office skips the store check below — so the head office
+    // of ANY organisation could set the password of a user in another one, and
+    // creating an organisation is open to the public. A user of another
+    // organisation is simply not found.
+    const target = await this.prisma.user.findFirst({
+      where: { id: userId, organisationId: actor.organisationId },
       include: { userStores: { select: { storeId: true } } },
     });
     if (!target) throw new NotFoundException('User not found');
@@ -908,6 +917,13 @@ export class AuthService {
 
     const passwordHash = await bcrypt.hash(newPassword, 10);
     await this.prisma.user.update({ where: { id: target.id }, data: { passwordHash } });
+    // Who set whose password, never the password: it had left no trace at all.
+    await this.audit.record(actor, {
+      action: 'user.password_reset',
+      entityType: 'User',
+      entityId: target.id,
+      summary: `Password set for ${target.name}`,
+    });
     return { ok: true };
   }
 
@@ -983,7 +999,7 @@ export class AuthService {
       },
       role,
       /** The screens this person may open and at what level (auth/access.ts). */
-      access: effectiveAccess(role, user.accessOverrides),
+      access: effectiveAccess(role, user.accessOverrides, user.organisationId),
       stores: storeViews,
       currentStore,
       productProfile: {

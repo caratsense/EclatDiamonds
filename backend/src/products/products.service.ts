@@ -706,6 +706,11 @@ export class ProductsService {
         where: {
           productId: id,
           organisationId: user.organisationId,
+          // The dialog lists these as "Pieces on hand". A piece keeps its row
+          // after it is sold or sent to another branch, so without this a design
+          // listed more than twice the pieces there are. The same statuses
+          // stockPresence counts as on the shelf.
+          status: { in: ['in_stock', 'aging', 'dead_stock'] },
           ...(visible ? { storeId: { in: visible } } : {}),
         },
         orderBy: [{ status: 'asc' }, { inwardDate: 'desc' }],

@@ -8,9 +8,10 @@ import { defineConfig } from "vitest/config";
  * execute the checks the work items ask for. It runs in a NODE environment, not
  * jsdom: every test here exercises a pure decision function — which module a
  * route belongs to, whether a tenant may see it, whether an organisation slug is
- * usable — and none of them render a component. Adding jsdom and a React
- * testing library to assert on a decision table would be more machinery for a
- * weaker test.
+ * usable — and none of them needs a DOM. The few that read a component's
+ * markup (the quote builder's search boxes) render it on the server with
+ * `react-dom/server`. Adding jsdom and a React testing library to assert on a
+ * decision table would be more machinery for a weaker test.
  *
  * The preflight in scripts/ is deliberately NOT run here: it is dependency-free
  * and runs under `node --test`, so it stays usable in a checkout where npm

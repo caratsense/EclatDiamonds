@@ -8,13 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { SearchSelect } from "@/components/ui/search-select";
 import { formatINR } from "@/lib/format";
 import {
   fetchStyle,
@@ -22,11 +16,17 @@ import {
   useStyleSearch,
   type MaterialMaster,
   type MaterialOption,
+  type StyleBom,
 } from "@/lib/queries/materials";
 import { apiErrorMessage, cn } from "@/lib/utils";
 
-/** The karats the business quotes in (owner, 22 Sep 2026). */
-export const QUOTE_KARATS = [9, 12, 14, 18, 22, 24];
+/**
+ * The karats a new quote is built in: the shop's own list (1 Oct 2026). The
+ * server still takes 22 and 24, because older quotes have them.
+ */
+export const QUOTE_KARATS = [9, 12, 14, 18];
+/** The list as staff are told it: "9/12/14/18K". */
+export const QUOTE_KARATS_TEXT = `${QUOTE_KARATS.join("/")}K`;
 
 /** Item types when the item master has not been loaded yet (the ERP's list). */
 const ITEM_TYPES_FALLBACK = [
@@ -123,6 +123,9 @@ export const sizeText = (item: ItemRow) => {
   return s && item.sizeUnit ? `${s} ${item.sizeUnit}` : s;
 };
 
+/** The item in another metal. A new metal is a new rate, so a rate typed for the old one is dropped. */
+export const withMetal = (item: ItemRow, metalCode: string): ItemRow => ({ ...item, metalCode, manualRate: "" });
+
 /**
  * What an item comes to, worked out the way the server does: each line's
  * amount, and what its own discount takes off it.
@@ -150,9 +153,11 @@ export function masterLists(master: MaterialMaster | undefined) {
   const missing = QUOTE_KARATS.filter((k) => !metals.some((m) => m.karat === k));
   return {
     itemTypes: master?.itemTypes.length ? master.itemTypes : ITEM_TYPES_FALLBACK,
-    metals: [...metals, ...metalsFor(missing)].sort(
-      (a, b) => (a.karat ?? 0) - (b.karat ?? 0) || a.code.localeCompare(b.code),
-    ),
+    metals: [...metals, ...metalsFor(missing)]
+      .sort((a, b) => (a.karat ?? 0) - (b.karat ?? 0) || a.code.localeCompare(b.code))
+      // A metal is also found by its karat and colour as the screen writes
+      // them ("18K", "14K WG"); its code and name (G18WG GOLD18WG) have no K.
+      .map((m) => ({ ...m, keywords: `${m.karat}K ${m.tone ?? ""}` })),
     diamonds: master?.diamonds ?? [],
     stones: master?.stones ?? [],
     sizes: master?.sizes ?? [],
@@ -161,15 +166,10 @@ export function masterLists(master: MaterialMaster | undefined) {
 
 export type Lists = ReturnType<typeof masterLists>;
 
-/** Metal and stone codes for the type-to-search boxes; rendered once per builder. */
+/** Diamond and colour-stone codes for their type-to-search boxes; rendered once per builder. */
 export function MaterialDatalists({ lists }: { lists: Lists }) {
   return (
     <>
-      <datalist id="qb-metals">
-        {lists.metals.map((m) => (
-          <option key={m.code} value={m.code}>{`${m.karat}K ${m.tone ?? ""} · ${m.name}`}</option>
-        ))}
-      </datalist>
       <datalist id="qb-codes-D">
         {lists.diamonds.map((m) => (
           <option key={m.code} value={m.code}>{m.name}</option>
@@ -203,6 +203,49 @@ function nextStone(stone: StoneRow, patch: Partial<StoneRow>, lists: Lists): Sto
     next.rate = rate != null ? String(rate) : "";
   }
   return next;
+}
+
+/**
+ * A design's default materials as the builder takes them: its gold, its
+ * stones, and a note of what it did not bring. A design in a gold the shop
+ * does not quote in (10K, 22K…) comes without its gold or its weight; the note
+ * says so, and that line is not one of the charges it counts as left out.
+ */
+export function readStyle(bom: StyleBom, lists: Lists, master: MaterialMaster | undefined) {
+  const metalLine = bom.lines.find((l) => lists.metals.some((m) => m.code === l.code));
+  const unoffered = metalLine ? undefined : bom.lines.find((l) => master?.metals.some((m) => m.code === l.code));
+  const stones: StoneRow[] = [];
+  let skipped = 0;
+  for (const l of bom.lines) {
+    if (l === metalLine || l === unoffered) continue;
+    const d = lists.diamonds.find((m) => m.code === l.code);
+    const c = d ? undefined : lists.stones.find((m) => m.code === l.code);
+    if (!d && !c) {
+      skipped += 1;
+      continue;
+    }
+    const base = emptyStone(d ? "D" : "C");
+    stones.push(
+      nextStone(
+        base,
+        {
+          code: l.code,
+          size: l.size ?? "",
+          carats: l.weight ? round2(l.weight).toFixed(2) : "",
+          ...(l.pieces ? { pieces: String(l.pieces) } : {}),
+        },
+        lists,
+      ),
+    );
+  }
+  const note = [
+    `${stones.length} stone line${stones.length === 1 ? "" : "s"}`,
+    unoffered ? `its gold is not ${QUOTE_KARATS_TEXT} — pick the metal and type the weight` : "",
+    skipped ? `${skipped} other line${skipped === 1 ? "" : "s"} (charges) left out` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return { metalLine, stones, note };
 }
 
 /** Today's rate for a karat, and how much to trust it. */
@@ -269,32 +312,7 @@ export function QuoteItemEditor({
     setLoading(true);
     try {
       const bom = await fetchStyle(code);
-      const metalLine = bom.lines.find((l) => lists.metals.some((m) => m.code === l.code));
-      const stones: StoneRow[] = [];
-      let skipped = 0;
-      for (const l of bom.lines) {
-        if (l === metalLine) continue;
-        const d = lists.diamonds.find((m) => m.code === l.code);
-        const c = d ? undefined : lists.stones.find((m) => m.code === l.code);
-        if (!d && !c) {
-          skipped += 1;
-          continue;
-        }
-        const base = emptyStone(d ? "D" : "C");
-        stones.push(
-          nextStone(
-            base,
-            {
-              code: l.code,
-              size: l.size ?? "",
-              carats: l.weight ? round2(l.weight).toFixed(2) : "",
-              ...(l.pieces ? { pieces: String(l.pieces) } : {}),
-            },
-            lists,
-          ),
-        );
-      }
-      const heavyMetal = bom.lines.find((l) => master?.metals.some((m) => m.code === l.code)) && !metalLine;
+      const { metalLine, stones, note } = readStyle(bom, lists, master);
       onChange({
         ...item,
         styleNumber: bom.styleCode,
@@ -305,15 +323,7 @@ export function QuoteItemEditor({
         weight: metalLine ? String(metalLine.weight) : item.weight,
         stones,
       });
-      toast.success(`Loaded ${bom.styleCode}`, {
-        description: [
-          `${stones.length} stone line${stones.length === 1 ? "" : "s"}`,
-          heavyMetal ? "its gold is not 9/12/14/18/22/24K — pick the metal" : "",
-          skipped ? `${skipped} other line${skipped === 1 ? "" : "s"} (charges) left out` : "",
-        ]
-          .filter(Boolean)
-          .join(" · "),
-      });
+      toast.success(`Loaded ${bom.styleCode}`, { description: note });
     } catch (e) {
       toast.error(apiErrorMessage(e, `No style ${code} in the item master.`));
     } finally {
@@ -359,18 +369,13 @@ export function QuoteItemEditor({
       <div className="grid gap-3 sm:grid-cols-[1.2fr_1.2fr_1fr]">
         <div className="grid gap-1.5">
           <Label>Item type</Label>
-          <Select value={item.itemType} onValueChange={(v) => set({ itemType: v })}>
-            <SelectTrigger aria-label={`Item ${index + 1} type`}>
-              <SelectValue placeholder="Ring, pendant…" />
-            </SelectTrigger>
-            <SelectContent>
-              {lists.itemTypes.map((t) => (
-                <SelectItem key={t.code} value={t.code}>
-                  <span className="font-mono text-xs text-muted-foreground">{t.code}</span> {t.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SearchSelect
+            aria-label={`Item ${index + 1} type`}
+            options={lists.itemTypes}
+            value={item.itemType}
+            onChange={(code) => set({ itemType: code })}
+            placeholder="Type ring, pendant, ALR…"
+          />
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor={`qb-style-${item.id}`}>Style no.</Label>
@@ -479,17 +484,13 @@ export function QuoteItemEditor({
         {/* Gold */}
         <div className={ROW}>
           <span className={cn(KIND, "border-amber-300 text-amber-700 dark:text-amber-300")}>Gold</span>
-          <Input
+          <SearchSelect
             aria-label={`Item ${index + 1} metal`}
-            list="qb-metals"
+            options={lists.metals}
             value={item.metalCode}
-            // Type to search: "14", "WG", "G18"… and pick. A new metal is a new
-            // rate, so a rate typed for the old one is dropped.
-            onChange={(e) => set({ metalCode: e.target.value.toUpperCase().trim(), manualRate: "" })}
+            // Type to search: "14", "18K", "WG", "G18"… and pick.
+            onChange={(code) => onChange(withMetal(item, code))}
             placeholder="Metal — type 14, WG, G18YG…"
-            autoComplete="off"
-            aria-invalid={!!item.metalCode && !metal}
-            className={cn(!!item.metalCode && !metal && "border-destructive")}
           />
           <span />
           <div className="col-span-3 grid grid-cols-4 gap-x-1.5 gap-y-0.5 md:contents">

@@ -95,11 +95,15 @@ export class MetaLeadAdapter implements MetaLeadSink, OnModuleInit {
      * default store if one is configured — and left unassigned rather than
      * pushed to an arbitrary branch.
      */
-    const route = await this.adSetRules.resolve(lead.organisationId, {
-      ...(lead.adId ? { adId: lead.adId } : {}),
-      ...(lead.adSetId ? { adSetId: lead.adSetId } : {}),
-      ...(lead.adSetName ? { adSetName: lead.adSetName } : {}),
-    });
+    const route = await this.adSetRules.resolve(
+      lead.organisationId,
+      {
+        ...(lead.adId ? { adId: lead.adId } : {}),
+        ...(lead.adSetId ? { adSetId: lead.adSetId } : {}),
+        ...(lead.adSetName ? { adSetName: lead.adSetName } : {}),
+      },
+      'crm',
+    );
 
     const storeId = route?.storeId ?? (await this.defaultStoreId(lead.organisationId));
     if (!storeId) {
