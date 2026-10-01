@@ -22,6 +22,9 @@ import { useT } from "@/lib/i18n";
  * Preferred order for the thumb-reachable bottom tabs; we render the first four
  * the current role can actually see (a salesperson has no Dashboards, so they
  * get Quotation instead). Everything else lives in "More".
+ *
+ * Attendance comes last: sales staff on attendance only can open none of the
+ * others, and their bar would otherwise be a lone "More" button.
  */
 const PREFERRED_PRIMARY = [
   "dashboards",
@@ -30,7 +33,13 @@ const PREFERRED_PRIMARY = [
   "catalogue",
   "checkins",
   "reminders",
+  "hrms",
 ] as const;
+
+/** The bottom tabs for somebody who can see the screens in `visible`. */
+export function primaryTabSlugs(visible: ReadonlySet<string>): string[] {
+  return PREFERRED_PRIMARY.filter((s) => visible.has(s)).slice(0, 4);
+}
 
 function Tab({
   href,
@@ -92,8 +101,7 @@ export function MobileNav() {
   const visibleSlugs = new Set(
     groups.flatMap((g) => g.items.map((i) => i.slug)),
   );
-  const primary = PREFERRED_PRIMARY.filter((s) => visibleSlugs.has(s))
-    .slice(0, 4)
+  const primary = primaryTabSlugs(visibleSlugs)
     .map((slug) => NAV_ITEMS.find((i) => i.slug === slug)!)
     .filter(Boolean);
   const primarySlugs = primary.map((i) => i.slug);
