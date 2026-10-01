@@ -1,18 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ImagePlus, Plus, Sparkles, Wrench, X } from "lucide-react";
+import { ArrowLeft, ChevronDown, ImagePlus, Plus, Sparkles, Wrench, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -56,6 +48,7 @@ import {
   emptyStone,
   masterLists,
   num,
+  pct,
   priceItem,
   round2,
   sizeText,
@@ -81,9 +74,9 @@ function escapeHtml(s: string): string {
 
 type QuoteLineInput = Omit<QuoteLine, "id">;
 
-interface QuoteBuilderDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+interface QuoteBuilderProps {
+  /** Called once the quote (or custom order) is saved, or the screen is left. */
+  onDone: () => void;
 }
 
 /**
@@ -91,18 +84,18 @@ interface QuoteBuilderDialogProps {
  *
  * A sale quote is one or more items, each priced from the item master: gold by
  * item code and weight at today's rate, making per gram x weight, and diamonds
- * (D) and colour stones (C) by code and size at a rate per carat x a staff-only
- * multiplier. A style number loads the design's default materials. Discounts:
- * % off making, % off stones, then a flat amount; never into the gold. Repair
- * mode is making-only. The live preview mirrors the server formula.
+ * (D) and colour stones (C) by code at a rate per carat. A style number loads
+ * the design's default materials. Every line has its own discount %, the way
+ * the shop's bill prints them, then a flat amount at the end. Repair mode is
+ * making-only. The live preview mirrors the server formula.
+ *
+ * A whole screen rather than a popup: with two or three items it is a long
+ * form, and the shop asked for room.
  *
  * Keyboard: Alt+N new item, Alt+D diamond, Alt+C colour stone (on the item
  * being edited), Ctrl+Enter creates the quote.
  */
-export function QuoteBuilderDialog({
-  open,
-  onOpenChange,
-}: QuoteBuilderDialogProps) {
+export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
   const { targetStoreId, storeLabel, pickedStoreId, setPickedStoreId } =
     useStoreScope();
   const createQuote = useCreateQuote();
@@ -132,9 +125,9 @@ export function QuoteBuilderDialog({
   const [remarks, setRemarks] = useState("");
   const [repairMaking, setRepairMaking] = useState("");
 
-  // Discounts: % off making, % off diamonds and stones, a flat amount at the end.
+  // A sale gives its discounts line by line (in each item). What is left here:
+  // the % off a repair's making, and the flat amount at the end of either.
   const [makingDiscount, setMakingDiscount] = useState("");
-  const [stoneDiscount, setStoneDiscount] = useState("");
   const [additionalDiscount, setAdditionalDiscount] = useState("");
 
   // Reference photos (uploaded after the quote id is known)
@@ -143,17 +136,14 @@ export function QuoteBuilderDialog({
 
   // Custom-order details (revealed for the "Custom Order" action)
   const [customOpen, setCustomOpen] = useState(false);
-  const [metalColorSel, setMetalColorSel] = useState("");
-  const [metalColorOther, setMetalColorOther] = useState("");
   const [deliveryDate, setDeliveryDate] = useState("");
   const [advance, setAdvance] = useState("");
   const [advanceMode, setAdvanceMode] = useState("");
 
+  // Production still needs the colour; it is the gold item's own tone, so it is
+  // no longer asked for a second time.
   const firstMetal = lists.metals.find((m) => m.code === items[0]?.metalCode);
-  const metalColor =
-    metalColorSel === "other"
-      ? metalColorOther.trim()
-      : metalColorSel || (firstMetal?.tone ? TONE_COLOUR[firstMetal.tone] ?? "" : "");
+  const metalColor = firstMetal?.tone ? TONE_COLOUR[firstMetal.tone] ?? "" : "";
   const itemTypeName = (code: string) => lists.itemTypes.find((t) => t.code === code)?.name ?? "";
 
   /*
@@ -189,8 +179,7 @@ export function QuoteBuilderDialog({
 
   const repairMakingNum = num(repairMaking) ?? 0;
   const disc = {
-    making: Math.min(Math.max(num(makingDiscount) ?? 0, 0), 100),
-    stone: Math.min(Math.max(num(stoneDiscount) ?? 0, 0), 100),
+    making: mode === "repair" ? pct(makingDiscount) : 0,
     additional: Math.max(num(additionalDiscount) ?? 0, 0),
   };
 
@@ -202,29 +191,36 @@ export function QuoteBuilderDialog({
     let metal = 0;
     let making = repairMakingNum;
     let stones = 0;
+    let metalOff = 0;
+    let makingOff = (repairMakingNum * disc.making) / 100;
+    let stoneOff = 0;
     if (mode === "sale") {
       making = 0;
+      makingOff = 0;
       for (const it of items) {
         const p = priceItem(it, goldRateOf(it));
         metal += p.metal;
         making += p.making;
         stones += p.stoneTotal;
+        metalOff += p.metalOff;
+        makingOff += p.makingOff;
+        stoneOff += p.stoneOff;
       }
     }
-    const makingOff = round2((making * disc.making) / 100);
-    const byPercent = (making * disc.making + stones * disc.stone) / 100;
-    const discount = round2(byPercent + disc.additional);
+    const discount = round2(metalOff + makingOff + stoneOff + disc.additional);
     const taxable = metal + making + stones - discount;
     const gst = taxable * rate;
     return {
       metal,
       making,
       stones,
-      makingOff,
-      stoneOff: round2(byPercent - makingOff),
+      metalOff: round2(metalOff),
+      makingOff: round2(makingOff),
+      stoneOff: round2(stoneOff),
       additional: disc.additional,
       discount,
-      overDiscount: disc.additional > round2(making + stones - byPercent) + 0.001,
+      // The flat amount may not reach into the gold.
+      overDiscount: disc.additional > round2(making + stones - makingOff - stoneOff) + 0.001,
       taxable,
       gst,
       grand: taxable + gst,
@@ -275,12 +271,9 @@ export function QuoteBuilderDialog({
     setRemarks("");
     setRepairMaking("");
     setMakingDiscount("");
-    setStoneDiscount("");
     setAdditionalDiscount("");
     setRefFiles([]);
     setCustomOpen(false);
-    setMetalColorSel("");
-    setMetalColorOther("");
     setDeliveryDate("");
     setAdvance("");
     setAdvanceMode("");
@@ -319,6 +312,11 @@ export function QuoteBuilderDialog({
           size: sizeText(it) || undefined,
           metalCode: hasGold ? it.metalCode : undefined,
           makingRatePerGram: hasGold ? num(it.makingRate) ?? 0 : undefined,
+          // Always sent, 0 included: a line with no % of its own would take the
+          // quote's, and a sale quote no longer has one.
+          metalDiscountPercent: pct(it.metalDiscount),
+          makingDiscountPercent: pct(it.makingDiscount),
+          remark: it.remark.trim() || undefined,
           stones: it.stones.length
             ? it.stones.map((s) => ({
                 type: s.type,
@@ -327,7 +325,7 @@ export function QuoteBuilderDialog({
                 pieces: num(s.pieces),
                 carats: round2(num(s.carats) ?? 0),
                 ratePerCt: num(s.rate) ?? 0,
-                multiplier: num(s.multiplier) ?? 1,
+                discountPercent: pct(s.discount),
               }))
             : undefined,
         };
@@ -357,6 +355,10 @@ export function QuoteBuilderDialog({
           return `${n}: ${s.code} is not a ${s.type === "D" ? "diamond" : "colour stone"} code — pick one from the list.`;
         }
         if (!((num(s.carats) ?? 0) > 0)) return `${n}: ${s.code} needs its carats.`;
+        if ((num(s.discount) ?? 0) > 100) return `${n}: ${s.code} has a discount over 100%.`;
+      }
+      if ((num(it.metalDiscount) ?? 0) > 100 || (num(it.makingDiscount) ?? 0) > 100) {
+        return `${n}: a discount cannot be more than 100%.`;
       }
       if (sizeText(it).length > 30) return `${n}: the size is too long.`;
     }
@@ -391,6 +393,7 @@ export function QuoteBuilderDialog({
           )}</td></tr>`,
       )
       .join("");
+    const lessAdditional = round2(preview.discount - preview.additional);
     return `<!doctype html><html><head><title>${escapeHtml(
       ref,
     )}</title><meta charset="utf-8"/><style>
@@ -410,7 +413,7 @@ export function QuoteBuilderDialog({
       <table class="tot" style="margin-top:16px"><tbody>
         ${
           preview.discount > 0
-            ? `<tr><td>Discount</td><td style="text-align:right">- ${formatINR(preview.discount)}</td></tr>`
+            ? `<tr><td>Discount${lessAdditional > 0 && preview.additional > 0 ? " (lines + additional)" : ""}</td><td style="text-align:right">- ${formatINR(preview.discount)}</td></tr>`
             : ""
         }
         <tr><td>Taxable</td><td style="text-align:right">${formatINR(
@@ -473,7 +476,7 @@ export function QuoteBuilderDialog({
       return;
     }
     if (preview.overDiscount) {
-      toast.error("The discount comes to more than the making and diamonds. Gold is never discounted.");
+      toast.error("The additional discount is more than the making and diamonds that are left.");
       return;
     }
 
@@ -487,7 +490,6 @@ export function QuoteBuilderDialog({
         remarks: mode === "repair" ? remarks.trim() || undefined : undefined,
         grossWeightG: mode === "repair" ? num(grossWeight) : undefined,
         makingDiscountPercent: disc.making || undefined,
-        stoneDiscountPercent: disc.stone || undefined,
         additionalDiscount: disc.additional || undefined,
         lines: buildLines(),
       });
@@ -517,7 +519,7 @@ export function QuoteBuilderDialog({
         });
       }
       reset();
-      onOpenChange(false);
+      onDone();
     } catch (e) {
       toast.error(apiErrorMessage(e, "Could not create the quote. Please try again."));
     }
@@ -548,21 +550,19 @@ export function QuoteBuilderDialog({
   }
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(o) => {
-        if (!o) reset();
-        onOpenChange(o);
-      }}
-    >
-      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-4xl" onKeyDown={onShortcut}>
-        <DialogHeader>
-          <DialogTitle>New quote</DialogTitle>
-          <DialogDescription>
-            Raised at {storeLabel}. Gold is priced at today&apos;s rate unless you
-            type another.
-          </DialogDescription>
-        </DialogHeader>
+    <div className="mx-auto w-full max-w-5xl md:pb-24" onKeyDown={onShortcut}>
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold tracking-tight">New quote</h1>
+            <p className="text-sm text-muted-foreground">
+              Raised at {storeLabel}. Gold is priced at today&apos;s rate unless you
+              type another.
+            </p>
+          </div>
+          <Button variant="outline" size="sm" className="shrink-0" onClick={onDone} disabled={busy}>
+            <ArrowLeft className="h-4 w-4" /> Back to quotes
+          </Button>
+        </div>
 
         <MaterialDatalists lists={lists} />
 
@@ -766,25 +766,15 @@ export function QuoteBuilderDialog({
           {/* Discounts — judged on the server against the role's cap. Above it,
               the quote waits for a manager before it can be sent. */}
           <div className="grid gap-1.5">
-            <div className={cn("grid gap-3", mode === "sale" ? "grid-cols-3" : "grid-cols-2")}>
-              <div className="grid gap-1.5">
-                <Label htmlFor="qb-disc-making">Making discount %</Label>
-                <Input
-                  id="qb-disc-making"
-                  inputMode="decimal"
-                  value={makingDiscount}
-                  onChange={(e) => setMakingDiscount(e.target.value.replace(/[^0-9.]/g, ""))}
-                  placeholder="0"
-                />
-              </div>
-              {mode === "sale" ? (
+            <div className="grid max-w-md grid-cols-2 gap-3">
+              {mode === "repair" ? (
                 <div className="grid gap-1.5">
-                  <Label htmlFor="qb-disc-stone">Diamond discount %</Label>
+                  <Label htmlFor="qb-disc-making">Making discount %</Label>
                   <Input
-                    id="qb-disc-stone"
+                    id="qb-disc-making"
                     inputMode="decimal"
-                    value={stoneDiscount}
-                    onChange={(e) => setStoneDiscount(e.target.value.replace(/[^0-9.]/g, ""))}
+                    value={makingDiscount}
+                    onChange={(e) => setMakingDiscount(e.target.value.replace(/[^0-9.]/g, ""))}
                     placeholder="0"
                   />
                 </div>
@@ -802,8 +792,8 @@ export function QuoteBuilderDialog({
               </div>
             </div>
             <p className="text-xs text-muted-foreground">
-              Gold is never discounted. Above your limit, a manager must approve
-              before the quote can be sent.
+              {mode === "sale" ? "Each line's own discount is in its item above. " : ""}
+              Above your limit, a manager must approve before the quote can be sent.
             </p>
           </div>
 
@@ -822,12 +812,9 @@ export function QuoteBuilderDialog({
               ) : (
                 <PreviewRow label="Making / labour" value={preview.making} />
               )}
-              {preview.makingOff > 0 ? (
-                <PreviewRow label={`Making discount ${disc.making}%`} value={-preview.makingOff} />
-              ) : null}
-              {preview.stoneOff > 0 ? (
-                <PreviewRow label={`Diamond discount ${disc.stone}%`} value={-preview.stoneOff} />
-              ) : null}
+              {preview.metalOff > 0 ? <PreviewRow label="Gold discount" value={-preview.metalOff} /> : null}
+              {preview.makingOff > 0 ? <PreviewRow label="Making discount" value={-preview.makingOff} /> : null}
+              {preview.stoneOff > 0 ? <PreviewRow label="Diamond discount" value={-preview.stoneOff} /> : null}
               {preview.additional > 0 ? (
                 <PreviewRow label="Additional discount" value={-preview.additional} />
               ) : null}
@@ -875,32 +862,7 @@ export function QuoteBuilderDialog({
                   </span>
                   . All optional.
                 </p>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="qb-metal">Metal colour</Label>
-                    <Select value={metalColorSel} onValueChange={setMetalColorSel}>
-                      <SelectTrigger id="qb-metal">
-                        <SelectValue placeholder={metalColor || "Select metal colour"} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {METAL_COLOR_PRESETS.map((c) => (
-                          <SelectItem key={c} value={c}>
-                            {c}
-                          </SelectItem>
-                        ))}
-                        <SelectItem value="other">
-                          Other (platinum / silver…)
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {metalColorSel === "other" ? (
-                      <Input
-                        value={metalColorOther}
-                        onChange={(e) => setMetalColorOther(e.target.value)}
-                        placeholder="e.g. Platinum"
-                      />
-                    ) : null}
-                  </div>
+                <div className="grid gap-3 sm:grid-cols-3">
                   <div className="grid gap-1.5">
                     <Label htmlFor="qb-delivery">Delivery date</Label>
                     <Input
@@ -941,22 +903,30 @@ export function QuoteBuilderDialog({
           </div>
         </div>
 
-        <DialogFooter className="gap-2 sm:items-center sm:justify-between">
-          <p className="hidden text-[11px] text-muted-foreground sm:block">
-            Alt+N item · Alt+D diamond · Alt+C colour stone · Ctrl+Enter save
-          </p>
-          <div className="flex flex-col-reverse gap-2 sm:flex-row">
-            <Button variant="outline" onClick={() => void submit(false)} disabled={busy}>
-              {busy ? "Working…" : "Create Quote"}
-            </Button>
-            <Button variant="gold" onClick={onCustomOrderClick} disabled={busy}>
-              <Sparkles className="h-4 w-4" />
-              {customOpen ? "Create Custom Order" : "Custom Order"}
-            </Button>
+        {/* The total and the two ways out stay in reach however long the form gets.
+            Pinned on a desktop; on a phone the bottom is the menu's, so there
+            it simply closes the form. */}
+        <div className="mt-4 border-t bg-background/95 md:fixed md:inset-x-0 md:bottom-0 md:left-68 md:z-30 md:mt-0 md:backdrop-blur">
+          <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-2 py-2.5 md:px-4">
+            <div>
+              <p className="text-xs text-muted-foreground">Grand total</p>
+              <p className="num text-lg font-semibold">{formatINR(preview.grand)}</p>
+            </div>
+            <p className="hidden text-[11px] text-muted-foreground lg:block">
+              Alt+N item · Alt+D diamond · Alt+C colour stone · Ctrl+Enter save
+            </p>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => void submit(false)} disabled={busy}>
+                {busy ? "Working…" : "Create Quote"}
+              </Button>
+              <Button variant="gold" onClick={onCustomOrderClick} disabled={busy}>
+                <Sparkles className="h-4 w-4" />
+                {customOpen ? "Create Custom Order" : "Custom Order"}
+              </Button>
+            </div>
           </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </div>
+    </div>
   );
 }
 
