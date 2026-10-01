@@ -406,6 +406,10 @@ describe('Backfill of the platform an ad lead came from (e2e)', () => {
       expect(await exited).toBe(0);
       expect(lineFor(out, ids.setMeanwhile)).toContain('left alone: a platform was set while this ran');
       expect(out).toContain('Written 0 of 5.');
+      // The closing lines speak for every thread left alone, and this one is
+      // not empty. So they say what this run did, not what the threads hold.
+      expect(out).toContain('Conversations left alone were not written by this run.');
+      expect(out).not.toContain('keep sourcePlatform NULL');
       expect((await platforms()).setMeanwhile).toBe('facebook');
     });
   });

@@ -212,9 +212,13 @@ async function main() {
     `\n${APPLY ? 'Written' : 'DRY RUN - nothing written. Would write'} ${done} of ${rows.length}${detail(written)}.`,
   );
   console.log(`Left alone ${rows.length - done}${detail(leftAlone)}.`);
+  // The closing lines claim only what this run did. A thread left alone is not
+  // always still empty (its platform may have been set meanwhile), and its
+  // platform is not always unknowable: only the touch was read here, and the
+  // referral is also kept on the thread's first message.
   console.log(
     APPLY
-      ? 'Conversations left alone keep sourcePlatform NULL and show the plain "Ad Lead" chip,\nwhich is the honest outcome - nothing on record says which platform it was.'
+      ? 'Conversations left alone were not written by this run. The reason for each is on its line above.\nThose still without a platform show the plain "Ad Lead" chip.'
       : 'Re-run with --apply --organisation <slug or id> once the mapping above looks right.',
   );
 }
