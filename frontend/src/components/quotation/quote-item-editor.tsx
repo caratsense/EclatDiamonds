@@ -122,6 +122,9 @@ export const sizeText = (item: ItemRow) => {
   return s && item.sizeUnit ? `${s} ${item.sizeUnit}` : s;
 };
 
+/** The item in another metal. A new metal is a new rate, so a rate typed for the old one is dropped. */
+export const withMetal = (item: ItemRow, metalCode: string): ItemRow => ({ ...item, metalCode, manualRate: "" });
+
 /**
  * What an item comes to, worked out the way the server does: each line's
  * amount, and what its own discount takes off it.
@@ -149,9 +152,11 @@ export function masterLists(master: MaterialMaster | undefined) {
   const missing = QUOTE_KARATS.filter((k) => !metals.some((m) => m.karat === k));
   return {
     itemTypes: master?.itemTypes.length ? master.itemTypes : ITEM_TYPES_FALLBACK,
-    metals: [...metals, ...metalsFor(missing)].sort(
-      (a, b) => (a.karat ?? 0) - (b.karat ?? 0) || a.code.localeCompare(b.code),
-    ),
+    metals: [...metals, ...metalsFor(missing)]
+      .sort((a, b) => (a.karat ?? 0) - (b.karat ?? 0) || a.code.localeCompare(b.code))
+      // A metal is also found by its karat and colour as the screen writes
+      // them ("18K", "14K WG"); its code and name (G18WG GOLD18WG) have no K.
+      .map((m) => ({ ...m, keywords: `${m.karat}K ${m.tone ?? ""}` })),
     diamonds: master?.diamonds ?? [],
     stones: master?.stones ?? [],
     sizes: master?.sizes ?? [],
@@ -472,9 +477,8 @@ export function QuoteItemEditor({
             aria-label={`Item ${index + 1} metal`}
             options={lists.metals}
             value={item.metalCode}
-            // Type to search: "14", "WG", "G18"… and pick. A new metal is a new
-            // rate, so a rate typed for the old one is dropped.
-            onChange={(code) => set({ metalCode: code, manualRate: "" })}
+            // Type to search: "14", "18K", "WG", "G18"… and pick.
+            onChange={(code) => onChange(withMetal(item, code))}
             placeholder="Metal — type 14, WG, G18YG…"
           />
           <span />

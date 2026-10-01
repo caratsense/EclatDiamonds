@@ -1,11 +1,9 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import { matchOptions } from "@/components/ui/search-select";
 import type { MaterialMaster, MaterialOption } from "@/lib/queries/materials";
 
 import {
@@ -15,6 +13,7 @@ import {
   QuoteItemEditor,
   emptyItem,
   masterLists,
+  withMetal,
 } from "./quote-item-editor";
 
 /**
@@ -70,8 +69,7 @@ describe("an item's type and metal", () => {
   /*
    * The editor is rendered once on the server, with a type and a metal already
    * chosen, to read the two boxes the way the screen and the browser tests do.
-   * Nothing can be typed without a DOM, so what a change does is pinned on the
-   * source instead.
+   * What typing and picking in them do is the search box's own, tested with it.
    */
   const html = renderToStaticMarkup(
     createElement(
@@ -89,7 +87,8 @@ describe("an item's type and metal", () => {
     ),
   );
   const box = (name: string) => html.match(new RegExp(`<input[^>]*aria-label="${name}"[^>]*>`))?.[0] ?? "";
-  const source = readFileSync(fileURLToPath(new URL("./quote-item-editor.tsx", import.meta.url)), "utf8");
+  const metalsFound = (master: MaterialMaster | undefined, text: string) =>
+    matchOptions(masterLists(master).metals, text).map((m) => m.code);
 
   it("are search boxes still named 'Item N type' and 'Item N metal'", () => {
     expect(box("Item 1 type")).toContain('role="combobox"');
@@ -110,7 +109,18 @@ describe("an item's type and metal", () => {
     expect(datalists).toContain("qb-codes-C");
   });
 
+  it("find a metal by its karat and colour as the screen writes them", () => {
+    // "18K · today's rate" and "pick the metal (9/12/14/18K)" sit beside the box.
+    expect(metalsFound(undefined, "18K")).toEqual(["G18PG", "G18WG", "G18YG"]);
+    expect(metalsFound(undefined, "14k wg")).toEqual(["G14WG"]);
+    // The master's own metals too, whose tone can be two colours.
+    const master = masterWith([gold(14, "YG"), gold(18, "W/YG"), gold(18, "YG"), gold(22, "YG")]);
+    expect(metalsFound(master, "18k")).toEqual(["G18W/YG", "G18YG"]);
+    expect(metalsFound(master, "22K")).toEqual([]);
+  });
+
   it("drop a gold rate typed by hand when the metal changes", () => {
-    expect(source).toContain('onChange={(code) => set({ metalCode: code, manualRate: "" })}');
+    const item = { ...emptyItem(), metalCode: "G14YG", weight: "3.5", manualRate: "6000" };
+    expect(withMetal(item, "G18WG")).toEqual({ ...item, metalCode: "G18WG", manualRate: "" });
   });
 });
