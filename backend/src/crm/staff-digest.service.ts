@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { Prisma, Role } from '@prisma/client';
 
-import { canOpen } from '../auth/access';
+import { canOpen, startsAttendanceOnly } from '../auth/access';
 import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
 import { StoreScopeService } from '../common/store-scope.service';
@@ -270,6 +270,10 @@ export class StaffDigestService {
     }
 
     const day = businessDate(now, tz);
+    // Whether this workspace starts its sales staff on attendance only
+    // (auth/access.ts). Only there is anybody left out below. Everywhere else the
+    // digest goes out as it always has, whatever is switched off for one person.
+    const underRule = startsAttendanceOnly(Role.salesperson, organisationId);
     const staff = await this.prisma.user.findMany({
       where: {
         organisationId,
@@ -286,11 +290,13 @@ export class StaffDigestService {
       // What they hold reaches the managers of the branch it sits in, as a number.
       // ponytail: store managers only. Where a branch has none who can open CRM,
       // nobody is told; send the number to head office if a branch runs that way.
-      if (!canOpen(person, 'crm')) continue;
+      if (underRule && !canOpen(person, 'crm')) continue;
       const { due, overdue } = await this.linesFor(person.id, organisationId, tz, now);
       const own = due.length + overdue.length;
       const others =
-        person.role === Role.store_manager ? await this.heldByOthers(organisationId, person.id, day) : 0;
+        underRule && person.role === Role.store_manager
+          ? await this.heldByOthers(organisationId, person.id, day)
+          : 0;
       if (!own && !others) continue;
 
       /*

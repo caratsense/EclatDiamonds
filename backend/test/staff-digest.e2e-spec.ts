@@ -33,13 +33,17 @@ import * as bcrypt from 'bcryptjs';
  *  6. THE PREVIEW IS YOUR OWN. It exists so somebody can see what they will get,
  *     not so they can read a colleague's customers.
  *
- *  7. NOBODY IS SENT A LIST THEY CANNOT OPEN. Somebody who cannot open CRM gets
- *     no digest. The follow-ups they hold are counted instead, and each manager
- *     who can open CRM is told the number for the branches they run: one more
- *     line in the manager's own digest, or a digest for that alone. A follow-up
- *     counts for the branch it sits in, wherever its owner works now, because
- *     that is where a manager can open it. Somebody who manages two branches is
- *     told about both in the one digest.
+ *  7. NOBODY IS SENT A LIST THEY CANNOT OPEN, where sales staff start with
+ *     attendance only. Somebody there who cannot open CRM gets no digest. The
+ *     follow-ups they hold are counted instead, and each manager who can open
+ *     CRM is told the number for the branches they run: one more line in the
+ *     manager's own digest, or a digest for that alone. A follow-up counts for
+ *     the branch it sits in, wherever its owner works now, because that is
+ *     where a manager can open it. Somebody who manages two branches is told
+ *     about both in the one digest.
+ *
+ *  8. A WORKSPACE WITHOUT THAT RULE GETS WHAT IT ALWAYS GOT, even for somebody
+ *     head office has switched CRM off for by hand.
  */
 
 const PASSWORD = 'password123';
@@ -188,7 +192,8 @@ describe('Staff digest (e2e)', () => {
       // Head office has given this salesperson CRM back.
       ['u_dig_b_rep2', 'salesperson', B.store, { crm: 'own' }],
       ['u_dig_b_rep3', 'salesperson', B.store2, undefined],
-      ['u_dig_b_rep4', 'salesperson', B.store, undefined],
+      // Head office has switched CRM off for this salesperson by hand, rule or no rule.
+      ['u_dig_b_rep4', 'salesperson', B.store, { crm: 'none' }],
     ] as const) {
       await prisma.user.create({
         data: {
@@ -370,12 +375,13 @@ describe('Staff digest (e2e)', () => {
     delete process.env[VARIABLE];
     const ran = await digest.runForStore(B.org, B.store, 'Asia/Kolkata', nineAmIst);
     expect(ran.sent).toBe(5);
-    // The sales staff can open CRM here, so each list is its owner's and no manager hears of it.
+    // Each list is its owner's and no manager hears of anybody else's.
     expect(await bellsB()).toEqual({
       u_dig_b_mgr: ['2 follow-ups today', '1 of them are overdue.', '/calling'],
       u_dig_b_rep: ['3 follow-ups today', '1 of them are overdue.', '/calling'],
       u_dig_b_rep2: ['1 follow-ups today', null, '/calling'],
       u_dig_b_rep3: ['1 follow-ups today', null, '/calling'],
+      // CRM switched off by hand. The digest changes only under the rule, so it still comes.
       u_dig_b_rep4: ['1 follow-ups today', null, '/calling'],
     });
   });

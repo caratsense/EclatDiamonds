@@ -35,6 +35,8 @@ import { PrismaService } from '../src/prisma/prisma.service';
 const PASSWORD = 'password123';
 const A = { org: 'org_dgo_a', slug: 'dgo-a', store: 'store_dgo_a', integ: 'int_dgo_a' };
 const TEMPLATE = 'staff_morning_digest';
+/** Lists the workspaces whose sales staff start with attendance only (auth/access.ts). */
+const VARIABLE = 'ATTENDANCE_ONLY_SALES_ORGS';
 
 class FakeWhatsApp {
   sends: { to: string; name: string; languageCode?: string; route?: { storeId?: string | null } }[] = [];
@@ -94,6 +96,7 @@ describe('Staff digest through the outbox (e2e)', () => {
   let omnichannel: OmnichannelService;
   const whatsapp = new FakeWhatsApp();
   let hoToken = '';
+  const listedBefore = process.env[VARIABLE];
 
   const ymd = dateOnly(businessDate(new Date(), 'Asia/Kolkata'));
   const nineAmIst = new Date(`${ymd}T03:30:00.000Z`);
@@ -200,6 +203,8 @@ describe('Staff digest through the outbox (e2e)', () => {
   }, 120_000);
 
   afterAll(async () => {
+    if (listedBefore === undefined) delete process.env[VARIABLE];
+    else process.env[VARIABLE] = listedBefore;
     if (prisma) await teardown(prisma);
     if (app) await app.close();
   });
@@ -368,17 +373,20 @@ describe('Staff digest through the outbox (e2e)', () => {
   });
 
   it("a store manager's number covers the follow-ups with staff who cannot open CRM", async () => {
-    const joins = (id: string, role: Role, phone: string, accessOverrides?: { crm: 'none' }) =>
+    // The mornings above are done with. From here sales staff start with attendance only.
+    await prisma.leadFollowUp.updateMany({ where: { lead: { organisationId: A.org } }, data: { done: true } });
+    process.env[VARIABLE] = A.org;
+    const joins = (id: string, role: Role, phone: string) =>
       prisma.user.create({
         data: {
           id, email: `${id}@dgo-a.local`, name: `${id} Person`, role, isActive: true,
-          approvalStatus: 'approved', organisationId: A.org, phone, accessOverrides,
+          approvalStatus: 'approved', organisationId: A.org, phone,
           userStores: { create: { storeId: A.store, isPrimary: true } },
         },
       });
     await joins('u_dgo_mgr', Role.store_manager, '9812370005');
-    // Head office has switched CRM off for this one, who still holds a lead.
-    await joins('u_dgo_off', Role.salesperson, '9812370006', { crm: 'none' });
+    // Cannot open CRM, and still holds a lead.
+    await joins('u_dgo_off', Role.salesperson, '9812370006');
     await owe('u_dgo_mgr', 'DGO-5');
     await owe('u_dgo_off', 'DGO-6');
 
