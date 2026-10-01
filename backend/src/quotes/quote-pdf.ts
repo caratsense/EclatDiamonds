@@ -45,6 +45,10 @@ export interface QuotePdfData {
     hsn?: string | null;
     certificateNo?: string | null;
     makingRatePerGram: number | null;
+    /** % off this item's gold and making; null means the quote's own % applies. */
+    metalDiscountPercent?: number | null;
+    makingDiscountPercent?: number | null;
+    remark?: string | null;
     stones: {
       type: 'D' | 'C';
       code: string;
@@ -54,6 +58,7 @@ export interface QuotePdfData {
       carats: number;
       ratePerCt: number;
       multiplier: number;
+      discountPercent?: number;
       amount: number;
     }[];
   }[];
@@ -150,19 +155,22 @@ function materialRows(
       code: [line.metalCode, line.karat ? `${line.karat}KT` : ''].filter(Boolean).join('  '),
       weight: `${num(line.weightGrams, 3)} g`,
       rate: line.goldRatePerGram,
-      amount: line.weightGrams * line.goldRatePerGram,
+      discountPercent: line.metalDiscountPercent || undefined,
+      amount: line.weightGrams * line.goldRatePerGram * (1 - (line.metalDiscountPercent || 0) / 100),
     });
   }
   if (!repair) {
     for (const s of line.stones) {
+      // Its own % when it has one; the quote's stone % on an older quote.
+      const off = s.discountPercent ?? (data.stoneDiscountPercent || 0);
       rows.push({
         code: [s.type, s.code, s.size].filter(Boolean).join(' '),
         pieces: s.pieces,
         weight: `${num(s.carats, 2)} ct`,
         // The multiplier is the shop's lever; the customer's rate has it in.
         rate: s.ratePerCt * s.multiplier,
-        discountPercent: data.stoneDiscountPercent || undefined,
-        amount: s.amount * (1 - (data.stoneDiscountPercent || 0) / 100),
+        discountPercent: off || undefined,
+        amount: s.amount * (1 - off / 100),
       });
     }
     if (!line.stones.length && line.stoneCharges > 0) {
@@ -176,12 +184,13 @@ function materialRows(
     }
   }
   if (line.makingCharges > 0) {
+    const off = line.makingDiscountPercent ?? (data.makingDiscountPercent || 0);
     rows.push({
       code: repair ? 'Repair / labour' : 'Making',
       weight: line.makingRatePerGram != null ? `${num(line.weightGrams, 3)} g` : undefined,
       rate: line.makingRatePerGram ?? undefined,
-      discountPercent: data.makingDiscountPercent || undefined,
-      amount: line.makingCharges * (1 - (data.makingDiscountPercent || 0) / 100),
+      discountPercent: off || undefined,
+      amount: line.makingCharges * (1 - off / 100),
     });
   }
   const stoneCarats = line.stones.reduce((sum, s) => sum + s.carats, 0) || line.caratWeight;
@@ -241,6 +250,22 @@ export async function renderQuotePdf(data: QuotePdfData): Promise<Buffer> {
     const at = opts.at ?? y;
     const px = opts.align === 'right' ? x - w : opts.align === 'center' ? x - w / 2 : x;
     page.drawText(s, { x: px, y: at, size, font, color: opts.color ?? INK });
+  };
+  /** Words broken into lines that fit `width`; what does not fit in `max` lines is cut. */
+  const wrap = (value: string, width: number, size: number, max = 4): string[] => {
+    const lines: string[] = [];
+    let current = '';
+    for (const word of clean(value).split(/\s+/).filter(Boolean)) {
+      const next = current ? `${current} ${word}` : word;
+      if (current && regular.widthOfTextAtSize(next, size) > width) {
+        lines.push(current);
+        current = word;
+      } else {
+        current = next;
+      }
+    }
+    if (current) lines.push(current);
+    return lines.slice(0, max);
   };
   const line = (x1: number, y1: number, x2: number, y2: number) =>
     page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: 0.5, color: RULE });
@@ -330,11 +355,11 @@ export async function renderQuotePdf(data: QuotePdfData): Promise<Buffer> {
     { key: 'product', title: 'Product', w: 62, align: 'left' as const },
     { key: 'item', title: 'Item No', w: 44, align: 'left' as const },
     { key: 'detail', title: '', w: 96, align: 'left' as const },
-    { key: 'code', title: 'Code', w: 88, align: 'left' as const },
+    { key: 'code', title: 'Code', w: 80, align: 'left' as const },
     { key: 'gr', title: 'Gr Wt', w: 34, align: 'right' as const },
     { key: 'net', title: 'Net Wt', w: 36, align: 'right' as const },
     { key: 'rate', title: 'Rate', w: 42, align: 'right' as const },
-    { key: 'dis', title: 'Dis%', w: 28, align: 'right' as const },
+    { key: 'dis', title: 'Dis%', w: 36, align: 'right' as const },
     { key: 'amount', title: 'Amount', w: 46, align: 'right' as const },
     { key: 'tot', title: 'Tot Amt', w: 47, align: 'right' as const },
   ];
@@ -376,7 +401,9 @@ export async function renderQuotePdf(data: QuotePdfData): Promise<Buffer> {
       `StyleCode : ${l.styleNumber ?? ''}`,
       `J_Certi : ${l.certificateNo ?? ''}`,
       l.size ? `Size : ${l.size}` : '',
-    ];
+      // The item's note, on as many lines as it needs under the bill's labels.
+      ...wrap(l.remark ? `Note : ${l.remark}` : '', colX.detail.w - 6, 6.6),
+    ].filter((d, k) => k < 4 || d);
     const blockRows = Math.max(rows.length, details.length, 1);
     const blockHeight = blockRows * 10 + 6;
     const top = y;
