@@ -56,6 +56,18 @@ class FenceHarness {
       ];
     }),
     $executeRaw: jest.fn(async (query: Prisma.Sql) => {
+      if (query.strings.join('?').includes('INSERT INTO "LegacyRow"')) {
+        // syncRaw writes a whole batch as one statement, its rows a JSON array.
+        // Count them row by row and hold the statement where the per-row upsert
+        // used to be held, so the assertions below still speak of rows.
+        const rows: unknown[] = JSON.parse(String(query.values[2]));
+        this.rawWrites.push(...rows);
+        if (this.pauseFirstWrite && this.rawWrites.length === rows.length) {
+          this.firstWriteReached.resolve();
+          await this.continueFirstWrite.promise;
+        }
+        return rows.length;
+      }
       const [, organisationId, sourceTable, storeId, watermark, received] = query.values;
       // Normalise the raw atomic upsert into the old harness shape so the
       // surrounding generation-fence assertions stay implementation-agnostic.
@@ -72,16 +84,6 @@ class FenceHarness {
       });
       return 1;
     }),
-    legacyRow: {
-      upsert: jest.fn(async (args: unknown) => {
-        this.rawWrites.push(args);
-        if (this.pauseFirstWrite && this.rawWrites.length === 1) {
-          this.firstWriteReached.resolve();
-          await this.continueFirstWrite.promise;
-        }
-        return {};
-      }),
-    },
     syncState: {
       upsert: jest.fn(async (args: unknown) => {
         this.stateWrites.push(args);
