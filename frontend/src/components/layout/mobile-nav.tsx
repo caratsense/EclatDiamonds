@@ -12,7 +12,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { NAV_ITEMS, filterNavGroups, visibleNavGroups } from "@/lib/navigation";
+import {
+  NAV_ITEMS,
+  filterNavGroups,
+  homeForRole,
+  punchTab,
+  visibleNavGroups,
+} from "@/lib/navigation";
 import { Input } from "@/components/ui/input";
 import { useEnabledNavigation } from "@/lib/queries/tenant-config";
 import { useSession } from "@/store/use-session";
@@ -90,7 +96,8 @@ export function MobileNav() {
   // Role-aware "More" sheet: HO-only sections stay hidden for other roles.
   const role = useSession((s) => s.baseRole);
   const access = useSession((s) => s.access);
-  const groups = visibleNavGroups(role, useEnabledNavigation(), access);
+  const enabledNavigation = useEnabledNavigation();
+  const groups = visibleNavGroups(role, enabledNavigation, access);
 
   const isActive = (slug: string) => {
     const href = `/${slug}`;
@@ -106,8 +113,11 @@ export function MobileNav() {
     .filter(Boolean);
   const primarySlugs = primary.map((i) => i.slug);
 
+  // Someone who lives on the punch screen gets a tab for it (punchTab).
+  const punch = punchTab(homeForRole(role, enabledNavigation, access));
+  const onPunch = !!punch && isActive(punch.slug);
   const moreActive =
-    !primarySlugs.some((s) => isActive(s)) && pathname !== "/login";
+    !primarySlugs.some((s) => isActive(s)) && !onPunch && pathname !== "/login";
 
   return (
     <>
@@ -115,6 +125,15 @@ export function MobileNav() {
         aria-label="Primary"
         className="fixed inset-x-0 bottom-0 z-40 flex h-16 border-t border-border bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden"
       >
+        {punch ? (
+          <Tab
+            href={`/${punch.slug}`}
+            title={t(`nav.${punch.slug}`, punch.title)}
+            hint={punch.purpose}
+            Icon={punch.icon}
+            active={onPunch}
+          />
+        ) : null}
         {primary.map((item) => (
           <Tab
             key={item.slug}

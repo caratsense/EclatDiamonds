@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -9,6 +10,7 @@ import {
   Clock,
   Loader2,
   LogIn,
+  LogOut,
   MapPin,
   Navigation,
 } from "lucide-react";
@@ -31,13 +33,18 @@ import { useEnabledNavigation } from "@/lib/queries/tenant-config";
 import { markAttendanceHandled } from "@/lib/attendance-gate";
 import { useSession } from "@/store/use-session";
 import type { SelfAttendance } from "@/lib/mock/hrms";
-import { useCheckIn, useGeofence, useMyAttendance } from "@/lib/queries/hrms";
+import { useCheckIn, useCheckOut, useGeofence, useMyAttendance } from "@/lib/queries/hrms";
 import { FaceScannerDialog } from "@/components/biometrics/face-scanner-dialog";
 import { apiErrorMessage } from "@/lib/utils";
 import { useHydrated } from "@/lib/use-reset-on";
 import {
   evaluatePunchLocation,
+  formatDistance,
+  isEarlierDay,
+  keptShift,
   punchAction,
+  punchScreen,
+  tooFarMessage,
   type PunchLocationDecision,
   type PunchPosition,
 } from "@/lib/attendance-punch-policy";
@@ -69,14 +76,6 @@ function todayLabel(): string {
     day: "numeric",
     month: "long",
   });
-}
-
-/** Human distance: nearest 5 m under 1 km, else km with one decimal. */
-function formatDistance(m: number): string {
-  if (m >= 1000) {
-    return `${(m / 1000).toFixed(m >= 10000 ? 0 : 1)} km`;
-  }
-  return `${Math.round(m / 5) * 5} m`;
 }
 
 /**
@@ -119,6 +118,13 @@ function RangeChip({ record }: { record: SelfAttendance }) {
   );
 }
 
+export default function CheckInPage() {
+  // A new day starts the screen from scratch, so no punch, position or
+  // half-written reason is carried over from the day before (startNewDay).
+  const [day, setDay] = useState(0);
+  return <CheckInScreen key={day} onNewDay={() => setDay((d) => d + 1)} />;
+}
+
 /**
  * Attendance-first check-in — the salesperson's landing screen after sign-in.
  * Mobile-first (large tap targets, works at 375px).
@@ -129,16 +135,27 @@ function RangeChip({ record }: { record: SelfAttendance }) {
  * store and the app welcomes them. Manual check-in and "Skip for now" remain
  * available. A confirmed outside check-in is blocked; an unavailable
  * or inconclusive fix can continue only with a written reason.
+ *
+ * For someone whose home is this screen (attendance only, see homeForRole) it
+ * is the whole app: Check in, then one big Check out, then "Done for today".
+ * They are never sent on, so they are not offered "Skip for now" either. Left
+ * open overnight it offers "Check in for today", and waits for that tap.
  */
-export default function CheckInPage() {
+function CheckInScreen({ onNewDay }: { onNewDay: () => void }) {
   const router = useRouter();
   const { user, role, currentStore, access } = useSession();
   const month = useMemo(() => new Date().toISOString().slice(0, 7), []);
-  const { data, isLoading, isError, refetch } = useMyAttendance(month);
-  const { data: geofence, isLoading: geoLoading } = useGeofence();
+  const { data, isLoading, isError, isFetching, refetch } = useMyAttendance(month);
+  const {
+    data: geofence,
+    isLoading: geoLoading,
+    refetch: refetchFence,
+  } = useGeofence();
   const checkIn = useCheckIn();
+  const checkOut = useCheckOut();
 
-  // Immediate result of a fresh punch (before the refetch lands).
+  // Immediate result of a fresh punch (before the refetch lands). For someone
+  // who lives on this screen, also the shift it goes on showing (keptShift).
   const [lastPunch, setLastPunch] = useState<SelfAttendance | null>(null);
   // True when the fresh check-in couldn't capture a location.
   const [geoMissed, setGeoMissed] = useState(false);
@@ -150,8 +167,9 @@ export default function CheckInPage() {
   // than copied into state by an effect.
   const [permissionDenied, setGeoDenied] = useState(false);
   const hydrated = useHydrated();
-  // Missing or inconclusive GPS needs a written reason before the API records it.
-  const [reasonOpen, setReasonOpen] = useState(false);
+  // Missing or inconclusive GPS needs a written reason before the API records
+  // it. Which punch the reason box is open for, or null when it is closed.
+  const [reasonFor, setReasonFor] = useState<"in" | "out" | null>(null);
   const [reason, setReason] = useState("");
   const [pendingPos, setPendingPos] = useState<PunchPosition | null>(null);
   const [pendingDecision, setPendingDecision] = useState<PunchLocationDecision | null>(null);
@@ -160,6 +178,14 @@ export default function CheckInPage() {
   // to explain their location does not have to take it again.
   const [scannerOpen, setScannerOpen] = useState(false);
   const [pendingPhoto, setPendingPhoto] = useState<string | null>(null);
+  // True from the tap on Check out until the position has been read. The one
+  // button on the screen has to answer at once: a GPS fix can take ten seconds,
+  // and a second tap in that silence would send a second check-out.
+  const [locatingOut, setLocatingOut] = useState(false);
+  // When this screen was last brought into view. Someone who lives on it leaves
+  // it open overnight, so this is how the shift on screen is seen to be an
+  // earlier day's (isEarlierDay).
+  const [seenAt, setSeenAt] = useState(() => new Date());
 
   // watchPosition handle, so we can clearWatch on unmount / after a punch.
   const watchIdRef = useRef<number | null>(null);
@@ -168,19 +194,30 @@ export default function CheckInPage() {
   // Fires the auto check-in exactly once; also set by the manual button so the
   // watcher never double-punches.
   const punchedRef = useRef(false);
-  // Pending redirect after a successful punch (cleared on unmount).
-  const redirectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // When a check-out last landed here (see startNewDay).
+  const checkedOutAtRef = useRef(0);
 
   const enabledNavigation = useEnabledNavigation();
   const firstName = user.name.split(" ")[0] || user.name;
   // With the tenant's navigation, so a manager whose industry has no Dashboards
   // is not bounced from the attendance gate onto a screen their product omits.
   const home = homeForRole(role, enabledNavigation, access);
+  // Attendance-only staff: this screen is their home, so it sends them nowhere.
+  const isHome = home === "/check-in";
   const storeName = geofence?.storeName ?? currentStore.name;
   const radius = geofence?.geofenceRadiusM ?? 0;
 
+  // Someone who lives on this screen keeps the shift it is showing, whatever a
+  // later read of today's attendance says (keptShift has the reason).
+  const kept = keptShift(lastPunch, data?.today, isHome);
+  if (kept !== lastPunch) setLastPunch(kept);
+
   const today = lastPunch ?? data?.today ?? null;
   const alreadyIn = !lastPunch && !!data?.today?.checkInAt;
+  const screen = punchScreen(today, isHome);
+  // The shift on screen is an earlier day's, so today's can be started.
+  const earlierDay = isHome && !!today && isEarlierDay(today, seenAt);
+  const checkingOut = locatingOut || checkOut.isPending;
 
   const liveDecision = useMemo(
     () => evaluatePunchLocation(watchPos, geofence),
@@ -236,7 +273,7 @@ export default function CheckInPage() {
         onSuccess: (row) => {
           clearWatcher(); // clear the watch immediately after a successful punch
           setLastPunch(row);
-          setReasonOpen(false);
+          setReasonFor(null);
           setReason("");
           setPendingDecision(null);
           setPendingPos(null);
@@ -246,8 +283,6 @@ export default function CheckInPage() {
           toast.success("Attendance marked", {
             description: describePunch(row, captured),
           });
-          // Auto-advance to the salesperson's home shortly after the welcome shows.
-          redirectRef.current = setTimeout(() => router.replace(home), 1800);
         },
         onError: (err) => {
           // Allow the watcher (still running) to retry on a later fix.
@@ -310,22 +345,39 @@ export default function CheckInPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inRange, alreadyIn, lastPunch, checkIn.isPending]);
 
-  // --- Cleanup on unmount: stop the watcher + cancel any pending redirect. ---
+  // --- Cleanup on unmount: stop the watcher. ---
   useEffect(() => {
     return () => {
       clearWatcher();
-      if (redirectRef.current) clearTimeout(redirectRef.current);
     };
   }, []);
 
-  // Already checked in when the page loaded (not a fresh punch): mark handled
-  // and gently auto-advance. Fresh punches schedule their own redirect.
+  // Everyone whose home is elsewhere moves on once they are in: shortly after
+  // the welcome shows for a fresh punch, sooner when they were already in.
+  // Someone who lives on this screen is never "move-on" (punchScreen): they
+  // stay, and the screen turns to Check out.
   useEffect(() => {
-    if (lastPunch || !data?.today?.checkInAt) return;
+    if (screen !== "move-on") return;
     markAttendanceHandled();
-    const t = setTimeout(() => router.replace(home), 1000);
+    const t = setTimeout(() => router.replace(home), lastPunch ? 1800 : 1000);
     return () => clearTimeout(t);
-  }, [lastPunch, data, home, router]);
+  }, [screen, lastPunch, home, router]);
+
+  // Note the time whenever the screen comes back into view, so a shift left on
+  // it overnight is seen to be yesterday's. Noting it is all this does: the
+  // screen then offers to start today and waits for the tap. Reading today's
+  // attendance here instead would set off the automatic check-in the moment a
+  // tablet left signed in at the shop woke up, with nobody touching it.
+  // ponytail: noted only when the screen comes back into view; add a timer if
+  // this ever runs on a wall tablet nobody switches away from.
+  useEffect(() => {
+    if (!isHome) return;
+    const onVisible = () => {
+      if (!document.hidden) setSeenAt(new Date());
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [isHome]);
 
   /** Mark the day handled + leave to the salesperson's home. */
   function goHome() {
@@ -346,7 +398,7 @@ export default function CheckInPage() {
       punchedRef.current = false;
       setScannerOpen(false);
       toast.error("Check-in blocked outside the store range", {
-        description: `You are ${formatDistance(decision.distanceM ?? 0)} away. Move within ${radius} m or ask a manager to regularize attendance.`,
+        description: tooFarMessage(storeName, decision.distanceM ?? 0, radius),
       });
       return;
     }
@@ -355,7 +407,7 @@ export default function CheckInPage() {
       setPendingPhoto(photo ?? null);
       setPendingDecision(decision);
       setScannerOpen(false);
-      setReasonOpen(true);
+      setReasonFor("in");
       return;
     }
     runCheckIn(pos, undefined, photo);
@@ -372,7 +424,87 @@ export default function CheckInPage() {
   function submitWithReason() {
     const note = reason.trim();
     if (!note) return;
-    runCheckIn(pendingPos, note, pendingPhoto);
+    if (reasonFor === "out") runCheckOut(pendingPos, note);
+    else runCheckIn(pendingPos, note, pendingPhoto);
+  }
+
+  /** The check-out call the "My attendance" card makes, from this screen. */
+  function runCheckOut(pos: PunchPosition | null, note?: string) {
+    // The shift being closed, as the screen shows it now.
+    const shown = today;
+    checkOut.mutate(
+      {
+        ...(pos ? { lat: pos.lat, lng: pos.lng, accuracyM: pos.accuracyM } : {}),
+        ...(note ? { note } : {}),
+      },
+      {
+        onSuccess: (row) => {
+          checkedOutAtRef.current = Date.now();
+          setLastPunch(row);
+          setReasonFor(null);
+          setReason("");
+          setPendingDecision(null);
+          setPendingPos(null);
+          toast.success("Checked out");
+        },
+        onError: (err) => {
+          toast.error(apiErrorMessage(err, "Could not check out. Please try again."));
+          // The server may already have this check-out: its reply was lost, or
+          // a manager closed the day. Nobody leaves this screen, so read the
+          // record again and show the server's copy of it, rather than leave a
+          // button that fails on every tap. Only its copy of THIS shift: after
+          // midnight "today" is a new day with no record, and the shift on
+          // screen still needs its Check out. A refusal is also a moment to
+          // look at the clock again (seenAt), for a screen that never left view.
+          setSeenAt(new Date());
+          void refetch().then((fresh) => {
+            const server = fresh.isSuccess ? fresh.data.today : null;
+            if (!server || server.id !== shown?.id) return;
+            setLastPunch(server);
+            // Checked out there already: nothing is left to give a reason for.
+            if (server.checkOutAt) setReasonFor(null);
+          });
+        },
+      },
+    );
+  }
+
+  /**
+   * Check-out for someone who stays on this screen, under the same location
+   * rules as the "My attendance" card: leaving is never blocked, but a fix that
+   * is off-site, vague or missing needs a written reason first.
+   */
+  async function startCheckOut() {
+    if (checkingOut) return;
+    setLocatingOut(true);
+    const pos = await getPosition();
+    // A fence that failed to load is not "no fence". Ask for it once more, and
+    // if it still cannot be read take a reason, so that whatever the server
+    // says about the distance has already been answered.
+    const fence = geofence ?? (await refetchFence()).data;
+    setLocatingOut(false);
+    const decision = evaluatePunchLocation(pos, fence);
+    if (!fence || punchAction(decision, "out") === "reason") {
+      setPendingPos(pos);
+      setPendingDecision(decision);
+      setReasonFor("out");
+      return;
+    }
+    runCheckOut(pos);
+  }
+
+  /**
+   * Start today on a screen still showing an earlier day's shift: read today's
+   * attendance again, then begin from scratch (CheckInPage). The automatic
+   * check-in may follow, which is why this waits for a tap.
+   */
+  async function startNewDay() {
+    // The Check out button was in this place a moment ago: a second tap meant
+    // for it must not start a new day.
+    if (Date.now() - checkedOutAtRef.current < 2000) return;
+    const fresh = await refetch();
+    // A failed read shows "Couldn't load your attendance" and its Retry.
+    if (fresh.isSuccess) onNewDay();
   }
 
   /**
@@ -386,6 +518,20 @@ export default function CheckInPage() {
     punchedRef.current = true; // stop the watcher from also firing
     prepareCheckIn(await getPosition(), photo);
   }
+
+  /** "Skip for now" leads on to the person's home, so someone already there is not offered it. */
+  const skipLink = (wrap = "text-center") =>
+    isHome ? null : (
+      <div className={wrap}>
+        <button
+          type="button"
+          onClick={skip}
+          className="text-sm font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
+        >
+          Skip for now
+        </button>
+      </div>
+    );
 
   return (
     <div className="mx-auto flex min-h-[70vh] w-full max-w-md flex-col justify-center px-4 py-8">
@@ -402,18 +548,24 @@ export default function CheckInPage() {
         </CardHeader>
 
         <CardContent className="space-y-5">
-          {reasonOpen ? (
-            /* Missing or inconclusive GPS: collect the reason required by the API. */
+          {reasonFor ? (
+            /* Missing or inconclusive GPS: collect the reason required by the API.
+               A check-out from outside the range is recorded the same way. */
             <div className="space-y-4">
               <div className="rounded-xl border border-warning/40 bg-warning/10 p-4">
                 <p className="text-sm font-medium">
                   {pendingDecision?.state === "imprecise"
                     ? "GPS accuracy cannot confirm your location"
-                    : "We couldn't read your location"}
+                    : pendingDecision?.state === "outside"
+                      ? `You are ${formatDistance(pendingDecision.distanceM)} from ${storeName}`
+                      : pendingDecision?.state === "unfenced"
+                        ? `We couldn't check your distance from ${storeName}`
+                        : "We couldn't read your location"}
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Add a reason to continue. The check-in and your note will be
-                  recorded for manager review.
+                  Add a reason to continue. The{" "}
+                  {reasonFor === "out" ? "check-out" : "check-in"} and your note
+                  will be recorded for manager review.
                 </p>
               </div>
               <div className="grid gap-1.5">
@@ -423,7 +575,11 @@ export default function CheckInPage() {
                   rows={3}
                   maxLength={300}
                   autoFocus
-                  placeholder="e.g. Visiting a client before the shop opens"
+                  placeholder={
+                    reasonFor === "out"
+                      ? "e.g. Left to deliver an order to a customer"
+                      : "e.g. Visiting a client before the shop opens"
+                  }
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
                 />
@@ -432,13 +588,18 @@ export default function CheckInPage() {
                 variant="gold"
                 size="lg"
                 className="h-12 w-full text-base"
-                disabled={checkIn.isPending || !reason.trim()}
+                disabled={checkIn.isPending || checkOut.isPending || !reason.trim()}
                 onClick={submitWithReason}
               >
-                {checkIn.isPending ? (
+                {checkIn.isPending || checkOut.isPending ? (
                   <>
                     <Loader2 className="h-5 w-5 animate-spin" />
                     Marking…
+                  </>
+                ) : reasonFor === "out" ? (
+                  <>
+                    <LogOut className="h-5 w-5" />
+                    Record check-out
                   </>
                 ) : (
                   <>
@@ -451,7 +612,7 @@ export default function CheckInPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    setReasonOpen(false);
+                    setReasonFor(null);
                     setReason("");
                     setPendingDecision(null);
                     setPendingPos(null);
@@ -482,13 +643,89 @@ export default function CheckInPage() {
               >
                 Retry
               </Button>
-              <button
-                type="button"
-                onClick={skip}
-                className="mt-3 text-sm font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
+              {skipLink("mt-3")}
+            </div>
+          ) : screen === "check-out" ? (
+            /* ── Home screen, checked in: the rest of the day is one button ── */
+            <div className="space-y-5">
+              <div className="rounded-xl border bg-card p-6 text-center">
+                <CheckCircle2 className="mx-auto h-14 w-14 text-success" />
+                <p className="num mt-4 text-2xl font-semibold">
+                  Checked in at {today!.checkInLocal ?? formatTime(today!.checkInAt)}
+                </p>
+              </div>
+              <Button
+                variant="gold"
+                size="lg"
+                className="h-14 w-full text-base"
+                // Until the fence has loaded there is nothing to measure against.
+                disabled={geoLoading || checkingOut}
+                onClick={startCheckOut}
               >
-                Skip for now
-              </button>
+                {checkingOut ? (
+                  <>
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    Checking out…
+                  </>
+                ) : (
+                  <>
+                    <LogOut className="h-5 w-5" />
+                    Check out
+                  </>
+                )}
+              </Button>
+              {/* Still open from an earlier day. Just after midnight Check out
+                  is what is wanted, and it closes that shift. If the check-out
+                  was simply forgotten, today's can be started without it. */}
+              {earlierDay ? (
+                <div className="text-center">
+                  <button
+                    type="button"
+                    disabled={isFetching}
+                    onClick={startNewDay}
+                    className="text-sm font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                  >
+                    Check in for today
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : screen === "done" ? (
+            /* ── Home screen, checked out: nothing left to do today. Once the
+               day is over the same shift is the last one, and today's starts
+               with a tap. ── */
+            <div className="space-y-5">
+              <div className="rounded-xl border bg-card p-6 text-center">
+                <CheckCircle2 className="mx-auto h-14 w-14 text-success" />
+                <p className="mt-4 text-xl font-semibold">
+                  {earlierDay ? "Last shift" : "Done for today"}
+                </p>
+                <p className="num mt-1 text-sm text-muted-foreground">
+                  In {today!.checkInLocal ?? formatTime(today!.checkInAt)} · Out{" "}
+                  {today!.checkOutLocal ?? formatTime(today!.checkOutAt)}
+                </p>
+              </div>
+              {earlierDay ? (
+                <Button
+                  variant="gold"
+                  size="lg"
+                  className="h-14 w-full text-base"
+                  disabled={isFetching}
+                  onClick={startNewDay}
+                >
+                  {isFetching ? (
+                    <>
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                      Loading…
+                    </>
+                  ) : (
+                    <>
+                      <LogIn className="h-5 w-5" />
+                      Check in for today
+                    </>
+                  )}
+                </Button>
+              ) : null}
             </div>
           ) : lastPunch ? (
             /* ── Welcome — a fresh punch just landed ───────────────── */
@@ -616,15 +853,7 @@ export default function CheckInPage() {
               <p className="text-center text-xs text-muted-foreground">
                 Automatic detection unavailable for this store.
               </p>
-              <div className="text-center">
-                <button
-                  type="button"
-                  onClick={skip}
-                  className="text-sm font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
-                >
-                  Skip for now
-                </button>
-              </div>
+              {skipLink()}
             </div>
           ) : geoDenied ? (
             /* ── Permission denied / unsupported → manual fallback ─── */
@@ -668,15 +897,7 @@ export default function CheckInPage() {
                 <Camera className="h-5 w-5" />
                 Add optional photo
               </Button>
-              <div className="text-center">
-                <button
-                  type="button"
-                  onClick={skip}
-                  className="text-sm font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
-                >
-                  Skip for now
-                </button>
-              </div>
+              {skipLink()}
             </div>
           ) : inRange ? (
             /* ── In range → auto check-in firing ───────────────────── */
@@ -698,15 +919,31 @@ export default function CheckInPage() {
             <div className="rounded-xl border bg-card p-6 text-center">
               <Loader2 className="mx-auto h-8 w-8 animate-spin text-muted-foreground" />
               <p className="mt-3 text-sm text-muted-foreground">Locating you…</p>
-              <div className="mt-4 text-center">
-                <button
-                  type="button"
-                  onClick={skip}
-                  className="text-sm font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
+              {skipLink("mt-4 text-center")}
+              {/* A phone that is allowed to read the location but never gets a
+                  fix stays here for good. Everyone else skips and punches from
+                  HRMS; someone with no Skip needs the way in on this face. */}
+              {isHome ? (
+                <Button
+                  variant="secondary"
+                  size="lg"
+                  className="mt-4 h-12 w-full text-base"
+                  disabled={checkIn.isPending}
+                  onClick={startManual}
                 >
-                  Skip for now
-                </button>
-              </div>
+                  {checkIn.isPending ? (
+                    <>
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                      Marking…
+                    </>
+                  ) : (
+                    <>
+                      <LogIn className="h-5 w-5" />
+                      Continue with reason
+                    </>
+                  )}
+                </Button>
+              ) : null}
             </div>
           ) : (
             /* ── Outside range → live distance, closing the gap ────── */
@@ -763,19 +1000,23 @@ export default function CheckInPage() {
               </Button>
               </>
               ) : null}
-              <div className="text-center">
-                <button
-                  type="button"
-                  onClick={skip}
-                  className="text-sm font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
-                >
-                  Skip for now
-                </button>
-              </div>
+              {skipLink()}
             </div>
           )}
         </CardContent>
       </Card>
+
+      {/* The one other thing someone who lives on this screen can open. */}
+      {isHome ? (
+        <p className="mt-4 text-center">
+          <Link
+            href="/hrms"
+            className="text-sm font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
+          >
+            Apply for leave or fix attendance
+          </Link>
+        </p>
+      ) : null}
 
       {/* Optional evidence inside the punch flow; never an authentication step. */}
       <FaceScannerDialog

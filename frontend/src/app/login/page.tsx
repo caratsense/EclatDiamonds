@@ -716,7 +716,8 @@ function LoginPage() {
     clearAttendanceHandled();
     router.replace(
       // Everyone who punches starts on the punch screen; it sends them on to
-      // their own home once today's attendance is done or skipped.
+      // their own home once today's attendance is done or skipped. Staff set
+      // to attendance only stay there: it is their home (homeForRole).
       me.role === "head_office"
         ? homeForRole(me.role, me.productProfile?.enabledNavigation)
         : "/check-in",

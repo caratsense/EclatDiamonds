@@ -235,6 +235,15 @@ describe("per-person access (auth/access.ts)", () => {
     expect(roleDecision("/quotation", "marketing", { crm: "store" })).toBe("refuse");
   });
 
+  it("leaves someone set to attendance only their home and HRMS, and nothing else", () => {
+    // Their home is the punch screen (homeForRole), which is not in the
+    // navigation; closing non-navigation paths by access would lock them out.
+    const attendanceOnly = { hrms: "own" } as const;
+    expect(roleDecision("/check-in", "salesperson", attendanceOnly)).toBe("render");
+    expect(roleDecision("/hrms", "salesperson", attendanceOnly)).toBe("render");
+    expect(roleDecision("/crm", "salesperson", attendanceOnly)).toBe("refuse");
+  });
+
   it("serves a page at the person's level for that screen", () => {
     expect(roleForPage("/inventory", "salesperson", salesAccess)).toBe("store_manager");
     expect(roleForPage("/crm", "salesperson", salesAccess)).toBe("salesperson");
