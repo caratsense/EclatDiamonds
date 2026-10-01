@@ -202,8 +202,8 @@ matched image selected; the hero stays marked "Primary".
   SKU, style, website code, external id), listing, every variant, sizes, every
   price with {source, kind, variant}, every active image (source, colour, angle,
   shape, isPrimary, pinned, thumbUrl, embeddingStatus), BOM per variant,
-  specifications, stock availability per store, every stock piece with all
-  fields (tag, hallmark, HUID, certificate, size, HSN, gross/net/pure/diamond/
+  specifications, stock availability per store, every stock piece on hand with
+  all fields (tag, hallmark, HUID, certificate, size, HSN, gross/net/pure/diamond/
   stone weights and pieces, component amounts), provenance timestamps, open
   conflicts for the product.
 - Cost boundary: for anyone below store_manager (and any public/unauth path)
@@ -319,7 +319,7 @@ Everything in `GET /products/:id` (incl. the additions above) plus:
                "diamondWeightCt", "diamondPieces", "stoneWeightCt", "stonePieces", "tagPrice", "mrp",
                "metalAmount"†, "diamondAmount"†, "stoneAmount"†, "makingAmount"†, "cpfAmount"†, "cost"†,
                "imageUrl", "inwardDate", "ageDays" }],
-             // every status, in the viewer's stores, max 1000
+             // on hand only (in_stock, aging, dead_stock), in the viewer's stores, max 1000
   "provenance": { "source", "createdAt", "updatedAt", "gatiSyncedAt", "gatiUpdatedAt", "websiteSyncedAt",
                   "websiteSourceCreatedAt", "websiteSourceUpdatedAt", "websiteLastSeenAt", "importBatchId" },
   "conflicts": [{ "id", "kind", "summary", "detail" /* cost keys † */, "firstSeenAt", "lastSeenAt" }]

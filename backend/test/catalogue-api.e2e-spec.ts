@@ -366,6 +366,23 @@ describe('Catalogue product API (e2e)', () => {
     expect(res.body.pieces.map((p: { id: string }) => p.id)).toEqual(['catapi_piece_1']);
   });
 
+  it('lists only the pieces on hand: not one that was sold, nor one head office has sent to a shop', async () => {
+    // Gati keeps a piece's row after it is sold. Head office also keeps its own
+    // row for a piece it has issued to a shop; that row names no branch, so it
+    // sits in the holding store. The dialog shows this list as "Pieces on hand".
+    await prisma.store.create({
+      data: { id: 'store_catapi_hold', name: 'Unassigned', city: '', organisationId: A.org, status: 'pending', isActive: false, isHolding: true },
+    });
+    await prisma.stockItem.createMany({
+      data: [
+        { id: 'catapi_piece_issued', organisationId: A.org, storeId: 'store_catapi_hold', productId: P1, legacyId: 'J-1003', status: 'transferred', tagPrice: 60000 },
+        { id: 'catapi_piece_sold', organisationId: A.org, storeId: A.s1, productId: P1, legacyId: 'J-1004', status: 'sold', tagPrice: 61000 },
+      ],
+    });
+    const res = await request(server()).get(`/products/${P1}/full`).set(as('catapi_ho')).expect(200);
+    expect(res.body.pieces.map((p: { id: string }) => p.id).sort()).toEqual(['catapi_piece_1', 'catapi_piece_2']);
+  });
+
   it('a salesperson gets the design with every cost field removed', async () => {
     const res = await request(server()).get(`/products/${P1}/full`).set(as('catapi_rep')).expect(200);
     const keys = allKeys(res.body);
