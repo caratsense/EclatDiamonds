@@ -22,6 +22,9 @@ import { useSession } from "@/store/use-session";
  *    today == null → replace to /check-in.
  *  - Managers / area / HO are never redirected. "Skip for now" and a successful
  *    check-in both set the flag, so it won't bounce them back.
+ *  - Someone whose home is /check-in (attendance only) has no "Skip for now":
+ *    that screen sets the flag as it opens, so their link to leave and
+ *    regularisation is not bounced straight back to it.
  */
 export function AttendanceGate() {
   const router = useRouter();

@@ -137,8 +137,9 @@ describe("navigation", () => {
       }
     });
 
-    it("starts someone set to attendance only on attendance, not a screen they lost", () => {
-      expect(homeForRole("salesperson", null, { hrms: "own" })).toBe("/hrms");
+    it("makes the punch screen home for someone set to attendance only, not a screen they lost", () => {
+      expect(homeForRole("salesperson", null, { hrms: "own" })).toBe("/check-in");
+      expect(homeForRole("store_manager", null, { hrms: "store" })).toBe("/check-in");
       expect(homeForRole("salesperson", null, { hrms: "own", crm: "own" })).toBe("/crm");
       expect(homeForRole("salesperson")).toBe("/crm");
     });

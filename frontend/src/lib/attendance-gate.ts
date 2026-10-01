@@ -3,7 +3,8 @@
 /**
  * Shared state for the salesperson "attendance-first" gate. A single
  * sessionStorage flag records whether the current session has already handled
- * today's attendance (checked in, or explicitly skipped). It is per-session by
+ * today's attendance (checked in, explicitly skipped, or opened the punch
+ * screen when it is the person's home). It is per-session by
  * design: a fresh login / reopen re-prompts, but we never nag within a session.
  */
 

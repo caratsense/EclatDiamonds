@@ -901,6 +901,7 @@ export function homeForRole(
           ? "/crm"
           : "/dashboards";
   // Someone whose access leaves out their role's usual home (sales staff set to
-  // attendance only) starts on attendance, the one screen everybody keeps.
-  return access && !(home.slice(1) in access) ? "/hrms" : home;
+  // attendance only) lives on the punch screen: Check in, then Check out. Leave
+  // and regularisation stay one link away, under HRMS.
+  return access && !(home.slice(1) in access) ? "/check-in" : home;
 }

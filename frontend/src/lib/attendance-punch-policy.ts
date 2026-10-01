@@ -86,3 +86,36 @@ export function punchAction(
   if (decision.state === "outside" && kind === "in") return "block";
   return "reason";
 }
+
+/**
+ * What someone is told when a check-in is refused for distance. It names the
+ * branch the distance was measured from: "635 m away" on its own reads as a
+ * faulty phone to someone standing in a branch, just not the one they are
+ * assigned to, and gives a manager nothing to fix.
+ */
+export function tooFarMessage(
+  branchName: string,
+  distanceM: number,
+  radiusM: number,
+): string {
+  return `You are ${distanceM} m from ${branchName}. Move within ${radiusM} m of it, or ask a manager to fix your attendance.`;
+}
+
+export type PunchScreen = "check-in" | "check-out" | "done" | "move-on";
+
+/**
+ * What the punch screen (/check-in) is for, given today's punches.
+ *
+ * Most people only pass through it: once they are in, it sends them on to
+ * their own home and they check out from HRMS. Someone whose home IS this
+ * screen (attendance only) stays, so it has to carry their whole day: Check
+ * in, then Check out, then nothing left to do.
+ */
+export function punchScreen(
+  today: { checkInAt: string | null; checkOutAt: string | null } | null | undefined,
+  isHome: boolean,
+): PunchScreen {
+  if (!today?.checkInAt) return "check-in";
+  if (!isHome) return "move-on";
+  return today.checkOutAt ? "done" : "check-out";
+}
