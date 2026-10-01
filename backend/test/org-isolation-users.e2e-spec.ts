@@ -150,6 +150,48 @@ describe('Organisation isolation — USERS (e2e)', () => {
     expect(after?.isActive).toBe(true); // UNCHANGED
   });
 
+  it("A head office cannot set an Org-B user's password", async () => {
+    // Head office skips the store check, so the organisation is the only fence:
+    // without it any organisation's head office could sign in as anybody.
+    const before = await prisma.user.findUnique({ where: { id: ids.repB } });
+    for (const target of [ids.repB, ids.hoB]) {
+      const r = await request(app.getHttpServer())
+        .post('/auth/reset-password')
+        .set(auth(tokens.aHo))
+        .send({ userId: target, newPassword: 'taken-over-123' });
+      expect(r.status).toBe(404);
+    }
+    const after = await prisma.user.findUnique({ where: { id: ids.repB } });
+    expect(after?.passwordHash).toBe(before?.passwordHash); // UNCHANGED
+    await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: B_REP_EMAIL, password: 'taken-over-123' })
+      .expect(401);
+  });
+
+  it('B head office CAN set the password of its own user, and it is on record', async () => {
+    await request(app.getHttpServer())
+      .post('/auth/reset-password')
+      .set(auth(tokens.bHo))
+      .send({ userId: ids.repB, newPassword: 'own-org-reset-123' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: B_REP_EMAIL, password: 'own-org-reset-123' })
+      .expect(201);
+    const trail = await prisma.auditLog.findFirst({
+      where: { action: 'user.password_reset', entityId: ids.repB },
+    });
+    expect(trail).toBeTruthy();
+    expect(JSON.stringify(trail)).not.toContain('own-org-reset-123');
+    // Back to the password the rest of this file signs in with.
+    await request(app.getHttpServer())
+      .post('/auth/reset-password')
+      .set(auth(tokens.bHo))
+      .send({ userId: ids.repB, newPassword: PASSWORD })
+      .expect(201);
+  });
+
   it('A head office cannot activate an Org-B (unassigned) user', async () => {
     const r = await request(app.getHttpServer())
       .patch(`/users/${ids.unassignedB}/activate`)
@@ -198,6 +240,7 @@ describe('Organisation isolation — USERS (e2e)', () => {
 });
 
 async function teardownOrgB(prisma: PrismaService) {
+  await prisma.auditLog.deleteMany({ where: { organisationId: 'org_iso_users' } });
   await prisma.leaveBalance.deleteMany({ where: { user: { organisationId: 'org_iso_users' } } });
   await prisma.userStore.deleteMany({ where: { store: { organisationId: 'org_iso_users' } } });
   await prisma.user.deleteMany({ where: { organisationId: 'org_iso_users' } });

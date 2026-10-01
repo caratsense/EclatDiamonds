@@ -37,6 +37,9 @@ describe('Login by mobile number or personal email (e2e)', () => {
   let prisma: import('../src/prisma/prisma.service').PrismaService;
 
   beforeAll(async () => {
+    // This file signs in more than ten times a minute on purpose (the lockout
+    // test alone is six); the per-address limit is another spec's subject.
+    process.env.RATE_LIMIT_AUTH = '100';
     const { AppModule } = await import('../src/app.module');
     const { PrismaService } = await import('../src/prisma/prisma.service');
     const mod = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -80,6 +83,7 @@ describe('Login by mobile number or personal email (e2e)', () => {
   }, 120_000);
 
   afterAll(async () => {
+    delete process.env.RATE_LIMIT_AUTH;
     if (prisma) await teardown(prisma);
     if (app) await app.close();
   });
@@ -106,6 +110,17 @@ describe('Login by mobile number or personal email (e2e)', () => {
   it('two people on one number are told apart by their password', async () => {
     expect((await login(app, '9811100002', 'ravi-pass-1').expect(201)).body.user.name).toBe('lbm_ravi');
     expect((await login(app, '9811100002', 'sita-pass-1').expect(201)).body.user.name).toBe('lbm_sita');
+  });
+
+  it('counts wrong passwords against the number, however it is typed', async () => {
+    // Five wrong tries lock a handle. Typed five different ways it is still one
+    // number, so the sixth try is refused even with the right password.
+    for (const typed of ['9811100002', '+919811100002', '09811100002', '98111 00002', '98111-00002']) {
+      await login(app, typed, 'wrong-pass-9').expect(401);
+    }
+    const locked = await login(app, '+91 98111 00002', 'ravi-pass-1');
+    expect(locked.status).toBe(401);
+    expect(locked.body.message).toMatch(/Too many failed attempts/);
   });
 
   it('refuses rather than guesses, and never says why', async () => {
