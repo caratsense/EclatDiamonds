@@ -259,8 +259,12 @@ describe('industry packs — navigation', () => {
   const withFrontend = fs.existsSync(NAV_SOURCE) ? it : it.skip;
 
   withFrontend('jewellery covers every route the frontend navigation defines', () => {
+    // The modules only (NAV_ITEMS). Further down the file is the punch screen's
+    // tab on a phone: `/check-in` is a page every member of staff has, not a
+    // module a pack switches on.
     const navSource = fs.readFileSync(NAV_SOURCE, 'utf8');
-    const slugs = [...navSource.matchAll(/^\s+slug: "([^"]+)"/gm)].map((m) => m[1]);
+    const modules = navSource.slice(0, navSource.indexOf('export const NAV_GROUPS'));
+    const slugs = [...modules.matchAll(/^\s+slug: "([^"]+)"/gm)].map((m) => m[1]);
 
     // A sanity floor: if the regex ever stops matching, fail loudly here rather
     // than passing an empty comparison.
