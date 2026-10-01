@@ -240,7 +240,14 @@ describe('legacy Gati generation fence', () => {
       () => service.syncRaw(row.organisationId, 'BarrierTable', records),
       'BarrierTable',
     );
-    await harness.firstWriteReached.promise;
+    // The harness knows the raw write by its SQL. If syncRaw writes some other
+    // way the batch never pauses, so fail saying that, not on the timeout.
+    await Promise.race([
+      harness.firstWriteReached.promise,
+      batch.then(() => {
+        throw new Error('The batch finished without pausing: the harness did not recognise its raw write.');
+      }),
+    ]);
 
     let mutationCompleted = false;
     const mutation = harness.queueHeadOfficeMutation(() => {
