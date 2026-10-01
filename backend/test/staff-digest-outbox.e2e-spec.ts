@@ -28,6 +28,8 @@ import { PrismaService } from '../src/prisma/prisma.service';
  *  4. THE WORKER RE-CHECKS THE PERSON. Deactivated after queuing → not messaged.
  *  5. RECEIPTS AND AUDIT land on the outbox message like any other.
  *  6. A STAFF THREAD IS NOT IN THE CUSTOMER INBOX.
+ *  7. A STORE MANAGER'S NUMBER COVERS WHAT STAFF WHO CANNOT OPEN CRM HOLD. The
+ *     approved template has room for one number, so it is the two added up.
  */
 
 const PASSWORD = 'password123';
@@ -363,5 +365,41 @@ describe('Staff digest through the outbox (e2e)', () => {
       .get(`/crm/conversations/${staffThread.id}`)
       .set({ Authorization: `Bearer ${hoToken}` })
       .expect(404);
+  });
+
+  it("a store manager's number covers the follow-ups with staff who cannot open CRM", async () => {
+    const joins = (id: string, role: Role, phone: string, accessOverrides?: { crm: 'none' }) =>
+      prisma.user.create({
+        data: {
+          id, email: `${id}@dgo-a.local`, name: `${id} Person`, role, isActive: true,
+          approvalStatus: 'approved', organisationId: A.org, phone, accessOverrides,
+          userStores: { create: { storeId: A.store, isPrimary: true } },
+        },
+      });
+    await joins('u_dgo_mgr', Role.store_manager, '9812370005');
+    // Head office has switched CRM off for this one, who still holds a lead.
+    await joins('u_dgo_off', Role.salesperson, '9812370006', { crm: 'none' });
+    await owe('u_dgo_mgr', 'DGO-5');
+    await owe('u_dgo_off', 'DGO-6');
+
+    const ran = await digest.runForStore(A.org, A.store, 'Asia/Kolkata', nineAmIst);
+    expect(ran.sent).toBe(1);
+    expect(await runFor('u_dgo_off')).toBeNull();
+
+    const run = await runFor('u_dgo_mgr');
+    expect(run?.whatsappStatus).toBe('queued');
+    const message = await prisma.message.findUniqueOrThrow({ where: { id: run!.whatsappMessageId! } });
+    // Her own one and the one she is told about.
+    expect(message.payload).toMatchObject({
+      omnichannel: { templateComponents: [{ parameters: [{ text: 'u_dgo_mgr' }, { text: '2' }] }] },
+    });
+    // The bell keeps the two apart.
+    const bell = await prisma.notification.findFirstOrThrow({
+      where: { userId: 'u_dgo_mgr', kind: 'reminder' },
+    });
+    expect(bell).toMatchObject({
+      title: '1 follow-ups today',
+      body: '1 more follow-up is with staff who cannot open it.',
+    });
   });
 });
