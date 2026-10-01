@@ -217,9 +217,9 @@ const SYNONYMS: Record<string, string[]> = {
   '1_3_months': ['few months', '2 months', '3 months'],
   exploring: ['exploring', 'just looking', 'browsing', 'no hurry', 'not decided'],
 
-  call_now: ['yes', 'yeah', 'sure', 'ok', 'okay', 'please call', 'call me'],
+  call_now: ['yes', 'yeah', 'sure', 'ok', 'okay', 'please call', 'call me', 'call now', 'right now', 'now'],
   call_later: ['later', 'not now but', 'afterwards'],
-  not_now: ['no', 'nope', 'not interested', 'dont call', "don't call"],
+  not_now: ['no', 'nope', 'not now', 'not interested', 'dont call'],
 
   later_today: ['today', 'this evening'],
   tomorrow_am: ['tomorrow morning', 'morning'],
@@ -230,6 +230,15 @@ const SYNONYMS: Record<string, string[]> = {
 
 /** Strip everything that is not a letter or digit, for comparison. */
 const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+/**
+ * The text as whole words, single-spaced. A phrase is looked for as WORDS, not
+ * as letters: squashed together, "no" is inside "now", "ring" is inside
+ * "earrings" and "5 lakh" is inside "1.5 lakh", and each of those filed a
+ * wrong answer. Apostrophes go ("don't" is "dont"); "1.5" and "50k" stay whole.
+ */
+const wordsOf = (t: string) =>
+  (t.toLowerCase().replace(/['’]/g, '').match(/[a-z0-9]+(?:\.[0-9]+)?/g) ?? []).join(' ');
 
 /**
  * Read one answer.
@@ -275,7 +284,8 @@ export function parseChoice(step: FlowStep, raw: string): string | null {
 
   /*
    * 4 — a real sentence. Match the label or a known synonym anywhere inside it,
-   * against the normalised text so "₹1L–₹2L" is reachable from "1 to 2 lakh".
+   * as whole words (see wordsOf), so "₹1L–₹2L" is reachable from "1 to 2 lakh"
+   * and "now" is never read as "no".
    *
    * Scored by the LENGTH of the matched phrase so a longer, more specific
    * phrase wins: "tomorrow morning" must beat the bare "morning", exactly as
@@ -284,11 +294,12 @@ export function parseChoice(step: FlowStep, raw: string): string | null {
   let best: { value: string; length: number } | null = null;
   let tied = false;
 
+  const sentence = ` ${wordsOf(s)} `;
   for (const option of step.options) {
     const phrases = [option.label, ...(SYNONYMS[option.value] ?? [])];
     for (const phrase of phrases) {
-      const needle = norm(phrase);
-      if (!needle || !target.includes(needle)) continue;
+      const needle = wordsOf(phrase);
+      if (!needle || !sentence.includes(` ${needle} `)) continue;
       if (!best || needle.length > best.length) {
         best = { value: option.value, length: needle.length };
         tied = false;

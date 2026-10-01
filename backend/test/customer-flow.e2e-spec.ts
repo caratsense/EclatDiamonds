@@ -1,4 +1,4 @@
-﻿/**
+/**
  * The customer qualification flow, exercised without a database or WhatsApp.
  *
  * Named `.e2e-spec.ts` only because that is what the runner matches; nothing
@@ -80,6 +80,24 @@ describe('customer flow — a real sentence, not a number', () => {
   it('still refuses a genuinely unreadable answer rather than guessing', () => {
     expect(parseChoice(step('looking_for'), 'hmm let me think about it')).toBeNull();
     expect(parseChoice(step('budget'), 'whatever it costs')).toBeNull();
+  });
+
+  it('reads whole words: a phrase is never found inside another word', () => {
+    // Each of these filed a wrong answer when the text was matched as letters.
+    // "now" holds "no": a customer asking to be called at once was filed as
+    // "do not call", and nobody rang them.
+    expect(parseChoice(step('call'), 'now')).toBe('call_now');
+    expect(parseChoice(step('call'), 'right now')).toBe('call_now');
+    expect(parseChoice(step('call'), 'not now')).toBe('not_now');
+    expect(parseChoice(step('call'), "don't call")).toBe('not_now');
+    expect(parseChoice(step('call'), 'I dont know')).toBeNull();
+    expect(parseChoice(step('call'), 'afternoon is fine')).toBeNull();
+    // "1.5 lakh" holds "5 lakh"; "earrings" holds "ring"; "home" holds "me".
+    expect(parseChoice(step('budget'), '1.5 lakh')).toBe('1l_2l');
+    expect(parseChoice(step('budget'), '1.5 lakh')).not.toBe('above_2l');
+    expect(parseChoice(step('looking_for'), 'earrings')).toBeNull();
+    expect(parseChoice(step('who_for'), 'something for home')).toBeNull();
+    expect(parseChoice(step('timeline'), 'in 2 weeks')).toBeNull();
   });
 
   it('no longer tells the customer that only numbers work', () => {
