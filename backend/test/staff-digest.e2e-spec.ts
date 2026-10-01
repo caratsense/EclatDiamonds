@@ -32,6 +32,18 @@ import * as bcrypt from 'bcryptjs';
  *
  *  6. THE PREVIEW IS YOUR OWN. It exists so somebody can see what they will get,
  *     not so they can read a colleague's customers.
+ *
+ *  7. NOBODY IS SENT A LIST THEY CANNOT OPEN, where sales staff start with
+ *     attendance only. Somebody there who cannot open CRM gets no digest. The
+ *     follow-ups they hold are counted instead, and each manager who can open
+ *     CRM is told the number for the branches they run: one more line in the
+ *     manager's own digest, or a digest for that alone. A follow-up counts for
+ *     the branch it sits in, wherever its owner works now, because that is
+ *     where a manager can open it. Somebody who manages two branches is told
+ *     about both in the one digest.
+ *
+ *  8. A WORKSPACE WITHOUT THAT RULE GETS WHAT IT ALWAYS GOT, even for somebody
+ *     head office has switched CRM off for by hand.
  */
 
 const PASSWORD = 'password123';
@@ -40,20 +52,25 @@ const A = {
   org: 'org_dig_a', slug: 'dig-a', store: 'store_dig_a',
   ho: 'ho.dig@dig-a.local', rep: 'rep.dig@dig-a.local', quiet: 'quiet.dig@dig-a.local',
 };
+/** A second workspace, for the day its sales staff start with attendance only (auth/access.ts). */
+const B = { org: 'org_dig_b', slug: 'dig-b', store: 'store_dig_b', store2: 'store_dig_b2' };
+const VARIABLE = 'ATTENDANCE_ONLY_SALES_ORGS';
 
 async function teardown(prisma: import('../src/prisma/prisma.service').PrismaService) {
-  await prisma.staffDigestRun.deleteMany({ where: { organisationId: A.org } });
-  await prisma.staffDigestSettings.deleteMany({ where: { organisationId: A.org } });
-  await prisma.notification.deleteMany({
-    where: { user: { organisationId: A.org } },
-  });
-  await prisma.auditLog.deleteMany({ where: { organisationId: A.org } });
-  await prisma.leadFollowUp.deleteMany({ where: { lead: { organisationId: A.org } } });
-  await prisma.lead.deleteMany({ where: { organisationId: A.org } });
-  await prisma.userStore.deleteMany({ where: { user: { organisationId: A.org } } });
-  await prisma.user.deleteMany({ where: { organisationId: A.org } });
-  await prisma.store.deleteMany({ where: { organisationId: A.org } });
-  await prisma.organisation.deleteMany({ where: { id: A.org } });
+  for (const org of [A.org, B.org]) {
+    await prisma.staffDigestRun.deleteMany({ where: { organisationId: org } });
+    await prisma.staffDigestSettings.deleteMany({ where: { organisationId: org } });
+    await prisma.notification.deleteMany({
+      where: { user: { organisationId: org } },
+    });
+    await prisma.auditLog.deleteMany({ where: { organisationId: org } });
+    await prisma.leadFollowUp.deleteMany({ where: { lead: { organisationId: org } } });
+    await prisma.lead.deleteMany({ where: { organisationId: org } });
+    await prisma.userStore.deleteMany({ where: { user: { organisationId: org } } });
+    await prisma.user.deleteMany({ where: { organisationId: org } });
+    await prisma.store.deleteMany({ where: { organisationId: org } });
+    await prisma.organisation.deleteMany({ where: { id: org } });
+  }
 }
 
 describe('Staff digest (e2e)', () => {
@@ -62,9 +79,19 @@ describe('Staff digest (e2e)', () => {
   let digest: import('../src/crm/staff-digest.service').StaffDigestService;
   let hoA: string;
   let repA: string;
+  let listedBefore: string | undefined;
 
   const server = () => app.getHttpServer();
   const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+  /** Who in the second workspace was sent a digest, and what their bell says and opens. */
+  const bellsB = async () =>
+    Object.fromEntries(
+      (
+        await prisma.notification.findMany({
+          where: { user: { organisationId: B.org }, entityType: 'StaffDigestRun' },
+        })
+      ).map((n) => [n.userId, [n.title, n.body, n.href]]),
+    );
 
   /*
    * Anchored to the real today, not a fixed date.
@@ -91,6 +118,7 @@ describe('Staff digest (e2e)', () => {
     new Date(new Date(`${ymd}T00:00:00.000Z`).getTime() - n * 86_400_000);
 
   beforeAll(async () => {
+    listedBefore = process.env[VARIABLE];
     const { AppModule } = await import('../src/app.module');
     const { PrismaService } = await import('../src/prisma/prisma.service');
     const { StaffDigestService } = await import('../src/crm/staff-digest.service');
@@ -144,6 +172,65 @@ describe('Staff digest (e2e)', () => {
     await lead('ld_dig_1', 'LD-DIG-1', 'Overdue Customer', daysAgo(4).toISOString());
     await lead('ld_dig_2', 'LD-DIG-2', 'Today Customer', daysAgo(0).toISOString());
 
+    // The second workspace. Nobody there signs in: the digest is run for them.
+    await prisma.organisation.create({
+      data: { id: B.org, name: 'Dig B', slug: B.slug, industryPackCode: 'retail' },
+    });
+    for (const [id, name] of [[B.store, 'Counter'], [B.store2, 'Second counter']] as const) {
+      await prisma.store.create({
+        data: { id, name, city: 'Mumbai', organisationId: B.org, timezone: 'Asia/Kolkata' },
+      });
+    }
+    for (const [id, role, storeId, accessOverrides] of [
+      ['u_dig_b_mgr', 'store_manager', B.store, undefined],
+      ['u_dig_b_mgr2', 'store_manager', B.store, undefined],
+      // Head office has switched CRM off for this manager.
+      ['u_dig_b_mgr3', 'store_manager', B.store, { crm: 'none' }],
+      // Runs the second branch and nothing else.
+      ['u_dig_b_mgr4', 'store_manager', B.store2, undefined],
+      ['u_dig_b_rep', 'salesperson', B.store, undefined],
+      // Head office has given this salesperson CRM back.
+      ['u_dig_b_rep2', 'salesperson', B.store, { crm: 'own' }],
+      ['u_dig_b_rep3', 'salesperson', B.store2, undefined],
+      // Head office has switched CRM off for this salesperson by hand, rule or no rule.
+      ['u_dig_b_rep4', 'salesperson', B.store, { crm: 'none' }],
+    ] as const) {
+      await prisma.user.create({
+        data: {
+          id, email: `${id}@dig-b.local`, name: id, role, isActive: true, approvalStatus: 'approved',
+          organisationId: B.org, accessOverrides,
+          userStores: { create: { storeId, isPrimary: true } },
+        },
+      });
+    }
+    // The second of the managers runs the second branch as well.
+    await prisma.userStore.create({ data: { userId: 'u_dig_b_mgr2', storeId: B.store2 } });
+    // The salesperson of the second branch now works at the first one too: "reassign
+    // store" on Settings > Team keeps the old link.
+    await prisma.userStore.create({ data: { userId: 'u_dig_b_rep3', storeId: B.store } });
+    // What is owed there, and how many days late. One manager owes two, the others
+    // nothing. The salesperson holds three; the one given CRM back, one. Two more sit
+    // at the second branch: one with the salesperson who works at both, and one with
+    // somebody moved to the first branch on the HR form, which drops the old link.
+    for (const [n, ownerId, daysLate, storeId] of [
+      [1, 'u_dig_b_mgr', 2, B.store], [2, 'u_dig_b_mgr', 0, B.store],
+      [3, 'u_dig_b_rep', 4, B.store], [4, 'u_dig_b_rep', 0, B.store], [5, 'u_dig_b_rep', 0, B.store],
+      [6, 'u_dig_b_rep2', 0, B.store],
+      [7, 'u_dig_b_rep3', 0, B.store2],
+      [8, 'u_dig_b_rep4', 0, B.store2],
+    ] as const) {
+      await prisma.lead.create({
+        data: {
+          organisationId: B.org, storeId, ref: `LD-DIGB-${n}`, customerName: `Customer ${n}`,
+          source: 'walk_in', stage: 'inquiry', ownerId,
+          followUps: { create: { storeId, seq: 1, dueDate: daysAgo(daysLate) } },
+        },
+      });
+    }
+    await prisma.staffDigestSettings.create({
+      data: { organisationId: B.org, enabled: true, sendHourLocal: 9 },
+    });
+
     const login = async (email: string) =>
       (await request(server()).post('/auth/login').send({ email, password: PASSWORD }).expect(201))
         .body.token;
@@ -152,6 +239,8 @@ describe('Staff digest (e2e)', () => {
   }, 120_000);
 
   afterAll(async () => {
+    if (listedBefore === undefined) delete process.env[VARIABLE];
+    else process.env[VARIABLE] = listedBefore;
     if (prisma) await teardown(prisma);
     if (app) await app.close();
   });
@@ -280,5 +369,77 @@ describe('Staff digest (e2e)', () => {
     expect(res.body.userId).toBe('u_dig_ho');
     expect(res.body.due).toHaveLength(0);
     expect(res.body.overdue).toHaveLength(0);
+  });
+
+  it('where the attendance-only rule is off, everybody gets their own list as before and nothing more', async () => {
+    delete process.env[VARIABLE];
+    const ran = await digest.runForStore(B.org, B.store, 'Asia/Kolkata', nineAmIst);
+    expect(ran.sent).toBe(5);
+    // Each list is its owner's and no manager hears of anybody else's.
+    expect(await bellsB()).toEqual({
+      u_dig_b_mgr: ['2 follow-ups today', '1 of them are overdue.', '/calling'],
+      u_dig_b_rep: ['3 follow-ups today', '1 of them are overdue.', '/calling'],
+      u_dig_b_rep2: ['1 follow-ups today', null, '/calling'],
+      u_dig_b_rep3: ['1 follow-ups today', null, '/calling'],
+      // CRM switched off by hand. The digest changes only under the rule, so it still comes.
+      u_dig_b_rep4: ['1 follow-ups today', null, '/calling'],
+    });
+  });
+
+  it('under the rule, somebody who cannot open CRM gets no digest and the store managers are told the count', async () => {
+    // The same morning again, with nothing sent yet and the rule switched on.
+    await prisma.staffDigestRun.deleteMany({ where: { organisationId: B.org } });
+    await prisma.notification.deleteMany({ where: { user: { organisationId: B.org } } });
+    process.env[VARIABLE] = B.org;
+
+    const ran = await digest.runForStore(B.org, B.store, 'Asia/Kolkata', nineAmIst);
+    expect(ran.sent).toBe(3);
+    expect(await bellsB()).toEqual({
+      // Her own digest as it was, and one line more: the three that sit in her branch.
+      // Two of her staff hold one each at the second branch, which she cannot open.
+      u_dig_b_mgr: [
+        '2 follow-ups today',
+        '1 of them are overdue. 3 more follow-ups are with staff who cannot open them.',
+        '/calling',
+      ],
+      // Owes nothing himself and is still told. He has one digest a day, so it counts his
+      // second branch's two as well, and it opens the store's follow-ups, where they are.
+      u_dig_b_mgr2: ['5 follow-ups are with staff who cannot open them', null, '/reminders'],
+      // Given CRM back: exactly what he got before.
+      u_dig_b_rep2: ['1 follow-ups today', null, '/calling'],
+    });
+    // No digest for the sales staff, nor for the manager head office switched CRM off for.
+    const runs = await prisma.staffDigestRun.findMany({
+      where: { organisationId: B.org },
+      orderBy: { userId: 'asc' },
+    });
+    expect(runs.map((r) => r.userId)).toEqual(['u_dig_b_mgr', 'u_dig_b_mgr2', 'u_dig_b_rep2']);
+  });
+
+  it('a follow-up is counted for the managers of its own branch, wherever its owner works now', async () => {
+    // The second branch's morning. Its manager is told about the two that sit there,
+    // one of them with somebody who no longer works at that branch.
+    const ran = await digest.runForStore(B.org, B.store2, 'Asia/Kolkata', nineAmIst);
+    expect(ran.sent).toBe(1);
+    expect((await bellsB()).u_dig_b_mgr4).toEqual([
+      '2 follow-ups are with staff who cannot open them',
+      null,
+      '/reminders',
+    ]);
+  });
+
+  it("a manager told about other people's follow-ups is still told once a day", async () => {
+    const bells = () =>
+      prisma.notification.findMany({ where: { user: { organisationId: B.org } }, orderBy: { userId: 'asc' } });
+    const before = await bells();
+
+    for (const store of [B.store, B.store2]) {
+      const ran = await digest.runForStore(B.org, store, 'Asia/Kolkata', nineAmIst);
+      expect(ran.sent).toBe(0);
+    }
+    // Still one digest each, the managers who owe nothing included, and no bell rung again.
+    expect(await prisma.staffDigestRun.count({ where: { userId: 'u_dig_b_mgr2' } })).toBe(1);
+    expect(await prisma.staffDigestRun.count({ where: { organisationId: B.org } })).toBe(4);
+    expect(await bells()).toEqual(before);
   });
 });

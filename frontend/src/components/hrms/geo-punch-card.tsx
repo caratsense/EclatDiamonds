@@ -37,6 +37,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   evaluatePunchLocation,
   punchAction,
+  tooFarMessage,
   type PunchLocationDecision,
   type PunchPosition,
 } from "@/lib/attendance-punch-policy";
@@ -283,7 +284,11 @@ export function GeoPunchCard() {
     if (action === "block") {
       setCameraFor(null);
       toast.error("Check-in blocked outside the store range", {
-        description: `You are ${decision.distanceM ?? "outside"} m away (allowed: ${fence?.geofenceRadiusM ?? 0} m). Move within range or ask a manager to regularize attendance.`,
+        description: tooFarMessage(
+          fence?.storeName ?? "the store",
+          decision.distanceM ?? 0,
+          fence?.geofenceRadiusM ?? 0,
+        ),
       });
       return;
     }

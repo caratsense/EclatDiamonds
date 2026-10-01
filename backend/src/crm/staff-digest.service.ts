@@ -1,8 +1,10 @@
 import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 
+import { canOpen, startsAttendanceOnly } from '../auth/access';
 import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
+import { StoreScopeService } from '../common/store-scope.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { OmnichannelService } from '../omnichannel/omnichannel.service';
@@ -52,6 +54,7 @@ export class StaffDigestService {
     @Inject(forwardRef(() => OmnichannelService))
     private readonly omnichannel: OmnichannelService,
     private readonly audit: AuditService,
+    private readonly scope: StoreScopeService,
   ) {}
 
   async settingsFor(organisationId: string) {
@@ -267,6 +270,10 @@ export class StaffDigestService {
     }
 
     const day = businessDate(now, tz);
+    // Whether this workspace starts its sales staff on attendance only
+    // (auth/access.ts). Only there is anybody left out below. Everywhere else the
+    // digest goes out as it always has, whatever is switched off for one person.
+    const underRule = startsAttendanceOnly(Role.salesperson, organisationId);
     const staff = await this.prisma.user.findMany({
       where: {
         organisationId,
@@ -274,13 +281,23 @@ export class StaffDigestService {
         approvalStatus: 'approved',
         userStores: { some: { storeId } },
       },
-      select: { id: true, name: true, phone: true },
+      select: { id: true, name: true, phone: true, role: true, accessOverrides: true, organisationId: true },
     });
 
     let sent = 0;
     for (const person of staff) {
+      // A list to work through in CRM is no use to somebody who cannot open CRM.
+      // What they hold reaches the managers of the branch it sits in, as a number.
+      // ponytail: store managers only. Where a branch has none who can open CRM,
+      // nobody is told; send the number to head office if a branch runs that way.
+      if (underRule && !canOpen(person, 'crm')) continue;
       const { due, overdue } = await this.linesFor(person.id, organisationId, tz, now);
-      if (!due.length && !overdue.length) continue;
+      const own = due.length + overdue.length;
+      const others =
+        underRule && person.role === Role.store_manager
+          ? await this.heldByOthers(organisationId, person.id, day)
+          : 0;
+      if (!own && !others) continue;
 
       /*
        * Claim the day first.
@@ -322,9 +339,16 @@ export class StaffDigestService {
         // In-app always. No phone, no template and no provider needed.
         await this.notifications.emit([person.id], {
           kind: 'reminder',
-          title: `${due.length + overdue.length} follow-ups today`,
-          body: overdue.length ? `${overdue.length} of them are overdue.` : undefined,
-          href: '/calling',
+          title: own ? `${own} follow-ups today` : this.othersLine(others, false),
+          body:
+            [
+              overdue.length ? `${overdue.length} of them are overdue.` : null,
+              own && others ? `${this.othersLine(others, true)}.` : null,
+            ]
+              .filter(Boolean)
+              .join(' ') || undefined,
+          // Their own list is the calling queue. Other people's are in the store's follow-ups.
+          href: own ? '/calling' : '/reminders',
           storeId,
           entityType: 'StaffDigestRun',
           entityId: run.id,
@@ -347,6 +371,52 @@ export class StaffDigestService {
   }
 
   /**
+   * How many follow-ups, due by `day`, sit in this manager's branches with
+   * somebody who cannot open CRM (the leads were given to them before their
+   * screens changed). Those people are sent no digest. The digest is the only
+   * push the automatic +7 and +30 day follow-ups get, so the manager's carries
+   * the number and somebody who can open them is told.
+   *
+   * Counted by the branch the follow-up belongs to, not by where its owner works
+   * now. That is what the manager finds on /reminders, and somebody moved to
+   * another branch keeps the leads of the old one. Every branch the manager runs
+   * is counted: a manager gets one digest a day, with whichever branch comes
+   * first, so another branch's follow-ups would never reach them otherwise.
+   */
+  private async heldByOthers(organisationId: string, managerId: string, day: Date): Promise<number> {
+    // ponytail: every active person in the workspace is read to find who cannot open
+    // CRM. Staff lists are tens of rows; narrow it to the owners of due follow-ups
+    // past a few thousand.
+    const people = await this.prisma.user.findMany({
+      where: { organisationId, isActive: true, approvalStatus: 'approved' },
+      select: { id: true, role: true, accessOverrides: true, organisationId: true },
+    });
+    const unable = people.filter((p) => !canOpen(p, 'crm')).map((p) => p.id);
+    if (!unable.length) return 0;
+    // The branches /reminders shows this manager.
+    const { storeIds } = await this.scope.resolveScope(managerId, Role.store_manager, organisationId);
+    return this.prisma.leadFollowUp.count({
+      where: {
+        done: false,
+        dueDate: { lte: day },
+        storeId: { in: storeIds },
+        lead: { organisationId, ownerId: { in: unable } },
+      },
+    });
+  }
+
+  /**
+   * The line a store manager gets about follow-ups held by staff who cannot open
+   * CRM. `more` when it comes after the manager's own count.
+   */
+  private othersLine(count: number, more: boolean): string {
+    const n = `${count} ${more ? 'more ' : ''}`;
+    return count === 1
+      ? `${n}follow-up is with staff who cannot open it`
+      : `${n}follow-ups are with staff who cannot open them`;
+  }
+
+  /**
    * Hand the WhatsApp half to the outbox and record its answer.
    *
    * `queued` means an outbox message exists — not that anybody received it.
@@ -360,16 +430,21 @@ export class StaffDigestService {
     dueCount: number,
     overdueCount: number,
   ) {
-    const gate = this.whatsappGate(settings);
-    if (gate.reason) {
+    const total = dueCount + overdueCount;
+    // The approved template tells the reader how many follow-ups are their own, so
+    // that is the only number it is given. A digest that is only about what other
+    // staff hold has no such number: the bell has said it, and WhatsApp says nothing.
+    const reason =
+      this.whatsappGate(settings).reason ??
+      (total ? null : 'No follow-ups of their own today. The count for other staff is sent in the app only.');
+    if (reason) {
       await this.prisma.staffDigestRun.update({
         where: { id: run.id },
-        data: { whatsappStatus: 'skipped', whatsappReason: gate.reason },
+        data: { whatsappStatus: 'skipped', whatsappReason: reason },
       });
       return;
     }
 
-    const total = dueCount + overdueCount;
     const result = await this.omnichannel.queueStaffNotice({
       organisationId: run.organisationId,
       // The digest is this branch's, so it leaves on this branch's number.

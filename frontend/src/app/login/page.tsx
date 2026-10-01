@@ -716,7 +716,8 @@ function LoginPage() {
     clearAttendanceHandled();
     router.replace(
       // Everyone who punches starts on the punch screen; it sends them on to
-      // their own home once today's attendance is done or skipped.
+      // their own home once today's attendance is done or skipped. Staff set
+      // to attendance only stay there: it is their home (homeForRole).
       me.role === "head_office"
         ? homeForRole(me.role, me.productProfile?.enabledNavigation)
         : "/check-in",
@@ -1032,22 +1033,18 @@ function LoginPage() {
             </div>
           )}
 
-          {/* Sign in ⇄ Create account toggle */}
-          <button
-            type="button"
-            onClick={() => setMode((m) => (m === "signin" ? "signup" : "signin"))}
-            className="flex w-full items-center justify-center gap-1.5 text-sm text-slate-600 dark:text-[#f8fafc]/70 transition-colors hover:text-[#6366f1] dark:hover:text-[#818cf8]"
-          >
-            {mode === "signin" ? (
-              <>
-                <UserPlus className="h-3.5 w-3.5" /> New staff? Set up your login
-              </>
-            ) : (
-              <>
-                <ArrowLeft className="h-3.5 w-3.5" /> Back to sign in
-              </>
-            )}
-          </button>
+          {/* The sign-in screen has no way into sign-up: a manager makes staff
+              logins, and sign-up opens only from a direct ?start=join or
+              ?start=create link. Whoever came by one still gets a way back. */}
+          {mode === "signup" ? (
+            <button
+              type="button"
+              onClick={() => setMode("signin")}
+              className="flex w-full items-center justify-center gap-1.5 text-sm text-slate-600 dark:text-[#f8fafc]/70 transition-colors hover:text-[#6366f1] dark:hover:text-[#818cf8]"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" /> Back to sign in
+            </button>
+          ) : null}
         </div>
 
         {/* PWA Install Footer Notice */}

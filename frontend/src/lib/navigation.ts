@@ -43,6 +43,7 @@ import {
   Archive,
   Tags,
   CalendarClock,
+  Clock,
   Images,
   PackageX,
   Receipt as ReceiptIcon,
@@ -900,7 +901,31 @@ export function homeForRole(
         : enabledNavigation?.length && !enabledNavigation.includes("dashboards")
           ? "/crm"
           : "/dashboards";
-  // Someone whose access leaves out their role's usual home (sales staff set to
-  // attendance only) starts on attendance, the one screen everybody keeps.
-  return access && !(home.slice(1) in access) ? "/hrms" : home;
+  if (!access || home.slice(1) in access) return home;
+  // Their access leaves out the role's usual home. Someone set to attendance
+  // only (People & Access switches off every screen but HRMS) lives on the
+  // punch screen: Check in, then Check out, with leave and regularisation one
+  // link away. Anyone who still has other screens starts on attendance, the
+  // one screen everybody keeps, and goes on from there as before.
+  const slugs = Object.keys(access);
+  return slugs.length === 1 && slugs[0] === "hrms" ? "/check-in" : "/hrms";
+}
+
+/**
+ * The punch screen as a tab on a phone's bottom bar, for someone whose home it
+ * is. It is not a module, so it is not in NAV_ITEMS and no list of screens
+ * offers it. Without this tab a phone has no way back to Check in / Check out
+ * from leave or the profile page: the logo that leads home is in the sidebar,
+ * which a phone does not show.
+ */
+export function punchTab(
+  home: string,
+): Pick<NavItem, "slug" | "title" | "purpose" | "icon"> | null {
+  if (home !== "/check-in") return null;
+  return {
+    slug: "check-in",
+    title: "Attendance",
+    purpose: "Check in and check out.",
+    icon: Clock,
+  };
 }
