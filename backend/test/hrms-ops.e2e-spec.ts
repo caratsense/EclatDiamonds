@@ -705,23 +705,6 @@ describe('Attendance operations (e2e)', () => {
       .set(as(U.mgr))
       .send({ bufferMins: 20 })
       .expect(409);
-    // A weekly off is not dated: it applies from today, so what refuses it is
-    // a lock on today's month. On the 1st and 2nd, P is still in last month,
-    // and a lock on last month alone must not freeze the roster.
-    const thisMonth = dateOnly(today).slice(0, 7);
-    if (thisMonth !== month) {
-      await request(server()).post('/hrms/payroll-locks').set(as(U.ho)).send({ month: thisMonth }).expect(201);
-    }
-    await request(server())
-      .patch('/hrms/week-off')
-      .set(as(U.ho))
-      .send({ storeId: A.s1, weekOffDay: 1 })
-      .expect(409);
-    await request(server())
-      .put('/hrms/payroll/week-offs')
-      .set(as(U.mgr))
-      .send({ userId: U.repC, storeId: A.s1, days: [2] })
-      .expect(409);
 
     const run = (await request(server()).post('/hrms/processing-runs').set(as(U.ho)).send({ from: dateOnly(P), to: dateOnly(P), storeId: A.s1 }).expect(201)).body;
     expect(run).toMatchObject({ skippedLocked: 1, processed: 0, changed: 0 });
@@ -741,5 +724,27 @@ describe('Attendance operations (e2e)', () => {
     expect(await prisma.rawPunchEvent.count({ where: { userId: U.repE } })).toBeGreaterThan(0);
     const locks = (await request(server()).get('/hrms/payroll-locks').set(as(U.ho)).expect(200)).body;
     expect(locks[0].lockedBy).toMatchObject({ id: U.ho });
+  });
+
+  it('a weekly-off change is refused by a lock on this month, not by one on last month', async () => {
+    // A weekly off is not dated: it applies from today. So a lock on today's
+    // month refuses the change and a lock on an older month does not, or nobody
+    // could change a weekly off again once the first month was locked.
+    // The test above locks P's month, which on the 1st and 2nd is last month:
+    // these refusals sat in it and failed on 1 October.
+    await prisma.payrollPeriodLock.deleteMany({ where: { organisationId: A.org } }); // no lock left over from above
+    const lock = (day: Date) =>
+      request(server()).post('/hrms/payroll-locks').set(as(U.ho)).send({ month: dateOnly(day).slice(0, 7) }).expect(201);
+    const storeOff = () => request(server()).patch('/hrms/week-off').set(as(U.ho)).send({ storeId: A.s1, weekOffDay: 1 });
+    const staffOff = () =>
+      request(server()).put('/hrms/payroll/week-offs').set(as(U.mgr)).send({ userId: U.repC, storeId: A.s1, days: [2] });
+
+    await lock(dayOff(-today.getUTCDate())); // the last day of last month
+    await storeOff().expect(200);
+    await staffOff().expect(200);
+
+    await lock(today);
+    await storeOff().expect(409);
+    await staffOff().expect(409);
   });
 });
