@@ -1545,7 +1545,16 @@ function AddStaffDialog({
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              // Cancel keeps the rest of the form as before, but never a typed
+              // password: it must not wait in a closed dialog and end up as
+              // the next person's.
+              setPassword("");
+              onOpenChange(false);
+            }}
+          >
             Cancel
           </Button>
           <Button onClick={save} disabled={createStaff.isPending}>
