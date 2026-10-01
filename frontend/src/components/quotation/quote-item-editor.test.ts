@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { matchOptions } from "@/components/ui/search-select";
-import type { MaterialMaster, MaterialOption } from "@/lib/queries/materials";
+import type { MaterialMaster, MaterialOption, StyleBom } from "@/lib/queries/materials";
 
 import {
   MaterialDatalists,
@@ -13,6 +13,7 @@ import {
   QuoteItemEditor,
   emptyItem,
   masterLists,
+  readStyle,
   withMetal,
 } from "./quote-item-editor";
 
@@ -122,5 +123,54 @@ describe("an item's type and metal", () => {
   it("drop a gold rate typed by hand when the metal changes", () => {
     const item = { ...emptyItem(), metalCode: "G14YG", weight: "3.5", manualRate: "6000" };
     expect(withMetal(item, "G18WG")).toEqual({ ...item, metalCode: "G18WG", manualRate: "" });
+  });
+});
+
+describe("a design's materials", () => {
+  const diamond: MaterialOption = {
+    ...gold(0, ""),
+    code: "LG-RND-VVS-E-F",
+    name: "LAB GROWN ROUND",
+    kind: "diamond",
+    karat: null,
+    tone: null,
+  };
+  const master: MaterialMaster = {
+    ...masterWith([gold(10, "YG"), gold(14, "YG"), gold(22, "YG")]),
+    diamonds: [diamond],
+  };
+  const lists = masterLists(master);
+  const style = (...lines: StyleBom["lines"]): StyleBom => ({
+    styleCode: "10778RG",
+    itemType: "ALR",
+    itemSize: "12",
+    lines,
+  });
+
+  it("bring its gold with the weight, and each stone", () => {
+    const read = readStyle(
+      style({ code: "G14YG", weight: 3.6 }, { code: "LG-RND-VVS-E-F", pieces: 12, weight: 0.096 }),
+      lists,
+      master,
+    );
+    expect(read.metalLine).toEqual({ code: "G14YG", weight: 3.6 });
+    expect(read.stones.map((s) => [s.type, s.code, s.pieces, s.carats])).toEqual([
+      ["D", "LG-RND-VVS-E-F", "12", "0.10"],
+    ]);
+    expect(read.note).toBe("1 stone line");
+  });
+
+  it("come without the gold when it is not one a quote is built in, and say what is left to do", () => {
+    for (const code of ["G10YG", "G22YG"]) {
+      const read = readStyle(style({ code, weight: 3.6 }), lists, master);
+      expect(read.metalLine).toBeUndefined();
+      // The gold is not a charge: nothing is said of "other lines left out".
+      expect(read.note).toBe("0 stone lines · its gold is not 9/12/14/18K — pick the metal and type the weight");
+    }
+  });
+
+  it("count a line that is neither its gold nor a stone as left out", () => {
+    const read = readStyle(style({ code: "G14YG", weight: 3.6 }, { code: "HALLMARK", weight: 1 }), lists, master);
+    expect(read.note).toBe("0 stone lines · 1 other line (charges) left out");
   });
 });

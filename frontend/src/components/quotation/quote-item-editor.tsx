@@ -16,6 +16,7 @@ import {
   useStyleSearch,
   type MaterialMaster,
   type MaterialOption,
+  type StyleBom,
 } from "@/lib/queries/materials";
 import { apiErrorMessage, cn } from "@/lib/utils";
 
@@ -204,6 +205,49 @@ function nextStone(stone: StoneRow, patch: Partial<StoneRow>, lists: Lists): Sto
   return next;
 }
 
+/**
+ * A design's default materials as the builder takes them: its gold, its
+ * stones, and a note of what it did not bring. A design in a gold the shop
+ * does not quote in (10K, 22K…) comes without its gold or its weight; the note
+ * says so, and that line is not one of the charges it counts as left out.
+ */
+export function readStyle(bom: StyleBom, lists: Lists, master: MaterialMaster | undefined) {
+  const metalLine = bom.lines.find((l) => lists.metals.some((m) => m.code === l.code));
+  const unoffered = metalLine ? undefined : bom.lines.find((l) => master?.metals.some((m) => m.code === l.code));
+  const stones: StoneRow[] = [];
+  let skipped = 0;
+  for (const l of bom.lines) {
+    if (l === metalLine || l === unoffered) continue;
+    const d = lists.diamonds.find((m) => m.code === l.code);
+    const c = d ? undefined : lists.stones.find((m) => m.code === l.code);
+    if (!d && !c) {
+      skipped += 1;
+      continue;
+    }
+    const base = emptyStone(d ? "D" : "C");
+    stones.push(
+      nextStone(
+        base,
+        {
+          code: l.code,
+          size: l.size ?? "",
+          carats: l.weight ? round2(l.weight).toFixed(2) : "",
+          ...(l.pieces ? { pieces: String(l.pieces) } : {}),
+        },
+        lists,
+      ),
+    );
+  }
+  const note = [
+    `${stones.length} stone line${stones.length === 1 ? "" : "s"}`,
+    unoffered ? `its gold is not ${QUOTE_KARATS_TEXT} — pick the metal and type the weight` : "",
+    skipped ? `${skipped} other line${skipped === 1 ? "" : "s"} (charges) left out` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return { metalLine, stones, note };
+}
+
 /** Today's rate for a karat, and how much to trust it. */
 export interface AutoRate {
   rate: number;
@@ -268,32 +312,7 @@ export function QuoteItemEditor({
     setLoading(true);
     try {
       const bom = await fetchStyle(code);
-      const metalLine = bom.lines.find((l) => lists.metals.some((m) => m.code === l.code));
-      const stones: StoneRow[] = [];
-      let skipped = 0;
-      for (const l of bom.lines) {
-        if (l === metalLine) continue;
-        const d = lists.diamonds.find((m) => m.code === l.code);
-        const c = d ? undefined : lists.stones.find((m) => m.code === l.code);
-        if (!d && !c) {
-          skipped += 1;
-          continue;
-        }
-        const base = emptyStone(d ? "D" : "C");
-        stones.push(
-          nextStone(
-            base,
-            {
-              code: l.code,
-              size: l.size ?? "",
-              carats: l.weight ? round2(l.weight).toFixed(2) : "",
-              ...(l.pieces ? { pieces: String(l.pieces) } : {}),
-            },
-            lists,
-          ),
-        );
-      }
-      const heavyMetal = bom.lines.find((l) => master?.metals.some((m) => m.code === l.code)) && !metalLine;
+      const { metalLine, stones, note } = readStyle(bom, lists, master);
       onChange({
         ...item,
         styleNumber: bom.styleCode,
@@ -304,15 +323,7 @@ export function QuoteItemEditor({
         weight: metalLine ? String(metalLine.weight) : item.weight,
         stones,
       });
-      toast.success(`Loaded ${bom.styleCode}`, {
-        description: [
-          `${stones.length} stone line${stones.length === 1 ? "" : "s"}`,
-          heavyMetal ? `its gold is not ${QUOTE_KARATS_TEXT} — pick the metal` : "",
-          skipped ? `${skipped} other line${skipped === 1 ? "" : "s"} (charges) left out` : "",
-        ]
-          .filter(Boolean)
-          .join(" · "),
-      });
+      toast.success(`Loaded ${bom.styleCode}`, { description: note });
     } catch (e) {
       toast.error(apiErrorMessage(e, `No style ${code} in the item master.`));
     } finally {
