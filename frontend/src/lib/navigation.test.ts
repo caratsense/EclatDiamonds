@@ -7,6 +7,7 @@ import {
   NAV_ITEMS,
   getNavItem,
   homeForRole,
+  punchTab,
   visibleNavGroups,
 } from "@/lib/navigation";
 import type { Role } from "@/lib/types";
@@ -152,6 +153,17 @@ describe("navigation", () => {
       ).toBe("/hrms");
       // A manager with only Dashboards switched off.
       expect(homeForRole("store_manager", null, { hrms: "store", crm: "store" })).toBe("/hrms");
+    });
+
+    it("gives someone who lives on the punch screen a phone tab for it, and nobody else", () => {
+      // HRMS is their one screen in the navigation. Without this tab a phone had
+      // no way back to Check in / Check out once leave was open.
+      const tabFor = (...person: Parameters<typeof homeForRole>) => punchTab(homeForRole(...person));
+      expect(tabFor("salesperson", null, { hrms: "own" })?.slug).toBe("check-in");
+      expect(tabFor("store_manager", null, { hrms: "store" })?.slug).toBe("check-in");
+      expect(tabFor("salesperson")).toBeNull();
+      expect(tabFor("salesperson", null, { hrms: "own", catalogue: "own" })).toBeNull();
+      expect(tabFor("head_office")).toBeNull();
     });
 
     it("drops a section entirely when the pack disables every item in it", () => {

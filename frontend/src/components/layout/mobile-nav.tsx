@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Clock, MoreHorizontal, type LucideIcon } from "lucide-react";
+import { MoreHorizontal, type LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import {
@@ -16,8 +16,8 @@ import {
   NAV_ITEMS,
   filterNavGroups,
   homeForRole,
+  punchTab,
   visibleNavGroups,
-  type NavItem,
 } from "@/lib/navigation";
 import { Input } from "@/components/ui/input";
 import { useEnabledNavigation } from "@/lib/queries/tenant-config";
@@ -37,34 +37,6 @@ const PREFERRED_PRIMARY = [
   "checkins",
   "reminders",
 ] as const;
-
-type PrimaryTab = Pick<NavItem, "slug" | "title" | "purpose" | "icon">;
-
-/** The punch screen as a tab. It is not a module, so it is not in NAV_ITEMS. */
-const PUNCH_TAB: PrimaryTab = {
-  slug: "check-in",
-  title: "Attendance",
-  purpose: "Check in and check out.",
-  icon: Clock,
-};
-
-/**
- * The bottom bar's tabs: the first four preferred screens this person can see.
- *
- * Someone whose home is the punch screen (attendance only) has none of them,
- * so it gets a tab of its own. Without one a phone has no way back to Check
- * in / Check out from leave or the profile page: the logo that leads home is
- * in the sidebar, which a phone does not show.
- */
-export function primaryTabs(
-  visibleSlugs: ReadonlySet<string>,
-  home: string,
-): PrimaryTab[] {
-  const tabs: PrimaryTab[] = PREFERRED_PRIMARY.filter((s) => visibleSlugs.has(s))
-    .map((slug) => NAV_ITEMS.find((i) => i.slug === slug)!)
-    .filter(Boolean);
-  return (home === "/check-in" ? [PUNCH_TAB, ...tabs] : tabs).slice(0, 4);
-}
 
 function Tab({
   href,
@@ -127,14 +99,17 @@ export function MobileNav() {
   const visibleSlugs = new Set(
     groups.flatMap((g) => g.items.map((i) => i.slug)),
   );
-  const primary = primaryTabs(
-    visibleSlugs,
-    homeForRole(role, enabledNavigation, access),
-  );
+  const primary = PREFERRED_PRIMARY.filter((s) => visibleSlugs.has(s))
+    .slice(0, 4)
+    .map((slug) => NAV_ITEMS.find((i) => i.slug === slug)!)
+    .filter(Boolean);
   const primarySlugs = primary.map((i) => i.slug);
 
+  // Someone who lives on the punch screen gets a tab for it (punchTab).
+  const punch = punchTab(homeForRole(role, enabledNavigation, access));
+  const onPunch = !!punch && isActive(punch.slug);
   const moreActive =
-    !primarySlugs.some((s) => isActive(s)) && pathname !== "/login";
+    !primarySlugs.some((s) => isActive(s)) && !onPunch && pathname !== "/login";
 
   return (
     <>
@@ -142,6 +117,15 @@ export function MobileNav() {
         aria-label="Primary"
         className="fixed inset-x-0 bottom-0 z-40 flex h-16 border-t border-border bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden"
       >
+        {punch ? (
+          <Tab
+            href={`/${punch.slug}`}
+            title={t(`nav.${punch.slug}`, punch.title)}
+            hint={punch.purpose}
+            Icon={punch.icon}
+            active={onPunch}
+          />
+        ) : null}
         {primary.map((item) => (
           <Tab
             key={item.slug}
