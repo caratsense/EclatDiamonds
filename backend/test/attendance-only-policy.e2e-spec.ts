@@ -395,6 +395,19 @@ describe('Attendance-only sales staff, as a workspace rule (e2e)', () => {
   it('leads and conversations take turns separately', async () => {
     // Two people for the inbox, one of them for leads.
     await queueOf(['u_aop_rep2', 'u_aop_rep3']);
+    // The store's turn as it was recorded before the two kinds were told apart: one last pick, of either kind.
+    const { settings } = await prisma.organisation.findUniqueOrThrow({ where: { id: P.org } });
+    await prisma.organisation.update({
+      where: { id: P.org },
+      data: {
+        settings: {
+          ...(settings as object),
+          crmRoundRobinState: {
+            [P.store]: { lastUserId: 'u_aop_rep2', sequence: 9, updatedAt: '2026-09-01T00:00:00.000Z' },
+          },
+        },
+      },
+    });
     const inbox = async (from: string) => (await messageFrom(from)).automaticAssignment?.assignedUserId;
 
     const first = await inbox('919812340901');
@@ -403,9 +416,9 @@ describe('Attendance-only sales staff, as a workspace rule (e2e)', () => {
     expect((await enquiry(5)).assigned?.userId).toBe('u_aop_rep2');
     const third = await inbox('919812340903');
 
-    // An enquiry in between costs nobody their turn at the inbox.
-    expect(new Set([first, second])).toEqual(new Set(['u_aop_rep2', 'u_aop_rep3']));
-    expect(third).toBe(first);
+    // The old turn still counts, so the inbox starts with the person after it. From
+    // there an enquiry in between costs nobody their turn at the inbox.
+    expect([first, second, third]).toEqual(['u_aop_rep3', 'u_aop_rep2', 'u_aop_rep3']);
   });
 
   it('the bot hands a thread to the first manager who can open Conversations', async () => {
