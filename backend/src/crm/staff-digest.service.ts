@@ -4,6 +4,7 @@ import { Prisma, Role } from '@prisma/client';
 import { canOpen } from '../auth/access';
 import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
+import { StoreScopeService } from '../common/store-scope.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { OmnichannelService } from '../omnichannel/omnichannel.service';
@@ -53,6 +54,7 @@ export class StaffDigestService {
     @Inject(forwardRef(() => OmnichannelService))
     private readonly omnichannel: OmnichannelService,
     private readonly audit: AuditService,
+    private readonly scope: StoreScopeService,
   ) {}
 
   async settingsFor(organisationId: string) {
@@ -281,7 +283,7 @@ export class StaffDigestService {
     let sent = 0;
     for (const person of staff) {
       // A list to work through in CRM is no use to somebody who cannot open CRM.
-      // What they hold reaches their store's managers as a number instead.
+      // What they hold reaches the managers of the branch it sits in, as a number.
       // ponytail: store managers only. Where a branch has none who can open CRM,
       // nobody is told; send the number to head office if a branch runs that way.
       if (!canOpen(person, 'crm')) continue;
@@ -364,30 +366,37 @@ export class StaffDigestService {
   }
 
   /**
-   * How many follow-ups, due by `day`, are with staff of this manager's branches
-   * who cannot open CRM (the leads were given to them before their screens
-   * changed). Those people are sent no digest. The digest is the only push the
-   * automatic +7 and +30 day follow-ups get, so the manager's carries the number
-   * and somebody who can open them is told.
+   * How many follow-ups, due by `day`, sit in this manager's branches with
+   * somebody who cannot open CRM (the leads were given to them before their
+   * screens changed). Those people are sent no digest. The digest is the only
+   * push the automatic +7 and +30 day follow-ups get, so the manager's carries
+   * the number and somebody who can open them is told.
    *
-   * The same test as a person's own list (linesFor), over every branch the
-   * manager runs: a manager gets one digest a day, with whichever branch comes
+   * Counted by the branch the follow-up belongs to, not by where its owner works
+   * now. That is what the manager finds on /reminders, and somebody moved to
+   * another branch keeps the leads of the old one. Every branch the manager runs
+   * is counted: a manager gets one digest a day, with whichever branch comes
    * first, so another branch's follow-ups would never reach them otherwise.
    */
   private async heldByOthers(organisationId: string, managerId: string, day: Date): Promise<number> {
-    const colleagues = await this.prisma.user.findMany({
-      where: {
-        organisationId,
-        isActive: true,
-        approvalStatus: 'approved',
-        userStores: { some: { store: { userStores: { some: { userId: managerId } } } } },
-      },
+    // ponytail: every active person in the workspace is read to find who cannot open
+    // CRM. Staff lists are tens of rows; narrow it to the owners of due follow-ups
+    // past a few thousand.
+    const people = await this.prisma.user.findMany({
+      where: { organisationId, isActive: true, approvalStatus: 'approved' },
       select: { id: true, role: true, accessOverrides: true, organisationId: true },
     });
-    const unable = colleagues.filter((p) => !canOpen(p, 'crm')).map((p) => p.id);
+    const unable = people.filter((p) => !canOpen(p, 'crm')).map((p) => p.id);
     if (!unable.length) return 0;
+    // The branches /reminders shows this manager.
+    const { storeIds } = await this.scope.resolveScope(managerId, Role.store_manager, organisationId);
     return this.prisma.leadFollowUp.count({
-      where: { done: false, dueDate: { lte: day }, lead: { organisationId, ownerId: { in: unable } } },
+      where: {
+        done: false,
+        dueDate: { lte: day },
+        storeId: { in: storeIds },
+        lead: { organisationId, ownerId: { in: unable } },
+      },
     });
   }
 

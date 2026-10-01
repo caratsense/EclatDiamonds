@@ -35,9 +35,11 @@ import * as bcrypt from 'bcryptjs';
  *
  *  7. NOBODY IS SENT A LIST THEY CANNOT OPEN. Somebody who cannot open CRM gets
  *     no digest. The follow-ups they hold are counted instead, and each manager
- *     of their store who can open CRM is told the number: one more line in the
- *     manager's own digest, or a digest for that alone. Somebody who manages
- *     two branches is told about both in the one digest.
+ *     who can open CRM is told the number for the branches they run: one more
+ *     line in the manager's own digest, or a digest for that alone. A follow-up
+ *     counts for the branch it sits in, wherever its owner works now, because
+ *     that is where a manager can open it. Somebody who manages two branches is
+ *     told about both in the one digest.
  */
 
 const PASSWORD = 'password123';
@@ -180,10 +182,13 @@ describe('Staff digest (e2e)', () => {
       ['u_dig_b_mgr2', 'store_manager', B.store, undefined],
       // Head office has switched CRM off for this manager.
       ['u_dig_b_mgr3', 'store_manager', B.store, { crm: 'none' }],
+      // Runs the second branch and nothing else.
+      ['u_dig_b_mgr4', 'store_manager', B.store2, undefined],
       ['u_dig_b_rep', 'salesperson', B.store, undefined],
       // Head office has given this salesperson CRM back.
       ['u_dig_b_rep2', 'salesperson', B.store, { crm: 'own' }],
       ['u_dig_b_rep3', 'salesperson', B.store2, undefined],
+      ['u_dig_b_rep4', 'salesperson', B.store, undefined],
     ] as const) {
       await prisma.user.create({
         data: {
@@ -195,14 +200,19 @@ describe('Staff digest (e2e)', () => {
     }
     // The second of the managers runs the second branch as well.
     await prisma.userStore.create({ data: { userId: 'u_dig_b_mgr2', storeId: B.store2 } });
-    // What is owed there, and how many days late. One manager owes two, the other
-    // nothing. The salesperson holds three; the one given CRM back, one; the one
-    // at the second branch, one.
+    // The salesperson of the second branch now works at the first one too: "reassign
+    // store" on Settings > Team keeps the old link.
+    await prisma.userStore.create({ data: { userId: 'u_dig_b_rep3', storeId: B.store } });
+    // What is owed there, and how many days late. One manager owes two, the others
+    // nothing. The salesperson holds three; the one given CRM back, one. Two more sit
+    // at the second branch: one with the salesperson who works at both, and one with
+    // somebody moved to the first branch on the HR form, which drops the old link.
     for (const [n, ownerId, daysLate, storeId] of [
       [1, 'u_dig_b_mgr', 2, B.store], [2, 'u_dig_b_mgr', 0, B.store],
       [3, 'u_dig_b_rep', 4, B.store], [4, 'u_dig_b_rep', 0, B.store], [5, 'u_dig_b_rep', 0, B.store],
       [6, 'u_dig_b_rep2', 0, B.store],
       [7, 'u_dig_b_rep3', 0, B.store2],
+      [8, 'u_dig_b_rep4', 0, B.store2],
     ] as const) {
       await prisma.lead.create({
         data: {
@@ -359,12 +369,14 @@ describe('Staff digest (e2e)', () => {
   it('where the attendance-only rule is off, everybody gets their own list as before and nothing more', async () => {
     delete process.env[VARIABLE];
     const ran = await digest.runForStore(B.org, B.store, 'Asia/Kolkata', nineAmIst);
-    expect(ran.sent).toBe(3);
-    // The salesperson can open CRM here, so the list is hers and no manager hears of it.
+    expect(ran.sent).toBe(5);
+    // The sales staff can open CRM here, so each list is its owner's and no manager hears of it.
     expect(await bellsB()).toEqual({
       u_dig_b_mgr: ['2 follow-ups today', '1 of them are overdue.', '/calling'],
       u_dig_b_rep: ['3 follow-ups today', '1 of them are overdue.', '/calling'],
       u_dig_b_rep2: ['1 follow-ups today', null, '/calling'],
+      u_dig_b_rep3: ['1 follow-ups today', null, '/calling'],
+      u_dig_b_rep4: ['1 follow-ups today', null, '/calling'],
     });
   });
 
@@ -377,19 +389,20 @@ describe('Staff digest (e2e)', () => {
     const ran = await digest.runForStore(B.org, B.store, 'Asia/Kolkata', nineAmIst);
     expect(ran.sent).toBe(3);
     expect(await bellsB()).toEqual({
-      // Her own digest as it was, and one line more.
+      // Her own digest as it was, and one line more: the three that sit in her branch.
+      // Two of her staff hold one each at the second branch, which she cannot open.
       u_dig_b_mgr: [
         '2 follow-ups today',
         '1 of them are overdue. 3 more follow-ups are with staff who cannot open them.',
         '/calling',
       ],
       // Owes nothing himself and is still told. He has one digest a day, so it counts his
-      // second branch's one too, and it opens the store's follow-ups, where they are.
-      u_dig_b_mgr2: ['4 follow-ups are with staff who cannot open them', null, '/reminders'],
+      // second branch's two as well, and it opens the store's follow-ups, where they are.
+      u_dig_b_mgr2: ['5 follow-ups are with staff who cannot open them', null, '/reminders'],
       // Given CRM back: exactly what he got before.
       u_dig_b_rep2: ['1 follow-ups today', null, '/calling'],
     });
-    // No digest for the salesperson, nor for the manager head office switched CRM off for.
+    // No digest for the sales staff, nor for the manager head office switched CRM off for.
     const runs = await prisma.staffDigestRun.findMany({
       where: { organisationId: B.org },
       orderBy: { userId: 'asc' },
@@ -397,16 +410,30 @@ describe('Staff digest (e2e)', () => {
     expect(runs.map((r) => r.userId)).toEqual(['u_dig_b_mgr', 'u_dig_b_mgr2', 'u_dig_b_rep2']);
   });
 
+  it('a follow-up is counted for the managers of its own branch, wherever its owner works now', async () => {
+    // The second branch's morning. Its manager is told about the two that sit there,
+    // one of them with somebody who no longer works at that branch.
+    const ran = await digest.runForStore(B.org, B.store2, 'Asia/Kolkata', nineAmIst);
+    expect(ran.sent).toBe(1);
+    expect((await bellsB()).u_dig_b_mgr4).toEqual([
+      '2 follow-ups are with staff who cannot open them',
+      null,
+      '/reminders',
+    ]);
+  });
+
   it("a manager told about other people's follow-ups is still told once a day", async () => {
     const bells = () =>
       prisma.notification.findMany({ where: { user: { organisationId: B.org } }, orderBy: { userId: 'asc' } });
     const before = await bells();
 
-    const ran = await digest.runForStore(B.org, B.store, 'Asia/Kolkata', nineAmIst);
-    expect(ran.sent).toBe(0);
-    // Still one digest each, the manager who owes nothing included, and no bell rung again.
+    for (const store of [B.store, B.store2]) {
+      const ran = await digest.runForStore(B.org, store, 'Asia/Kolkata', nineAmIst);
+      expect(ran.sent).toBe(0);
+    }
+    // Still one digest each, the managers who owe nothing included, and no bell rung again.
     expect(await prisma.staffDigestRun.count({ where: { userId: 'u_dig_b_mgr2' } })).toBe(1);
-    expect(await prisma.staffDigestRun.count({ where: { organisationId: B.org } })).toBe(3);
+    expect(await prisma.staffDigestRun.count({ where: { organisationId: B.org } })).toBe(4);
     expect(await bells()).toEqual(before);
   });
 });
