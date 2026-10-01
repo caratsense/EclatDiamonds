@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { RotateCcw, Search } from "lucide-react";
+import { Clock, RotateCcw, Search } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { SectionHeader } from "@/components/section/section-header";
@@ -12,7 +13,8 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { NAV_GROUPS, getNavItem } from "@/lib/navigation";
 import { useStaff } from "@/lib/queries/users";
-import { useSetUserAccess, useUserAccess, type AccessOverride } from "@/lib/queries/access";
+import { api } from "@/lib/api";
+import { useSetUserAccess, useUserAccess, type AccessOverride, type UserAccess } from "@/lib/queries/access";
 import { ROLE_LABELS } from "@/lib/types";
 import { apiErrorMessage, cn } from "@/lib/utils";
 
@@ -37,11 +39,48 @@ const LEVELS: { value: AccessOverride; label: string; hint: string }[] = [
  * how far. A change applies to that person only, on top of their role, and the
  * server enforces it — a screen switched off is refused, one switched on works.
  */
+/**
+ * Attendance and nothing else: every screen the role gives, switched off,
+ * except HRMS — where Check in / Check out, leave and regularisation live.
+ */
+const attendanceOnly = (defaults: Record<string, unknown>): Record<string, AccessOverride> =>
+  Object.fromEntries(Object.keys(defaults).filter((slug) => slug !== "hrms").map((slug) => [slug, "none"]));
+
 export default function AccessPage() {
   const item = getNavItem("settings/access");
   const staff = useStaff();
+  const qc = useQueryClient();
   const [query, setQuery] = useState("");
   const [userId, setUserId] = useState<string | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  const salesStaff = (staff.data ?? []).filter((u) => u.isActive && u.role === "salesperson");
+  /** The same audited save as one person, once for each of the sales staff. */
+  async function allSalesStaffAttendanceOnly() {
+    if (
+      !window.confirm(
+        `Set all ${salesStaff.length} sales staff to attendance only?
+
+After signing in they will see Check in / Check out and nothing else. Undo it for any one person with "Role defaults".`,
+      )
+    )
+      return;
+    setBulkBusy(true);
+    let done = 0;
+    try {
+      for (const u of salesStaff) {
+        const { data } = await api.get<UserAccess>(`/users/${u.id}/access`);
+        await api.put(`/users/${u.id}/access`, { overrides: attendanceOnly(data.defaults) });
+        done++;
+      }
+      toast.success(`${done} sales staff now see attendance only`);
+    } catch (e) {
+      toast.error(apiErrorMessage(e, `Stopped after ${done} of ${salesStaff.length}. Try again.`));
+    } finally {
+      setBulkBusy(false);
+      void qc.invalidateQueries({ queryKey: ["user-access"] });
+    }
+  }
 
   const people = useMemo(
     () =>
@@ -68,6 +107,16 @@ export default function AccessPage() {
                 onChange={(e) => setQuery(e.target.value)}
               />
             </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full"
+              disabled={bulkBusy || salesStaff.length === 0}
+              onClick={allSalesStaffAttendanceOnly}
+            >
+              <Clock className="h-3.5 w-3.5" />
+              {bulkBusy ? "Saving…" : "All sales staff: attendance only"}
+            </Button>
           </CardHeader>
           <CardContent className="max-h-[32rem] space-y-1 overflow-y-auto p-2">
             {staff.isLoading ? (
@@ -166,7 +215,16 @@ function PersonAccess({ userId }: { userId: string }) {
             {changedCount ? ` ${changedCount} screen${changedCount === 1 ? " differs" : "s differ"} from the role.` : ""}
           </CardDescription>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={save.isPending}
+            title="Only Check in / Check out, leave and regularisation"
+            onClick={() => submit(attendanceOnly(data.defaults))}
+          >
+            <Clock className="h-3.5 w-3.5" /> Attendance only
+          </Button>
           <Button
             variant="outline"
             size="sm"

@@ -887,10 +887,20 @@ export function navigationFromSettings(
  * they start on CRM (their funnel). Managers+ get the Dashboards home.
  * Also used by the sidebar logo so "home" always points somewhere visible.
  */
-export function homeForRole(role: Role, enabledNavigation?: readonly string[] | null): string {
-  if (role === "storeperson") return "/inventory";
-  if (role === "salesperson" || role === "marketing") return "/crm";
-  return enabledNavigation?.length && !enabledNavigation.includes("dashboards")
-    ? "/crm"
-    : "/dashboards";
+export function homeForRole(
+  role: Role,
+  enabledNavigation?: readonly string[] | null,
+  access?: AccessMap | null,
+): string {
+  const home =
+    role === "storeperson"
+      ? "/inventory"
+      : role === "salesperson" || role === "marketing"
+        ? "/crm"
+        : enabledNavigation?.length && !enabledNavigation.includes("dashboards")
+          ? "/crm"
+          : "/dashboards";
+  // Someone whose access leaves out their role's usual home (sales staff set to
+  // attendance only) starts on attendance, the one screen everybody keeps.
+  return access && !(home.slice(1) in access) ? "/hrms" : home;
 }

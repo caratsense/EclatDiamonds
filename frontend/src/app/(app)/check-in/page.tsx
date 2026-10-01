@@ -132,7 +132,7 @@ function RangeChip({ record }: { record: SelfAttendance }) {
  */
 export default function CheckInPage() {
   const router = useRouter();
-  const { user, role, currentStore } = useSession();
+  const { user, role, currentStore, access } = useSession();
   const month = useMemo(() => new Date().toISOString().slice(0, 7), []);
   const { data, isLoading, isError, refetch } = useMyAttendance(month);
   const { data: geofence, isLoading: geoLoading } = useGeofence();
@@ -175,7 +175,7 @@ export default function CheckInPage() {
   const firstName = user.name.split(" ")[0] || user.name;
   // With the tenant's navigation, so a manager whose industry has no Dashboards
   // is not bounced from the attendance gate onto a screen their product omits.
-  const home = homeForRole(role, enabledNavigation);
+  const home = homeForRole(role, enabledNavigation, access);
   const storeName = geofence?.storeName ?? currentStore.name;
   const radius = geofence?.geofenceRadiusM ?? 0;
 
