@@ -362,8 +362,7 @@ export class StaffDigestService {
       }
 
       if (run.whatsappStatus === 'pending') {
-        // The approved template has room for one number, so a manager's covers the others' too.
-        await this.queueWhatsApp(run, person, storeId, settings, due.length + others, overdue.length);
+        await this.queueWhatsApp(run, person, storeId, settings, due.length, overdue.length);
       }
       sent += 1;
     }
@@ -431,16 +430,21 @@ export class StaffDigestService {
     dueCount: number,
     overdueCount: number,
   ) {
-    const gate = this.whatsappGate(settings);
-    if (gate.reason) {
+    const total = dueCount + overdueCount;
+    // The approved template tells the reader how many follow-ups are their own, so
+    // that is the only number it is given. A digest that is only about what other
+    // staff hold has no such number: the bell has said it, and WhatsApp says nothing.
+    const reason =
+      this.whatsappGate(settings).reason ??
+      (total ? null : 'No follow-ups of their own today. The count for other staff is sent in the app only.');
+    if (reason) {
       await this.prisma.staffDigestRun.update({
         where: { id: run.id },
-        data: { whatsappStatus: 'skipped', whatsappReason: gate.reason },
+        data: { whatsappStatus: 'skipped', whatsappReason: reason },
       });
       return;
     }
 
-    const total = dueCount + overdueCount;
     const result = await this.omnichannel.queueStaffNotice({
       organisationId: run.organisationId,
       // The digest is this branch's, so it leaves on this branch's number.
