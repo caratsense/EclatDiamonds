@@ -8,13 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { SearchSelect } from "@/components/ui/search-select";
 import { formatINR } from "@/lib/format";
 import {
   fetchStyle,
@@ -166,15 +160,10 @@ export function masterLists(master: MaterialMaster | undefined) {
 
 export type Lists = ReturnType<typeof masterLists>;
 
-/** Metal and stone codes for the type-to-search boxes; rendered once per builder. */
+/** Diamond and colour-stone codes for their type-to-search boxes; rendered once per builder. */
 export function MaterialDatalists({ lists }: { lists: Lists }) {
   return (
     <>
-      <datalist id="qb-metals">
-        {lists.metals.map((m) => (
-          <option key={m.code} value={m.code}>{`${m.karat}K ${m.tone ?? ""} · ${m.name}`}</option>
-        ))}
-      </datalist>
       <datalist id="qb-codes-D">
         {lists.diamonds.map((m) => (
           <option key={m.code} value={m.code}>{m.name}</option>
@@ -364,18 +353,13 @@ export function QuoteItemEditor({
       <div className="grid gap-3 sm:grid-cols-[1.2fr_1.2fr_1fr]">
         <div className="grid gap-1.5">
           <Label>Item type</Label>
-          <Select value={item.itemType} onValueChange={(v) => set({ itemType: v })}>
-            <SelectTrigger aria-label={`Item ${index + 1} type`}>
-              <SelectValue placeholder="Ring, pendant…" />
-            </SelectTrigger>
-            <SelectContent>
-              {lists.itemTypes.map((t) => (
-                <SelectItem key={t.code} value={t.code}>
-                  <span className="font-mono text-xs text-muted-foreground">{t.code}</span> {t.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SearchSelect
+            aria-label={`Item ${index + 1} type`}
+            options={lists.itemTypes}
+            value={item.itemType}
+            onChange={(code) => set({ itemType: code })}
+            placeholder="Type ring, pendant, ALR…"
+          />
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor={`qb-style-${item.id}`}>Style no.</Label>
@@ -484,17 +468,14 @@ export function QuoteItemEditor({
         {/* Gold */}
         <div className={ROW}>
           <span className={cn(KIND, "border-amber-300 text-amber-700 dark:text-amber-300")}>Gold</span>
-          <Input
+          <SearchSelect
             aria-label={`Item ${index + 1} metal`}
-            list="qb-metals"
+            options={lists.metals}
             value={item.metalCode}
             // Type to search: "14", "WG", "G18"… and pick. A new metal is a new
             // rate, so a rate typed for the old one is dropped.
-            onChange={(e) => set({ metalCode: e.target.value.toUpperCase().trim(), manualRate: "" })}
+            onChange={(code) => set({ metalCode: code, manualRate: "" })}
             placeholder="Metal — type 14, WG, G18YG…"
-            autoComplete="off"
-            aria-invalid={!!item.metalCode && !metal}
-            className={cn(!!item.metalCode && !metal && "border-destructive")}
           />
           <span />
           <div className="col-span-3 grid grid-cols-4 gap-x-1.5 gap-y-0.5 md:contents">
