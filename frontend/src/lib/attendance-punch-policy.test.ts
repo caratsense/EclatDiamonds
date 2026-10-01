@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   evaluatePunchLocation,
+  isEarlierDay,
+  keptShift,
   punchAction,
   punchScreen,
   tooFarMessage,
@@ -55,6 +57,14 @@ describe("attendance punch location policy", () => {
     expect(message).toContain("635 m from Surat Main");
     expect(message).toContain("150 m");
   });
+
+  it("gives that distance in kilometres once it is that far, and exactly below", () => {
+    // The way the distance card on the punch screen writes it, not "2480 m".
+    expect(tooFarMessage("Surat Main", 2480, 150)).toContain("2.5 km from Surat Main");
+    expect(tooFarMessage("Surat Main", 12480, 150)).toContain("12 km from Surat Main");
+    // Rounded to 5 m, this would be "150 m from" a branch to be within 150 m of.
+    expect(tooFarMessage("Surat Main", 152, 150)).toContain("152 m from Surat Main");
+  });
 });
 
 describe("the punch screen, by today's punches", () => {
@@ -74,7 +84,42 @@ describe("the punch screen, by today's punches", () => {
   });
 
   it("sends everyone else on to their own home once they are in", () => {
+    // The punch screen's redirect is this answer and nothing else.
     expect(punchScreen(checkedIn, false)).toBe("move-on");
     expect(punchScreen(checkedOut, false)).toBe("move-on");
+  });
+});
+
+describe("a shift left on the punch screen overnight", () => {
+  const checkedIn = { checkInAt: "2026-10-01T04:32:00.000Z", checkOutAt: null };
+
+  it("stays on the screen of someone who lives there when a later read says nothing today", () => {
+    // The first read of the day shows the shift, and it is kept.
+    const kept = keptShift(null, checkedIn, true);
+    expect(kept).toBe(checkedIn);
+    // The phone wakes after midnight and the app reads again: no record for the
+    // new day. Showing that would start the automatic check-in with no tap.
+    expect(keptShift(kept, null, true)).toBe(checkedIn);
+    expect(punchScreen(keptShift(kept, null, true), true)).toBe("check-out");
+  });
+
+  it("is not kept for everyone else, nor is a record that is not a punch", () => {
+    expect(keptShift(null, checkedIn, false)).toBeNull();
+    // A row a manager created (on leave, absent) has no check-in to keep.
+    expect(keptShift(null, { checkInAt: null, checkOutAt: null }, true)).toBeNull();
+    expect(keptShift(null, undefined, true)).toBeNull();
+  });
+
+  it("is an earlier day's once the date has changed at its branch", () => {
+    const shift = { date: "2026-10-01", timezone: "Asia/Kolkata" };
+    // 23:59 and 00:01 in Kolkata, whatever zone the phone (or this test) is in.
+    expect(isEarlierDay(shift, new Date("2026-10-01T18:29:00.000Z"))).toBe(false);
+    expect(isEarlierDay(shift, new Date("2026-10-01T18:31:00.000Z"))).toBe(true);
+  });
+
+  it("goes by the phone's own date when the record names no timezone", () => {
+    const shift = { date: "2026-10-01" };
+    expect(isEarlierDay(shift, new Date(2026, 9, 1, 23, 59))).toBe(false);
+    expect(isEarlierDay(shift, new Date(2026, 9, 2, 0, 1))).toBe(true);
   });
 });
