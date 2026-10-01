@@ -157,7 +157,12 @@ export class DashboardService {
         }),
         this.prisma.party.count({ where: { ...partyScope, types: { has: 'customer' } } }),
         this.prisma.product.count({ where: productScope }),
-        this.prisma.stockItem.count({ where: storeWhere }),
+        // Pieces on hand only: the four statuses the stock page lists. A piece
+        // keeps its row after it is sold or sent to another branch, and counting
+        // those showed more than twice the stock the page this tile opens does.
+        this.prisma.stockItem.count({
+          where: { ...storeWhere, status: { in: ['in_stock', 'aging', 'dead_stock', 'reserved'] } },
+        }),
       ]);
 
     const sales = num(salesToday._sum.totalAmount);
