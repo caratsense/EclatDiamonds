@@ -234,7 +234,9 @@ export function useCreateStaff() {
       const { data } = await api.post<StaffUser>("/users", input);
       return data;
     },
-    onSuccess: () => invalidateUsers(qc),
+    // After a failure too: an add whose answer was lost may still have gone
+    // through, and the roster is how the manager and Add staff find that out.
+    onSettled: () => invalidateUsers(qc),
   });
 }
 

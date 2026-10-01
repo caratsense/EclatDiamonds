@@ -89,6 +89,8 @@ import {
 } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
+import { addStaffInput, staffAddedNote } from "./add-staff";
+
 const nav = getNavItem("settings/team")!;
 
 /** Roles assignable from this page, in rank order (salesperson is the default). */
@@ -223,6 +225,7 @@ export default function TeamPage() {
         open={addOpen}
         onOpenChange={setAddOpen}
         viewerRole={viewerRole}
+        roster={staff}
       />
     </>
   );
@@ -1282,10 +1285,12 @@ function AddStaffDialog({
   open,
   onOpenChange,
   viewerRole,
+  roster,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   viewerRole: Role;
+  roster: StaffUser[];
 }) {
   const createStaff = useCreateStaff();
   const stores = useSession((s) => s.stores);
@@ -1362,35 +1367,24 @@ function AddStaffDialog({
       return;
     }
 
-    createStaff.mutate(
-      {
-        name: name.trim(),
-        storeId,
-        phone: normalizedPhone ?? undefined,
-        email: email.trim(),
-        role,
-        password: password || undefined,
+    const input = addStaffInput({ name, phone, email, storeId, role, password });
+    createStaff.mutate(input, {
+      onSuccess: (created) => {
+        toast.success(`${created.name} added`, {
+          description: staffAddedNote(created, input, roster),
+          duration: 10_000,
+        });
+        reset();
+        onOpenChange(false);
       },
-      {
-        onSuccess: (created) => {
-          toast.success(`${created.name} added`, {
-            description: password
-              ? `They sign in with their mobile number (or Login ID ${created.email}) and the password you set.`
-              : `Their Login ID is ${created.email}. They have no password yet, so they cannot sign in. Set one with Reset password on their row.`,
-            duration: 10_000,
-          });
-          reset();
-          onOpenChange(false);
-        },
-        onError: (err) =>
-          toast.error(
-            apiErrorMessage(
-              err,
-              "Could not add the staff member — the phone or email may be in use.",
-            ),
+      onError: (err) =>
+        toast.error(
+          apiErrorMessage(
+            err,
+            "Could not add the staff member — the phone or email may be in use.",
           ),
-      },
-    );
+        ),
+    });
   }
 
   return (
@@ -1401,7 +1395,9 @@ function AddStaffDialog({
         onOpenChange(o);
       }}
     >
-      <DialogContent>
+      {/* Taller than a phone screen once every field stacks, so it scrolls and
+          Cancel and Close stay within reach. */}
+      <DialogContent className="max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Add staff</DialogTitle>
           <DialogDescription>
