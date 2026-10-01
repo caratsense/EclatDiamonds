@@ -26,6 +26,8 @@ export const SYSTEM_ACTORS = {
   import_lead_capture: 'Import lead capture',
   /** The background job turning an approved campaign audience into recipients. */
   campaign_expansion: 'Campaign audience expansion',
+  /** The hourly job rebuilding the quote item master from the mirrored Gati tables. */
+  gati_item_master: 'Item master from Gati',
   /** A verified telephony provider notification opening an enquiry from a call. */
   telephony_webhook: 'Inbound call',
   /** The tenant's own website calling the loyalty API with its own key. */

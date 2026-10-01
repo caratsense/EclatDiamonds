@@ -1,9 +1,13 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { createHash } from 'crypto';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
 import { ImportMaterialsDto } from './dto/materials.dto';
+import { GATI_ITEM_MASTER_TABLES, buildGatiItemMaster } from './gati-item-master';
 
 /**
  * The item master a quote is priced from: item types, metals, diamonds,
@@ -12,9 +16,14 @@ import { ImportMaterialsDto } from './dto/materials.dto';
  */
 @Injectable()
 export class MaterialsService {
+  private readonly logger = new Logger(MaterialsService.name);
+  /** What was last written for each organisation, so an unchanged master is not rewritten. */
+  private readonly lastGatiMaster = new Map<string, string>();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly config: ConfigService,
   ) {}
 
   /** Everything the quote builder's dropdowns need, in one read. */
@@ -103,6 +112,75 @@ export class MaterialsService {
    */
   async import(user: AuthUser, dto: ImportMaterialsDto) {
     const organisationId = user.organisationId;
+    const counts = await this.write(organisationId, dto);
+    await this.audit.record(user, {
+      action: 'materials.import',
+      entityType: 'Material',
+      entityId: organisationId,
+      summary: `Item master loaded: ${counts.materials} items, ${counts.sizes} sizes, ${counts.styles} styles`,
+      metadata: counts,
+    });
+    return counts;
+  }
+
+  /**
+   * The item master and the designs' materials, rebuilt from Gati's own tables
+   * as the sync mirrors them. A design keyed into Gati is quotable here within
+   * the hour, and a rate changed there is the rate quoted here.
+   *
+   * Returns null, and writes nothing, when the mirror does not hold Gati's item
+   * table yet: an empty mirror is "not synced", never "Gati has no items".
+   * Upserts only: nothing here is deleted because Gati no longer lists it.
+   */
+  async refreshFromGati(organisationId: string) {
+    const rows = await this.prisma.legacyRow.findMany({
+      where: {
+        organisationId,
+        OR: GATI_ITEM_MASTER_TABLES.map((t) => ({ sourceTable: { equals: t, mode: 'insensitive' as const } })),
+      },
+      select: { sourceTable: true, data: true },
+    });
+    const tables: Record<string, Record<string, unknown>[]> = {};
+    for (const r of rows) (tables[r.sourceTable.toLowerCase()] ??= []).push(r.data as Record<string, unknown>);
+    if (!tables['spm_items']?.length) return null;
+
+    const master = buildGatiItemMaster(tables);
+    const fingerprint = createHash('sha256').update(JSON.stringify(master)).digest('hex');
+    const counts = { materials: master.materials.length, sizes: master.sizes.length, styles: master.styles.length };
+    if (this.lastGatiMaster.get(organisationId) === fingerprint) return { ...counts, changed: false };
+
+    await this.write(organisationId, master as ImportMaterialsDto);
+    this.lastGatiMaster.set(organisationId, fingerprint);
+    await this.audit.recordSystem(organisationId, 'gati_item_master', {
+      action: 'materials.import',
+      entityType: 'Material',
+      entityId: organisationId,
+      summary: `Item master refreshed from Gati: ${counts.materials} items, ${counts.sizes} sizes, ${counts.styles} styles`,
+      metadata: counts,
+    });
+    return { ...counts, changed: true };
+  }
+
+  /** Every organisation whose mirror holds Gati's item table, once an hour. */
+  @Cron(CronExpression.EVERY_HOUR, { name: 'materials.gati-refresh' })
+  async refreshAllFromGati(): Promise<void> {
+    if ((this.config.get<string>('SCHEDULER_ENABLED') ?? 'true') === 'false') return;
+    const orgs = await this.prisma.legacyRow.groupBy({
+      by: ['organisationId'],
+      where: { sourceTable: { equals: 'SPM_Items', mode: 'insensitive' } },
+    });
+    for (const { organisationId } of orgs) {
+      try {
+        const r = await this.refreshFromGati(organisationId);
+        if (r?.changed) this.logger.log(`item master from Gati ${organisationId}: ${r.materials} items, ${r.sizes} sizes, ${r.styles} styles`);
+      } catch (e) {
+        this.logger.warn(`item master from Gati ${organisationId} failed: ${e instanceof Error ? e.message : e}`);
+      }
+    }
+  }
+
+  /** Upsert the three lists by code. Shared by the file load and the Gati refresh. */
+  private async write(organisationId: string, dto: ImportMaterialsDto) {
     const json = (v: unknown) => (v == null ? Prisma.DbNull : (v as Prisma.InputJsonValue));
     for (const m of dto.materials ?? []) {
       const data = {
@@ -150,18 +228,10 @@ export class MaterialsService {
         update: data,
       });
     }
-    const counts = {
+    return {
       materials: dto.materials?.length ?? 0,
       sizes: dto.sizes?.length ?? 0,
       styles: dto.styles?.length ?? 0,
     };
-    await this.audit.record(user, {
-      action: 'materials.import',
-      entityType: 'Material',
-      entityId: organisationId,
-      summary: `Item master loaded: ${counts.materials} items, ${counts.sizes} sizes, ${counts.styles} styles`,
-      metadata: counts,
-    });
-    return counts;
   }
 }
