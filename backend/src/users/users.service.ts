@@ -5,7 +5,15 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { AccessOverride, HEAD_OFFICE_ONLY, MODULES, ROLE_ACCESS, effectiveAccess } from '../auth/access';
+import {
+  AccessOverride,
+  HEAD_OFFICE_ONLY,
+  MODULES,
+  canOpen,
+  effectiveAccess,
+  roleDefaults,
+  startsAttendanceOnly,
+} from '../auth/access';
 import { Prisma, Role } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
@@ -398,6 +406,12 @@ export class UsersService {
         this.scope.assertStoreAllowed(actor, recipientStore);
       } else if (!actor.allStores) {
         throw new ForbiddenException('Reassignment target is not in your scope');
+      }
+      // The leads move to the recipient, who has to be able to open them.
+      if (!canOpen(recipient, 'crm')) {
+        throw new BadRequestException(
+          `${recipient.name} cannot open CRM & Leads, so open leads cannot be handed to them.`,
+        );
       }
 
       // Only move work in stores the actor controls (HO = unfiltered). Prevents a
@@ -901,9 +915,11 @@ export class UsersService {
       userId: u.id,
       name: u.name,
       role: u.role,
-      defaults: ROLE_ACCESS[u.role],
+      defaults: roleDefaults(u.role, actor.organisationId),
+      /** True when those defaults are the workspace's attendance-only start, not the role's own. */
+      startsAttendanceOnly: startsAttendanceOnly(u.role, actor.organisationId),
       overrides: (u.accessOverrides ?? {}) as Record<string, AccessOverride>,
-      effective: effectiveAccess(u.role, u.accessOverrides),
+      effective: effectiveAccess(u.role, u.accessOverrides, actor.organisationId),
     };
   }
 
@@ -917,7 +933,7 @@ export class UsersService {
     if (u.role === 'head_office') {
       throw new BadRequestException('Head office always has every screen.');
     }
-    const defaults = ROLE_ACCESS[u.role];
+    const defaults = roleDefaults(u.role, actor.organisationId);
     const clean: Record<string, AccessOverride> = {};
     for (const [slug, level] of Object.entries(overrides ?? {})) {
       if (!(MODULES as readonly string[]).includes(slug)) {
@@ -929,7 +945,7 @@ export class UsersService {
       if (level !== 'none' && (HEAD_OFFICE_ONLY as string[]).includes(slug)) {
         throw new BadRequestException(`${slug} is for head office only`);
       }
-      // Equal to the role's default: not a change, so not stored.
+      // Equal to what this person starts with: not a change, so not stored.
       if ((defaults[slug] ?? 'none') === level) continue;
       clean[slug] = level;
     }

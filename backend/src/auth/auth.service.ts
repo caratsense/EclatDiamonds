@@ -999,7 +999,7 @@ export class AuthService {
       },
       role,
       /** The screens this person may open and at what level (auth/access.ts). */
-      access: effectiveAccess(role, user.accessOverrides),
+      access: effectiveAccess(role, user.accessOverrides, user.organisationId),
       stores: storeViews,
       currentStore,
       productProfile: {

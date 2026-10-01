@@ -1,4 +1,4 @@
-import { Role } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 
 /**
  * Who may open which screen, and how far.
@@ -15,6 +15,10 @@ import { Role } from '@prisma/client';
  * and a screen given at `store` level really works — the person is treated as
  * a store manager for that screen's API only, still inside their own stores.
  * Head office always has everything; overrides never apply to it.
+ *
+ * A workspace can start its sales staff on attendance only instead of the
+ * salesperson defaults (`startsAttendanceOnly`); head office's changes for one
+ * person then apply on top of that.
  */
 
 export type AccessLevel = 'own' | 'store';
@@ -79,7 +83,7 @@ const MARKETING: AccessMap = {
   ...at('own', ['hrms', 'tasks']),
 };
 
-export const ROLE_ACCESS: Record<Role, AccessMap> = {
+const ROLE_ACCESS: Record<Role, AccessMap> = {
   salesperson: at('own', SALESPERSON),
   store_manager: at('store', STORE_MANAGER),
   marketing: MARKETING,
@@ -101,9 +105,37 @@ export const HEAD_OFFICE_ONLY: ModuleSlug[] = [
 /** The roles in use. Area manager and storeperson are retired: nobody can be given them. */
 export const ACTIVE_ROLES: Role[] = ['salesperson', 'store_manager', 'marketing', 'head_office'];
 
-/** What this person may open: their role's defaults with head office's changes applied. */
-export function effectiveAccess(role: Role, overrides: unknown): AccessMap {
-  const base = { ...ROLE_ACCESS[role] };
+/**
+ * A workspace's own rule: its sales staff start with attendance only (Check in
+ * / Check out, leave, regularisation) instead of the salesperson defaults. It
+ * covers staff added later, which setting each person by hand could not.
+ *
+ * Switched on per organisation by ATTENDANCE_ONLY_SALES_ORGS, a comma-separated
+ * list of organisation ids; unset or empty is off everywhere. Read here and
+ * nowhere else, so sign-in, the API guard, People & Access and assignment
+ * cannot disagree about it.
+ */
+export function startsAttendanceOnly(role: Role, organisationId: string | null | undefined): boolean {
+  if (role !== 'salesperson' || !organisationId) return false;
+  const listed = (process.env.ATTENDANCE_ONLY_SALES_ORGS ?? '').split(',').map((id) => id.trim());
+  return listed.includes(organisationId);
+}
+
+/** What a role starts with in this organisation, before head office's changes for one person. */
+export function roleDefaults(role: Role, organisationId: string | null | undefined): AccessMap {
+  const usual = ROLE_ACCESS[role];
+  if (!startsAttendanceOnly(role, organisationId)) return { ...usual };
+  // Picked out of the role's own screens, so the rule can take screens away but never give one.
+  return Object.fromEntries(Object.entries(usual).filter(([slug]) => slug === 'hrms'));
+}
+
+/** What this person may open: what their role starts with here, with head office's changes applied. */
+export function effectiveAccess(
+  role: Role,
+  overrides: unknown,
+  organisationId: string | null | undefined,
+): AccessMap {
+  const base = roleDefaults(role, organisationId);
   if (role === 'head_office' || !overrides || typeof overrides !== 'object') return base;
   for (const [slug, v] of Object.entries(overrides as Record<string, unknown>)) {
     if (!(MODULES as readonly string[]).includes(slug)) continue;
@@ -111,6 +143,32 @@ export function effectiveAccess(role: Role, overrides: unknown): AccessMap {
     else if (v === 'own' || v === 'store') base[slug] = v;
   }
   return base;
+}
+
+/**
+ * Whether this person can open a screen at all. Asked before a lead or a
+ * conversation is given to somebody, so work never sits with a person who
+ * cannot see it.
+ */
+export function canOpen(
+  person: { role: Role; accessOverrides: unknown; organisationId: string },
+  screen: ModuleSlug,
+): boolean {
+  return screen in effectiveAccess(person.role, person.accessOverrides, person.organisationId);
+}
+
+/** The same question about a person known only by id. Nobody found: no. */
+export async function canOpenById(
+  db: Pick<Prisma.TransactionClient, 'user'>,
+  organisationId: string,
+  userId: string,
+  screen: ModuleSlug,
+): Promise<boolean> {
+  const person = await db.user.findFirst({
+    where: { id: userId, organisationId },
+    select: { role: true, accessOverrides: true, organisationId: true },
+  });
+  return !!person && canOpen(person, screen);
 }
 
 /**

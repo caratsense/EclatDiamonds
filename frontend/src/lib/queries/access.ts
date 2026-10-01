@@ -13,6 +13,8 @@ export interface UserAccess {
   role: Role;
   /** What the role gives by default. */
   defaults: AccessMap;
+  /** True when those defaults are this workspace's attendance-only start for sales staff. */
+  startsAttendanceOnly: boolean;
   /** Head office's changes for this person only. */
   overrides: Record<string, AccessOverride>;
   /** The result: what they can open now. */

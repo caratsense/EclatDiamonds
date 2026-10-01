@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { LeadSource, LeadStage, Prisma } from '@prisma/client';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'crypto';
 
+import { canOpen, canOpenById } from '../auth/access';
 import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
 import { SequenceService } from '../common/sequence.service';
@@ -778,7 +779,13 @@ export class AdvancedCrmService {
   async autoAssignInbound(organisationId: string, conversationId: string, leadId: string | null) {
     try {
       const assigned = await this.assignRoundRobin(organisationId, 'conversation', conversationId, null);
-      if (assigned && leadId) {
+      if (
+        assigned &&
+        leadId &&
+        // The lead follows the conversation's owner only if that person can open
+        // CRM; otherwise it stays unowned, where the branch's managers see it.
+        (await canOpenById(this.prisma, organisationId, assigned.assignedUserId, 'crm'))
+      ) {
         const { count } = await this.prisma.lead.updateMany({
           where: { id: leadId, organisationId, storeId: assigned.storeId, ownerId: null },
           data: { ownerId: assigned.assignedUserId },
@@ -891,15 +898,21 @@ export class AdvancedCrmService {
 
       const storePolicy = policy.stores.find((s) => s.storeId === target.storeId);
       if (!storePolicy) return null;
-      const eligible = await tx.user.findMany({
-        where: {
-          organisationId, role: 'salesperson', isActive: true, approvalStatus: 'approved',
-          ...(storePolicy.eligibleUserIds.length ? { id: { in: storePolicy.eligibleUserIds } } : {}),
-          userStores: { some: { storeId: target.storeId } },
-        },
-        select: { id: true },
-        orderBy: { id: 'asc' },
-      });
+      // Only people who can open the work. A salesperson without this screen
+      // (attendance only, or switched off by head office) is passed over, even
+      // when the store's own list names them.
+      const screen = entity === 'lead' ? 'crm' : 'conversations';
+      const eligible = (
+        await tx.user.findMany({
+          where: {
+            organisationId, role: 'salesperson', isActive: true, approvalStatus: 'approved',
+            ...(storePolicy.eligibleUserIds.length ? { id: { in: storePolicy.eligibleUserIds } } : {}),
+            userStores: { some: { storeId: target.storeId } },
+          },
+          select: { id: true, role: true, accessOverrides: true, organisationId: true },
+          orderBy: { id: 'asc' },
+        })
+      ).filter((u) => canOpen(u, screen));
       if (!eligible.length) throw new BadRequestException('No active salesperson is eligible for this location.');
 
       const state = normaliseRoundRobinState(settings[ROUND_ROBIN_STATE_KEY]);

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { canOpen } from '../auth/access';
 import {
   WhatsAppCredentialsService,
   type SenderRoute,
@@ -759,8 +760,8 @@ export class WhatsAppBotService {
     });
     if (!conversation) return;
 
-    const manager = conversation.storeId
-      ? await this.prisma.user.findFirst({
+    const managers = conversation.storeId
+      ? await this.prisma.user.findMany({
           where: {
             organisationId,
             isActive: true,
@@ -768,9 +769,12 @@ export class WhatsAppBotService {
             userStores: { some: { storeId: conversation.storeId } },
           },
           orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-          select: { id: true, name: true },
+          select: { id: true, name: true, role: true, accessOverrides: true, organisationId: true },
         })
-      : null;
+      : [];
+    // The first of them who can open Conversations: a manager head office has
+    // switched the inbox off for would be handed a thread they cannot see.
+    const manager = managers.find((m) => canOpen(m, 'conversations')) ?? null;
 
     await this.prisma.conversation.update({
       where: { id: conversationId },

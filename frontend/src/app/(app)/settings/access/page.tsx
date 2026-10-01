@@ -211,7 +211,9 @@ function PersonAccess({ userId }: { userId: string }) {
             {data.name} · {ROLE_LABELS[data.role]}
           </CardTitle>
           <CardDescription>
-            Starts from what a {ROLE_LABELS[data.role].toLowerCase()} gets. Changes apply to {data.name} only.
+            {data.startsAttendanceOnly
+              ? "Sales staff in this workspace start with attendance only. Switch on what this person needs."
+              : `Starts from what a ${ROLE_LABELS[data.role].toLowerCase()} gets. Changes apply to ${data.name} only.`}
             {changedCount ? ` ${changedCount} screen${changedCount === 1 ? " differs" : "s differ"} from the role.` : ""}
           </CardDescription>
         </div>
