@@ -65,6 +65,13 @@ export class QuoteStoneDto {
   @Min(0)
   @Max(10)
   multiplier?: number;
+
+  /** % off this stone. Left out, the quote's own stone % applies. */
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  discountPercent?: number;
 }
 
 export class QuoteLineDto {
@@ -139,6 +146,26 @@ export class QuoteLineDto {
   @IsOptional()
   @IsString()
   productId?: string;
+
+  /** % off this item's gold (on its net weight x rate). */
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  metalDiscountPercent?: number;
+
+  /** % off this item's making. Left out, the quote's own making % applies. */
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  makingDiscountPercent?: number;
+
+  /** Free text about this item. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  remark?: string;
 }
 
 export class CreateQuoteDto {

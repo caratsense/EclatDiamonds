@@ -77,6 +77,9 @@ function toView(q: any) {
       metalCode: l.metalCode ?? null,
       makingRatePerGram: l.makingRatePerGram != null ? Number(l.makingRatePerGram) : null,
       stones: (l.stones as StoredStone[] | null) ?? [],
+      metalDiscountPercent: l.metalDiscountPercent != null ? Number(l.metalDiscountPercent) : null,
+      makingDiscountPercent: l.makingDiscountPercent != null ? Number(l.makingDiscountPercent) : null,
+      remark: l.remark ?? null,
     })),
     photos: (q.photos ?? []).map((p: any) => ({
       id: p.id,
@@ -101,15 +104,36 @@ function toView(q: any) {
   };
 }
 
-/** The stored discount in its three parts, the same way computeTotals made it. */
+/**
+ * The stored discount in its parts, the same way computeTotals made it: off the
+ * gold, off the making, off the stones, and the flat amount. The stone part is
+ * whatever is left, so the parts always add up to the stored total.
+ */
 function discountSplit(q: any) {
   const total = Number(q.discountAmount ?? 0);
   const additional = Number(q.additionalDiscount ?? 0);
-  const making = Math.min(
-    round2((Number(q.makingCharges) * Number(q.makingDiscountPercent ?? 0)) / 100),
-    total - additional,
-  );
-  return { makingDiscount: making, stoneDiscount: round2(total - additional - making), additionalDiscount: additional };
+  const quote = {
+    making: Number(q.makingDiscountPercent ?? 0),
+    stone: Number(q.stoneDiscountPercent ?? 0),
+    additional,
+  };
+  let metal = 0;
+  let making = 0;
+  for (const l of q.lines ?? []) {
+    const d = lineDiscount(lineInput(l), quote, q.kind === QuoteKind.repair);
+    metal += d.metal;
+    making += d.making;
+  }
+  // A quote read without its lines (a list row) has only the quote's own %.
+  if (!q.lines) making = (Number(q.makingCharges) * quote.making) / 100;
+  const metalDiscount = Math.min(round2(metal), Math.max(total - additional, 0));
+  const makingDiscount = Math.min(round2(making), Math.max(round2(total - additional - metalDiscount), 0));
+  return {
+    metalDiscount,
+    makingDiscount,
+    stoneDiscount: round2(total - additional - metalDiscount - makingDiscount),
+    additionalDiscount: additional,
+  };
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -124,6 +148,9 @@ export interface StoredStone {
   carats: number;
   ratePerCt: number;
   multiplier: number;
+  /** % off this stone; absent on quotes made before discounts were per line. */
+  discountPercent?: number;
+  /** Before the discount. */
   amount: number;
 }
 
@@ -139,6 +166,7 @@ function stoneData(s: QuoteStoneDto): StoredStone {
     carats: s.carats,
     ratePerCt: s.ratePerCt,
     multiplier,
+    ...(s.discountPercent != null ? { discountPercent: s.discountPercent } : {}),
     amount: round2(s.carats * s.ratePerCt * multiplier),
   };
 }
@@ -161,6 +189,25 @@ function linePrice(l: QuoteLineDto) {
     ? Math.round(stones.reduce((sum, x) => sum + x.carats, 0) * 1000) / 1000
     : (l.caratWeight ?? 0);
   return { stones, making, stoneCharges, caratWeight };
+}
+
+/**
+ * What comes off one item, unrounded: its gold, its making and its stones each
+ * at their own %. A making or stone line with no % of its own takes the
+ * quote's, which is how every quote before 30 Sep 2026 gave its discount.
+ */
+function lineDiscount(l: QuoteLineDto, quote: QuoteDiscounts, repair = false) {
+  const p = linePrice(l);
+  const making = (p.making * (l.makingDiscountPercent ?? quote.making)) / 100;
+  if (repair) return { metal: 0, making, stone: 0 };
+  const stone = p.stones
+    ? p.stones.reduce((sum, s) => sum + (s.amount * (s.discountPercent ?? quote.stone)) / 100, 0)
+    : (p.stoneCharges * quote.stone) / 100;
+  return {
+    metal: (l.weightGrams * l.goldRatePerGram * (l.metalDiscountPercent ?? 0)) / 100,
+    making,
+    stone,
+  };
 }
 
 /** The discount as the salesperson gives it. */
@@ -198,10 +245,14 @@ function discountsFrom(
  * For a `repair` quote: making-ONLY — metal & stone are zeroed, taxable = sum of
  * line making charges, GST 3% on making, grandTotal = making + GST.
  *
- * Discount comes off BEFORE tax: a % of making, a % of the stones, then a flat
- * amount. Gold is never discounted, so the three together may not come to more
- * than making + stones. `discountPercent` is what they come to as one % of
- * making + stones — the figure the approval caps judge.
+ * Discount comes off BEFORE tax, line by line as the shop's bill prints it: a %
+ * off each item's gold, a % off its making, a % off each stone, then a flat
+ * amount at the end. The flat amount never eats into the gold, so it may not be
+ * more than what is left of making + stones.
+ *
+ * `discountPercent` is everything given away as one % of making + stones — the
+ * figure the approval caps judge. A discount on gold counts in it, against the
+ * same base: gold given away uses up the same allowance as making given away.
  */
 function computeTotals(
   lines: QuoteLineDto[],
@@ -223,17 +274,26 @@ function computeTotals(
   const base = makingCharges + stoneCharges;
   // Summed before rounding, so equal making and stone percentages come to
   // exactly what the single percentage always did.
-  const byPercent = (makingCharges * discounts.making + stoneCharges * discounts.stone) / 100;
-  if (discounts.additional > round2(base - byPercent) + 0.001) {
+  let metalOff = 0;
+  let makingStoneOff = 0;
+  for (const l of lines) {
+    const d = lineDiscount(l, discounts, repair);
+    metalOff += d.metal;
+    makingStoneOff += d.making + d.stone;
+  }
+  const byPercent = metalOff + makingStoneOff;
+  if (discounts.additional > round2(base - makingStoneOff) + 0.001) {
     throw new BadRequestException(
-      'The discount comes to more than the making and diamonds. Gold is never discounted.',
+      'The additional discount comes to more than the making and diamonds that are left.',
     );
   }
   const discountAmount = round2(byPercent + discounts.additional);
   const discountPercent =
     base > 0
-      ? round2(((byPercent + discounts.additional) / base) * 100)
-      : Math.max(discounts.making, discounts.stone);
+      ? Math.min(round2(((byPercent + discounts.additional) / base) * 100), 999.99)
+      : metalValue > 0 && metalOff > 0
+        ? round2((metalOff / metalValue) * 100)
+        : Math.max(discounts.making, discounts.stone);
   const taxable = metalValue + makingCharges + stoneCharges - discountAmount;
   const gst = taxable * GST_RATE;
   // The bill is settled in whole rupees, as the shop's own invoice is: GST is
@@ -265,6 +325,9 @@ function lineData(l: QuoteLineDto) {
     metalCode: l.metalCode?.trim() || null,
     makingRatePerGram: l.makingRatePerGram != null ? new Prisma.Decimal(l.makingRatePerGram) : null,
     ...(p.stones ? { stones: p.stones as unknown as Prisma.InputJsonValue } : {}),
+    metalDiscountPercent: l.metalDiscountPercent != null ? new Prisma.Decimal(l.metalDiscountPercent) : null,
+    makingDiscountPercent: l.makingDiscountPercent != null ? new Prisma.Decimal(l.makingDiscountPercent) : null,
+    remark: l.remark?.trim() || null,
   };
 }
 
@@ -286,6 +349,9 @@ function lineInput(l: any): QuoteLineDto {
     metalCode: l.metalCode ?? undefined,
     makingRatePerGram: l.makingRatePerGram != null ? Number(l.makingRatePerGram) : undefined,
     stones: stones?.map(({ amount: _amount, ...rest }) => rest),
+    metalDiscountPercent: l.metalDiscountPercent != null ? Number(l.metalDiscountPercent) : undefined,
+    makingDiscountPercent: l.makingDiscountPercent != null ? Number(l.makingDiscountPercent) : undefined,
+    remark: l.remark ?? undefined,
   };
 }
 
@@ -336,6 +402,7 @@ function orderDetails(lines: any[]): string {
         ...stones.map(
           (x) => `${x.type} ${x.code}${x.size ? ` ${x.size}` : ''}${x.pieces ? ` ${x.pieces} pc` : ''} ${x.carats.toFixed(2)} ct`,
         ),
+        l.remark && `note: ${l.remark}`,
       ]
         .filter(Boolean)
         .join(' · ');

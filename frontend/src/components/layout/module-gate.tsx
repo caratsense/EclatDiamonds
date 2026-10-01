@@ -62,7 +62,7 @@ export function ModuleGate({ children }: { children: React.ReactNode }) {
   // The server refuses the data either way; this is what stops a typed URL
   // rendering a shell whose every panel then fails.
   if (roleDecision(pathname, role, access) === "refuse") {
-    return <NotForYourRole home={homeForRole(role, enabled)} />;
+    return <NotForYourRole home={homeForRole(role, enabled, access)} />;
   }
   // One frame while the page role catches up, so no page renders at the wrong level.
   if (pageRole !== wanted) {
@@ -85,7 +85,7 @@ export function ModuleGate({ children }: { children: React.ReactNode }) {
         </div>
       );
     case "refuse":
-      return <NotInYourPlan home={homeForRole(role, enabled)} />;
+      return <NotInYourPlan home={homeForRole(role, enabled, access)} />;
   }
 }
 

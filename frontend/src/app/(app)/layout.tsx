@@ -3,7 +3,6 @@ import { ModuleGate } from "@/components/layout/module-gate";
 import { SessionGate } from "@/components/auth/session-gate";
 import { WelcomeTour } from "@/components/onboarding/welcome-tour";
 import { AttendanceGate } from "@/components/attendance/attendance-gate";
-import { AutoSignOut } from "@/components/attendance/auto-signout";
 import { AssistantPanel } from "@/components/assistant/assistant-panel";
 import { ASSISTANT_ENABLED } from "@/lib/features";
 
@@ -31,7 +30,6 @@ export default function AppGroupLayout({
         {/* Idle auto sign-out for the day (attendance only). Salesperson-only;
             managers/area/HO attach no timers. Ends the attendance session and
             returns to /check-in — the auth token is left intact. */}
-        <AutoSignOut />
         {/* Floating assistant: answers "what's waiting on me", "which branches
             raised diamond-rate requests", etc. Deterministic server-side — every
             answer is a store-scoped, role-filtered query, never a model call.

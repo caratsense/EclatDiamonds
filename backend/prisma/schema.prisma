@@ -1860,10 +1860,19 @@ model QuoteLine {
   metalCode         String?
   makingRatePerGram Decimal? @db.Decimal(12, 2)
   /// Diamonds (D) and colour stones (C), one entry per code and size:
-  /// [{ type, code, name?, size?, pieces?, carats, ratePerCt, multiplier, amount }].
-  /// The multiplier is the staff's pricing lever and never printed; the
-  /// customer sees ratePerCt x multiplier as the rate.
+  /// [{ type, code, name?, size?, pieces?, carats, ratePerCt, multiplier,
+  /// discountPercent?, amount }]. `amount` is before the discount. The
+  /// multiplier is from quotes made before 30 Sep 2026; the builder no longer
+  /// offers it and it is 1 on every quote since.
   stones            Json?
+  /// % off this item's gold and off its making, as the shop gives them: line by
+  /// line, the way its bill prints them. NULL means the quote's own
+  /// making % applies (quotes made before discounts were per line).
+  metalDiscountPercent  Decimal? @db.Decimal(5, 2)
+  makingDiscountPercent Decimal? @db.Decimal(5, 2)
+  /// Anything about this item the lists cannot say: a stone that is not in the
+  /// master, an engraving, what the customer asked for.
+  remark            String?
 
   quote   Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
   product Product? @relation(fields: [productId], references: [id])

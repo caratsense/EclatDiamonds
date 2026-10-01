@@ -113,7 +113,7 @@ export function Sidebar() {
       {/* Brand */}
       <div className="flex h-16 items-center border-b border-sidebar-border px-5">
         <Link
-          href={homeForRole(role, enabledNavigation)}
+          href={homeForRole(role, enabledNavigation, access)}
           aria-label={brandName ?? "CaratOS"}
           className="flex items-center"
         >

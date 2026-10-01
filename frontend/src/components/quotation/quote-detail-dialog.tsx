@@ -52,7 +52,7 @@ interface QuoteDetailDialogProps {
 /**
  * Read-only view of an existing quote — the pricing breakdown, portability, any
  * reference photos, and a WhatsApp share action. Creation lives in
- * {@link QuoteBuilderDialog}.
+ * {@link QuoteBuilder}.
  */
 export function QuoteDetailDialog({
   quote,
@@ -247,6 +247,12 @@ export function QuoteDetailDialog({
                     value={formatINR(lineMetalValue(line))}
                   />
                 ) : null}
+                {line.weightGrams > 0 && line.metalDiscountPercent ? (
+                  <Row
+                    label={`Gold discount ${line.metalDiscountPercent}%`}
+                    value={`- ${formatINR((lineMetalValue(line) * line.metalDiscountPercent) / 100)}`}
+                  />
+                ) : null}
                 {line.makingCharges > 0 ? (
                   <Row
                     label={
@@ -261,7 +267,14 @@ export function QuoteDetailDialog({
                     value={formatINR(line.makingCharges)}
                   />
                 ) : null}
-                {/* Staff view: the multiplier shows here and never on the PDF. */}
+                {line.makingCharges > 0 && line.makingDiscountPercent ? (
+                  <Row
+                    label={`Making discount ${line.makingDiscountPercent}%`}
+                    value={`- ${formatINR((line.makingCharges * line.makingDiscountPercent) / 100)}`}
+                  />
+                ) : null}
+                {/* Each stone before its own discount, then the discount. An older
+                    quote's multiplier still shows here, and never on the PDF. */}
                 {(line.stones ?? []).map((st, i) => (
                   <Row
                     key={`${st.code}-${i}`}
@@ -273,9 +286,10 @@ export function QuoteDetailDialog({
                         <span className="num">{formatCarats(st.carats)}</span> ×{" "}
                         <span className="num">{formatINR(st.ratePerCt)}</span>
                         {st.multiplier && st.multiplier !== 1 ? <span className="num"> × {st.multiplier}</span> : null}
+                        {st.discountPercent ? <span className="num"> · less {st.discountPercent}%</span> : null}
                       </>
                     }
-                    value={formatINR(st.amount ?? 0)}
+                    value={formatINR((st.amount ?? 0) * (1 - (st.discountPercent ?? 0) / 100))}
                   />
                 ))}
                 {line.stoneCharges > 0 && !line.stones?.length ? (
@@ -296,6 +310,9 @@ export function QuoteDetailDialog({
                     }
                     value={formatINR(line.stoneCharges)}
                   />
+                ) : null}
+                {line.remark ? (
+                  <p className="pt-1 text-xs text-muted-foreground">Remark: {line.remark}</p>
                 ) : null}
                 <Separator className="my-1" />
                 <Row
@@ -364,15 +381,19 @@ export function QuoteDetailDialog({
             )}
             {totals.makingDiscount != null ? (
               <>
+                {(totals.metalDiscount ?? 0) > 0 ? (
+                  <Row label="Gold discount" value={`- ${formatINR(totals.metalDiscount ?? 0)}`} />
+                ) : null}
                 {totals.makingDiscount > 0 ? (
                   <Row
-                    label={`Making discount ${quote.makingDiscountPercent ?? 0}%`}
+                    // One % for the whole quote on an older quote; line by line since.
+                    label={quote.makingDiscountPercent ? `Making discount ${quote.makingDiscountPercent}%` : "Making discount"}
                     value={`- ${formatINR(totals.makingDiscount)}`}
                   />
                 ) : null}
                 {(totals.stoneDiscount ?? 0) > 0 ? (
                   <Row
-                    label={`Diamond discount ${quote.stoneDiscountPercent ?? 0}%`}
+                    label={quote.stoneDiscountPercent ? `Diamond discount ${quote.stoneDiscountPercent}%` : "Diamond discount"}
                     value={`- ${formatINR(totals.stoneDiscount ?? 0)}`}
                   />
                 ) : null}

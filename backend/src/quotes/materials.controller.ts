@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Put, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Put, Query } from '@nestjs/common';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { Roles } from '../auth/roles.decorator';
 import { MaterialsService } from './materials.service';
@@ -22,6 +22,18 @@ export class MaterialsController {
   @Get('styles/:code')
   style(@CurrentUser() user: AuthUser, @Param('code') code: string) {
     return this.materials.style(user, code);
+  }
+
+  /**
+   * Rebuild the master from the mirrored Gati tables now, rather than waiting
+   * for the hourly run. Head office only. `{ synced: false }` when the mirror
+   * does not hold Gati's item table yet.
+   */
+  @Roles('head_office')
+  @Post('refresh-from-gati')
+  async refreshFromGati(@CurrentUser() user: AuthUser) {
+    const result = await this.materials.refreshFromGati(user.organisationId);
+    return result ? { synced: true, ...result } : { synced: false };
   }
 
   /** Load or refresh the master from the ERP export. Head office only. */

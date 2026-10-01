@@ -137,6 +137,12 @@ describe("navigation", () => {
       }
     });
 
+    it("starts someone set to attendance only on attendance, not a screen they lost", () => {
+      expect(homeForRole("salesperson", null, { hrms: "own" })).toBe("/hrms");
+      expect(homeForRole("salesperson", null, { hrms: "own", crm: "own" })).toBe("/crm");
+      expect(homeForRole("salesperson")).toBe("/crm");
+    });
+
     it("drops a section entirely when the pack disables every item in it", () => {
       // A tenant whose pack enables only CRM keeps one section, not nine empty
       // headings.

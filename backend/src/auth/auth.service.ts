@@ -610,27 +610,57 @@ export class AuthService {
     };
   }
 
+  /**
+   * Who is signing in. A Login ID is unique, so it is one person. It is also
+   * generated from the store's name and nobody remembers theirs, so the mobile
+   * number or personal email given at sign-up works too. Neither of those is
+   * unique, so they return everyone who gave it.
+   */
+  private async loginCandidates(identifier: string) {
+    const byLoginId = await this.prisma.user.findUnique({ where: { email: identifier } });
+    if (byLoginId) return [byLoginId];
+    const mobile = normalizeIndianMobile(identifier);
+    if (mobile) {
+      // Stored as typed (+91, spaces, dashes), so compare digits with digits.
+      const ids = await this.prisma.$queryRaw<{ id: string }[]>`
+        SELECT "id" FROM "User"
+        WHERE "phone" IS NOT NULL AND regexp_replace("phone", '[^0-9]', '', 'g') LIKE ${'%' + mobile}
+        LIMIT 20`;
+      const found = await this.prisma.user.findMany({ where: { id: { in: ids.map((r) => r.id) } } });
+      return found.filter((u) => normalizeIndianMobile(u.phone ?? '') === mobile);
+    }
+    if (!identifier.includes('@')) return [];
+    return this.prisma.user.findMany({
+      where: { contactEmail: { equals: identifier, mode: 'insensitive' } },
+      take: 20,
+    });
+  }
+
   async login(email: string, password: string) {
-    const key = email.toLowerCase();
+    const key = email.trim().toLowerCase();
     // Checked BEFORE the DB lookup, and failures are recorded for unknown handles
     // too, so lockout behaviour never reveals which handles are real accounts.
     if (this.lockout.isLocked(key)) {
       throw new UnauthorizedException('Too many failed attempts. Try again in a few minutes.');
     }
 
-    const user = await this.prisma.user.findUnique({ where: { email: key } });
     // isActive already blocks pending/rejected (both are isActive=false); the
     // explicit approvalStatus check is defence-in-depth. Same generic message
-    // for every case so login never reveals which emails exist or their status.
-    if (!user || !user.passwordHash || !user.isActive || user.approvalStatus !== 'approved') {
+    // for every case so login never reveals which handles exist or their status.
+    const usable = (await this.loginCandidates(key)).filter(
+      (u) => u.passwordHash && u.isActive && u.approvalStatus === 'approved',
+    );
+    // A mobile number can belong to more than one person; the password picks.
+    // Two people sharing both is not one identity, so that is refused as well.
+    const matches: typeof usable = [];
+    for (const u of usable.slice(0, 5)) {
+      if (await bcrypt.compare(password, u.passwordHash!)) matches.push(u);
+    }
+    if (matches.length !== 1) {
       this.lockout.fail(key);
       throw new UnauthorizedException('Invalid credentials');
     }
-    const ok = await bcrypt.compare(password, user.passwordHash);
-    if (!ok) {
-      this.lockout.fail(key);
-      throw new UnauthorizedException('Invalid credentials');
-    }
+    const user = matches[0];
     this.lockout.clear(key); // clean login clears the counter
 
     const token = await this.jwt.signAsync({

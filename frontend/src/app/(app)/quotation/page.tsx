@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { FileText, MessageCircle } from "lucide-react";
 import { toast } from "sonner";
 
-import { QuoteBuilderDialog } from "@/components/quotation/quote-builder-dialog";
 import { QuoteDetailDialog } from "@/components/quotation/quote-detail-dialog";
 import { SectionHeader } from "@/components/section/section-header";
 import { OrdersTimelineView } from "@/components/timelines/orders-timeline-view";
@@ -66,7 +66,7 @@ export default function QuotationPage() {
   } = useQuotes({ includeKaccha });
   const [active, setActive] = useState<Quote | null>(null);
   const [open, setOpen] = useState(false);
-  const [newOpen, setNewOpen] = useState(false);
+  const router = useRouter();
 
   function storeName(id: string) {
     return stores.find((s) => s.id === id)?.name ?? id;
@@ -77,7 +77,8 @@ export default function QuotationPage() {
     setOpen(true);
   }
 
-  const openBuilder = () => setNewOpen(true);
+  // A screen of its own: with two or three items the form is long.
+  const openBuilder = () => router.push("/quotation/new");
 
   async function handleSendQuoteWhatsApp(e: React.MouseEvent, q: Quote) {
     e.stopPropagation();
@@ -296,7 +297,6 @@ export default function QuotationPage() {
         open={open}
         onOpenChange={setOpen}
       />
-      <QuoteBuilderDialog open={newOpen} onOpenChange={setNewOpen} />
     </>
   );
 }
