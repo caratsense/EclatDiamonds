@@ -43,6 +43,7 @@ import {
 } from "@/components/common/store-scope-field";
 import {
   MaterialDatalists,
+  QUOTE_KARATS_TEXT,
   QuoteItemEditor,
   emptyItem,
   emptyStone,
@@ -340,7 +341,7 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
       if (!priced.includes(it)) continue;
       const n = `Item ${i + 1}`;
       if (!it.itemType) return `${n}: pick the item type.`;
-      if ((num(it.weight) ?? 0) > 0 && !karatOf(it)) return `${n}: pick the metal (9, 12, 14, 18, 22 or 24K).`;
+      if ((num(it.weight) ?? 0) > 0 && !karatOf(it)) return `${n}: pick the metal (${QUOTE_KARATS_TEXT}).`;
       if ((num(it.weight) ?? 0) > 0 && !num(it.manualRate)) {
         const a = autoRate(karatOf(it));
         // A quote freezes the gold rate it was priced at. It must not freeze a

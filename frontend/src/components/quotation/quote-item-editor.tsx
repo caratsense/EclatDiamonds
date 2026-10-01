@@ -25,8 +25,13 @@ import {
 } from "@/lib/queries/materials";
 import { apiErrorMessage, cn } from "@/lib/utils";
 
-/** The karats the business quotes in (owner, 22 Sep 2026). */
-export const QUOTE_KARATS = [9, 12, 14, 18, 22, 24];
+/**
+ * The karats a new quote is built in: the shop's own list (1 Oct 2026). The
+ * server still takes 22 and 24, because older quotes have them.
+ */
+export const QUOTE_KARATS = [9, 12, 14, 18];
+/** The list as staff are told it: "9/12/14/18K". */
+export const QUOTE_KARATS_TEXT = `${QUOTE_KARATS.join("/")}K`;
 
 /** Item types when the item master has not been loaded yet (the ERP's list). */
 const ITEM_TYPES_FALLBACK = [
@@ -308,7 +313,7 @@ export function QuoteItemEditor({
       toast.success(`Loaded ${bom.styleCode}`, {
         description: [
           `${stones.length} stone line${stones.length === 1 ? "" : "s"}`,
-          heavyMetal ? "its gold is not 9/12/14/18/22/24K — pick the metal" : "",
+          heavyMetal ? `its gold is not ${QUOTE_KARATS_TEXT} — pick the metal` : "",
           skipped ? `${skipped} other line${skipped === 1 ? "" : "s"} (charges) left out` : "",
         ]
           .filter(Boolean)
