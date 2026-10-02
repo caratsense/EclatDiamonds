@@ -259,6 +259,36 @@ export class WhatsAppBotService {
 
     const user = await this.identity.resolveActiveUser(from);
 
+    /*
+     * WHICH LINE WAS WRITTEN TO, NOT JUST WHO WROTE.
+     *
+     * One webhook carries two bots. Until there was a second number, telling
+     * them apart by sender was enough: a linked staff phone meant the DSR bot,
+     * anyone else meant a customer. With a dedicated operations line that rule
+     * breaks in both directions, and the expensive direction is a stranger
+     * finding the internal number and being answered with a sales script.
+     *
+     * So an internal line answers STAFF ONLY, and says nothing at all to
+     * anybody else. Silence rather than a polite refusal is deliberate and is
+     * the same rule unknown numbers have always had here: a reply confirms the
+     * number is live and worth messaging again, which is exactly what an
+     * internal line should never confirm to a stranger.
+     *
+     * The customer line is deliberately NOT made staff-proof to match. A
+     * manager who has not yet saved the new number keeps reaching the reporting
+     * flow where they always did, instead of silently filing nothing and
+     * finding out at month end. That tolerance is meant to be removed once the
+     * branches have moved across; it is not meant to be permanent.
+     */
+    const internalLine = inbound?.purpose === 'internal';
+
+    if (internalLine && !user) {
+      this.logger.log(
+        `  ignored: a number not linked to anyone wrote to the internal line`,
+      );
+      return { status: 'ignored', organisationId: inboundOrgId };
+    }
+
     if (user) {
       if (!text) {
         // Media, location, stickers — nothing to read yet.
@@ -378,6 +408,20 @@ export class WhatsAppBotService {
        * branch.
        */
       const referral = extractMetaReferral(event.payload);
+      /*
+       * Log the two fields that decide platform attribution.
+       *
+       * `source_url` is the only thing on a CTWA referral that says whether the
+       * customer was inside Instagram or Facebook when they tapped, and Meta is
+       * not consistent about sending it. When a lead lands as "source unknown"
+       * in the inbox, this line is the difference between knowing Meta sent no
+       * url and guessing that our parser missed one.
+       */
+      if (referral) {
+        this.logger.log(
+          `  ctwa referral: ad=${referral.adId ?? '-'} type=${referral.sourceType ?? '-'} url=${referral.sourceUrl ?? '(none sent)'}`,
+        );
+      }
       const adMeta = referral?.adId
         ? await this.adMetadata.resolve(organisationId, referral.adId)
         : null;
@@ -865,7 +909,7 @@ export class WhatsAppBotService {
     replyRoute: SenderRoute | undefined,
   ): Promise<void> {
     const body = [
-      'Thank you — I have that.',
+      'Thank you, got it.',
       '',
       'One of our team will take a look and come back to you shortly with details and pricing. 💎',
     ].join('\n');
@@ -1088,6 +1132,8 @@ export class WhatsAppBotService {
     organisationId: string;
     /** The number it arrived on, so the reply leaves from the same one. */
     assetId: string | null;
+    /** 'internal' for a staff operations line; null for a customer-facing one. */
+    purpose: string | null;
     /** The branch that number answers for, when exactly one does. */
     storeId: string | null;
   } | null> {
@@ -1100,6 +1146,7 @@ export class WhatsAppBotService {
     return {
       organisationId: owner.organisationId,
       assetId: owner.assetId,
+      purpose: owner.purpose,
       storeId: owner.storeId,
     };
   }

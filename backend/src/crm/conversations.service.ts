@@ -21,7 +21,11 @@ import { isSalesScoped } from '../common/sales-scope';
 import { ActivityService } from './activity.service';
 import { IdentityService, ContactKind } from './identity.service';
 import { AdSetRulesService, type AdSetRoutingContext } from './adset-rules.service';
-import { platformFromSourceUrl } from '../integrations/meta-referral';
+import {
+  adCardFrom,
+  extractMetaReferral,
+  platformFromSourceUrl,
+} from '../integrations/meta-referral';
 import { AttributionService } from './attribution.service';
 import { RequalificationService } from './requalification.service';
 import { AdvancedCrmService } from './advanced-crm.service';
@@ -1497,6 +1501,17 @@ export class ConversationsService {
     user: AuthUser,
     opts: {
       status?: string; handling?: string; assignedToMe?: boolean; channel?: string; limit?: number;
+      /**
+       * Which Meta surface the ad was tapped on: 'instagram' | 'facebook' |
+       * 'messenger', or the literal 'unknown' for ad leads whose referral
+       * carried no readable source.
+       *
+       * Distinct from `channel`, and the difference matters: one advert runs on
+       * Instagram and Facebook at once and BOTH send the customer to WhatsApp,
+       * so every lead here has `channel: 'whatsapp'` while coming from two
+       * different places. Filtering by channel cannot separate them; this can.
+       */
+      sourcePlatform?: string;
       /** Queue: threads a later ad tried to reroute. */
       routingReview?: boolean;
       /** Queue: inbound traffic not yet linked to a customer. */
@@ -1542,6 +1557,17 @@ export class ConversationsService {
         // "No ad told us where this came from" — never inferred from a missing
         // store, which can also mean a rule simply has not been written yet.
         ...(opts.nonAd ? { sourceAdId: null } : {}),
+        /*
+         * 'unknown' means an AD lead we could not place, not "no ad". Meta does
+         * not send `publisher_platform` on a referral, so some ad clicks
+         * genuinely arrive with no readable source — and those are exactly the
+         * ones somebody auditing attribution needs to be able to list.
+         */
+        ...(opts.sourcePlatform === 'unknown'
+          ? { sourceAdId: { not: null }, sourcePlatform: null }
+          : opts.sourcePlatform
+            ? { sourcePlatform: opts.sourcePlatform }
+            : {}),
         // AND, not a sibling OR: a top-level `storeId` alongside an `OR` that
         // admits `storeId: null` is contradictory, and Prisma would AND them
         // into something nobody intended.
@@ -1684,12 +1710,42 @@ export class ConversationsService {
 
   async thread(user: AuthUser, conversationId: string, limit = 100) {
     const conversation = await this.load(user, conversationId);
-    const messages = await this.prisma.message.findMany({
+    const rows = await this.prisma.message.findMany({
       where: { conversationId, organisationId: user.organisationId },
       orderBy: { sentAt: 'asc' },
       take: Math.min(Math.max(limit, 1), 500),
       include: { authorUser: { select: { id: true, name: true } } },
     });
+
+    /*
+     * THE ADVERT TRAVELS WITH THE MESSAGE IT ARRIVED ON.
+     *
+     * WhatsApp shows the customer a card above their own first message —
+     * thumbnail, headline, a link back to the advert. Reading the same thread in
+     * the CRM, a manager saw none of it, and had to work out which advert this
+     * was from a 17-digit id in a side panel.
+     *
+     * Deliberately per MESSAGE, not per conversation. `Conversation.sourceAdId`
+     * holds FIRST touch and is never rewritten — a customer who clicks a second
+     * advert months later must not silently re-attribute the thread that an
+     * earlier one opened. So a later click is invisible on the conversation row
+     * by design, and this is where it becomes visible instead: every ad click
+     * shows up on the exact message it brought in, in order, the way the
+     * customer experienced it.
+     *
+     * Derived on read rather than stored. The raw referral is already on
+     * `payload`; a stored second copy could drift from it, and this costs a
+     * field read.
+     */
+    const messages = rows.map(({ payload, ...message }) => ({
+      ...message,
+      // The raw provider payload stays on the server. It carries the sender's
+      // WhatsApp profile name and the full envelope, none of which the inbox
+      // needs, and shipping it to every browser that opens a thread is a wider
+      // surface than the feature requires.
+      ad: adCardFrom(extractMetaReferral(payload)),
+    }));
+
     return { conversation, messages };
   }
 

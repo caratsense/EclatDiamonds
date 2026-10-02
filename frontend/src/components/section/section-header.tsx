@@ -7,8 +7,12 @@ import { useT } from "@/lib/i18n";
 
 interface SectionHeaderProps {
   title: string;
-  /** One-line purpose from MODULES.md. */
-  purpose: string;
+  /**
+   * One-line purpose from MODULES.md. Optional: a screen that is a working
+   * surface rather than a report — Conversations, where the three panes want
+   * every pixel — omits it and spends that band on the content instead.
+   */
+  purpose?: string;
   /** Label for the primary CTA. */
   primaryAction?: string;
   onPrimaryAction?: () => void;
@@ -35,15 +39,17 @@ export function SectionHeader({
   const t = useT();
 
   return (
-    <div className="mb-8">
+    <div className={purpose ? "mb-8" : "mb-4"}>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-2">
           <h1 className="font-display text-[30px] font-bold leading-tight tracking-tight text-foreground">
             {t(title, title)}
           </h1>
-          <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
-            {t(purpose, purpose)}
-          </p>
+          {purpose ? (
+            <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+              {t(purpose, purpose)}
+            </p>
+          ) : null}
           {/*
             The active store and the signed-in role used to be repeated here as
             two chips. The top bar carries both already — `StoreSwitcher` and
@@ -68,7 +74,9 @@ export function SectionHeader({
           </Button>
         ) : null}
       </div>
-      <div className="mt-5 h-px bg-gradient-to-r from-border via-border to-transparent" />
+      <div
+        className={`${purpose ? "mt-5" : "mt-3"} h-px bg-gradient-to-r from-border via-border to-transparent`}
+      />
     </div>
   );
 }

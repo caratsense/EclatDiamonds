@@ -5,7 +5,11 @@ import * as bcrypt from 'bcryptjs';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { ConversationsService } from '../src/crm/conversations.service';
-import { extractMetaReferral, platformFromSourceUrl } from '../src/integrations/meta-referral';
+import {
+  adCardFrom,
+  extractMetaReferral,
+  platformFromSourceUrl,
+} from '../src/integrations/meta-referral';
 import { resolveAdSetRule } from '../src/crm/adset-rules.service';
 
 /**
@@ -299,6 +303,219 @@ describe('CTWA ad routing and measured attribution (e2e)', () => {
     expect(convo!.sourceAdId).toBe('999999999999999');
     // And no lead was invented in an arbitrary store.
     expect(result.leadId).toBeNull();
+  });
+
+  /* ----------------------------------------------- the advert, on the message */
+
+  /*
+   * WhatsApp puts a card above the customer's first message: the creative, its
+   * headline, and a link back to the advert. The CRM showed a manager none of
+   * that and left them decoding a 17-digit id in a side panel.
+   *
+   * The card is built per MESSAGE rather than per conversation on purpose. The
+   * conversation row holds FIRST touch and is never rewritten, so a second ad
+   * click months later is invisible there by design. On the message it is not.
+   */
+  it('hands the inbox everything it needs to draw the advert card', () => {
+    const raw = ctwaMessage('120210000000001', 'wamid.card.1');
+    raw.referral.source_url = 'https://www.instagram.com/p/DdwKr6isgcO/';
+    (raw.referral as Record<string, unknown>).thumbnail_url =
+      'https://scontent.xx.fbcdn.net/v/t45.1600-4/thumb.jpg';
+
+    const card = adCardFrom(extractMetaReferral(raw))!;
+    expect(card.adId).toBe('120210000000001');
+    expect(card.headline).toBe('Bridal collection — Hyderabad');
+    expect(card.body).toBe('Book a private viewing');
+    expect(card.sourceUrl).toBe('https://www.instagram.com/p/DdwKr6isgcO/');
+    expect(card.platform).toBe('instagram');
+    expect(card.thumbnailUrl).toContain('thumb.jpg');
+  });
+
+  it('falls back to image_url, and to nothing at all, rather than inventing a thumbnail', () => {
+    const withImage = ctwaMessage('120210000000001', 'wamid.card.2');
+    (withImage.referral as Record<string, unknown>).image_url = 'https://scontent.xx.fbcdn.net/img.jpg';
+    expect(adCardFrom(extractMetaReferral(withImage))!.thumbnailUrl).toContain('img.jpg');
+
+    // A text-only advert sends neither. A card with no picture is correct;
+    // a placeholder that looks like the creative is a small lie.
+    const bare = ctwaMessage('120210000000001', 'wamid.card.3');
+    expect(adCardFrom(extractMetaReferral(bare))!.thumbnailUrl).toBeNull();
+  });
+
+  it('returns no card for an ordinary message', () => {
+    // Every message except the first of an ad thread. If this ever returned a
+    // card, every bubble in every conversation would grow an advert above it.
+    expect(adCardFrom(extractMetaReferral({ text: { body: 'hi' } }))).toBeNull();
+    expect(adCardFrom(null)).toBeNull();
+  });
+
+  it('puts the card on the message that carried it, and on no other', async () => {
+    const raw = ctwaMessage('120210000000001', 'wamid.card.thread.1');
+    raw.from = '919000000020';
+    raw.referral.source_url = 'https://www.instagram.com/p/DdwKr6isgcO/';
+    const first = await conversations.ingestInbound({
+      organisationId: A.org, channel: 'whatsapp',
+      externalThreadId: raw.from, externalId: raw.id,
+      senderKind: 'whatsapp', senderValue: raw.from,
+      body: raw.text.body, payload: raw as never, adReferral: extractMetaReferral(raw),
+    });
+
+    // A second, ordinary message on the same thread.
+    const plain = { from: raw.from, id: 'wamid.card.thread.2', type: 'text', text: { body: 'Still there?' } };
+    await conversations.ingestInbound({
+      organisationId: A.org, channel: 'whatsapp',
+      externalThreadId: raw.from, externalId: plain.id,
+      senderKind: 'whatsapp', senderValue: raw.from,
+      body: plain.text.body, payload: plain as never,
+    });
+
+    const res = await request(app.getHttpServer())
+      .get(`/crm/conversations/${first.conversationId}`)
+      .set(auth())
+      .expect(200);
+
+    const messages = res.body.messages as Array<{ body: string; ad: unknown }>;
+    expect(messages).toHaveLength(2);
+    expect(messages[0].ad).toMatchObject({
+      adId: '120210000000001',
+      platform: 'instagram',
+      headline: 'Bridal collection — Hyderabad',
+    });
+    expect(messages[1].ad).toBeNull();
+
+    // And the raw provider envelope stays on the server. It carries the
+    // sender's WhatsApp profile name and the whole webhook body, none of which
+    // the inbox needs in order to draw a card.
+    expect(messages[0]).not.toHaveProperty('payload');
+  });
+
+  /* ------------------------------------------- which app the ad was tapped in */
+
+  /*
+   * One advert, two placements, one inbox.
+   *
+   * The same creative runs on Instagram and on Facebook, both CTAs open
+   * WhatsApp, so every lead below arrives with `channel: 'whatsapp'`. The
+   * channel filter cannot separate them — only the referral's `source_url`
+   * can, and this is the test that says so.
+   */
+  it('separates Instagram leads from Facebook leads that came through the same inbox', async () => {
+    const ig = ctwaMessage('120210000000001', 'wamid.ig.1');
+    ig.from = '919000000010';
+    ig.referral.source_url = 'https://www.instagram.com/p/DdwKr6isgcO/';
+    const igResult = await conversations.ingestInbound({
+      organisationId: A.org, channel: 'whatsapp',
+      externalThreadId: ig.from, externalId: ig.id,
+      senderKind: 'whatsapp', senderValue: ig.from,
+      body: ig.text.body, payload: ig as never, adReferral: extractMetaReferral(ig),
+    });
+
+    const fb = ctwaMessage('120210000000001', 'wamid.fb.1');
+    fb.from = '919000000011';
+    fb.referral.source_url = 'https://www.facebook.com/eclatdiamonds/posts/123';
+    const fbResult = await conversations.ingestInbound({
+      organisationId: A.org, channel: 'whatsapp',
+      externalThreadId: fb.from, externalId: fb.id,
+      senderKind: 'whatsapp', senderValue: fb.from,
+      body: fb.text.body, payload: fb as never, adReferral: extractMetaReferral(fb),
+    });
+
+    // Same ad, same channel, same store — only the placement differs.
+    const [igRow, fbRow] = await Promise.all([
+      prisma.conversation.findUnique({
+        where: { id: igResult.conversationId },
+        select: { channel: true, sourceAdId: true, sourcePlatform: true },
+      }),
+      prisma.conversation.findUnique({
+        where: { id: fbResult.conversationId },
+        select: { channel: true, sourceAdId: true, sourcePlatform: true },
+      }),
+    ]);
+    expect(igRow!.channel).toBe('whatsapp');
+    expect(fbRow!.channel).toBe('whatsapp');
+    expect(igRow!.sourceAdId).toBe(fbRow!.sourceAdId);
+    expect(igRow!.sourcePlatform).toBe('instagram');
+    expect(fbRow!.sourcePlatform).toBe('facebook');
+
+    const onlyIg = await request(app.getHttpServer())
+      .get('/crm/conversations?sourcePlatform=instagram')
+      .set(auth())
+      .expect(200);
+    const igIds = onlyIg.body.map((c: { id: string }) => c.id);
+    expect(igIds).toContain(igResult.conversationId);
+    expect(igIds).not.toContain(fbResult.conversationId);
+
+    const onlyFb = await request(app.getHttpServer())
+      .get('/crm/conversations?sourcePlatform=facebook')
+      .set(auth())
+      .expect(200);
+    const fbIds = onlyFb.body.map((c: { id: string }) => c.id);
+    expect(fbIds).toContain(fbResult.conversationId);
+    expect(fbIds).not.toContain(igResult.conversationId);
+
+    // And the platform rides along on the row, so the inbox can label it
+    // without a second request.
+    const igBody = onlyIg.body.find((c: { id: string }) => c.id === igResult.conversationId);
+    expect(igBody.source.platform).toBe('instagram');
+  });
+
+  /*
+   * "Unknown" is its own bucket, not a synonym for Facebook.
+   *
+   * Meta does not always send `source_url`, and when it does not, the honest
+   * answer is that nobody knows which app the customer was in. Folding those
+   * into Facebook would make the Facebook count quietly wrong, and nothing on
+   * screen would say so.
+   */
+  it('lists ad leads with no readable source separately, and never as Facebook', async () => {
+    const bare = ctwaMessage('120210000000001', 'wamid.bare.1');
+    bare.from = '919000000012';
+    delete (bare.referral as { source_url?: string }).source_url;
+    const result = await conversations.ingestInbound({
+      organisationId: A.org, channel: 'whatsapp',
+      externalThreadId: bare.from, externalId: bare.id,
+      senderKind: 'whatsapp', senderValue: bare.from,
+      body: bare.text.body, payload: bare as never, adReferral: extractMetaReferral(bare),
+    });
+
+    const row = await prisma.conversation.findUnique({
+      where: { id: result.conversationId },
+      select: { sourceAdId: true, sourcePlatform: true },
+    });
+    expect(row!.sourceAdId).toBe('120210000000001'); // the ad is still known
+    expect(row!.sourcePlatform).toBeNull(); // the placement is not
+
+    const unknown = await request(app.getHttpServer())
+      .get('/crm/conversations?sourcePlatform=unknown')
+      .set(auth())
+      .expect(200);
+    expect(unknown.body.map((c: { id: string }) => c.id)).toContain(result.conversationId);
+
+    const fb = await request(app.getHttpServer())
+      .get('/crm/conversations?sourcePlatform=facebook')
+      .set(auth())
+      .expect(200);
+    expect(fb.body.map((c: { id: string }) => c.id)).not.toContain(result.conversationId);
+  });
+
+  /*
+   * A thread nobody clicked an ad to start is not "unknown placement" — it has
+   * no placement at all. Mixing the two would put walk-in and organic chatter
+   * into a bucket a marketer reads as wasted ad spend.
+   */
+  it('keeps non-ad conversations out of the unknown-source bucket', async () => {
+    const result = await conversations.ingestInbound({
+      organisationId: A.org, channel: 'whatsapp',
+      externalThreadId: '919000000013', externalId: 'wamid.organic.1',
+      senderKind: 'whatsapp', senderValue: '919000000013',
+      body: 'Hi, are you open on Sunday?', payload: { from: '919000000013' } as never,
+    });
+
+    const unknown = await request(app.getHttpServer())
+      .get('/crm/conversations?sourcePlatform=unknown')
+      .set(auth())
+      .expect(200);
+    expect(unknown.body.map((c: { id: string }) => c.id)).not.toContain(result.conversationId);
   });
 
   it('a replayed webhook creates no second message, lead or touch', async () => {

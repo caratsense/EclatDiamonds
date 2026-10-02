@@ -34,6 +34,7 @@ import {
   RotateCcw,
   Search,
   Send,
+  Share2,
   SlidersHorizontal,
   Smile,
   Sparkles,
@@ -80,7 +81,6 @@ import {
   useSendReply,
   useUpdateConversation,
 } from "@/lib/queries/crm";
-import { ChannelStatus } from "@/components/crm/channel-status";
 import { AssignConversationDialog } from "@/components/crm/assign-conversation-dialog";
 import { AuthedImage } from "@/components/ui/authed-image";
 import { IntentAnalysisPanel } from "@/components/crm/intent-analysis-panel";
@@ -182,12 +182,25 @@ function stripAgentSignature(body: string, authorName?: string | null): string {
  * the conversation they describe, and reading the last card meant scrolling the
  * thread out of sight.
  *
- * Viewport-relative rather than a fixed pixel height so the inbox fills a large
- * screen instead of leaving dead space under it. The floor keeps the thread
- * usable on a short window; the ceiling stops the columns stretching so tall on
- * a big display that the list and the composer are no longer visible together.
+ * MEASURED BY THE BROWSER, NOT BY ME.
+ *
+ * This used to be `calc(100vh - 13rem)`: the viewport, less a number I had
+ * counted off the topbar, the page padding, the heading and the filter row. It
+ * was wrong the moment any of those changed — and it had already drifted, which
+ * is why the page itself grew a second scrollbar outside the three panes. One
+ * that moved the whole layout out from under the cursor while you were reading
+ * a thread inside it.
+ *
+ * `flex-1 min-h-0` asks for the leftover height instead of computing it. The
+ * shell's content wrapper is a `min-h-full` flex column, so whatever is left
+ * after the real heading and the real filter row is what the panes get, on any
+ * window, forever.
+ *
+ * `min-h-0` is the load-bearing half: a flex child defaults to `min-height:auto`
+ * and refuses to shrink below its content, so without it the panes would push
+ * past the viewport and bring the outer scrollbar straight back.
  */
-const PANE_HEIGHT = "h-[calc(100vh-13rem)] min-h-[520px] max-h-[900px]";
+const PANE_HEIGHT = "min-h-0 flex-1";
 
 /**
  * The chips on a conversation row.
@@ -339,13 +352,16 @@ export default function ConversationsPage() {
 }
 
 function ConversationsSkeleton() {
+  // Fills the shell exactly like the real page, so the fallback does not show a
+  // 650px block that briefly overflows and flashes the outer scrollbar before
+  // the inbox renders.
   return (
-    <div className="space-y-6">
-      <Skeleton className="h-8 w-64" />
-      <div className="grid gap-4 lg:grid-cols-[310px_1fr_320px]">
-        <Skeleton className="h-[650px] w-full rounded-xl" />
-        <Skeleton className="h-[650px] w-full rounded-xl" />
-        <Skeleton className="h-[650px] w-full rounded-xl" />
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
+      <Skeleton className="h-8 w-64 shrink-0" />
+      <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-4 lg:grid-cols-[310px_1fr_320px]">
+        <Skeleton className="h-full w-full rounded-xl" />
+        <Skeleton className="h-full w-full rounded-xl" />
+        <Skeleton className="h-full w-full rounded-xl" />
       </div>
     </div>
   );
@@ -366,6 +382,8 @@ function ConversationsContent() {
   const storeFilter = searchParams.get("store") ?? "";
   /** Which platform the lead arrived on. Empty means all of them. */
   const channelFilter = searchParams.get("channel") ?? "";
+  /** Which Meta surface the AD was tapped on. Empty means all of them. */
+  const sourceFilter = searchParams.get("source") ?? "";
 
   // Whether the Non-ad queue is offered at all. The server refuses it for
   // everyone else regardless, so this only keeps a dead tab off the screen.
@@ -392,6 +410,7 @@ function ConversationsContent() {
     thread?: string | null;
     store?: string | null;
     channel?: string | null;
+    source?: string | null;
   }) => {
     const params = new URLSearchParams(searchParams.toString());
     if (next.queue !== undefined) {
@@ -419,6 +438,11 @@ function ConversationsContent() {
       if (next.channel) params.set("channel", next.channel);
       else params.delete("channel");
       params.delete("thread"); // same reason as the branch filter above
+    }
+    if (next.source !== undefined) {
+      if (next.source) params.set("source", next.source);
+      else params.delete("source");
+      params.delete("thread");
     }
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   };
@@ -452,6 +476,7 @@ function ConversationsContent() {
           ...serverQueueParams,
           ...(storeFilter ? { storeId: storeFilter } : {}),
           ...(channelFilter ? { channel: channelFilter } : {}),
+          ...(sourceFilter ? { sourcePlatform: sourceFilter } : {}),
         },
   );
   const counts = useQueueCounts();
@@ -477,9 +502,18 @@ function ConversationsContent() {
   if (!channelFilter && listedChannels.join("|") !== seenChannels.join("|")) {
     setSeenChannels(listedChannels);
   }
-  const channelOptions = channelFilter
-    ? [...new Set([...seenChannels, channelFilter])]
-    : listedChannels;
+  /*
+   * `whatsapp` is seeded rather than discovered. The selector is always on
+   * screen now, and an empty inbox would otherwise leave it offering nothing
+   * but "All channels" — a control that looks broken on the one screen where
+   * you most want reassurance that it is not.
+   */
+  const channelOptions = [
+    ...new Set([
+      "whatsapp",
+      ...(channelFilter ? [...seenChannels, channelFilter] : listedChannels),
+    ]),
+  ];
 
   const selected =
     searchParams.get("thread") ?? (partyId ? (list.data?.[0]?.id ?? null) : null);
@@ -526,15 +560,21 @@ function ConversationsContent() {
   });
 
   return (
-    <div className="space-y-4">
-      {/* Named for what a manager comes here to do, not for the architecture
-          or the competitor it was benchmarked against. */}
-      <SectionHeader
-        title="Conversations"
-        purpose="Manage customer conversations and sales enquiries across all your stores."
-      />
+    // `flex-1 min-h-0` claims the leftover height from the shell's content
+    // wrapper; `gap-4` replaces `space-y-4`, which does nothing useful on a
+    // flex container.
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
+      {/*
+        Named for what a manager comes here to do, not for the architecture or
+        the competitor it was benchmarked against.
 
-      <ChannelStatus />
+        No purpose line and no `<ChannelStatus />` strip: both stated things a
+        manager already knows — what this screen is for, and that WhatsApp is
+        connected — while costing a good 120px off the top of the three panes
+        they actually work in. Connection state still lives on Settings →
+        Channels, which is where you go when it breaks.
+      */}
+      <SectionHeader title="Conversations" />
 
       {partyId && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/80 bg-card px-3 py-2 text-sm shadow-xs">
@@ -666,30 +706,67 @@ function ConversationsContent() {
             answers "how is Bandra doing this week" without opening each thread.
             Offered only to someone who can see more than one branch.
           */}
-          {/* Which platform the lead came in on. Hidden while only one exists —
-              a selector with a single option is furniture, not a control. */}
-          {channelOptions.length > 1 && (
-            <div className="flex items-center gap-1.5">
-              <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
-              <select
-                aria-label="Filter conversations by platform"
-                value={channelFilter}
-                onChange={(e) => navigate({ channel: e.target.value || null })}
-                className={`h-8 rounded-md border bg-background px-2 text-xs font-medium ${
-                  channelFilter
-                    ? "border-[#25D366]/40 text-[#128C7E] dark:text-[#25D366]"
-                    : "border-border text-muted-foreground"
-                }`}
-              >
-                <option value="">All platforms</option>
-                {channelOptions.map((ch) => (
-                  <option key={ch} value={ch}>
-                    {CHANNEL_LABELS[ch] ?? ch}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+          {/*
+            Which inbox the lead came in on — WhatsApp, a phone call, and so on.
+
+            Always rendered, even when today's threads only use one of them. It
+            used to hide itself below two options, on the theory that a
+            single-option selector is furniture; in practice it vanished exactly
+            when someone wanted to confirm a filter existed at all, and reappeared
+            unannounced the first time a second channel showed up. A control that
+            comes and goes with the data is harder to trust than a quiet one.
+          */}
+          <div className="flex items-center gap-1.5">
+            <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
+            <select
+              aria-label="Filter conversations by channel"
+              value={channelFilter}
+              onChange={(e) => navigate({ channel: e.target.value || null })}
+              className={`h-8 rounded-md border bg-background px-2 text-xs font-medium ${
+                channelFilter
+                  ? "border-[#25D366]/40 text-[#128C7E] dark:text-[#25D366]"
+                  : "border-border text-muted-foreground"
+              }`}
+            >
+              <option value="">All channels</option>
+              {channelOptions.map((ch) => (
+                <option key={ch} value={ch}>
+                  {CHANNEL_LABELS[ch] ?? ch}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/*
+            Which Meta surface the ad was tapped on.
+
+            This is NOT the same question as the channel above, and that is the
+            whole reason it exists: one advert runs on Instagram and Facebook at
+            once, both CTAs open WhatsApp, so every one of those leads arrives
+            with `channel: whatsapp` no matter which app the customer was in.
+            Only the referral on the first inbound message can tell them apart.
+
+            "Unknown" is ad traffic whose referral carried no readable source —
+            worth seeing separately rather than silently folded into Facebook.
+          */}
+          <div className="flex items-center gap-1.5">
+            <Share2 className="h-3.5 w-3.5 text-muted-foreground" />
+            <select
+              aria-label="Filter conversations by the platform the ad was clicked on"
+              value={sourceFilter}
+              onChange={(e) => navigate({ source: e.target.value || null })}
+              className={`h-8 rounded-md border bg-background px-2 text-xs font-medium ${
+                sourceFilter
+                  ? "border-[#25D366]/40 text-[#128C7E] dark:text-[#25D366]"
+                  : "border-border text-muted-foreground"
+              }`}
+            >
+              <option value="">All sources</option>
+              <option value="instagram">Instagram ad</option>
+              <option value="facebook">Facebook ad</option>
+              <option value="unknown">Ad — source unknown</option>
+            </select>
+          </div>
           {showStoreFilter && (
             <div className="flex items-center gap-1.5">
               <MapPin className="h-3.5 w-3.5 text-muted-foreground" />
@@ -733,7 +810,17 @@ function ConversationsContent() {
       </div>
 
       {/* ── 3-PANE ZITHARA ARCHITECTURE: Contacts | Chat | Darrell CRM ── */}
-      <div className="grid gap-3 lg:grid-cols-[280px_1fr] xl:grid-cols-[285px_1fr]">
+      {/*
+        `grid-rows-[minmax(0,1fr)]` is doing real work here.
+
+        A grid row defaults to `auto`, which means "as tall as the tallest
+        child" — so a long conversation would have pushed the row past the
+        viewport and handed the outer scrollbar straight back. `minmax(0, 1fr)`
+        pins the row to the grid's own height and, crucially, allows it to
+        shrink below its content, which is what lets each pane scroll inside
+        itself rather than stretching the page.
+      */}
+      <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-3 lg:grid-cols-[280px_1fr] xl:grid-cols-[285px_1fr]">
         {/* LEFT PANE: Contacts List */}
         <Card className={`flex flex-col ${PANE_HEIGHT} overflow-hidden border-border/80 shadow-sm`}>
           {/* Zithara Top Mini Toolbar */}
@@ -1046,7 +1133,11 @@ function ThreadView({
   };
 
   return (
-    <div className={`grid gap-3 ${showRightCrm ? "xl:grid-cols-[1fr_290px]" : "grid-cols-1"} items-start`}>
+    <div
+      className={`grid min-h-0 grid-rows-[minmax(0,1fr)] gap-3 ${
+        showRightCrm ? "xl:grid-cols-[1fr_290px]" : "grid-cols-1"
+      }`}
+    >
       {/* ── CENTER COLUMN: WhatsApp Web Chat Window ───────────────────── */}
       <Card className={`flex flex-col ${PANE_HEIGHT} overflow-hidden border-border/80 shadow-sm`}>
         {/* WhatsApp Header + Zithara Quick Action Icons */}
@@ -1254,6 +1345,80 @@ function ThreadView({
                     key={m.id}
                     className={`flex flex-col ${isInbound ? "items-start" : "items-end"}`}
                   >
+                    {/*
+                      THE ADVERT THAT BROUGHT THEM IN, WHERE WHATSAPP PUTS IT.
+
+                      WhatsApp shows the customer this exact card above their
+                      own first message: the creative, its headline, and a link
+                      back to the advert. Until now a manager reading the same
+                      conversation here saw none of it and had to decode a
+                      17-digit ad id in the side panel.
+
+                      It sits ABOVE the bubble, attached to the message that
+                      carried the referral, rather than in a panel: which advert
+                      someone answered is a fact about one moment in the thread,
+                      and a second ad click weeks later deserves its own card
+                      further down rather than quietly replacing this one.
+                    */}
+                    {m.ad && (
+                      <a
+                        href={m.ad.sourceUrl ?? undefined}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={`mb-1 flex max-w-[85%] items-stretch gap-2.5 overflow-hidden rounded-xl border border-black/[0.06] bg-white p-2 shadow-xs transition hover:border-[#25D366]/50 dark:border-white/[0.06] dark:bg-[#202c33] ${
+                          m.ad.sourceUrl ? "cursor-pointer" : "pointer-events-none"
+                        }`}
+                      >
+                        {m.ad.thumbnailUrl ? (
+                          /* eslint-disable-next-line @next/next/no-img-element --
+                             Meta's own CDN, a remote host Next's optimiser is
+                             not configured for, and the URL expires. */
+                          <img
+                            src={m.ad.thumbnailUrl}
+                            alt=""
+                            className="size-14 shrink-0 rounded-lg object-cover"
+                          />
+                        ) : (
+                          <span className="flex size-14 shrink-0 items-center justify-center rounded-lg bg-muted">
+                            <Megaphone className="size-5 text-muted-foreground" />
+                          </span>
+                        )}
+                        <span className="flex min-w-0 flex-col justify-center gap-0.5 pr-1">
+                          {/* Brand COLOUR, not a brand glyph. The row chips
+                              upstream already say Instagram and Facebook this
+                              way, and lucide carries no logo icons. */}
+                          <span className="flex items-center gap-1.5">
+                            <Megaphone
+                              className={`size-3 ${
+                                m.ad.platform === "instagram"
+                                  ? "text-[#C13584]"
+                                  : m.ad.platform === "facebook"
+                                    ? "text-[#1877F2]"
+                                    : "text-muted-foreground"
+                              }`}
+                            />
+                            <span className="text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground">
+                              {m.ad.platform === "instagram"
+                                ? "Instagram ad"
+                                : m.ad.platform === "facebook"
+                                  ? "Facebook ad"
+                                  : m.ad.platform === "messenger"
+                                    ? "Messenger ad"
+                                    : "Ad"}
+                            </span>
+                          </span>
+                          <span className="truncate text-[13px] font-semibold text-foreground">
+                            {m.ad.headline ?? "Click-to-WhatsApp advert"}
+                          </span>
+                          {/* The ad id is what somebody pastes into Ads Manager,
+                              so it is shown when there is no headline to show
+                              instead — never both, which would be clutter. */}
+                          <span className="truncate text-[11px] text-muted-foreground">
+                            {m.ad.body ?? (m.ad.adId ? `Ad ${m.ad.adId}` : "")}
+                          </span>
+                        </span>
+                      </a>
+                    )}
                     <div
                       className={`relative max-w-[85%] sm:max-w-[75%] px-3.5 py-2 text-[13.5px] leading-relaxed shadow-xs ${
                         isInbound

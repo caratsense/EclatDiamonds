@@ -347,6 +347,22 @@ export interface MessageRow {
   error: string | null;
   sentAt: string;
   authorUser: { id: string; name: string } | null;
+  /**
+   * The advert this message arrived from, when it arrived from one.
+   *
+   * Per MESSAGE, not per conversation, and that is the point: the conversation
+   * row holds first touch and is never rewritten, so a customer's second ad
+   * click is invisible there. Here every click shows on the message it brought
+   * in. Null on every message except the first of an ad-originated thread.
+   */
+  ad: {
+    adId: string | null;
+    headline: string | null;
+    body: string | null;
+    sourceUrl: string | null;
+    platform: string | null;
+    thumbnailUrl: string | null;
+  } | null;
 }
 
 export function useConversations(params: {
@@ -361,6 +377,13 @@ export function useConversations(params: {
   /** Conversations no ad brought in. Head office only; the server refuses others. */
   nonAd?: boolean;
   storeId?: string;
+  /**
+   * Which Meta surface the ad was tapped on — 'instagram' | 'facebook' |
+   * 'messenger', or 'unknown' for an ad lead whose referral had no readable
+   * source. Distinct from `channel`: one advert runs on both platforms and
+   * both send the customer to WhatsApp, so channel cannot separate them.
+   */
+  sourcePlatform?: string;
   /** Every thread belonging to one customer, newest first. */
   partyId?: string;
 }) {
@@ -379,6 +402,7 @@ export function useConversations(params: {
             unidentified: params.unidentified ? "true" : undefined,
             nonAd: params.nonAd ? "true" : undefined,
             storeId: params.storeId,
+            sourcePlatform: params.sourcePlatform,
             partyId: params.partyId,
           },
         })
