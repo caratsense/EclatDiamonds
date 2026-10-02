@@ -42,21 +42,22 @@ export type FlowOutcome =
   | { kind: 'handoff'; reason: 'wants_call' | 'wants_call_later' | 'gave_up' | 'returning' }
   | { kind: 'parked'; reason: 'not_now' };
 
-export const RING_SHAPES: FlowOption[] = [
-  { value: 'round', label: 'Round' },
-  { value: 'oval', label: 'Oval' },
-  { value: 'emerald', label: 'Emerald' },
-  { value: 'princess', label: 'Princess' },
-  { value: 'pear', label: 'Pear' },
-  { value: 'unsure', label: 'Other' },
-];
-
 /**
- * The steps, in order.
+ * The steps, in order. Four questions, and the fifth only when someone asks to
+ * be called later.
  *
- * `looking_for` branches: an engagement ring gets the shape question, everything
- * else goes straight to the call ask. That branch is the only place the order
- * changes, which is why `next` is a function rather than a field.
+ * It used to be six, with a branch: an engagement ring also got asked its
+ * diamond shape, and everyone was asked who the piece was for. Both are gone.
+ *
+ * The shape question was the worst of them. It arrives before anyone has shown
+ * a customer a single ring, it reads as a quiz rather than a conversation, and
+ * the answer changes nothing the salesperson does on the call. Who the piece is
+ * for went the same way: pleasant to know, never acted on, and one more thing
+ * between an interested person and a human being.
+ *
+ * What is left is what a salesperson genuinely needs before they ring someone:
+ * what they want, what they will spend, when they want it, and whether a call
+ * is welcome. Nothing is asked that nobody reads.
  */
 export const FLOW_STEPS: FlowStep[] = [
   {
@@ -68,17 +69,6 @@ export const FLOW_STEPS: FlowStep[] = [
       { value: 'daily_wear', label: 'Daily Wear' },
       { value: 'other', label: 'Other Jewellery' },
     ],
-    next: () => 'who_for',
-  },
-  {
-    key: 'who_for',
-    prompt: 'Is this purchase for yourself or someone special?',
-    options: [
-      { value: 'myself', label: 'Myself' },
-      { value: 'partner', label: 'Partner' },
-      { value: 'family', label: 'Family' },
-      { value: 'gift', label: 'Gift' },
-    ],
     next: () => 'budget',
   },
   {
@@ -87,9 +77,9 @@ export const FLOW_STEPS: FlowStep[] = [
     
     options: [
       { value: 'under_50k', label: 'Under ₹50K' },
-      { value: '50k_1l', label: '₹50K – ₹1L' },
-      { value: '1l_2l', label: '₹1L – ₹2L' },
-      { value: 'above_2l', label: '₹2L+' },
+      { value: '50k_1l', label: '₹50K to ₹1L' },
+      { value: '1l_2l', label: '₹1L to ₹2L' },
+      { value: 'above_2l', label: 'Above ₹2L' },
     ],
     next: () => 'timeline',
   },
@@ -99,17 +89,9 @@ export const FLOW_STEPS: FlowStep[] = [
     options: [
       { value: 'within_7_days', label: 'Within 7 days' },
       { value: 'this_month', label: 'This month' },
-      { value: '1_3_months', label: '1–3 months' },
+      { value: '1_3_months', label: 'In a few months' },
       { value: 'exploring', label: 'Just exploring' },
     ],
-    // The shape question only makes sense for a ring; see resolveNext().
-    next: () => 'call',
-  },
-  {
-    key: 'ring_shape',
-    prompt: 'Do you have a preferred diamond shape?',
-    hint: 'I can send you a link with those rings.',
-    options: RING_SHAPES,
     next: () => 'call',
   },
   {
@@ -147,18 +129,17 @@ export const FIRST_STEP = 'looking_for';
 /**
  * The next step, given the whole answer set rather than just the last answer.
  *
- * `timeline` is followed by the shape question only when the customer said they
- * want an engagement ring. Asking a wedding-jewellery buyer which diamond shape
- * they want reads as a bot that is not listening.
+ * There is no branching left: the one branch there was sent engagement-ring
+ * buyers to a diamond-shape question that has since been removed. The signature
+ * keeps `answers` because `firstUnanswered` walks the flow through here, and
+ * because the next question that needs context should not have to reintroduce
+ * it.
  */
 export function resolveNext(
   step: FlowStep,
   value: string,
-  answers: Record<string, string>,
+  _answers: Record<string, string>,
 ): string | null {
-  if (step.key === 'timeline' && answers.looking_for === 'engagement_ring') {
-    return 'ring_shape';
-  }
   return step.next(value);
 }
 
@@ -320,21 +301,26 @@ export function labelFor(stepKey: string, value: string): string | undefined {
 /**
  * The question as the customer sees it.
  *
- * The options are still listed — they tell somebody what kind of answer is
- * useful, and a person who wants to tap a number still can. What changed is
- * the instruction underneath: it used to read "Reply with a number", which
- * taught customers the bot could not read words. It can (see `parseChoice`),
- * and being told otherwise made a conversation feel like a form.
+ * NO NUMBERED LIST, AND NO DASHES. Both were a tell.
  *
- * The numbers are kept as a convenience, not as the contract. When interactive
- * messages land this stays the only function that changes.
+ * It used to render as "1 — Engagement Ring / 2 — Wedding Jewellery", with
+ * "Reply with a number" underneath. A shop assistant does not hand you a
+ * numbered menu, and an em dash is not something people type into WhatsApp, so
+ * between them the message announced itself as machine-written before it had
+ * said anything. The options stay, because they tell somebody what kind of
+ * answer is useful; they are simply listed the way a person would list them.
+ *
+ * `parseChoice` still accepts "1" or "2" from anyone who types one out of
+ * habit. That tolerance is deliberately not advertised: answering in words is
+ * the path we want people on, and "or send a number" is what put them on the
+ * other one.
  */
 export function promptFor(step: FlowStep): string {
   const lines = [`*${step.prompt}*`];
   if (step.hint) lines.push(`_${step.hint}_`);
   lines.push('');
-  step.options.forEach((o, i) => lines.push(`${i + 1} — ${o.label}`));
-  lines.push('', '_Just reply in your own words, or send a number._');
+  step.options.forEach((o) => lines.push(o.label));
+  lines.push('', '_Just tell me in your own words._');
   return lines.join('\n');
 }
 
@@ -392,7 +378,7 @@ export function greeting(firstName?: string): string {
     '',
     'Thanks for reaching out to *Éclat Diamonds*.',
     '',
-    "I'll ask a couple of quick questions so I can show you the right pieces — it takes under a minute.",
+    "Just a couple of quick questions so I can show you the right pieces. Takes under a minute.",
   ].join('\n');
 }
 
@@ -408,7 +394,7 @@ export function closingFor(outcome: FlowOutcome, branch?: string): string {
     case 'handoff':
       switch (outcome.reason) {
         case 'wants_call':
-          return `Perfect — I'm connecting you with ${team} now. They'll take it from here. 💎`;
+          return `Perfect. I'm connecting you with ${team} now, they'll take it from here. 💎`;
         case 'returning':
           // Someone who has already been through the script. Asking their
           // budget a second time is what makes a bot feel like a form, and
@@ -416,14 +402,14 @@ export function closingFor(outcome: FlowOutcome, branch?: string): string {
           return [
             'Good to hear from you again 👋',
             '',
-            `I've passed this to ${team} — someone will reply here shortly. 💎`,
+            `I've passed this to ${team}. Someone will reply here shortly. 💎`,
           ].join('\n');
         default:
-          return `Noted — ${team} will call you then. 💎`;
+          return `Noted. ${team} will call you then. 💎`;
       }
     case 'parked':
       return [
-        'No problem at all — no pressure from us.',
+        'No problem at all, no pressure from us.',
         '',
         '📷 Send me a photo of any design you like and I can get you a price.',
         '',
@@ -439,7 +425,7 @@ export function reprompt(): string {
   return [
     "Sorry, I didn't quite catch that.",
     '',
-    'You can answer in your own words, or send the number of an option above — or say *call me* and I will connect you with someone.',
+    'You can answer in your own words, or just say *call me* and I will connect you with someone.',
   ].join('\n');
 }
 
@@ -451,7 +437,7 @@ export function isStop(raw: string): boolean {
 }
 
 export function stopConfirmation(): string {
-  return "Understood — I won't message you again. If you change your mind, just message us here. 💎";
+  return "Understood, I won't message you again. If you change your mind, just message us here. 💎";
 }
 
 /** A customer asking for a person at any point short-circuits the flow. */
