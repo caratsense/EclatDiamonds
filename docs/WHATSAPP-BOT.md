@@ -204,50 +204,90 @@ can be unit-tested with no infrastructure at all.
 
 ## 9. Current status & what's left
 
-**The bot's behaviour is complete and verified from a real handset**: linking,
-the guided report (every number format), store→HO messages, correct store and
-date selection, retry-safety under a real outage, fail-closed signatures, and
+> Re-verified 2026-10-01 against a local run: link a number, menu, pick store,
+> ten answers, `YES` → a `DailyReport` row with `source: whatsapp`, which is the
+> same row `/reporting` reads. The DSR bot works.
+
+**The bot's behaviour is complete and verified**: linking, the guided report
+(every number format), store→HO messages, correct store and date selection,
+retry-safety under a real outage, fail-closed signatures, and
 revoke-on-deactivate. The compliance API behind the HO view is built too.
 
-What that does **not** mean is "shipped". The bot only reaches the outside world
-through a tunnel on a developer's laptop right now — see item 1.
+### One number, two bots
+
+There is **one** WhatsApp number and **one** webhook. `route()` splits the
+traffic by who is writing, not by which number was written to:
+
+| Sender | What happens |
+|---|---|
+| A phone with an active `WhatsAppIdentity` | The **internal DSR bot** — menu, daily report, message to HO |
+| Anyone else | The **customer bot** — CRM conversation, qualification, store routing |
+
+That split is why the DSR bot needs no Meta work of its own: it is already live
+wherever the customer bot is. Adding a *second* number would be a Meta change
+(§9.2) and would not change any of this code.
 
 ### Left to do
 
-**1. Production webhook — off ngrok, onto Railway.** The single thing between
-"works" and "live". The backend already deploys to Railway and has a permanent
-HTTPS URL; point Meta's callback at
-`https://<service>.up.railway.app/integrations/whatsapp/webhook`, set the
-`WHATSAPP_*` variables there, and no tunnel is involved again. Until this is
-done the bot is only alive while someone's laptop is.
+**1. No screen for linking a staff number.** This is the real blocker for store
+staff, and it is a frontend gap, not a Meta one. All three endpoints exist
+(§4) — there is simply nothing that calls them, so binding a phone today means
+an API call by hand:
 
-**2. Evening nudges.** Remind branches that have not filed. The scheduler and
+```
+POST /whatsapp/link/start      (as the user being linked, their own JWT)
+  → { code: "RDVUE6JA" }       8 chars, 10-minute TTL, single use
+```
+
+The user then sends that code to the bot **from the handset they want bound**,
+and gets "✅ Linked as <name>". Nothing else is needed. Until the screen exists,
+one person has to do this for every store manager, one at a time.
+
+**2. A separate number for the DSR bot (optional).** Only if staff and customers
+should not share a line. Entirely Meta-side plus one row:
+
+- WhatsApp Manager → the WABA → **Phone numbers → Add phone number**, verify it.
+- The new number appears under **API Setup** with its own `phone_number_id`.
+- No webhook change: a WABA delivers every number's messages to the same
+  callback, and `metadata.phone_number_id` on each message says which one.
+- Register it as an `IntegrationAsset` (`kind: 'phone_number'`, the new
+  `externalId`, `isActive: true`) and give it a messaging route for the store it
+  answers for. `organisationForPhoneNumberId()` then resolves it exactly like
+  the first number.
+
+**3. Documents are not accepted.** A linked staff member who sends a PDF or a
+photograph gets *"I can only read text messages right now."* The pieces are all
+present — `fetchInboundMedia()` + `storage.savePrivate()` already store customer
+media on the CRM side — but nothing attaches a file to a `DailyReport`, and
+there is no attachment table and no dashboard view for one. This is a build, not
+a configuration: a model + migration, a branch in `route()`, a read endpoint and
+a panel on `/reporting`.
+
+**4. Evening nudges.** Remind branches that have not filed. The scheduler and
 the compliance query it needs both exist, so the code is small.
 ⚠️ **Two external gates, not one:** the template `eclat_dsr_reminder` must be
 approved (submitted 2026-08-21), *and* the WABA needs a payment method —
-business-initiated messages are billed, and "Add payment to send
-business-initiated messages" is still unchecked in Meta's Production setup.
-Replies inside the 24h window stay free, which is why everything else works
-today with no payment configured. Build it against the template shape in the
-plan doc; it will simply fail to send until both gates clear.
+business-initiated messages are billed. Replies inside the 24h window stay free,
+which is why everything else works today with no payment configured.
 
-**3. Retention + cleanup cron.** `WhatsAppEvent` stores full message bodies —
+**5. Retention + cleanup cron.** `WhatsAppEvent` stores full message bodies —
 customer names, phone numbers — and nothing ever deletes them. `WhatsAppSession`
 rows accumulate the same way (they expire logically, but are never removed). A
 job that purges event bodies after ~90 days and clears expired sessions.
-`JobRunnerService.runOnce` is the pattern; the existing 5-minute sweep in
-`whatsapp-bot.scheduler.ts` is the template.
+`JobRunnerService.runOnce` is the pattern.
 
-**4. Webhook throttle exemption.** The global limit is 300 requests/60s per IP,
+**6. Webhook throttle exemption.** The global limit is 300 requests/60s per IP,
 and all of Meta's traffic arrives from their range. A burst can get throttled;
 Meta retries so nothing is lost, but it stalls delivery for no reason. Give the
 webhook route its own limit or `@SkipThrottle()`.
 
+### Done since this doc was written
+
+- **Production webhook.** Off ngrok, onto Railway. The bot no longer depends on
+  a laptop being awake.
+
 ### Frontend (assigned separately)
 
-- **WhatsApp settings page** — request a link code, list bound numbers, revoke
-  one. All three endpoints exist (§4); nothing else is needed from the backend.
-  Until this ships, linking a number requires an API call by hand.
 - **Compliance grid** — `GET /reporting/compliance?days=7` already returns
   exactly what a store × day heatmap needs: per-store `entries[]` with
   `{date, submitted, source, submittedBy, reportId}`, plus `missingToday`. The

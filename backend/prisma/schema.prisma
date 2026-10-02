@@ -724,32 +724,32 @@ model Region {
 
 /// A physical store / branch. Legacy: a PartyMst row with IsLocation/IsFactory.
 model Store {
-  organisationId String
-  organisation   Organisation @relation(fields: [organisationId], references: [id])
-  id             String       @id @default(cuid())
-  name           String
-  city           String
-  code           String?
-  regionId       String?
-  isActive       Boolean      @default(true)
+  organisationId                  String
+  organisation                    Organisation @relation(fields: [organisationId], references: [id])
+  id                              String       @id @default(cuid())
+  name                            String
+  city                            String
+  code                            String?
+  regionId                        String?
+  isActive                        Boolean      @default(true)
   /// Lifecycle: pending (auto-detected, awaiting HO/AM setup) | active | closed.
   /// Kept in sync with isActive in code: active => isActive true; pending/closed => false.
-  status         String       @default("active")
+  status                          String       @default("active")
   /// true only for the synthetic "All Stores" aggregate the UI shows to broad roles.
-  isAggregate    Boolean      @default(false)
+  isAggregate                     Boolean      @default(false)
   /// A non-physical reconciliation bucket for imported rows whose source branch
   /// cannot yet be resolved. It stays inside backend store scope so the rows are
   /// never lost, but must never be presented or operated as a real branch.
-  isHolding      Boolean      @default(false)
+  isHolding                       Boolean      @default(false)
   /// An attendance-only location (e.g. Head Office): staff are rostered and
   /// punch here, but it is not a trading branch — no sales, stock, targets,
   /// footfall or DSR, and it is left out of store KPIs.
-  attendanceOnly Boolean      @default(false)
+  attendanceOnly                  Boolean      @default(false)
   /// HR has entered this location's weekly offs, holidays, shifts and grace
   /// minutes and confirmed them complete through this date. For any later date
   /// (or while null) an unpunched day stays "not marked" — never an automatic
   /// "absent" — because none of those rules can be inferred from the data.
-  attendanceRulesConfirmedThrough DateTime? @db.Date
+  attendanceRulesConfirmedThrough DateTime?    @db.Date
 
   // Geofence for HRMS geo-attendance (Module 6).
   latitude        Decimal? @db.Decimal(10, 7)
@@ -952,7 +952,7 @@ model User {
   slaResponses             ConversationResponseSla[]     @relation("SlaResponder")
   weekOffs                 StaffWeekOff[]
   compensation             StaffCompensation?
-  employeeProfile          EmployeeProfile?  @relation("EmployeeProfileUser")
+  employeeProfile          EmployeeProfile?              @relation("EmployeeProfileUser")
   shiftAssignments         ShiftAssignment[]
   payslips                 Payslip[]
   quotesApprovalRequested  Quote[]                       @relation("QuoteApprovalRequestedBy")
@@ -1222,25 +1222,23 @@ model Party {
   creditLimit   Decimal? @db.Decimal(14, 2)
   isBlacklisted Boolean  @default(false)
 
-  /*
+  /**
    * Archived — taken out of the working lists, NOT deleted.
-   *
    * The meeting asked to "delete blocked contacts". Deleting is the one thing
    * this must not do. A person who sent STOP is remembered BY their record: the
    * consent events, the opt-out, the blacklist flag and the delivery history all
    * hang off this row. Remove it and the next inbound message from that number
    * resolves to a brand-new customer with no opt-out on it, and the system
    * cheerfully messages someone who told it to stop.
-   *
    * So archiving hides, and identity resolution deliberately still finds
    * archived rows — that is what keeps the refusal attached to the person.
    */
-  archivedAt     DateTime?
-  archivedById   String?
-  archivedBy     User?     @relation("PartyArchivedBy", fields: [archivedById], references: [id])
+  archivedAt    DateTime?
+  archivedById  String?
+  archivedBy    User?     @relation("PartyArchivedBy", fields: [archivedById], references: [id])
   /// Why, in the archiver's own words. Required by the API, not by the column,
   /// because rows written before this existed have no reason to give.
-  archiveReason  String?
+  archiveReason String?
 
   // Legacy provenance (PartyMst.PartyNo).
   legacyId        String?
@@ -1352,10 +1350,10 @@ model Lead {
   /// `convo:<conversationId>`. NULL for every human-created lead, and Postgres
   /// treats NULLs as distinct — so this constrains ONLY auto-created leads and
   /// never limits how many opportunities a customer may legitimately have.
-  originKey String?
-  callLogs  CallLog[]
+  originKey      String?
+  callLogs       CallLog[]
   tagAssignments LeadTagAssignment[]
-  visits    CheckIn[] @relation("CheckInLead")
+  visits         CheckIn[]           @relation("CheckInLead")
 
   @@unique([organisationId, originKey])
   @@index([storeId, createdAt])
@@ -1442,15 +1440,14 @@ model LeadFollowUp {
   /// fall before the due day (a heads-up) or on it.
   ///
   /// Who is reminded. Null means the lead's owner at the time the reminder fires.
-  assigneeId String?
-  assignee   User?   @relation("FollowUpAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
-  reminderAt DateTime?
+  assigneeId         String?
+  assignee           User?     @relation("FollowUpAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  reminderAt         DateTime?
   /// Set when the reminder went out, by a conditional claim, so two replicas or a
   /// retried sweep cannot both notify.
   reminderNotifiedAt DateTime?
 
   @@index([done, reminderNotifiedAt, reminderAt])
-
   @@index([storeId, done, dueDate])
   @@index([leadId])
 }
@@ -1500,7 +1497,7 @@ model LeadTagAssignment {
   id             String       @id @default(cuid())
 
   leadId String
-  lead   Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  lead   Lead    @relation(fields: [leadId], references: [id], onDelete: Cascade)
   tagId  String
   tag    LeadTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
@@ -1600,8 +1597,8 @@ model StaffDigestRun {
   /// message exists; whether it was delivered is that message's status, never a
   /// copy kept here. The REASON is stored beside it so the settings screen can
   /// say which, instead of the team guessing why nobody got a message.
-  whatsappStatus String  @default("skipped")
-  whatsappReason String?
+  whatsappStatus    String  @default("skipped")
+  whatsappReason    String?
   /// The outbox Message carrying the WhatsApp half, once queued.
   whatsappMessageId String?
 
@@ -1645,9 +1642,9 @@ model LeadNote {
   organisationId String
   organisation   Organisation @relation(fields: [organisationId], references: [id])
 
-  id String @id @default(cuid())
+  id         String   @id @default(cuid())
   /// The opportunity this note is about. Null for a note about the person.
-  leadId String?
+  leadId     String?
   /// The customer this note is about. Null only for a lead with no identity yet.
   partyId    String?
   authorId   String?
@@ -1739,9 +1736,9 @@ model Quote {
   isKaccha Boolean @default(false)
 
   /// Money rollup snapshot (recomputed from lines, persisted for fast listing).
-  /*
+  /**
+   * /*
    * Approval.
-   *
    * `approvedTotal` is the amount that was actually approved, snapshotted at the
    * moment of the decision. Sharing compares the CURRENT grand total against it
    * and refuses if they differ — otherwise a quote approved at one price could be
@@ -1754,13 +1751,13 @@ model Quote {
   decisionReason String?
   approvedTotal  Decimal?  @db.Decimal(14, 2)
 
-  /*
+  /**
    * Discount: one percentage off making + diamond/stone charges together. Gold
    * is never discounted. Judged against DiscountLimit.maxPercent for the role of
    * whoever last PRICED the quote (`pricedByRole`), not whoever presses send.
    */
-  discountPercent Decimal @default(0) @db.Decimal(5, 2)
-  discountAmount  Decimal @default(0) @db.Decimal(14, 2)
+  discountPercent       Decimal @default(0) @db.Decimal(5, 2)
+  discountAmount        Decimal @default(0) @db.Decimal(14, 2)
   /// The discount as the salesperson gives it: a % off making, a % off
   /// diamonds and stones, and a flat amount off at the end. `discountPercent`
   /// above is what the three come to as one % of making + stones, the number
@@ -1768,8 +1765,8 @@ model Quote {
   makingDiscountPercent Decimal @default(0) @db.Decimal(5, 2)
   stoneDiscountPercent  Decimal @default(0) @db.Decimal(5, 2)
   additionalDiscount    Decimal @default(0) @db.Decimal(14, 2)
-  pricedById      String?
-  pricedByRole    Role?
+  pricedById            String?
+  pricedByRole          Role?
 
   /// Content revision, bumped by every edit to lines, price, discount or
   /// validity. An approval is for one revision (`approvedRevision`).
@@ -1983,19 +1980,19 @@ model Product {
   /// one could be asked. Free text because it is the supplier's vocabulary, not
   /// ours, and deliberately NOT unique: many products sharing a style number is
   /// the entire point.
-  styleNumber    String?
+  styleNumber     String?
   /// The design's code on the client's website (its `productCode`), when the
   /// website carries it. Kept separately because a Gati design matched to a
   /// website one keeps Gati's id in `legacyId` — without this the website code,
   /// and the fact that the design is on the website at all, was lost.
-  websiteCode    String?
+  websiteCode     String?
   /// What the design is made of — metal, diamonds, stones, making — as
   /// `{ source: 'gati'|'website', lines: [{ item, kind, weight?, unit?,
   /// pieces?, rate?, amount? }] }`. See src/products/composition.ts. Amounts
   /// are stripped from the API for anyone below store manager.
-  composition    Json?
+  composition     Json?
   /// Gati-owned HSN code for the design.
-  hsn            String?
+  hsn             String?
   /// Last time each source wrote this design (provenance shown in the detail).
   gatiSyncedAt    DateTime?
   websiteSyncedAt DateTime?
@@ -2003,7 +2000,7 @@ model Product {
   /// Block 9 — the design's classification. A made-to-order design is
   /// `customised`, and every piece of it inherits that unless the piece says
   /// otherwise. Defaulted, so every existing design stays ordinary stock.
-  stockClass     StockClass      @default(standard)
+  stockClass StockClass @default(standard)
 
   // Image lives in object storage; only the URL is stored here.
   imageUrl String?
@@ -2024,7 +2021,7 @@ model Product {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  store               Store?               @relation(fields: [storeId], references: [id])
+  store               Store?                 @relation(fields: [storeId], references: [id])
   stockItems          StockItem[]
   quoteLines          QuoteLine[]
   saleLines           SaleLine[]
@@ -2041,7 +2038,7 @@ model Product {
   /// Phase A7 — the file or Connect import run that created this row. Later
   /// updates do not rewrite creation provenance; legacyId identifies its source.
   importBatchId       String?
-  importBatch         ImportBatch?         @relation(fields: [importBatchId], references: [id])
+  importBatch         ImportBatch?           @relation(fields: [importBatchId], references: [id])
 
   @@unique([organisationId, sku])
   @@unique([organisationId, legacyId])
@@ -2118,7 +2115,7 @@ model ProductImage {
   product        Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   /// Object-storage URL (R2 / Cloudinary), or a local /uploads path.
-  url   String
+  url String
 
   /// Which view this is: "front", "side", "on model", "CAD". Free text, not
   /// an enum — the useful list is the trade’s, not ours, and it differs by
@@ -2135,28 +2132,27 @@ model ProductImage {
 
   createdAt DateTime @default(now())
 
-
   /// Where the picture came from: gati_cad | website | manual | inventory | other.
   /// Drives the default order: an admin pin, else the Gati CAD, else website
   /// photos in source order, then the rest.
-  source        String    @default("other")
+  source            String    @default("other")
   /// Set only by an explicit admin choice. `isPrimary` is the computed result.
-  pinnedPrimary Boolean   @default(false)
+  pinnedPrimary     Boolean   @default(false)
   /// The URL the source published, and its own id for the picture if it has one.
-  sourceUrl     String?
-  sourceImageId String?
+  sourceUrl         String?
+  sourceImageId     String?
   /// Position within the source (website: order inside its colour group).
-  sourceOrder   Int       @default(0)
+  sourceOrder       Int       @default(0)
   /// sha256 of the downloaded bytes; identical pictures under different URLs
   /// are one asset.
-  contentHash   String?
-  thumbUrl      String?
-  width         Int?
-  height        Int?
+  contentHash       String?
+  thumbUrl          String?
+  width             Int?
+  height            Int?
   /// active | tombstoned. A picture the source stopped publishing is kept as a
   /// tombstone (and dropped from search), never deleted outright.
-  status        String    @default("active")
-  tombstonedAt  DateTime?
+  status            String    @default("active")
+  tombstonedAt      DateTime?
   /// pending | queued | running | indexed | failed | dead | skipped
   embeddingStatus   String    @default("pending")
   embeddingVersion  String?
@@ -2164,7 +2160,7 @@ model ProductImage {
   embeddingAttempts Int       @default(0)
   embeddedAt        DateTime?
 
-  updatedAt DateTime  @default(now()) @updatedAt
+  updatedAt DateTime @default(now()) @updatedAt
 
   embeddings   ProductEmbedding[]
   associations ProductImageAssociation[]
@@ -2242,7 +2238,7 @@ model StockItem {
 
   /// The design this piece belongs to. Mirrored from the product at stock-in and
   /// carried here so a piece with no product link is still groupable by design.
-  styleNumber   String?
+  styleNumber String?
 
   /// The piece's own identifier, generated by us.
   ///
@@ -2254,17 +2250,17 @@ model StockItem {
   ///
   /// Nullable, because every piece that already exists has none and inventing
   /// them retroactively would put a number on a tag that the tag does not carry.
-  vin           String?
+  vin String?
 
   /// Block 9 — this piece's own classification. NULL means "whatever the design
   /// is", which is what every existing piece gets: one ring made for a customer
   /// on a standard design must be markable without reclassifying its siblings.
-  stockClass     StockClass?
+  stockClass StockClass?
 
   /// A person has judged this piece worth remaking or customising rather than
   /// selling as it is. Set by hand, never inferred — a flag nobody decided would
   /// send a sellable piece to the melting pot.
-  remakeSuitable Boolean     @default(false)
+  remakeSuitable Boolean @default(false)
 
   hallmarkNo    String?
   /// BIS Hallmark Unique ID (6-char alphanumeric, one per hallmarked piece).
@@ -2276,16 +2272,16 @@ model StockItem {
 
   // --- Gati fields previously dropped by the sync -------------------------
   /// Ring/bangle size as Gati holds it (SizeNo / ItemSizeId).
-  sizeLabel     String?
-  itemSizeId    String?
-  hsn           String?
+  sizeLabel   String?
+  itemSizeId  String?
+  hsn         String?
   /// Gati ProductCode (the item-type code, not the style).
-  productCode   String?
-  quantity      Int?
-  stonePieces   Int?
+  productCode String?
+  quantity    Int?
+  stonePieces Int?
   /// The website variant this piece is, when the match is unambiguous.
-  variantId     String?
-  variant       ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  variantId   String?
+  variant     ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
 
   // Legacy provenance (Inward.JewelId).
   legacyId        String?
@@ -2789,16 +2785,16 @@ model AttendanceRecord {
 
   // Shift / lateness (Module 6). Lateness is measured against the ASSIGNED shift's
   // start + buffer, so a night/second-batch check-in in the afternoon is not "late".
-  shiftId     String?
-  isLate      Boolean @default(false)
-  lateMinutes Int?
+  shiftId            String?
+  isLate             Boolean @default(false)
+  lateMinutes        Int?
   /// Version of the dashboard calculation contract used for this day.
   /// Nullable only for rows created before snapshots were introduced.
   calculationVersion String?
   /// Immutable copy of the applied shift inputs (times, grace and day-credit
   /// thresholds). Reprocessing must not reinterpret an old day after somebody
   /// edits the live Shift master.
-  shiftSnapshot Json?
+  shiftSnapshot      Json?
 
   // --- Integrity + payroll (international-HRMS parity) ----------------------
   /// Metres from the store centre at check-OUT (mirrors checkInDistanceM).
@@ -2829,9 +2825,9 @@ model AttendanceRecord {
 
   /// Provenance of the row: self (phone punch) | manager (marked for staff) |
   /// regularization (approved fix) | auto (day-close job).
-  source            String   @default("self")
+  source     String  @default("self")
   /// True when the day-close job closed a dangling punch at the shift's end time.
-  autoClosed        Boolean  @default(false)
+  autoClosed Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
@@ -3035,9 +3031,8 @@ model CheckIn {
   /// the visitor is comes from the customer record this visit is attached to.
   photoUrl String?
 
-  /*
+  /**
    * What was decided when the customer left.
-   *
    * `remark` and `followUpDate` are deliberately two columns, not one. The
    * meeting argued about exactly this and stopped without settling it, so the
    * reading taken here is the one where they do not overlap: the remark is what
@@ -3907,13 +3902,13 @@ model DailyReport {
 
   /// TABLE A — counter sale. This is its value; cash/card/upi and oldGold*
   /// below are its payment split.
-  deliveredBilled  Decimal      @default(0) @db.Decimal(14, 2)
+  deliveredBilled Decimal @default(0) @db.Decimal(14, 2)
 
   /// TABLE B — customised sale. `bookingsNew` is the value booked today and
   /// `advanceReceived` is what was actually collected against the book; the
   /// custom* columns below are that collection's payment split.
-  bookingsNew      Decimal      @default(0) @db.Decimal(14, 2)
-  advanceReceived  Decimal      @default(0) @db.Decimal(14, 2)
+  bookingsNew     Decimal @default(0) @db.Decimal(14, 2)
+  advanceReceived Decimal @default(0) @db.Decimal(14, 2)
 
   /// The customised-order book as the store already keeps it: what stood open at
   /// the start of the day, and what closed (sale completed) during it.
@@ -3921,35 +3916,35 @@ model DailyReport {
   /// Closing booking is deliberately NOT a column: it is open + new - closed,
   /// and two stored numbers that have to agree is a reconciliation bug waiting
   /// to happen. The sheet shows it; the database derives it.
-  bookingsOpen     Decimal      @default(0) @db.Decimal(14, 2)
-  bookingsClosed   Decimal      @default(0) @db.Decimal(14, 2)
+  bookingsOpen   Decimal @default(0) @db.Decimal(14, 2)
+  bookingsClosed Decimal @default(0) @db.Decimal(14, 2)
 
   /// Payment split for the COUNTER sale (Table A). Gold is a mode of payment on
   /// the store's sheet, not a separate transaction — a customer settling with
   /// old gold is paying — so it sits here beside cash/card/UPI.
-  cash             Decimal      @default(0) @db.Decimal(14, 2)
-  card             Decimal      @default(0) @db.Decimal(14, 2)
-  upi              Decimal      @default(0) @db.Decimal(14, 2)
-  oldGoldWtG       Decimal?     @db.Decimal(12, 3)
-  oldGoldValue     Decimal?     @db.Decimal(14, 2)
+  cash         Decimal  @default(0) @db.Decimal(14, 2)
+  card         Decimal  @default(0) @db.Decimal(14, 2)
+  upi          Decimal  @default(0) @db.Decimal(14, 2)
+  oldGoldWtG   Decimal? @db.Decimal(12, 3)
+  oldGoldValue Decimal? @db.Decimal(14, 2)
 
   /// Payment split for the CUSTOMISED sale (Table B). Separate columns rather
   /// than one merged split, because the store reconciles the two tables
   /// separately and a merged total cannot be checked against either table. The
   /// short names above keep their meaning for every report already filed.
-  customCash       Decimal      @default(0) @db.Decimal(14, 2)
-  customCard       Decimal      @default(0) @db.Decimal(14, 2)
-  customUpi        Decimal      @default(0) @db.Decimal(14, 2)
-  customGoldWtG    Decimal?     @db.Decimal(12, 3)
-  customGoldValue  Decimal?     @db.Decimal(14, 2)
-  customBankTransfer Decimal    @default(0) @db.Decimal(14, 2)
+  customCash         Decimal  @default(0) @db.Decimal(14, 2)
+  customCard         Decimal  @default(0) @db.Decimal(14, 2)
+  customUpi          Decimal  @default(0) @db.Decimal(14, 2)
+  customGoldWtG      Decimal? @db.Decimal(12, 3)
+  customGoldValue    Decimal? @db.Decimal(14, 2)
+  customBankTransfer Decimal  @default(0) @db.Decimal(14, 2)
   /// The sheet's Remark row, free text for the day.
-  remark           String?
-  submittedBy      String?
+  remark             String?
+  submittedBy        String?
   /// Where this came from: "web" (the in-app form) or "whatsapp" (the bot), so
   /// HO can tell the channels apart.
-  source           String       @default("web")
-  createdAt        DateTime     @default(now())
+  source             String   @default("web")
+  createdAt          DateTime @default(now())
 
   store Store @relation(fields: [storeId], references: [id])
 
@@ -4811,6 +4806,24 @@ model IntegrationAsset {
   metadata   Json?
   isActive   Boolean @default(true)
 
+  /// WHAT THIS NUMBER IS FOR. 'internal' | null (customer-facing).
+  ///
+  /// A business may run one WhatsApp line or several, and they are not
+  /// interchangeable: an operations line that store staff file daily reports on
+  /// must never answer a customer, and a customer line must never be the place
+  /// a manager types a revenue figure.
+  ///
+  /// Until this existed the two bots were told apart by WHO was writing rather
+  /// than WHICH number they wrote to, which worked only because there was one
+  /// number. With two, sender identity alone would send a stranger who found
+  /// the operations number into the sales funnel, and a linked manager writing
+  /// to the shopfront line into the reporting flow.
+  ///
+  /// Null, not 'customer', for a number nobody has classified: every line that
+  /// exists today is customer-facing, and a default that had to be backfilled
+  /// onto live routing would be a migration with a blast radius.
+  purpose String?
+
   /// True only after a live provider call proved this tenant's credential can
   /// read this asset. A manually typed id is NOT ownership: without this, an
   /// admin screen cannot tell "somebody entered a Page id" from "we confirmed
@@ -5587,13 +5600,13 @@ model FeedbackRequest {
 
   /// 'manual' | 'visit_auto'. An automatic ask after a walk-in that ended with no
   /// follow-up booked. It is a feedback request, never a sales follow-up.
-  origin       String    @default("manual")
-  scheduledFor DateTime?
+  origin           String    @default("manual")
+  scheduledFor     DateTime?
   /// One automatic ask per visit, whatever retries or a second checkout do.
-  dedupeKey    String?   @unique
+  dedupeKey        String?   @unique
   /// Why an automatic ask did not go out on WhatsApp, in words a manager can act on.
-  deliveryNote String?
-  dispatchAttempts Int   @default(0)
+  deliveryNote     String?
+  dispatchAttempts Int       @default(0)
 
   createdById String?
   createdAt   DateTime @default(now())
@@ -5683,12 +5696,12 @@ model ConversationResponseSla {
   /// conversationId while waiting, NULL once answered or closed. See above.
   openConversationId String? @unique
 
-  startedAt DateTime
+  startedAt     DateTime
   /// startedAt + target. Stored rather than recomputed so changing the tenant's
   /// target does not retroactively breach or un-breach threads already running.
-  dueAt     DateTime
+  dueAt         DateTime
   /// startedAt + escalation delay, or NULL when the tenant does not escalate.
-  escalateAt DateTime?
+  escalateAt    DateTime?
   /// The target in force when this clock started, kept for the same reason.
   targetMinutes Int
 
@@ -5712,7 +5725,7 @@ model ConversationResponseSla {
   escalatedAt DateTime?
   /// The calling-queue task a breach created, so the queue and the SLA row point
   /// at each other instead of duplicating on a re-run.
-  taskId String?
+  taskId      String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -5814,7 +5827,7 @@ model ScheduledReportRun {
   /// `dry_run` is the honest label for "SMTP is not configured here". The file
   /// was built and nothing was delivered; saying 'sent' would be a lie the
   /// tenant only discovers by asking why they never got it.
-  emailStatus String  @default("no_recipients")
+  emailStatus String   @default("no_recipients")
   emailDetail String?
   recipients  String[]
 
@@ -6024,14 +6037,14 @@ model Payslip {
   overtimeMins  Int     @default(0)
 
   // ── The money, as computed ────────────────────────────────────────────────
-  basis            String
+  basis           String
   /// The compensation figures AS THEY WERE when this was generated.
-  amount           Decimal  @db.Decimal(12, 2)
-  perDayRate       Decimal  @db.Decimal(12, 2)
-  earnedAmount     Decimal  @db.Decimal(12, 2)
-  overtimeAmount   Decimal  @db.Decimal(12, 2) @default(0)
-  deductionAmount  Decimal  @db.Decimal(12, 2) @default(0)
-  netPay           Decimal  @db.Decimal(12, 2)
+  amount          Decimal @db.Decimal(12, 2)
+  perDayRate      Decimal @db.Decimal(12, 2)
+  earnedAmount    Decimal @db.Decimal(12, 2)
+  overtimeAmount  Decimal @default(0) @db.Decimal(12, 2)
+  deductionAmount Decimal @default(0) @db.Decimal(12, 2)
+  netPay          Decimal @db.Decimal(12, 2)
 
   /// Day by day, so a disputed slip can be walked line by line rather than
   /// argued about from a single total.
@@ -6212,7 +6225,7 @@ model LoyaltyLedgerEntry {
   reversedBy LoyaltyLedgerEntry? @relation("LoyaltyReversal")
 
   /// Free text for the statement line ("Diwali purchase", "cancelled sale").
-  reason String?
+  reason    String?
   /// The caller's own identifier — invoice number, web order id. Not unique:
   /// one invoice can legitimately produce an earn and later a reversal.
   reference String?
@@ -6222,7 +6235,7 @@ model LoyaltyLedgerEntry {
 
   /// 'website' | 'store' | 'system'. Where the movement came from, so a
   /// statement can say "earned online" without guessing.
-  source String @default("store")
+  source    String  @default("store")
   /// 'api_client' | 'user' | 'system', and which one.
   actorType String
   actorId   String?
@@ -6233,9 +6246,9 @@ model LoyaltyLedgerEntry {
   // the moment they do. So every entry is announced to the tenant's configured
   // endpoint, signed. These three columns record what actually happened to that
   // announcement: a webhook nobody can see the failure of is worse than none.
-  webhookAttempts Int       @default(0)
-  webhookedAt     DateTime?
-  webhookError    String?
+  webhookAttempts   Int                      @default(0)
+  webhookedAt       DateTime?
+  webhookError      String?
   /// Every announcement of this entry and what happened to it.
   webhookDeliveries LoyaltyWebhookDelivery[]
 
@@ -6376,7 +6389,6 @@ model StoreMessagingRoute {
   @@index([assetId])
 }
 
-
 // ===========================================================================
 // Employee master, roster and the attendance ledger (Module 6).
 //
@@ -6435,35 +6447,35 @@ model EmployeeProfile {
   user           User         @relation("EmployeeProfileUser", fields: [userId], references: [id], onDelete: Cascade)
 
   /// "ED003". Unique per organisation; what payroll and the biometric device use.
-  employeeCode   String
-  biometricNo    String?
-  departmentId   String?
-  department     Department?  @relation(fields: [departmentId], references: [id])
-  designationId  String?
-  designation    Designation? @relation(fields: [designationId], references: [id])
+  employeeCode       String
+  biometricNo        String?
+  departmentId       String?
+  department         Department?      @relation(fields: [departmentId], references: [id])
+  designationId      String?
+  designation        Designation?     @relation(fields: [designationId], references: [id])
   /// EzAttendance "UNIT" (city / legal unit), kept as text.
-  unit           String?
+  unit               String?
   reportingManagerId String?
-  gender         String?
-  dateOfBirth    DateTime?    @db.Date
-  dateOfJoining  DateTime?    @db.Date
-  dateOfConfirmation DateTime? @db.Date
-  exitDate       DateTime?    @db.Date
-  exitReason     String?
+  gender             String?
+  dateOfBirth        DateTime?        @db.Date
+  dateOfJoining      DateTime?        @db.Date
+  dateOfConfirmation DateTime?        @db.Date
+  exitDate           DateTime?        @db.Date
+  exitReason         String?
   /// full_time | part_time | contract
-  employmentType String       @default("full_time")
-  status         EmploymentStatus @default(active)
-  bloodGroup     String?
-  address        String?
-  personalEmail  String?
+  employmentType     String           @default("full_time")
+  status             EmploymentStatus @default(active)
+  bloodGroup         String?
+  address            String?
+  personalEmail      String?
   /// Legacy shift code ("S", "G", "F", "6HR") until a ShiftAssignment exists.
-  shiftCode      String?
+  shiftCode          String?
   /// manual | ezattendance
-  source         String       @default("manual")
+  source             String           @default("manual")
   /// The source row exactly as imported, so cleaning never loses evidence.
-  sourceRaw      Json?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  sourceRaw          Json?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
 
   @@unique([organisationId, employeeCode])
   @@index([organisationId, status])
@@ -6515,9 +6527,9 @@ model RawPunchEvent {
   voidedAt       DateTime?
   voidedById     String?
 
+  @@unique([organisationId, idempotencyKey])
   @@index([organisationId, eventAt])
   @@index([userId, eventAt])
-  @@unique([organisationId, idempotencyKey])
 }
 
 model AttendanceProcessingRun {
@@ -6557,7 +6569,6 @@ model PayrollPeriodLock {
   @@unique([organisationId, month])
 }
 
-
 // ===========================================================================
 // Lossless catalogue sources (Module 5). See docs/modules/05-catalogue-sources.md.
 //
@@ -6571,27 +6582,27 @@ model PayrollPeriodLock {
 /// The source record exactly as received, one row per external product.
 /// `payloadHash` makes a re-sync of an unchanged product a no-op.
 model ExternalProductSnapshot {
-  id             String       @id @default(cuid())
-  organisationId String
-  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  id                  String       @id @default(cuid())
+  organisationId      String
+  organisation        Organisation @relation(fields: [organisationId], references: [id])
   /// website | gati
-  source         String
+  source              String
   /// The source's own id (website `_id`); falls back to the product code.
-  externalId     String
-  productCode    String?
-  schemaVersion  Int          @default(1)
-  payload        Json
-  payloadHash    String
-  sourceUpdatedAt DateTime?
-  firstSeenAt    DateTime     @default(now())
-  lastSeenAt     DateTime     @default(now())
+  externalId          String
+  productCode         String?
+  schemaVersion       Int          @default(1)
+  payload             Json
+  payloadHash         String
+  sourceUpdatedAt     DateTime?
+  firstSeenAt         DateTime     @default(now())
+  lastSeenAt          DateTime     @default(now())
   /// Set when a full run no longer sees it, or the source marks it deleted.
-  goneAt         DateTime?
-  syncRunId      String?
+  goneAt              DateTime?
+  syncRunId           String?
   /// ok | error | conflict
-  normalizationStatus String  @default("ok")
+  normalizationStatus String       @default("ok")
   normalizationError  String?
-  productId      String?
+  productId           String?
 
   @@unique([organisationId, source, externalId])
   @@index([organisationId, source, productCode])
@@ -6671,7 +6682,7 @@ model ProductVariant {
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
 
-  stockItems StockItem[]
+  stockItems        StockItem[]
   imageAssociations ProductImageAssociation[]
 
   @@unique([productId, source, sourceKey])

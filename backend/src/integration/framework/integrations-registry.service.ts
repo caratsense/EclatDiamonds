@@ -298,7 +298,7 @@ export class IntegrationsRegistryService {
   async setAsset(
     user: AuthUser,
     integrationId: string,
-    input: { kind: string; externalId: string; name?: string },
+    input: { kind: string; externalId: string; name?: string; purpose?: string },
   ) {
     const integration = await this.load(user, integrationId);
     if (integration.providerCode !== 'whatsapp_cloud' || input.kind !== 'phone_number') {
@@ -318,6 +318,15 @@ export class IntegrationsRegistryService {
       );
     }
     const name = input.name?.trim() || null;
+    /*
+     * 'customer' is stored as NULL rather than as the string.
+     *
+     * Every number that existed before this field did is customer-facing and
+     * has NULL here, so storing the word would leave two spellings of the same
+     * state and every routing read would have to handle both. One spelling, and
+     * the one already on disk wins.
+     */
+    const purpose = input.purpose === 'internal' ? 'internal' : null;
     const ownershipKey = whatsappPhoneOwnershipKey(externalId);
 
     let asset: {
@@ -325,6 +334,7 @@ export class IntegrationsRegistryService {
       kind: string;
       externalId: string;
       name: string | null;
+      purpose: string | null;
       isActive: boolean;
     } | null = null;
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -380,6 +390,7 @@ export class IntegrationsRegistryService {
                 kind: 'phone_number',
                 externalId,
                 name,
+                purpose,
                 metadata: { providerOwnershipVerified: false },
                 isActive: true,
                 ownershipKey,
@@ -387,11 +398,19 @@ export class IntegrationsRegistryService {
               update: {
                 organisationId: user.organisationId,
                 name,
+                purpose,
                 metadata: { providerOwnershipVerified: false },
                 isActive: true,
                 ownershipKey,
               },
-              select: { id: true, kind: true, externalId: true, name: true, isActive: true },
+              select: {
+                id: true,
+                kind: true,
+                externalId: true,
+                name: true,
+                purpose: true,
+                isActive: true,
+              },
             });
           },
           { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },

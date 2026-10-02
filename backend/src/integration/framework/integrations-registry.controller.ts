@@ -63,6 +63,19 @@ class SetIntegrationAssetDto {
   @IsString()
   @MaxLength(100)
   name?: string;
+
+  /**
+   * What the number is FOR. 'internal' marks a staff operations line, which
+   * answers linked staff only and says nothing to anybody else.
+   *
+   * Omitting it leaves the number customer-facing, which is what every number
+   * registered before this field existed is. Sending 'customer' explicitly
+   * clears an internal marking.
+   */
+  @IsOptional()
+  @IsString()
+  @IsIn(['internal', 'customer'])
+  purpose?: string;
 }
 
 /**
