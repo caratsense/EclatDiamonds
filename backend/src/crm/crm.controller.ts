@@ -233,6 +233,7 @@ export class CrmConversationsController {
     @Query('storeId') storeId?: string,
     @Query('partyId') partyId?: string,
     @Query('nonAd') nonAd?: string,
+    @Query('sourcePlatform') sourcePlatform?: string,
   ) {
     // Every one of these narrows the caller's own scope; none widens it. The
     // store filter is asserted against their allowed stores in the service, and
@@ -247,6 +248,7 @@ export class CrmConversationsController {
       nonAd: nonAd === 'true',
       storeId: storeId || undefined,
       partyId: partyId || undefined,
+      sourcePlatform: sourcePlatform || undefined,
       limit: limit ? Number(limit) : undefined,
     });
   }

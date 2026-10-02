@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { Prisma, PartyType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
@@ -191,6 +191,28 @@ export class PartiesService {
    * POST /parties — add a customer (type=customer) against a store the caller
    * may write to. Any authenticated role can add (reps create customers), but
    * store scope is enforced via assertStoreAllowed.
+   *
+   * ## The same person, walked into two shops
+   *
+   * This path used to create a row with no duplicate check of any kind. A
+   * customer who bought at Bandra and then walked into Andheri became two
+   * customers the moment the second manager typed their number in: two
+   * histories, two intent scores, two entries in an export, and two of them in
+   * any campaign counting "customers who have not visited in 90 days".
+   *
+   * Nothing caught it. `ContactPoint` holds the real tenant-wide uniqueness,
+   * but only the identity path (inbound webhooks, `/crm/identity`) ever wrote
+   * one; `Party.phone` carries a plain index and no constraint, so the database
+   * was perfectly happy. The failure was silent and compounding: nobody notices
+   * the duplicate on the day, and by the time anyone does the two records have
+   * both grown real history and can no longer simply be deleted.
+   *
+   * So the number is checked across the WHOLE tenant before anything is
+   * written, and a match is refused with the branch named. Refusing rather than
+   * silently returning the existing customer is the deliberate part: the person
+   * typing believes they are creating somebody, and a success response that
+   * quietly did something else is how a manager ends up thinking a customer is
+   * theirs when the record still belongs to another shop.
    */
   async create(user: AuthUser, dto: CreatePartyDto): Promise<PartyRow> {
     this.scope.assertStoreAllowed(user, dto.storeId);
@@ -212,10 +234,69 @@ export class PartiesService {
     }
     const city = dto.city?.trim() || undefined;
 
+    await this.refuseDuplicate(user, phone, dto.storeId);
+
     const party = await this.prisma.party.create({
       data: { organisationId: user.organisationId, storeId: dto.storeId, name, phone, email, city, types: ['customer'] },
       select: PARTY_SELECT,
     });
     return toPartyRow(party);
+  }
+
+  /**
+   * Refuse a number this tenant already holds, and say where it is.
+   *
+   * Searched tenant-wide, NOT within the caller's store scope. Scoping the
+   * lookup would defeat the whole point: the duplicate that matters is the one
+   * at a branch this person cannot see, and a check that cannot see it would
+   * report "no duplicate" and create the second record.
+   *
+   * The message names the branch because the next action depends on it. "This
+   * customer already exists" leaves a manager with nothing to do; "already a
+   * customer at Mumbai - Bandra" tells them who to ask.
+   *
+   * Archived contacts count. Somebody who asked us to stop is still that
+   * person, and letting a fresh record be typed over the top of their opt-out
+   * is how a blocked contact starts receiving messages again.
+   */
+  private async refuseDuplicate(
+    user: AuthUser,
+    phone: string,
+    storeId: string,
+  ): Promise<void> {
+    const existing = await this.prisma.party.findFirst({
+      where: {
+        organisationId: user.organisationId,
+        OR: [{ phone }, { whatsapp: phone }],
+        types: { has: 'customer' },
+      },
+      select: {
+        id: true,
+        name: true,
+        storeId: true,
+        archivedAt: true,
+        store: { select: { name: true } },
+      },
+      // Oldest wins: the record with the history is the one to keep, and it is
+      // the one a reassignment should move.
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!existing) return;
+
+    const where = existing.store?.name
+      ? `at *${existing.store.name}*`
+      : 'in this business';
+
+    if (existing.storeId === storeId) {
+      throw new ConflictException(
+        `${existing.name} is already a customer ${where} on this number. Open their record instead of adding them again.`,
+      );
+    }
+
+    throw new ConflictException(
+      existing.archivedAt
+        ? `That number belongs to ${existing.name}, an archived contact ${where}. Ask head office to restore and reassign them rather than creating a new record.`
+        : `${existing.name} is already a customer ${where} on this number. Ask head office to reassign them to your branch, or share them, rather than creating a second record.`,
+    );
   }
 }

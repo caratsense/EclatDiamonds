@@ -67,6 +67,50 @@ export function platformFromSourceUrl(sourceUrl: string | null): string | null {
   return null;
 }
 
+/**
+ * The advert as a person should SEE it, next to the message it arrived on.
+ *
+ * WhatsApp draws a card above the customer's first message: the creative's
+ * thumbnail, its headline, and a tappable link back to the advert. A manager
+ * reading the same conversation in the CRM was shown none of that — at best an
+ * opaque 17-digit ad id in a side panel, which answers "which ad?" only for
+ * somebody holding Ads Manager open in another tab.
+ *
+ * This projects the referral into exactly the fields that card needs. It is
+ * derived, never stored: the raw referral already sits on the message, and a
+ * second copy that could disagree with it is worse than no copy.
+ *
+ * Returns null when the message carried no referral, which is every message
+ * except the first of an ad-originated thread.
+ */
+export interface AdCard {
+  adId: string | null;
+  /** The advert's own headline, as written in Ads Manager. */
+  headline: string | null;
+  body: string | null;
+  /** Tappable: where the advert lives. The same link WhatsApp shows. */
+  sourceUrl: string | null;
+  /** 'instagram' | 'facebook' | 'messenger', or null when unreadable. */
+  platform: string | null;
+  /** Meta's own CDN thumbnail of the creative. Expires; treat as best-effort. */
+  thumbnailUrl: string | null;
+}
+
+export function adCardFrom(referral: AdReferral | null): AdCard | null {
+  if (!referral) return null;
+  const raw = (referral.raw ?? {}) as Record<string, unknown>;
+  return {
+    adId: referral.adId,
+    headline: referral.headline,
+    body: referral.body,
+    sourceUrl: referral.sourceUrl,
+    platform: platformFromSourceUrl(referral.sourceUrl),
+    // Meta names this differently depending on the creative's media type, and
+    // sends none of them for a text-only advert.
+    thumbnailUrl: str(raw.thumbnail_url) ?? str(raw.image_url) ?? null,
+  };
+}
+
 function str(value: unknown): string | null {
   if (typeof value === 'string') {
     const trimmed = value.trim();

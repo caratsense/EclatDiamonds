@@ -459,6 +459,16 @@ export class WhatsAppCredentialsService {
      */
     assetId: string | null;
     /**
+     * WHAT THE NUMBER IS FOR: 'internal' for a staff operations line, null for
+     * a customer-facing one.
+     *
+     * Read before anything else decides what a message means. Two bots share
+     * one webhook, and which of them answers has to be settled by the line that
+     * was written to, not only by who wrote: an operations number that replies
+     * to a stranger with a sales script is the failure this prevents.
+     */
+    purpose: string | null;
+    /**
      * The branch that number is mapped to, when one is. This is the inbound
      * half of routing: a message to the Surat line opens a Surat thread, rather
      * than landing unattributed and being picked up by whoever looks first.
@@ -482,6 +492,7 @@ export class WhatsAppCredentialsService {
         id: true,
         organisationId: true,
         integrationId: true,
+        purpose: true,
         integration: { select: { organisationId: true } },
         // The branch this number answers for, so inbound lands in the right one.
         messagingRoutes: {
@@ -509,6 +520,11 @@ export class WhatsAppCredentialsService {
             integrationId: null,
             scope: 'platform_env',
             assetId: null,
+            // The platform sender has no asset row to classify, and it is the
+            // number customers were given. Null is the honest answer and the
+            // safe one: it keeps the customer bot on the line it has always
+            // been on.
+            purpose: null,
             storeId: null,
           }
         : null;
@@ -538,6 +554,7 @@ export class WhatsAppCredentialsService {
       integrationId: asset.integrationId,
       scope: 'tenant',
       assetId: asset.id,
+      purpose: asset.purpose,
       // Exactly one branch, or none. A number shared by three shops cannot say
       // which one an inbound message belongs to, and picking one would file a
       // customer's enquiry against a branch that never spoke to them.

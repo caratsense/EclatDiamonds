@@ -18,6 +18,23 @@ import { Prisma } from '@prisma/client';
 
 export const SEGMENT_FIELDS = [
   // --- who they are -------------------------------------------------------
+  /*
+   * NAMED CUSTOMERS, CHOSEN BY HAND.
+   *
+   * Every other field here describes a rule ("bought in the last year", "has
+   * not visited for 90 days") and the audience is whoever happens to match it.
+   * Sometimes the audience is not a rule at all: a manager has five people in
+   * mind and wants to send to those five.
+   *
+   * Expressing that as a field rather than as a separate `partyIds` column on
+   * the campaign is what keeps it cheap and keeps it safe. A hand-picked list
+   * then travels the identical path as any other audience: previewed with a
+   * real count before anything is written, frozen into `audienceSnapshot` at
+   * approval, store-scoped on expansion, and filtered by marketing consent and
+   * the archive at send time. A second audience mechanism would be a second
+   * place for all of that to be forgotten.
+   */
+  'party.id',
   'party.type',
   'party.storeId',
   'party.city',
@@ -221,6 +238,15 @@ function compileCondition(c: SegmentCondition, now: Date): { where: Prisma.Party
       return {
         where: { types: { hasSome: values as never } },
         reason: `is a ${values.join(' or ')}`,
+      };
+    }
+    case 'party.id': {
+      const values = asStringArray(c.value, c.field);
+      return {
+        where: c.op === 'not_in' ? { id: { notIn: values } } : { id: { in: values } },
+        reason: c.op === 'not_in'
+          ? 'not one of the customers chosen by hand'
+          : 'chosen by hand',
       };
     }
     case 'party.storeId': {

@@ -68,6 +68,21 @@ const SALESPERSON: ModuleSlug[] = [
 const STORE_MANAGER: ModuleSlug[] = [
   ...SALESPERSON,
   'dashboards', 'feedback', 'conversations/sla', 'customers/archived',
+  /*
+   * Bulk sending, at STORE level.
+   *
+   * It used to be marketing and head office only, which read as a safety rule
+   * and worked as an obstacle: the person who knows which customers have not
+   * been in since Diwali is the manager of the shop they used to come to, and
+   * they had to ask somebody else to send to them.
+   *
+   * The level is what makes it safe rather than the absence of the screen. At
+   * 'store' a manager's audience preview, and therefore their send, cannot
+   * reach past the branches they already run; the approval gate, the consent
+   * filter and the archive filter are unchanged and apply to them exactly as
+   * they apply to head office.
+   */
+  'campaigns',
   'payments', 'loyalty/programme',
   'inventory', 'stock-transfers', 'inventory/dead-stock', 'data/images',
   'settings/team', 'sales-performance', 'settings/targets', 'hrms/payroll',

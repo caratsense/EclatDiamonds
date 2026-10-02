@@ -8,6 +8,9 @@
 import {
   FLOW_STEPS,
   closingFor,
+  greeting,
+  stopConfirmation,
+  reprompt,
   FIRST_STEP,
   MAX_REPROMPTS,
   firstUnanswered,
@@ -41,12 +44,12 @@ describe('customer flow — a real sentence, not a number', () => {
     expect(parseChoice(step('looking_for'), 'just daily wear pieces')).toBe('daily_wear');
   });
 
-  it('reads who it is for, including how people actually say it', () => {
-    expect(parseChoice(step('who_for'), "it's for my wife")).toBe('partner');
-    expect(parseChoice(step('who_for'), 'for my fiancee')).toBe('partner');
-    expect(parseChoice(step('who_for'), 'buying it for myself')).toBe('myself');
-    expect(parseChoice(step('who_for'), 'a gift for a friend')).toBe('gift');
-  });
+  /*
+   * The "who is it for" question went the same way as the diamond-shape one:
+   * pleasant to know, never acted on, and one more thing standing between an
+   * interested person and a human being. Its synonyms stay in SYNONYMS keyed
+   * by option value, where nothing reads them and nothing breaks.
+   */
 
   it('reads a budget written as money rather than as a bracket', () => {
     expect(parseChoice(step('budget'), 'around 1 lakh')).toBe('50k_1l');
@@ -96,16 +99,21 @@ describe('customer flow — a real sentence, not a number', () => {
     expect(parseChoice(step('budget'), '1.5 lakh')).toBe('1l_2l');
     expect(parseChoice(step('budget'), '1.5 lakh')).not.toBe('above_2l');
     expect(parseChoice(step('looking_for'), 'earrings')).toBeNull();
-    expect(parseChoice(step('who_for'), 'something for home')).toBeNull();
     expect(parseChoice(step('timeline'), 'in 2 weeks')).toBeNull();
   });
 
-  it('no longer tells the customer that only numbers work', () => {
+  it('never shows a numbered list, and never mentions numbers', () => {
     const prompt = promptFor(step('looking_for'));
-    expect(prompt).not.toMatch(/Reply with a number\./);
+    expect(prompt).not.toMatch(/Reply with a number/i);
+    expect(prompt).not.toMatch(/send a number/i);
+    // The giveaway this replaced: "1 — Engagement Ring". A numbered menu and an
+    // em dash together announced the message as machine-written before it had
+    // said anything.
+    expect(prompt).not.toMatch(/\d\s*[—–-]\s*Engagement/);
     expect(prompt).toMatch(/your own words/i);
-    // The numbered list stays — it shows what kind of answer is useful.
-    expect(prompt).toMatch(/1 — Engagement Ring/);
+    // The options are still listed, just the way a person would list them.
+    expect(prompt).toContain('Engagement Ring');
+    expect(prompt).toContain('Other Jewellery');
   });
 });
 
@@ -121,12 +129,12 @@ describe('customer flow — reading an answer', () => {
   });
 
   it('reads a label, case-insensitively', () => {
-    expect(parseChoice(step('ring_shape'), 'oval')).toBe('oval');
-    expect(parseChoice(step('ring_shape'), 'EMERALD')).toBe('emerald');
+    expect(parseChoice(step('looking_for'), 'daily wear')).toBe('daily_wear');
+    expect(parseChoice(step('looking_for'), 'WEDDING JEWELLERY')).toBe('wedding_jewellery');
   });
 
   it('reads an unambiguous prefix', () => {
-    expect(parseChoice(step('ring_shape'), 'prin')).toBe('princess');
+    expect(parseChoice(step('timeline'), 'this mon')).toBe('this_month');
   });
 
   it('refuses rather than guessing', () => {
@@ -139,15 +147,21 @@ describe('customer flow — reading an answer', () => {
   });
 
   it('refuses an ambiguous prefix instead of picking one', () => {
-    // "p" matches both Princess and Pear.
-    expect(parseChoice(step('ring_shape'), 'p')).toBeNull();
+    // A bare rupee sign prefixes both "₹50K to ₹1L" and "₹1L to ₹2L". Picking
+    // either would file a budget the customer never gave, and a mis-scored
+    // lead is one nobody ever goes back and checks.
+    expect(parseChoice(step('budget'), '₹')).toBeNull();
+    // "Jewellery" ends two of the four options on the first question.
+    expect(parseChoice(step('looking_for'), 'jewellery')).toBeNull();
   });
 });
 
 describe('customer flow — where the conversation goes next', () => {
-  it('asks about diamond shape only for an engagement ring', () => {
+  it('goes straight from timeline to the call ask, whatever they want', () => {
+    // There used to be a branch here: an engagement ring was also asked its
+    // diamond shape. That question is gone, so every path is the same path.
     const ring = { looking_for: 'engagement_ring' };
-    expect(resolveNext(step('timeline'), 'this_month', ring)).toBe('ring_shape');
+    expect(resolveNext(step('timeline'), 'this_month', ring)).toBe('call');
 
     const wedding = { looking_for: 'wedding_jewellery' };
     expect(resolveNext(step('timeline'), 'this_month', wedding)).toBe('call');
@@ -170,23 +184,21 @@ describe('customer flow — not re-asking what the lead form already captured', 
   });
 
   it('skips a step the form already answered', () => {
-    expect(firstUnanswered({ looking_for: 'daily_wear' })).toBe('who_for');
+    expect(firstUnanswered({ looking_for: 'daily_wear' })).toBe('budget');
   });
 
-  it('skips several, including across the ring branch', () => {
+  it('skips several and lands on the call ask', () => {
     const known = {
       looking_for: 'engagement_ring',
-      who_for: 'partner',
       budget: '1l_2l',
       timeline: 'this_month',
     };
-    expect(firstUnanswered(known)).toBe('ring_shape');
+    expect(firstUnanswered(known)).toBe('call');
   });
 
   it('returns null when everything has been answered', () => {
     const all = {
       looking_for: 'daily_wear',
-      who_for: 'myself',
       budget: 'under_50k',
       timeline: 'exploring',
       call: 'not_now',
@@ -201,14 +213,14 @@ describe('customer flow — not re-asking what the lead form already captured', 
 });
 
 describe('customer flow — what the customer sees', () => {
-  it('numbers the options and says how to reply', () => {
+  it('lists the options plainly, with no numbers and no dashes', () => {
     const text = promptFor(step('looking_for'));
-    expect(text).toContain('1 — Engagement Ring');
-    expect(text).toContain('4 — Other Jewellery');
-    // Was "Reply with a number", which taught customers the bot could not read
-    // words. It can — so the instruction now offers both, numbers included.
+    expect(text).toContain('Engagement Ring');
+    expect(text).toContain('Other Jewellery');
     expect(text).toContain('your own words');
-    expect(text).toContain('send a number');
+    // The two tells, both gone.
+    expect(text).not.toMatch(/^\d+[.)]?\s/m);
+    expect(text).not.toContain('—');
   });
 
   it('keeps every option short enough to become a WhatsApp list row', () => {
@@ -222,9 +234,42 @@ describe('customer flow — what the customer sees', () => {
   });
 
   it('uses the client-approved wording', () => {
-    expect(step('who_for').prompt).toBe('Is this purchase for yourself or someone special?');
+    expect(step('looking_for').prompt).toBe('What are you looking for today?');
     expect(step('budget').prompt).toBe('What is your approximate budget?');
     expect(step('timeline').prompt).toBe('When are you planning to purchase?');
+  });
+
+  it('asks four questions, and a fifth only to book a call', () => {
+    // The count is the feature. Six questions with a branch is a form; four is
+    // a conversation, and everything removed was something no salesperson read
+    // before picking up the phone.
+    expect(FLOW_STEPS.map((s) => s.key)).toEqual([
+      'looking_for',
+      'budget',
+      'timeline',
+      'call',
+      'call_time',
+    ]);
+  });
+
+  it('writes no dashes anywhere a customer can see one', () => {
+    for (const s of FLOW_STEPS) {
+      expect(s.prompt).not.toMatch(/[—–]/);
+      for (const o of s.options) expect(o.label).not.toMatch(/[—–]/);
+    }
+    expect(greeting()).not.toMatch(/[—–]/);
+    expect(greeting('Priya')).not.toMatch(/[—–]/);
+    expect(reprompt()).not.toMatch(/[—–]/);
+    expect(stopConfirmation()).not.toMatch(/[—–]/);
+    for (const outcome of [
+      { kind: 'handoff', reason: 'wants_call' },
+      { kind: 'handoff', reason: 'wants_call_later' },
+      { kind: 'handoff', reason: 'returning' },
+      { kind: 'parked', reason: 'not_now' },
+    ] as const) {
+      expect(closingFor(outcome, 'Mumbai Bandra')).not.toMatch(/[—–]/);
+      expect(closingFor(outcome)).not.toMatch(/[—–]/);
+    }
   });
 });
 
@@ -252,12 +297,12 @@ describe('customer flow — the note a manager picks up', () => {
   it('reads back the answers in labels, not codes', () => {
     const note = handoffSummary({
       looking_for: 'engagement_ring',
-      who_for: 'partner',
       budget: '1l_2l',
+      timeline: 'within_7_days',
     });
     expect(note).toContain('Engagement Ring');
-    expect(note).toContain('Partner');
-    expect(note).toContain('₹1L – ₹2L');
+    expect(note).toContain('Within 7 days');
+    expect(note).toContain('₹1L to ₹2L');
     expect(note).not.toContain('engagement_ring');
   });
 
