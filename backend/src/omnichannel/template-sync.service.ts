@@ -28,6 +28,8 @@ interface ProviderTemplate {
   language?: unknown;
   status?: unknown;
   category?: unknown;
+  /** HEADER / BODY / FOOTER / BUTTONS, each with its own text and examples. */
+  components?: unknown;
 }
 
 interface ProviderTemplatePage {
@@ -127,7 +129,15 @@ export class TemplateSyncService implements OnModuleInit {
           organisationId,
           integrationId,
           `${account}/message_templates`,
-          { fields: 'id,name,language,status,category', limit: PAGE_SIZE, ...(after ? { after } : {}) },
+          {
+            // `components` carries the wording. Without it a synchronised
+            // template was a name and a verdict, and the campaign wizard could
+            // only offer a bare identifier to choose between — which is how
+            // somebody sends the wrong one to several thousand people.
+            fields: 'id,name,language,status,category,components',
+            limit: PAGE_SIZE,
+            ...(after ? { after } : {}),
+          },
           WHATSAPP_PROVIDER_CODE,
         );
         if (!body || !Array.isArray(body.data)) {
@@ -211,6 +221,15 @@ export class TemplateSyncService implements OnModuleInit {
             ...(row && typeof row.category === 'string'
               ? { providerCategory: row.category.toLowerCase() }
               : {}),
+            /*
+             * The wording, refreshed from the provider.
+             *
+             * Written on every sync rather than only when absent: Meta lets a
+             * template's text be edited while it keeps its name, and a preview
+             * that silently describes last month's version is worse than none
+             * — it is what an approver reads before signing off a send.
+             */
+            ...(row ? previewFromComponents(row.components) : {}),
           } as unknown as Prisma.InputJsonValue,
           // The same three columns Meta asset health uses, meaning the same
           // thing: a live provider call confirmed this, and here is when.
@@ -257,6 +276,7 @@ export class TemplateSyncService implements OnModuleInit {
             providerStatus: status,
             providerSyncedAt: syncedAt.toISOString(),
             ...(typeof row.id === 'string' ? { providerTemplateId: row.id } : {}),
+            ...previewFromComponents(row.components),
             discoveredFromProvider: true,
           } as unknown as Prisma.InputJsonValue,
         },
@@ -487,6 +507,40 @@ function wabaId(config: unknown): string | null {
   const raw = jsonObject(config).whatsappBusinessAccountId;
   const id = typeof raw === 'number' && Number.isSafeInteger(raw) ? String(raw) : String(raw ?? '').trim();
   return /^\d{5,32}$/.test(id) ? id : null;
+}
+
+/**
+ * The readable message from a provider template's components.
+ *
+ * Meta returns the BODY text with its placeholders intact and, separately, the
+ * sample values it was approved with. Substituting them gives the sentence a
+ * customer actually receives, which is what somebody picking a template in the
+ * campaign wizard needs to read — "Hi {{1}}, your order at {{2}} is ready" is
+ * not a message anybody can sign off on.
+ *
+ * Returns an empty object rather than a null field when there is nothing to
+ * say, so the caller can spread it and leave any existing preview untouched.
+ */
+function previewFromComponents(components: unknown): { bodyPreview?: string } {
+  if (!Array.isArray(components)) return {};
+  const body = components.find(
+    (c) => jsonObject(c).type === 'BODY' && typeof jsonObject(c).text === 'string',
+  );
+  const text = body ? String(jsonObject(body).text) : '';
+  if (!text.trim()) return {};
+
+  // example.body_text is an array OF arrays: one row per example set, and Meta
+  // sends one row. A template with no variables has no example block at all.
+  const example = jsonObject(jsonObject(body).example);
+  const rows = Array.isArray(example.body_text) ? example.body_text : [];
+  const values = Array.isArray(rows[0]) ? (rows[0] as unknown[]) : [];
+
+  const filled = text.replace(/\{\{\s*(\d+)\s*\}\}/g, (whole, digits: string) => {
+    const value = values[Number(digits) - 1];
+    return typeof value === 'string' && value.trim() ? value.trim() : whole;
+  });
+
+  return { bodyPreview: filled.slice(0, 2_000) };
 }
 
 function jsonObject(value: unknown): Record<string, unknown> {

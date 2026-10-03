@@ -33,6 +33,7 @@ import {
   type SegmentCondition,
   type SegmentDefinition,
 } from "@/lib/queries/campaigns";
+import { TemplatePicker } from "@/components/campaigns/template-picker";
 import { apiErrorMessage } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
@@ -462,44 +463,34 @@ export default function NewCampaignPage() {
             <CardTitle className="text-base">What does it say?</CardTitle>
             <CardDescription>
               WhatsApp only allows an approved template for a message a customer did not ask for.
-              Enter the template exactly as it is registered, including its language.
+              Pick the one this campaign sends.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_10rem]">
-              <div className="space-y-1.5">
-                <Label>Template name</Label>
-                <Input
-                  value={templateName}
-                  onChange={(e) => setTemplateName(e.target.value)}
-                  placeholder="appointment_reminder"
-                  maxLength={512}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Language</Label>
-                <Input
-                  value={templateLanguage}
-                  onChange={(e) => setTemplateLanguage(e.target.value)}
-                  placeholder="en_US"
-                  maxLength={16}
-                />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label>What it looks like (optional)</Label>
-              <Textarea
-                value={bodyPreview}
-                onChange={(e) => setBodyPreview(e.target.value)}
-                rows={4}
-                maxLength={2000}
-                placeholder="Paste the approved wording here so your approver can read it."
-              />
-              <p className="text-xs text-muted-foreground">
-                For the approval screen only. The message actually sent is the approved template
-                held by the provider.
-              </p>
-            </div>
+            {/*
+              This was three free-text boxes: name, language, and a textarea
+              somebody pasted the wording into by hand.
+
+              Each was a way to send the wrong thing to several thousand people.
+              A typo in the name failed at the provider, after approval, with
+              the campaign already scheduled. The pasted preview was the worst
+              of them: it is what the APPROVER reads, it was typed by a human,
+              and nothing ever compared it to the template Meta approved.
+              Sign-off on wording nobody verified is not sign-off.
+
+              Picking one fills all three from the provider's own record.
+            */}
+            <TemplatePicker
+              value={templateName ? { name: templateName, languageCode: templateLanguage } : null}
+              onChange={(picked) => {
+                setTemplateName(picked?.name ?? "");
+                setTemplateLanguage(picked?.languageCode ?? "en_US");
+                // The approver reads the approved wording, not a recollection
+                // of it. Cleared along with the choice so a stale preview can
+                // never outlive the template it described.
+                setBodyPreview(picked?.preview ?? "");
+              }}
+            />
           </CardContent>
         </Card>
       ) : null}

@@ -29,6 +29,7 @@ import {
   useMessageTemplates,
   useQueueTemplateSync,
   useSyncTemplates,
+  isTemplateSendable,
   type MessageTemplateRow,
   type ProviderTemplateStatus,
 } from "@/lib/queries/meta-admin";
@@ -49,9 +50,6 @@ const PROVIDER_LABEL: Record<ProviderTemplateStatus, string> = {
   REMOVED: "No longer at the provider",
   UNKNOWN: "Never confirmed",
 };
-
-/** How long an approval may be relied on. Matches the server's own window. */
-const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Screen 4 — templates, as the provider sees them.
@@ -259,13 +257,13 @@ function Templates() {
 }
 
 /** The same rule the server applies, so the screen and the send agree. */
-function isSendable(row: MessageTemplateRow): boolean {
-  if (!row.isActive) return false;
-  if (!row.lastVerifiedAt) return false;
-  if (row.metadata.providerStatus !== "APPROVED") return false;
-  const age = Date.now() - new Date(row.lastVerifiedAt).getTime();
-  return age >= 0 && age <= MAX_AGE_MS;
-}
+/**
+ * Moved to `queries/meta-admin` so the campaign wizard asks the same question
+ * this screen does. It decides whether a send to several thousand people goes
+ * out or fails at the provider; two copies would eventually disagree, and the
+ * screen that was wrong would be the one offering the template.
+ */
+const isSendable = isTemplateSendable;
 
 function reasonNotSendable(row: MessageTemplateRow): string {
   if (!row.isActive) return "Switched off for this connection.";
