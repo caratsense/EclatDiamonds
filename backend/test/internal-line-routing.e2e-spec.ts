@@ -5,6 +5,7 @@ import * as bcrypt from 'bcryptjs';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { WhatsAppBotService } from '../src/whatsapp-bot/whatsapp-bot.service';
+import { WhatsAppIdentityService } from '../src/whatsapp-bot/whatsapp-identity.service';
 
 /**
  * TWO NUMBERS, TWO BOTS, ONE WEBHOOK.
@@ -42,11 +43,14 @@ const MANAGER = 'mgr.twoline@twoline.local';
 const STAFF_PHONE = '919000090001';
 /** Someone who is not staff. */
 const STRANGER_PHONE = '919000090002';
+/** Staff-to-be: a real person whose handset is not yet bound to them. */
+const NEWCOMER_PHONE = '919000090004';
 
 describe('two WhatsApp lines, one webhook (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let bot: WhatsAppBotService;
+  let identity: WhatsAppIdentityService;
   let wamidSeq = 0;
 
   const envelope = (phoneNumberId: string, from: string, text: string, wamid: string) => ({
@@ -107,6 +111,7 @@ describe('two WhatsApp lines, one webhook (e2e)', () => {
     await app.init();
     prisma = app.get(PrismaService);
     bot = app.get(WhatsAppBotService);
+    identity = app.get(WhatsAppIdentityService);
 
     await teardown(prisma);
     const hash = await bcrypt.hash(PASSWORD, 10);
@@ -229,6 +234,49 @@ describe('two WhatsApp lines, one webhook (e2e)', () => {
     expect(convo).not.toBeNull();
   });
 
+  /*
+   * THE ONE EXCEPTION, AND WITHOUT IT THE LINE IS UNUSABLE.
+   *
+   * A link code is how somebody BECOMES staff. The first version of this rule
+   * refused every unlinked number, which meant the first manager handed the
+   * operations number sent their code into silence and could never get on --
+   * the line was reachable only by people already on it. Found by trying to
+   * onboard a store manager, which is the only way it could have been found.
+   */
+  it('accepts a link code from an unlinked number, so somebody can get on at all', async () => {
+    const mgr = await prisma.user.findFirst({
+      where: { email: MANAGER },
+      select: { id: true, organisationId: true, name: true, role: true },
+    });
+    const code = await identity.startLinking({
+      id: mgr!.id,
+      organisationId: mgr!.organisationId,
+      name: mgr!.name,
+      role: mgr!.role,
+      storeIds: [STORE],
+      allStores: false,
+    } as never);
+
+    const wamid = await send(INTERNAL_LINE, NEWCOMER_PHONE, code.code);
+    expect(await statusOf(wamid)).toBe('processed');
+
+    const bound = await prisma.whatsAppIdentity.findFirst({
+      where: { phoneE164: NEWCOMER_PHONE },
+      select: { status: true, userId: true },
+    });
+    expect(bound?.status).toBe('active');
+    expect(bound?.userId).toBe(mgr!.id);
+  });
+
+  it('still says nothing to an unlinked number that writes anything else', async () => {
+    // The exception is narrow on purpose: only a message already shaped like a
+    // code is looked at. "hello" from a stranger is as silent as it ever was,
+    // so the enumeration risk the rule exists to close is unchanged.
+    const wamid = await send(INTERNAL_LINE, '919000090003', 'hello is anyone there');
+    expect(await statusOf(wamid)).toBe('ignored');
+    expect(await conversationFor('919000090003')).toBeNull();
+  });
+
   /* ------------------------------------------------------- the staff side */
 
   it('gives a linked staff member the DSR bot on the internal line', async () => {
@@ -281,8 +329,10 @@ describe('two WhatsApp lines, one webhook (e2e)', () => {
 });
 
 async function teardown(prisma: PrismaService) {
-  await prisma.whatsAppSession.deleteMany({ where: { phoneE164: { in: [STAFF_PHONE, STRANGER_PHONE] } } });
-  await prisma.whatsAppIdentity.deleteMany({ where: { phoneE164: { in: [STAFF_PHONE, STRANGER_PHONE] } } });
+  const phones = [STAFF_PHONE, STRANGER_PHONE, NEWCOMER_PHONE, '919000090003'];
+  await prisma.whatsAppSession.deleteMany({ where: { phoneE164: { in: phones } } });
+  await prisma.whatsAppIdentity.deleteMany({ where: { phoneE164: { in: phones } } });
+  await prisma.whatsAppLinkCode.deleteMany({ where: { organisationId: ORG } }).catch(() => undefined);
   await prisma.whatsAppEvent.deleteMany({ where: { wamid: { startsWith: 'wamid.TWOLINE-' } } });
   await prisma.attributionTouch.deleteMany({ where: { organisationId: ORG } });
   await prisma.message.deleteMany({ where: { organisationId: ORG } });
@@ -295,7 +345,25 @@ async function teardown(prisma: PrismaService) {
   await prisma.integrationAsset.deleteMany({ where: { organisationId: ORG } });
   await prisma.integration.deleteMany({ where: { organisationId: ORG } });
   await prisma.userStore.deleteMany({ where: { storeId: STORE } });
+  /*
+   * Before the users, and this is not optional.
+   *
+   * Linking a number is an audited act, so the moment this suite started
+   * exercising it, every row it wrote pinned the user it names:
+   * `AuditLog_actorId_fkey` is RESTRICT, and the delete below fails with 23001
+   * rather than cascading. The suite then failed in beforeAll's own teardown
+   * and every test in it went red for a reason that had nothing to do with any
+   * of them.
+   */
+  await prisma.auditLog.deleteMany({ where: { organisationId: ORG } }).catch(() => undefined);
   await prisma.user.deleteMany({ where: { organisationId: ORG } });
   await prisma.store.deleteMany({ where: { organisationId: ORG } });
+  /*
+   * A background job seeds this organisation a metal rate while the suite is
+   * running, and it holds the organisation down on the way out. Swept rather
+   * than suppressed, so the next run starts from the same clean slate as the
+   * first one did.
+   */
+  await prisma.metalRate.deleteMany({ where: { organisationId: ORG } }).catch(() => undefined);
   await prisma.organisation.deleteMany({ where: { id: ORG } });
 }

@@ -33,6 +33,7 @@ import {
   type MessageTemplateRow,
   type ProviderTemplateStatus,
 } from "@/lib/queries/meta-admin";
+import { NumbersOnAccount } from "@/components/integrations/numbers-on-account";
 import { TemplateComposer } from "@/components/integrations/template-composer";
 import { useIntegrations } from "@/lib/queries/tenant-config";
 import { apiErrorMessage } from "@/lib/utils";
@@ -100,6 +101,13 @@ function Templates() {
 
   return (
     <div className="space-y-6">
+      {/*
+        Which numbers these templates can go out on. Shown here because the
+        obvious assumption -- that a template belongs to a number -- is wrong,
+        and acting on it means somebody writes the same template twice.
+      */}
+      <NumbersOnAccount />
+
       <div className="flex flex-wrap items-center justify-end gap-3">
         <ConnectionPicker
           connections={connections}

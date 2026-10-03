@@ -282,7 +282,23 @@ export class WhatsAppBotService {
      */
     const internalLine = inbound?.purpose === 'internal';
 
-    if (internalLine && !user) {
+    /*
+     * ONE EXCEPTION, AND WITHOUT IT THE LINE IS UNUSABLE.
+     *
+     * A link code is how somebody BECOMES staff here. Refusing every unlinked
+     * number would mean nobody could ever link one — the first manager to be
+     * given the operations number would send their code into silence, and the
+     * line would be reachable only by people who were already on it.
+     *
+     * Allowing it costs nothing the silence was protecting. `CODE_RE` is
+     * narrow, so a stranger who writes "hello" still gets nothing; only a
+     * message already shaped like a code is even looked at, and a wrong one is
+     * answered with a refusal rather than a greeting. The enumeration risk this
+     * rule exists to close is unchanged.
+     */
+    const linkAttempt = Boolean(text && CODE_RE.test(text.trim()));
+
+    if (internalLine && !user && !linkAttempt) {
       this.logger.log(
         `  ignored: a number not linked to anyone wrote to the internal line`,
       );

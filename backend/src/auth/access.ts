@@ -41,7 +41,8 @@ export const MODULES = [
   'approvals', 'requests', 'ticketing', 'finance',
   // Administration
   'settings/onboarding', 'settings/stores', 'new-store', 'settings/configuration', 'settings/rates',
-  'settings/integrations', 'data', 'settings/audit', 'settings/staff-digest', 'settings/lead-tags',
+  'settings/integrations', 'settings/integrations/templates',
+  'data', 'settings/audit', 'settings/staff-digest', 'settings/lead-tags',
   'data/images', 'settings/messaging-routes', 'settings/channels', 'settings/access',
 ] as const;
 
@@ -110,6 +111,11 @@ export const ROLE_ACCESS: Record<Role, AccessMap> = {
  */
 export const HEAD_OFFICE_ONLY: ModuleSlug[] = [
   'settings/onboarding', 'new-store', 'settings/configuration', 'settings/integrations',
+  // Writing a template puts the business's name in a customer's WhatsApp and
+  // Meta judges the whole account on what it says. The API behind this screen
+  // is @Roles('head_office') already; listing it here keeps the sidebar from
+  // offering somebody a page that would 403 on open.
+  'settings/integrations/templates',
   'settings/messaging-routes', 'settings/access',
 ];
 

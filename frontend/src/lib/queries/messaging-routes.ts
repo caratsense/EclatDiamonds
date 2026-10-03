@@ -34,6 +34,12 @@ export interface MessagingNumber {
   phoneNumberIdSuffix: string;
   name: string | null;
   isActive: boolean;
+  /**
+   * 'internal' for a staff operations line, null for a customer-facing one.
+   * Decides which bot answers on it, so it is worth showing plainly rather
+   * than leaving somebody to guess from the name.
+   */
+  purpose: string | null;
   /** True only after a live provider call proved the token can read it. */
   providerOwnershipVerified: boolean;
   lastVerifiedAt: string | null;
