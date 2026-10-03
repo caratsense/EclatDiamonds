@@ -298,21 +298,60 @@ describe('two WhatsApp lines, one webhook (e2e)', () => {
   });
 
   /*
-   * The changeover tolerance, and the reason it exists.
+   * EACH LINE DOES ITS OWN JOB.
    *
-   * A manager who has not yet saved the new number keeps reaching the reporting
-   * flow where they always did, rather than silently filing nothing and finding
-   * out at month end. This is meant to be removed once every branch has moved
-   * across; it is not meant to be permanent.
+   * Staff used to get the reporting flow on the shopfront number too, so that
+   * a manager who had not saved the new one would not silently file nothing.
+   * But a phone BECOMES linked by sending its code to the internal line, so
+   * every linked person has already used that number -- the manager being
+   * protected cannot exist. Meanwhile the person most likely to check the
+   * customer experience is somebody who works here, and they could not see it.
    */
-  it('still answers staff on the customer line during the changeover', async () => {
-    await send(CUSTOMER_LINE, STAFF_PHONE, 'cancel');
-    const wamid = await send(CUSTOMER_LINE, STAFF_PHONE, 'hi');
+  it('answers staff as a CUSTOMER on the customer line, so they can test it', async () => {
+    await send(INTERNAL_LINE, STAFF_PHONE, 'cancel');
+    const wamid = await send(CUSTOMER_LINE, STAFF_PHONE, 'hi, do you have bangles');
 
     expect(await statusOf(wamid)).toBe('processed');
-    expect(await sessionFor(STAFF_PHONE)).not.toBeNull();
-    // And still never as a customer.
-    expect(await conversationFor(STAFF_PHONE)).toBeNull();
+    // A real CRM thread, the qualification script, the lot.
+    const convo = await conversationFor(STAFF_PHONE);
+    expect(convo).not.toBeNull();
+  });
+
+  /*
+   * AND THE CONDITION THAT MAKES THAT SAFE.
+   *
+   * Most tenants run ONE number, whose purpose is null because nobody ever had
+   * to classify it, and on that number the staff menu and the customer script
+   * share a line by necessity. Applying the rule above there would take the
+   * daily report away from every one of them at once, silently, and the first
+   * anybody would know is a month of missing figures.
+   */
+  it('keeps the DSR bot on a lone number, where staff have nowhere else to go', async () => {
+    const internal = await prisma.integrationAsset.findFirst({
+      where: { integrationId: INTEGRATION, externalId: INTERNAL_LINE },
+      select: { id: true },
+    });
+    // Take the internal line away: this tenant now has one number, like most.
+    await prisma.integrationAsset.update({
+      where: { id: internal!.id },
+      data: { isActive: false },
+    });
+    await prisma.conversation.deleteMany({
+      where: { organisationId: ORG, externalThreadId: STAFF_PHONE },
+    });
+
+    try {
+      const wamid = await send(CUSTOMER_LINE, STAFF_PHONE, 'hi');
+      expect(await statusOf(wamid)).toBe('processed');
+      // The staff menu, on the only number there is.
+      expect(await sessionFor(STAFF_PHONE)).not.toBeNull();
+      expect(await conversationFor(STAFF_PHONE)).toBeNull();
+    } finally {
+      await prisma.integrationAsset.update({
+        where: { id: internal!.id },
+        data: { isActive: true },
+      });
+    }
   });
 
   /* ----------------------------------------------------- the classification */

@@ -18,11 +18,38 @@ export class WhatsAppBotController {
     return this.identity.startLinking(user);
   }
 
+  /**
+   * Issue a code FOR somebody else, so an admin can onboard a branch.
+   *
+   * Store-scoped against the TARGET in the service: head office reaches
+   * everybody, a store manager reaches their own team. The code still only
+   * proves who — the number is learnt from the coded message when it arrives,
+   * so nobody can bind a handset they do not hold.
+   */
+  @Roles('store_manager', 'area_manager', 'head_office')
+  @Post('link/start/:userId')
+  startLinkFor(@CurrentUser() user: AuthUser, @Param('userId') userId: string) {
+    return this.identity.startLinkingFor(user, userId);
+  }
+
   /** List bound numbers for users inside my store scope. */
   @Roles('store_manager', 'area_manager', 'head_office')
   @Get('identities')
   list(@CurrentUser() user: AuthUser) {
     return this.identity.listInScope(user);
+  }
+
+  /**
+   * The whole team, linked or not.
+   *
+   * What the onboarding screen needs, and what `identities` cannot give it:
+   * the rows that matter there are the people MISSING a handset, who by
+   * definition do not appear in a list of handsets.
+   */
+  @Roles('store_manager', 'area_manager', 'head_office')
+  @Get('roster')
+  roster(@CurrentUser() user: AuthUser) {
+    return this.identity.rosterInScope(user);
   }
 
   /** Unbind a number (offboarding, lost handset, wrong link). */

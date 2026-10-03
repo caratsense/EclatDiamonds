@@ -257,7 +257,7 @@ export class WhatsAppBotService {
       ? { assetId: inbound.assetId, storeId: inbound.storeId }
       : undefined;
 
-    const user = await this.identity.resolveActiveUser(from);
+    const linkedUser = await this.identity.resolveActiveUser(from);
 
     /*
      * WHICH LINE WAS WRITTEN TO, NOT JUST WHO WROTE.
@@ -274,11 +274,22 @@ export class WhatsAppBotService {
      * number is live and worth messaging again, which is exactly what an
      * internal line should never confirm to a stranger.
      *
-     * The customer line is deliberately NOT made staff-proof to match. A
-     * manager who has not yet saved the new number keeps reaching the reporting
-     * flow where they always did, instead of silently filing nothing and
-     * finding out at month end. That tolerance is meant to be removed once the
-     * branches have moved across; it is not meant to be permanent.
+     * AND THE CUSTOMER LINE ANSWERS AS A CUSTOMER LINE, TO EVERYBODY.
+     *
+     * This used to make an exception for staff: a linked phone writing to the
+     * shopfront number still got the reporting flow, on the theory that a
+     * manager who had not yet saved the new number should not silently file
+     * nothing.
+     *
+     * That reasoning does not survive contact with how linking works. A phone
+     * BECOMES linked by sending its code to the internal line, so every linked
+     * person has already used that number by definition, and the manager who
+     * "has not saved it yet" cannot be linked in the first place. The exception
+     * was protecting somebody who does not exist.
+     *
+     * What it cost was real. The person most likely to check whether the
+     * customer experience works is somebody who works here, and they could not
+     * see it: they got the staff menu instead, on the number customers use.
      */
     const internalLine = inbound?.purpose === 'internal';
 
@@ -297,6 +308,37 @@ export class WhatsAppBotService {
      * rule exists to close is unchanged.
      */
     const linkAttempt = Boolean(text && CODE_RE.test(text.trim()));
+
+    /*
+     * Staff on the customer line are answered as customers -- but ONLY where
+     * they have somewhere else to go, and that condition is the whole safety
+     * of this.
+     *
+     * Most tenants run ONE number, whose purpose is null because nobody ever
+     * had to classify it, and on that number the staff menu and the customer
+     * script share a line by necessity. Applying this rule there would take the
+     * daily report away from every one of them at once, silently, and the first
+     * anybody would know is a month of missing figures.
+     *
+     * So the lookup asks whether THIS tenant operates an internal line at all.
+     * One number keeps behaving exactly as it does today.
+     */
+    const answerStaffAsCustomer =
+      Boolean(linkedUser) && !internalLine && (await this.hasInternalLine(inboundOrgId));
+
+    if (answerStaffAsCustomer) {
+      this.logger.log(
+        '  staff wrote to the customer line; answering as a customer (this tenant has an internal line)',
+      );
+    }
+
+    /*
+     * Everything downstream reads `user` to mean "treat this as staff". Setting
+     * it to null here is the entire mechanism: the customer path below is
+     * already the one that runs for anybody unrecognised, so this needs no
+     * second copy of it.
+     */
+    const user = answerStaffAsCustomer ? null : linkedUser;
 
     if (internalLine && !user && !linkAttempt) {
       this.logger.log(
@@ -1144,6 +1186,30 @@ export class WhatsAppBotService {
    * organisation happens to be first would put one business's customer
    * conversation in another business's inbox.
    */
+  /**
+   * Does this tenant run a line for staff, separate from the one customers use?
+   *
+   * Asked per inbound message rather than cached, because the answer changes
+   * the moment somebody registers a number and the wrong answer is expensive in
+   * both directions: cached-true sends a single-number tenant's manager into
+   * the sales funnel, cached-false puts staff back on the customer bot's
+   * doorstep. It is one indexed lookup on a table with a handful of rows.
+   */
+  private async hasInternalLine(organisationId: string | null): Promise<boolean> {
+    if (!organisationId) return false;
+    const found = await this.prisma.integrationAsset.findFirst({
+      where: {
+        organisationId,
+        kind: 'phone_number',
+        purpose: 'internal',
+        isActive: true,
+        integration: { providerCode: 'whatsapp_cloud', status: { notIn: ['disabled'] } },
+      },
+      select: { id: true },
+    });
+    return Boolean(found);
+  }
+
   private async resolveTenantForInbound(payload: unknown): Promise<{
     organisationId: string;
     /** The number it arrived on, so the reply leaves from the same one. */

@@ -115,6 +115,74 @@ export class WhatsAppIdentityService {
   }
 
   /**
+   * A manager issues a code FOR SOMEBODY ELSE.
+   *
+   * `startLinking` above binds the caller's own handset, which is the right
+   * shape for a developer and the wrong one for a shop. The people who file
+   * daily reports are store managers; asking each of them to sign in to the
+   * dashboard, find a settings page and copy a code out of it is how a feature
+   * ends up used by nobody. In practice one person sets the branches up, reads
+   * the codes out, and the managers send them from the handsets they already
+   * have in their hands.
+   *
+   * So this is the same act with a different subject, and the rules that matter
+   * are unchanged:
+   *
+   *  - The code still only proves WHO; the number is learnt when the coded
+   *    message arrives, from the message itself. Nobody types a phone number
+   *    here, so nobody can bind a number they do not control.
+   *  - Store scope is asserted against the target, not the caller, so a manager
+   *    cannot onboard somebody at a branch they do not run.
+   *  - The hourly ceiling counts codes per TARGET. Issuing on behalf must not
+   *    become a way around the limit that protects the person being onboarded.
+   */
+  async startLinkingFor(actor: AuthUser, targetUserId: string) {
+    const target = await this.prisma.user.findFirst({
+      where: { id: targetUserId, organisationId: actor.organisationId },
+      select: {
+        id: true,
+        name: true,
+        role: true,
+        isActive: true,
+        organisationId: true,
+        userStores: { select: { storeId: true } },
+      },
+    });
+    // Same message for "no such user" and "another tenant's user": a different
+    // one would turn this into a way to test whether an id exists.
+    if (!target) throw new NotFoundException('No such team member.');
+    if (!target.isActive) {
+      throw new BadRequestException(
+        `${target.name} is deactivated. Reactivate them before linking a number.`,
+      );
+    }
+
+    /*
+     * The caller must run at least one of the target's branches. Head office
+     * passes `allStores` and reaches everybody; a store manager reaches their
+     * own team and no further.
+     */
+    if (!actor.allStores) {
+      const theirs = new Set(actor.storeIds);
+      const overlap = target.userStores.some((s) => theirs.has(s.storeId));
+      if (!overlap) {
+        throw new ForbiddenException(
+          `${target.name} is not at a branch you manage.`,
+        );
+      }
+    }
+
+    return this.startLinking({
+      id: target.id,
+      name: target.name,
+      role: target.role,
+      organisationId: target.organisationId,
+      storeIds: target.userStores.map((s) => s.storeId),
+      allStores: false,
+    } as AuthUser);
+  }
+
+  /**
    * Called from the inbound path when a message looks like a link code. Finds the
    * matching un-consumed code, binds the sender's number to that code's user, and
    * consumes the code. Idempotent for the same (number, user) pair. The binding
@@ -258,6 +326,72 @@ export class WhatsAppIdentityService {
       verifiedAt: r.verifiedAt?.toISOString() ?? null,
       lastSeenAt: r.lastSeenAt?.toISOString() ?? null,
     }));
+  }
+
+  /**
+   * Everybody in scope, linked or not.
+   *
+   * `listInScope` answers "which numbers are bound", which is the wrong
+   * question for the screen that onboards people: the rows that matter there
+   * are the ones that are MISSING. A manager who has never linked a handset
+   * does not appear in a list of handsets, so an admin reading it cannot tell
+   * a complete rollout from one nobody has started.
+   *
+   * Salespeople are included deliberately. The daily report is a manager's job
+   * today, but an admin deciding who gets the bot should be choosing from the
+   * whole team rather than from a list somebody else pre-filtered.
+   */
+  async rosterInScope(actor: AuthUser) {
+    const people = await this.prisma.user.findMany({
+      where: {
+        organisationId: actor.organisationId,
+        isActive: true,
+        approvalStatus: 'approved',
+        // Head office reaches everybody; anyone else reaches their own branches.
+        ...(actor.allStores
+          ? {}
+          : { userStores: { some: { storeId: { in: actor.storeIds } } } }),
+      },
+      orderBy: [{ name: 'asc' }],
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        userStores: { select: { store: { select: { id: true, name: true } } } },
+        whatsappIdentities: {
+          select: {
+            id: true,
+            phoneE164: true,
+            status: true,
+            verifiedAt: true,
+            lastSeenAt: true,
+          },
+        },
+      },
+    });
+
+    return people.map((u) => {
+      // A revoked binding is history, not access. Only an active one counts.
+      const active = u.whatsappIdentities.find((i) => i.status === 'active') ?? null;
+      return {
+        userId: u.id,
+        name: u.name,
+        email: u.email,
+        role: u.role,
+        stores: u.userStores.map((s) => s.store),
+        identity: active
+          ? {
+              id: active.id,
+              // Last four only. Enough to recognise their handset, useless to
+              // anybody reading over a shoulder.
+              phoneSuffix: `…${active.phoneE164.slice(-4)}`,
+              verifiedAt: active.verifiedAt?.toISOString() ?? null,
+              lastSeenAt: active.lastSeenAt?.toISOString() ?? null,
+            }
+          : null,
+      };
+    });
   }
 
   /** POST /whatsapp/identities/:id/revoke — a manager unbinds a number in scope. */

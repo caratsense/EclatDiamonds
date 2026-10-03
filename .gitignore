@@ -70,3 +70,4 @@ docs/zithara-analysis/screenshots/
 # Extracts are business data, not source.
 synceclatcaratsense/bak_export/*.json
 synceclatcaratsense/bak_export/.agent_token
+backend/staging-cutover.mjs
