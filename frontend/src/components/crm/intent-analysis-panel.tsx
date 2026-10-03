@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import {
   ArrowRight,
   CheckCircle2,
@@ -339,6 +340,20 @@ function Unavailable({
   onScoreByHand?: () => void;
   busy: boolean;
 }) {
+  /*
+   * "Switched off" is not a failure you can retry your way out of.
+   *
+   * The server says, correctly, that qualification is disabled for this
+   * organisation — and the panel then offered "Try again", which re-ran the
+   * same refusal every time it was pressed. The one thing that would help is
+   * the switch itself, so when this is the reason we point at it instead.
+   *
+   * Matched on the server's wording rather than a flag because the reason is
+   * deliberately a free-text sentence; a mismatch here degrades to the ordinary
+   * retry button, which is the same behaviour as before.
+   */
+  const switchedOff = (reason ?? "").toLowerCase().includes("switched off");
+
   return (
     <div className="space-y-3">
       <p className="text-sm text-muted-foreground">
@@ -350,7 +365,14 @@ function Unavailable({
         {considered === 1 ? "1 message" : `${considered} messages`} were considered.
       </p>
       <div className="flex flex-wrap gap-2">
-        {onAssess ? (
+        {switchedOff ? (
+          <Button asChild size="sm" variant="outline">
+            <Link href="/settings/configuration">
+              <ArrowRight className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+              Turn scoring on
+            </Link>
+          </Button>
+        ) : onAssess ? (
           <Button size="sm" variant="outline" onClick={onAssess} disabled={busy}>
             <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${busy ? "animate-spin" : ""}`} aria-hidden />
             Try again

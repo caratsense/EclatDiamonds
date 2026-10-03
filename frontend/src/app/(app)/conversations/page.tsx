@@ -35,7 +35,6 @@ import {
   Search,
   Send,
   Share2,
-  SlidersHorizontal,
   Smile,
   Sparkles,
   Star,
@@ -719,32 +718,48 @@ function ConversationsContent() {
           {/*
             Which inbox the lead came in on — WhatsApp, a phone call, and so on.
 
-            Always rendered, even when today's threads only use one of them. It
-            used to hide itself below two options, on the theory that a
-            single-option selector is furniture; in practice it vanished exactly
-            when someone wanted to confirm a filter existed at all, and reappeared
-            unannounced the first time a second channel showed up. A control that
-            comes and goes with the data is harder to trust than a quiet one.
+            Always PRESENT, never a dropdown that cannot filter.
+
+            This control used to hide itself below two options, which was wrong:
+            it vanished exactly when somebody wanted to confirm a filter existed,
+            and reappeared unannounced the first time a second channel showed up.
+            Always rendering it fixed that and introduced the opposite complaint —
+            with only WhatsApp connected, "All channels" opened a menu whose two
+            entries select the identical set of threads. A filter that cannot
+            change the result is furniture pretending to be a control.
+
+            So: a real selector once there is a genuine choice, and a plain label
+            stating the one channel otherwise. The information ("this inbox is
+            WhatsApp") survives either way; only the false affordance goes.
           */}
           <div className="flex items-center gap-1.5">
             <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
-            <select
-              aria-label="Filter conversations by channel"
-              value={channelFilter}
-              onChange={(e) => navigate({ channel: e.target.value || null })}
-              className={`h-8 rounded-md border bg-background px-2 text-xs font-medium ${
-                channelFilter
-                  ? "border-[#25D366]/40 text-[#128C7E] dark:text-[#25D366]"
-                  : "border-border text-muted-foreground"
-              }`}
-            >
-              <option value="">All channels</option>
-              {channelOptions.map((ch) => (
-                <option key={ch} value={ch}>
-                  {CHANNEL_LABELS[ch] ?? ch}
-                </option>
-              ))}
-            </select>
+            {channelOptions.length > 1 ? (
+              <select
+                aria-label="Filter conversations by channel"
+                value={channelFilter}
+                onChange={(e) => navigate({ channel: e.target.value || null })}
+                className={`h-8 rounded-md border bg-background px-2 text-xs font-medium ${
+                  channelFilter
+                    ? "border-[#25D366]/40 text-[#128C7E] dark:text-[#25D366]"
+                    : "border-border text-muted-foreground"
+                }`}
+              >
+                <option value="">All channels</option>
+                {channelOptions.map((ch) => (
+                  <option key={ch} value={ch}>
+                    {CHANNEL_LABELS[ch] ?? ch}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span
+                className="flex h-8 items-center rounded-md border border-border bg-muted/40 px-2 text-xs font-medium text-muted-foreground"
+                title="This organisation has one messaging channel connected. The filter appears once there is a second."
+              >
+                {CHANNEL_LABELS[channelOptions[0]] ?? channelOptions[0]}
+              </span>
+            )}
           </div>
 
           {/*
@@ -799,22 +814,32 @@ function ConversationsContent() {
               </select>
             </div>
           )}
+          {/*
+            Goes to the screen that actually onboards somebody.
+
+            This button used to raise a toast reading "Share WhatsApp inbox
+            access link" and do nothing else — there is no such link, and no
+            invite was ever sent. Staff are added in Settings → Team, where an
+            admin records their phone and they sign in with a WhatsApp OTP; this
+            now takes you there instead of describing a feature that does not
+            exist. Kept on this screen because wanting to add a colleague while
+            staring at an overflowing inbox is exactly when the thought occurs.
+
+            A second button sat beside this one, captioned "Filter Settings",
+            which toasted "Filter by Tag, Assignee, or Showroom" and did nothing.
+            Those filters are already real and already here — "More filters" to
+            the left of this toolbar — so it has been removed rather than wired
+            up to duplicate them.
+          */}
           <Button
+            asChild
             size="sm"
             variant="outline"
             className="h-8 gap-1.5 text-xs"
-            onClick={() => toast.info("Invite Sales Team", { description: "Share WhatsApp inbox access link" })}
           >
-            <Users className="h-3.5 w-3.5" /> Invite Members
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
-            title="Filter Settings"
-            onClick={() => toast.info("Filters", { description: "Filter by Tag, Assignee, or Showroom" })}
-          >
-            <SlidersHorizontal className="h-4 w-4" />
+            <Link href="/settings/team">
+              <Users className="h-3.5 w-3.5" /> Invite Members
+            </Link>
           </Button>
         </div>
       </div>
@@ -1562,7 +1587,7 @@ function ThreadView({
               }
               className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/50 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted hover:border-[#25D366]/40 transition-colors whitespace-nowrap"
             >
-              ðŸ’Ž Confirm Saturday Visit
+              💎 Confirm Saturday Visit
             </button>
             <button
               type="button"
@@ -1573,7 +1598,7 @@ function ThreadView({
               }
               className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/50 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted hover:border-[#25D366]/40 transition-colors whitespace-nowrap"
             >
-              ðŸ“ Store Location
+              📍 Store Location
             </button>
             <button
               type="button"
@@ -1584,7 +1609,7 @@ function ThreadView({
               }
               className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/50 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted hover:border-[#25D366]/40 transition-colors whitespace-nowrap"
             >
-              ðŸ“œ IGI Certificate Info
+              📜 IGI Certificate Info
             </button>
           </div>
 
@@ -1597,7 +1622,7 @@ function ThreadView({
                 variant="ghost"
                 className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground"
                 title="Insert emoji"
-                onClick={() => setDraft((d) => d + " ðŸ˜Š ")}
+                onClick={() => setDraft((d) => d + " 😊 ")}
               >
                 <Smile className="h-4 w-4" />
               </Button>
