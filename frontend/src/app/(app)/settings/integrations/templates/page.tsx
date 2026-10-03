@@ -29,9 +29,12 @@ import {
   useMessageTemplates,
   useQueueTemplateSync,
   useSyncTemplates,
+  isTemplateSendable,
   type MessageTemplateRow,
   type ProviderTemplateStatus,
 } from "@/lib/queries/meta-admin";
+import { NumbersOnAccount } from "@/components/integrations/numbers-on-account";
+import { TemplateComposer } from "@/components/integrations/template-composer";
 import { useIntegrations } from "@/lib/queries/tenant-config";
 import { apiErrorMessage } from "@/lib/utils";
 
@@ -48,9 +51,6 @@ const PROVIDER_LABEL: Record<ProviderTemplateStatus, string> = {
   REMOVED: "No longer at the provider",
   UNKNOWN: "Never confirmed",
 };
-
-/** How long an approval may be relied on. Matches the server's own window. */
-const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Screen 4 — templates, as the provider sees them.
@@ -101,12 +101,29 @@ function Templates() {
 
   return (
     <div className="space-y-6">
+      {/*
+        Which numbers these templates can go out on. Shown here because the
+        obvious assumption -- that a template belongs to a number -- is wrong,
+        and acting on it means somebody writes the same template twice.
+      */}
+      <NumbersOnAccount />
+
       <div className="flex flex-wrap items-center justify-end gap-3">
         <ConnectionPicker
           connections={connections}
           value={integrationId}
           onChange={setIntegrationId}
         />
+        {/*
+          Write one here rather than in WhatsApp Manager.
+
+          Needs the WABA id for the same reason synchronising does: both call
+          /{waba-id}/message_templates, and without it there is nothing to post
+          to. Disabled rather than hidden, so the gap is visible and fixable.
+        */}
+        {integrationId ? (
+          <TemplateComposer integrationId={integrationId} disabled={!accountConfigured} />
+        ) : null}
         <Button
           size="sm"
           variant="outline"
@@ -248,13 +265,13 @@ function Templates() {
 }
 
 /** The same rule the server applies, so the screen and the send agree. */
-function isSendable(row: MessageTemplateRow): boolean {
-  if (!row.isActive) return false;
-  if (!row.lastVerifiedAt) return false;
-  if (row.metadata.providerStatus !== "APPROVED") return false;
-  const age = Date.now() - new Date(row.lastVerifiedAt).getTime();
-  return age >= 0 && age <= MAX_AGE_MS;
-}
+/**
+ * Moved to `queries/meta-admin` so the campaign wizard asks the same question
+ * this screen does. It decides whether a send to several thousand people goes
+ * out or fails at the provider; two copies would eventually disagree, and the
+ * screen that was wrong would be the one offering the template.
+ */
+const isSendable = isTemplateSendable;
 
 function reasonNotSendable(row: MessageTemplateRow): string {
   if (!row.isActive) return "Switched off for this connection.";

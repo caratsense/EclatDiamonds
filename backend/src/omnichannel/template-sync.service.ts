@@ -7,6 +7,13 @@ import { MetaGraphClient } from '../integrations/meta-graph.client';
 import { JobContext, JobsService } from '../jobs/jobs.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { providerTemplateStatus, type ProviderTemplateStatus } from './omnichannel-policy';
+import {
+  TemplateDraftError,
+  buildTemplatePayload,
+  placeholdersIn,
+  previewOf,
+  type TemplateDraft,
+} from './template-draft';
 
 export const TEMPLATE_SYNC_JOB = 'omnichannel.templates.sync';
 export const TEMPLATE_ASSET_KIND = 'message_template';
@@ -21,6 +28,8 @@ interface ProviderTemplate {
   language?: unknown;
   status?: unknown;
   category?: unknown;
+  /** HEADER / BODY / FOOTER / BUTTONS, each with its own text and examples. */
+  components?: unknown;
 }
 
 interface ProviderTemplatePage {
@@ -120,7 +129,15 @@ export class TemplateSyncService implements OnModuleInit {
           organisationId,
           integrationId,
           `${account}/message_templates`,
-          { fields: 'id,name,language,status,category', limit: PAGE_SIZE, ...(after ? { after } : {}) },
+          {
+            // `components` carries the wording. Without it a synchronised
+            // template was a name and a verdict, and the campaign wizard could
+            // only offer a bare identifier to choose between — which is how
+            // somebody sends the wrong one to several thousand people.
+            fields: 'id,name,language,status,category,components',
+            limit: PAGE_SIZE,
+            ...(after ? { after } : {}),
+          },
           WHATSAPP_PROVIDER_CODE,
         );
         if (!body || !Array.isArray(body.data)) {
@@ -204,6 +221,15 @@ export class TemplateSyncService implements OnModuleInit {
             ...(row && typeof row.category === 'string'
               ? { providerCategory: row.category.toLowerCase() }
               : {}),
+            /*
+             * The wording, refreshed from the provider.
+             *
+             * Written on every sync rather than only when absent: Meta lets a
+             * template's text be edited while it keeps its name, and a preview
+             * that silently describes last month's version is worse than none
+             * — it is what an approver reads before signing off a send.
+             */
+            ...(row ? previewFromComponents(row.components) : {}),
           } as unknown as Prisma.InputJsonValue,
           // The same three columns Meta asset health uses, meaning the same
           // thing: a live provider call confirmed this, and here is when.
@@ -250,6 +276,7 @@ export class TemplateSyncService implements OnModuleInit {
             providerStatus: status,
             providerSyncedAt: syncedAt.toISOString(),
             ...(typeof row.id === 'string' ? { providerTemplateId: row.id } : {}),
+            ...previewFromComponents(row.components),
             discoveredFromProvider: true,
           } as unknown as Prisma.InputJsonValue,
         },
@@ -300,6 +327,143 @@ export class TemplateSyncService implements OnModuleInit {
     return this.sync(context.organisationId, p.integrationId);
   }
 
+  /**
+   * Write a template to Meta and record what Meta said about it.
+   *
+   * This is the half that did not exist. Templates could be SYNCED — read back
+   * from Meta and have their verdict recorded — but never created, so every
+   * template had to be typed into WhatsApp Manager by somebody with access to
+   * Éclat's Business account. Which meant, in practice, that there were none:
+   * the WABA holds one template, and it is the `hello_world` sample Meta ships.
+   * A reminder campaign had nothing it was allowed to send.
+   *
+   * ## The local row is written from the RESPONSE, never from the request
+   *
+   * Meta decides the template's id, its status, and sometimes its category —
+   * it silently re-files a template as MARKETING when the text reads like
+   * marketing, whatever was asked for. Recording what we sent would make the
+   * local row disagree with Meta on all three, and the disagreement would only
+   * surface when a send failed. So the row is built from what came back.
+   *
+   * `providerStatus` lands as PENDING, and ONLY `syncNow` can ever raise it to
+   * APPROVED. That rule is the whole point of this service and submission does
+   * not get an exception: nothing here can authorise a send.
+   */
+  async submit(user: AuthUser, integrationId: string, draft: TemplateDraft) {
+    const integration = await this.load(user.organisationId, integrationId);
+    const account = wabaId(integration.config);
+    if (!account) {
+      throw new BadRequestException(
+        'Set the WhatsApp Business Account id on this connection before submitting templates.',
+      );
+    }
+
+    let payload;
+    try {
+      payload = buildTemplatePayload(draft);
+    } catch (error) {
+      // A draft problem is the author's to fix and is phrased for them; it is
+      // not a provider failure and must not be recorded as one on the
+      // integration.
+      if (error instanceof TemplateDraftError) throw new BadRequestException(error.message);
+      throw error;
+    }
+
+    const key = templateKey(payload.name, payload.language);
+    if (!key) throw new BadRequestException('A template needs a valid name and language code.');
+
+    /*
+     * Meta rejects a duplicate name+language with a message about the API. A
+     * local check first turns that into a sentence about the template, and
+     * saves a review cycle on a submission that was never going to land.
+     */
+    const clash = await this.prisma.integrationAsset.findFirst({
+      where: { integrationId, kind: TEMPLATE_ASSET_KIND, externalId: key },
+      select: { id: true, metadata: true },
+    });
+    if (clash) {
+      const status = jsonObject(clash.metadata).providerStatus;
+      throw new BadRequestException(
+        `A template called "${payload.name}" already exists in ${payload.language}` +
+          (typeof status === 'string' ? ` and Meta reports it as ${status}` : '') +
+          '. Use a different name, or delete that one at Meta first.',
+      );
+    }
+
+    let response: { id?: unknown; status?: unknown; category?: unknown };
+    try {
+      response = await this.graph.postForIntegration(
+        user.organisationId,
+        integrationId,
+        `${account}/message_templates`,
+        payload,
+        WHATSAPP_PROVIDER_CODE,
+      );
+    } catch (error) {
+      const message = bounded(error);
+      await this.prisma.integration
+        .updateMany({ where: { id: integrationId, organisationId: user.organisationId }, data: { lastError: message } })
+        .catch(() => undefined);
+      this.logger.warn(`WhatsApp template submission failed for ${integrationId}: ${message}`);
+      throw error;
+    }
+
+    const submittedAt = new Date();
+    const status = providerTemplateStatus(response.status);
+    const category =
+      typeof response.category === 'string' ? response.category.toUpperCase() : payload.category;
+
+    const asset = await this.prisma.integrationAsset.create({
+      data: {
+        organisationId: user.organisationId,
+        integrationId,
+        kind: TEMPLATE_ASSET_KIND,
+        externalId: key,
+        name: payload.name,
+        isActive: true,
+        // Submitted is not approved. Only syncNow may set this true.
+        providerOwnershipVerified: false,
+        lastVerifiedAt: submittedAt,
+        lastError: `Submitted to Meta; awaiting review. Provider reports ${status}.`,
+        metadata: {
+          channel: 'whatsapp',
+          languageCode: payload.language,
+          category: category.toLowerCase(),
+          approvalStatus: 'pending',
+          variables: placeholdersIn(draft.body).map((n) => `{{${n}}}`),
+          bodyPreview: previewOf(draft.body, draft.examples ?? []),
+          recordedAt: submittedAt.toISOString(),
+          providerStatus: status,
+          providerSyncedAt: submittedAt.toISOString(),
+          ...(typeof response.id === 'string' ? { providerTemplateId: response.id } : {}),
+          submittedFromDashboard: true,
+        } as unknown as Prisma.InputJsonValue,
+      },
+      select: { id: true, name: true, externalId: true, metadata: true },
+    });
+
+    await this.audit.record(user, {
+      action: 'omnichannel.template_submitted',
+      entityType: 'IntegrationAsset',
+      entityId: asset.id,
+      summary: `${user.name ?? 'Head office'} submitted the WhatsApp template "${payload.name}" (${payload.language}) to Meta for review`,
+      metadata: { integrationId, category, providerStatus: status },
+    });
+
+    this.logger.log(`template ${payload.name}:${payload.language} submitted -> ${status}`);
+
+    return {
+      id: asset.id,
+      name: asset.name,
+      languageCode: payload.language,
+      category: category.toLowerCase(),
+      providerStatus: status,
+      providerTemplateId: typeof response.id === 'string' ? response.id : null,
+      preview: previewOf(draft.body, draft.examples ?? []),
+      submittedAt: submittedAt.toISOString(),
+    };
+  }
+
   private async load(organisationId: string, integrationId: string) {
     const integration = await this.prisma.integration.findFirst({
       where: { id: integrationId, organisationId, providerCode: WHATSAPP_PROVIDER_CODE },
@@ -343,6 +507,40 @@ function wabaId(config: unknown): string | null {
   const raw = jsonObject(config).whatsappBusinessAccountId;
   const id = typeof raw === 'number' && Number.isSafeInteger(raw) ? String(raw) : String(raw ?? '').trim();
   return /^\d{5,32}$/.test(id) ? id : null;
+}
+
+/**
+ * The readable message from a provider template's components.
+ *
+ * Meta returns the BODY text with its placeholders intact and, separately, the
+ * sample values it was approved with. Substituting them gives the sentence a
+ * customer actually receives, which is what somebody picking a template in the
+ * campaign wizard needs to read — "Hi {{1}}, your order at {{2}} is ready" is
+ * not a message anybody can sign off on.
+ *
+ * Returns an empty object rather than a null field when there is nothing to
+ * say, so the caller can spread it and leave any existing preview untouched.
+ */
+function previewFromComponents(components: unknown): { bodyPreview?: string } {
+  if (!Array.isArray(components)) return {};
+  const body = components.find(
+    (c) => jsonObject(c).type === 'BODY' && typeof jsonObject(c).text === 'string',
+  );
+  const text = body ? String(jsonObject(body).text) : '';
+  if (!text.trim()) return {};
+
+  // example.body_text is an array OF arrays: one row per example set, and Meta
+  // sends one row. A template with no variables has no example block at all.
+  const example = jsonObject(jsonObject(body).example);
+  const rows = Array.isArray(example.body_text) ? example.body_text : [];
+  const values = Array.isArray(rows[0]) ? (rows[0] as unknown[]) : [];
+
+  const filled = text.replace(/\{\{\s*(\d+)\s*\}\}/g, (whole, digits: string) => {
+    const value = values[Number(digits) - 1];
+    return typeof value === 'string' && value.trim() ? value.trim() : whole;
+  });
+
+  return { bodyPreview: filled.slice(0, 2_000) };
 }
 
 function jsonObject(value: unknown): Record<string, unknown> {

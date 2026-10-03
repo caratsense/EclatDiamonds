@@ -6,6 +6,7 @@ import { AuthUser, CurrentUser } from '../common/auth-user';
 import {
   QueueOmnichannelMessageDto,
   RecordConsentDto,
+  SubmitMessageTemplateDto,
   UpsertMessageTemplateDto,
 } from './dto/omnichannel.dto';
 import { MessagePurpose, OmnichannelChannel, OMNICHANNEL_CHANNELS } from './omnichannel-policy';
@@ -58,6 +59,26 @@ export class OmnichannelController {
     @Body() dto: UpsertMessageTemplateDto,
   ) {
     return this.omnichannel.upsertTemplate(user, integrationId, dto);
+  }
+
+  /**
+   * Write a new template to Meta and put it in for review.
+   *
+   * Head office only and audited, for the same reason the sync below is: this
+   * creates something that will carry the business's name into a customer's
+   * WhatsApp, and Meta judges the whole account on what it says.
+   *
+   * Approval is not a side effect of this call. The template comes back PENDING
+   * and stays unsendable until TemplateSyncService reads APPROVED from Meta.
+   */
+  @Roles('head_office')
+  @Post('integrations/:integrationId/templates/submit')
+  submitTemplate(
+    @CurrentUser() user: AuthUser,
+    @Param('integrationId') integrationId: string,
+    @Body() dto: SubmitMessageTemplateDto,
+  ) {
+    return this.templateSync.submit(user, integrationId, dto);
   }
 
   /**

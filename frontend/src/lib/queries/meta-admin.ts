@@ -158,7 +158,43 @@ export interface MessageTemplateRow {
     providerSyncedAt: string | null;
     variables: string[];
     recordedAt: string;
+    /**
+     * The approved wording with its sample values filled in, as a customer
+     * reads it. Written at submission and on sync; absent on templates
+     * recorded before either existed.
+     */
+    bodyPreview?: string;
   };
+}
+
+/**
+ * HOW LONG A PROVIDER VERDICT IS BELIEVED.
+ *
+ * Meta can pause a template for quality at any moment and tells us nothing. A
+ * verdict read two days ago is a guess about today, so it expires and the
+ * template stops being offered until somebody synchronises.
+ *
+ * 24 hours, which is `TEMPLATE_VERDICT_MAX_AGE_MS` in the server's own
+ * omnichannel policy. The server refuses the send either way; matching it here
+ * means a template the server would reject is never offered in the first place,
+ * rather than being offered and failing at the end of a campaign wizard.
+ */
+export const TEMPLATE_VERDICT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * May this template actually be sent?
+ *
+ * Shared rather than copied, because it is the question that decides whether a
+ * campaign to several thousand people goes out or fails at the provider. Two
+ * implementations of it would eventually disagree, and the screen that was
+ * wrong would be the one offering the template.
+ */
+export function isTemplateSendable(row: MessageTemplateRow): boolean {
+  if (!row.isActive) return false;
+  if (!row.lastVerifiedAt) return false;
+  if (row.metadata.providerStatus !== "APPROVED") return false;
+  const age = Date.now() - new Date(row.lastVerifiedAt).getTime();
+  return age >= 0 && age <= TEMPLATE_VERDICT_MAX_AGE_MS;
 }
 
 export interface TemplateSyncResult {
@@ -189,6 +225,50 @@ export function useSyncTemplates() {
       (
         await api.post<TemplateSyncResult>(
           `/omnichannel/integrations/${integrationId}/templates/sync`,
+        )
+      ).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["omnichannel", "templates"] }),
+  });
+}
+
+/** What the client types here, on its way to Meta for review. */
+export interface TemplateDraftInput {
+  name: string;
+  languageCode: string;
+  category: "MARKETING" | "UTILITY" | "AUTHENTICATION";
+  body: string;
+  header?: string;
+  footer?: string;
+  examples?: string[];
+}
+
+export interface SubmittedTemplate {
+  id: string;
+  name: string;
+  languageCode: string;
+  category: string;
+  /** PENDING on submission. Only a sync can ever raise this to APPROVED. */
+  providerStatus: ProviderTemplateStatus;
+  providerTemplateId: string | null;
+  preview: string;
+  submittedAt: string;
+}
+
+/**
+ * POST /omnichannel/integrations/:id/templates/submit — write a template to
+ * Meta and put it in for review.
+ *
+ * Returns PENDING, always. Approval is a fact about Meta that arrives through
+ * template synchronisation, never from this call.
+ */
+export function useSubmitTemplate(integrationId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (draft: TemplateDraftInput) =>
+      (
+        await api.post<SubmittedTemplate>(
+          `/omnichannel/integrations/${integrationId}/templates/submit`,
+          draft,
         )
       ).data,
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["omnichannel", "templates"] }),

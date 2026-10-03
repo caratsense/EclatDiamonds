@@ -572,6 +572,25 @@ export const NAV_ITEMS: NavItem[] = [
     roles: ["head_office"],
   },
   {
+    /*
+     * On the sidebar rather than three clicks inside Integrations.
+     *
+     * A template is the only thing a campaign is allowed to send to somebody
+     * who did not write in first, and Meta takes about a day to approve one.
+     * Burying the screen that writes them meant a reminder was a day away from
+     * anybody who had not already found it.
+     */
+    module: 1,
+    slug: "settings/integrations/templates",
+    title: "Message Templates",
+    purpose:
+      "Write a WhatsApp message and put it to Meta for approval. Approved ones are what campaigns send.",
+    primaryAction: "",
+    icon: MessageSquarePlus,
+    group: "Setup",
+    roles: ["head_office"],
+  },
+  {
     // CaratOS Phase A7 — bring existing records in, and see what each
     // source has actually delivered. store_manager+ because onboarding data
     // is a management action (matches ImportController's own guard).
@@ -792,6 +811,7 @@ export const CORE_NAVIGATION: readonly string[] = Object.freeze([
   "data",
   "data/images",
   "settings/integrations",
+  "settings/integrations/templates",
   "settings/audit",
   "settings/access",
 ]);

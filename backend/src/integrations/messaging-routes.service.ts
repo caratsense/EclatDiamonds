@@ -70,6 +70,10 @@ export class MessagingRoutesService {
           externalId: true,
           name: true,
           isActive: true,
+          // 'internal' for a staff operations line, null for customer-facing.
+          // The screen that lists numbers is the only place a person can see
+          // which of them a stranger reaches and which answers staff only.
+          purpose: true,
           providerOwnershipVerified: true,
           lastVerifiedAt: true,
           integrationId: true,
@@ -112,6 +116,12 @@ export class MessagingRoutesService {
         phoneNumberIdSuffix: `…${a.externalId.slice(-4)}`,
         name: a.name,
         isActive: a.isActive,
+        /**
+         * 'internal' means this line answers linked staff only and says
+         * nothing to anybody else. Null is customer-facing, which every
+         * number registered before the distinction existed is.
+         */
+        purpose: a.purpose,
         // Never presented as proven unless a live provider call proved it.
         providerOwnershipVerified: a.providerOwnershipVerified,
         lastVerifiedAt: a.lastVerifiedAt,

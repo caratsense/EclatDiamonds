@@ -95,6 +95,58 @@ export class UpsertMessageTemplateDto {
   variables?: string[];
 }
 
+/**
+ * A template the client wrote here, on its way to Meta for review.
+ *
+ * Deliberately NOT a variant of UpsertMessageTemplateDto. That one records what
+ * somebody says exists at Meta; this one creates it. The giveaway is `status`:
+ * it is absent here, because nobody submitting a template gets to say what Meta
+ * will decide about it.
+ *
+ * Shape checks only. Whether the placeholders run 1,2,3 and whether every one
+ * has a sample value is `buildTemplatePayload`'s job, where the answer can be a
+ * sentence about the thing they typed rather than a validator name.
+ */
+export class SubmitMessageTemplateDto {
+  @IsString()
+  @Matches(/^[a-z0-9_]{1,512}$/, {
+    message: 'name may use lowercase letters, numbers and underscores only',
+  })
+  name!: string;
+
+  @IsString()
+  @Matches(/^[a-z]{2,3}(?:_[A-Z]{2})?$/, {
+    message: 'languageCode must be a Meta language code such as en_US, hi_IN or gu_IN',
+  })
+  languageCode!: string;
+
+  @IsIn(['MARKETING', 'UTILITY', 'AUTHENTICATION'])
+  category!: 'MARKETING' | 'UTILITY' | 'AUTHENTICATION';
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(1024)
+  body!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  header?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  footer?: string;
+
+  /** One realistic value per placeholder, in order. Meta refuses the template without them. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsString({ each: true })
+  @MaxLength(200, { each: true })
+  examples?: string[];
+}
+
 export class QueueOmnichannelMessageDto {
   @IsOptional()
   @IsString()
