@@ -354,6 +354,61 @@ describe('two WhatsApp lines, one webhook (e2e)', () => {
     }
   });
 
+  /*
+   * ONE PERSON, BOTH BOTS, AT THE SAME TIME.
+   *
+   * The session row was unique on phoneE164 alone, so the two bots shared it.
+   * A manager halfway through a daily report who then wrote to the shopfront
+   * number had the report silently overwritten by a fresh customer session --
+   * walkIns and seriousEnquiries already collected, gone after one message.
+   *
+   * Found by testing the thing somebody actually does: use their own handset
+   * for both.
+   */
+  it('keeps a half-finished report alive while the same number talks to the customer bot', async () => {
+    await prisma.whatsAppSession.deleteMany({ where: { phoneE164: STAFF_PHONE } });
+    await prisma.conversation.deleteMany({
+      where: { organisationId: ORG, externalThreadId: STAFF_PHONE },
+    });
+
+    // Two answers into a daily report on the internal line.
+    await send(INTERNAL_LINE, STAFF_PHONE, 'hi');
+    await send(INTERNAL_LINE, STAFF_PHONE, '1');
+    await send(INTERNAL_LINE, STAFF_PHONE, '21');
+
+    // The detour that used to destroy it.
+    await send(CUSTOMER_LINE, STAFF_PHONE, 'hi do you have rings');
+
+    const staff = await prisma.whatsAppSession.findFirst({
+      where: { phoneE164: STAFF_PHONE, kind: 'staff' },
+      select: { flow: true, draft: true },
+    });
+    expect(staff?.flow).toBe('dsr');
+    expect((staff?.draft as Record<string, unknown>)?.walkIns).toBe(21);
+
+    // And the customer side is live in its own row, not instead of it.
+    const customer = await prisma.whatsAppSession.findFirst({
+      where: { phoneE164: STAFF_PHONE, kind: 'customer' },
+      select: { flow: true },
+    });
+    expect(customer?.flow).toBe('customer');
+    expect(await conversationFor(STAFF_PHONE)).not.toBeNull();
+  });
+
+  it('carries the report on from where it was left', async () => {
+    await send(INTERNAL_LINE, STAFF_PHONE, '9');
+
+    const staff = await prisma.whatsAppSession.findFirst({
+      where: { phoneE164: STAFF_PHONE, kind: 'staff' },
+      select: { draft: true },
+    });
+    const draft = staff?.draft as Record<string, unknown>;
+    // The earlier answer is still there beside the new one, which is the whole
+    // point: the detour cost nothing.
+    expect(draft?.walkIns).toBe(21);
+    expect(draft?.seriousEnquiries).toBe(9);
+  });
+
   /* ----------------------------------------------------- the classification */
 
   it('treats an unclassified number as customer-facing, so nothing in production changes', async () => {

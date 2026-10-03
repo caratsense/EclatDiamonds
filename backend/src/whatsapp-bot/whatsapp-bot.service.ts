@@ -1046,7 +1046,9 @@ export class WhatsAppBotService {
    */
   private async reopenForFreshClick(phoneE164: string): Promise<void> {
     const session = await this.prisma.whatsAppSession.findUnique({
-      where: { phoneE164 },
+      // The CUSTOMER session. An ad click says nothing about a daily report the
+      // same person may be halfway through on the other line.
+      where: { phoneE164_kind: { phoneE164, kind: 'customer' } },
       select: { draft: true },
     });
     if (!session) return;
@@ -1074,7 +1076,7 @@ export class WhatsAppBotService {
      */
     await this.prisma.whatsAppSession
       .update({
-        where: { phoneE164 },
+        where: { phoneE164_kind: { phoneE164, kind: 'customer' } },
         data: { draft: {} as Prisma.InputJsonValue },
       })
       .catch(() => undefined);
@@ -1135,7 +1137,9 @@ export class WhatsAppBotService {
       // The old half-finished answers belong to the previous enquiry. Keeping
       // them would skip questions this customer never answered about this ad.
       await this.prisma.whatsAppSession
-        .delete({ where: { phoneE164 } })
+        // Only the customer session. Deleting by phone alone used to take a
+        // staff member's unfinished daily report with it.
+        .delete({ where: { phoneE164_kind: { phoneE164, kind: 'customer' } } })
         .catch(() => undefined);
       this.logger.log(`  bot turn reclaimed on ${conversationId}: new ad click on a thread nobody had taken`);
       return true;

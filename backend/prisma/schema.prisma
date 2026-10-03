@@ -1105,19 +1105,40 @@ model WhatsAppSession {
   organisationId String?
   organisation   Organisation? @relation(fields: [organisationId], references: [id])
   id             String        @id @default(cuid())
-  phoneE164      String        @unique
+  phoneE164      String
   userId         String?
-  /// idle | dsr | dsr_confirm | message | pick_store
-  flow           String        @default("idle")
-  /// Index into the flow's question list.
-  step           Int           @default(0)
-  /// Answers collected so far, keyed by DailyReport field name.
-  draft          Json?
-  storeId        String?
-  expiresAt      DateTime
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
 
+  /// WHICH BOT this session belongs to: 'staff' or 'customer'.
+  ///
+  /// One person can hold a conversation with both at once, and before this
+  /// existed they could not: the row was unique on `phoneE164` alone, so a
+  /// store manager halfway through a daily report who then wrote to the
+  /// shopfront number had the report silently overwritten by a fresh customer
+  /// session. Measured, not theorised -- a draft holding walkIns and
+  /// seriousEnquiries was gone after one message to the other line.
+  ///
+  /// Keyed on the BOT rather than on the business number, because the two are
+  /// not the same thing: a tenant with one number runs both bots on it, and
+  /// keying by number would put them back in the same row there.
+  ///
+  /// `flow` cannot serve as the discriminator either. It mutates within the
+  /// staff bot (idle -> pick_store -> dsr -> dsr_confirm), so a key built on it
+  /// would move the row mid-conversation.
+  kind String @default("staff")
+
+  /// idle | dsr | dsr_confirm | message | pick_store
+  flow      String   @default("idle")
+  /// Index into the flow's question list.
+  step      Int      @default(0)
+  /// Answers collected so far, keyed by DailyReport field name.
+  draft     Json?
+  storeId   String?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// One live session per person PER BOT.
+  @@unique([phoneE164, kind])
   @@index([expiresAt])
   @@index([organisationId])
 }
@@ -1737,6 +1758,7 @@ model Quote {
 
   /// Money rollup snapshot (recomputed from lines, persisted for fast listing).
   /**
+   * /**
    * /*
    * Approval.
    * `approvedTotal` is the amount that was actually approved, snapshotted at the

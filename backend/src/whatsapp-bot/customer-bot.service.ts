@@ -247,7 +247,7 @@ export class CustomerBotService {
 
   private async load(phoneE164: string) {
     const now = new Date();
-    const existing = await this.prisma.whatsAppSession.findUnique({ where: { phoneE164 } });
+    const existing = await this.prisma.whatsAppSession.findUnique({ where: { phoneE164_kind: { phoneE164, kind: 'customer' } } });
     if (!existing || existing.expiresAt <= now || existing.flow !== 'customer') {
       return { flow: 'customer', step: 0, draft: {} as Prisma.JsonValue };
     }
@@ -257,9 +257,10 @@ export class CustomerBotService {
   private async save(phoneE164: string, organisationId: string, draft: Draft) {
     const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
     await this.prisma.whatsAppSession.upsert({
-      where: { phoneE164 },
+      where: { phoneE164_kind: { phoneE164, kind: 'customer' } },
       create: {
         phoneE164,
+        kind: 'customer',
         organisationId,
         flow: 'customer',
         step: 0,
@@ -294,9 +295,10 @@ export class CustomerBotService {
     kept[DONE_KEY] = new Date().toISOString();
     const expiresAt = new Date(Date.now() + FINISHED_COOLDOWN_MS);
     await this.prisma.whatsAppSession.upsert({
-      where: { phoneE164 },
+      where: { phoneE164_kind: { phoneE164, kind: 'customer' } },
       create: {
         phoneE164,
+        kind: 'customer',
         organisationId,
         flow: 'customer',
         step: 0,
@@ -314,7 +316,7 @@ export class CustomerBotService {
 
   private async clear(phoneE164: string) {
     await this.prisma.whatsAppSession
-      .delete({ where: { phoneE164 } })
+      .delete({ where: { phoneE164_kind: { phoneE164, kind: 'customer' } } })
       .catch(() => undefined); // nothing to clear is the normal case, not an error
   }
 }
