@@ -14,7 +14,6 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock,
-  Download,
   Edit3,
   ExternalLink,
   FileText,
@@ -24,8 +23,6 @@ import {
   MapPin,
   Megaphone,
   MessageSquare,
-  MessageSquarePlus,
-  Mic,
   MoreVertical,
   Paperclip,
   Phone,
@@ -870,30 +867,36 @@ function ConversationsContent() {
               </div>
               <span className="text-xs font-medium text-foreground">CaratOS Staff</span>
             </div>
+            {/*
+              One button, and it does what it says.
+
+              Three sat here. "Sync Threads" reported `toast.success("Synced
+              with Meta Cloud API")` without contacting anything — a success
+              message for work that never happened, which is the one kind of
+              lie a user cannot detect. It now refetches the list, which is the
+              real answer to "show me anything new": inbound messages arrive by
+              webhook, so there is nothing to pull from Meta, only our own list
+              to re-read.
+
+              "New Chat" and "Download Conversations" are gone. WhatsApp does
+              not allow opening a conversation with a number that has not
+              written first unless it is an approved template — that is what
+              Campaigns is for — and there is no conversation export endpoint
+              to download anything from. Both were toasts describing features
+              that do not exist.
+            */}
             <div className="flex items-center gap-1 text-muted-foreground">
               <button
                 type="button"
-                onClick={() => toast.success("Synced with Meta Cloud API")}
-                className="h-7 w-7 rounded-md hover:bg-muted flex items-center justify-center"
-                title="Sync Threads"
+                onClick={() => {
+                  void list.refetch();
+                  toast.success("Refreshed");
+                }}
+                disabled={list.isFetching}
+                className="h-7 w-7 rounded-md hover:bg-muted flex items-center justify-center disabled:opacity-50"
+                title="Check for new messages"
               >
-                <RefreshCw className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => toast.info("New Direct Chat", { description: "Enter customer phone to start WhatsApp chat" })}
-                className="h-7 w-7 rounded-md hover:bg-muted flex items-center justify-center"
-                title="New Chat"
-              >
-                <MessageSquarePlus className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => toast.info("Exporting Chat Logs...")}
-                className="h-7 w-7 rounded-md hover:bg-muted flex items-center justify-center"
-                title="Download Conversations"
-              >
-                <Download className="h-3.5 w-3.5" />
+                <RefreshCw className={`h-3.5 w-3.5 ${list.isFetching ? "animate-spin" : ""}`} />
               </button>
             </div>
           </div>
@@ -1282,15 +1285,39 @@ function ThreadView({
               </Button>
             )}
 
+            {/*
+              Hands the number to whatever actually places calls on this device.
+
+              This used to raise a toast reading "Calling <name>…" and do
+              nothing — the worst kind of stub, because it did not look broken.
+              Somebody could press it, read that the call was going through,
+              and never pick up a handset.
+
+              There is no dial-out to wire it to, and that is not an oversight
+              to fix here: the telephony integration is INBOUND — a webhook
+              recording calls that already happened — and the calling module
+              logs outcomes rather than originating anything. Placing a call
+              from the server needs an outbound voice provider nobody has
+              bought.
+
+              `tel:` is the honest alternative and genuinely works: the mobile
+              dialer, or a desktop softphone registered for the scheme. Spaces
+              and punctuation are stripped because some dialers refuse them.
+            */}
             {party?.phone && (
               <Button
+                asChild
                 size="sm"
                 variant="ghost"
                 className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-                title={`Call ${party.phone}`}
-                onClick={() => toast.info(`Calling ${party.name}...`, { description: party.phone })}
               >
-                <Phone className="h-3.5 w-3.5" />
+                <a
+                  href={`tel:${party.phone.replace(/[^\d+]/g, "")}`}
+                  title={`Call ${party.phone}`}
+                  aria-label={`Call ${party.name ?? party.phone}`}
+                >
+                  <Phone className="h-3.5 w-3.5" />
+                </a>
               </Button>
             )}
 
@@ -1664,17 +1691,14 @@ function ThreadView({
               >
                 <Send className="h-4 w-4 fill-white" />
               </Button>
-            ) : (
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-9 w-9 shrink-0 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted"
-                title="Record voice note"
-                onClick={() => toast.info("Voice Message", { description: "Hold to record WhatsApp voice message" })}
-              >
-                <Mic className="h-4 w-4" />
-              </Button>
-            )}
+            ) : null}
+            {/*
+              The microphone that sat here recorded nothing. It toasted "Hold
+              to record WhatsApp voice message" and had no recorder behind it,
+              no upload, and no outbound audio path on the server — a reply is
+              sent as text. Removed rather than left as an invitation to hold
+              a button that does nothing.
+            */}
           </div>
 
           <div className="flex items-center justify-between text-[10.5px] text-muted-foreground px-1 pt-0.5">
@@ -1768,15 +1792,19 @@ function ThreadView({
                 </span>
               </div>
 
-              <div className="pt-1">
-                <button
-                  type="button"
-                  onClick={() => toast.info("Contact Resolution", { description: "Re-assign or link to different customer record" })}
-                  className="text-[11px] text-[#25D366] hover:underline"
-                >
-                  Not the right contact?
-                </button>
-              </div>
+              {/*
+                "Not the right contact?" used to toast "Re-assign or link to
+                different customer record" and do nothing. Detaching a thread
+                from one customer and attaching it to another is not a feature
+                that exists — there is no endpoint for it — so the link was
+                offering a repair the product cannot perform.
+
+                Deliberately NOT pointed at the duplicate-merge tool in
+                Settings - Configuration: that answers "these two records are
+                the same person", which is a different question from "this
+                conversation is filed against the wrong person". Sending
+                somebody there would trade a dead link for a misleading one.
+              */}
             </CardContent>
           </Card>
 
@@ -1810,13 +1838,17 @@ function ThreadView({
                   <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
                   Whatsapp messages
                 </span>
-                <button
-                  type="button"
-                  onClick={() => toast.success("Activity Logged", { description: "15 WhatsApp messages archived in timeline" })}
-                  className="text-primary hover:underline text-[11px] font-medium"
-                >
-                  + Log
-                </button>
+                {/*
+                  "+ Log" reported `toast.success("Activity Logged", "15
+                  WhatsApp messages archived in timeline")` — a success for
+                  work that never ran, quoting a count nobody counted. The
+                  number was a literal in the source and read the same whether
+                  the thread held three messages or three hundred.
+
+                  Nothing is logged because nothing needs to be: every message
+                  on this thread is already persisted as it arrives, and the
+                  timeline reads from that. Removed.
+                */}
               </div>
 
               <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
@@ -1873,13 +1905,19 @@ function ThreadView({
                   <CheckCircle2 className="h-3.5 w-3.5 text-muted-foreground" />
                   tickets
                 </span>
-                <button
-                  type="button"
-                  onClick={() => toast.info("Support Ticket", { description: "Creating customer service ticket..." })}
+                {/*
+                  Ticketing is a real module with a real screen, so this goes
+                  there rather than toasting "Creating customer service
+                  ticket…" and creating nothing. The customer is carried in the
+                  query string so the ticket opens against the person whose
+                  conversation you were reading.
+                */}
+                <Link
+                  href={party?.id ? `/ticketing?partyId=${party.id}` : "/ticketing"}
                   className="text-primary hover:underline text-[11px] font-medium"
                 >
                   + Add
-                </button>
+                </Link>
               </div>
             </div>
           </Card>
