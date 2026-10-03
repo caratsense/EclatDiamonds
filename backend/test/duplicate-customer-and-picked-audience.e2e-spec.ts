@@ -5,7 +5,7 @@ import * as bcrypt from 'bcryptjs';
 
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { ROLE_ACCESS } from '../src/auth/access';
+import { roleDefaults } from '../src/auth/access';
 import { compileSegment, parseSegmentDefinition } from '../src/crm/audience-segment.dsl';
 
 /**
@@ -199,9 +199,12 @@ describe('duplicate customers across stores, and hand-picked audiences (e2e)', (
   it('gives a store manager the bulk-send screen, at STORE level', async () => {
     // The level is what makes it safe, not the absence of the screen: at
     // 'store' their audience cannot reach past the branches they run.
-    expect(ROLE_ACCESS.store_manager['campaigns']).toBe('store');
+    //
+    // Read through `roleDefaults` rather than the map directly: a tenant can
+    // start its sales staff on attendance only, and the defaults differ there.
+    expect(roleDefaults('store_manager', ORG)['campaigns']).toBe('store');
     // A salesperson is still not given it.
-    expect(ROLE_ACCESS.salesperson['campaigns']).toBeUndefined();
+    expect(roleDefaults('salesperson', ORG)['campaigns']).toBeUndefined();
   });
 
   it('lets a store manager open the campaign list', async () => {

@@ -413,12 +413,12 @@ export class WhatsAppConversationService {
   }
 
   private async loadSession(phoneE164: string, userId: string) {
-    const existing = await this.prisma.whatsAppSession.findUnique({ where: { phoneE164 } });
+    const existing = await this.prisma.whatsAppSession.findUnique({ where: { phoneE164_kind: { phoneE164, kind: 'staff' } } });
     if (existing && existing.expiresAt > new Date() && existing.userId === userId) return existing;
 
     // Expired, missing, or belonging to a previous owner of this number.
     return this.prisma.whatsAppSession.upsert({
-      where: { phoneE164 },
+      where: { phoneE164_kind: { phoneE164, kind: 'staff' } },
       create: { phoneE164, userId, flow: 'idle', expiresAt: this.expiry() },
       update: { userId, flow: 'idle', step: 0, draft: Prisma.DbNull, storeId: null, expiresAt: this.expiry() },
     });
@@ -430,7 +430,7 @@ export class WhatsAppConversationService {
     patch: { flow: string; step?: number; draft?: any; storeId?: string },
   ) {
     await this.prisma.whatsAppSession.upsert({
-      where: { phoneE164 },
+      where: { phoneE164_kind: { phoneE164, kind: 'staff' } },
       create: {
         phoneE164,
         userId,
