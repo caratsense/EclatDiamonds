@@ -3,6 +3,7 @@ import {
   Injectable,
   InternalServerErrorException,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
@@ -236,6 +237,27 @@ export class IntegrationsRegistryService {
       );
     }
     if (!secret?.trim()) throw new BadRequestException('The secret is empty.');
+
+    /*
+     * SAY WHY, rather than letting this be a 500.
+     *
+     * `encrypt` below already refuses without a key, and its message names the
+     * variable to set -- but it throws InternalServerErrorException, and the
+     * global filter replaces every 500 body with "Something went wrong. The
+     * team has been notified." Correct for a genuine fault, useless here: this
+     * is a deployment that has not been finished, the operator reading the
+     * toast is the person who can finish it, and the fix is one variable.
+     *
+     * Cost a real afternoon: a token was pasted three times into a save that
+     * could not succeed, against a message that said nothing.
+     */
+    if (!this.crypto.isConfigured) {
+      throw new ServiceUnavailableException(
+        'Integration credentials cannot be stored yet: CREDENTIAL_ENCRYPTION_KEY is not set ' +
+          'on this deployment. Secrets are never written unencrypted, so nothing was saved. ' +
+          'Set it (32 random bytes, base64) and try again.',
+      );
+    }
 
     // Throws when no key is configured — the integration simply cannot be saved.
     const credentialContext = {

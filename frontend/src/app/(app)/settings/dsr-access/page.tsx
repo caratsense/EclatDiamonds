@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Copy, KeyRound, Search, Smartphone, Unlink } from "lucide-react";
+import { Check, Copy, KeyRound, Search, Unlink } from "lucide-react";
 import { toast } from "sonner";
 
 import { SectionHeader } from "@/components/section/section-header";

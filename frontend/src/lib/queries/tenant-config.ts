@@ -296,6 +296,8 @@ export interface IntegrationRow {
     kind: string;
     externalId: string;
     name: string | null;
+    /** 'internal' for a staff-only line; null or absent for customer-facing. */
+    purpose?: string | null;
     isActive?: boolean;
   }[];
 }
@@ -347,6 +349,12 @@ export function useSetIntegrationAsset(integrationId: string) {
       kind: "phone_number";
       externalId: string;
       name?: string;
+      /**
+       * 'internal' for a line only staff may use, 'customer' for one anybody
+       * may write to. Omitted leaves it customer-facing, which is what every
+       * number registered before the distinction existed is.
+       */
+      purpose?: "internal" | "customer";
     }) =>
       (await api.post(`/integrations-registry/${integrationId}/assets`, input)).data,
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["integrations-registry"] }),

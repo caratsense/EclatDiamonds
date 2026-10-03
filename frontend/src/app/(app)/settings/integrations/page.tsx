@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useUpdateIntegrationConfig } from "@/lib/queries/meta-admin";
 import {
   useCreateIntegration,
   useIntegrations,
@@ -255,10 +256,24 @@ function IntegrationCard({
   const setAsset = useSetIntegrationAsset(integration.id);
   const [kind, setKind] = useState(provider?.credentialKinds?.[0] ?? "api_key");
   const [secret, setSecret] = useState("");
-  const currentPhoneNumberId = integration.assets.find(
-    (asset) => asset.kind === "phone_number",
-  )?.externalId;
-  const [phoneNumberId, setPhoneNumberId] = useState(currentPhoneNumberId ?? "");
+  const updateConfig = useUpdateIntegrationConfig();
+  /*
+   * Deliberately EMPTY, not pre-filled with the first number.
+   *
+   * It used to show whichever number happened to be registered first, which
+   * read as "this is the number" on a business that now runs two. Worse, the
+   * save upserts on the id, so editing that pre-filled value and saving adds a
+   * SECOND number rather than correcting the first — the field looked like an
+   * edit and behaved like an add. Blank says what it does: this adds one.
+   */
+  const phoneNumbers = integration.assets.filter((asset) => asset.kind === "phone_number");
+  const [phoneNumberId, setPhoneNumberId] = useState("");
+  const [purpose, setPurpose] = useState<"customer" | "internal">("customer");
+  const [wabaId, setWabaId] = useState(
+    typeof integration.config?.whatsappBusinessAccountId === "string"
+      ? integration.config.whatsappBusinessAccountId
+      : "",
+  );
 
   const save = async () => {
     if (!secret.trim()) return;
@@ -279,11 +294,32 @@ function IntegrationCard({
       await setAsset.mutateAsync({
         kind: "phone_number",
         externalId: phoneNumberId,
-        name: "WhatsApp sender",
+        // Named for what it is, so the routes screen reads as something other
+        // than two rows both called "WhatsApp sender".
+        name: purpose === "internal" ? "Staff reporting line" : "Customer line",
+        purpose,
       });
-      toast.success("WhatsApp phone number ID saved");
+      setPhoneNumberId("");
+      toast.success(
+        purpose === "internal"
+          ? "Added. This line answers linked staff only."
+          : "Added. Customers reach this line.",
+      );
     } catch (e) {
       toast.error(apiErrorMessage(e, "Could not save the WhatsApp phone number ID."));
+    }
+  };
+
+  const saveWabaId = async () => {
+    if (!/^\d{5,32}$/.test(wabaId)) return;
+    try {
+      await updateConfig.mutateAsync({
+        integrationId: integration.id,
+        config: { whatsappBusinessAccountId: wabaId },
+      });
+      toast.success("WhatsApp Business Account id saved");
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Could not save the account id."));
     }
   };
 
@@ -347,12 +383,26 @@ function IntegrationCard({
           </div>
           <div className="min-w-48 flex-1 space-y-1">
             <Label className="text-xs">Secret</Label>
+            {/*
+              `autoComplete="off"` is not enough, and Edge proved it: a
+              type=password field made it offer to save a Meta access token
+              into the user's Microsoft account, pairing it with their login
+              email. A production API token does not belong in a browser
+              password store.
+
+              `new-password` is the form browsers honour for "this is a secret
+              being set, not a credential to remember" -- it suppresses both the
+              save prompt and autofill, while keeping the value masked.
+            */}
             <Input
               type="password"
               value={secret}
               onChange={(e) => setSecret(e.target.value)}
               placeholder="Paste the value"
-              autoComplete="off"
+              autoComplete="new-password"
+              name="integration-secret"
+              data-1p-ignore
+              data-lpignore="true"
             />
           </div>
           <Button size="sm" onClick={save} disabled={setCredential.isPending || !secret.trim()}>
@@ -365,27 +415,106 @@ function IntegrationCard({
       ) : null}
 
       {integration.providerCode === "whatsapp_cloud" ? (
-        <div className="mt-3 flex flex-wrap items-end gap-2 border-t pt-3">
-          <div className="min-w-56 flex-1 space-y-1">
-            <Label className="text-xs">WhatsApp phone number ID</Label>
-            <Input
-              inputMode="numeric"
-              value={phoneNumberId}
-              onChange={(event) => setPhoneNumberId(event.target.value.replace(/\D/g, ""))}
-              placeholder="Meta phone number ID"
-              maxLength={32}
-            />
+        <div className="mt-3 space-y-4 border-t pt-3">
+          {/*
+            WHAT IS ALREADY HERE, before the form that adds another.
+
+            A business can run several numbers and the two jobs are not
+            interchangeable: a line customers reach, and a line only staff may
+            use. Showing the list first means nobody has to guess whether the
+            number they are about to type is already registered — and nobody
+            discovers they have two customer lines by watching a stranger get a
+            sales script on the reporting number.
+          */}
+          {phoneNumbers.length > 0 && (
+            <div className="space-y-1.5">
+              <Label className="text-xs">Numbers on this connection</Label>
+              <div className="space-y-1">
+                {phoneNumbers.map((n) => (
+                  <div
+                    key={n.id}
+                    className="flex flex-wrap items-center gap-2 rounded-md border px-2.5 py-1.5 text-sm"
+                  >
+                    <span className="font-mono text-xs">…{n.externalId.slice(-4)}</span>
+                    <span className="text-muted-foreground">{n.name ?? "WhatsApp sender"}</span>
+                    <Badge
+                      variant={n.purpose === "internal" ? "secondary" : "default"}
+                      className="text-[10px]"
+                    >
+                      {n.purpose === "internal" ? "Staff only" : "Customers"}
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="min-w-56 flex-1 space-y-1">
+              <Label className="text-xs">Add a phone number ID</Label>
+              <Input
+                inputMode="numeric"
+                value={phoneNumberId}
+                onChange={(event) => setPhoneNumberId(event.target.value.replace(/\D/g, ""))}
+                placeholder="Meta phone number ID"
+                maxLength={32}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Who writes to it</Label>
+              <select
+                className="h-9 rounded-md border bg-background px-3 text-sm"
+                value={purpose}
+                onChange={(e) => setPurpose(e.target.value as "customer" | "internal")}
+              >
+                <option value="customer">Customers</option>
+                <option value="internal">Staff only</option>
+              </select>
+            </div>
+            <Button
+              size="sm"
+              onClick={savePhoneNumber}
+              disabled={setAsset.isPending || !/^[1-9]\d{5,31}$/.test(phoneNumberId)}
+            >
+              Add number
+            </Button>
+            <p className="w-full text-xs text-muted-foreground">
+              The numeric Phone Number ID from WhatsApp Manager, not the visible phone number.{" "}
+              {purpose === "internal"
+                ? "A staff line answers people linked to a CaratOS account and says nothing to anybody else."
+                : "A customer line answers anyone who writes in, and is where ad clicks arrive."}
+            </p>
           </div>
-          <Button
-            size="sm"
-            onClick={savePhoneNumber}
-            disabled={setAsset.isPending || !/^[1-9]\d{5,31}$/.test(phoneNumberId)}
-          >
-            Save sender ID
-          </Button>
-          <p className="w-full text-xs text-muted-foreground">
-            This is the numeric Phone Number ID from WhatsApp Manager, not the visible phone number.
-          </p>
+
+          {/*
+            The account the numbers belong to. Templates live here, not on a
+            number: both `list templates` and `submit a template` call
+            /{waba-id}/message_templates, so without this the Templates screen
+            loads and every button on it refuses.
+          */}
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="min-w-56 flex-1 space-y-1">
+              <Label className="text-xs">WhatsApp Business Account ID</Label>
+              <Input
+                inputMode="numeric"
+                value={wabaId}
+                onChange={(event) => setWabaId(event.target.value.replace(/\D/g, ""))}
+                placeholder="WABA ID from WhatsApp Manager"
+                maxLength={32}
+              />
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={saveWabaId}
+              disabled={updateConfig.isPending || !/^\d{5,32}$/.test(wabaId)}
+            >
+              Save account ID
+            </Button>
+            <p className="w-full text-xs text-muted-foreground">
+              Needed before message templates can be listed or submitted for approval.
+            </p>
+          </div>
         </div>
       ) : null}
     </div>
