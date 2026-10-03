@@ -45,6 +45,7 @@
  *   --url       backend base URL (default http://localhost:4000)
  */
 
+import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -61,9 +62,26 @@ const TEXT = args.text ?? 'Saw your ad, do you have this in 22k?';
  * rather than on the string — "http://localhost.evil.com" contains "localhost"
  * and is not this machine.
  */
+/*
+ * Local by default, and a NAMED staging host only when asked for explicitly.
+ *
+ * The allowlist is spelt out rather than pattern-matched: "contains staging"
+ * would accept backend-production-89dd if somebody ever renamed it, and the
+ * one host this must never reach is the one answering real customers.
+ */
+const ALLOWED_HOSTS = [
+  'localhost',
+  '127.0.0.1',
+  '::1',
+  '[::1]',
+  'backend-staging-e5cd.up.railway.app',
+];
 const host = new URL(BASE).hostname;
-if (!['localhost', '127.0.0.1', '::1', '[::1]'].includes(host)) {
-  console.error(`Refusing to post to ${host}. This script only targets the local backend.`);
+if (!ALLOWED_HOSTS.includes(host)) {
+  console.error(
+    `Refusing to post to ${host}. This script targets the local backend or ` +
+      'the named staging host, never production.',
+  );
   process.exit(1);
 }
 
@@ -146,10 +164,38 @@ const envelope = {
   ],
 };
 
+/*
+ * SIGNED, because the thing being tested verifies signatures.
+ *
+ * Staging sets WHATSAPP_APP_SECRET and checks `x-hub-signature-256` on every
+ * inbound body, exactly as production does -- that check is the only thing
+ * standing between the webhook and anybody who knows the URL. An unsigned
+ * simulator would have had to be met by turning it off, which would have meant
+ * testing a configuration nobody runs.
+ *
+ * The signature is over the EXACT bytes sent. Serialise once and reuse the
+ * string: re-stringifying for the body would be a different byte sequence the
+ * moment key order or spacing differed, and the failure reads as "invalid
+ * signature" rather than "you hashed something else".
+ */
+const payload = JSON.stringify(envelope);
+const appSecret =
+  args.secret ??
+  process.env.ECLAT_APP_SECRET ??
+  readEnvFile('WHATSAPP_APP_SECRET');
+
+const headers = { 'content-type': 'application/json' };
+if (appSecret) {
+  headers['x-hub-signature-256'] =
+    'sha256=' + createHmac('sha256', appSecret).update(payload).digest('hex');
+} else {
+  console.warn('No app secret found — sending unsigned. A host that verifies will refuse this.');
+}
+
 const res = await fetch(`${BASE}/integrations/whatsapp/webhook`, {
   method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify(envelope),
+  headers,
+  body: payload,
 });
 
 const body = await res.text();
@@ -200,7 +246,10 @@ function parseArgs(argv) {
 function readEnvFile(key) {
   try {
     const text = readFileSync(join(import.meta.dirname, '..', '.env'), 'utf8');
-    const line = text.split(/\r?\n/).find((l) => l.startsWith(`${key}=`));
+    const line = text
+      .split(String.fromCharCode(10))
+      .map((l) => l.trim())
+      .find((l) => l.startsWith(`${key}=`));
     if (!line) return null;
     return line.slice(key.length + 1).trim().replace(/^["']|["']$/g, '');
   } catch {
