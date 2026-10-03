@@ -197,7 +197,7 @@ describe('Item master + item-level quote pricing (e2e)', () => {
     await quote({ lines: [{ ...ITEM, stones: [{ ...ITEM.stones[0], type: 'X' }] }] }).expect(400);
     await quote({ lines: [{ ...ITEM, size: '12<b>' }] }).expect(400);
     const tooMuch = await quote({ lines: [ITEM], additionalDiscount: 12101 }).expect(400);
-    expect(JSON.stringify(tooMuch.body)).toMatch(/Gold is never discounted/);
+    expect(JSON.stringify(tooMuch.body)).toMatch(/more than the making and diamonds that are left/);
     await quote({ lines: [{ ...ITEM, karat: 12, size: '16 inch' }], additionalDiscount: 12100 }).expect(201);
   });
 
@@ -238,6 +238,57 @@ describe('Item master + item-level quote pricing (e2e)', () => {
     expect(rupeesInWords(12345678.9)).toBe(
       'INR One Crore Twenty Three Lakh Forty Five Thousand Six Hundred Seventy Eight and Ninety Paise Only',
     );
+  });
+
+  it('gives each line its own discount, the way the shop writes its bill', async () => {
+    // The shop's own worked example (30 Sep 2026):
+    //   gold     4.90 g  x 11,000            = 53,900
+    //   diamond  0.72 ct x 20,000  less 5%   = 13,680
+    //   diamond  2.00 ct x 30,000  less 5%   = 57,000
+    //   making   4.90 g  x  1,200  less 16.66% =  4,900.39
+    const line = {
+      description: 'LADIES RING', karat: 14, weightGrams: 4.9, goldRatePerGram: 11000, metalCode: 'G14YG',
+      makingRatePerGram: 1200, metalDiscountPercent: 0, makingDiscountPercent: 16.66,
+      remark: 'pear diamond, not in the list',
+      stones: [
+        { type: 'D', code: 'LG-RND-VVS-E-F', carats: 0.72, ratePerCt: 20000, discountPercent: 5 },
+        { type: 'D', code: 'LG-RND-VVS-E-F', carats: 2, ratePerCt: 30000, discountPercent: 5 },
+      ],
+    };
+    const res = await quote({ lines: [line] }).expect(201);
+    expect(res.body.lines[0]).toMatchObject({
+      makingCharges: 5880, stoneCharges: 74400, metalDiscountPercent: 0, makingDiscountPercent: 16.66,
+      remark: 'pear diamond, not in the list',
+    });
+    expect(res.body.lines[0].stones.map((x: { discountPercent: number }) => x.discountPercent)).toEqual([5, 5]);
+    expect(res.body.totals).toMatchObject({
+      metalValue: 53900, makingCharges: 5880, stoneCharges: 74400,
+      metalDiscount: 0, makingDiscount: 979.61, stoneDiscount: 3720, discount: 4699.61,
+      taxable: 129480.39,
+    });
+    // Everything given away, as one % of making + stones: what a role's cap is judged on.
+    expect(res.body.discountPercent).toBe(5.85);
+
+    // The bill prints each line's own % and the note.
+    const file = await request(server()).get(`/quotes/${res.body.id}/pdf`).set(as('rep')).buffer(true).parse(binary).expect(200);
+    const text = (await pdfParse(file.body as Buffer)).text;
+    // The note wraps under the item's labels rather than being cut short.
+    for (const part of ['-5%', '-16.66%', '13,680.00', '57,000.00', '4,900.39', 'Note : pear diamond, not in', 'the list']) {
+      expect(text).toContain(part);
+    }
+
+    // Gold can be discounted too, on its net weight; it counts against the same allowance.
+    const gold = await quote({ lines: [{ ...line, metalDiscountPercent: 2 }] }).expect(201);
+    expect(gold.body.totals).toMatchObject({ metalDiscount: 1078, discount: 5777.61, taxable: 128402.39 });
+    expect(gold.body.discountPercent).toBe(7.2);
+
+    // Re-pricing only the flat amount leaves every line's own % as it was.
+    const edited = await request(server()).patch(`/quotes/${gold.body.id}`).set(as('rep')).send({ additionalDiscount: 100 }).expect(200);
+    expect(edited.body.totals).toMatchObject({ metalDiscount: 1078, makingDiscount: 979.61, stoneDiscount: 3720, additionalDiscount: 100 });
+
+    // The flat amount still cannot reach into the gold.
+    await quote({ lines: [line], additionalDiscount: 80280.39 - 4699.61 + 1 }).expect(400);
+    await quote({ lines: [{ ...line, makingDiscountPercent: 101 }] }).expect(400);
   });
 
   it('a custom order booked from the quote carries the item type, size and materials', async () => {

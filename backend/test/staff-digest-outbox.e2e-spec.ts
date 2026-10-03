@@ -28,11 +28,17 @@ import { PrismaService } from '../src/prisma/prisma.service';
  *  4. THE WORKER RE-CHECKS THE PERSON. Deactivated after queuing → not messaged.
  *  5. RECEIPTS AND AUDIT land on the outbox message like any other.
  *  6. A STAFF THREAD IS NOT IN THE CUSTOMER INBOX.
+ *  7. A STORE MANAGER'S NUMBER STAYS HER OWN. The approved template says how
+ *     many follow-ups the reader has. What staff who cannot open CRM hold is
+ *     told on the bell alone, and a manager with nothing of her own is sent no
+ *     WhatsApp notice, with the reason recorded.
  */
 
 const PASSWORD = 'password123';
 const A = { org: 'org_dgo_a', slug: 'dgo-a', store: 'store_dgo_a', integ: 'int_dgo_a' };
 const TEMPLATE = 'staff_morning_digest';
+/** Lists the workspaces whose sales staff start with attendance only (auth/access.ts). */
+const VARIABLE = 'ATTENDANCE_ONLY_SALES_ORGS';
 
 class FakeWhatsApp {
   sends: { to: string; name: string; languageCode?: string; route?: { storeId?: string | null } }[] = [];
@@ -92,6 +98,7 @@ describe('Staff digest through the outbox (e2e)', () => {
   let omnichannel: OmnichannelService;
   const whatsapp = new FakeWhatsApp();
   let hoToken = '';
+  const listedBefore = process.env[VARIABLE];
 
   const ymd = dateOnly(businessDate(new Date(), 'Asia/Kolkata'));
   const nineAmIst = new Date(`${ymd}T03:30:00.000Z`);
@@ -198,6 +205,8 @@ describe('Staff digest through the outbox (e2e)', () => {
   }, 120_000);
 
   afterAll(async () => {
+    if (listedBefore === undefined) delete process.env[VARIABLE];
+    else process.env[VARIABLE] = listedBefore;
     if (prisma) await teardown(prisma);
     if (app) await app.close();
   });
@@ -363,5 +372,53 @@ describe('Staff digest through the outbox (e2e)', () => {
       .get(`/crm/conversations/${staffThread.id}`)
       .set({ Authorization: `Bearer ${hoToken}` })
       .expect(404);
+  });
+
+  it("a store manager's number stays her own, and the bell alone says what other staff hold", async () => {
+    // The mornings above are done with. From here sales staff start with attendance only.
+    await prisma.leadFollowUp.updateMany({ where: { lead: { organisationId: A.org } }, data: { done: true } });
+    process.env[VARIABLE] = A.org;
+    const joins = (id: string, role: Role, phone: string) =>
+      prisma.user.create({
+        data: {
+          id, email: `${id}@dgo-a.local`, name: `${id} Person`, role, isActive: true,
+          approvalStatus: 'approved', organisationId: A.org, phone,
+          userStores: { create: { storeId: A.store, isPrimary: true } },
+        },
+      });
+    await joins('u_dgo_mgr', Role.store_manager, '9812370005');
+    // This manager owes nothing herself.
+    await joins('u_dgo_mgr2', Role.store_manager, '9812370007');
+    // Cannot open CRM, and still holds a lead.
+    await joins('u_dgo_off', Role.salesperson, '9812370006');
+    await owe('u_dgo_mgr', 'DGO-5');
+    await owe('u_dgo_off', 'DGO-6');
+
+    const messagesBefore = await prisma.message.count({ where: { organisationId: A.org } });
+    const ran = await digest.runForStore(A.org, A.store, 'Asia/Kolkata', nineAmIst);
+    expect(ran.sent).toBe(2);
+    expect(await runFor('u_dgo_off')).toBeNull();
+
+    const run = await runFor('u_dgo_mgr');
+    expect(run?.whatsappStatus).toBe('queued');
+    const message = await prisma.message.findUniqueOrThrow({ where: { id: run!.whatsappMessageId! } });
+    // Her own one, as on any other morning. The template says how many are the reader's.
+    expect(message.payload).toMatchObject({
+      omnichannel: { templateComponents: [{ parameters: [{ text: 'u_dgo_mgr' }, { text: '1' }] }] },
+    });
+    // The bell says both, kept apart.
+    const bell = (userId: string) =>
+      prisma.notification.findFirstOrThrow({ where: { userId, kind: 'reminder' } });
+    expect(await bell('u_dgo_mgr')).toMatchObject({
+      title: '1 follow-ups today',
+      body: '1 more follow-up is with staff who cannot open it.',
+    });
+
+    // With nothing of her own the template has no number to give: the bell, and no WhatsApp.
+    expect(await bell('u_dgo_mgr2')).toMatchObject({ title: '1 follow-up is with staff who cannot open it' });
+    const alone = await runFor('u_dgo_mgr2');
+    expect(alone).toMatchObject({ inAppNotified: true, whatsappStatus: 'skipped', whatsappMessageId: null });
+    expect(alone?.whatsappReason).toMatch(/of their own/i);
+    expect(await prisma.message.count({ where: { organisationId: A.org } })).toBe(messagesBefore + 1);
   });
 });

@@ -69,12 +69,17 @@ export interface QuoteLine {
   makingRatePerGram?: number | null;
   /** Diamonds (D) and colour stones (C) by item-master code. */
   stones?: QuoteStone[];
+  /** % off this item's gold and off its making; null on quotes that gave one % for the whole quote. */
+  metalDiscountPercent?: number | null;
+  makingDiscountPercent?: number | null;
+  /** Free text about this item. */
+  remark?: string | null;
 }
 
 /**
  * One diamond or colour-stone entry of an item. The server works out
- * `amount` = carats x ratePerCt x multiplier; the multiplier is staff-only and
- * never printed for the customer.
+ * `amount` = carats x ratePerCt (x the multiplier on quotes made before
+ * 30 Sep 2026), before the stone's own discount.
  */
 export interface QuoteStone {
   type: "D" | "C";
@@ -85,6 +90,8 @@ export interface QuoteStone {
   carats: number;
   ratePerCt: number;
   multiplier?: number;
+  /** % off this stone. */
+  discountPercent?: number;
   amount?: number;
 }
 
@@ -176,7 +183,17 @@ export function lineMetalValue(line: QuoteLine): number {
 
 /** Per-line subtotal before GST. */
 export function lineSubtotal(line: QuoteLine): number {
-  return lineMetalValue(line) + line.makingCharges + line.stoneCharges;
+  // After each line's own discount, where it has one.
+  const stonesOff = (line.stones ?? []).reduce(
+    (sum, st) => sum + ((st.amount ?? 0) * (st.discountPercent ?? 0)) / 100,
+    0,
+  );
+  return (
+    lineMetalValue(line) * (1 - (line.metalDiscountPercent ?? 0) / 100) +
+    line.makingCharges * (1 - (line.makingDiscountPercent ?? 0) / 100) +
+    line.stoneCharges -
+    stonesOff
+  );
 }
 
 export interface QuoteTotals {
@@ -184,6 +201,8 @@ export interface QuoteTotals {
   makingCharges: number;
   stoneCharges: number;
   discount: number;
+  /** What came off the gold, the making and the stones, and the flat amount. */
+  metalDiscount?: number;
   makingDiscount?: number;
   stoneDiscount?: number;
   additionalDiscount?: number;

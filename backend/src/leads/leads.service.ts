@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { SequenceService } from '../common/sequence.service';
 import { AuthUser } from '../common/auth-user';
+import { canOpen } from '../auth/access';
 import { isSalesScoped } from '../common/sales-scope';
 import { AttributionService } from '../crm/attribution.service';
 import { ActivityService } from '../crm/activity.service';
@@ -239,9 +240,15 @@ export class LeadsService {
         isActive: true,
         OR: [{ role: 'head_office' }, { userStores: { some: { storeId } } }],
       },
-      select: { id: true },
+      select: { name: true, role: true, accessOverrides: true, organisationId: true },
     });
     if (!owner) throw new BadRequestException('That person cannot take leads at this branch.');
+    // An owner who cannot open CRM would never see the lead.
+    if (!canOpen(owner, 'crm')) {
+      throw new BadRequestException(
+        `${owner.name} cannot open CRM & Leads, so this lead cannot be given to them.`,
+      );
+    }
   }
 
   async list(user: AuthUser, q: ListLeadsQuery, headerStore?: string) {

@@ -12,6 +12,7 @@ import { StorageService } from '../storage/storage.service';
 import { LeadSource, Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
+import { canOpen } from '../auth/access';
 import { ResponseSlaService } from './response-sla.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuditService } from '../common/audit.service';
@@ -214,7 +215,7 @@ export class ConversationsService {
             ...(ref?.adSetId ? { adSetId: ref.adSetId } : {}),
           }
         : undefined;
-    const route = await this.adSetRules.resolve(organisationId, routingContext);
+    const route = await this.adSetRules.resolve(organisationId, routingContext, 'conversations');
     let inboundStoreId = msg.storeId ?? null;
     if (inboundStoreId) {
       const physicalStore = await this.prisma.store.findFirst({
@@ -1062,7 +1063,7 @@ export class ConversationsService {
     if (input.assignedUserId) {
       const assignee = await this.prisma.user.findFirst({
         where: { id: input.assignedUserId, organisationId: user.organisationId, isActive: true },
-        select: { id: true, name: true },
+        select: { id: true, name: true, role: true, accessOverrides: true, organisationId: true },
       });
       if (!assignee) throw new NotFoundException('Assignee not found, or not active, in your organisation');
 
@@ -1078,6 +1079,12 @@ export class ConversationsService {
         select: { userId: true },
       });
       if (!member) throw new BadRequestException('That person does not work at the destination location.');
+      // An owner who cannot open the inbox would never see the customer's messages.
+      if (!canOpen(assignee, 'conversations')) {
+        throw new BadRequestException(
+          `${assignee.name} cannot open Conversations, so this conversation cannot be given to them.`,
+        );
+      }
     }
 
     const before = {

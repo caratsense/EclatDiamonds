@@ -418,9 +418,13 @@ describe('Tenant module switches and the management view (e2e)', () => {
       );
       if (!fs.existsSync(navSource)) return; // backend-only deployment
 
-      const slugs = [...fs.readFileSync(navSource, 'utf8').matchAll(/^\s+slug: "([^"]+)"/gm)].map(
-        (m) => m[1],
-      );
+      // The modules only (NAV_ITEMS). Further down the file is the punch screen's
+      // tab on a phone: `/check-in` is a page every member of staff has, not a
+      // module a pack switches on, and the module gate lets it through.
+      const source = fs.readFileSync(navSource, 'utf8');
+      const modules = source.slice(0, source.indexOf('export const NAV_GROUPS'));
+      const slugs = [...modules.matchAll(/^\s+slug: "([^"]+)"/gm)].map((m) => m[1]);
+      expect(slugs.length).toBeGreaterThan(20);
       const res = await request(server()).get('/config/bootstrap').set(auth(hoT)).expect(200);
       const packNav: string[] = res.body.industry.packNavigation;
 

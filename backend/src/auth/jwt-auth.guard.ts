@@ -164,7 +164,7 @@ export class JwtAuthGuard implements CanActivate {
       allStores,
       industryPackCode: dbUser.organisation?.industryPackCode ?? null,
       disabledCapabilities: dbUser.organisation?.disabledCapabilities ?? [],
-      access: effectiveAccess(dbUser.role, dbUser.accessOverrides),
+      access: effectiveAccess(dbUser.role, dbUser.accessOverrides, dbUser.organisationId),
     };
     // A machine must never reach a route marked @HumansOnly(). Checked for every
     // principal, not only machines, so the marker is a property of the ROUTE

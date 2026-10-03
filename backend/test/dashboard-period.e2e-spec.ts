@@ -100,6 +100,7 @@ describe('Dashboard period window (e2e)', () => {
 
   afterAll(async () => {
     await prisma.sale.deleteMany({ where: { legacyId: { startsWith: 'PERIOD-' } } });
+    await prisma.stockItem.deleteMany({ where: { sku: { startsWith: 'PERIOD-STOCK-' } } });
     await app?.close();
   });
 
@@ -223,6 +224,37 @@ describe('Dashboard period window (e2e)', () => {
     expect(flowTotal).toBeLessThan(9_000_000);
     const kpis = await sales('month').expect(200);
     expect(valueOf(kpis.body, 'sales')).toBeLessThan(9_000_000);
+  });
+
+  it('Stock Pieces counts what is on hand, the same figure the stock page shows', async () => {
+    const organisationId = (
+      await prisma.store.findUniqueOrThrow({
+        where: { id: SURAT },
+        select: { organisationId: true },
+      })
+    ).organisationId;
+    const tile = async () => valueOf((await sales().expect(200)).body, 'stock');
+    const before = await tile();
+
+    // The old ERP keeps a piece's row after it is sold or sent to another
+    // branch. Those two rows are history; only the first two are stock.
+    await prisma.stockItem.createMany({
+      data: (['in_stock', 'reserved', 'sold', 'transferred'] as const).map((status) => ({
+        organisationId,
+        storeId: SURAT,
+        sku: `PERIOD-STOCK-${status}`,
+        status,
+      })),
+    });
+
+    expect((await tile()) - before).toBe(2);
+    // The tile opens the stock page, so the two must read the same.
+    const page = await request(app.getHttpServer())
+      .get('/stock/summary')
+      .set(auth())
+      .set('X-Store-Id', SURAT)
+      .expect(200);
+    expect(await tile()).toBe(page.body.totalPieces);
   });
 
   it('the store comparison follows the window too', async () => {

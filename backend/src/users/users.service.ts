@@ -5,7 +5,16 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { AccessOverride, HEAD_OFFICE_ONLY, MODULES, ROLE_ACCESS, effectiveAccess } from '../auth/access';
+import {
+  AccessOverride,
+  HEAD_OFFICE_ONLY,
+  MODULES,
+  canOpen,
+  effectiveAccess,
+  overridesForNewRole,
+  roleDefaults,
+  startsAttendanceOnly,
+} from '../auth/access';
 import { Prisma, Role } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
@@ -188,8 +197,10 @@ export class UsersService {
   /**
    * POST /users — a manager onboards a staff member strictly below their rank
    * (default salesperson) and links them to a store IN THEIR SCOPE as primary.
-   * They then sign in via WhatsApp OTP with their phone (matched on the last 10
-   * digits) — the generated password is only a placeholder so the row is valid.
+   * Given a password, the person signs in straight away with their mobile number
+   * or the Login ID. Without one they sign in via WhatsApp OTP with their phone
+   * (matched on the last 10 digits) — the generated password is only a
+   * placeholder so the row is valid.
    */
   async create(actor: AuthUser, dto: CreateUserDto) {
     const role: Role = dto.role ?? 'salesperson';
@@ -230,8 +241,10 @@ export class UsersService {
     const policy = readSignupPolicy(store.organisation.settings);
     const subject = { name: dto.name, storeName: store.name, organisationSlug: store.organisation.slug };
 
-    // Random password — the user logs in via OTP, or a manager resets it to share one.
-    const passwordHash = await bcrypt.hash(randomBytes(24).toString('hex'), 10);
+    // The password the manager chose, hashed the way a reset hashes it. Without
+    // one: a random password — the user logs in via OTP, or a manager resets it
+    // to share one.
+    const passwordHash = await bcrypt.hash(dto.password || randomBytes(24).toString('hex'), 10);
 
     const user = await allocateLoginId(
       (n) => renderLoginId(policy.loginIdTemplate, subject, n),
@@ -263,6 +276,7 @@ export class UsersService {
       entityId: user.id,
       storeId: dto.storeId,
       summary: `Provisioned ${user.name} as ${role}`,
+      // Named fields only, never the whole dto: it can carry the password.
       metadata: { role, storeId: dto.storeId },
     });
 
@@ -277,9 +291,20 @@ export class UsersService {
     this.assertCanManage(actor, existing.role, storeId);
     this.assertAssignableRole(actor, dto.role);
 
+    // A screen given at `own` must not hold the person below their new role.
+    // Only head office edits access, so a manager's role change leaves it alone.
+    const { kept, dropped } = overridesForNewRole(
+      actor.role === 'head_office' ? existing.accessOverrides : null,
+      existing.role,
+      dto.role,
+      actor.organisationId,
+    );
     const user = await this.prisma.user.update({
       where: { id },
-      data: { role: dto.role },
+      data: {
+        role: dto.role,
+        ...(dropped.length ? { accessOverrides: Object.keys(kept).length ? kept : Prisma.DbNull } : {}),
+      },
       include: USER_INCLUDE,
     });
 
@@ -290,7 +315,7 @@ export class UsersService {
         entityId: id,
         storeId: null,
         summary: `Changed ${user.name} role: ${existing.role} → ${dto.role}`,
-        metadata: { from: existing.role, to: dto.role },
+        metadata: { from: existing.role, to: dto.role, ...(dropped.length ? { accessDropped: dropped } : {}) },
       });
     }
     return this.toView(user);
@@ -404,6 +429,16 @@ export class UsersService {
       // scoped manager's offboarding from rewriting ownership in a store outside
       // their scope (for a user assigned to multiple stores).
       const scopeWhere = actor.allStores ? {} : { storeId: { in: actor.storeIds } };
+      // The leads move to the recipient, who has to be able to open them. With
+      // no leads to move there is nothing to refuse.
+      if (
+        !canOpen(recipient, 'crm') &&
+        (await this.prisma.lead.count({ where: { ownerId: id, ...scopeWhere } })) > 0
+      ) {
+        throw new BadRequestException(
+          `${recipient.name} cannot open CRM & Leads, so open leads cannot be handed to them.`,
+        );
+      }
       const [leads, checkIns] = await this.prisma.$transaction([
         this.prisma.lead.updateMany({
           where: { ownerId: id, ...scopeWhere },
@@ -901,9 +936,11 @@ export class UsersService {
       userId: u.id,
       name: u.name,
       role: u.role,
-      defaults: ROLE_ACCESS[u.role],
+      defaults: roleDefaults(u.role, actor.organisationId),
+      /** True when those defaults are the workspace's attendance-only start, not the role's own. */
+      startsAttendanceOnly: startsAttendanceOnly(u.role, actor.organisationId),
       overrides: (u.accessOverrides ?? {}) as Record<string, AccessOverride>,
-      effective: effectiveAccess(u.role, u.accessOverrides),
+      effective: effectiveAccess(u.role, u.accessOverrides, actor.organisationId),
     };
   }
 
@@ -917,7 +954,7 @@ export class UsersService {
     if (u.role === 'head_office') {
       throw new BadRequestException('Head office always has every screen.');
     }
-    const defaults = ROLE_ACCESS[u.role];
+    const defaults = roleDefaults(u.role, actor.organisationId);
     const clean: Record<string, AccessOverride> = {};
     for (const [slug, level] of Object.entries(overrides ?? {})) {
       if (!(MODULES as readonly string[]).includes(slug)) {
@@ -929,7 +966,7 @@ export class UsersService {
       if (level !== 'none' && (HEAD_OFFICE_ONLY as string[]).includes(slug)) {
         throw new BadRequestException(`${slug} is for head office only`);
       }
-      // Equal to the role's default: not a change, so not stored.
+      // Equal to what this person starts with: not a change, so not stored.
       if ((defaults[slug] ?? 'none') === level) continue;
       clean[slug] = level;
     }

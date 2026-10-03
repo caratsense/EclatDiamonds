@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
+import { canOpenById } from '../auth/access';
 import { AuditService } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
 import { PrismaService } from '../prisma/prisma.service';
@@ -180,7 +181,17 @@ export class AdSetRulesService {
     return rules;
   }
 
-  async resolve(organisationId: string, context?: AdSetRoutingContext): Promise<AdSetRoutingDecision | null> {
+  /**
+   * `screen` is where the routed work lives: Conversations for a message, CRM
+   * for a lead. A rule keeps its store when the person it names cannot open
+   * that screen; only the person is dropped, so the work is never left with
+   * somebody who cannot see it.
+   */
+  async resolve(
+    organisationId: string,
+    context: AdSetRoutingContext | undefined,
+    screen: 'crm' | 'conversations',
+  ): Promise<AdSetRoutingDecision | null> {
     if (!context) return null;
     const rule = resolveAdSetRule(await this.list(organisationId), context);
     if (rule?.storeId) {
@@ -211,7 +222,10 @@ export class AdSetRulesService {
           ruleId: rule.id,
           ruleName: rule.name,
           storeId: rule.storeId,
-          assignedUserId: rule.assignedUserId,
+          assignedUserId:
+            rule.assignedUserId && (await canOpenById(this.prisma, organisationId, rule.assignedUserId, screen))
+              ? rule.assignedUserId
+              : null,
           handling: rule.handling,
           aiContext: rule.aiContext ?? null,
           aiGuardrails: rule.aiGuardrails ?? null,

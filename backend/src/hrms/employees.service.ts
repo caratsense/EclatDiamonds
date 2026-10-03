@@ -11,6 +11,7 @@ import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { ROLE_RANK } from '../common/role.util';
+import { overridesForNewRole } from '../auth/access';
 import {
   DEFAULT_TZ,
   businessDate,
@@ -491,6 +492,8 @@ export class EmployeesService {
       throw new BadRequestException('Someone cannot report to themselves');
 
     const before = this.auditView((await this.toRows(user, [target]))[0]);
+    // A screen given at `own` must not hold the person below their new role (auth/access.ts).
+    const access = overridesForNewRole(target.accessOverrides, target.role, dto.role ?? target.role, user.organisationId);
     await this.prisma.$transaction(async (tx) => {
       await tx.user.update({
         where: { id: userId },
@@ -499,6 +502,9 @@ export class EmployeesService {
           initials: dto.name ? initialsOf(dto.name) : undefined,
           phone: dto.phone === undefined ? undefined : dto.phone?.trim() || null,
           role: dto.role,
+          ...(access.dropped.length
+            ? { accessOverrides: Object.keys(access.kept).length ? access.kept : Prisma.DbNull }
+            : {}),
         },
       });
       if (storeIds) {
@@ -537,7 +543,11 @@ export class EmployeesService {
       entityId: userId,
       storeId: target.userStores[0]?.storeId ?? null,
       summary: `Updated employee ${row.name}`,
-      metadata: { before, after: this.auditView(row) },
+      metadata: {
+        before,
+        after: this.auditView(row),
+        ...(access.dropped.length ? { accessDropped: access.dropped } : {}),
+      },
     });
     return row;
   }

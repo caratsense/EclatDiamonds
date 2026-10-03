@@ -104,4 +104,23 @@ describe('legacy sync tenant-owned fallback stores', () => {
       isHolding: true,
     });
   });
+
+  it('warns about a branch id that has no store, not about rows that name no branch', () => {
+    const service = serviceWith({});
+    const warn = jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+    const report = {
+      attributed: 2,
+      fellBackToDefault: 3,
+      unknownBranchIds: [] as string[],
+      branchColumns: ['EclatBranchId', 'BranchNo'],
+    };
+
+    // Head office's own stock and vouchers name no branch in Gati, every cycle.
+    (service as any).logAttribution('stock', report);
+    expect(warn).not.toHaveBeenCalled();
+
+    (service as any).logAttribution('stock', { ...report, unknownBranchIds: ['BRANCH-NEW'] });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('BRANCH-NEW');
+  });
 });

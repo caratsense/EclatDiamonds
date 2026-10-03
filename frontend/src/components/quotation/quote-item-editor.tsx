@@ -1,20 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { Download, Gem, Plus, Sparkles, Trash2 } from "lucide-react";
+import { Download, Plus, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { SearchSelect } from "@/components/ui/search-select";
 import { formatINR } from "@/lib/format";
 import {
   fetchStyle,
@@ -22,11 +16,17 @@ import {
   useStyleSearch,
   type MaterialMaster,
   type MaterialOption,
+  type StyleBom,
 } from "@/lib/queries/materials";
 import { apiErrorMessage, cn } from "@/lib/utils";
 
-/** The karats the business quotes in (owner, 22 Sep 2026). */
-export const QUOTE_KARATS = [9, 12, 14, 18, 22, 24];
+/**
+ * The karats a new quote is built in: the shop's own list (1 Oct 2026). The
+ * server still takes 22 and 24, because older quotes have them.
+ */
+export const QUOTE_KARATS = [9, 12, 14, 18];
+/** The list as staff are told it: "9/12/14/18K". */
+export const QUOTE_KARATS_TEXT = `${QUOTE_KARATS.join("/")}K`;
 
 /** Item types when the item master has not been loaded yet (the ERP's list). */
 const ITEM_TYPES_FALLBACK = [
@@ -55,11 +55,17 @@ export interface StoneRow {
   id: number;
   type: "D" | "C";
   code: string;
+  /**
+   * The stone's size, when the design's materials brought one. Not typed on the
+   * screen (the shop does not quote by it) but kept, because the rate chart and
+   * the weight per stone are looked up by it.
+   */
   size: string;
   pieces: string;
   carats: string;
   rate: string;
-  multiplier: string;
+  /** % off this stone. */
+  discount: string;
   /** The rate is still the chart's, so it follows the code and size. */
   rateAuto: boolean;
 }
@@ -75,6 +81,11 @@ export interface ItemRow {
   /** Gold rate typed over today's; empty means today's rate. */
   manualRate: string;
   makingRate: string;
+  /** % off the gold (on its net weight) and % off the making. */
+  metalDiscount: string;
+  makingDiscount: string;
+  /** Anything the lists cannot say about this item. */
+  remark: string;
   stones: StoneRow[];
 }
 
@@ -84,12 +95,12 @@ const newId = () => (lastId += 1);
 export function emptyItem(): ItemRow {
   return {
     id: newId(), itemType: "", styleNumber: "", size: "", sizeUnit: "", metalCode: "",
-    weight: "", manualRate: "", makingRate: "", stones: [],
+    weight: "", manualRate: "", makingRate: "", metalDiscount: "", makingDiscount: "", remark: "", stones: [],
   };
 }
 
 export function emptyStone(type: "D" | "C"): StoneRow {
-  return { id: newId(), type, code: "", size: "", pieces: "", carats: "", rate: "", multiplier: "1", rateAuto: true };
+  return { id: newId(), type, code: "", size: "", pieces: "", carats: "", rate: "", discount: "", rateAuto: true };
 }
 
 /** A typed number, or undefined when blank or not a number. */
@@ -100,6 +111,9 @@ export function num(v: string): number | undefined {
 
 export const round2 = (n: number) => Math.round(n * 100) / 100;
 
+/** A typed discount as a % between 0 and 100. */
+export const pct = (v: string) => Math.min(Math.max(num(v) ?? 0, 0), 100);
+
 /** Digits and one decimal point only: no minus sign can be typed. */
 const unsigned = (v: string) => v.replace(/[^0-9.]/g, "").replace(/(\..*)\./g, "$1");
 
@@ -109,16 +123,27 @@ export const sizeText = (item: ItemRow) => {
   return s && item.sizeUnit ? `${s} ${item.sizeUnit}` : s;
 };
 
-/** What an item comes to, worked out the way the server does. */
+/** The item in another metal. A new metal is a new rate, so a rate typed for the old one is dropped. */
+export const withMetal = (item: ItemRow, metalCode: string): ItemRow => ({ ...item, metalCode, manualRate: "" });
+
+/**
+ * What an item comes to, worked out the way the server does: each line's
+ * amount, and what its own discount takes off it.
+ */
 export function priceItem(item: ItemRow, goldRate: number) {
   const weight = num(item.weight) ?? 0;
   const metal = weight * goldRate;
   const making = round2((num(item.makingRate) ?? 0) * weight);
-  const stones = item.stones.map((s) =>
-    round2((num(s.carats) ?? 0) * (num(s.rate) ?? 0) * (num(s.multiplier) ?? 1)),
-  );
+  const stones = item.stones.map((s) => round2((num(s.carats) ?? 0) * (num(s.rate) ?? 0)));
   const stoneTotal = round2(stones.reduce((a, b) => a + b, 0));
-  return { weight, metal, making, stones, stoneTotal, subtotal: metal + making + stoneTotal };
+  const metalOff = (metal * pct(item.metalDiscount)) / 100;
+  const makingOff = (making * pct(item.makingDiscount)) / 100;
+  const stoneOffs = item.stones.map((s, i) => (stones[i] * pct(s.discount)) / 100);
+  const stoneOff = stoneOffs.reduce((a, b) => a + b, 0);
+  return {
+    weight, metal, making, stones, stoneTotal, metalOff, makingOff, stoneOffs, stoneOff,
+    subtotal: metal + making + stoneTotal - metalOff - makingOff - stoneOff,
+  };
 }
 
 /** The master with fallbacks, so the builder works before the master is loaded. */
@@ -128,9 +153,11 @@ export function masterLists(master: MaterialMaster | undefined) {
   const missing = QUOTE_KARATS.filter((k) => !metals.some((m) => m.karat === k));
   return {
     itemTypes: master?.itemTypes.length ? master.itemTypes : ITEM_TYPES_FALLBACK,
-    metals: [...metals, ...metalsFor(missing)].sort(
-      (a, b) => (a.karat ?? 0) - (b.karat ?? 0) || a.code.localeCompare(b.code),
-    ),
+    metals: [...metals, ...metalsFor(missing)]
+      .sort((a, b) => (a.karat ?? 0) - (b.karat ?? 0) || a.code.localeCompare(b.code))
+      // A metal is also found by its karat and colour as the screen writes
+      // them ("18K", "14K WG"); its code and name (G18WG GOLD18WG) have no K.
+      .map((m) => ({ ...m, keywords: `${m.karat}K ${m.tone ?? ""}` })),
     diamonds: master?.diamonds ?? [],
     stones: master?.stones ?? [],
     sizes: master?.sizes ?? [],
@@ -139,7 +166,7 @@ export function masterLists(master: MaterialMaster | undefined) {
 
 export type Lists = ReturnType<typeof masterLists>;
 
-/** Stone codes and sizes for the type-to-search boxes; rendered once per builder. */
+/** Diamond and colour-stone codes for their type-to-search boxes; rendered once per builder. */
 export function MaterialDatalists({ lists }: { lists: Lists }) {
   return (
     <>
@@ -151,13 +178,6 @@ export function MaterialDatalists({ lists }: { lists: Lists }) {
       <datalist id="qb-codes-C">
         {lists.stones.map((m) => (
           <option key={m.code} value={m.code}>{m.name}</option>
-        ))}
-      </datalist>
-      <datalist id="qb-sizes">
-        {lists.sizes.map((s) => (
-          <option key={s.code} value={s.code}>
-            {[s.mm, s.caratPerPiece ? `${s.caratPerPiece} ct/pc` : ""].filter(Boolean).join(" · ")}
-          </option>
         ))}
       </datalist>
     </>
@@ -185,6 +205,49 @@ function nextStone(stone: StoneRow, patch: Partial<StoneRow>, lists: Lists): Sto
   return next;
 }
 
+/**
+ * A design's default materials as the builder takes them: its gold, its
+ * stones, and a note of what it did not bring. A design in a gold the shop
+ * does not quote in (10K, 22K…) comes without its gold or its weight; the note
+ * says so, and that line is not one of the charges it counts as left out.
+ */
+export function readStyle(bom: StyleBom, lists: Lists, master: MaterialMaster | undefined) {
+  const metalLine = bom.lines.find((l) => lists.metals.some((m) => m.code === l.code));
+  const unoffered = metalLine ? undefined : bom.lines.find((l) => master?.metals.some((m) => m.code === l.code));
+  const stones: StoneRow[] = [];
+  let skipped = 0;
+  for (const l of bom.lines) {
+    if (l === metalLine || l === unoffered) continue;
+    const d = lists.diamonds.find((m) => m.code === l.code);
+    const c = d ? undefined : lists.stones.find((m) => m.code === l.code);
+    if (!d && !c) {
+      skipped += 1;
+      continue;
+    }
+    const base = emptyStone(d ? "D" : "C");
+    stones.push(
+      nextStone(
+        base,
+        {
+          code: l.code,
+          size: l.size ?? "",
+          carats: l.weight ? round2(l.weight).toFixed(2) : "",
+          ...(l.pieces ? { pieces: String(l.pieces) } : {}),
+        },
+        lists,
+      ),
+    );
+  }
+  const note = [
+    `${stones.length} stone line${stones.length === 1 ? "" : "s"}`,
+    unoffered ? `its gold is not ${QUOTE_KARATS_TEXT} — pick the metal and type the weight` : "",
+    skipped ? `${skipped} other line${skipped === 1 ? "" : "s"} (charges) left out` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return { metalLine, stones, note };
+}
+
 /** Today's rate for a karat, and how much to trust it. */
 export interface AutoRate {
   rate: number;
@@ -204,11 +267,19 @@ interface ItemEditorProps {
   onFocus: () => void;
 }
 
+/** One line of the materials table: what it is, how much, at what rate, less what. */
+const ROW =
+  "grid grid-cols-[3.6rem_1fr_2rem] gap-1.5 rounded-md bg-muted/30 p-1.5 md:grid-cols-[3.6rem_1.7fr_3.4rem_5rem_5.6rem_4.2rem_6rem_2rem] md:items-center md:bg-transparent md:p-0";
+const KIND = "flex h-9 items-center justify-center rounded-md border text-xs font-semibold";
+/** A cell's label on a phone, where the header row is not shown. */
+const cap = (text: string) => <span className="text-[10px] text-muted-foreground md:hidden">{text}</span>;
+
 /**
- * One item of a sale quote: what it is (type, design, size), its gold (item
- * code, weight, rate, making per gram) and its diamonds (D) and colour stones
- * (C) by item-master code. Entering a style number loads the design's default
- * materials, which are then changed for the customer.
+ * One item of a sale quote: what it is (type, design, size), then its
+ * materials as one table laid out like the shop's bill — the gold, each
+ * diamond (D) and colour stone (C), and the making — each line with its
+ * weight, its rate and its own discount. Entering a style number loads the
+ * design's default materials, which are then changed for the customer.
  */
 export function QuoteItemEditor({
   index,
@@ -241,32 +312,7 @@ export function QuoteItemEditor({
     setLoading(true);
     try {
       const bom = await fetchStyle(code);
-      const metalLine = bom.lines.find((l) => lists.metals.some((m) => m.code === l.code));
-      const stones: StoneRow[] = [];
-      let skipped = 0;
-      for (const l of bom.lines) {
-        if (l === metalLine) continue;
-        const d = lists.diamonds.find((m) => m.code === l.code);
-        const c = d ? undefined : lists.stones.find((m) => m.code === l.code);
-        if (!d && !c) {
-          skipped += 1;
-          continue;
-        }
-        const base = emptyStone(d ? "D" : "C");
-        stones.push(
-          nextStone(
-            base,
-            {
-              code: l.code,
-              size: l.size ?? "",
-              carats: l.weight ? round2(l.weight).toFixed(2) : "",
-              ...(l.pieces ? { pieces: String(l.pieces) } : {}),
-            },
-            lists,
-          ),
-        );
-      }
-      const heavyMetal = bom.lines.find((l) => master?.metals.some((m) => m.code === l.code)) && !metalLine;
+      const { metalLine, stones, note } = readStyle(bom, lists, master);
       onChange({
         ...item,
         styleNumber: bom.styleCode,
@@ -277,21 +323,29 @@ export function QuoteItemEditor({
         weight: metalLine ? String(metalLine.weight) : item.weight,
         stones,
       });
-      toast.success(`Loaded ${bom.styleCode}`, {
-        description: [
-          `${stones.length} stone line${stones.length === 1 ? "" : "s"}`,
-          heavyMetal ? "its gold is not 9/12/14/18/22/24K — pick the metal" : "",
-          skipped ? `${skipped} other line${skipped === 1 ? "" : "s"} (charges) left out` : "",
-        ]
-          .filter(Boolean)
-          .join(" · "),
-      });
+      toast.success(`Loaded ${bom.styleCode}`, { description: note });
     } catch (e) {
       toast.error(apiErrorMessage(e, `No style ${code} in the item master.`));
     } finally {
       setLoading(false);
     }
   }
+
+  /** The % box every line of the table carries. */
+  const discountBox = (label: string, value: string, onValue: (v: string) => void) => (
+    <Input
+      aria-label={label}
+      inputMode="decimal"
+      value={value}
+      onChange={(e) => onValue(unsigned(e.target.value))}
+      placeholder="0"
+      aria-invalid={(num(value) ?? 0) > 100}
+      className={cn("px-2", (num(value) ?? 0) > 100 && "border-destructive")}
+    />
+  );
+  const amount = (value: number) => (
+    <span className="num flex items-center justify-end text-sm">{formatINR(value)}</span>
+  );
 
   return (
     <div className="rounded-lg border p-3" onFocusCapture={onFocus}>
@@ -315,18 +369,13 @@ export function QuoteItemEditor({
       <div className="grid gap-3 sm:grid-cols-[1.2fr_1.2fr_1fr]">
         <div className="grid gap-1.5">
           <Label>Item type</Label>
-          <Select value={item.itemType} onValueChange={(v) => set({ itemType: v })}>
-            <SelectTrigger aria-label={`Item ${index + 1} type`}>
-              <SelectValue placeholder="Ring, pendant…" />
-            </SelectTrigger>
-            <SelectContent>
-              {lists.itemTypes.map((t) => (
-                <SelectItem key={t.code} value={t.code}>
-                  <span className="font-mono text-xs text-muted-foreground">{t.code}</span> {t.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SearchSelect
+            aria-label={`Item ${index + 1} type`}
+            options={lists.itemTypes}
+            value={item.itemType}
+            onChange={(code) => set({ itemType: code })}
+            placeholder="Type ring, pendant, ALR…"
+          />
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor={`qb-style-${item.id}`}>Style no.</Label>
@@ -419,114 +468,74 @@ export function QuoteItemEditor({
         </div>
       </div>
 
-      {/* Gold */}
-      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="grid gap-1.5">
-          <Label>Metal</Label>
-          <Select value={item.metalCode} onValueChange={(v) => set({ metalCode: v, manualRate: "" })}>
-            <SelectTrigger aria-label={`Item ${index + 1} metal`}>
-              <SelectValue placeholder="G14YG…" />
-            </SelectTrigger>
-            <SelectContent>
-              {lists.metals.map((m) => (
-                <SelectItem key={m.code} value={m.code}>
-                  {m.code} <span className="text-xs text-muted-foreground">{m.karat}K {m.tone ?? ""}</span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+      {/* Materials: the gold, the stones and the making, as the bill lists them */}
+      <div className="mt-3 space-y-1.5">
+        <div className="hidden grid-cols-[3.6rem_1.7fr_3.4rem_5rem_5.6rem_4.2rem_6rem_2rem] gap-1.5 px-1 text-[11px] font-medium text-muted-foreground md:grid">
+          <span />
+          <span>Code</span>
+          <span>Pcs</span>
+          <span>Weight</span>
+          <span>Rate</span>
+          <span>Dis %</span>
+          <span className="text-right">Amount</span>
+          <span />
         </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor={`qb-wt-${item.id}`}>Weight (g)</Label>
-          <Input
-            id={`qb-wt-${item.id}`}
-            inputMode="decimal"
-            value={item.weight}
-            onChange={(e) => set({ weight: unsigned(e.target.value) })}
-            placeholder="0.000"
-          />
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor={`qb-rate-${item.id}`}>Gold rate (₹/g)</Label>
-          <Input
-            id={`qb-rate-${item.id}`}
-            inputMode="decimal"
-            value={item.manualRate}
-            onChange={(e) => set({ manualRate: unsigned(e.target.value) })}
-            placeholder={auto ? String(auto.rate) : "Pick metal"}
-            title="Today's rate unless you type another"
-          />
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor={`qb-making-${item.id}`}>Making (₹/g)</Label>
-          <Input
-            id={`qb-making-${item.id}`}
-            inputMode="decimal"
-            value={item.makingRate}
-            onChange={(e) => set({ makingRate: unsigned(e.target.value) })}
-            placeholder="0"
-          />
-        </div>
-      </div>
-      <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        {auto && !item.manualRate ? (
-          auto.fallback || auto.stale ? (
-            <Badge variant="destructive" className="text-[10px]">{auto.note}</Badge>
-          ) : (
-            <Badge variant="outline" className="text-[10px]">{auto.note}</Badge>
-          )
-        ) : null}
-        {price.weight > 0 ? (
-          <span>
-            Gold {formatINR(price.metal)} · Making {formatINR(price.making)}
-            {num(item.makingRate) ? ` (${item.makingRate} × ${price.weight} g)` : ""}
-          </span>
-        ) : null}
-      </div>
 
-      {/* Diamonds and colour stones */}
-      <div className="mt-3 space-y-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="flex items-center gap-1.5 text-sm font-medium">
-            <Gem className="h-4 w-4 text-muted-foreground" />
-            Diamonds &amp; stones
-            {price.stoneTotal > 0 ? (
-              <span className="num text-xs font-normal text-muted-foreground">{formatINR(price.stoneTotal)}</span>
-            ) : null}
-          </p>
-          <div className="flex gap-1.5">
-            <Button type="button" variant="outline" size="sm" title="Alt+D" onClick={() => set({ stones: [...item.stones, emptyStone("D")] })}>
-              <Plus className="h-4 w-4" /> Diamond
-            </Button>
-            <Button type="button" variant="outline" size="sm" title="Alt+C" onClick={() => set({ stones: [...item.stones, emptyStone("C")] })}>
-              <Plus className="h-4 w-4" /> Colour stone
-            </Button>
+        {/* Gold */}
+        <div className={ROW}>
+          <span className={cn(KIND, "border-amber-300 text-amber-700 dark:text-amber-300")}>Gold</span>
+          <SearchSelect
+            aria-label={`Item ${index + 1} metal`}
+            options={lists.metals}
+            value={item.metalCode}
+            // Type to search: "14", "18K", "WG", "G18"… and pick.
+            onChange={(code) => onChange(withMetal(item, code))}
+            placeholder="Metal — type 14, WG, G18YG…"
+          />
+          <span />
+          <div className="col-span-3 grid grid-cols-4 gap-x-1.5 gap-y-0.5 md:contents">
+            {cap("Weight (g)")}
+            {cap("Rate ₹/g")}
+            {cap("Dis %")}
+            {cap("Amount")}
+            <Input
+              aria-label="Gold weight in grams"
+              className="px-2"
+              inputMode="decimal"
+              value={item.weight}
+              onChange={(e) => set({ weight: unsigned(e.target.value) })}
+              placeholder="0.000 g"
+            />
+            <Input
+              aria-label="Gold rate per gram"
+              className="px-2"
+              inputMode="decimal"
+              value={item.manualRate}
+              onChange={(e) => set({ manualRate: unsigned(e.target.value) })}
+              placeholder={auto ? String(auto.rate) : "₹/g"}
+              title="Today's rate unless you type another"
+            />
+            {discountBox("Gold discount %", item.metalDiscount, (v) => set({ metalDiscount: v }))}
+            {amount(price.metal - price.metalOff)}
           </div>
         </div>
-        {item.stones.length ? (
-          <div className="hidden grid-cols-[2.2rem_1.6fr_1fr_3.2rem_4.2rem_5rem_3.6rem_5rem_2rem] gap-1.5 px-1 text-[11px] font-medium text-muted-foreground md:grid">
-            <span>Type</span>
-            <span>Code</span>
-            <span>Size</span>
-            <span>Pcs</span>
-            <span>Carats</span>
-            <span>Rate/ct</span>
-            <span title="Staff only — never printed">× Mult</span>
-            <span className="text-right">Amount</span>
-            <span />
+        {auto && !item.manualRate ? (
+          <div className="px-1">
+            <Badge variant={auto.fallback || auto.stale ? "destructive" : "outline"} className="text-[10px]">
+              {auto.note}
+            </Badge>
           </div>
         ) : null}
+
+        {/* Diamonds and colour stones */}
         {item.stones.map((s, i) => (
-          <div
-            key={s.id}
-            className="grid grid-cols-[2.2rem_1fr_2rem] gap-1.5 rounded-md bg-muted/30 p-1.5 md:grid-cols-[2.2rem_1.6fr_1fr_3.2rem_4.2rem_5rem_3.6rem_5rem_2rem] md:items-center md:bg-transparent md:p-0"
-          >
+          <div key={s.id} className={ROW}>
             <button
               type="button"
               title={s.type === "D" ? "Diamond — switch to colour stone" : "Colour stone — switch to diamond"}
               onClick={() => setStone(s.id, { type: s.type === "D" ? "C" : "D", code: "" })}
               className={cn(
-                "h-9 rounded-md border text-xs font-semibold",
+                KIND,
                 s.type === "D" ? "border-sky-300 text-sky-700 dark:text-sky-300" : "border-rose-300 text-rose-700 dark:text-rose-300",
               )}
             >
@@ -546,20 +555,15 @@ export function QuoteItemEditor({
               <Trash2 className="h-4 w-4" />
               <span className="sr-only">Remove stone {i + 1}</span>
             </Button>
-            <div className="col-span-3 grid grid-cols-3 gap-x-1.5 gap-y-0.5 md:contents">
-              <span className="text-[10px] text-muted-foreground md:hidden">Size</span>
-              <span className="text-[10px] text-muted-foreground md:hidden">Pcs</span>
-              <span className="text-[10px] text-muted-foreground md:hidden">Carats</span>
-              <Input
-                aria-label="Size"
-                list="qb-sizes"
-                value={s.size}
-                onChange={(e) => setStone(s.id, { size: e.target.value })}
-                placeholder="Size"
-                autoComplete="off"
-              />
+            <div className="col-span-3 grid grid-cols-[2.6rem_1fr_1.25fr_2.9rem_auto] gap-x-1.5 gap-y-0.5 md:contents">
+              {cap("Pcs")}
+              {cap("Carats")}
+              {cap("Rate/ct")}
+              {cap("Dis %")}
+              {cap("Amount")}
               <Input
                 aria-label="Pieces"
+              className="px-2"
                 inputMode="numeric"
                 value={s.pieces}
                 onChange={(e) => setStone(s.id, { pieces: e.target.value.replace(/\D/g, "") })}
@@ -567,6 +571,7 @@ export function QuoteItemEditor({
               />
               <Input
                 aria-label="Carats"
+              className="px-2"
                 inputMode="decimal"
                 value={s.carats}
                 onChange={(e) => setStone(s.id, { carats: unsigned(e.target.value) })}
@@ -574,30 +579,68 @@ export function QuoteItemEditor({
                   const c = num(s.carats);
                   if (c != null) setStone(s.id, { carats: round2(c).toFixed(2) });
                 }}
-                placeholder="0.00"
+                placeholder="0.00 ct"
               />
-              <span className="text-[10px] text-muted-foreground md:hidden">Rate/ct</span>
-              <span className="text-[10px] text-muted-foreground md:hidden">× Mult (staff)</span>
-              <span className="text-[10px] text-muted-foreground md:hidden">Amount</span>
               <Input
                 aria-label="Rate per carat"
+              className="px-2"
                 inputMode="decimal"
                 value={s.rate}
                 onChange={(e) => setStone(s.id, { rate: unsigned(e.target.value), rateAuto: false })}
                 placeholder="₹/ct"
               />
-              <Input
-                aria-label="Multiplier (staff only)"
-                title="Staff only — the customer sees rate × multiplier"
-                inputMode="decimal"
-                value={s.multiplier}
-                onChange={(e) => setStone(s.id, { multiplier: unsigned(e.target.value) })}
-                placeholder="1"
-              />
-              <span className="num flex items-center justify-end text-sm">{formatINR(price.stones[i] ?? 0)}</span>
+              {discountBox(`${s.type === "D" ? "Diamond" : "Colour stone"} discount %`, s.discount, (v) =>
+                setStone(s.id, { discount: v }),
+              )}
+              {amount((price.stones[i] ?? 0) - (price.stoneOffs[i] ?? 0))}
             </div>
           </div>
         ))}
+
+        {/* Making: its rate per gram on the gold's weight */}
+        <div className={ROW}>
+          <span className={cn(KIND, "text-muted-foreground")}>Making</span>
+          <span className="flex h-9 items-center px-1 text-xs text-muted-foreground">
+            {price.weight > 0 ? `on ${price.weight} g` : "per gram of the gold"}
+          </span>
+          <span />
+          <div className="col-span-3 grid grid-cols-3 gap-x-1.5 gap-y-0.5 md:contents">
+            <span className="hidden md:block" />
+            {cap("Making ₹/g")}
+            {cap("Dis %")}
+            {cap("Amount")}
+            <Input
+              aria-label="Making per gram"
+              className="px-2"
+              inputMode="decimal"
+              value={item.makingRate}
+              onChange={(e) => set({ makingRate: unsigned(e.target.value) })}
+              placeholder="₹/g"
+            />
+            {discountBox("Making discount %", item.makingDiscount, (v) => set({ makingDiscount: v }))}
+            {amount(price.making - price.makingOff)}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-1.5 pt-1">
+          <Button type="button" variant="outline" size="sm" title="Alt+D" onClick={() => set({ stones: [...item.stones, emptyStone("D")] })}>
+            <Plus className="h-4 w-4" /> Diamond
+          </Button>
+          <Button type="button" variant="outline" size="sm" title="Alt+C" onClick={() => set({ stones: [...item.stones, emptyStone("C")] })}>
+            <Plus className="h-4 w-4" /> Colour stone
+          </Button>
+        </div>
+      </div>
+
+      <div className="mt-3 grid gap-1.5">
+        <Label htmlFor={`qb-remark-${item.id}`}>Remark</Label>
+        <Input
+          id={`qb-remark-${item.id}`}
+          value={item.remark}
+          maxLength={500}
+          onChange={(e) => set({ remark: e.target.value })}
+          placeholder="Anything the lists cannot say: a stone not in the master, engraving, what the customer asked for"
+        />
       </div>
     </div>
   );

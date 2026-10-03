@@ -1,5 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { Role } from '@prisma/client';
 
+import { canOpen } from '../auth/access';
 import { AuditService } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
 import { instantFromLocalTime, parseHHMM, resolveTz, zonedParts } from '../common/tz.util';
@@ -176,19 +178,32 @@ export class FollowUpRemindersService {
       }
       const active = await this.prisma.user.findFirst({
         where: { id: recipient, organisationId: f.lead.organisationId, isActive: true },
-        select: { id: true },
+        select: { id: true, name: true, role: true, accessOverrides: true, organisationId: true },
       });
       if (!active) {
+        skipped++;
+        continue;
+      }
+      // Follow-ups are worked from the lead. Somebody who cannot open CRM (the
+      // follow-up was booked before their screens changed) can do nothing with
+      // the reminder, and it fires only once: the branch's managers get it instead.
+      const theirs = canOpen(active, 'crm');
+      const told = theirs
+        ? [recipient]
+        : await this.notifications.recipientsFor(f.storeId, Role.store_manager, undefined, f.lead.organisationId);
+      if (!told.length) {
         skipped++;
         continue;
       }
 
       const dedupeKey = `follow-up-reminder:${f.id}`;
       try {
-        await this.notifications.emit([recipient], {
+        await this.notifications.emit(told, {
           kind: 'reminder',
           title: `Follow up with ${f.lead.customerName}`,
-          body: `Due ${f.dueDate.toISOString().slice(0, 10)}${f.note ? ` · ${f.note.slice(0, 140)}` : ''}`,
+          body:
+            `Due ${f.dueDate.toISOString().slice(0, 10)}${f.note ? ` · ${f.note.slice(0, 140)}` : ''}` +
+            (theirs ? '' : ` · ${active.name} cannot open it`),
           href: '/reminders',
           storeId: f.storeId,
           entityType: 'LeadFollowUp',
@@ -198,8 +213,8 @@ export class FollowUpRemindersService {
         });
         // `emit` logs and swallows a failed write so one bad recipient cannot sink
         // a batch. The stored row is what a reminder IS, so check it landed.
-        const landed = await this.prisma.notification.findUnique({
-          where: { userId_dedupeKey: { userId: recipient, dedupeKey } },
+        const landed = await this.prisma.notification.findFirst({
+          where: { userId: { in: told }, dedupeKey },
           select: { id: true },
         });
         if (!landed) throw new Error('the notification was not stored');

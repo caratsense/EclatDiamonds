@@ -44,6 +44,25 @@ const A = {
 };
 const FEEDBACK_TEMPLATE = 'visit_feedback';
 
+/*
+ * No date is written into this file. The server refuses a reminder in the past
+ * and moves a default that has already passed to now, so a fixed date passes
+ * only until the day it arrives. Every day is worked out from today instead.
+ *
+ * `day(n)` is the Mumbai branch's calendar day, n days from today. Kolkata is
+ * UTC+5:30 all year, so the instants expected below can still be spelled out.
+ * Today is read once, so a run that crosses midnight keeps one calendar.
+ */
+const DAY_MS = 86_400_000;
+const ymd = (d: Date) => d.toISOString().slice(0, 10);
+const TODAY_IN_KOLKATA = Date.now() + 330 * 60_000;
+const day = (n: number) => ymd(new Date(TODAY_IN_KOLKATA + n * DAY_MS));
+/*
+ * New York's offset changes through the year, so its dates come from next
+ * year's calendar: always ahead of today, and out of reach of the sweeps below.
+ */
+const NEXT_YEAR = new Date().getUTCFullYear() + 1;
+
 class FakeWhatsApp {
   sends: { to: string; name: string; components?: unknown }[] = [];
   async sendText() {
@@ -209,50 +228,55 @@ describe('Follow-up reminders and visit feedback (e2e)', () => {
   describe('follow-up reminders', () => {
     it('a follow-up date with no reminder gets the tenant default, at the branch', async () => {
       const id = await walkIn(rep);
-      await checkout(rep, id, { outcome: 'follow_up', followUpDate: '2026-10-02', remark: 'Wants the pair' }).expect(200);
+      await checkout(rep, id, { outcome: 'follow_up', followUpDate: day(1), remark: 'Wants the pair' }).expect(200);
       const fu = await followUpFor(id);
       // 10:00 in Kolkata is 04:30 UTC.
-      expect(fu?.reminderAt?.toISOString()).toBe('2026-10-02T04:30:00.000Z');
+      expect(fu?.reminderAt?.toISOString()).toBe(`${day(1)}T04:30:00.000Z`);
       expect(fu?.assigneeId).toBe('u_b3_rep');
       expect(fu?.reminderNotifiedAt).toBeNull();
 
       const list = await request(server()).get('/checkins').set(auth(rep)).expect(200);
       const row = list.body.find((c: { id: string }) => c.id === id);
-      expect(row.reminder).toMatchObject({ local: '2026-10-02T10:00', state: 'scheduled' });
+      expect(row.reminder).toMatchObject({ local: `${day(1)}T10:00`, state: 'scheduled' });
       expect(row.remark).toBe('Wants the pair');
       expect(row.feedback).toBeNull();
     });
 
     it('an explicit reminder is its own instant, the evening before', async () => {
       const id = await walkIn(rep);
-      await checkout(rep, id, { followUpDate: '2026-10-02', reminderAt: '2026-10-01T18:00' }).expect(200);
-      expect((await followUpFor(id))?.reminderAt?.toISOString()).toBe('2026-10-01T12:30:00.000Z');
+      // Tomorrow evening, for the day after: this evening may already have passed.
+      await checkout(rep, id, { followUpDate: day(2), reminderAt: `${day(1)}T18:00` }).expect(200);
+      expect((await followUpFor(id))?.reminderAt?.toISOString()).toBe(`${day(1)}T12:30:00.000Z`);
     });
 
     it('reads the reminder on the branch clock across a daylight-saving change', async () => {
-      // 1 November 2026 is the day New York leaves daylight time (-4 → -5).
+      // New York leaves daylight time (-4 → -5) on the first Sunday of November.
+      const nov1 = new Date(Date.UTC(NEXT_YEAR, 10, 1));
+      const change = new Date(nov1.getTime() + ((7 - nov1.getUTCDay()) % 7) * DAY_MS);
+      const sunday = ymd(change);
       const id = await walkIn(rep, A.ny);
-      await checkout(rep, id, { followUpDate: '2026-11-01', reminderAt: '2026-11-01T09:00' }, A.ny).expect(200);
-      expect((await followUpFor(id))?.reminderAt?.toISOString()).toBe('2026-11-01T14:00:00.000Z');
+      await checkout(rep, id, { followUpDate: sunday, reminderAt: `${sunday}T09:00` }, A.ny).expect(200);
+      expect((await followUpFor(id))?.reminderAt?.toISOString()).toBe(`${sunday}T14:00:00.000Z`);
       // The day before is still daylight time.
+      const saturday = ymd(new Date(change.getTime() - DAY_MS));
       const id2 = await walkIn(rep, A.ny);
-      await checkout(rep, id2, { followUpDate: '2026-10-31', reminderAt: '2026-10-31T09:00' }, A.ny).expect(200);
-      expect((await followUpFor(id2))?.reminderAt?.toISOString()).toBe('2026-10-31T13:00:00.000Z');
+      await checkout(rep, id2, { followUpDate: saturday, reminderAt: `${saturday}T09:00` }, A.ny).expect(200);
+      expect((await followUpFor(id2))?.reminderAt?.toISOString()).toBe(`${saturday}T13:00:00.000Z`);
     });
 
     it('a reminder alone books the follow-up on the reminder day', async () => {
       const id = await walkIn(rep);
-      await checkout(rep, id, { reminderAt: '2026-10-05T16:15' }).expect(200);
+      await checkout(rep, id, { reminderAt: `${day(4)}T16:15` }).expect(200);
       const visit = await prisma.checkIn.findUniqueOrThrow({ where: { id } });
-      expect(visit.followUpDate?.toISOString().slice(0, 10)).toBe('2026-10-05');
-      expect((await followUpFor(id))?.reminderAt?.toISOString()).toBe('2026-10-05T10:45:00.000Z');
+      expect(visit.followUpDate?.toISOString().slice(0, 10)).toBe(day(4));
+      expect((await followUpFor(id))?.reminderAt?.toISOString()).toBe(`${day(4)}T10:45:00.000Z`);
     });
 
     it('refuses a reminder after the follow-up day, in the past, or malformed — and closes nothing', async () => {
       const id = await walkIn(rep);
-      await checkout(rep, id, { followUpDate: '2026-10-02', reminderAt: '2026-10-03T09:00' }).expect(400);
-      await checkout(rep, id, { followUpDate: '2026-10-02', reminderAt: '2026-01-01T09:00' }).expect(400);
-      await checkout(rep, id, { followUpDate: '2026-10-02', reminderAt: '2 Oct 9am' }).expect(400);
+      await checkout(rep, id, { followUpDate: day(1), reminderAt: `${day(2)}T09:00` }).expect(400);
+      await checkout(rep, id, { followUpDate: day(1), reminderAt: `${day(-1)}T09:00` }).expect(400);
+      await checkout(rep, id, { followUpDate: day(1), reminderAt: 'tomorrow 9am' }).expect(400);
       const visit = await prisma.checkIn.findUniqueOrThrow({ where: { id } });
       expect(visit.timeOut).toBeNull();
     });
@@ -268,9 +292,9 @@ describe('Follow-up reminders and visit feedback (e2e)', () => {
       expect(read.body).toEqual({ defaultTimeLocal: '09:15', defaultDaysBefore: 1 });
 
       const id = await walkIn(rep);
-      await checkout(rep, id, { followUpDate: '2026-10-10' }).expect(200);
+      await checkout(rep, id, { followUpDate: day(9) }).expect(200);
       // 09:15 the day before, in Kolkata.
-      expect((await followUpFor(id))?.reminderAt?.toISOString()).toBe('2026-10-09T03:45:00.000Z');
+      expect((await followUpFor(id))?.reminderAt?.toISOString()).toBe(`${day(8)}T03:45:00.000Z`);
       await request(server())
         .put('/crm/follow-up-reminders/settings')
         .set(auth(ho))
@@ -279,7 +303,8 @@ describe('Follow-up reminders and visit feedback (e2e)', () => {
     });
 
     it('the sweep reminds once, however many times it runs', async () => {
-      const after = new Date('2026-10-02T05:00:00.000Z');
+      // Half past ten in Kolkata, two days from now: both of tomorrow's reminders are due.
+      const after = new Date(`${day(2)}T05:00:00.000Z`);
       const first = await reminders.sweep(after);
       expect(first.notified).toBeGreaterThan(0);
       const again = await reminders.sweep(after);
@@ -290,20 +315,20 @@ describe('Follow-up reminders and visit feedback (e2e)', () => {
       });
       const keys = notes.map((n) => n.dedupeKey);
       expect(new Set(keys).size).toBe(keys.length);
-      // Only what was due by then went out; the 5 October reminder is still waiting.
+      // Only what was due by then went out; the reminder four days from now is still waiting.
       const pending = await prisma.leadFollowUp.findFirst({
-        where: { lead: { organisationId: A.org }, reminderAt: new Date('2026-10-05T10:45:00.000Z') },
+        where: { lead: { organisationId: A.org }, reminderAt: new Date(`${day(4)}T10:45:00.000Z`) },
       });
       expect(pending?.reminderNotifiedAt).toBeNull();
     });
 
     it('a failed notification is released and retried, not lost', async () => {
-      const at = new Date('2026-10-05T11:00:00.000Z');
+      const at = new Date(`${day(4)}T11:00:00.000Z`);
       const emit = jest.spyOn(notifications, 'emit').mockResolvedValueOnce(undefined);
       const failed = await reminders.sweep(at);
       expect(failed.released).toBe(1);
       const row = await prisma.leadFollowUp.findFirstOrThrow({
-        where: { lead: { organisationId: A.org }, reminderAt: new Date('2026-10-05T10:45:00.000Z') },
+        where: { lead: { organisationId: A.org }, reminderAt: new Date(`${day(4)}T10:45:00.000Z`) },
       });
       expect(row.reminderNotifiedAt).toBeNull();
 
@@ -317,23 +342,23 @@ describe('Follow-up reminders and visit feedback (e2e)', () => {
 
     it('rescheduling a pending follow-up moves its reminder by the same days, keeping the time', async () => {
       const id = await walkIn(rep);
-      await checkout(rep, id, { followUpDate: '2026-10-20', reminderAt: '2026-10-19T17:30' }).expect(200);
+      await checkout(rep, id, { followUpDate: day(19), reminderAt: `${day(18)}T17:30` }).expect(200);
       const fu = await followUpFor(id);
       const res = await request(server())
         .patch(`/leads/reminders/${fu!.id}`)
         .set(auth(rep))
-        .send({ dueDate: '2026-10-23' })
+        .send({ dueDate: day(22) })
         .expect(200);
-      expect(res.body.reminder).toMatchObject({ local: '2026-10-22T17:30', state: 'scheduled' });
+      expect(res.body.reminder).toMatchObject({ local: `${day(21)}T17:30`, state: 'scheduled' });
     });
 
     it('the lead shows each follow-up with its reminder', async () => {
       const id = await walkIn(rep);
-      await checkout(rep, id, { followUpDate: '2026-10-12' }).expect(200);
+      await checkout(rep, id, { followUpDate: day(11) }).expect(200);
       const visit = await prisma.checkIn.findUniqueOrThrow({ where: { id } });
       const lead = await request(server()).get(`/leads/${visit.leadId}`).set(auth(rep)).expect(200);
-      const shown = lead.body.followUps.find((f: { dueDate: string }) => f.dueDate === '2026-10-12');
-      expect(shown.reminder).toMatchObject({ local: '2026-10-12T10:00', state: 'scheduled' });
+      const shown = lead.body.followUps.find((f: { dueDate: string }) => f.dueDate === day(11));
+      expect(shown.reminder).toMatchObject({ local: `${day(11)}T10:00`, state: 'scheduled' });
     });
   });
 
@@ -366,7 +391,7 @@ describe('Follow-up reminders and visit feedback (e2e)', () => {
       expect(await prisma.feedbackRequest.count({ where: { checkInId: plain } })).toBe(1);
 
       const booked = await walkIn(rep);
-      await checkout(rep, booked, { followUpDate: '2026-10-02' }).expect(200);
+      await checkout(rep, booked, { followUpDate: day(1) }).expect(200);
       expect(await askFor(booked)).toBeNull();
 
       const list = await request(server()).get('/checkins').set(auth(rep)).expect(200);
@@ -382,23 +407,23 @@ describe('Follow-up reminders and visit feedback (e2e)', () => {
       const late = await prisma.checkIn.create({
         data: { organisationId: A.org, storeId: A.ist, partyId: party.id, customerName: 'Late Leaver', timeIn: new Date() },
       });
-      // 23:30 on 1 October in Kolkata is still 1 October there, 18:00 UTC.
+      // 23:30 tonight in Kolkata is still today there, 18:00 UTC.
       const r1 = await visits.scheduleAfterVisit({
-        organisationId: A.org, checkIn: late, closedAt: new Date('2026-10-01T18:00:00.000Z'),
+        organisationId: A.org, checkIn: late, closedAt: new Date(`${day(0)}T18:00:00.000Z`),
         timezone: 'Asia/Kolkata', createdById: 'u_b3_rep',
       });
-      expect(r1.scheduledFor?.toISOString()).toBe('2026-10-08T05:30:00.000Z');
+      expect(r1.scheduledFor?.toISOString()).toBe(`${day(7)}T05:30:00.000Z`);
 
       const party2 = await prisma.party.create({ data: { organisationId: A.org, name: 'NY Leaver', phone: '9812399002' } });
       const ny = await prisma.checkIn.create({
         data: { organisationId: A.org, storeId: A.ny, partyId: party2.id, customerName: 'NY Leaver', timeIn: new Date() },
       });
-      // 23:30 on 1 October in New York is 03:30 UTC on the 2nd — still the 1st there.
+      // 23:30 on 1 July in New York is 03:30 UTC on the 2nd — still the 1st there.
       const r2 = await visits.scheduleAfterVisit({
-        organisationId: A.org, checkIn: ny, closedAt: new Date('2026-10-02T03:30:00.000Z'),
+        organisationId: A.org, checkIn: ny, closedAt: new Date(`${NEXT_YEAR}-07-02T03:30:00.000Z`),
         timezone: 'America/New_York', createdById: 'u_b3_rep',
       });
-      expect(r2.scheduledFor?.toISOString()).toBe('2026-10-08T15:00:00.000Z');
+      expect(r2.scheduledFor?.toISOString()).toBe(`${NEXT_YEAR}-07-08T15:00:00.000Z`);
     });
 
     it('a scheduled ask cannot be answered before it has been sent', async () => {

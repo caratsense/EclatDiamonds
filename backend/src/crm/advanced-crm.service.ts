@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { LeadSource, LeadStage, Prisma } from '@prisma/client';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'crypto';
 
+import { canOpen, canOpenById } from '../auth/access';
 import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
 import { SequenceService } from '../common/sequence.service';
@@ -776,9 +777,18 @@ export class AdvancedCrmService {
 
   /** Called by inbound ingestion only after the customer message is safely stored. */
   async autoAssignInbound(organisationId: string, conversationId: string, leadId: string | null) {
+    // Assignment automation is advisory plumbing. An inbound message has
+    // already been stored and must never turn into a provider retry because a
+    // tenant has no eligible salesperson or a settings row is malformed.
+    const assigned = await this.assignRoundRobin(organisationId, 'conversation', conversationId, null).catch(() => null);
+    if (!leadId) return assigned;
     try {
-      const assigned = await this.assignRoundRobin(organisationId, 'conversation', conversationId, null);
-      if (assigned && leadId) {
+      // The lead follows the conversation's owner only if that person can open
+      // CRM. Otherwise, and when nobody took the conversation, it takes its own
+      // turn in the lead queue, like an enquiry from any other door.
+      if (!assigned || !(await canOpenById(this.prisma, organisationId, assigned.assignedUserId, 'crm'))) {
+        await this.autoAssignLead(organisationId, leadId);
+      } else {
         const { count } = await this.prisma.lead.updateMany({
           where: { id: leadId, organisationId, storeId: assigned.storeId, ownerId: null },
           data: { ownerId: assigned.assignedUserId },
@@ -804,13 +814,10 @@ export class AdvancedCrmService {
           });
         }
       }
-      return assigned;
     } catch {
-      // Assignment automation is advisory plumbing. An inbound message has
-      // already been stored and must never turn into a provider retry because a
-      // tenant has no eligible salesperson or a settings row is malformed.
-      return null;
+      // Advisory too: the conversation's own assignment above still stands.
     }
+    return assigned;
   }
 
   /**
@@ -891,19 +898,28 @@ export class AdvancedCrmService {
 
       const storePolicy = policy.stores.find((s) => s.storeId === target.storeId);
       if (!storePolicy) return null;
-      const eligible = await tx.user.findMany({
-        where: {
-          organisationId, role: 'salesperson', isActive: true, approvalStatus: 'approved',
-          ...(storePolicy.eligibleUserIds.length ? { id: { in: storePolicy.eligibleUserIds } } : {}),
-          userStores: { some: { storeId: target.storeId } },
-        },
-        select: { id: true },
-        orderBy: { id: 'asc' },
-      });
+      // Only people who can open the work. A salesperson without this screen
+      // (attendance only, or switched off by head office) is passed over, even
+      // when the store's own list names them.
+      const screen = entity === 'lead' ? 'crm' : 'conversations';
+      const eligible = (
+        await tx.user.findMany({
+          where: {
+            organisationId, role: 'salesperson', isActive: true, approvalStatus: 'approved',
+            ...(storePolicy.eligibleUserIds.length ? { id: { in: storePolicy.eligibleUserIds } } : {}),
+            userStores: { some: { storeId: target.storeId } },
+          },
+          select: { id: true, role: true, accessOverrides: true, organisationId: true },
+          orderBy: { id: 'asc' },
+        })
+      ).filter((u) => canOpen(u, screen));
       if (!eligible.length) throw new BadRequestException('No active salesperson is eligible for this location.');
 
       const state = normaliseRoundRobinState(settings[ROUND_ROBIN_STATE_KEY]);
-      const previous = state[target.storeId]?.lastUserId;
+      // Leads and conversations take turns separately. The people who can open
+      // one are not always the people who can open the other, and one shared
+      // turn would then keep handing the same person every conversation.
+      const previous = state[target.storeId]?.lastByEntity[entity] ?? state[target.storeId]?.lastUserId;
       const previousIndex = previous ? eligible.findIndex((u) => u.id === previous) : -1;
       const selected = eligible[(previousIndex + 1) % eligible.length];
       const sequence = (state[target.storeId]?.sequence ?? 0) + 1;
@@ -914,7 +930,12 @@ export class AdvancedCrmService {
           ...current,
           [ROUND_ROBIN_STATE_KEY]: {
             ...liveState,
-            [target.storeId!]: { lastUserId: selected.id, sequence, updatedAt: new Date().toISOString() },
+            [target.storeId!]: {
+              lastUserId: selected.id,
+              lastByEntity: { ...liveState[target.storeId!]?.lastByEntity, [entity]: selected.id },
+              sequence,
+              updatedAt: new Date().toISOString(),
+            },
           },
         };
       });
@@ -1408,13 +1429,31 @@ function normaliseRoundRobinPolicy(value: unknown): RoundRobinPolicy {
   return { enabled: raw.enabled === true, stores };
 }
 
-function normaliseRoundRobinState(value: unknown): Record<string, { lastUserId: string; sequence: number; updatedAt: string }> {
+/**
+ * Whose turn it was, per store. `lastUserId` is the last pick of either kind
+ * (all there was before the two kinds took turns separately, and still where a
+ * kind with no pick of its own starts from); `lastByEntity` is the last pick of
+ * each kind.
+ */
+type RoundRobinState = Record<string, {
+  lastUserId: string;
+  lastByEntity: { lead?: string; conversation?: string };
+  sequence: number;
+  updatedAt: string;
+}>;
+
+function normaliseRoundRobinState(value: unknown): RoundRobinState {
   const raw = asObject(value);
   return Object.fromEntries(Object.entries(raw).flatMap(([storeId, entry]) => {
     const s = asObject(entry);
     if (typeof s.lastUserId !== 'string') return [];
+    const by = asObject(s.lastByEntity);
     return [[storeId, {
       lastUserId: s.lastUserId,
+      lastByEntity: {
+        ...(typeof by.lead === 'string' ? { lead: by.lead } : {}),
+        ...(typeof by.conversation === 'string' ? { conversation: by.conversation } : {}),
+      },
       sequence: Number.isInteger(s.sequence) && Number(s.sequence) >= 0 ? Number(s.sequence) : 0,
       updatedAt: typeof s.updatedAt === 'string' ? s.updatedAt : new Date(0).toISOString(),
     }]];

@@ -257,7 +257,7 @@ function buildSteps(role: Role, firstName: string): TourStep[] {
  * free and never counts against the ten.
  */
 export function WelcomeTour() {
-  const { user, role, authenticated } = useSession();
+  const { user, role, authenticated, access } = useSession();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -337,6 +337,9 @@ export function WelcomeTour() {
   useEffect(() => {
     if (!tour?.autoOpen || autoOpened.current) return;
     if (NO_AUTO_OPEN.includes(pathname)) return;
+    // Someone with attendance and nothing else has nothing to be shown round;
+    // the guide would only sit on top of the one button they came for.
+    if (access && Object.keys(access).length <= 1) return;
     autoOpened.current = true;
     const timer = setTimeout(() => {
       setStep(0);
@@ -351,7 +354,7 @@ export function WelcomeTour() {
     // /check-in) only defers the guide — it opens on the next page, rather than
     // being lost for the session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tour?.autoOpen, pathname]);
+  }, [tour?.autoOpen, pathname, access]);
 
   // Reopening from the user menu: always allowed, always from the start, and
   // never counted — someone asking for a reminder should not be penalised.

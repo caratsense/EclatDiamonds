@@ -715,9 +715,12 @@ function LoginPage() {
     });
     clearAttendanceHandled();
     router.replace(
-      me.role === "salesperson"
-        ? "/check-in"
-        : homeForRole(me.role, me.productProfile?.enabledNavigation),
+      // Everyone who punches starts on the punch screen; it sends them on to
+      // their own home once today's attendance is done or skipped. Staff set
+      // to attendance only stay there: it is their home (homeForRole).
+      me.role === "head_office"
+        ? homeForRole(me.role, me.productProfile?.enabledNavigation)
+        : "/check-in",
     );
   }
 
@@ -731,7 +734,7 @@ function LoginPage() {
           const status = (err as AxiosError)?.response?.status;
           toast.error(
             status === 401
-              ? "Invalid Login ID or password."
+              ? "That Login ID or mobile number and password do not match."
               : "Couldn't sign in. Check your connection and try again.",
           );
         },
@@ -897,7 +900,7 @@ function LoginPage() {
             </h2>
             <p className="mt-1.5 text-sm text-slate-600 dark:text-[#f8fafc]/70">
               {mode === "signin"
-                ? "Enter your Login ID and password to start the session."
+                ? "Enter your Login ID or mobile number, and your password."
                 : signupKind === "organisation"
                   ? "Choose your industry and start with the right CRM, fields and workflow."
                   : "Request access to an existing team. Your manager will approve you."}
@@ -927,10 +930,11 @@ function LoginPage() {
           <div className="glass facet-top relative rounded-2xl p-5 shadow-xs">
             <form onSubmit={onSubmitPassword} className="space-y-4">
                 <div className="space-y-1.5">
-                  <Label htmlFor="email" className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">Login ID</Label>
+                  <Label htmlFor="email" className="text-xs font-medium text-slate-700 dark:text-[#f8fafc]/80">Login ID or mobile number</Label>
                   <Input
                     id="email"
-                    type="email"
+                    type="text"
+                    inputMode="email"
                     autoComplete="username"
                     className={FIELD}
                     value={email}
@@ -984,6 +988,9 @@ function LoginPage() {
           </>
           ) : (
             <div className="space-y-3.5">
+              {/* Setting up a whole new organisation is not offered on this
+                  screen; it opens only from a direct ?start=create link. */}
+              {startAt === "create" ? (
               <div className="grid grid-cols-2 gap-2 rounded-xl border border-slate-200/80 dark:border-white/[0.08] bg-slate-100/70 dark:bg-black/25 p-1.5 shadow-xs">
                 <button
                   type="button"
@@ -1010,6 +1017,7 @@ function LoginPage() {
                   <Building2 className="h-3.5 w-3.5" /> Create organisation
                 </button>
               </div>
+              ) : null}
               {signupKind === "organisation" ? (
                 <OrganisationSignupCard
                   onCreated={finishLogin}
@@ -1025,22 +1033,18 @@ function LoginPage() {
             </div>
           )}
 
-          {/* Sign in ⇄ Create account toggle */}
-          <button
-            type="button"
-            onClick={() => setMode((m) => (m === "signin" ? "signup" : "signin"))}
-            className="flex w-full items-center justify-center gap-1.5 text-sm text-slate-600 dark:text-[#f8fafc]/70 transition-colors hover:text-[#6366f1] dark:hover:text-[#818cf8]"
-          >
-            {mode === "signin" ? (
-              <>
-                <UserPlus className="h-3.5 w-3.5" /> New here? Create an account
-              </>
-            ) : (
-              <>
-                <ArrowLeft className="h-3.5 w-3.5" /> Already have an account? Sign in
-              </>
-            )}
-          </button>
+          {/* The sign-in screen has no way into sign-up: a manager makes staff
+              logins, and sign-up opens only from a direct ?start=join or
+              ?start=create link. Whoever came by one still gets a way back. */}
+          {mode === "signup" ? (
+            <button
+              type="button"
+              onClick={() => setMode("signin")}
+              className="flex w-full items-center justify-center gap-1.5 text-sm text-slate-600 dark:text-[#f8fafc]/70 transition-colors hover:text-[#6366f1] dark:hover:text-[#818cf8]"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" /> Back to sign in
+            </button>
+          ) : null}
         </div>
 
         {/* PWA Install Footer Notice */}

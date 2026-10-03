@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { canOpen, canOpenById } from '../auth/access';
 import {
   WhatsAppCredentialsService,
   type SenderRoute,
@@ -861,8 +862,8 @@ export class WhatsAppBotService {
     });
     if (!conversation) return;
 
-    const manager = conversation.storeId
-      ? await this.prisma.user.findFirst({
+    const managers = conversation.storeId
+      ? await this.prisma.user.findMany({
           where: {
             organisationId,
             isActive: true,
@@ -870,9 +871,20 @@ export class WhatsAppBotService {
             userStores: { some: { storeId: conversation.storeId } },
           },
           orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-          select: { id: true, name: true },
+          select: { id: true, name: true, role: true, accessOverrides: true, organisationId: true },
         })
-      : null;
+      : [];
+    // The first of them who can open Conversations: a manager head office has
+    // switched the inbox off for would be handed a thread they cannot see.
+    const manager = managers.find((m) => canOpen(m, 'conversations')) ?? null;
+    // The same goes for whoever holds the thread now. An owner who cannot open
+    // Conversations (given it before their screens changed, or since left)
+    // would never see it, so the thread counts as nobody's.
+    const holder =
+      conversation.assignedUserId &&
+      (await canOpenById(this.prisma, organisationId, conversation.assignedUserId, 'conversations'))
+        ? conversation.assignedUserId
+        : null;
 
     await this.prisma.conversation.update({
       where: { id: conversationId },
@@ -881,7 +893,7 @@ export class WhatsAppBotService {
         handoffReason: reason,
         // Never steal a thread somebody has already taken: a manager who picked
         // this up by hand outranks the automatic choice.
-        ...(manager && !conversation.assignedUserId ? { assignedUserId: manager.id } : {}),
+        ...(manager && !holder ? { assignedUserId: manager.id } : {}),
       },
     });
 
@@ -935,7 +947,7 @@ export class WhatsAppBotService {
      *
      * Best-effort by contract, and emitted after the writes have committed.
      */
-    const owner = conversation.assignedUserId ?? manager?.id ?? null;
+    const owner = holder ?? manager?.id ?? null;
     if (owner) {
       const who = conversation.party?.name?.trim() || 'A customer';
       await this.notifications.emit([owner], {

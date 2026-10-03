@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Prisma, Role } from '@prisma/client';
 
+import { canOpenById } from '../auth/access';
 import { AuditService } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
 import { isSalesScoped } from '../common/sales-scope';
@@ -464,6 +465,16 @@ export class ResponseSlaService {
     const href = `/conversations?thread=${clock.conversationId}`;
 
     /*
+     * Who owes the reply. Somebody who cannot open Conversations (given the
+     * thread before their screens changed, or since left) cannot reply, so the
+     * thread counts as unassigned: the task is not parked on them, and the
+     * branch's managers hear about it instead.
+     */
+    const held = clock.conversation.assignedUserId;
+    const assigneeId =
+      held && (await canOpenById(this.prisma, clock.organisationId, held, 'conversations')) ? held : null;
+
+    /*
      * The calling queue, because that is where a shop already looks for work it
      * owes somebody. A breach that only raised a bell would be invisible to
      * whoever is working the list.
@@ -477,7 +488,7 @@ export class ResponseSlaService {
         priority: 'urgent',
         status: 'open',
         partyId: clock.conversation.partyId,
-        assigneeId: clock.conversation.assignedUserId,
+        assigneeId,
         // The BRANCH's today, not the server's. A store in another timezone
         // would otherwise get a task dated tomorrow and never see it in its
         // "due today" bucket.
@@ -495,8 +506,8 @@ export class ResponseSlaService {
      * is unassigned. An unowned overdue conversation is the worst case, so it
      * must not be the one nobody is told about.
      */
-    if (clock.conversation.assignedUserId) {
-      await this.notifications.emit([clock.conversation.assignedUserId], {
+    if (assigneeId) {
+      await this.notifications.emit([assigneeId], {
         kind: 'reminder',
         title,
         body,
@@ -513,7 +524,7 @@ export class ResponseSlaService {
         Role.store_manager,
         {
           kind: 'reminder',
-          title: `${title} — nobody is assigned`,
+          title: `${title} — ${held ? 'the person assigned cannot open it' : 'nobody is assigned'}`,
           body,
           href,
           storeId: clock.storeId,

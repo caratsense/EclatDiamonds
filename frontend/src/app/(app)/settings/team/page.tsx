@@ -89,6 +89,8 @@ import {
 } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
+import { addStaffInput, staffAddedNote } from "./add-staff";
+
 const nav = getNavItem("settings/team")!;
 
 /** Roles assignable from this page, in rank order (salesperson is the default). */
@@ -223,6 +225,7 @@ export default function TeamPage() {
         open={addOpen}
         onOpenChange={setAddOpen}
         viewerRole={viewerRole}
+        roster={staff}
       />
     </>
   );
@@ -1282,10 +1285,12 @@ function AddStaffDialog({
   open,
   onOpenChange,
   viewerRole,
+  roster,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   viewerRole: Role;
+  roster: StaffUser[];
 }) {
   const createStaff = useCreateStaff();
   const stores = useSession((s) => s.stores);
@@ -1303,6 +1308,7 @@ function AddStaffDialog({
   const [email, setEmail] = useState("");
   const [storeId, setStoreId] = useState("");
   const [role, setRole] = useState<StaffRole>("salesperson");
+  const [password, setPassword] = useState("");
   const [touched, setTouched] = useState(false);
 
   function reset() {
@@ -1311,6 +1317,7 @@ function AddStaffDialog({
     setEmail("");
     setStoreId("");
     setRole("salesperson");
+    setPassword("");
     setTouched(false);
   }
 
@@ -1322,6 +1329,8 @@ function AddStaffDialog({
   const phoneError = normalizedPhone == null;
   const emailError = !isValidEmail(email);
   const storeError = !storeId;
+  // Optional, but if given it must pass the same rule as Reset password.
+  const passwordError = password.length > 0 && password.length < 8;
 
   function save() {
     setTouched(true);
@@ -1353,30 +1362,29 @@ function AddStaffDialog({
       toast.error("Select a store.");
       return;
     }
+    if (passwordError) {
+      toast.error("Password must be at least 8 characters.");
+      return;
+    }
 
-    createStaff.mutate(
-      {
-        name: name.trim(),
-        storeId,
-        phone: normalizedPhone ?? undefined,
-        email: email.trim(),
-        role,
+    const input = addStaffInput({ name, phone, email, storeId, role, password });
+    createStaff.mutate(input, {
+      onSuccess: (created) => {
+        toast.success(`${created.name} added`, {
+          description: staffAddedNote(created, input, roster),
+          duration: 10_000,
+        });
+        reset();
+        onOpenChange(false);
       },
-      {
-        onSuccess: (created) => {
-          toast.success(`Staff added — their Login ID is ${created.email}`);
-          reset();
-          onOpenChange(false);
-        },
-        onError: (err) =>
-          toast.error(
-            apiErrorMessage(
-              err,
-              "Could not add the staff member — the phone or email may be in use.",
-            ),
+      onError: (err) =>
+        toast.error(
+          apiErrorMessage(
+            err,
+            "Could not add the staff member — the phone or email may be in use.",
           ),
-      },
-    );
+        ),
+    });
   }
 
   return (
@@ -1387,14 +1395,16 @@ function AddStaffDialog({
         onOpenChange(o);
       }}
     >
-      <DialogContent>
+      {/* Taller than a phone screen once every field stacks, so it scrolls and
+          Cancel and Close stay within reach. */}
+      <DialogContent className="max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Add staff</DialogTitle>
           <DialogDescription>
-            New staff default to Salesperson. We generate a unique Login ID
-            for them in your organisation’s Login ID format, and show it to you
-            once they are added; a phone also lets them sign in with a WhatsApp OTP.
-            You can promote them later.
+            New staff default to Salesperson. Give them a password and they can
+            sign in straight away with their mobile number. We also generate a
+            unique Login ID for them in your organisation’s Login ID format, and
+            show it to you once they are added. You can promote them later.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
@@ -1457,8 +1467,8 @@ function AddStaffDialog({
             </p>
           ) : (
             <p className="text-xs text-muted-foreground">
-              Phone and email are both required. The phone also enables WhatsApp
-              OTP sign-in.
+              Phone and email are both required. The phone number is also what
+              they sign in with.
             </p>
           )}
           <div className="grid gap-3 sm:grid-cols-2">
@@ -1507,9 +1517,40 @@ function AddStaffDialog({
               )}
             </div>
           </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="staff-password">Password</Label>
+            <Input
+              id="staff-password"
+              type="password"
+              autoComplete="new-password"
+              placeholder="At least 8 characters"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              aria-invalid={touched && passwordError}
+            />
+            {touched && passwordError ? (
+              <p className="text-xs text-destructive">
+                Password must be at least 8 characters.
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Share it with them privately; they can change it later in
+                Settings. Leave it blank to set one later with Reset password.
+              </p>
+            )}
+          </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              // Cancel keeps the rest of the form as before, but never a typed
+              // password: it must not wait in a closed dialog and end up as
+              // the next person's.
+              setPassword("");
+              onOpenChange(false);
+            }}
+          >
             Cancel
           </Button>
           <Button onClick={save} disabled={createStaff.isPending}>
