@@ -33,6 +33,7 @@ export type NotificationKind =
   | "order_delayed"
   | "attendance_review"
   | "reminder"
+  | "lead_assigned"
   | "system";
 
 export interface FeedNotification {

@@ -624,6 +624,103 @@ describe('Multi-location ad routing, handoff and visibility (e2e)', () => {
     expect(row.lastMessage.preview.startsWith('*')).toBe(false);
     expect(row.lastMessage.preview).toContain('Saturday');
   });
+
+  /* ------------------------------------------- 6. an admin moves a lead on */
+
+  /*
+   * Last in the file on purpose. These reassign the Bandra thread to another
+   * branch, which is exactly the cross-branch notification the earlier
+   * "never notifies a manager about another branch" test asserts the absence
+   * of. Running after it keeps both honest instead of relaxing either.
+   */
+
+  it('tells the receiving manager when head office moves a lead to their branch', async () => {
+    const to = BRANCHES[1];
+
+    await request(server())
+      .post(`/crm/conversations/${convoOf.bandra}/assign`)
+      .set(auth(token.ho))
+      .send({
+        storeId: to.storeId,
+        assignedUserId: managerId[to.key],
+        handling: 'human',
+      })
+      .expect((res) => {
+        if (res.status !== 200 && res.status !== 201) {
+          throw new Error(`assign failed: ${res.status} ${JSON.stringify(res.body)}`);
+        }
+      });
+
+    const notifications = await prisma.notification.findMany({
+      where: {
+        entityType: 'Conversation',
+        entityId: convoOf.bandra,
+        kind: 'lead_assigned',
+      },
+      select: { userId: true, storeId: true, priority: true, href: true, body: true },
+    });
+
+    // Exactly the person it was given to. A reassign announced to the whole
+    // branch is one nobody treats as theirs — the same rule the automatic
+    // handoff follows.
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0].userId).toBe(managerId[to.key]);
+    expect(notifications[0].storeId).toBe(to.storeId);
+    // A lead waiting for a first call outranks a routine approval.
+    expect(notifications[0].priority).toBe('high');
+    expect(notifications[0].href).toBe(`/conversations?thread=${convoOf.bandra}`);
+    // The body has to say who moved it, or the recipient cannot tell an admin's
+    // decision from an automatic one.
+    expect(notifications[0].body).toContain('routed this lead here');
+  });
+
+  it('does not notify the admin who performed the reassign', async () => {
+    const ho = await prisma.user.findFirst({
+      where: { organisationId: ORG, role: 'head_office' },
+      select: { id: true },
+    });
+    const own = await prisma.notification.count({
+      where: {
+        userId: ho!.id,
+        entityType: 'Conversation',
+        entityId: convoOf.bandra,
+        kind: 'lead_assigned',
+      },
+    });
+    // Telling somebody what they just did is noise that trains people to
+    // ignore the bell.
+    expect(own).toBe(0);
+  });
+
+  it('a reassign that changes nothing does not ring a second time', async () => {
+    const to = BRANCHES[1];
+    const before = await prisma.notification.findFirst({
+      where: { entityType: 'Conversation', entityId: convoOf.bandra, kind: 'lead_assigned' },
+      select: { id: true, createdAt: true },
+    });
+
+    // Re-saving the dialog with the same destination and the same owner.
+    await request(server())
+      .post(`/crm/conversations/${convoOf.bandra}/assign`)
+      .set(auth(token.ho))
+      .send({ storeId: to.storeId, assignedUserId: managerId[to.key], handling: 'human' })
+      .expect((res) => {
+        if (res.status !== 200 && res.status !== 201) {
+          throw new Error(`assign failed: ${res.status} ${JSON.stringify(res.body)}`);
+        }
+      });
+
+    const after = await prisma.notification.findMany({
+      where: { entityType: 'Conversation', entityId: convoOf.bandra, kind: 'lead_assigned' },
+      select: { id: true, createdAt: true },
+    });
+
+    // Still one row, and the SAME row untouched: a no-op save must not re-unread
+    // a notification the manager has already cleared.
+    expect(after).toHaveLength(1);
+    expect(after[0].id).toBe(before!.id);
+    expect(after[0].createdAt.getTime()).toBe(before!.createdAt.getTime());
+  });
 });
 
 async function teardown(prisma: PrismaService) {
