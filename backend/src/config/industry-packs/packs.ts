@@ -161,6 +161,20 @@ const CORE_NAVIGATION = [
   'settings/audit',
   /** Head office decides, person by person, which screens someone can open. */
   'settings/access',
+  /*
+   * The same omission as the block above, caught again.
+   *
+   * Both screens shipped, were tested and were deployed, and neither appeared
+   * in anybody's sidebar — so the DSR bot could only be given to someone by
+   * running an API call by hand, which is the exact problem that screen was
+   * built to remove. The templates screen was equally invisible.
+   *
+   * Universal, like the rest: any business with staff on WhatsApp wants to say
+   * who may file a report from a handset, and any business messaging customers
+   * needs to see which templates its numbers actually hold.
+   */
+  'settings/dsr-access',
+  'settings/integrations/templates',
 ] as const;
 
 function universalNavigation(): string[] {

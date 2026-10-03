@@ -163,6 +163,26 @@ const UNIVERSAL_ROUTES = [
   'settings/integrations',
   'settings/audit',
   'settings/access',
+  /*
+   * A third deliberate widening — the same fault as the second, except this
+   * one was found in production rather than by this test, which is the part
+   * worth noting.
+   *
+   * Both screens were built, tested and deployed while missing from this list.
+   * The DSR access screen exists precisely so nobody has to run an API call by
+   * hand to let a manager file a report from their phone; being absent here
+   * meant it could only be reached by running an API call by hand. The
+   * templates screen was invisible the same way.
+   *
+   * Cross-industry by nature: any business with staff on WhatsApp wants to say
+   * who may file a report from a handset, and any business that messages
+   * customers needs to see which templates its numbers hold.
+   *
+   * The jewellery-only list above is still untouched — no pack gains finance,
+   * loyalty, returns or stock.
+   */
+  'settings/dsr-access',
+  'settings/integrations/templates',
 ] as const;
 
 describe('industry packs — the catalogue', () => {
