@@ -32,6 +32,7 @@ import {
   type MessageTemplateRow,
   type ProviderTemplateStatus,
 } from "@/lib/queries/meta-admin";
+import { TemplateComposer } from "@/components/integrations/template-composer";
 import { useIntegrations } from "@/lib/queries/tenant-config";
 import { apiErrorMessage } from "@/lib/utils";
 
@@ -107,6 +108,16 @@ function Templates() {
           value={integrationId}
           onChange={setIntegrationId}
         />
+        {/*
+          Write one here rather than in WhatsApp Manager.
+
+          Needs the WABA id for the same reason synchronising does: both call
+          /{waba-id}/message_templates, and without it there is nothing to post
+          to. Disabled rather than hidden, so the gap is visible and fixable.
+        */}
+        {integrationId ? (
+          <TemplateComposer integrationId={integrationId} disabled={!accountConfigured} />
+        ) : null}
         <Button
           size="sm"
           variant="outline"

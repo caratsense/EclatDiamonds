@@ -105,6 +105,100 @@ export class MetaGraphClient {
       clearTimeout(timer);
     }
   }
+
+  /**
+   * The same door, opened outwards.
+   *
+   * Every guard on the GET path applies here unchanged — the path shape, the
+   * tenant-and-provider check on the integration, the token from the registry,
+   * the explicit API version, the ten-second abort, the bounded provider error.
+   * They are repeated rather than shared because the differences that matter
+   * are small and a reader should be able to see both halves at once.
+   *
+   * Two things are deliberately NOT the same:
+   *
+   * The body is JSON, not query parameters. Meta's template-creation payload is
+   * a nested `components` array, which cannot survive the flat `key=value`
+   * validation the GET path applies — and that validation is worth keeping
+   * there, so this takes an already-built object and serialises it whole.
+   *
+   * There is no retry. A GET that fails can be repeated for free; a POST that
+   * times out may well have been received, and submitting the same template
+   * twice earns a duplicate-name rejection from Meta that reads like our bug.
+   * The caller is told it failed and decides.
+   */
+  async postForIntegration<T>(
+    organisationId: string,
+    integrationId: string,
+    path: string,
+    body: unknown,
+    providerCode: string = META_ADS_PROVIDER_CODE,
+  ): Promise<T> {
+    if (!ID_OR_EDGE.test(path) || path.includes('..') || path.includes('://')) {
+      throw new MetaGraphError('Meta Graph path is invalid.');
+    }
+    const integration = await this.prisma.integration.findFirst({
+      where: {
+        id: integrationId,
+        organisationId,
+        providerCode,
+        status: { not: 'disabled' },
+      },
+      select: { id: true },
+    });
+    if (!integration) throw new MetaGraphError('That Meta integration is unavailable for this tenant.');
+
+    const token = await this.registry.credentialFor(organisationId, integrationId, 'access_token');
+    if (!token) throw new MetaGraphError('The Meta access token is not configured for this connection.');
+
+    const version = this.config.get<string>('META_GRAPH_API_VERSION')?.trim() ?? '';
+    if (!/^v\d{1,3}\.\d{1,2}$/.test(version)) {
+      throw new MetaGraphError('META_GRAPH_API_VERSION is not configured with an explicit version.');
+    }
+
+    const url = new URL(`/${version}/${path.replace(/^\/+/, '')}`, GRAPH_ORIGIN);
+    const payload = JSON.stringify(body ?? {});
+    if (payload.length > 64_000) {
+      throw new MetaGraphError('Meta Graph request body is too large.');
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10_000);
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: payload,
+        redirect: 'error',
+        signal: controller.signal,
+      });
+      const raw = (await response.text()).slice(0, 64_000);
+      const parsed = parseJson(raw);
+      if (!response.ok) {
+        const providerError = object(parsed)?.error;
+        const provider = object(providerError);
+        throw new MetaGraphError(
+          boundedProviderMessage(provider?.message, response.status),
+          response.status,
+          scalar(provider?.code),
+        );
+      }
+      if (!parsed || typeof parsed !== 'object') {
+        throw new MetaGraphError('Meta Graph returned an unreadable response.', response.status);
+      }
+      return parsed as T;
+    } catch (error) {
+      if (error instanceof MetaGraphError) throw error;
+      const reason = error instanceof Error && error.name === 'AbortError' ? 'timed out' : 'failed';
+      throw new MetaGraphError(`Meta Graph request ${reason}.`);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 }
 
 function parseJson(value: string): unknown {

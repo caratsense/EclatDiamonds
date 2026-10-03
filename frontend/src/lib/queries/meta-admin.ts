@@ -195,6 +195,50 @@ export function useSyncTemplates() {
   });
 }
 
+/** What the client types here, on its way to Meta for review. */
+export interface TemplateDraftInput {
+  name: string;
+  languageCode: string;
+  category: "MARKETING" | "UTILITY" | "AUTHENTICATION";
+  body: string;
+  header?: string;
+  footer?: string;
+  examples?: string[];
+}
+
+export interface SubmittedTemplate {
+  id: string;
+  name: string;
+  languageCode: string;
+  category: string;
+  /** PENDING on submission. Only a sync can ever raise this to APPROVED. */
+  providerStatus: ProviderTemplateStatus;
+  providerTemplateId: string | null;
+  preview: string;
+  submittedAt: string;
+}
+
+/**
+ * POST /omnichannel/integrations/:id/templates/submit — write a template to
+ * Meta and put it in for review.
+ *
+ * Returns PENDING, always. Approval is a fact about Meta that arrives through
+ * template synchronisation, never from this call.
+ */
+export function useSubmitTemplate(integrationId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (draft: TemplateDraftInput) =>
+      (
+        await api.post<SubmittedTemplate>(
+          `/omnichannel/integrations/${integrationId}/templates/submit`,
+          draft,
+        )
+      ).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["omnichannel", "templates"] }),
+  });
+}
+
 export function useQueueTemplateSync() {
   const qc = useQueryClient();
   return useMutation({
