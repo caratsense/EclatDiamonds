@@ -86,6 +86,7 @@ import { AuthedImage } from "@/components/ui/authed-image";
 import { IntentAnalysisPanel } from "@/components/crm/intent-analysis-panel";
 import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
+import { useFillViewport } from "@/lib/use-fill-viewport";
 import { apiErrorMessage, positiveNumberInput } from "@/lib/utils";
 
 /**
@@ -200,7 +201,7 @@ function stripAgentSignature(body: string, authorName?: string | null): string {
  * and refuses to shrink below its content, so without it the panes would push
  * past the viewport and bring the outer scrollbar straight back.
  */
-const PANE_HEIGHT = "min-h-0 flex-1";
+const PANE_HEIGHT = "h-full min-h-0";
 
 /**
  * The chips on a conversation row.
@@ -356,9 +357,9 @@ function ConversationsSkeleton() {
   // 650px block that briefly overflows and flashes the outer scrollbar before
   // the inbox renders.
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4">
-      <Skeleton className="h-8 w-64 shrink-0" />
-      <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-4 lg:grid-cols-[310px_1fr_320px]">
+    <div className="space-y-4">
+      <Skeleton className="h-8 w-64" />
+      <div className="grid h-[70vh] grid-rows-[minmax(0,1fr)] gap-4 lg:grid-cols-[310px_1fr_320px]">
         <Skeleton className="h-full w-full rounded-xl" />
         <Skeleton className="h-full w-full rounded-xl" />
         <Skeleton className="h-full w-full rounded-xl" />
@@ -495,6 +496,15 @@ function ConversationsContent() {
    * Read from the UNFILTERED result when a channel is selected, so choosing
    * WhatsApp does not remove every other option from the menu that chose it.
    */
+  /*
+   * The three panes reach the bottom of the window and stop there, so the page
+   * itself never scrolls — each pane scrolls inside itself instead.
+   *
+   * Measured rather than calculated: see `useFillViewport` for the two
+   * arithmetic attempts that preceded it and how each one failed.
+   */
+  const { ref: paneRef, style: paneStyle } = useFillViewport<HTMLDivElement>();
+
   const [seenChannels, setSeenChannels] = useState<string[]>([]);
   const listedChannels = [
     ...new Set((list.data ?? []).map((c) => c.channel).filter(Boolean)),
@@ -563,7 +573,7 @@ function ConversationsContent() {
     // `flex-1 min-h-0` claims the leftover height from the shell's content
     // wrapper; `gap-4` replaces `space-y-4`, which does nothing useful on a
     // flex container.
-    <div className="flex min-h-0 flex-1 flex-col gap-4">
+    <div className="space-y-4">
       {/*
         Named for what a manager comes here to do, not for the architecture or
         the competitor it was benchmarked against.
@@ -820,7 +830,10 @@ function ConversationsContent() {
         shrink below its content, which is what lets each pane scroll inside
         itself rather than stretching the page.
       */}
-      <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-3 lg:grid-cols-[280px_1fr] xl:grid-cols-[285px_1fr]">
+      <div
+        ref={paneRef}
+        style={paneStyle}
+        className="grid min-h-0 grid-rows-[minmax(0,1fr)] gap-3 lg:grid-cols-[280px_1fr] xl:grid-cols-[285px_1fr]">
         {/* LEFT PANE: Contacts List */}
         <Card className={`flex flex-col ${PANE_HEIGHT} overflow-hidden border-border/80 shadow-sm`}>
           {/* Zithara Top Mini Toolbar */}
@@ -1090,7 +1103,7 @@ function ThreadView({
 
   if (isLoading) {
     return (
-      <div className={`grid gap-4 xl:grid-cols-[1fr_320px] ${PANE_HEIGHT}`}>
+      <div className="grid h-full gap-4 xl:grid-cols-[1fr_320px]">
         <Skeleton className="h-full w-full rounded-xl" />
         <Skeleton className="h-full w-full rounded-xl hidden xl:block" />
       </div>

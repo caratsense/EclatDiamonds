@@ -23,25 +23,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 `--tour-inset` is published by the welcome guide while it is on
                 screen (0 otherwise) so the page scrolls clear of it — the card
                 is a fixed overlay and was covering page controls outright on a
-                phone, swallowing the clicks meant for them. */}
-            {/*
-              `flex min-h-full flex-col` lets a screen CHOOSE to fill the
-              viewport instead of growing past it.
+                phone, swallowing the clicks meant for them.
 
-              Most pages are documents: they stack, they run long, and `main`
-              scrolls them. The inbox is not a document. It is three panes that
-              each scroll on their own, and when the page ALSO scrolled you got
-              a scrollbar that moved the whole three-pane layout out from under
-              the cursor while you were reading a conversation inside it.
-
-              `min-h-full` rather than `h-full`: at least the viewport, never
-              capped. A long page grows and scrolls exactly as before, so this
-              changes nothing for the other screens. A page that wants to fill
-              adds `flex-1 min-h-0` to its own root and gets the leftover height
-              without anybody having to hard-code what the topbar is worth.
-            */}
+                NOT a flex column with `min-h-full`. That was tried, to let a
+                screen claim the leftover height — but `min-h-full` is a floor,
+                not a size, so the height stays indefinite and `flex-1` on a
+                child resolves against nothing. The child grew to its content,
+                this grew with it, and the inbox got a second scrollbar over
+                its own panes. A screen that wants to fill measures where it
+                starts instead; see `useFillViewport`. */}
             <div
-              className="mx-auto flex min-h-full w-full max-w-7xl flex-col px-4 py-6 pb-24 md:px-6 md:py-8 md:pb-8"
+              className="mx-auto w-full max-w-7xl px-4 py-6 pb-24 md:px-6 md:py-8 md:pb-8"
               style={{ scrollPaddingBottom: "var(--tour-inset, 0px)" }}
             >
               {children}
