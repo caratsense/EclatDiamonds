@@ -172,7 +172,7 @@ export class WhatsAppIdentityService {
       }
     }
 
-    return this.startLinking({
+    const issued = await this.startLinking({
       id: target.id,
       name: target.name,
       role: target.role,
@@ -180,6 +180,29 @@ export class WhatsAppIdentityService {
       storeIds: target.userStores.map((s) => s.storeId),
       allStores: false,
     } as AuthUser);
+
+    /*
+     * Who issued it, for whom.
+     *
+     * `completeLinking` already audits the binding, but it records the TARGET
+     * as the actor -- correct when somebody links their own handset, and a gap
+     * the moment an admin does it on their behalf. Without this line the trail
+     * says "Aarav linked a number" and nothing anywhere says head office
+     * started it. The code grants access to a reporting bot; who handed it out
+     * is the part worth being able to ask about later.
+     *
+     * Recorded at ISSUE rather than at completion, because a code that is
+     * never redeemed still happened and is still worth seeing.
+     */
+    await this.audit.record(actor, {
+      action: 'whatsapp.link_code_issued',
+      entityType: 'User',
+      entityId: target.id,
+      summary: `${actor.name ?? 'A manager'} issued a WhatsApp link code for ${target.name}`,
+      metadata: { targetRole: target.role, expiresAt: issued.expiresAt },
+    });
+
+    return issued;
   }
 
   /**
@@ -374,12 +397,27 @@ export class WhatsAppIdentityService {
     return people.map((u) => {
       // A revoked binding is history, not access. Only an active one counts.
       const active = u.whatsappIdentities.find((i) => i.status === 'active') ?? null;
+      /*
+       * Only the branches the CALLER can see.
+       *
+       * The filter above returns people who work at one of the caller's
+       * branches, but a colleague posted to several carries all of them in
+       * this list -- so a Surat manager was reading "Mumbai - Bandra" off a
+       * head-office row. Harmless on its own, and still somebody else's
+       * organisation chart leaking through a screen about phone numbers.
+       */
+      const visibleStores = actor.allStores
+        ? u.userStores.map((s) => s.store)
+        : u.userStores
+            .filter((s) => actor.storeIds.includes(s.store.id))
+            .map((s) => s.store);
+
       return {
         userId: u.id,
         name: u.name,
         email: u.email,
         role: u.role,
-        stores: u.userStores.map((s) => s.store),
+        stores: visibleStores,
         identity: active
           ? {
               id: active.id,

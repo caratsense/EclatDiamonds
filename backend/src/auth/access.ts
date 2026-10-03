@@ -45,7 +45,7 @@ export const MODULES = [
   'approvals', 'requests', 'ticketing', 'finance',
   // Administration
   'settings/onboarding', 'settings/stores', 'new-store', 'settings/configuration', 'settings/rates',
-  'settings/integrations', 'settings/integrations/templates',
+  'settings/integrations', 'settings/integrations/templates', 'settings/dsr-access',
   'data', 'settings/audit', 'settings/staff-digest', 'settings/lead-tags',
   'data/images', 'settings/messaging-routes', 'settings/channels', 'settings/access',
 ] as const;
@@ -68,6 +68,15 @@ const SALESPERSON: ModuleSlug[] = [
  */
 const STORE_MANAGER: ModuleSlug[] = [
   ...SALESPERSON,
+  /*
+   * Onboarding their own team onto the reporting bot.
+   *
+   * Not head-office-only, because the person who notices a manager cannot file
+   * a report is the one standing next to them. The service scopes every action
+   * to the TARGET's branches, so a manager reaches their own team and no
+   * further -- the screen is safe at store level because the API is.
+   */
+  'settings/dsr-access',
   'dashboards', 'feedback', 'conversations/sla', 'customers/archived',
   /*
    * Bulk sending, at STORE level.

@@ -573,6 +573,24 @@ export const NAV_ITEMS: NavItem[] = [
   },
   {
     /*
+     * Who can file a daily report from their phone.
+     *
+     * The bot answers a handset only when that number is bound to a user, and
+     * before this screen the only way to bind one was an API call by hand --
+     * so the feature shipped unusable by anybody who could not run curl.
+     */
+    module: 1,
+    slug: "settings/dsr-access",
+    title: "WhatsApp Reporting",
+    purpose:
+      "Who can file a daily report over WhatsApp, and who still needs setting up.",
+    primaryAction: "",
+    icon: Smartphone,
+    group: "Setup",
+    roles: ["store_manager", "area_manager", "head_office"],
+  },
+  {
+    /*
      * On the sidebar rather than three clicks inside Integrations.
      *
      * A template is the only thing a campaign is allowed to send to somebody
@@ -812,6 +830,7 @@ export const CORE_NAVIGATION: readonly string[] = Object.freeze([
   "data/images",
   "settings/integrations",
   "settings/integrations/templates",
+  "settings/dsr-access",
   "settings/audit",
   "settings/access",
 ]);
