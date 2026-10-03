@@ -108,7 +108,15 @@ export class IntegrationsRegistryService {
       orderBy: [{ providerCode: 'asc' }, { name: 'asc' }],
       include: {
         credentials: { select: { kind: true, expiresAt: true, rotatedAt: true, lastUsedAt: true } },
-        assets: { where: { isActive: true }, select: { id: true, kind: true, externalId: true, name: true } },
+        assets: {
+          where: { isActive: true },
+          // `purpose` decides which bot answers on a number, so the screen that
+          // sets it has to be able to read it back. Without it every number
+          // rendered as customer-facing, including the one just added as staff
+          // only -- the save was correct and the page said otherwise, which is
+          // worse than either being wrong on its own.
+          select: { id: true, kind: true, externalId: true, name: true, purpose: true },
+        },
       },
     });
     return rows.map((r) => this.present(r));
