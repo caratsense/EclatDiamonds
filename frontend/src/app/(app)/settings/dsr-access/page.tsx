@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Copy, KeyRound, Search, Unlink } from "lucide-react";
+import Link from "next/link";
+import { Check, Copy, KeyRound, Search, Unlink, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 
 import { SectionHeader } from "@/components/section/section-header";
@@ -84,23 +85,49 @@ export default function DsrAccessPage() {
                 : `${linked} of ${roster.data?.length ?? 0} can file a report from their phone.`}
             </CardDescription>
           </div>
-          <div className="relative sm:w-64">
-            <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-            <Input
-              className="pl-8"
-              placeholder="Name, email or branch"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
+          <div className="flex items-center gap-2">
+            <div className="relative sm:w-64">
+              <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
+              <Input
+                className="pl-8"
+                placeholder="Name, email or branch"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </div>
+            {/*
+              This screen can only grant access to somebody who already exists,
+              because a link code binds a handset to a USER — there has to be a
+              user first. Somebody arriving here to "give the new girl report
+              access" would otherwise search, find nothing, and have no idea
+              where to go. Adding staff is Settings - Team's job and stays
+              there; this is the signpost.
+            */}
+            <Button asChild variant="outline" size="sm" className="shrink-0">
+              <Link href="/settings/team">
+                <UserPlus className="mr-1.5 size-4" aria-hidden />
+                New person
+              </Link>
+            </Button>
           </div>
         </CardHeader>
         <CardContent>
           {roster.isLoading ? (
             <Skeleton className="h-64 w-full" />
           ) : rows.length === 0 ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">
-              {query ? "No one matches." : "No team members in your branches yet."}
-            </p>
+            <div className="py-10 text-center">
+              <p className="text-sm text-muted-foreground">
+                {query
+                  ? "No one matches. They may not have been added to the team yet."
+                  : "No team members in your branches yet."}
+              </p>
+              <Button asChild variant="outline" size="sm" className="mt-3">
+                <Link href="/settings/team">
+                  <UserPlus className="mr-1.5 size-4" aria-hidden />
+                  Add someone to the team
+                </Link>
+              </Button>
+            </div>
           ) : (
             <Table>
               <TableHeader>
