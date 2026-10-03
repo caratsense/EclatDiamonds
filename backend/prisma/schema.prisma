@@ -3339,6 +3339,10 @@ enum NotificationKind {
   order_delayed
   attendance_review
   reminder
+  /// A lead now belongs to a branch and to a person. Raised when ad routing
+  /// places a click, and when somebody reassigns a conversation by hand — the
+  /// recipient is the person expected to make the first contact.
+  lead_assigned
   system
 }
 

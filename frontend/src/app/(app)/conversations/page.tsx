@@ -14,7 +14,6 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock,
-  Download,
   Edit3,
   ExternalLink,
   FileText,
@@ -24,8 +23,6 @@ import {
   MapPin,
   Megaphone,
   MessageSquare,
-  MessageSquarePlus,
-  Mic,
   MoreVertical,
   Paperclip,
   Phone,
@@ -35,7 +32,6 @@ import {
   Search,
   Send,
   Share2,
-  SlidersHorizontal,
   Smile,
   Sparkles,
   Star,
@@ -719,32 +715,48 @@ function ConversationsContent() {
           {/*
             Which inbox the lead came in on — WhatsApp, a phone call, and so on.
 
-            Always rendered, even when today's threads only use one of them. It
-            used to hide itself below two options, on the theory that a
-            single-option selector is furniture; in practice it vanished exactly
-            when someone wanted to confirm a filter existed at all, and reappeared
-            unannounced the first time a second channel showed up. A control that
-            comes and goes with the data is harder to trust than a quiet one.
+            Always PRESENT, never a dropdown that cannot filter.
+
+            This control used to hide itself below two options, which was wrong:
+            it vanished exactly when somebody wanted to confirm a filter existed,
+            and reappeared unannounced the first time a second channel showed up.
+            Always rendering it fixed that and introduced the opposite complaint —
+            with only WhatsApp connected, "All channels" opened a menu whose two
+            entries select the identical set of threads. A filter that cannot
+            change the result is furniture pretending to be a control.
+
+            So: a real selector once there is a genuine choice, and a plain label
+            stating the one channel otherwise. The information ("this inbox is
+            WhatsApp") survives either way; only the false affordance goes.
           */}
           <div className="flex items-center gap-1.5">
             <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
-            <select
-              aria-label="Filter conversations by channel"
-              value={channelFilter}
-              onChange={(e) => navigate({ channel: e.target.value || null })}
-              className={`h-8 rounded-md border bg-background px-2 text-xs font-medium ${
-                channelFilter
-                  ? "border-[#25D366]/40 text-[#128C7E] dark:text-[#25D366]"
-                  : "border-border text-muted-foreground"
-              }`}
-            >
-              <option value="">All channels</option>
-              {channelOptions.map((ch) => (
-                <option key={ch} value={ch}>
-                  {CHANNEL_LABELS[ch] ?? ch}
-                </option>
-              ))}
-            </select>
+            {channelOptions.length > 1 ? (
+              <select
+                aria-label="Filter conversations by channel"
+                value={channelFilter}
+                onChange={(e) => navigate({ channel: e.target.value || null })}
+                className={`h-8 rounded-md border bg-background px-2 text-xs font-medium ${
+                  channelFilter
+                    ? "border-[#25D366]/40 text-[#128C7E] dark:text-[#25D366]"
+                    : "border-border text-muted-foreground"
+                }`}
+              >
+                <option value="">All channels</option>
+                {channelOptions.map((ch) => (
+                  <option key={ch} value={ch}>
+                    {CHANNEL_LABELS[ch] ?? ch}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span
+                className="flex h-8 items-center rounded-md border border-border bg-muted/40 px-2 text-xs font-medium text-muted-foreground"
+                title="This organisation has one messaging channel connected. The filter appears once there is a second."
+              >
+                {CHANNEL_LABELS[channelOptions[0]] ?? channelOptions[0]}
+              </span>
+            )}
           </div>
 
           {/*
@@ -799,22 +811,32 @@ function ConversationsContent() {
               </select>
             </div>
           )}
+          {/*
+            Goes to the screen that actually onboards somebody.
+
+            This button used to raise a toast reading "Share WhatsApp inbox
+            access link" and do nothing else — there is no such link, and no
+            invite was ever sent. Staff are added in Settings → Team, where an
+            admin records their phone and they sign in with a WhatsApp OTP; this
+            now takes you there instead of describing a feature that does not
+            exist. Kept on this screen because wanting to add a colleague while
+            staring at an overflowing inbox is exactly when the thought occurs.
+
+            A second button sat beside this one, captioned "Filter Settings",
+            which toasted "Filter by Tag, Assignee, or Showroom" and did nothing.
+            Those filters are already real and already here — "More filters" to
+            the left of this toolbar — so it has been removed rather than wired
+            up to duplicate them.
+          */}
           <Button
+            asChild
             size="sm"
             variant="outline"
             className="h-8 gap-1.5 text-xs"
-            onClick={() => toast.info("Invite Sales Team", { description: "Share WhatsApp inbox access link" })}
           >
-            <Users className="h-3.5 w-3.5" /> Invite Members
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
-            title="Filter Settings"
-            onClick={() => toast.info("Filters", { description: "Filter by Tag, Assignee, or Showroom" })}
-          >
-            <SlidersHorizontal className="h-4 w-4" />
+            <Link href="/settings/team">
+              <Users className="h-3.5 w-3.5" /> Invite Members
+            </Link>
           </Button>
         </div>
       </div>
@@ -845,30 +867,36 @@ function ConversationsContent() {
               </div>
               <span className="text-xs font-medium text-foreground">CaratOS Staff</span>
             </div>
+            {/*
+              One button, and it does what it says.
+
+              Three sat here. "Sync Threads" reported `toast.success("Synced
+              with Meta Cloud API")` without contacting anything — a success
+              message for work that never happened, which is the one kind of
+              lie a user cannot detect. It now refetches the list, which is the
+              real answer to "show me anything new": inbound messages arrive by
+              webhook, so there is nothing to pull from Meta, only our own list
+              to re-read.
+
+              "New Chat" and "Download Conversations" are gone. WhatsApp does
+              not allow opening a conversation with a number that has not
+              written first unless it is an approved template — that is what
+              Campaigns is for — and there is no conversation export endpoint
+              to download anything from. Both were toasts describing features
+              that do not exist.
+            */}
             <div className="flex items-center gap-1 text-muted-foreground">
               <button
                 type="button"
-                onClick={() => toast.success("Synced with Meta Cloud API")}
-                className="h-7 w-7 rounded-md hover:bg-muted flex items-center justify-center"
-                title="Sync Threads"
+                onClick={() => {
+                  void list.refetch();
+                  toast.success("Refreshed");
+                }}
+                disabled={list.isFetching}
+                className="h-7 w-7 rounded-md hover:bg-muted flex items-center justify-center disabled:opacity-50"
+                title="Check for new messages"
               >
-                <RefreshCw className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => toast.info("New Direct Chat", { description: "Enter customer phone to start WhatsApp chat" })}
-                className="h-7 w-7 rounded-md hover:bg-muted flex items-center justify-center"
-                title="New Chat"
-              >
-                <MessageSquarePlus className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => toast.info("Exporting Chat Logs...")}
-                className="h-7 w-7 rounded-md hover:bg-muted flex items-center justify-center"
-                title="Download Conversations"
-              >
-                <Download className="h-3.5 w-3.5" />
+                <RefreshCw className={`h-3.5 w-3.5 ${list.isFetching ? "animate-spin" : ""}`} />
               </button>
             </div>
           </div>
@@ -1257,15 +1285,39 @@ function ThreadView({
               </Button>
             )}
 
+            {/*
+              Hands the number to whatever actually places calls on this device.
+
+              This used to raise a toast reading "Calling <name>…" and do
+              nothing — the worst kind of stub, because it did not look broken.
+              Somebody could press it, read that the call was going through,
+              and never pick up a handset.
+
+              There is no dial-out to wire it to, and that is not an oversight
+              to fix here: the telephony integration is INBOUND — a webhook
+              recording calls that already happened — and the calling module
+              logs outcomes rather than originating anything. Placing a call
+              from the server needs an outbound voice provider nobody has
+              bought.
+
+              `tel:` is the honest alternative and genuinely works: the mobile
+              dialer, or a desktop softphone registered for the scheme. Spaces
+              and punctuation are stripped because some dialers refuse them.
+            */}
             {party?.phone && (
               <Button
+                asChild
                 size="sm"
                 variant="ghost"
                 className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-                title={`Call ${party.phone}`}
-                onClick={() => toast.info(`Calling ${party.name}...`, { description: party.phone })}
               >
-                <Phone className="h-3.5 w-3.5" />
+                <a
+                  href={`tel:${party.phone.replace(/[^\d+]/g, "")}`}
+                  title={`Call ${party.phone}`}
+                  aria-label={`Call ${party.name ?? party.phone}`}
+                >
+                  <Phone className="h-3.5 w-3.5" />
+                </a>
               </Button>
             )}
 
@@ -1562,7 +1614,7 @@ function ThreadView({
               }
               className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/50 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted hover:border-[#25D366]/40 transition-colors whitespace-nowrap"
             >
-              ðŸ’Ž Confirm Saturday Visit
+              💎 Confirm Saturday Visit
             </button>
             <button
               type="button"
@@ -1573,7 +1625,7 @@ function ThreadView({
               }
               className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/50 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted hover:border-[#25D366]/40 transition-colors whitespace-nowrap"
             >
-              ðŸ“ Store Location
+              📍 Store Location
             </button>
             <button
               type="button"
@@ -1584,7 +1636,7 @@ function ThreadView({
               }
               className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/50 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted hover:border-[#25D366]/40 transition-colors whitespace-nowrap"
             >
-              ðŸ“œ IGI Certificate Info
+              📜 IGI Certificate Info
             </button>
           </div>
 
@@ -1597,7 +1649,7 @@ function ThreadView({
                 variant="ghost"
                 className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground"
                 title="Insert emoji"
-                onClick={() => setDraft((d) => d + " ðŸ˜Š ")}
+                onClick={() => setDraft((d) => d + " 😊 ")}
               >
                 <Smile className="h-4 w-4" />
               </Button>
@@ -1639,17 +1691,14 @@ function ThreadView({
               >
                 <Send className="h-4 w-4 fill-white" />
               </Button>
-            ) : (
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-9 w-9 shrink-0 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted"
-                title="Record voice note"
-                onClick={() => toast.info("Voice Message", { description: "Hold to record WhatsApp voice message" })}
-              >
-                <Mic className="h-4 w-4" />
-              </Button>
-            )}
+            ) : null}
+            {/*
+              The microphone that sat here recorded nothing. It toasted "Hold
+              to record WhatsApp voice message" and had no recorder behind it,
+              no upload, and no outbound audio path on the server — a reply is
+              sent as text. Removed rather than left as an invitation to hold
+              a button that does nothing.
+            */}
           </div>
 
           <div className="flex items-center justify-between text-[10.5px] text-muted-foreground px-1 pt-0.5">
@@ -1743,15 +1792,19 @@ function ThreadView({
                 </span>
               </div>
 
-              <div className="pt-1">
-                <button
-                  type="button"
-                  onClick={() => toast.info("Contact Resolution", { description: "Re-assign or link to different customer record" })}
-                  className="text-[11px] text-[#25D366] hover:underline"
-                >
-                  Not the right contact?
-                </button>
-              </div>
+              {/*
+                "Not the right contact?" used to toast "Re-assign or link to
+                different customer record" and do nothing. Detaching a thread
+                from one customer and attaching it to another is not a feature
+                that exists — there is no endpoint for it — so the link was
+                offering a repair the product cannot perform.
+
+                Deliberately NOT pointed at the duplicate-merge tool in
+                Settings - Configuration: that answers "these two records are
+                the same person", which is a different question from "this
+                conversation is filed against the wrong person". Sending
+                somebody there would trade a dead link for a misleading one.
+              */}
             </CardContent>
           </Card>
 
@@ -1785,13 +1838,17 @@ function ThreadView({
                   <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
                   Whatsapp messages
                 </span>
-                <button
-                  type="button"
-                  onClick={() => toast.success("Activity Logged", { description: "15 WhatsApp messages archived in timeline" })}
-                  className="text-primary hover:underline text-[11px] font-medium"
-                >
-                  + Log
-                </button>
+                {/*
+                  "+ Log" reported `toast.success("Activity Logged", "15
+                  WhatsApp messages archived in timeline")` — a success for
+                  work that never ran, quoting a count nobody counted. The
+                  number was a literal in the source and read the same whether
+                  the thread held three messages or three hundred.
+
+                  Nothing is logged because nothing needs to be: every message
+                  on this thread is already persisted as it arrives, and the
+                  timeline reads from that. Removed.
+                */}
               </div>
 
               <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
@@ -1848,13 +1905,19 @@ function ThreadView({
                   <CheckCircle2 className="h-3.5 w-3.5 text-muted-foreground" />
                   tickets
                 </span>
-                <button
-                  type="button"
-                  onClick={() => toast.info("Support Ticket", { description: "Creating customer service ticket..." })}
+                {/*
+                  Ticketing is a real module with a real screen, so this goes
+                  there rather than toasting "Creating customer service
+                  ticket…" and creating nothing. The customer is carried in the
+                  query string so the ticket opens against the person whose
+                  conversation you were reading.
+                */}
+                <Link
+                  href={party?.id ? `/ticketing?partyId=${party.id}` : "/ticketing"}
                   className="text-primary hover:underline text-[11px] font-medium"
                 >
                   + Add
-                </button>
+                </Link>
               </div>
             </div>
           </Card>

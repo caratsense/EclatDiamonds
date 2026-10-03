@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { OmnichannelService } from '../omnichannel/omnichannel.service';
 import { StorageService } from '../storage/storage.service';
-import { LeadSource, Prisma } from '@prisma/client';
+import { LeadSource, Prisma, Role } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { canOpen } from '../auth/access';
@@ -31,6 +31,7 @@ import { AttributionService } from './attribution.service';
 import { RequalificationService } from './requalification.service';
 import { AdvancedCrmService } from './advanced-crm.service';
 import { LeadIntakeService } from './lead-intake.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import type { AdReferral } from '../integration/contracts/ad-referral';
 
 /**
@@ -186,6 +187,7 @@ export class ConversationsService {
     @Inject(forwardRef(() => OmnichannelService))
     private readonly omnichannel: OmnichannelService,
     private readonly storage: StorageService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   private readonly logger = new Logger(ConversationsService.name);
@@ -579,6 +581,22 @@ export class ConversationsService {
       ? await this.advanced.autoAssignInbound(organisationId, conversation.id, leadId)
       : null;
 
+    /*
+     * NO notification is emitted here, deliberately.
+     *
+     * Routing a thread to a branch is not yet news for a person: the bot is
+     * still qualifying, and the manager is told at handoff — see
+     * `handToAPerson` in WhatsAppBotService, which names the owner it just
+     * assigned and carries the qualification summary as the body. Emitting on
+     * arrival as well would ring the same manager twice for one lead, the
+     * second time with less to act on than the first.
+     *
+     * A lead that routes and is then abandoned mid-qualification therefore
+     * never rings. That is the existing design — the bell means "a person is
+     * needed now" — and changing it is a product decision, not a bug to patch
+     * from inside intake.
+     */
+
     return {
       duplicate: false as const,
       messageId: message.id,
@@ -610,6 +628,116 @@ export class ConversationsService {
    * is marked `measured` because the provider reported these ids — as distinct
    * from the `declared` touch a salesperson's source dropdown produces.
    */
+  /**
+   * Tell a branch that a lead has just been moved to them BY HAND.
+   *
+   * Only `assign` calls this. The automatic path has its own notification at
+   * handoff (`handToAPerson`), which fires when the bot stops and a person is
+   * genuinely needed; emitting here as well would ring one manager twice for
+   * one lead. A manual reassign has no such notification of its own, and it is
+   * the case that needs one most — the receiving manager has no other reason to
+   * look, because the thread was somebody else's a moment ago.
+   *
+   * ## Who is told
+   *
+   * The owner, when the reassign named one. Otherwise every store manager
+   * attached to the destination — a lead parked at a branch with no owner is
+   * exactly the case where somebody has to notice and claim it, so silence
+   * would be the worst of the three outcomes.
+   *
+   * Head office is deliberately NOT fanned out to. It spans every branch, so a
+   * bell that rings for all of them is a bell nobody reads; head office already
+   * sees these threads in the inbox and in the audit trail.
+   *
+   * ## Why it can never fail the caller
+   *
+   * Best-effort by contract, like every other `emit` site. A reassign whose
+   * notification is lost is a missed bell; a reassign that fails because of a
+   * bell loses the routing decision itself. The `catch` is the whole point.
+   */
+  private async notifyLeadRouted(input: {
+    organisationId: string;
+    conversationId: string;
+    storeId: string;
+    /** One sentence for the body — what put this lead here. */
+    reason: string;
+    adHeadline?: string | null;
+    /** Set for a manual reassign, so the actor is not told about their own act. */
+    actor?: AuthUser;
+  }): Promise<void> {
+    try {
+      /*
+       * Read the owner back rather than take it from the caller. `assign`
+       * writes `assignedUserId` only when the dialog supplied one, so a
+       * reassign that moved the BRANCH alone leaves the previous owner in
+       * place — and that person is who must be told, not whoever the caller
+       * happened to pass. One query removes the whole class of mistake.
+       */
+      const convo = await this.prisma.conversation.findUnique({
+        where: { id: input.conversationId },
+        select: {
+          assignedUserId: true,
+          externalThreadId: true,
+          party: { select: { name: true } },
+          store: { select: { name: true } },
+        },
+      });
+      if (!convo) return;
+
+      let recipients = convo.assignedUserId ? [convo.assignedUserId] : [];
+      if (!recipients.length) {
+        const managers = await this.prisma.user.findMany({
+          where: {
+            organisationId: input.organisationId,
+            isActive: true,
+            role: Role.store_manager,
+            userStores: { some: { storeId: input.storeId } },
+          },
+          select: { id: true },
+        });
+        recipients = managers.map((m) => m.id);
+      }
+      if (input.actor) {
+        const actorId = input.actor.id;
+        recipients = recipients.filter((id) => id !== actorId);
+      }
+      if (!recipients.length) return;
+
+      const who = convo.party?.name ?? convo.externalThreadId ?? 'a new enquiry';
+      const branch = convo.store?.name ?? 'your branch';
+
+      await this.notifications.emit(recipients, {
+        kind: 'lead_assigned',
+        title: `New lead at ${branch}: ${who}`,
+        body: [input.reason, input.adHeadline ? `Ad: ${input.adHeadline}` : null]
+          .filter(Boolean)
+          .join(' '),
+        // `thread` is the param the inbox actually reads to select a
+        // conversation; anything else lands on the list with nothing open.
+        href: `/conversations?thread=${input.conversationId}`,
+        storeId: input.storeId,
+        entityType: 'Conversation',
+        entityId: input.conversationId,
+        // A lead waiting for a first call outranks a routine approval.
+        priority: 'high',
+        actorId: input.actor?.id ?? null,
+        actorName: input.actor?.name ?? null,
+        /*
+         * One bell per conversation per recipient. A later reassign refreshes
+         * that row (and un-reads it, because the situation changed) instead of
+         * stacking a second copy for the same lead.
+         */
+        dedupeKey: `lead_assigned:${input.conversationId}`,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `lead routing notification failed for ${input.conversationId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
   private async recordAdOrigin(
     organisationId: string,
     ref: AdReferral,
@@ -1164,6 +1292,30 @@ export class ConversationsService {
     const backfilledLeadId = updated.storeId
       ? await this.backfillAdLeadOnAssign(user.organisationId, conversationId)
       : null;
+
+    /*
+     * Tell the new owner — or the destination's managers — that this lead is
+     * theirs now. An admin moving a lead between branches is the case the
+     * notification matters most: the receiving manager has no other reason to
+     * look, because the thread was somebody else's a moment ago.
+     *
+     * Only when the destination or the owner actually MOVED. Saving the dialog
+     * with the handling unchanged, or re-picking the same two values, is not
+     * news and must not re-ring a bell somebody already cleared.
+     */
+    const routingMoved =
+      updated.storeId !== before.storeId || updated.assignedUserId !== before.assignedUserId;
+    if (updated.storeId && routingMoved) {
+      await this.notifyLeadRouted({
+        organisationId: user.organisationId,
+        conversationId,
+        storeId: updated.storeId,
+        // Phrased for both audiences: the named owner, and a branch's managers
+        // when the lead arrived without one.
+        reason: `${user.name} routed this lead here.`,
+        actor: user,
+      });
+    }
 
     return { ...updated, backfilledLeadId };
   }
