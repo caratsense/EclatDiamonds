@@ -44,7 +44,6 @@ import {
   keptShift,
   punchAction,
   punchScreen,
-  tooFarMessage,
   type PunchLocationDecision,
   type PunchPosition,
 } from "@/lib/attendance-punch-policy";
@@ -133,8 +132,9 @@ export default function CheckInPage() {
  * device location and AUTO checks the salesperson in the moment they come within
  * the store's geofence radius — a returning salesperson just has to be near the
  * store and the app welcomes them. Manual check-in and "Skip for now" remain
- * available. A confirmed outside check-in is blocked; an unavailable
- * or inconclusive fix can continue only with a written reason.
+ * available. Nothing is refused: a punch the fence cannot confirm — outside
+ * it, no fix, or a fix too vague to tell — is recorded with a written reason
+ * and reported to the branch manager and head office for regularisation.
  *
  * For someone whose home is this screen (attendance only, see homeForRole) it
  * is the whole app: Check in, then one big Check out, then "Done for today".
@@ -393,15 +393,14 @@ function CheckInScreen({ onNewDay }: { onNewDay: () => void }) {
 
   function prepareCheckIn(pos: PunchPosition | null, photo?: string) {
     const decision = evaluatePunchLocation(pos, geofence);
+    /*
+     * No branch for "block" any more: the fence decides whether a punch is
+     * VERIFIED, not whether it may happen. A phone indoors in a concrete
+     * showroom reports 50-150 m of drift, so refusing the punch locked staff
+     * out of their own shift rather than catching anybody. Anything the fence
+     * cannot confirm asks for a reason and goes to the manager's queue.
+     */
     const action = punchAction(decision, "in");
-    if (action === "block") {
-      punchedRef.current = false;
-      setScannerOpen(false);
-      toast.error("Check-in blocked outside the store range", {
-        description: tooFarMessage(storeName, decision.distanceM ?? 0, radius),
-      });
-      return;
-    }
     if (action === "reason") {
       setPendingPos(pos);
       setPendingPhoto(photo ?? null);
