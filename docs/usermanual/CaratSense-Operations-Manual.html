@@ -1,0 +1,633 @@
+<meta charset="utf-8">
+<title>CaratSense — Operations Manual</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 20mm 16mm; }
+  :root {
+    --ink: #11151c; --muted: #5b6676; --line: #d8dee7;
+    --accent: #4f46e5; --accent-soft: #eef2ff;
+    --warn-bg: #fff7ed; --warn-line: #f59e0b;
+    --stop-bg: #fef2f2; --stop-line: #e11d48;
+    --ok-bg: #ecfdf5; --ok-line: #059669;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font: 10.5pt/1.55 "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    color: var(--ink); margin: 0;
+  }
+  h1, h2, h3, h4 { line-height: 1.25; margin: 0 0 .4em; font-weight: 650; }
+  h2 {
+    font-size: 16pt; margin-top: 0; padding-bottom: .3em;
+    border-bottom: 2.5px solid var(--accent); color: var(--accent);
+  }
+  h3 { font-size: 12pt; margin-top: 1.5em; }
+  h4 { font-size: 10.5pt; margin-top: 1.2em; color: var(--muted);
+       text-transform: uppercase; letter-spacing: .06em; font-size: 9pt; }
+  p, li { margin: 0 0 .55em; }
+  ul, ol { margin: 0 0 .7em; padding-left: 1.3em; }
+  li { margin-bottom: .3em; }
+  code, .mono { font-family: "Consolas", "SF Mono", monospace; font-size: 9.2pt; }
+  code { background: #f1f4f8; padding: .1em .35em; border-radius: 3px; }
+
+  .page { page-break-after: always; }
+  .page:last-child { page-break-after: auto; }
+  section { page-break-inside: avoid; }
+
+  /* Cover */
+  .cover { height: 247mm; display: flex; flex-direction: column; justify-content: center; }
+  .cover .mark { font-size: 34pt; font-weight: 750; letter-spacing: -.02em; }
+  .cover .mark span { color: var(--accent); }
+  .cover .sub { font-size: 14pt; color: var(--muted); margin-top: .2em; }
+  .cover .rule { height: 3px; background: var(--accent); width: 70px; margin: 1.4em 0; }
+  .cover dl { display: grid; grid-template-columns: 34mm 1fr; gap: .45em 0; font-size: 10pt; }
+  .cover dt { color: var(--muted); }
+
+  table { width: 100%; border-collapse: collapse; margin: .5em 0 1em; font-size: 9.6pt; }
+  th, td { border: 1px solid var(--line); padding: .42em .6em; text-align: left; vertical-align: top; }
+  th { background: var(--accent-soft); font-weight: 650; }
+  td.num, th.num { text-align: right; font-family: Consolas, monospace; }
+
+  .box { border-left: 3.5px solid; padding: .6em .9em; margin: .8em 0; border-radius: 0 4px 4px 0; }
+  .box p:last-child { margin-bottom: 0; }
+  .box .lbl { font-weight: 700; font-size: 8.6pt; letter-spacing: .07em;
+              text-transform: uppercase; display: block; margin-bottom: .25em; }
+  .warn { background: var(--warn-bg); border-color: var(--warn-line); }
+  .warn .lbl { color: #b45309; }
+  .stop { background: var(--stop-bg); border-color: var(--stop-line); }
+  .stop .lbl { color: #be123c; }
+  .ok   { background: var(--ok-bg); border-color: var(--ok-line); }
+  .ok .lbl { color: #047857; }
+
+  .toc { font-size: 10.5pt; }
+  .toc li { margin-bottom: .45em; }
+  .toc .n { display: inline-block; width: 7mm; color: var(--accent); font-weight: 700; }
+  .toc .d { color: var(--muted); font-size: 9.4pt; display: block; margin-left: 7mm; }
+
+  .steps { counter-reset: s; list-style: none; padding-left: 0; }
+  .steps > li { counter-increment: s; position: relative; padding-left: 8mm; margin-bottom: .6em; }
+  .steps > li::before {
+    content: counter(s); position: absolute; left: 0; top: .08em;
+    width: 5.2mm; height: 5.2mm; border-radius: 50%; background: var(--accent);
+    color: #fff; font-size: 8pt; font-weight: 700; text-align: center; line-height: 5.2mm;
+  }
+  .kv { font-size: 9.6pt; }
+  .kv td:first-child { width: 42mm; color: var(--muted); }
+  .lead { font-size: 11pt; color: var(--muted); margin-bottom: 1.2em; }
+</style>
+
+<!-- ───────────────────────────── COVER ───────────────────────────── -->
+<div class="page cover">
+  <div class="mark">Carat<span>Sense</span></div>
+  <div class="sub">Operations Manual</div>
+  <div class="rule"></div>
+  <p style="max-width:120mm; color:var(--muted); font-size:11pt;">
+    The complete working guide to the Éclat Diamonds platform: the CRM and
+    WhatsApp inbox, the two WhatsApp bots, quotations, attendance and daily
+    reporting, and how to give each person the access they need.
+  </p>
+  <dl style="margin-top:3em;">
+    <dt>Prepared for</dt><dd>Éclat Diamonds &amp; Company</dd>
+    <dt>Platform</dt><dd>CaratSense v2.4</dd>
+    <dt>Dashboard</dt><dd class="mono">eclat-diamonds-pi.vercel.app</dd>
+    <dt>Issued</dt><dd>5 October 2026</dd>
+  </dl>
+  <div class="box warn" style="margin-top:3em; max-width:135mm;">
+    <span class="lbl">Passwords are not in this document</span>
+    <p>Login IDs are listed so you know who has what. Passwords are shared
+       separately and should never travel in a document that can be forwarded.</p>
+  </div>
+</div>
+
+<!-- ───────────────────────────── CONTENTS ───────────────────────────── -->
+<div class="page">
+  <h2>Contents</h2>
+  <ol class="toc" style="list-style:none; padding-left:0;">
+    <li><span class="n">1</span><strong>Getting in</strong>
+        <span class="d">The address, who sees what, and the first sign-in.</span></li>
+    <li><span class="n">2</span><strong>Giving people access</strong>
+        <span class="d">Adding staff, setting a password, choosing screens.</span></li>
+    <li><span class="n">3</span><strong>The two WhatsApp bots</strong>
+        <span class="d">Which number does what, and why they never collide.</span></li>
+    <li><span class="n">4</span><strong>Conversations &amp; the CRM</strong>
+        <span class="d">How a lead arrives, who it reaches, and the 24-hour rule.</span></li>
+    <li><span class="n">5</span><strong>Advert routing</strong>
+        <span class="d">Sending each campaign's leads to the right showroom.</span></li>
+    <li><span class="n">6</span><strong>Lead scoring</strong>
+        <span class="d">What the score means and where it comes from.</span></li>
+    <li><span class="n">7</span><strong>Quotations</strong>
+        <span class="d">Building a multi-item quote with discounts.</span></li>
+    <li><span class="n">8</span><strong>Attendance</strong>
+        <span class="d">Punching in, GPS drift, and manager regularisation.</span></li>
+    <li><span class="n">9</span><strong>Daily reporting (DSR)</strong>
+        <span class="d">Filing the day's sheet over WhatsApp.</span></li>
+    <li><span class="n">10</span><strong>Known limits</strong>
+        <span class="d">What the system does not do, stated plainly.</span></li>
+  </ol>
+
+  <h3>Live addresses</h3>
+  <p class="lead">Every link below was opened and confirmed working on the day
+     this manual was issued.</p>
+  <table class="kv">
+    <tr><td>Dashboard</td><td class="mono">https://eclat-diamonds-pi.vercel.app</td></tr>
+    <tr><td>Customer WhatsApp bot</td><td class="mono">+91 72080 17690 · wa.me/917208017690</td></tr>
+    <tr><td>Staff reporting bot</td><td class="mono">+91 72089 12616 · wa.me/917208912616</td></tr>
+    <tr><td>Quotation workspace</td><td class="mono">/quotation/new</td></tr>
+    <tr><td>Attendance punch</td><td class="mono">/check-in</td></tr>
+  </table>
+</div>
+
+<!-- ───────────────────────────── 1. GETTING IN ───────────────────────────── -->
+<div class="page">
+  <h2>1 · Getting in</h2>
+  <p class="lead">Opening the address takes you straight to the sign-in screen.
+     There is no public landing page to click past.</p>
+
+  <h3>Two ways to sign in</h3>
+  <table>
+    <tr><th style="width:38mm;">Method</th><th>Who uses it</th></tr>
+    <tr><td><strong>Login ID + password</strong></td>
+        <td>Head office, managers, and anyone an admin has set a password for.</td></tr>
+    <tr><td><strong>WhatsApp OTP</strong></td>
+        <td>Shop-floor staff. They enter their mobile number and receive a code —
+            no password to forget or share.</td></tr>
+  </table>
+
+  <h3>Login IDs follow a pattern</h3>
+  <p>Accounts are created as
+     <code>firstname.storename@eclatdiamonds.in</code> — for example
+     <code>anjali.mumbaibandra@eclatdiamonds.in</code>. Staff are not told this
+     automatically, so an admin must pass it on.</p>
+
+  <div class="box stop">
+    <span class="lbl">The most common sign-in failure</span>
+    <p>“Email ID not found” almost always means the person is guessing their
+       login. Check the exact ID in <strong>Settings → Team</strong> and read it
+       to them. Accounts created outside the pattern keep whatever address they
+       were made with, and a login ID cannot be changed afterwards.</p>
+  </div>
+
+  <h3>Where each role lands</h3>
+  <table>
+    <tr><th style="width:38mm;">Role</th><th>Sees</th><th style="width:34mm;">Lands on</th></tr>
+    <tr><td>Head office</td><td>Every branch, every screen, all reporting.</td><td>Dashboards</td></tr>
+    <tr><td>Store manager</td><td>Their own branch: inbox, leads, team, attendance.</td><td>Punch screen</td></tr>
+    <tr><td>Salesperson</td><td>Their own branch's customers and their own attendance.</td><td>Punch screen</td></tr>
+  </table>
+  <p>Everyone except head office lands on the attendance punch screen, which
+     passes them through to their own home once the day is started.</p>
+</div>
+
+<!-- ───────────────────────────── 2. ACCESS ───────────────────────────── -->
+<div class="page">
+  <h2>2 · Giving people access</h2>
+
+  <h3>Add a person — Settings → Team</h3>
+  <ol class="steps">
+    <li>Open <strong>Settings → Team</strong> and choose <strong>Add staff</strong>.</li>
+    <li>Enter their name, mobile number and branch, and pick a role.</li>
+    <li>Optionally set a password now. If you leave it blank they sign in by
+        WhatsApp OTP instead.</li>
+    <li>The screen shows their Login ID. <strong>Write it down and give it to
+        them</strong> — nothing sends it automatically.</li>
+  </ol>
+
+  <h3>Set or reset a password — Settings → Stores</h3>
+  <div class="box warn">
+    <span class="lbl">Not on the Team screen</span>
+    <p>Password reset lives under <strong>Settings → Stores</strong>: open the
+       branch, find the person, choose <strong>Reset password</strong>. The
+       Team screen tells you to “reset on their row”, which is misleading —
+       the control is on Stores.</p>
+  </div>
+
+  <h3>Choose which screens a person can open — Settings → Access</h3>
+  <p>Head office can grant or withdraw individual screens per person. Leave it
+     alone and each role gets its standard set, which is what most people need.</p>
+  <div class="box warn">
+    <span class="lbl">One setting that silently breaks lead routing</span>
+    <p>A store manager who cannot open <strong>Conversations</strong> is skipped
+       when the system looks for someone to own a new lead. The lead reaches the
+       branch and sits unowned. If leads stop being assigned, check this first.</p>
+  </div>
+
+  <h3>Grant daily-report access — Settings → WhatsApp Reporting</h3>
+  <ol class="steps">
+    <li>Open <strong>Settings → WhatsApp Reporting</strong>. Everyone in your
+        branches is listed, with who can already file.</li>
+    <li>Find the person and choose <strong>Set up</strong>. A short code appears
+        and is copied to your clipboard. It is valid for <strong>10 minutes</strong>.</li>
+    <li>Read the code to them. They send it from the handset they want to use,
+        to the staff reporting number.</li>
+    <li>That handset is now bound to them. <strong>Remove</strong> on their row
+        undoes it.</li>
+  </ol>
+  <div class="box ok">
+    <span class="lbl">Why you never type their phone number</span>
+    <p>The number is learnt from the message carrying the code, so nobody can
+       bind a handset they are not holding. The bot also cannot message a number
+       that has never written to it — WhatsApp only allows a business to open a
+       conversation with an approved template, and a one-time code is not
+       something Meta approves.</p>
+  </div>
+</div>
+
+<!-- ───────────────────────────── 3. BOTS ───────────────────────────── -->
+<div class="page">
+  <h2>3 · The two WhatsApp bots</h2>
+  <p class="lead">Two separate numbers, two separate jobs. A message is answered
+     by whichever number it arrives on.</p>
+
+  <table>
+    <tr><th style="width:30mm;"></th>
+        <th>Customer bot</th><th>Staff reporting bot</th></tr>
+    <tr><td><strong>Number</strong></td>
+        <td class="mono">+91 72080 17690</td><td class="mono">+91 72089 12616</td></tr>
+    <tr><td><strong>Shows as</strong></td>
+        <td>Èclat diamonds and Company</td><td>Èclat diamonds Internal</td></tr>
+    <tr><td><strong>Answers</strong></td>
+        <td>Anybody who writes in, and anyone tapping a Click-to-WhatsApp advert.</td>
+        <td>Only handsets bound to a staff member.</td></tr>
+    <tr><td><strong>Does</strong></td>
+        <td>Asks four qualifying questions, then hands over to a person.</td>
+        <td>Walks the daily sales report, and passes messages to head office.</td></tr>
+    <tr><td><strong>Link</strong></td>
+        <td class="mono">wa.me/917208017690</td><td class="mono">wa.me/917208912616</td></tr>
+  </table>
+
+  <h3>What the customer bot asks</h3>
+  <ol>
+    <li>What are you looking for today? <em>(engagement ring, wedding jewellery, daily wear, other)</em></li>
+    <li>Approximate budget <em>(under ₹50K · ₹50K–₹1L · ₹1L–₹2L · above ₹2L)</em></li>
+    <li>When do you need it <em>(within 7 days · this month · in a few months · just exploring)</em></li>
+    <li>Shall we call you <em>(yes now · later · not now)</em></li>
+  </ol>
+  <p>Customers may answer in their own words — the options are a prompt, not a
+     menu. After the last answer the bot stops and the conversation is handed to
+     the branch, which is when the manager is notified.</p>
+
+  <div class="box ok">
+    <span class="lbl">One phone, both bots, no collision</span>
+    <p>The same mobile number can hold a customer conversation on one line and a
+       staff reporting conversation on the other at the same time. Neither
+       overwrites the other. A staff member messaging the customer number is
+       answered as a customer, so they can test it safely.</p>
+  </div>
+
+  <div class="box warn">
+    <span class="lbl">The bot stops once a person takes over</span>
+    <p>After hand-over a thread is marked for a human and the bot stays silent in
+       it. This is deliberate. When testing, always use a number that has never
+       written in before, or it will look as though nothing is happening.</p>
+  </div>
+</div>
+
+<!-- ───────────────────────────── 4. CRM ───────────────────────────── -->
+<div class="page">
+  <h2>4 · Conversations &amp; the CRM</h2>
+
+  <h3>What happens when a lead arrives</h3>
+  <ol class="steps">
+    <li>The customer taps an advert or writes to the customer number.</li>
+    <li>If they came from an advert, the advert is matched to a showroom by a
+        routing rule and the conversation is stamped with that branch.</li>
+    <li>The bot asks its four questions.</li>
+    <li>The conversation is handed to the branch's store manager, who gets a
+        notification with the customer's name.</li>
+    <li>The thread shows the advert they tapped, their answers, and a lead score.</li>
+  </ol>
+
+  <h3>Moving a lead to someone else</h3>
+  <p>Open the conversation and use <strong>Reassign</strong>. Choose the branch
+     first, then the owner — the list only offers people who actually work at
+     that branch. The new owner is notified; the person who made the change is
+     not.</p>
+
+  <h3>The 24-hour rule</h3>
+  <div class="box warn">
+    <span class="lbl">Why the message box sometimes will not type</span>
+    <p>WhatsApp allows a free reply only within <strong>24 hours</strong> of the
+       customer's last message. After that the box is disabled and the screen
+       says so. An approved template can still reach them — use
+       <strong>Send a template</strong>.</p>
+    <p>This is WhatsApp's rule, not a setting. The clock restarts every time the
+       customer writes again.</p>
+  </div>
+
+  <h3>Reading the inbox</h3>
+  <table>
+    <tr><th style="width:40mm;">What you see</th><th>What it means</th></tr>
+    <tr><td><strong>Facebook Ad / Instagram Ad</strong></td>
+        <td>Where the lead came from, read from the advert itself.</td></tr>
+    <tr><td><strong>Needs a person</strong></td>
+        <td>The bot has finished and somebody must reply.</td></tr>
+    <tr><td><strong>Routing check</strong></td>
+        <td>A later advert disagreed with where this thread already sits. The
+            thread was left alone for a person to decide.</td></tr>
+    <tr><td><strong>No store yet</strong></td>
+        <td>No routing rule matched, so no branch owns it. It waits in the head
+            office queue.</td></tr>
+    <tr><td><strong>Last wrote …</strong></td>
+        <td>When the customer last messaged — this drives the 24-hour rule.</td></tr>
+  </table>
+</div>
+
+<!-- ───────────────────────────── 5. AD ROUTING ───────────────────────────── -->
+<div class="page">
+  <h2>5 · Advert routing</h2>
+  <p class="lead">A rule sends each campaign's leads to the showroom that paid
+     for it, so the right manager is notified within seconds.</p>
+
+  <h3>Setting a rule — Settings → Business configuration → Ad routing</h3>
+  <table>
+    <tr><th style="width:42mm;">Match on</th><th>Use when</th></tr>
+    <tr><td><strong>Ad-set name contains</strong></td>
+        <td>The recommended choice. One rule per showroom, matching the words
+            your marketing team already puts in the ad-set name — “Bandra”,
+            “Udaipur”. Every future advert in that ad set routes with no further
+            work.</td></tr>
+    <tr><td><strong>Exact ad ID</strong></td>
+        <td>Pinning one specific advert somewhere different, or a campaign whose
+            ad-set name carries no location.</td></tr>
+  </table>
+  <p>Where two rules both match, the more specific wins — “Bandra Broadway”
+     beats “Bandra” without any manual ordering.</p>
+
+  <div class="box warn">
+    <span class="lbl">Ad-set name matching needs the Meta Ads connection</span>
+    <p>A Click-to-WhatsApp tap tells us the advert's ID and nothing else. To turn
+       that into an ad-set name, connect <strong>Meta Ads</strong> under Settings
+       → Integrations with an access token that can read adverts. Without it,
+       only exact-ad-ID rules can match.</p>
+  </div>
+
+  <h3>If a lead arrives unrouted</h3>
+  <ol>
+    <li>Open the thread and read the advert card — it names the advert.</li>
+    <li>Add a rule for that advert or its ad set.</li>
+    <li>Use <strong>Reassign</strong> to place the lead that already arrived.
+        Existing threads are never re-routed automatically, by design.</li>
+  </ol>
+
+  <div class="box stop">
+    <span class="lbl">A branch with no manager notifies nobody</span>
+    <p>A rule can send leads to a showroom that has no active store manager. The
+       lead arrives correctly and then sits, because there is nobody to tell.
+       Before adding a rule for a branch, make sure it has an active manager who
+       can open Conversations.</p>
+  </div>
+</div>
+
+<!-- ───────────────────────────── 6. SCORING ───────────────────────────── -->
+<div class="page">
+  <h2>6 · Lead scoring</h2>
+  <p class="lead">Every conversation is scored out of 100 so a manager can see
+     at a glance who is worth calling first.</p>
+
+  <h3>Where the number comes from</h3>
+  <p>The score is built from phrases your own policy lists, each carrying a
+     weight. It is arithmetic, not a guess, and the panel shows exactly which
+     signals fired.</p>
+  <table>
+    <tr><th>Signal</th><th class="num" style="width:20mm;">Weight</th><th>Recognises</th></tr>
+    <tr><td>Says they want to buy</td><td class="num">+30</td><td>“want to buy”, “ready to buy”, “yes, call me now”</td></tr>
+    <tr><td>Mentions a budget</td><td class="num">+20</td><td>“budget”, “under ₹50k”, “above ₹2L”</td></tr>
+    <tr><td>Needs it soon</td><td class="num">+20</td><td>“this week”, “within 7 days”, “urgent”</td></tr>
+    <tr><td>Wants to visit</td><td class="num">+15</td><td>“visit”, “appointment”, “timings”</td></tr>
+    <tr><td>Asks about a specific item</td><td class="num">+10</td><td>“do you have”, “in stock”</td></tr>
+    <tr><td>Comparing with others</td><td class="num">+5</td><td>“cheaper”, “other shop”</td></tr>
+    <tr><td>Raising a complaint</td><td class="num">−25</td><td>“refund”, “broken”, “not happy”</td></tr>
+    <tr><td>Not interested</td><td class="num">−40</td><td>“stop messaging”, “remove my number”</td></tr>
+  </table>
+  <p>Only the <strong>customer's</strong> words are read. The bot's own questions
+     are excluded, or “What is your budget?” would score every conversation.</p>
+
+  <h3>Editing the policy</h3>
+  <p><strong>Settings → Business configuration → Lead scoring.</strong> Phrases,
+     weights, bands and the minimum number of messages are all yours to change.</p>
+
+  <div class="box warn">
+    <span class="lbl">Changing the policy freezes your own copy</span>
+    <p>The first time you save the policy, your organisation keeps its own copy.
+       Improvements shipped later no longer reach you automatically — if the bot's
+       wording changes, add the new phrases yourself.</p>
+  </div>
+
+  <h3>Re-scoring</h3>
+  <p>A score is calculated when it is asked for and stored. Changing the policy
+     does not rewrite old scores — press the refresh arrow on the Intent panel to
+     score a conversation again under the current rules.</p>
+</div>
+
+<!-- ───────────────────────────── 7. QUOTATIONS ───────────────────────────── -->
+<div class="page">
+  <h2>7 · Quotations</h2>
+  <p class="lead">One quotation can carry several pieces — a necklace, earrings
+     and a ring — each priced in full and totalled together.</p>
+
+  <h3>Building one</h3>
+  <ol class="steps">
+    <li>Open <strong>Quotations → New</strong>. Enter the customer's name and number.</li>
+    <li>Choose the item type, and the style number if there is one. The download
+        arrow pulls that design's materials in automatically.</li>
+    <li>Fill the materials table — gold, stones, making.</li>
+    <li><strong>+ Add item</strong> for a second piece. Each keeps its own metal,
+        stones, making and discounts.</li>
+    <li><strong>Create quotation</strong>. GST is added and the total shown.</li>
+  </ol>
+
+  <h3>The materials table</h3>
+  <p>Gold, each stone and the making charge are rows in one list, in the same
+     order as the printed sheet. Every row has its own <strong>Dis %</strong>.</p>
+  <table>
+    <tr><th style="width:24mm;">Row</th><th>Priced as</th><th class="num" style="width:30mm;">Example</th></tr>
+    <tr><td><strong>Gold</strong></td><td>weight (g) × rate per gram, less its discount</td>
+        <td class="num">4.90 × 11,000 = 53,900</td></tr>
+    <tr><td><strong>Diamond</strong></td><td>carats × rate per carat, less its discount</td>
+        <td class="num">0.72 × 20,000 −5% = 13,680</td></tr>
+    <tr><td><strong>Colour stone</strong></td><td>carats × rate per carat, less its discount</td>
+        <td class="num">2.00 × 30,000 −5% = 57,000</td></tr>
+    <tr><td><strong>Making</strong></td><td>gold weight × making rate, less its discount</td>
+        <td class="num">4.90 × 1,200 −16.66% = 4,900</td></tr>
+  </table>
+  <p>Those four lines total <strong>₹1,29,480</strong> before GST, matching the
+     shop's own sheet exactly.</p>
+
+  <h3>Finding a stone</h3>
+  <p>Type what you know — <code>round</code>, <code>VVS</code>, <code>ruby</code>,
+     or the code itself. The box searches shape, quality and group, not just the
+     code. The carats box offers the standard per-stone weights.</p>
+
+  <h3>Size, remark and the rest</h3>
+  <ul>
+    <li><strong>Size</strong> is set once for the piece — ring size 12, bangle
+        2.6, chain 16 — with cm, inch or blank for Indian ring sizes.</li>
+    <li><strong>Remark</strong> carries bespoke instructions: engraving, finish,
+        a customer's own stone.</li>
+    <li><strong>Metal colour</strong> is not asked. The metal code already says
+        it: <code>G14YG</code> is 14K yellow, <code>G14WG</code> white.</li>
+  </ul>
+
+  <div class="box ok">
+    <span class="lbl">If it will not save</span>
+    <p>The message names the row — “Item 1, stone 2 of 3: … needs its carats”.
+       An empty row you added and did not use is ignored, so you can leave it.
+       A row with figures but no stone code must be completed or cleared.</p>
+  </div>
+</div>
+
+<!-- ───────────────────────────── 8. ATTENDANCE ───────────────────────────── -->
+<div class="page">
+  <h2>8 · Attendance</h2>
+
+  <h3>Where attendance is recorded</h3>
+  <p>Signing in does <strong>not</strong> mark anybody present. Everyone except
+     head office is taken to the punch screen at <code>/check-in</code>, and the
+     day is only recorded when a punch is made there.</p>
+  <table>
+    <tr><th style="width:44mm;">Situation</th><th>What happens</th></tr>
+    <tr><td><strong>Inside the branch fence</strong></td>
+        <td>Checks in automatically the moment the phone confirms the location.
+            Nothing to tap.</td></tr>
+    <tr><td><strong>Outside it, or GPS unclear</strong></td>
+        <td>Asks for a reason, records the punch, and flags it for review.</td></tr>
+    <tr><td><strong>No location at all</strong></td>
+        <td>Same — a reason is required, then it is recorded.</td></tr>
+  </table>
+  <p>Check-out works the same way, from the punch screen or from HRMS.</p>
+
+  <div class="box ok">
+    <span class="lbl">Nobody is ever locked out</span>
+    <p>A punch is never refused for being in the wrong place. A phone inside a
+       concrete showroom can be wrong by 50–150 metres, and refusing the punch
+       does not move the person — it only removes the record that they came to
+       work. The fence decides whether a punch is <em>verified</em>, not whether
+       it is allowed.</p>
+    <p>A reason is still required. An unexplained punch from outside the branch
+       would be indistinguishable from one person punching for another.</p>
+  </div>
+
+  <h3>Head office is told</h3>
+  <p>Every punch the fence cannot confirm raises a notification to the branch
+     manager <em>and</em> head office, carrying the distance, the allowed radius
+     and the reason that was typed. The person who punched is not notified —
+     they know where they were.</p>
+
+  <h3>Putting it right — regularisation</h3>
+  <ol class="steps">
+    <li>Open <strong>HRMS → Attendance</strong>. Flagged punches are marked.</li>
+    <li>Read the reason and the distance.</li>
+    <li>Accept it, or correct the record. Every change is kept in the audit log
+        with who made it.</li>
+  </ol>
+
+  <h3>Branch fences</h3>
+  <p>Each showroom has its own radius, set with the branch under
+     <strong>Settings → Stores</strong>. Mumbai Bandra is set to
+     <strong>250 m</strong> — wide enough to absorb indoor drift in a
+     concrete building, far short of the next showroom.</p>
+</div>
+
+<!-- ───────────────────────────── 9. DSR ───────────────────────────── -->
+<div class="page">
+  <h2>9 · Daily reporting over WhatsApp</h2>
+  <p class="lead">The day's sheet is filed by messaging the staff number. No app,
+     no login.</p>
+
+  <h3>Filing a report</h3>
+  <ol class="steps">
+    <li>Message <strong>+91 72089 12616</strong> and say <em>hi</em>.</li>
+    <li>Choose <strong>1</strong> — send today's daily report.</li>
+    <li>Answer each question. Reply <code>0</code> for none, or <code>skip</code>
+        where offered.</li>
+    <li>Check the summary, then reply <strong>YES</strong> to file it,
+        <strong>CANCEL</strong> to discard, or <strong>DATE 20/08</strong> to
+        file it for another day.</li>
+  </ol>
+
+  <h3>What it asks, in the order of the sheet</h3>
+  <table>
+    <tr><th style="width:38mm;">Section</th><th>Questions</th></tr>
+    <tr><td><strong>Footfall</strong></td>
+        <td>Walk-ins · serious enquiries · conversions</td></tr>
+    <tr><td><strong>Table A — counter sale</strong></td>
+        <td>Sale value, then cash · card · UPI · old gold taken and its value</td></tr>
+    <tr><td><strong>Table B — customised sale</strong></td>
+        <td>Booking value, open bookings, bookings closed, amount received, then
+            its own cash · card · UPI · bank transfer · old gold</td></tr>
+    <tr><td><strong>Remark</strong></td>
+        <td>Anything worth noting about the day</td></tr>
+  </table>
+
+  <div class="box ok">
+    <span class="lbl">It only asks what applies</span>
+    <p>Nothing sold at the counter? The counter payment questions are skipped
+       entirely. No old gold? It does not ask what the gold was worth. A quiet
+       day is <strong>nine</strong> questions; a full trading day is twenty.</p>
+  </div>
+
+  <div class="box warn">
+    <span class="lbl">The two payment blocks are kept apart</span>
+    <p>Counter sale and customised sale each have their own cash, card and UPI —
+       because the shop reconciles the two tables separately. The heading above
+       each question says which table you are filling. Each block must also add
+       up to its own total, or the bot asks again.</p>
+  </div>
+
+  <h3>Where reports appear</h3>
+  <p>Head office is notified as each report arrives. They are read under
+     <strong>Reporting → Daily</strong>, and can be downloaded as the standard
+     DSR sheet in PDF or Excel. Reports filed by WhatsApp are marked as such, so
+     they can be told apart from those entered on the dashboard.</p>
+</div>
+
+<!-- ───────────────────────────── 10. LIMITS ───────────────────────────── -->
+<div class="page">
+  <h2>10 · Known limits</h2>
+  <p class="lead">What the system does not do today, so nobody plans around
+     something that is not there.</p>
+
+  <h3>Adverts cannot be shared as a link</h3>
+  <div class="box stop">
+    <span class="lbl">There is no clickable advert URL</span>
+    <p>Click-to-WhatsApp adverts are built as unpublished posts. They have no
+       public web address, and the preview link from Ads Manager only opens for
+       somebody signed in to the ad account. To show the advert journey to
+       somebody, either let Meta deliver the advert to them, or tap it yourself
+       while sharing your screen.</p>
+  </div>
+
+  <h3>A login ID cannot be changed</h3>
+  <p>IDs are allocated when an account is created and are fixed. If somebody's
+     ID is wrong, the only remedy is a new account — which starts their
+     attendance history over.</p>
+
+  <h3>Messaging is WhatsApp only</h3>
+  <p>Instagram and Facebook Messenger are not connected as inboxes. An advert on
+     either platform still arrives, because the conversation itself happens on
+     WhatsApp.</p>
+
+  <h3>Not yet built</h3>
+  <ul>
+    <li><strong>Automatic reminders</strong> to staff who have not filed a daily
+        report.</li>
+    <li><strong>Uploading weekly and monthly PDFs</strong> for storage against a
+        branch.</li>
+    <li><strong>Outbound calling.</strong> The phone icon opens the device's own
+        dialler; the system records calls that happened but does not place them.</li>
+  </ul>
+
+  <h3>Things worth checking monthly</h3>
+  <ul>
+    <li>Every trading branch has an <strong>active store manager</strong> who can
+        open Conversations.</li>
+    <li>New campaigns have a <strong>routing rule</strong>, or their leads land in
+        the head office queue.</li>
+    <li>The Meta access token is still valid — <strong>Settings → Integrations</strong>
+        reports the connection state.</li>
+  </ul>
+
+  <div style="margin-top:2.5em; padding-top:1em; border-top:1px solid var(--line);
+              color:var(--muted); font-size:9pt;">
+    CaratSense v2.4 · Operations Manual · Issued 5 October 2026 ·
+    Prepared for Éclat Diamonds &amp; Company
+  </div>
+</div>
