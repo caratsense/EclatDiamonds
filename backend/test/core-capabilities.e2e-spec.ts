@@ -111,7 +111,21 @@ describe('Core capabilities: qualification, attribution, connect, tasks (e2e)', 
 
   /* ------------------------------------------------------ qualification */
 
-  it('qualification is OFF until a tenant turns it on, and says so rather than scoring', async () => {
+  it('a tenant who switches qualification off is told so rather than scored', async () => {
+    /*
+     * This asserted the opposite until scoring became the default: that a
+     * tenant who had said nothing got no score. Scoring sends nothing and,
+     * with no provider, is keyword matching over the tenant's own phrases, so
+     * silence is no longer read as refusal — but an explicit refusal must
+     * still be honoured, and that is what is checked here.
+     */
+    const untouched = await get('/crm/qualification/policy');
+    expect(untouched.status).toBe(200);
+    expect(untouched.body.policy.enabled).toBe(true);
+
+    const off = await post('/crm/qualification/policy', { enabled: false });
+    expect(off.status).toBe(201);
+
     const lead = await post('/leads', {
       storeId: F.store,
       customerName: F.customer,

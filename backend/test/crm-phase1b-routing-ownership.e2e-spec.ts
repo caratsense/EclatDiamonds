@@ -374,10 +374,20 @@ describe('CRM Phase 1B — routing ownership, conflicts, concurrency, queues (e2
 
   /* ================================================================ 1G */
 
-  it('1G: the three AI switches default OFF and are readable', async () => {
+  it('1G: scoring defaults ON, writing and sending default OFF, and all are readable', async () => {
     const res = await request(app.getHttpServer()).get('/crm/qualification/ai-settings').set(ho());
     expect(res.status).toBe(200);
-    expect(res.body.qualificationEnabled).toBe(false);
+
+    /*
+     * The split is the point, and it is why these were never one switch.
+     *
+     * Scoring is read-only — it sends nothing, and with no provider it is
+     * keyword matching over the tenant's own phrases — so it is on unless a
+     * tenant says otherwise. Drafting composes a message in a customer's
+     * thread and auto-send delivers one with no person involved; absence is
+     * not consent to either, so both stay off until asked for.
+     */
+    expect(res.body.qualificationEnabled).toBe(true);
     expect(res.body.draftEnabled).toBe(false);
     expect(res.body.autoSendEnabled).toBe(false);
     expect(res.body.providerConfigured).toBe(false);

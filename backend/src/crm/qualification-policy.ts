@@ -109,9 +109,48 @@ export interface QualificationPolicy {
  * feature gets something coherent on day one, and every one of them is editable.
  */
 export const DEFAULT_QUALIFICATION_POLICY: QualificationPolicy = {
-  // OFF by default. Turning on an assessment that starts scoring people the
-  // moment the code ships is not a decision the platform gets to make.
-  enabled: false,
+  /*
+
+   * ON by default.
+
+   *
+
+   * This was off, on the argument that scoring people the moment the code
+
+   * ships is not the platform's decision to make. That argument was written
+
+   * for a feature that might call a model; it does not survive what this
+
+   * actually is. With no provider configured — the normal case — an
+
+   * assessment is exact keyword matching over the tenant's OWN phrases, on
+
+   * the tenant's OWN conversations, producing a number only their staff see.
+
+   * Nothing leaves the system, and nobody is profiled who was not already a
+
+   * lead in a CRM.
+
+   *
+
+   * What the old default produced instead was a panel on every lead reading
+
+   * "Lead qualification is switched off for this organisation" — a feature
+
+   * that reads as broken rather than as awaiting consent.
+
+   *
+
+   * An explicit `false` still wins: `resolvePolicy` falls back to this only
+
+   * when the tenant has expressed no preference, so anyone who deliberately
+
+   * turned it off stays off.
+
+   */
+
+  enabled: true,
+
   version: 1,
   signals: [
     /*
