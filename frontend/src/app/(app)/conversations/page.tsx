@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -40,7 +40,6 @@ import {
   User as UserIcon,
   UserCog,
   Users,
-  X,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -1107,6 +1106,38 @@ function ThreadView({
   const send = useSendReply(id);
   const update = useUpdateConversation(id);
 
+  /**
+   * Is WhatsApp's 24-hour customer-care window still open?
+   *
+   * A business may reply freely for 24 hours after the customer's last
+   * message; after that only an approved template may be sent. The server
+   * enforces this already — `OmnichannelPolicy` holds the same constant and a
+   * reply posted outside the window comes back "Saved — not sent" — so this is
+   * purely the affordance, computed from the same `lastInboundAt` the policy
+   * reads. Duplicating the number is the price of not shipping a composer that
+   * looks usable and silently is not; the server remains the authority.
+   */
+  const lastInboundAt = data?.conversation?.lastInboundAt ?? null;
+  /*
+   * A clock that ticks, rather than a timestamp captured once.
+   *
+   * The deadline passes while somebody has the thread open — the normal case
+   * for a manager working an inbox all afternoon — so a value derived once at
+   * render would never expire, and the composer would stay enabled past it:
+   * the exact failure this exists to prevent.
+   *
+   * Shaped as "current time in state, window derived from it" so the
+   * derivation stays a pure expression and the only impure call sits inside
+   * the timer callback, where it belongs.
+   */
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  const windowOpen =
+    !!lastInboundAt && now - new Date(lastInboundAt).getTime() < 24 * 60 * 60 * 1000;
+
   /*
    * Read here rather than further down beside `party`, because the early returns
    * for loading and error sit between the two and a hook cannot be called after
@@ -1116,7 +1147,6 @@ function ThreadView({
   const notes = useCustomerNotes(notesPartyId);
   const addNote = useAddCustomerNote(notesPartyId);
   const [draft, setDraft] = useState("");
-  const [showRightCrm, setShowRightCrm] = useState(true);
 
   // Dialog states for Zithara Right Sidebar Accordions
   const [noteDialogOpen, setNoteDialogOpen] = useState(false);
@@ -1174,11 +1204,7 @@ function ThreadView({
   };
 
   return (
-    <div
-      className={`grid min-h-0 grid-rows-[minmax(0,1fr)] gap-3 ${
-        showRightCrm ? "xl:grid-cols-[1fr_290px]" : "grid-cols-1"
-      }`}
-    >
+    <div className="grid min-h-0 grid-rows-[minmax(0,1fr)] gap-3 xl:grid-cols-[1fr_290px]">
       {/* ── CENTER COLUMN: WhatsApp Web Chat Window ───────────────────── */}
       <Card className={`flex flex-col ${PANE_HEIGHT} overflow-hidden border-border/80 shadow-sm`}>
         {/* WhatsApp Header + Zithara Quick Action Icons */}
@@ -1201,16 +1227,37 @@ function ThreadView({
                     "Unknown sender"
                   )}
                 </CardTitle>
-                <Badge
-                  variant="outline"
-                  className="shrink-0 text-[9.5px] px-1.5 py-0 border-[#25D366]/40 text-[#25D366] bg-[#25D366]/10 font-normal leading-tight"
-                >
-                  WhatsApp
-                </Badge>
+                {/*
+                  The "WhatsApp" badge that sat here is gone. It told a reader
+                  nothing they did not know — this inbox has one channel, named
+                  in the toolbar filter — and it was a hard-coded string rather
+                  than the conversation's own channel, so a phone-call thread
+                  would have been labelled WhatsApp too.
+                */}
               </div>
               <div className="flex items-center gap-1 text-[11px] text-muted-foreground mt-0.5 min-w-0 truncate">
-                <span className="shrink-0 inline-block h-1.5 w-1.5 rounded-full bg-[#25D366] animate-pulse" />
-                <span className="shrink-0 text-[#25D366] font-medium text-[11px]">Online</span>
+                {/*
+                  When they last wrote, which we know — not "Online", which we
+                  do not.
+
+                  A pulsing green dot and the word "Online" sat here on every
+                  conversation ever opened. The WhatsApp Cloud API carries no
+                  presence signal at all, so it was decoration that read as
+                  fact, and the fact it asserted was one a salesperson would
+                  act on: somebody seeing "Online" has every reason to call
+                  that second.
+                */}
+                {conversation.lastInboundAt ? (
+                  <span className="shrink-0">
+                    Last wrote{" "}
+                    {new Date(conversation.lastInboundAt).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </span>
+                ) : (
+                  <span className="shrink-0">No reply yet</span>
+                )}
                 <span className="shrink-0 text-muted-foreground/30">·</span>
                 <span className="truncate">{conversation.store?.name ?? "No store yet"}</span>
                 <span className="shrink-0 text-muted-foreground/30">·</span>
@@ -1359,16 +1406,17 @@ function ThreadView({
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <Button
-              size="sm"
-              variant={showRightCrm ? "default" : "outline"}
-              className="text-xs h-7 gap-1 ml-1 px-2"
-              onClick={() => setShowRightCrm((v) => !v)}
-              title="Toggle Customer CRM panel"
-            >
-              <TrendingUp className="h-3 w-3" />
-              <span className="text-[11px] font-medium">CRM</span>
-            </Button>
+            {/*
+              The CRM toggle is gone, and with it the two controls that closed
+              the same panel from inside it.
+
+              Three different buttons hid one panel, and nothing explained why
+              you would want it hidden — the customer's details are the reason
+              to open a conversation, not a distraction from it. Removing only
+              the toggle would have been worse than leaving it: the panel's own
+              ✕ and the Intent card's ✕ would still close it, with nothing left
+              to bring it back.
+            */}
           </div>
         </CardHeader>
 
@@ -1600,45 +1648,81 @@ function ThreadView({
 
         {/* WhatsApp Web Input Dock & Quick Templates */}
         <div className="border-t border-border/70 bg-card p-3 space-y-2">
-          {/* Quick Pre-Approved Templates Chips */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap pl-1">
-              Quick replies:
-            </span>
-            <button
-              type="button"
-              onClick={() =>
-                setDraft(
-                  "Hello Priya! Would you like us to reserve a 0.50 ct solitaire ring for your visit this Saturday?",
-                )
-              }
-              className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/50 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted hover:border-[#25D366]/40 transition-colors whitespace-nowrap"
-            >
-              💎 Confirm Saturday Visit
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                setDraft(
-                  "Our Surat showroom is at: Éclat Diamonds, Ring Road, Surat. Store hours: 10:30 AM to 8:30 PM.",
-                )
-              }
-              className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/50 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted hover:border-[#25D366]/40 transition-colors whitespace-nowrap"
-            >
-              📍 Store Location
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                setDraft(
-                  "All solitaires come with certified IGI laser-inscribed documentation and lifetime buyback guarantee.",
-                )
-              }
-              className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/50 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted hover:border-[#25D366]/40 transition-colors whitespace-nowrap"
-            >
-              📜 IGI Certificate Info
-            </button>
-          </div>
+          {windowOpen ? (
+            /*
+              Quick replies, with no emoji.
+
+              The chips carried a gem, a pin and a scroll. They had already been
+              through one cp1252 round-trip and rendered as mojibake in
+              production, and a decorative glyph on an internal shortcut is not
+              worth a second encoding incident. The words say what each one is.
+            */
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap pl-1">
+                Quick replies:
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  setDraft(
+                    `Hello${party?.name ? ` ${party.name}` : ""}! Would you like us to reserve a 0.50 ct solitaire ring for your visit this Saturday?`,
+                  )
+                }
+                className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/50 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted hover:border-[#25D366]/40 transition-colors whitespace-nowrap"
+              >
+                Confirm Saturday Visit
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setDraft(
+                    `Our ${conversation.store?.name ?? "Éclat Diamonds"} showroom is open 10:30 AM to 8:30 PM. Shall I send you the address?`,
+                  )
+                }
+                className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/50 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted hover:border-[#25D366]/40 transition-colors whitespace-nowrap"
+              >
+                Store Location
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setDraft(
+                    "All solitaires come with certified IGI laser-inscribed documentation and lifetime buyback guarantee.",
+                  )
+                }
+                className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/50 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted hover:border-[#25D366]/40 transition-colors whitespace-nowrap"
+              >
+                IGI Certificate Info
+              </button>
+            </div>
+          ) : (
+            /*
+              The 24-hour customer-care window has closed.
+
+              WhatsApp only allows a free-form reply within 24 hours of the
+              customer's last message; after that a business may send an
+              approved template and nothing else. The server already enforces
+              this — a reply posted now comes back "Saved — not sent" — but the
+              composer looked exactly as it does at any other time, so the only
+              way to discover the rule was to write a message and watch it not
+              arrive.
+
+              The server stays the authority. This is the affordance, computed
+              from the same `lastInboundAt` the policy uses.
+            */
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-400">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              <span className="min-w-0">
+                {conversation.lastInboundAt
+                  ? `It is over 24 hours since ${party?.name ?? "this customer"} last wrote, so WhatsApp no longer allows a free-form reply.`
+                  : `${party?.name ?? "This customer"} has not written yet, so WhatsApp does not allow a free-form message.`}{" "}
+                An approved template can still reach them.
+              </span>
+              <Button asChild size="sm" variant="outline" className="h-7 shrink-0 text-[11px]">
+                <Link href="/campaigns">Send a template</Link>
+              </Button>
+            </div>
+          )}
 
           {/* Action Row: Emoji + Plus + Input + Mic/Send */}
           <div className="flex items-end gap-2">
@@ -1675,13 +1759,18 @@ function ThreadView({
                     onSend();
                   }
                 }}
-                placeholder="Type a message…"
+                disabled={!windowOpen}
+                placeholder={
+                  windowOpen
+                    ? "Type a message…"
+                    : "You can only send an approved template now"
+                }
                 rows={draft.includes("\n") ? 3 : 1}
-                className="w-full resize-none rounded-xl border border-input bg-background/80 px-3.5 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#25D366] transition-all min-h-[38px]"
+                className="w-full resize-none rounded-xl border border-input bg-background/80 px-3.5 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#25D366] transition-all min-h-[38px] disabled:cursor-not-allowed disabled:opacity-60"
               />
             </div>
 
-            {draft.trim() ? (
+            {draft.trim() && windowOpen ? (
               <Button
                 size="icon"
                 onClick={onSend}
@@ -1712,217 +1801,210 @@ function ThreadView({
       </Card>
 
       {/* ── RIGHT COLUMN: Darrell Steward Style Customer Profile & Accordions ── */}
-      {showRightCrm && (
-        <div className={`${PANE_HEIGHT} space-y-3 overflow-y-auto pr-1`}>
-          {/* Customer Profile Card */}
-          <Card className="border-border/80 shadow-sm overflow-hidden">
-            <CardHeader className="p-4 pb-3 border-b border-border/60 flex-row items-center justify-between space-y-0">
-              <div className="flex items-center gap-2">
-                <span className="font-semibold text-sm">
-                  {party?.name ?? "Customer"}
-                </span>
-                <span className="text-amber-500 font-bold">⚡</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <Link
-                  href={party ? `/customers/${party.id}` : "#"}
-                  className="text-xs text-primary hover:underline inline-flex items-center gap-1"
-                >
-                  <Edit3 className="h-3 w-3" /> Edit
-                </Link>
-                <button
-                  type="button"
-                  onClick={() => setShowRightCrm(false)}
-                  className="h-6 w-6 rounded-md hover:bg-muted flex items-center justify-center text-muted-foreground ml-1"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </CardHeader>
-            <CardContent className="p-4 space-y-3 text-xs">
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <span className="text-muted-foreground block text-[11px]">Email</span>
-                  <span className="font-medium text-foreground truncate block">
-                    {party?.name ? `${party.name.toLowerCase().replace(/\s+/g, ".")}@gmail.com` : "Not provided"}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground block text-[11px]">Phone number</span>
-                  <span className="font-medium text-foreground">
-                    {party?.phone ?? "+91 91900000101"}
-                  </span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <span className="text-muted-foreground block text-[11px]">Company name</span>
-                  <span className="font-medium text-foreground">
-                    {conversation.store?.name ?? "No store yet"}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground block text-[11px]">Job title</span>
-                  <span className="font-medium text-foreground">
-                    Solitaire Buyer
-                  </span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <span className="text-muted-foreground block text-[11px]">Contact owner</span>
-                  <span className="font-medium text-foreground">
-                    {conversation.assignedUser?.name ?? "Karan Malhotra"}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground block text-[11px]">Lifecycle stage</span>
-                  <span className="font-medium text-foreground">
-                    Marketing qualified…
-                  </span>
-                </div>
-              </div>
-
+      <div className={`${PANE_HEIGHT} space-y-3 overflow-y-auto pr-1`}>
+        {/* Customer Profile Card */}
+        <Card className="border-border/80 shadow-sm overflow-hidden">
+          <CardHeader className="p-4 pb-3 border-b border-border/60 flex-row items-center justify-between space-y-0">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-sm">
+                {party?.name ?? "Customer"}
+              </span>
+              <span className="text-amber-500 font-bold">⚡</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Link
+                href={party ? `/customers/${party.id}` : "#"}
+                className="text-xs text-primary hover:underline inline-flex items-center gap-1"
+              >
+                <Edit3 className="h-3 w-3" /> Edit
+              </Link>
+            </div>
+          </CardHeader>
+          <CardContent className="p-4 space-y-3 text-xs">
+            <div className="grid grid-cols-2 gap-2">
               <div>
-                <span className="text-muted-foreground block text-[11px]">Lead status</span>
-                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#128C7E] dark:text-[#25D366] mt-0.5">
-                  <Sparkles className="h-3 w-3" /> High Intent Prospect
+                <span className="text-muted-foreground block text-[11px]">Email</span>
+                <span className="font-medium text-foreground truncate block">
+                  {party?.name ? `${party.name.toLowerCase().replace(/\s+/g, ".")}@gmail.com` : "Not provided"}
                 </span>
               </div>
-
-              {/*
-                "Not the right contact?" used to toast "Re-assign or link to
-                different customer record" and do nothing. Detaching a thread
-                from one customer and attaching it to another is not a feature
-                that exists — there is no endpoint for it — so the link was
-                offering a repair the product cannot perform.
-
-                Deliberately NOT pointed at the duplicate-merge tool in
-                Settings - Configuration: that answers "these two records are
-                the same person", which is a different question from "this
-                conversation is filed against the wrong person". Sending
-                somebody there would trade a dead link for a misleading one.
-              */}
-            </CardContent>
-          </Card>
-
-          {/* AI Intent & Signal Qualification */}
-          <Card className="border-border/80 shadow-sm overflow-hidden">
-            <CardHeader className="p-3 pb-2 border-b border-border/60">
-              <CardTitle className="text-xs font-semibold flex items-center justify-between">
-                <span className="flex items-center gap-1.5">
-                  <TrendingUp className="h-3.5 w-3.5 text-[#6366f1]" /> AI Intent & Score
+              <div>
+                <span className="text-muted-foreground block text-[11px]">Phone number</span>
+                <span className="font-medium text-foreground">
+                  {party?.phone ?? "+91 91900000101"}
                 </span>
-                <Badge variant="secondary" className="text-[9px] uppercase font-mono">
-                  Beta
-                </Badge>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-3">
-              <IntentAnalysisPanel
-                conversationId={id}
-                partyId={party?.id}
-                onClose={() => setShowRightCrm(false)}
-                onApplyAction={(text) => setDraft((prev) => (prev ? prev + "\n" + text : text))}
-              />
-            </CardContent>
-          </Card>
-
-          {/* Zithara 5-Section Accordion List */}
-          <Card className="border-border/80 shadow-sm">
-            <div className="divide-y divide-border/40 text-xs">
-              <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
-                <span className="font-medium flex items-center gap-1.5">
-                  <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
-                  Whatsapp messages
-                </span>
-                {/*
-                  "+ Log" reported `toast.success("Activity Logged", "15
-                  WhatsApp messages archived in timeline")` — a success for
-                  work that never ran, quoting a count nobody counted. The
-                  number was a literal in the source and read the same whether
-                  the thread held three messages or three hundred.
-
-                  Nothing is logged because nothing needs to be: every message
-                  on this thread is already persisted as it arrives, and the
-                  timeline reads from that. Removed.
-                */}
-              </div>
-
-              <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
-                <span className="font-medium flex items-center gap-1.5">
-                  <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-                  Notes
-                  {/* The real count, so a thread with history says so before it
-                      is opened. Omitted rather than shown as 0 while loading. */}
-                  {notes.data?.length ? (
-                    <span className="num text-[10px] text-muted-foreground">
-                      ({notes.data.length})
-                    </span>
-                  ) : null}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setNoteDialogOpen(true)}
-                  className="text-primary hover:underline text-[11px] font-medium"
-                >
-                  + Add
-                </button>
-              </div>
-
-              <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
-                <span className="font-medium flex items-center gap-1.5">
-                  <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
-                  Tasks
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setTaskDialogOpen(true)}
-                  className="text-primary hover:underline text-[11px] font-medium"
-                >
-                  + Add
-                </button>
-              </div>
-
-              <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
-                <span className="font-medium flex items-center gap-1.5">
-                  <Tag className="h-3.5 w-3.5 text-muted-foreground" />
-                  Deals
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setDealDialogOpen(true)}
-                  className="text-primary hover:underline text-[11px] font-medium"
-                >
-                  + Add
-                </button>
-              </div>
-
-              <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
-                <span className="font-medium flex items-center gap-1.5">
-                  <CheckCircle2 className="h-3.5 w-3.5 text-muted-foreground" />
-                  tickets
-                </span>
-                {/*
-                  Ticketing is a real module with a real screen, so this goes
-                  there rather than toasting "Creating customer service
-                  ticket…" and creating nothing. The customer is carried in the
-                  query string so the ticket opens against the person whose
-                  conversation you were reading.
-                */}
-                <Link
-                  href={party?.id ? `/ticketing?partyId=${party.id}` : "/ticketing"}
-                  className="text-primary hover:underline text-[11px] font-medium"
-                >
-                  + Add
-                </Link>
               </div>
             </div>
-          </Card>
-        </div>
-      )}
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <span className="text-muted-foreground block text-[11px]">Company name</span>
+                <span className="font-medium text-foreground">
+                  {conversation.store?.name ?? "No store yet"}
+                </span>
+              </div>
+              <div>
+                <span className="text-muted-foreground block text-[11px]">Job title</span>
+                <span className="font-medium text-foreground">
+                  Solitaire Buyer
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <span className="text-muted-foreground block text-[11px]">Contact owner</span>
+                <span className="font-medium text-foreground">
+                  {conversation.assignedUser?.name ?? "Karan Malhotra"}
+                </span>
+              </div>
+              <div>
+                <span className="text-muted-foreground block text-[11px]">Lifecycle stage</span>
+                <span className="font-medium text-foreground">
+                  Marketing qualified…
+                </span>
+              </div>
+            </div>
+
+            <div>
+              <span className="text-muted-foreground block text-[11px]">Lead status</span>
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#128C7E] dark:text-[#25D366] mt-0.5">
+                <Sparkles className="h-3 w-3" /> High Intent Prospect
+              </span>
+            </div>
+
+            {/*
+              "Not the right contact?" used to toast "Re-assign or link to
+              different customer record" and do nothing. Detaching a thread
+              from one customer and attaching it to another is not a feature
+              that exists — there is no endpoint for it — so the link was
+              offering a repair the product cannot perform.
+
+              Deliberately NOT pointed at the duplicate-merge tool in
+              Settings - Configuration: that answers "these two records are
+              the same person", which is a different question from "this
+              conversation is filed against the wrong person". Sending
+              somebody there would trade a dead link for a misleading one.
+            */}
+          </CardContent>
+        </Card>
+
+        {/* AI Intent & Signal Qualification */}
+        <Card className="border-border/80 shadow-sm overflow-hidden">
+          <CardHeader className="p-3 pb-2 border-b border-border/60">
+            <CardTitle className="text-xs font-semibold flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <TrendingUp className="h-3.5 w-3.5 text-[#6366f1]" /> AI Intent & Score
+              </span>
+              <Badge variant="secondary" className="text-[9px] uppercase font-mono">
+                Beta
+              </Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-3">
+            <IntentAnalysisPanel
+              conversationId={id}
+              partyId={party?.id}
+              // No `onClose`: the panel it used to close is permanent now, so
+              // the component hides its own ✕ rather than offering a button
+              // that would dismiss the whole CRM column from inside one card.
+              onApplyAction={(text) => setDraft((prev) => (prev ? prev + "\n" + text : text))}
+            />
+          </CardContent>
+        </Card>
+
+        {/* Zithara 5-Section Accordion List */}
+        <Card className="border-border/80 shadow-sm">
+          <div className="divide-y divide-border/40 text-xs">
+            <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
+              <span className="font-medium flex items-center gap-1.5">
+                <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
+                Whatsapp messages
+              </span>
+              {/*
+                "+ Log" reported `toast.success("Activity Logged", "15
+                WhatsApp messages archived in timeline")` — a success for
+                work that never ran, quoting a count nobody counted. The
+                number was a literal in the source and read the same whether
+                the thread held three messages or three hundred.
+
+                Nothing is logged because nothing needs to be: every message
+                on this thread is already persisted as it arrives, and the
+                timeline reads from that. Removed.
+              */}
+            </div>
+
+            <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
+              <span className="font-medium flex items-center gap-1.5">
+                <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                Notes
+                {/* The real count, so a thread with history says so before it
+                    is opened. Omitted rather than shown as 0 while loading. */}
+                {notes.data?.length ? (
+                  <span className="num text-[10px] text-muted-foreground">
+                    ({notes.data.length})
+                  </span>
+                ) : null}
+              </span>
+              <button
+                type="button"
+                onClick={() => setNoteDialogOpen(true)}
+                className="text-primary hover:underline text-[11px] font-medium"
+              >
+                + Add
+              </button>
+            </div>
+
+            <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
+              <span className="font-medium flex items-center gap-1.5">
+                <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
+                Tasks
+              </span>
+              <button
+                type="button"
+                onClick={() => setTaskDialogOpen(true)}
+                className="text-primary hover:underline text-[11px] font-medium"
+              >
+                + Add
+              </button>
+            </div>
+
+            <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
+              <span className="font-medium flex items-center gap-1.5">
+                <Tag className="h-3.5 w-3.5 text-muted-foreground" />
+                Deals
+              </span>
+              <button
+                type="button"
+                onClick={() => setDealDialogOpen(true)}
+                className="text-primary hover:underline text-[11px] font-medium"
+              >
+                + Add
+              </button>
+            </div>
+
+            <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
+              <span className="font-medium flex items-center gap-1.5">
+                <CheckCircle2 className="h-3.5 w-3.5 text-muted-foreground" />
+                tickets
+              </span>
+              {/*
+                Ticketing is a real module with a real screen, so this goes
+                there rather than toasting "Creating customer service
+                ticket…" and creating nothing. The customer is carried in the
+                query string so the ticket opens against the person whose
+                conversation you were reading.
+              */}
+              <Link
+                href={party?.id ? `/ticketing?partyId=${party.id}` : "/ticketing"}
+                className="text-primary hover:underline text-[11px] font-medium"
+              >
+                + Add
+              </Link>
+            </div>
+          </div>
+        </Card>
+      </div>
 
       {/* ── Dialogs for Zithara Accordions ── */}
       {/*

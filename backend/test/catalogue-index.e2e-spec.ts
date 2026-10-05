@@ -144,6 +144,33 @@ describe('Catalogue index + search (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let jobs: JobsService;
+
+  /**
+   * Drain until the queue is actually empty.
+   *
+   * `drain(10)` was a fixed budget, and a fixed budget breaks the moment
+   * anything else in the system queues work: lead scoring now enqueues a
+   * requalification job per inbound message, which ate the allowance before
+   * the jobs under test were reached, so these assertions failed on a status
+   * that was merely still pending. The number was never the point — "finish
+   * the outstanding work" is. Bounded, so a permanently failing job cannot
+   * spin here forever.
+   */
+  const drainAll = async (rounds = 20) => {
+    const total = { processed: 0, succeeded: 0, failed: 0 };
+    for (let i = 0; i < rounds; i += 1) {
+      // `jobs.drain`, never `drainAll` — this is the one place that must call
+      // the real queue.
+      const round = await jobs.drain(50);
+      total.processed += round.processed;
+      total.succeeded += round.succeeded;
+      total.failed += round.failed;
+      if (round.processed === 0) break;
+    }
+    // The same shape `drain` returns, summed, so a caller that inspected the
+    // counts still can.
+    return total;
+  };
   let index: CatalogueIndexService;
   let server: Server;
   let base = '';
@@ -252,7 +279,7 @@ describe('Catalogue index + search (e2e)', () => {
   });
 
   it('the worker downloads, hashes, thumbnails and embeds; the picture records it', async () => {
-    await jobs.drain(10);
+    await drainAll();
     const m = await image(img1);
     expect(m.embeddingStatus).toBe('indexed');
     expect(m.embeddingVersion).toBe('idx1|d1|s1|pp1');
@@ -275,7 +302,7 @@ describe('Catalogue index + search (e2e)', () => {
       data: { status: 'running', lockedBy: 'worker-that-died', lockedAt: new Date(Date.now() - 20 * 60_000), attempts: 1 },
     });
     await prisma.productImage.update({ where: { id }, data: { embeddingStatus: 'running' } });
-    await jobs.drain(10);
+    await drainAll();
     expect((await image(id)).embeddingStatus).toBe('indexed');
   });
 
@@ -284,7 +311,7 @@ describe('Catalogue index + search (e2e)', () => {
     const svg = (await addImage(P[4], `${base}/svg.jpg`, { source: 'website', sourceOrder: 1 })).id;
     const foreign = (await addImage(P[4], 'https://attacker.example.net/x.jpg', { source: 'website', sourceOrder: 2 })).id;
     await index.enqueue(ORG, [missing, svg, foreign]);
-    await jobs.drain(10);
+    await drainAll();
     expect(await image(missing)).toEqual(expect.objectContaining({ embeddingStatus: 'dead', embeddingError: expect.stringMatching(/HTTP 404/) }));
     expect(await image(svg)).toEqual(expect.objectContaining({ embeddingStatus: 'dead', embeddingError: expect.stringMatching(/not an image/) }));
     expect(await image(foreign)).toEqual(
@@ -296,14 +323,14 @@ describe('Catalogue index + search (e2e)', () => {
     flaky = 503;
     const id = (await addImage(P[4], `${base}/flaky.jpg`, { source: 'manual' })).id;
     await index.enqueue(ORG, [id]);
-    await jobs.drain(10);
+    await drainAll();
     expect(await image(id)).toEqual(expect.objectContaining({ embeddingStatus: 'failed', embeddingError: expect.stringMatching(/HTTP 503/) }));
     const job = await prisma.jobTask.findFirstOrThrow({ where: { kind: EMBED_JOB, payload: { equals: { imageId: id } } } });
     expect(job.status).toBe('pending');
     expect(job.runAt.getTime()).toBeGreaterThan(Date.now());
     // Fast-forward to the last attempt.
     await prisma.jobTask.update({ where: { id: job.id }, data: { attempts: 4, runAt: new Date(Date.now() - 1000) } });
-    await jobs.drain(10);
+    await drainAll();
     expect((await image(id)).embeddingStatus).toBe('dead');
     expect((await prisma.jobTask.findUniqueOrThrow({ where: { id: job.id } })).status).toBe('dead');
   });
@@ -312,9 +339,9 @@ describe('Catalogue index + search (e2e)', () => {
     const a = (await addImage(P[3], vecUrl(e(3), 'same'), { source: 'gati_cad' })).id;
     const b = (await addImage(P[3], vecUrl(e(3), 'same'), { source: 'website' })).id;
     await index.enqueue(ORG, [a]);
-    await jobs.drain(10);
+    await drainAll();
     await index.enqueue(ORG, [b]);
-    await jobs.drain(10);
+    await drainAll();
     expect((await image(a)).status).toBe('active');
     expect(await image(b)).toEqual(expect.objectContaining({ status: 'tombstoned', embeddingError: `duplicate of ${a}` }));
     expect(await prisma.productEmbedding.count({ where: { productId: P[3] } })).toBe(1);
@@ -326,7 +353,7 @@ describe('Catalogue index + search (e2e)', () => {
     await prisma.productImageAssociation.create({ data: { organisationId: ORG, imageId: web, source: 'website', colour: 'yellow' } });
     const cad = (await addImage(P[2], vecUrl(e(2), 'p3-cad'), { source: 'gati_cad' })).id;
     await index.enqueue(ORG, [web, cad]);
-    await jobs.drain(10);
+    await drainAll();
 
     mock.searchVec = e(2);
     const res = await search();
@@ -397,7 +424,7 @@ describe('Catalogue index + search (e2e)', () => {
       expect(res.status).toBe(201);
       expect(res.body.queued).toBe(1);
       expect((await image(cadId)).embeddingStatus).toBe('queued');
-      await jobs.drain(10);
+      await drainAll();
       expect((await image(cadId)).embeddingVersion).toBe('idx1|d1|s1|pp2');
       const rows = await prisma.productEmbedding.findMany({ where: { productImageId: cadId } });
       expect(rows.map((r) => r.preprocessingVersion)).toEqual(['pp2']);
@@ -465,7 +492,7 @@ describe('Catalogue index + search (e2e)', () => {
       mock.available = true;
     }
 
-    await jobs.drain(50);
+    await drainAll();
     const m = await image(id);
     expect(m.thumbUrl).toMatch(/catalogue-thumbs\/.*-grid\.webp$/);
     const file = join(app.get(StorageService).baseDir, ...m.thumbUrl!.replace(/^\/uploads\//, '').split('/'));
@@ -479,7 +506,7 @@ describe('Catalogue index + search (e2e)', () => {
     mock.noThumb = true;
     try {
       await index.enqueue(ORG, [id]);
-      await jobs.drain(50);
+      await drainAll();
     } finally {
       mock.noThumb = false;
     }
@@ -492,7 +519,7 @@ describe('Catalogue index + search (e2e)', () => {
     process.env.SCHEDULER_ENABLED = 'true';
     try {
       await index.sweep(); // queue anything still waiting from earlier tests
-      await jobs.drain(50);
+      await drainAll();
       const before = mock.healthCalls;
       await index.sweep();
       expect(mock.healthCalls).toBe(before); // nothing new: no wake
@@ -506,7 +533,7 @@ describe('Catalogue index + search (e2e)', () => {
       expect(mock.healthCalls).toBeGreaterThan(before);
     } finally {
       process.env.SCHEDULER_ENABLED = 'false';
-      await jobs.drain(50);
+      await drainAll();
     }
   });
 });

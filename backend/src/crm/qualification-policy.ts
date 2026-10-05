@@ -109,35 +109,117 @@ export interface QualificationPolicy {
  * feature gets something coherent on day one, and every one of them is editable.
  */
 export const DEFAULT_QUALIFICATION_POLICY: QualificationPolicy = {
-  // OFF by default. Turning on an assessment that starts scoring people the
-  // moment the code ships is not a decision the platform gets to make.
-  enabled: false,
+  /*
+
+   * ON by default.
+
+   *
+
+   * This was off, on the argument that scoring people the moment the code
+
+   * ships is not the platform's decision to make. That argument was written
+
+   * for a feature that might call a model; it does not survive what this
+
+   * actually is. With no provider configured — the normal case — an
+
+   * assessment is exact keyword matching over the tenant's OWN phrases, on
+
+   * the tenant's OWN conversations, producing a number only their staff see.
+
+   * Nothing leaves the system, and nobody is profiled who was not already a
+
+   * lead in a CRM.
+
+   *
+
+   * What the old default produced instead was a panel on every lead reading
+
+   * "Lead qualification is switched off for this organisation" — a feature
+
+   * that reads as broken rather than as awaiting consent.
+
+   *
+
+   * An explicit `false` still wins: `resolvePolicy` falls back to this only
+
+   * when the tenant has expressed no preference, so anyone who deliberately
+
+   * turned it off stays off.
+
+   */
+
+  enabled: true,
+
   version: 1,
   signals: [
+    /*
+     * Every list below carries TWO vocabularies, and the second one is why
+     * these defaults were failing in production.
+     *
+     * The first is how a stranger types: "want to buy", "my budget", "this
+     * week". That was all these phrases held, and it is correct for a customer
+     * writing freely.
+     *
+     * But most Éclat leads never write freely. The qualification bot asks four
+     * closed questions and the customer answers with the bot's OWN option
+     * labels — "Above ₹2L", "Within 7 days", "Yes, call me now". None of those
+     * contains a single phrase from the first vocabulary, so the best possible
+     * lead the bot can produce — engagement ring, above ₹2L, buying within a
+     * week, asking to be called — scored ZERO and rendered as "Do not pursue".
+     * That happened to a real lead on 5 Oct.
+     *
+     * So each signal now also lists the answers our own script can generate,
+     * in both the rendered form ("under ₹50k") and the form someone types back
+     * by hand ("under 50k"). Keep these in step with `customer-flow.ts`: an
+     * option label that changes there and not here silently stops scoring.
+     */
     {
       key: 'purchase_intent',
       label: 'Says they want to buy',
       weight: 30,
-      phrases: ['want to buy', 'looking to buy', 'i will take', 'ready to buy', 'purchase', 'book it'],
+      phrases: [
+        'want to buy', 'looking to buy', 'i will take', 'ready to buy', 'purchase', 'book it',
+        // Agreeing to a call is the strongest buying signal a closed-question
+        // flow can produce — nobody asks to be phoned about jewellery they do
+        // not intend to buy.
+        'yes, call me now', 'call me now', 'yes u can call', 'you can call',
+      ],
       hint: 'Explicit intent, not just interest.',
     },
     {
       key: 'budget_stated',
       label: 'Mentions a budget',
       weight: 20,
-      phrases: ['budget', 'my range', 'around rs', 'under rs', 'how much', 'price range'],
+      phrases: [
+        'budget', 'my range', 'around rs', 'under rs', 'how much', 'price range',
+        // The four budget bands the bot offers, as rendered and as retyped.
+        'under ₹50k', 'under 50k', '₹50k to ₹1l', '50k to 1l',
+        '₹1l to ₹2l', '1l to 2l', 'above ₹2l', 'above 2l',
+      ],
     },
     {
       key: 'timeline_soon',
       label: 'Needs it soon',
       weight: 20,
-      phrases: ['this week', 'tomorrow', 'urgent', 'as soon as', 'by friday', 'next week'],
+      phrases: [
+        'this week', 'tomorrow', 'urgent', 'as soon as', 'by friday', 'next week',
+        // The two near-term answers from the bot's timeline question. "In a
+        // few months" and "Just exploring" are deliberately absent — they are
+        // real answers, and the honest score for them is no urgency at all.
+        'within 7 days', 'this month',
+      ],
     },
     {
       key: 'visit_intent',
       label: 'Wants to visit',
       weight: 15,
-      phrases: ['come to the store', 'visit', 'appointment', 'address', 'timings', 'open today'],
+      phrases: [
+        'come to the store', 'visit', 'appointment', 'address', 'timings', 'open today',
+        // Accepting a later call is weaker than asking for one now, but it is
+        // still an opening the branch can act on.
+        'call me later',
+      ],
     },
     {
       key: 'specific_item',

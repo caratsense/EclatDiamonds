@@ -427,9 +427,23 @@ function Assessed({
         </p>
       ) : null}
 
-      <div className="flex items-center gap-4 rounded-lg border border-border bg-muted/30 p-3.5">
+      {/*
+        Stacked, not side by side.
+
+        This card lives in a 290px column. A 96px dial beside the text left
+        roughly 150px for three badges, so "Do not pursue", "RULES" and "low
+        confidence" each wrapped onto their own line and the block grew into a
+        tall stripe of chips — the clutter reported from production.
+
+        So the dial is smaller and keeps only the band label beside it, which
+        is the one thing a reader needs at a glance. The provenance badges and
+        the confidence line move underneath, where they have the full width and
+        wrap at most once.
+      */}
+      <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3.5">
+      <div className="flex items-center gap-3">
         <div className="relative flex shrink-0 items-center justify-center">
-          <svg className="h-24 w-24 -rotate-90" viewBox="0 0 100 100" role="img"
+          <svg className="h-16 w-16 -rotate-90" viewBox="0 0 100 100" role="img"
             aria-label={`Intent score ${score} out of 100`}>
             <circle
               cx="50" cy="50" r={radius}
@@ -445,59 +459,64 @@ function Assessed({
             />
           </svg>
           <span className="absolute flex flex-col items-center">
-            <span className="num text-2xl font-bold tracking-tight">{score}</span>
-            <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <span className="num text-xl font-bold leading-none tracking-tight">{score}</span>
+            <span className="text-[8px] font-semibold uppercase tracking-wider text-muted-foreground">
               Score
             </span>
           </span>
         </div>
 
-        <div className="min-w-0 flex-1 space-y-2">
-          <div className="flex flex-wrap items-center gap-1.5">
-            {/* The BAND'S OWN LABEL from the tenant's policy. Nothing here
-                invents a phrase like "Easy to Convert" for a number. */}
-            <StatusPill tone={tone}>{data.bandLabel ?? data.band ?? "Scored"}</StatusPill>
-            <Badge variant="outline" className="text-[10px] uppercase tracking-wider">
-              {byHand ? "By hand" : data.method === "ai" ? "Model" : "Rules"}
-            </Badge>
-            {data.lowConfidence ? (
-              <Badge variant="outline" className="text-[10px]">
-                low confidence
-              </Badge>
-            ) : null}
-          </div>
-          {/* A human score carries neither a confidence nor a message count —
-              the server records neither, so there is nothing truthful to put
-              here. The footer names who set it instead. */}
-          {byHand ? null : (
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              {/* Confidence is omitted when the server did not report one, rather
-                  than filled in with a plausible-looking percentage. */}
-              {data.confidence !== null ? (
-                <>
-                  Confidence{" "}
-                  <strong className="text-foreground">
-                    {Math.round(data.confidence * 100)}%
-                  </strong>
-                  {" · "}
-                </>
-              ) : null}
-              from{" "}
-              {data.messagesConsidered === 1 ? "1 message" : `${data.messagesConsidered} messages`}
-            </p>
-          )}
-          {onScoreByHand ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="-ml-2 h-7 px-2 text-xs"
-              onClick={onScoreByHand}
-            >
-              <PencilLine className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-              {byHand ? "Change it" : "Score it yourself"}
-            </Button>
-          ) : null}
+        {/* The band label only. It is the sentence a manager acts on. */}
+        <div className="min-w-0 flex-1">
+          {/* The BAND'S OWN LABEL from the tenant's policy. Nothing here
+              invents a phrase like "Easy to Convert" for a number. */}
+          <StatusPill tone={tone}>{data.bandLabel ?? data.band ?? "Scored"}</StatusPill>
         </div>
+      </div>
+
+      {/* Where the number came from, with the full width to say it in. */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Badge variant="outline" className="text-[10px] uppercase tracking-wider">
+          {byHand ? "By hand" : data.method === "ai" ? "Model" : "Rules"}
+        </Badge>
+        {data.lowConfidence ? (
+          <Badge variant="outline" className="text-[10px]">
+            low confidence
+          </Badge>
+        ) : null}
+        {/* A human score carries neither a confidence nor a message count —
+            the server records neither, so there is nothing truthful to put
+            here. The footer names who set it instead. */}
+        {byHand ? null : (
+          <span className="text-xs text-muted-foreground">
+            {/* Confidence is omitted when the server did not report one, rather
+                than filled in with a plausible-looking percentage. */}
+            {data.confidence !== null ? (
+              <>
+                Confidence{" "}
+                <strong className="text-foreground">
+                  {Math.round(data.confidence * 100)}%
+                </strong>
+                {" · "}
+              </>
+            ) : null}
+            from{" "}
+            {data.messagesConsidered === 1 ? "1 message" : `${data.messagesConsidered} messages`}
+          </span>
+        )}
+      </div>
+
+      {onScoreByHand ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="-ml-2 h-7 px-2 text-xs"
+          onClick={onScoreByHand}
+        >
+          <PencilLine className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+          {byHand ? "Change it" : "Score it yourself"}
+        </Button>
+      ) : null}
       </div>
 
       {data.summary ? (

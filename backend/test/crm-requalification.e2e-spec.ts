@@ -53,11 +53,19 @@ describe('CRM requalification jobs (e2e)', () => {
 
   afterAll(async () => { await teardown(prisma); await app?.close(); });
 
-  it('queues nothing while qualification is switched off (default)', async () => {
+  it('queues nothing when a tenant has explicitly switched qualification off', async () => {
+    /*
+     * The opt-OUT, which is the direction that now needs proving.
+     *
+     * Scoring used to be off until asked for, and this test asserted that
+     * absence. It is on by default now — it sends nothing, and without a
+     * provider it is keyword matching over the tenant's own phrases — so what
+     * matters is that a deliberate `false` still wins. The switch reads
+     * `!== false` for exactly this reason.
+     */
+    await disableQualification(prisma, Q.org);
     await ingest(convos, Q.org, msg('rq.off.1', '919330000001', 'hello'), 'th-off');
     const jobs = await prisma.jobTask.count({ where: { organisationId: Q.org, kind: REQUALIFY_JOB } });
-    // Off by default is the whole point: shipping this feature must not start
-    // spending a tenant's AI budget without them turning it on.
     expect(jobs).toBe(0);
   });
 
@@ -71,6 +79,17 @@ describe('CRM requalification jobs (e2e)', () => {
     expect(jobs).toHaveLength(1);
     expect(jobs[0].status).toBe('pending');
     expect(jobs[0].idempotencyKey).toContain(Q.org);
+  });
+
+  it('queues a job for a tenant that has never touched the setting', async () => {
+    /*
+     * The new default, asserted directly rather than inferred from the absence
+     * of a job above. Q2 is a second tenant with untouched settings, so this
+     * fails the moment somebody flips the default back without meaning to.
+     */
+    await ingest(convos, Q2.org, msg('rq.default.1', '919330000009', 'price please'), 'th-default');
+    const jobs = await prisma.jobTask.count({ where: { organisationId: Q2.org, kind: REQUALIFY_JOB } });
+    expect(jobs).toBeGreaterThan(0);
   });
 
   it('does NOT queue on a webhook replay', async () => {
@@ -152,6 +171,10 @@ async function setSettings(prisma: PrismaService, org: string, patch: Record<str
 
 const enableQualification = (prisma: PrismaService, org: string) =>
   setSettings(prisma, org, { crmAiQualificationEnabled: true });
+
+/** Writing the opt-out down, which is the only way to be off now. */
+const disableQualification = (prisma: PrismaService, org: string) =>
+  setSettings(prisma, org, { crmAiQualificationEnabled: false });
 
 async function teardown(prisma: PrismaService) {
   for (const t of [Q, Q2]) {

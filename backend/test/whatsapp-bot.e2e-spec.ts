@@ -253,8 +253,23 @@ describe('WhatsApp reporting bot — tenancy (e2e)', () => {
     // Surat manager is attached to one store, so no store-pick step.
     await sendInbound(PHONE_A_SURAT, 'hi');
     await sendInbound(PHONE_A_SURAT, '1'); // start daily report
-    // Answer the ten fields in order; skip the two optional old-gold questions.
-    const answers = ['10', '4', '500000', '200000', '50000', '100000', '150000', '250000', 'skip', 'skip'];
+    /*
+     * The full sheet, in order, with both tables reconciling.
+     *
+     * Footfall 10/4/2. Counter sale ₹5L paid 2L cash + 1.5L card + 1.5L UPI,
+     * no old gold. Bookings 3L new, 1L open, 50k closed, 1.2L received, split
+     * 20k/50k/50k and nothing by transfer, no gold. Then a remark.
+     *
+     * Each split is checked against ITS OWN table total, so these have to add
+     * up to ₹5,00,000 and ₹1,20,000 respectively or the bot re-asks.
+     */
+    const answers = [
+      '10', '4', '2',
+      '500000', '200000', '150000', '150000', 'skip',
+      '300000', '100000', '50000', '120000',
+      '20000', '50000', '50000', '0', 'skip',
+      'Busy evening, two walk-ins returning Saturday',
+    ];
     for (const a of answers) await sendInbound(PHONE_A_SURAT, a);
     await sendInbound(PHONE_A_SURAT, 'yes'); // submit
 
@@ -269,11 +284,34 @@ describe('WhatsApp reporting bot — tenancy (e2e)', () => {
     expect(row.walkIns).toBe(10);
     expect(row.seriousEnquiries).toBe(4);
 
+    /*
+     * The columns the bot used to leave at their defaults.
+     *
+     * Before the questionnaire matched the sheet, every WhatsApp-filed report
+     * carried conversions, the booking movements, the whole customised-sale
+     * split and the remark as zeros and nulls — indistinguishable, once in the
+     * column, from figures somebody had actually counted.
+     */
+    expect(row.conversions).toBe(2);
+    expect(Number(row.bookingsOpen)).toBe(100000);
+    expect(Number(row.bookingsClosed)).toBe(50000);
+    expect(Number(row.customCash)).toBe(20000);
+    expect(Number(row.customCard)).toBe(50000);
+    expect(Number(row.customUpi)).toBe(50000);
+    expect(Number(row.customBankTransfer)).toBe(0);
+    expect(row.remark).toContain('Busy evening');
+    // Table A gold was skipped, so it stays null rather than becoming 0 g.
+    expect(row.oldGoldWtG).toBeNull();
+
     // Re-file the same day → upsert updates in place, no second row.
     const before = await prisma.dailyReport.count({ where: { storeId: store.id, reportDate: row.reportDate } });
     await sendInbound(PHONE_A_SURAT, 'hi');
     await sendInbound(PHONE_A_SURAT, '1');
-    for (const a of ['11', '5', '600000', '0', '0', '0', '0', '0', 'skip', 'skip']) await sendInbound(PHONE_A_SURAT, a);
+    // A quiet re-file: nothing sold, so both payment splits are skipped
+    // entirely and the day collapses to nine questions.
+    for (const a of ['11', '5', '0', '0', '0', '0', '0', '0', 'skip']) {
+      await sendInbound(PHONE_A_SURAT, a);
+    }
     await sendInbound(PHONE_A_SURAT, 'yes');
     const after = await prisma.dailyReport.count({ where: { storeId: store.id, reportDate: row.reportDate } });
     expect(after).toBe(before); // still one row for that store-day

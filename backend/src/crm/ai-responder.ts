@@ -168,7 +168,19 @@ export class ConversationAiGate {
    *   draft          compose a reply and store it for a person to approve.
    *   autoSend       actually deliver without a human. Strictly the narrowest.
    *
-   * Every one defaults to OFF. Absence is never consent.
+   * `draft` and `autoSend` default to OFF, and that stays true: absence is
+   * never consent to write to a customer, let alone to send to one.
+   *
+   * `qualification` now defaults to ON, because the rule above was protecting
+   * against the wrong thing. It sends nothing. With no provider configured it
+   * is keyword matching over the tenant's own phrases, on their own threads,
+   * read by their own staff — and leaving it off meant every lead showed a
+   * panel saying the feature was switched off, which reads as broken rather
+   * than as careful. Scoring being on is not consent to message anybody; the
+   * two switches below are what guard that, and they are untouched.
+   *
+   * `!== false` rather than `=== true`, so a tenant who deliberately turned
+   * scoring off is not re-enabled by this change.
    */
   async settings(organisationId: string): Promise<AiSettings> {
     const org = await this.prisma.organisation.findUnique({
@@ -177,7 +189,7 @@ export class ConversationAiGate {
     });
     const raw = (org?.settings ?? {}) as Record<string, unknown>;
     return {
-      qualificationEnabled: raw.crmAiQualificationEnabled === true,
+      qualificationEnabled: raw.crmAiQualificationEnabled !== false,
       draftEnabled: raw.crmAiDraftEnabled === true,
       autoSendEnabled: raw.crmAiAutoSendEnabled === true,
       providerConfigured: this.responder?.isConfigured() ?? false,
