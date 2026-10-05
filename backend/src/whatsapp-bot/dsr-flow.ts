@@ -68,11 +68,23 @@ export function parseWeight(raw: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * The sheet's own headings, used verbatim.
+ *
+ * A reporter filling this in over WhatsApp is filling in the same document
+ * they sign at close of day; matching its language is what lets them check one
+ * against the other.
+ */
+export const FOOTFALL = 'Footfall';
+export const TABLE_A = 'Table A — Counter sale';
+export const TABLE_B = 'Table B — Customised sale';
+export const REMARK = 'Remark';
+
 export interface DsrField {
   /** Matches the DailyReport column. */
   key: string;
   prompt: string;
-  kind: 'count' | 'amount' | 'weight';
+  kind: 'count' | 'amount' | 'weight' | 'text';
   /** Optional fields store null when skipped; required ones store 0. */
   optional?: boolean;
   /**
@@ -87,6 +99,16 @@ export interface DsrField {
    * Absent means always ask.
    */
   askWhen?: (draft: DsrDraft) => boolean;
+  /**
+   * The sheet heading this field sits under, announced once on entry.
+   *
+   * Load-bearing rather than decorative: "Cash?" is asked TWICE — once for
+   * counter sale and once for customised sale — and without the heading there
+   * is no way for the reporter to tell which table they are filling. The two
+   * are reconciled separately by the store, so a number entered under the
+   * wrong one is not a rounding error.
+   */
+  section?: string;
 }
 
 /** Answers collected so far. `null` is a skipped optional field. */
@@ -99,12 +121,8 @@ function amount(draft: DsrDraft, key: string): number {
 }
 
 /**
- * Money actually taken today — the premise of the cash/card/UPI split.
- *
- * Deliberately billed PLUS advance rather than the advance alone. "Of that"
- * reads as the advance, but a day with ₹5L billed and no advance still has a
- * payment mix worth recording, and gating on the advance alone would skip it.
- * The split is only meaningless when nothing came in at all.
+ * Money taken across both tables. Reporting only — the per-table checks
+ * reconcile against their own totals, because the store does.
  */
 export function moneyReceived(draft: DsrDraft): number {
   return amount(draft, 'deliveredBilled') + amount(draft, 'advanceReceived');
@@ -115,32 +133,89 @@ export function moneyReceived(draft: DsrDraft): number {
  * what was sold, then how it was paid for, then old gold.
  */
 export const DSR_FIELDS: DsrField[] = [
-  { key: 'walkIns', prompt: 'How many *walk-ins* today?', kind: 'count' },
+  /* ------------------------------------------------------------- footfall */
+  { key: 'walkIns', prompt: 'How many *walk-ins* today?', kind: 'count', section: FOOTFALL },
   { key: 'seriousEnquiries', prompt: 'How many *serious enquiries*?', kind: 'count' },
-  { key: 'deliveredBilled', prompt: '*Delivered & billed* today?', kind: 'amount' },
-  { key: 'bookingsNew', prompt: '*New bookings* (approx)?', kind: 'amount' },
-  { key: 'advanceReceived', prompt: '*Advance received*?', kind: 'amount' },
-  // The payment split. Skipped entirely on a day nothing was taken, rather
-  // than asked three times to be told zero three times.
+  { key: 'conversions', prompt: 'How many *converted* into a sale?', kind: 'count' },
+
+  /* ----------------------------------------------- TABLE A — counter sale */
+  { key: 'deliveredBilled', prompt: '*Sale value* at the counter today?', kind: 'amount', section: TABLE_A },
+  // The payment split for Table A. Skipped entirely when nothing was sold at
+  // the counter, rather than asked five times to be told zero five times.
+  { key: 'cash', prompt: 'Of that — *cash*?', kind: 'amount', askWhen: (d) => amount(d, 'deliveredBilled') > 0 },
+  { key: 'card', prompt: 'Of that — *card*?', kind: 'amount', askWhen: (d) => amount(d, 'deliveredBilled') > 0 },
+  { key: 'upi', prompt: 'Of that — *UPI*?', kind: 'amount', askWhen: (d) => amount(d, 'deliveredBilled') > 0 },
   {
-    key: 'cash',
-    prompt: 'Of what came in — how much *cash*?',
-    kind: 'amount',
-    askWhen: (d) => moneyReceived(d) > 0,
+    key: 'oldGoldWtG',
+    prompt: '*Old gold* taken against it (grams)?',
+    kind: 'weight',
+    optional: true,
+    askWhen: (d) => amount(d, 'deliveredBilled') > 0,
   },
-  { key: 'card', prompt: 'How much *card*?', kind: 'amount', askWhen: (d) => moneyReceived(d) > 0 },
-  { key: 'upi', prompt: 'How much *UPI*?', kind: 'amount', askWhen: (d) => moneyReceived(d) > 0 },
-  { key: 'oldGoldWtG', prompt: '*Old gold* taken (grams)?', kind: 'weight', optional: true },
-  // Valuing old gold that was never taken is the same mistake as the split
-  // above, one question later.
+  // Valuing gold that was never taken is the same mistake one question later.
   {
     key: 'oldGoldValue',
-    prompt: 'Old gold *value*?',
+    prompt: 'What was that old gold *worth*?',
     kind: 'amount',
     optional: true,
     askWhen: (d) => amount(d, 'oldGoldWtG') > 0,
   },
+
+  /* -------------------------------------------- TABLE B — customised sale */
+  { key: 'bookingsNew', prompt: '*Booking value* taken today?', kind: 'amount', section: TABLE_B },
+  { key: 'bookingsOpen', prompt: '*Open bookings* still outstanding?', kind: 'amount' },
+  { key: 'bookingsClosed', prompt: '*Bookings closed* — sale completed?', kind: 'amount' },
+  // "Closing Booking" on the sheet is DERIVED (see reporting.service), so it is
+  // deliberately not asked. Asking for a number the system calculates invites a
+  // reporter's arithmetic to disagree with the sheet's.
+  { key: 'advanceReceived', prompt: '*Amount received* against bookings?', kind: 'amount' },
+  // Table B's own payment split, kept separate from Table A because the store
+  // reconciles the two tables separately and a merged total cannot be checked
+  // against either.
+  { key: 'customCash', prompt: 'Of that — *cash*?', kind: 'amount', askWhen: (d) => amount(d, 'advanceReceived') > 0 },
+  { key: 'customCard', prompt: 'Of that — *card*?', kind: 'amount', askWhen: (d) => amount(d, 'advanceReceived') > 0 },
+  { key: 'customUpi', prompt: 'Of that — *UPI*?', kind: 'amount', askWhen: (d) => amount(d, 'advanceReceived') > 0 },
+  {
+    key: 'customBankTransfer',
+    prompt: 'Of that — *bank transfer*?',
+    kind: 'amount',
+    askWhen: (d) => amount(d, 'advanceReceived') > 0,
+  },
+  {
+    key: 'customGoldWtG',
+    prompt: '*Old gold* taken against bookings (grams)?',
+    kind: 'weight',
+    optional: true,
+    askWhen: (d) => amount(d, 'advanceReceived') > 0,
+  },
+  {
+    key: 'customGoldValue',
+    prompt: 'What was that gold *worth*?',
+    kind: 'amount',
+    optional: true,
+    askWhen: (d) => amount(d, 'customGoldWtG') > 0,
+  },
+
+  /* --------------------------------------------------------------- remark */
+  { key: 'remark', prompt: 'Anything to *note* about the day?', kind: 'text', optional: true, section: REMARK },
 ];
+
+/**
+ * Which sheet heading a field sits under.
+ *
+ * Only the first field of each block carries `section`, so this walks back to
+ * the nearest one. Keeping the heading on a single field means inserting a
+ * question into the middle of a block cannot accidentally restate the heading
+ * or, worse, silently start a new one.
+ */
+export function sectionOf(field: DsrField, index: number): string | null {
+  if (field.section) return field.section;
+  for (let i = Math.min(index, DSR_FIELDS.length - 1); i >= 0; i -= 1) {
+    const s = DSR_FIELDS[i].section;
+    if (s) return s;
+  }
+  return null;
+}
 
 /** Is this question meaningful given what has been answered so far? */
 export function shouldAsk(field: DsrField, draft: DsrDraft): boolean {
@@ -181,23 +256,38 @@ export function fillSkipped(draft: DsrDraft): DsrDraft {
  * Checked at the END of the split rather than per answer, because cash alone
  * exceeding the total is only wrong once card and UPI are known to be zero.
  */
-export function paymentSplitError(draft: DsrDraft): string | null {
-  const received = moneyReceived(draft);
-  const split = amount(draft, 'cash') + amount(draft, 'card') + amount(draft, 'upi');
-  if (split <= received) return null;
+export function paymentSplitError(draft: DsrDraft, table: 'A' | 'B'): string | null {
+  const isA = table === 'A';
+  // Each table reconciles against its OWN total. The store checks them
+  // separately, so a merged comparison would let an overstatement in one hide
+  // behind headroom in the other.
+  const againstKey = isA ? 'deliveredBilled' : 'advanceReceived';
+  const against = amount(draft, againstKey);
+  const parts = isA
+    ? ['cash', 'card', 'upi', 'oldGoldValue']
+    : ['customCash', 'customCard', 'customUpi', 'customBankTransfer', 'customGoldValue'];
+  const split = parts.reduce((sum, k) => sum + amount(draft, k), 0);
+  if (split <= against) return null;
+
+  const label = isA ? 'the counter sale' : 'the amount received against bookings';
   return (
-    `That adds up to ${inr(split)} in payments, but only ${inr(received)} came in ` +
-    `(${inr(amount(draft, 'deliveredBilled'))} billed + ${inr(amount(draft, 'advanceReceived'))} advance).`
+    `That adds up to ${inr(split)} in payments, but ${label} was ${inr(against)}. ` +
+    `Please check the last figure.`
   );
 }
 
 /** Parse one answer for a field. `null` means "could not read it — re-ask". */
-export function parseField(field: DsrField, raw: string): number | null {
+export function parseField(field: DsrField, raw: string): number | string | null {
   switch (field.kind) {
     case 'count':
       return parseCount(raw);
     case 'weight':
       return parseWeight(raw);
+    case 'text':
+      // Kept as typed, trimmed. There is nothing to validate about a remark,
+      // and rejecting one would lose the only part of the report a person
+      // wrote in their own words.
+      return raw.trim() || null;
     default:
       return parseAmount(raw);
   }
@@ -316,26 +406,58 @@ export function promptFor(field: DsrField, index: number, draft: DsrDraft = {}):
 /** The summary shown before anything is written. */
 export function summarise(
   // `DsrDraft`, not `Record<string, number | null>`: the draft really does hold
-  // a string under DRAFT_DATE_KEY, and fields skipped by `askWhen` are absent
-  // until `fillSkipped` runs. The narrower type was never true of the value
-  // being passed in.
+  // a string under DRAFT_DATE_KEY and under `remark`, and fields skipped by
+  // `askWhen` are absent until `fillSkipped` runs.
   draft: DsrDraft,
   storeName: string,
   dateLabel: string,
 ): string {
   const v = (k: string) => Number(draft[k] ?? 0);
+  const money = (k: string) => inr(v(k));
+
+  /*
+   * Laid out as the SHEET is, not as the questions were asked.
+   *
+   * This is the last thing a reporter sees before committing the day, and the
+   * document it becomes has two tables that the store reconciles separately.
+   * A flat list of figures cannot be checked against either; this can be read
+   * straight down against the printed sheet.
+   */
   const lines = [
     `*${storeName}* — ${dateLabel}`,
     '',
-    `Walk-ins: ${v('walkIns')}   Serious enquiries: ${v('seriousEnquiries')}`,
-    `Delivered & billed: ${inr(v('deliveredBilled'))}`,
-    `New bookings: ${inr(v('bookingsNew'))}`,
-    `Advance received: ${inr(v('advanceReceived'))}`,
-    `Cash ${inr(v('cash'))} · Card ${inr(v('card'))} · UPI ${inr(v('upi'))}`,
+    `Walk-ins ${v('walkIns')} · Enquiries ${v('seriousEnquiries')} · Converted ${v('conversions')}`,
   ];
-  if (draft.oldGoldWtG != null || draft.oldGoldValue != null) {
-    lines.push(`Old gold: ${draft.oldGoldWtG ?? 0} g · ${inr(Number(draft.oldGoldValue ?? 0))}`);
+
+  lines.push('', '*Counter sale*', `Sale value: ${money('deliveredBilled')}`);
+  if (v('deliveredBilled') > 0) {
+    lines.push(`Cash ${money('cash')} · Card ${money('card')} · UPI ${money('upi')}`);
+    if (draft.oldGoldWtG != null) {
+      lines.push(`Old gold ${draft.oldGoldWtG} g · ${money('oldGoldValue')}`);
+    }
   }
+
+  lines.push(
+    '',
+    '*Customised sale*',
+    `Booked today: ${money('bookingsNew')}`,
+    `Open ${money('bookingsOpen')} · Closed ${money('bookingsClosed')}`,
+    `Received: ${money('advanceReceived')}`,
+  );
+  if (v('advanceReceived') > 0) {
+    lines.push(
+      `Cash ${money('customCash')} · Card ${money('customCard')} · UPI ${money('customUpi')}`,
+      `Bank transfer ${money('customBankTransfer')}`,
+    );
+    if (draft.customGoldWtG != null) {
+      lines.push(`Old gold ${draft.customGoldWtG} g · ${money('customGoldValue')}`);
+    }
+  }
+
+  if (typeof draft.remark === 'string' && draft.remark.trim()) {
+    lines.push('', `_${draft.remark.trim()}_`);
+  }
+
   lines.push(
     '',
     'Reply *YES* to submit, *CANCEL* to discard,',

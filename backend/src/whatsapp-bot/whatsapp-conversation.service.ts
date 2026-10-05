@@ -19,7 +19,10 @@ import {
   parseReportDate,
   paymentSplitError,
   promptFor,
+  sectionOf,
   summarise,
+  type DsrDraft,
+  type DsrField,
 } from './dsr-flow';
 
 /** An abandoned half-report must not resurface days later as if it were today. */
@@ -139,7 +142,12 @@ export class WhatsAppConversationService {
       draft: { [DRAFT_DATE_KEY]: isoDate(date) },
       storeId,
     });
-    return `Daily report for *${label}* — ${formatDateLabel(date)}.\n\n${promptFor(DSR_FIELDS[0], 0)}`;
+    // `askWithSection` with no previous field, so the opening question carries
+    // its heading like every other section entry does.
+    return (
+      `Daily report for *${label}* — ${formatDateLabel(date)}.\n\n` +
+      this.askWithSection(DSR_FIELDS[0], 0, {})
+    );
   }
 
   private async onPickStore(phoneE164: string, user: BotUser, text: string): Promise<string> {
@@ -157,6 +165,31 @@ export class WhatsAppConversationService {
     return this.beginDsrFor(phoneE164, user, picked.id);
   }
 
+  /**
+   * The next question, with its sheet heading when the section changes.
+   *
+   * The heading is not decoration. "Of that — cash?" is asked twice, once for
+   * the counter sale and once against bookings, and the store reconciles those
+   * two tables separately — so a figure entered under the wrong heading is not
+   * a rounding error, it is a number in the wrong column of a signed document.
+   *
+   * Announced on ENTRY to a section rather than repeated on every question,
+   * which would turn a twenty-question report into a wall of headings.
+   * `previous` is the field just answered, so the first question of the report
+   * (no previous) also gets its heading.
+   */
+  private askWithSection(
+    next: DsrField,
+    nextStep: number,
+    draft: DsrDraft,
+    previous?: DsrField,
+  ): string {
+    const prompt = promptFor(next, nextStep, draft);
+    const entering = sectionOf(next, nextStep);
+    const leaving = previous ? sectionOf(previous, DSR_FIELDS.indexOf(previous)) : null;
+    return entering && entering !== leaving ? `*${entering}*\n\n${prompt}` : prompt;
+  }
+
   private async onDsrAnswer(
     phoneE164: string,
     user: BotUser,
@@ -166,7 +199,7 @@ export class WhatsAppConversationService {
     const field = DSR_FIELDS[session.step];
     if (!field) return this.startDsr(phoneE164, user);
 
-    const draft: Record<string, number | null> = { ...(session.draft ?? {}) };
+    const draft: DsrDraft = { ...(session.draft ?? {}) };
 
     if (isSkip(text)) {
       draft[field.key] = field.optional ? null : 0;
@@ -174,21 +207,33 @@ export class WhatsAppConversationService {
       const value = parseField(field, text);
       if (value == null) {
         // Re-ask rather than store a guess.
-        return `I couldn't read "${text}" as a number.\n\n${promptFor(field, session.step, draft)}`;
+        const what = field.kind === 'text' ? 'an answer' : 'a number';
+        return `I couldn't read "${text}" as ${what}.\n\n${promptFor(field, session.step, draft)}`;
       }
       draft[field.key] = value;
     }
 
     /*
-     * Refuse a split that exceeds what came in, before it reaches the summary.
+     * Refuse a split that exceeds its table's total, before it reaches the
+     * summary.
      *
-     * Only once UPI is answered: cash on its own being larger than the total
-     * is not yet a contradiction, because card and UPI could be negative of
-     * nothing — it is the completed set that has to reconcile. Re-asking the
-     * last question is the cheapest correction that keeps the earlier answers.
+     * Checked on the LAST field of each split rather than per answer: cash on
+     * its own being larger than the total is not yet a contradiction, because
+     * the remaining modes could still be zero. It is the completed set that
+     * has to reconcile. Re-asking the last question is the cheapest correction
+     * that keeps the earlier answers.
+     *
+     * Each table is checked against its own total because the store
+     * reconciles them separately — see `paymentSplitError`.
      */
-    if (field.key === 'upi') {
-      const complaint = paymentSplitError(draft);
+    const closesSplit =
+      field.key === 'oldGoldValue' || field.key === 'upi'
+        ? ('A' as const)
+        : field.key === 'customGoldValue' || field.key === 'customBankTransfer'
+          ? ('B' as const)
+          : null;
+    if (closesSplit) {
+      const complaint = paymentSplitError(draft, closesSplit);
       if (complaint) {
         return `${complaint}\n\n${promptFor(field, session.step, draft)}`;
       }
@@ -199,7 +244,7 @@ export class WhatsAppConversationService {
     const nextStep = nextAskableStep(draft, session.step + 1);
     if (nextStep < DSR_FIELDS.length) {
       await this.setSession(phoneE164, user.id, { flow: 'dsr', step: nextStep, draft });
-      return promptFor(DSR_FIELDS[nextStep], nextStep, draft);
+      return this.askWithSection(DSR_FIELDS[nextStep], nextStep, draft, field);
     }
 
     // Everything the skip logic passed over still needs a value, or the report
@@ -280,17 +325,49 @@ export class WhatsAppConversationService {
       select: { id: true },
     });
 
+    const count = (v: unknown) => (typeof v === 'number' ? v : 0);
+    const wt = (v: unknown) => (typeof v === 'number' ? new Prisma.Decimal(v) : null);
+
+    /*
+     * Every column the sheet prints, not the handful the bot used to ask for.
+     *
+     * The questionnaire covered ten fields while the DSR sheet has around
+     * twenty, so a WhatsApp-filed report arrived with conversions, open and
+     * closed bookings, the whole customised-sale payment split and the remark
+     * all sitting at their defaults — and a default zero is indistinguishable
+     * from a counted zero once it is in the column. Head office was reading
+     * those as real figures.
+     */
     const data = {
-      walkIns: draft.walkIns ?? 0,
-      seriousEnquiries: draft.seriousEnquiries ?? 0,
-      deliveredBilled: dec(draft.deliveredBilled),
-      bookingsNew: dec(draft.bookingsNew),
-      advanceReceived: dec(draft.advanceReceived),
-      cash: dec(draft.cash),
-      card: dec(draft.card),
-      upi: dec(draft.upi),
-      oldGoldWtG: draft.oldGoldWtG == null ? null : new Prisma.Decimal(draft.oldGoldWtG),
-      oldGoldValue: draft.oldGoldValue == null ? null : new Prisma.Decimal(draft.oldGoldValue),
+      walkIns: count(draft.walkIns),
+      seriousEnquiries: count(draft.seriousEnquiries),
+      conversions: count(draft.conversions),
+
+      // Table A — counter sale.
+      deliveredBilled: dec(draft.deliveredBilled as number),
+      cash: dec(draft.cash as number),
+      card: dec(draft.card as number),
+      upi: dec(draft.upi as number),
+      oldGoldWtG: wt(draft.oldGoldWtG),
+      oldGoldValue: wt(draft.oldGoldValue),
+
+      // Table B — customised sale. Kept apart from Table A deliberately: the
+      // store reconciles the two separately and a merged split cannot be
+      // checked against either.
+      bookingsNew: dec(draft.bookingsNew as number),
+      bookingsOpen: dec(draft.bookingsOpen as number),
+      bookingsClosed: dec(draft.bookingsClosed as number),
+      advanceReceived: dec(draft.advanceReceived as number),
+      customCash: dec(draft.customCash as number),
+      customCard: dec(draft.customCard as number),
+      customUpi: dec(draft.customUpi as number),
+      customBankTransfer: dec(draft.customBankTransfer as number),
+      customGoldWtG: wt(draft.customGoldWtG),
+      customGoldValue: wt(draft.customGoldValue),
+
+      // `bookingsClosing` is DERIVED by the reporting service and deliberately
+      // not written here; a stored copy could disagree with the sheet.
+      remark: typeof draft.remark === 'string' && draft.remark.trim() ? draft.remark.trim() : null,
       submittedBy: user.name,
       source: 'whatsapp',
     };
