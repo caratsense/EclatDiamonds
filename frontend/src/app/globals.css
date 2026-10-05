@@ -174,12 +174,17 @@
    * nothing, because there is no darker left to go, so the rail dissolves into
    * the background and the app looks like one undifferentiated sheet.
    *
-   * It now sits slightly ABOVE the page rather than below it, which is the
-   * convention this palette already uses for every other surface (`--card` is
-   * #0e131f on the same background). The divider and the hover tint move with
-   * it, because a surface this close to its background is read by its edge.
+   * It now sits ABOVE the page rather than below it, which is the convention
+   * this palette already uses for every other surface (`--card` is #0e131f on
+   * the same background).
+   *
+   * The first attempt at this used #0d121c and was reported as no change at
+   * all — correctly, because four to twelve values per channel is not a
+   * boundary anybody can see. A rail is chrome, not content: it is allowed to
+   * sit above the cards that sit on the page, and it has to be unmistakable
+   * at a glance or it is not doing its job.
    */
-  --sidebar: #0d121c;
+  --sidebar: #141b2b;
   --sidebar-foreground: #94a3b8;
   --sidebar-primary: #818cf8;
   --sidebar-primary-foreground: #0b1120;
