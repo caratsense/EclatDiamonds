@@ -37,11 +37,35 @@ describe("attendance punch location policy", () => {
     expect(punchAction(decision, "in")).toBe("allow");
   });
 
-  it("blocks a precise outside check-in but lets checkout continue with a reason", () => {
+  it("records a precise outside punch with a reason, in either direction", () => {
+    /*
+     * This asserted that an outside check-in was BLOCKED, mirroring the server
+     * rule of the day. It locked staff out of their own shift: a phone indoors
+     * at Roha Orion reports 50-150 m of drift against a coordinate that is a
+     * street centroid, so somebody at the counter was told they were 635 m
+     * away. The fence now decides whether a punch is verified, not whether it
+     * is permitted — so neither direction is refused, and both carry a reason
+     * into the manager's queue.
+     */
     const decision = evaluatePunchLocation({ lat: 0, lng: 0.01, accuracyM: 5 }, fence);
     expect(decision.state).toBe("outside");
-    expect(punchAction(decision, "in")).toBe("block");
+    expect(punchAction(decision, "in")).toBe("reason");
     expect(punchAction(decision, "out")).toBe("reason");
+  });
+
+  it("never refuses a punch outright", () => {
+    // The guarantee the showroom actually needs, asserted directly so a future
+    // edit that reintroduces a hard block fails here rather than on the floor.
+    for (const pos of [
+      { lat: 0, lng: 0.01, accuracyM: 5 },
+      { lat: 0, lng: 0.00045, accuracyM: 200 },
+      { lat: 0, lng: 0, accuracyM: 5 },
+    ]) {
+      const d = evaluatePunchLocation(pos, fence);
+      expect(punchAction(d, "in")).not.toBe("block");
+      expect(punchAction(d, "out")).not.toBe("block");
+    }
+    expect(punchAction(evaluatePunchLocation(null, fence), "in")).not.toBe("block");
   });
 
   it("requires a reason when GPS uncertainty overlaps the fence", () => {

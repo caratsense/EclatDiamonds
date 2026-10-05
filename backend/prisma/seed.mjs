@@ -117,7 +117,7 @@ async function main() {
 
   const storeDefs = [
     { id: "surat-main", code: "surat-main", name: "Surat — Main", city: "Surat", latitude: "21.1859000", longitude: "72.8081000", geofenceRadiusM: 75 },
-    { id: "mumbai-bandra", code: "mumbai-bandra", name: "Mumbai — Bandra", city: "Mumbai", latitude: "19.0651400", longitude: "72.8307538", geofenceRadiusM: 60 },
+    { id: "mumbai-bandra", code: "mumbai-bandra", name: "Mumbai — Bandra", city: "Mumbai", latitude: "19.0651400", longitude: "72.8307538", geofenceRadiusM: 250 },
     { id: "ahmedabad-cg", code: "ahmedabad-cg", name: "Ahmedabad — C.G. Road", city: "Ahmedabad", latitude: "23.0298000", longitude: "72.5616000", geofenceRadiusM: 80 },
   ];
   for (const s of storeDefs) {
