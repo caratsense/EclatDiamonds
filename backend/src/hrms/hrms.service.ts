@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Logger,
 } from '@nestjs/common';
 import { AttendanceStatus, LeaveStatus, LeaveType, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -202,6 +203,8 @@ function photoRoute(recordId: string, which: 'in' | 'out', stored: string | null
 
 @Injectable()
 export class HrmsService {
+  private readonly logger = new Logger(HrmsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
@@ -345,23 +348,36 @@ export class HrmsService {
       return { distanceM: Math.round(dist), withinFence: false };
     }
     const withinFence = dist <= store.geofenceRadiusM;
-    if (!withinFence && kind === 'check-in') {
-      // A CONFIDENT fix outside the fence: the person is not at the store, and
-      // a typed reason does not change where they are. Refused outright — a
-      // note only rescues the cases GPS cannot decide (no fix, or a fix too
-      // vague to tell), which are handled above and go to the manager.
+    /*
+     * OUTSIDE THE FENCE, EITHER DIRECTION: recorded with a reason, never
+     * refused.
+     *
+     * A confident out-of-fence check-IN used to be thrown out entirely, on the
+     * earlier written requirement that "punch-in shouldn't be allowed if
+     * geo-fencing is breached". On the shop floor that rule locked staff out of
+     * their own shift. Roha Orion on 16th Road is dense concrete, a phone at
+     * the counter reports 50-150 m of drift, and the stored coordinate is a
+     * street centroid rather than the door — so somebody standing behind the
+     * till was told they were 635 m away and could not start work.
+     *
+     * The rule also assumed a refusal establishes the truth. It does not: the
+     * fix is only as good as the building allows, and blocking the punch does
+     * not move the person, it just deletes the evidence that they turned up. A
+     * punch captured, flagged and queued for a manager is strictly more honest
+     * than one that never happened.
+     *
+     * So the fence now decides whether a punch is VERIFIED, not whether it is
+     * allowed. `withinFence: false` is what carries it into the manager's
+     * regularisation queue, and the reason is what they read when they get
+     * there. A reason is still required — an unexplained out-of-fence punch
+     * would be indistinguishable from a buddy punch.
+     */
+    if (!withinFence && !note?.trim()) {
       throw new BadRequestException(
-        `You're ${Math.round(dist)} m from ${store.name} (allowed: ${store.geofenceRadiusM} m). You must be at the store to check in.`,
+        `You're ${Math.round(dist)} m from ${store.name} (allowed: ${
+          store.geofenceRadiusM
+        } m). Add a reason to record this ${kind} — your manager will review it.`,
       );
-    }
-    if (!withinFence) {
-      if (!note?.trim()) {
-        throw new BadRequestException(
-          `You're ${Math.round(dist)} m from ${store.name} (allowed: ${
-            store.geofenceRadiusM
-          } m). Add a reason or grace note to record it — your manager will review it.`,
-        );
-      }
     }
     return { distanceM: Math.round(dist), withinFence };
   }
@@ -784,6 +800,54 @@ export class HrmsService {
         } ${store.name}${payload.isMockLocation ? ' (mock location reported)' : ''}`,
         metadata: { distanceM, isMockLocation: payload.isMockLocation, note: payload.checkInNote },
       });
+
+      /*
+       * Tell a person, not just the audit log.
+       *
+       * The fence no longer refuses an out-of-fence punch, so the only thing
+       * standing between a drifted GPS fix and an unreviewed attendance record
+       * is somebody noticing. An audit row is where you look once you already
+       * suspect something; this is what makes anyone suspect it.
+       *
+       * Goes to store_manager and above, which `recipientsFor` resolves to the
+       * branch's managers PLUS head office — head office sees every branch, and
+       * asked to be told. The staffer is excluded: they know where they were.
+       *
+       * Best-effort, after the punch is durable. A notification failure must
+       * never cost somebody their shift record.
+       */
+      await this.notifications
+        .emitToApprovers(
+          storeId,
+          'store_manager',
+          {
+            kind: 'attendance_review',
+            title: `Check-in needs review — ${user.name}`,
+            body:
+              `${
+                distanceM != null
+                  ? `${distanceM} m from ${store.name} (allowed: ${store.geofenceRadiusM} m)`
+                  : `no location fix at ${store.name}`
+              }${payload.isMockLocation ? ' · device reported a mock location' : ''}` +
+              `${payload.checkInNote ? ` — "${payload.checkInNote}"` : ''}`,
+            href: '/hrms',
+            storeId,
+            entityType: 'AttendanceRecord',
+            entityId: row.id,
+            actorId: user.id,
+            actorName: user.name,
+            // One per punch, so a retry refreshes rather than stacks.
+            dedupeKey: `attendance:offsite:${row.id}:in`,
+          },
+          user.id,
+        )
+        .catch((error: unknown) => {
+          this.logger.warn(
+            `offsite punch notification failed for ${row.id}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        });
     }
 
     return this.toSelfAttendanceView(row, store.tz);

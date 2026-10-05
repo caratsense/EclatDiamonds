@@ -38,11 +38,26 @@ describe('HrmsService.evaluateFence', () => {
     expect(r.distanceM).toBe(0);
   });
 
-  it('BLOCKS an out-of-fence check-in even with a reason', () => {
-    // ~1 km north of the centre, well outside the 150 m radius.
+  it('records an out-of-fence check-in WITH a reason, flagged for review', () => {
+    /*
+     * This asserted the opposite until the showroom proved it wrong. A phone
+     * indoors at Roha Orion reports 50-150 m of drift against a coordinate
+     * that is a street centroid, so staff standing at the counter were told
+     * they were 635 m away and could not start their shift. The fence now
+     * decides whether a punch is VERIFIED, not whether it is permitted.
+     */
+    const far = { lat: MUMBAI.latitude + 0.01, lng: MUMBAI.longitude };
+    const r = evaluateFence(store(), far.lat, far.lng, 'customer visit', 'check-in');
+    expect(r.withinFence).toBe(false);
+    expect(r.distanceM).toBeGreaterThan(150);
+  });
+
+  it('still REFUSES an out-of-fence check-in with no reason', () => {
+    // The part that must not relax: an unexplained out-of-fence punch is
+    // indistinguishable from a buddy punch, so the reason is what buys it in.
     const far = { lat: MUMBAI.latitude + 0.01, lng: MUMBAI.longitude };
     expect(() =>
-      evaluateFence(store(), far.lat, far.lng, 'customer visit', 'check-in'),
+      evaluateFence(store(), far.lat, far.lng, undefined, 'check-in'),
     ).toThrow(BadRequestException);
   });
 
@@ -91,8 +106,16 @@ describe('HrmsService.evaluateFence — GPS accuracy', () => {
     expect(evaluateFence(store(), edge.lat, edge.lng, 'at the side entrance', 'check-in', 120).withinFence).toBe(false);
   });
 
-  it('far outside even allowing for the error is still blocked', () => {
+  it('far outside even allowing for the error is recorded, not blocked', () => {
     const far = { lat: MUMBAI.latitude + 0.01, lng: MUMBAI.longitude };
-    expect(() => evaluateFence(store(), far.lat, far.lng, 'reason', 'check-in', 50)).toThrow(/must be at the store/);
+    const r = evaluateFence(store(), far.lat, far.lng, 'reason', 'check-in', 50);
+    expect(r.withinFence).toBe(false);
+    expect(r.distanceM).toBeGreaterThan(150);
+  });
+
+  it('far outside with NO reason is still refused', () => {
+    const far = { lat: MUMBAI.latitude + 0.01, lng: MUMBAI.longitude };
+    expect(() => evaluateFence(store(), far.lat, far.lng, undefined, 'check-in', 50))
+      .toThrow(/Add a reason/);
   });
 });

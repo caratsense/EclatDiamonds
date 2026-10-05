@@ -105,9 +105,16 @@ describe("an item's type and metal", () => {
     expect(box("Item 1 metal")).not.toMatch(/\slist=/);
     const datalists = renderToStaticMarkup(createElement(MaterialDatalists, { lists: masterLists(undefined) }));
     expect(datalists).not.toContain("qb-metals");
-    // The diamond and colour-stone codes keep theirs.
-    expect(datalists).toContain("qb-codes-D");
-    expect(datalists).toContain("qb-codes-C");
+    /*
+     * The stone code datalists are gone with them. A datalist matches the
+     * start of a code, so "round" or "VVS" found nothing and the code had to
+     * be known by heart; those boxes are SearchSelects now, searching shape
+     * and quality as well.
+     */
+    expect(datalists).not.toContain("qb-codes-D");
+    expect(datalists).not.toContain("qb-codes-C");
+    // What survives is the weight chart, offered on every carats box.
+    expect(datalists).toContain("qb-stone-weights");
   });
 
   it("find a metal by its karat and colour as the screen writes them", () => {

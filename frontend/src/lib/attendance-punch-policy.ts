@@ -74,16 +74,26 @@ export function evaluatePunchLocation(
 }
 
 /**
- * A confident outside check-in is refused. A missing/imprecise fix needs a
- * written reason for either direction, while an outside check-out also needs a
- * reason so a staffer is not stranded after leaving the branch.
+ * Anything the fence cannot confirm needs a written reason. Nothing is
+ * refused.
+ *
+ * A confident outside check-in used to return "block", mirroring a server rule
+ * that has now been removed. A phone indoors in a concrete showroom reports
+ * 50-150 m of drift, and the stored coordinate is a street centroid rather
+ * than the door — so the fence was locking staff out of their own shift rather
+ * than catching anybody. It now decides whether a punch is VERIFIED, not
+ * whether it may happen, and an unverified punch carries its reason into the
+ * manager's regularisation queue.
+ *
+ * `kind` is no longer read. It stays in the signature because the callers pass
+ * it and a tenant-configurable hard fence would need it back; "block" stays in
+ * {@link PunchAction} for the same reason, and the screens still render it.
  */
 export function punchAction(
   decision: PunchLocationDecision,
-  kind: "in" | "out",
+  _kind: "in" | "out",
 ): PunchAction {
   if (decision.state === "unfenced" || decision.state === "inside") return "allow";
-  if (decision.state === "outside" && kind === "in") return "block";
   return "reason";
 }
 
