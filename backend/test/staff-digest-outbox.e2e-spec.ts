@@ -95,6 +95,27 @@ describe('Staff digest through the outbox (e2e)', () => {
   let prisma: PrismaService;
   let digest: StaffDigestService;
   let jobs: JobsService;
+
+  /**
+   * Drain until the queue is empty, rather than a fixed number of jobs.
+   *
+   * A fixed allowance is a hidden coupling to how much OTHER background work
+   * the system queues. Lead scoring now enqueues a requalification job per
+   * inbound message, which consumed the budget before the jobs under test were
+   * reached, and these suites failed on records that were merely still
+   * pending. Bounded, so a permanently failing job cannot spin forever.
+   */
+  const drainAll = async (rounds = 20) => {
+    const total = { processed: 0, succeeded: 0, failed: 0 };
+    for (let i = 0; i < rounds; i += 1) {
+      const round = await jobs.drain(50);
+      total.processed += round.processed;
+      total.succeeded += round.succeeded;
+      total.failed += round.failed;
+      if (round.processed === 0) break;
+    }
+    return total;
+  };
   let omnichannel: OmnichannelService;
   const whatsapp = new FakeWhatsApp();
   let hoToken = '';
@@ -250,7 +271,7 @@ describe('Staff digest through the outbox (e2e)', () => {
   });
 
   it('delivers through the worker, to the staff number, from the branch sender', async () => {
-    await jobs.drain(10);
+    await drainAll();
     expect(whatsapp.sends).toHaveLength(1);
     expect(whatsapp.sends[0]).toMatchObject({ to: '919812370001', name: TEMPLATE, languageCode: 'en' });
     expect(whatsapp.sends[0].route?.storeId).toBe(A.store);
@@ -274,7 +295,7 @@ describe('Staff digest through the outbox (e2e)', () => {
     const before = await prisma.message.count({ where: { organisationId: A.org } });
     const ran = await digest.runForStore(A.org, A.store, 'Asia/Kolkata', nineAmIst);
     expect(ran.sent).toBe(0);
-    await jobs.drain(10);
+    await drainAll();
     expect(await prisma.message.count({ where: { organisationId: A.org } })).toBe(before);
     expect(whatsapp.sends).toHaveLength(1);
   });
@@ -305,7 +326,7 @@ describe('Staff digest through the outbox (e2e)', () => {
   it('the worker re-checks the person: deactivated after queuing, not messaged', async () => {
     const sendsBefore = whatsapp.sends.length;
     await prisma.user.update({ where: { id: 'u_dgo_r2' }, data: { isActive: false } });
-    await jobs.drain(10);
+    await drainAll();
     expect(whatsapp.sends).toHaveLength(sendsBefore);
     const run = await runFor('u_dgo_r2');
     const message = await prisma.message.findUniqueOrThrow({ where: { id: run!.whatsappMessageId! } });

@@ -24,6 +24,27 @@ describe('Job queue clock (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let jobs: JobsService;
+
+  /**
+   * Drain until the queue is empty, rather than a fixed number of jobs.
+   *
+   * A fixed allowance is a hidden coupling to how much OTHER background work
+   * the system queues. Lead scoring now enqueues a requalification job per
+   * inbound message, which consumed the budget before the jobs under test were
+   * reached, and these suites failed on records that were merely still
+   * pending. Bounded, so a permanently failing job cannot spin forever.
+   */
+  const drainAll = async (rounds = 20) => {
+    const total = { processed: 0, succeeded: 0, failed: 0 };
+    for (let i = 0; i < rounds; i += 1) {
+      const round = await jobs.drain(50);
+      total.processed += round.processed;
+      total.succeeded += round.succeeded;
+      total.failed += round.failed;
+      if (round.processed === 0) break;
+    }
+    return total;
+  };
   const ran: string[] = [];
 
   beforeAll(async () => {
@@ -57,7 +78,7 @@ describe('Job queue clock (e2e)', () => {
     });
     await jobs.enqueue({ kind: KIND, payload: { tag: 'now' }, idempotencyKey: 'clock-probe-now' });
 
-    await jobs.drain(10);
+    await drainAll();
     expect(ran).toContain('now');
     expect(ran).not.toContain('later');
 

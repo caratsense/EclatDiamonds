@@ -72,6 +72,27 @@ describe('Catalogue photo ZIP export (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let jobs: JobsService;
+
+  /**
+   * Drain until the queue is empty, rather than a fixed number of jobs.
+   *
+   * A fixed allowance is a hidden coupling to how much OTHER background work
+   * the system queues. Lead scoring now enqueues a requalification job per
+   * inbound message, which consumed the budget before the jobs under test were
+   * reached, and these suites failed on records that were merely still
+   * pending. Bounded, so a permanently failing job cannot spin forever.
+   */
+  const drainAll = async (rounds = 20) => {
+    const total = { processed: 0, succeeded: 0, failed: 0 };
+    for (let i = 0; i < rounds; i += 1) {
+      const round = await jobs.drain(50);
+      total.processed += round.processed;
+      total.succeeded += round.succeeded;
+      total.failed += round.failed;
+      if (round.processed === 0) break;
+    }
+    return total;
+  };
   let uploadDir: string;
   let hoT: string;
   let mgrT: string;
@@ -270,7 +291,7 @@ describe('Catalogue photo ZIP export (e2e)', () => {
   });
 
   it('completes on the queue and lists every skipped photograph with its reason', async () => {
-    await jobs.drain(5);
+    await drainAll();
     const res = await request(server()).get(`/catalogue-exports/${exportId}`).set(auth(hoT)).expect(200);
     expect(res.body.status).toBe('completed');
     expect(res.body.archive.files).toBe(6);
@@ -335,7 +356,7 @@ describe('Catalogue photo ZIP export (e2e)', () => {
     expect(list.body.map((e: { id: string }) => e.id)).not.toContain(exportId);
     // And its own export never contains this tenant's photographs.
     const own = await request(server()).post('/catalogue-exports').set(auth(otherHoT)).send({}).expect(201);
-    await jobs.drain(5);
+    await drainAll();
     const done = await request(server()).get(`/catalogue-exports/${own.body.id}`).set(auth(otherHoT)).expect(200);
     expect(done.body.archive.files).toBe(1);
   });
@@ -346,7 +367,7 @@ describe('Catalogue photo ZIP export (e2e)', () => {
       .set(auth(hoT))
       .send({ code: 'st-1', category: 'ring', availability: 'in_stock', stockClass: 'standard' })
       .expect(201);
-    await jobs.drain(5);
+    await drainAll();
     const done = await request(server()).get(`/catalogue-exports/${res.body.id}`).set(auth(hoT)).expect(200);
     expect(done.body.archive.files).toBe(2);
 
@@ -387,7 +408,7 @@ describe('Catalogue photo ZIP export (e2e)', () => {
         .send({ code: 'LIMIT-' })
         .expect(201);
       await product('LIMIT-3');
-      await jobs.drain(5);
+      await drainAll();
 
       const done = await request(server()).get(`/catalogue-exports/${res.body.id}`).set(auth(hoT)).expect(200);
       expect(done.body.status).toBe('failed');
@@ -409,7 +430,7 @@ describe('Catalogue photo ZIP export (e2e)', () => {
         .set(auth(hoT))
         .send({ code: 'ST-1' })
         .expect(201);
-      await jobs.drain(5);
+      await drainAll();
       const done = await request(server()).get(`/catalogue-exports/${res.body.id}`).set(auth(hoT)).expect(200);
       expect(done.body.status).toBe('failed');
       expect(done.body.error).toMatch(/holds at most \d+ bytes/);
@@ -427,7 +448,7 @@ describe('Catalogue photo ZIP export (e2e)', () => {
       .send({ code: 'RING-001', emailMe: true })
       .expect(201);
     expect(res.body.emailRequested).toBe(true);
-    await jobs.drain(5);
+    await drainAll();
     const done = await request(server()).get(`/catalogue-exports/${res.body.id}`).set(auth(hoT)).expect(200);
     expect(done.body.status).toBe('completed');
     expect(done.body.email.status).not.toMatch(/^sent/);
