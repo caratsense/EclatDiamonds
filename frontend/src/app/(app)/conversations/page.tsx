@@ -40,7 +40,6 @@ import {
   User as UserIcon,
   UserCog,
   Users,
-  X,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -1116,7 +1115,6 @@ function ThreadView({
   const notes = useCustomerNotes(notesPartyId);
   const addNote = useAddCustomerNote(notesPartyId);
   const [draft, setDraft] = useState("");
-  const [showRightCrm, setShowRightCrm] = useState(true);
 
   // Dialog states for Zithara Right Sidebar Accordions
   const [noteDialogOpen, setNoteDialogOpen] = useState(false);
@@ -1176,7 +1174,7 @@ function ThreadView({
   return (
     <div
       className={`grid min-h-0 grid-rows-[minmax(0,1fr)] gap-3 ${
-        showRightCrm ? "xl:grid-cols-[1fr_290px]" : "grid-cols-1"
+        "xl:grid-cols-[1fr_290px]"
       }`}
     >
       {/* ── CENTER COLUMN: WhatsApp Web Chat Window ───────────────────── */}
@@ -1201,12 +1199,13 @@ function ThreadView({
                     "Unknown sender"
                   )}
                 </CardTitle>
-                <Badge
-                  variant="outline"
-                  className="shrink-0 text-[9.5px] px-1.5 py-0 border-[#25D366]/40 text-[#25D366] bg-[#25D366]/10 font-normal leading-tight"
-                >
-                  WhatsApp
-                </Badge>
+                {/*
+                  The "WhatsApp" badge that sat here is gone. It told a reader
+                  nothing they did not know — this inbox has one channel, named
+                  in the toolbar filter — and it was a hard-coded string rather
+                  than the conversation's own channel, so a phone-call thread
+                  would have been labelled WhatsApp too.
+                */}
               </div>
               <div className="flex items-center gap-1 text-[11px] text-muted-foreground mt-0.5 min-w-0 truncate">
                 <span className="shrink-0 inline-block h-1.5 w-1.5 rounded-full bg-[#25D366] animate-pulse" />
@@ -1359,16 +1358,17 @@ function ThreadView({
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <Button
-              size="sm"
-              variant={showRightCrm ? "default" : "outline"}
-              className="text-xs h-7 gap-1 ml-1 px-2"
-              onClick={() => setShowRightCrm((v) => !v)}
-              title="Toggle Customer CRM panel"
-            >
-              <TrendingUp className="h-3 w-3" />
-              <span className="text-[11px] font-medium">CRM</span>
-            </Button>
+            {/*
+              The CRM toggle is gone, and with it the two controls that closed
+              the same panel from inside it.
+
+              Three different buttons hid one panel, and nothing explained why
+              you would want it hidden — the customer's details are the reason
+              to open a conversation, not a distraction from it. Removing only
+              the toggle would have been worse than leaving it: the panel's own
+              ✕ and the Intent card's ✕ would still close it, with nothing left
+              to bring it back.
+            */}
           </div>
         </CardHeader>
 
@@ -1712,217 +1712,210 @@ function ThreadView({
       </Card>
 
       {/* ── RIGHT COLUMN: Darrell Steward Style Customer Profile & Accordions ── */}
-      {showRightCrm && (
-        <div className={`${PANE_HEIGHT} space-y-3 overflow-y-auto pr-1`}>
-          {/* Customer Profile Card */}
-          <Card className="border-border/80 shadow-sm overflow-hidden">
-            <CardHeader className="p-4 pb-3 border-b border-border/60 flex-row items-center justify-between space-y-0">
-              <div className="flex items-center gap-2">
-                <span className="font-semibold text-sm">
-                  {party?.name ?? "Customer"}
-                </span>
-                <span className="text-amber-500 font-bold">⚡</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <Link
-                  href={party ? `/customers/${party.id}` : "#"}
-                  className="text-xs text-primary hover:underline inline-flex items-center gap-1"
-                >
-                  <Edit3 className="h-3 w-3" /> Edit
-                </Link>
-                <button
-                  type="button"
-                  onClick={() => setShowRightCrm(false)}
-                  className="h-6 w-6 rounded-md hover:bg-muted flex items-center justify-center text-muted-foreground ml-1"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </CardHeader>
-            <CardContent className="p-4 space-y-3 text-xs">
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <span className="text-muted-foreground block text-[11px]">Email</span>
-                  <span className="font-medium text-foreground truncate block">
-                    {party?.name ? `${party.name.toLowerCase().replace(/\s+/g, ".")}@gmail.com` : "Not provided"}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground block text-[11px]">Phone number</span>
-                  <span className="font-medium text-foreground">
-                    {party?.phone ?? "+91 91900000101"}
-                  </span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <span className="text-muted-foreground block text-[11px]">Company name</span>
-                  <span className="font-medium text-foreground">
-                    {conversation.store?.name ?? "No store yet"}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground block text-[11px]">Job title</span>
-                  <span className="font-medium text-foreground">
-                    Solitaire Buyer
-                  </span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <span className="text-muted-foreground block text-[11px]">Contact owner</span>
-                  <span className="font-medium text-foreground">
-                    {conversation.assignedUser?.name ?? "Karan Malhotra"}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground block text-[11px]">Lifecycle stage</span>
-                  <span className="font-medium text-foreground">
-                    Marketing qualified…
-                  </span>
-                </div>
-              </div>
-
+      <div className={`${PANE_HEIGHT} space-y-3 overflow-y-auto pr-1`}>
+        {/* Customer Profile Card */}
+        <Card className="border-border/80 shadow-sm overflow-hidden">
+          <CardHeader className="p-4 pb-3 border-b border-border/60 flex-row items-center justify-between space-y-0">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-sm">
+                {party?.name ?? "Customer"}
+              </span>
+              <span className="text-amber-500 font-bold">⚡</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Link
+                href={party ? `/customers/${party.id}` : "#"}
+                className="text-xs text-primary hover:underline inline-flex items-center gap-1"
+              >
+                <Edit3 className="h-3 w-3" /> Edit
+              </Link>
+            </div>
+          </CardHeader>
+          <CardContent className="p-4 space-y-3 text-xs">
+            <div className="grid grid-cols-2 gap-2">
               <div>
-                <span className="text-muted-foreground block text-[11px]">Lead status</span>
-                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#128C7E] dark:text-[#25D366] mt-0.5">
-                  <Sparkles className="h-3 w-3" /> High Intent Prospect
+                <span className="text-muted-foreground block text-[11px]">Email</span>
+                <span className="font-medium text-foreground truncate block">
+                  {party?.name ? `${party.name.toLowerCase().replace(/\s+/g, ".")}@gmail.com` : "Not provided"}
                 </span>
               </div>
-
-              {/*
-                "Not the right contact?" used to toast "Re-assign or link to
-                different customer record" and do nothing. Detaching a thread
-                from one customer and attaching it to another is not a feature
-                that exists — there is no endpoint for it — so the link was
-                offering a repair the product cannot perform.
-
-                Deliberately NOT pointed at the duplicate-merge tool in
-                Settings - Configuration: that answers "these two records are
-                the same person", which is a different question from "this
-                conversation is filed against the wrong person". Sending
-                somebody there would trade a dead link for a misleading one.
-              */}
-            </CardContent>
-          </Card>
-
-          {/* AI Intent & Signal Qualification */}
-          <Card className="border-border/80 shadow-sm overflow-hidden">
-            <CardHeader className="p-3 pb-2 border-b border-border/60">
-              <CardTitle className="text-xs font-semibold flex items-center justify-between">
-                <span className="flex items-center gap-1.5">
-                  <TrendingUp className="h-3.5 w-3.5 text-[#6366f1]" /> AI Intent & Score
+              <div>
+                <span className="text-muted-foreground block text-[11px]">Phone number</span>
+                <span className="font-medium text-foreground">
+                  {party?.phone ?? "+91 91900000101"}
                 </span>
-                <Badge variant="secondary" className="text-[9px] uppercase font-mono">
-                  Beta
-                </Badge>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-3">
-              <IntentAnalysisPanel
-                conversationId={id}
-                partyId={party?.id}
-                onClose={() => setShowRightCrm(false)}
-                onApplyAction={(text) => setDraft((prev) => (prev ? prev + "\n" + text : text))}
-              />
-            </CardContent>
-          </Card>
-
-          {/* Zithara 5-Section Accordion List */}
-          <Card className="border-border/80 shadow-sm">
-            <div className="divide-y divide-border/40 text-xs">
-              <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
-                <span className="font-medium flex items-center gap-1.5">
-                  <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
-                  Whatsapp messages
-                </span>
-                {/*
-                  "+ Log" reported `toast.success("Activity Logged", "15
-                  WhatsApp messages archived in timeline")` — a success for
-                  work that never ran, quoting a count nobody counted. The
-                  number was a literal in the source and read the same whether
-                  the thread held three messages or three hundred.
-
-                  Nothing is logged because nothing needs to be: every message
-                  on this thread is already persisted as it arrives, and the
-                  timeline reads from that. Removed.
-                */}
-              </div>
-
-              <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
-                <span className="font-medium flex items-center gap-1.5">
-                  <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-                  Notes
-                  {/* The real count, so a thread with history says so before it
-                      is opened. Omitted rather than shown as 0 while loading. */}
-                  {notes.data?.length ? (
-                    <span className="num text-[10px] text-muted-foreground">
-                      ({notes.data.length})
-                    </span>
-                  ) : null}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setNoteDialogOpen(true)}
-                  className="text-primary hover:underline text-[11px] font-medium"
-                >
-                  + Add
-                </button>
-              </div>
-
-              <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
-                <span className="font-medium flex items-center gap-1.5">
-                  <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
-                  Tasks
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setTaskDialogOpen(true)}
-                  className="text-primary hover:underline text-[11px] font-medium"
-                >
-                  + Add
-                </button>
-              </div>
-
-              <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
-                <span className="font-medium flex items-center gap-1.5">
-                  <Tag className="h-3.5 w-3.5 text-muted-foreground" />
-                  Deals
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setDealDialogOpen(true)}
-                  className="text-primary hover:underline text-[11px] font-medium"
-                >
-                  + Add
-                </button>
-              </div>
-
-              <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
-                <span className="font-medium flex items-center gap-1.5">
-                  <CheckCircle2 className="h-3.5 w-3.5 text-muted-foreground" />
-                  tickets
-                </span>
-                {/*
-                  Ticketing is a real module with a real screen, so this goes
-                  there rather than toasting "Creating customer service
-                  ticket…" and creating nothing. The customer is carried in the
-                  query string so the ticket opens against the person whose
-                  conversation you were reading.
-                */}
-                <Link
-                  href={party?.id ? `/ticketing?partyId=${party.id}` : "/ticketing"}
-                  className="text-primary hover:underline text-[11px] font-medium"
-                >
-                  + Add
-                </Link>
               </div>
             </div>
-          </Card>
-        </div>
-      )}
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <span className="text-muted-foreground block text-[11px]">Company name</span>
+                <span className="font-medium text-foreground">
+                  {conversation.store?.name ?? "No store yet"}
+                </span>
+              </div>
+              <div>
+                <span className="text-muted-foreground block text-[11px]">Job title</span>
+                <span className="font-medium text-foreground">
+                  Solitaire Buyer
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <span className="text-muted-foreground block text-[11px]">Contact owner</span>
+                <span className="font-medium text-foreground">
+                  {conversation.assignedUser?.name ?? "Karan Malhotra"}
+                </span>
+              </div>
+              <div>
+                <span className="text-muted-foreground block text-[11px]">Lifecycle stage</span>
+                <span className="font-medium text-foreground">
+                  Marketing qualified…
+                </span>
+              </div>
+            </div>
+
+            <div>
+              <span className="text-muted-foreground block text-[11px]">Lead status</span>
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#128C7E] dark:text-[#25D366] mt-0.5">
+                <Sparkles className="h-3 w-3" /> High Intent Prospect
+              </span>
+            </div>
+
+            {/*
+              "Not the right contact?" used to toast "Re-assign or link to
+              different customer record" and do nothing. Detaching a thread
+              from one customer and attaching it to another is not a feature
+              that exists — there is no endpoint for it — so the link was
+              offering a repair the product cannot perform.
+
+              Deliberately NOT pointed at the duplicate-merge tool in
+              Settings - Configuration: that answers "these two records are
+              the same person", which is a different question from "this
+              conversation is filed against the wrong person". Sending
+              somebody there would trade a dead link for a misleading one.
+            */}
+          </CardContent>
+        </Card>
+
+        {/* AI Intent & Signal Qualification */}
+        <Card className="border-border/80 shadow-sm overflow-hidden">
+          <CardHeader className="p-3 pb-2 border-b border-border/60">
+            <CardTitle className="text-xs font-semibold flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <TrendingUp className="h-3.5 w-3.5 text-[#6366f1]" /> AI Intent & Score
+              </span>
+              <Badge variant="secondary" className="text-[9px] uppercase font-mono">
+                Beta
+              </Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-3">
+            <IntentAnalysisPanel
+              conversationId={id}
+              partyId={party?.id}
+              // No `onClose`: the panel it used to close is permanent now, so
+              // the component hides its own ✕ rather than offering a button
+              // that would dismiss the whole CRM column from inside one card.
+              onApplyAction={(text) => setDraft((prev) => (prev ? prev + "\n" + text : text))}
+            />
+          </CardContent>
+        </Card>
+
+        {/* Zithara 5-Section Accordion List */}
+        <Card className="border-border/80 shadow-sm">
+          <div className="divide-y divide-border/40 text-xs">
+            <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
+              <span className="font-medium flex items-center gap-1.5">
+                <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
+                Whatsapp messages
+              </span>
+              {/*
+                "+ Log" reported `toast.success("Activity Logged", "15
+                WhatsApp messages archived in timeline")` — a success for
+                work that never ran, quoting a count nobody counted. The
+                number was a literal in the source and read the same whether
+                the thread held three messages or three hundred.
+
+                Nothing is logged because nothing needs to be: every message
+                on this thread is already persisted as it arrives, and the
+                timeline reads from that. Removed.
+              */}
+            </div>
+
+            <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
+              <span className="font-medium flex items-center gap-1.5">
+                <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                Notes
+                {/* The real count, so a thread with history says so before it
+                    is opened. Omitted rather than shown as 0 while loading. */}
+                {notes.data?.length ? (
+                  <span className="num text-[10px] text-muted-foreground">
+                    ({notes.data.length})
+                  </span>
+                ) : null}
+              </span>
+              <button
+                type="button"
+                onClick={() => setNoteDialogOpen(true)}
+                className="text-primary hover:underline text-[11px] font-medium"
+              >
+                + Add
+              </button>
+            </div>
+
+            <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
+              <span className="font-medium flex items-center gap-1.5">
+                <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
+                Tasks
+              </span>
+              <button
+                type="button"
+                onClick={() => setTaskDialogOpen(true)}
+                className="text-primary hover:underline text-[11px] font-medium"
+              >
+                + Add
+              </button>
+            </div>
+
+            <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
+              <span className="font-medium flex items-center gap-1.5">
+                <Tag className="h-3.5 w-3.5 text-muted-foreground" />
+                Deals
+              </span>
+              <button
+                type="button"
+                onClick={() => setDealDialogOpen(true)}
+                className="text-primary hover:underline text-[11px] font-medium"
+              >
+                + Add
+              </button>
+            </div>
+
+            <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
+              <span className="font-medium flex items-center gap-1.5">
+                <CheckCircle2 className="h-3.5 w-3.5 text-muted-foreground" />
+                tickets
+              </span>
+              {/*
+                Ticketing is a real module with a real screen, so this goes
+                there rather than toasting "Creating customer service
+                ticket…" and creating nothing. The customer is carried in the
+                query string so the ticket opens against the person whose
+                conversation you were reading.
+              */}
+              <Link
+                href={party?.id ? `/ticketing?partyId=${party.id}` : "/ticketing"}
+                className="text-primary hover:underline text-[11px] font-medium"
+              >
+                + Add
+              </Link>
+            </div>
+          </div>
+        </Card>
+      </div>
 
       {/* ── Dialogs for Zithara Accordions ── */}
       {/*
