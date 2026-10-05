@@ -106,6 +106,33 @@ describe('Follow-up reminders and visit feedback (e2e)', () => {
   let reminders: FollowUpRemindersService;
   let visits: VisitFeedbackService;
   let jobs: JobsService;
+
+  /**
+   * Drain until the queue is actually empty.
+   *
+   * `drain(10)` was a fixed budget, and a fixed budget breaks the moment
+   * anything else in the system queues work: lead scoring now enqueues a
+   * requalification job per inbound message, which ate the allowance before
+   * the jobs under test were reached, so these assertions failed on a status
+   * that was merely still pending. The number was never the point — "finish
+   * the outstanding work" is. Bounded, so a permanently failing job cannot
+   * spin here forever.
+   */
+  const drainAll = async (rounds = 20) => {
+    const total = { processed: 0, succeeded: 0, failed: 0 };
+    for (let i = 0; i < rounds; i += 1) {
+      // `jobs.drain`, never `drainAll` — this is the one place that must call
+      // the real queue.
+      const round = await jobs.drain(50);
+      total.processed += round.processed;
+      total.succeeded += round.succeeded;
+      total.failed += round.failed;
+      if (round.processed === 0) break;
+    }
+    // The same shape `drain` returns, summed, so a caller that inspected the
+    // counts still can.
+    return total;
+  };
   let omnichannel: OmnichannelService;
   let adapters: ChannelAdaptersService;
   let notifications: NotificationsService;
@@ -483,7 +510,7 @@ describe('Follow-up reminders and visit feedback (e2e)', () => {
       // Nothing left on the sweep itself.
       expect(whatsapp.sends.length).toBe(sendsBefore);
 
-      await jobs.drain(10);
+      await drainAll();
       row = await prisma.feedbackRequest.findUniqueOrThrow({ where: { id: ask!.id } });
       expect(row.status).toBe('sent');
       expect(row.sentAt).toBeTruthy();
