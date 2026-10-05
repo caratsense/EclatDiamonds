@@ -53,6 +53,33 @@ describe("attendance punch location policy", () => {
     expect(punchAction(decision, "out")).toBe("reason");
   });
 
+  it("does NOT treat a fence it could not load as 'no fence'", () => {
+    /*
+     * The bug this exists to stop. `GET /hrms/geofence` returned 404 whenever
+     * the store header was missing or "All Stores", the screen could not tell
+     * a failed lookup from a branch with no fence, and the punch went through
+     * from anywhere with nothing asked. Not knowing where somebody is must
+     * never be recorded as knowing they are at work.
+     */
+    for (const missing of [undefined, null]) {
+      const d = evaluatePunchLocation({ lat: 0, lng: 0, accuracyM: 5 }, missing);
+      expect(d.state).toBe("unknown");
+      expect(punchAction(d, "in")).toBe("reason");
+      expect(punchAction(d, "out")).toBe("reason");
+    }
+  });
+
+  it("still allows a branch the business genuinely left unfenced", () => {
+    // The server saying "this branch has no coordinates" is an answer, not a
+    // failure, and must stay frictionless.
+    const d = evaluatePunchLocation(
+      { lat: 0, lng: 0, accuracyM: 5 },
+      { hasCoords: false, latitude: null, longitude: null, geofenceRadiusM: 150 },
+    );
+    expect(d.state).toBe("unfenced");
+    expect(punchAction(d, "in")).toBe("allow");
+  });
+
   it("never refuses a punch outright", () => {
     // The guarantee the showroom actually needs, asserted directly so a future
     // edit that reintroduces a hard block fails here rather than on the floor.

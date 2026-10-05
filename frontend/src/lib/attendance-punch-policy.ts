@@ -14,7 +14,18 @@ export interface PunchFence {
 }
 
 export type PunchLocationDecision =
+  /** The branch genuinely has no fence configured — the server said so. */
   | { state: "unfenced"; distanceM: null }
+  /**
+   * The fence could not be read at all.
+   *
+   * Deliberately NOT the same as "unfenced". Both used to collapse into one
+   * state, so a failed request — a 404, a dropped connection, a timeout —
+   * looked exactly like a branch with no fence and the punch sailed through
+   * from anywhere. Not knowing where somebody is must never be recorded as
+   * knowing they are at work.
+   */
+  | { state: "unknown"; distanceM: null }
   | { state: "unavailable"; distanceM: null }
   | { state: "inside"; distanceM: number }
   | { state: "imprecise"; distanceM: number }
@@ -44,11 +55,10 @@ export function evaluatePunchLocation(
   position: PunchPosition | null,
   fence: PunchFence | null | undefined,
 ): PunchLocationDecision {
-  if (
-    !fence?.hasCoords ||
-    fence.latitude == null ||
-    fence.longitude == null
-  ) {
+  // No fence OBJECT at all: the request for it failed or has not landed. That
+  // is ignorance, not an absent fence, and it fails safe below.
+  if (!fence) return { state: "unknown", distanceM: null };
+  if (!fence.hasCoords || fence.latitude == null || fence.longitude == null) {
     return { state: "unfenced", distanceM: null };
   }
   if (!position) return { state: "unavailable", distanceM: null };
@@ -93,6 +103,9 @@ export function punchAction(
   decision: PunchLocationDecision,
   _kind: "in" | "out",
 ): PunchAction {
+  // "unfenced" is a branch the business chose not to fence, and is allowed.
+  // "unknown" is a fence we failed to read, and is not — it asks for a reason
+  // like every other case the fence cannot confirm.
   if (decision.state === "unfenced" || decision.state === "inside") return "allow";
   return "reason";
 }
