@@ -2,7 +2,7 @@
  * Render the manual to PDF.
  *
  *   node docs/usermanual/src/build.mjs
- *   node docs/usermanual/src/render.mjs    # -> docs/usermanual/CaratOS-Operations-Manual.pdf
+ *   node docs/usermanual/src/render.mjs    # -> docs/usermanual/CaratSpace-Operations-Manual.pdf
  *
  * Chromium rather than a PDF library: the manual is a formatted document with
  * tables, callouts and page breaks, and laying that out by hand in pdf-lib
@@ -24,8 +24,8 @@ if (!from) {
 const { chromium } = createRequire(pathToFileURL(`${from}/package.json`))("playwright");
 
 const here = (rel) => fileURLToPath(new URL(rel, import.meta.url));
-const src = here("../CaratOS-Operations-Manual.html");
-const out = here("../CaratOS-Operations-Manual.pdf");
+const src = here("../CaratSpace-Operations-Manual.html");
+const out = here("../CaratSpace-Operations-Manual.pdf");
 
 const browser = await chromium.launch();
 const page = await browser.newPage();
@@ -39,7 +39,7 @@ await page.pdf({
   footerTemplate:
     '<div style="width:100%;font-size:7.5pt;color:#8a94a3;padding:0 16mm;' +
     'font-family:Segoe UI,Arial,sans-serif;display:flex;justify-content:space-between;">' +
-    "<span>CaratOS &middot; Operations Manual</span>" +
+    "<span>CaratSpace &middot; Operations Manual</span>" +
     '<span>Page <span class="pageNumber"></span> of <span class="totalPages"></span></span></div>',
   // Set here rather than left to @page: Playwright's margin option overrides
   // the stylesheet's, so omitting the sides would print to the paper edge.

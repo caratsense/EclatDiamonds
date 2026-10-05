@@ -1,7 +1,7 @@
 /**
  * Build the operations manual.
  *
- *   node docs/usermanual/src/build.mjs     # -> ../CaratOS-Operations-Manual.html
+ *   node docs/usermanual/src/build.mjs     # -> ../CaratSpace-Operations-Manual.html
  *
  * The feature map is GENERATED from the application's own navigation
  * definition, not typed out here. A manual that lists screens by hand goes
@@ -108,15 +108,15 @@ if (covered !== all.length) {
 }
 
 const html = `<meta charset="utf-8">
-<title>CaratOS — Operations Manual</title>
+<title>CaratSpace — Operations Manual</title>
 <style>${readFileSync(here("./manual.css"), "utf8")}</style>
 ${readFileSync(here("./chapters.html"), "utf8")
   .replace("<!--FEATURE_MAP-->", map)
   .replace(/<!--COUNT-->/g, String(all.length))}`;
 
-writeFileSync(here("../CaratOS-Operations-Manual.html"), html);
+writeFileSync(here("../CaratSpace-Operations-Manual.html"), html);
 console.log(
-  `CaratOS-Operations-Manual.html written — ${all.length} screens ` +
+  `CaratSpace-Operations-Manual.html written — ${all.length} screens ` +
     `(${grouped.length} in ${GROUP_ORDER.filter((g) => grouped.some((f) => f.group === g)).length} menu groups, ` +
     `${ungrouped.length} outside the menu)`,
 );

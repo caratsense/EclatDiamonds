@@ -17,7 +17,7 @@ const here = (rel) => fileURLToPath(new URL(rel, import.meta.url));
 const pdfParse = createRequire(pathToFileURL(here("../../../backend/package.json")))("pdf-parse");
 
 const screens = readNavigation(here("../../../frontend/src/lib/navigation.ts"));
-const { numpages, text } = await pdfParse(readFileSync(here("../CaratOS-Operations-Manual.pdf")));
+const { numpages, text } = await pdfParse(readFileSync(here("../CaratSpace-Operations-Manual.pdf")));
 
 let failures = 0;
 const check = (label, ok, detail = "") => {
@@ -50,7 +50,7 @@ const FACTS = [
   // manual claimed a WhatsApp OTP option: the API has one, the screen does not,
   // so no reader could ever have used it. These assert the real field label and
   // the real workflow names.
-  "Login ID or mobile number", "Account requests", "CaratOS", "Pending assignment",
+  "Login ID or mobile number", "Account requests", "CaratSpace", "Pending assignment",
   "Skip for now", "a sign-in identifier, not an inbox",
   "regularisation",
   // Workflows a reader is sent to by name.
@@ -62,6 +62,14 @@ const FACTS = [
   "posts/1293013417234982", "posts/1293013430568314",
 ];
 for (const f of FACTS) check(`"${f}"`, text.includes(f));
+
+// Names the product has been called before. The cover wordmark is split as
+// Carat<span>Space</span>, so a plain find-and-replace silently skips it — that
+// is exactly how "CaratSense" survived on the cover of a renamed manual.
+for (const stale of ["CaratSense", "CaratOS"]) {
+  const hits = (text.match(new RegExp(stale, "g")) ?? []).length;
+  check(`no stale name "${stale}"`, hits === 0, hits ? `${hits} occurrences` : "");
+}
 
 console.log(`\n${failures ? `${failures} FAILURES` : "all checks passed"}`);
 process.exit(failures ? 1 : 0);
