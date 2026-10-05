@@ -268,6 +268,23 @@ describe('Attendance operations (e2e)', () => {
      * already proved above; leaving it behind would make a passing suite
      * depend on the order its files happen to run in.
      */
+    /*
+     * The punch is no longer refused, so somebody has to be TOLD. An audit row
+     * is where you look once you already suspect something; the notification
+     * is what makes anyone suspect it.
+     */
+    const told = await prisma.notification.findMany({
+      where: { entityType: 'AttendanceRecord', kind: 'attendance_review' },
+      select: { userId: true, body: true },
+    });
+    expect(told.length).toBeGreaterThan(0);
+    // Never the person who punched — they know where they were.
+    expect(told.some((n) => n.userId === U.repB)).toBe(false);
+    // Head office asked to be told, and sees every branch.
+    expect(told.some((n) => n.userId === U.ho)).toBe(true);
+    expect(told[0].body).toContain('customer visit');
+
+    await prisma.notification.deleteMany({ where: { entityType: 'AttendanceRecord' } });
     await prisma.attendanceRecord.deleteMany({ where: { staffId: U.repB } });
     await prisma.rawPunchEvent.deleteMany({ where: { userId: U.repB } });
   });

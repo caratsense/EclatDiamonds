@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Logger,
 } from '@nestjs/common';
 import { AttendanceStatus, LeaveStatus, LeaveType, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -202,6 +203,8 @@ function photoRoute(recordId: string, which: 'in' | 'out', stored: string | null
 
 @Injectable()
 export class HrmsService {
+  private readonly logger = new Logger(HrmsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
@@ -797,6 +800,54 @@ export class HrmsService {
         } ${store.name}${payload.isMockLocation ? ' (mock location reported)' : ''}`,
         metadata: { distanceM, isMockLocation: payload.isMockLocation, note: payload.checkInNote },
       });
+
+      /*
+       * Tell a person, not just the audit log.
+       *
+       * The fence no longer refuses an out-of-fence punch, so the only thing
+       * standing between a drifted GPS fix and an unreviewed attendance record
+       * is somebody noticing. An audit row is where you look once you already
+       * suspect something; this is what makes anyone suspect it.
+       *
+       * Goes to store_manager and above, which `recipientsFor` resolves to the
+       * branch's managers PLUS head office — head office sees every branch, and
+       * asked to be told. The staffer is excluded: they know where they were.
+       *
+       * Best-effort, after the punch is durable. A notification failure must
+       * never cost somebody their shift record.
+       */
+      await this.notifications
+        .emitToApprovers(
+          storeId,
+          'store_manager',
+          {
+            kind: 'attendance_review',
+            title: `Check-in needs review — ${user.name}`,
+            body:
+              `${
+                distanceM != null
+                  ? `${distanceM} m from ${store.name} (allowed: ${store.geofenceRadiusM} m)`
+                  : `no location fix at ${store.name}`
+              }${payload.isMockLocation ? ' · device reported a mock location' : ''}` +
+              `${payload.checkInNote ? ` — "${payload.checkInNote}"` : ''}`,
+            href: '/hrms',
+            storeId,
+            entityType: 'AttendanceRecord',
+            entityId: row.id,
+            actorId: user.id,
+            actorName: user.name,
+            // One per punch, so a retry refreshes rather than stacks.
+            dedupeKey: `attendance:offsite:${row.id}:in`,
+          },
+          user.id,
+        )
+        .catch((error: unknown) => {
+          this.logger.warn(
+            `offsite punch notification failed for ${row.id}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        });
     }
 
     return this.toSelfAttendanceView(row, store.tz);

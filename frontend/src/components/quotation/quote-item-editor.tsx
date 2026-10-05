@@ -480,13 +480,24 @@ export function QuoteItemEditor({
               }
               placeholder="12, 2.6, IND 13"
             />
+            {/*
+              Explicit colours on the select AND on its options.
+
+              `bg-transparent` let the control inherit the page, which is right
+              for the closed box and wrong for the open list: a native dropdown
+              paints its own popup, so in dark mode the near-white option text
+              landed on that white popup and vanished. The blank unit read as an
+              empty row with nothing visibly selected. Naming both background
+              and foreground fixes it in either theme, and the blank option is
+              labelled rather than left as a bare dash.
+            */}
             <select
               aria-label="Size unit"
               value={item.sizeUnit}
               onChange={(e) => set({ sizeUnit: e.target.value as ItemRow["sizeUnit"] })}
-              className="h-9 rounded-md border border-input bg-transparent px-2 text-sm"
+              className="h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground [&>option]:bg-background [&>option]:text-foreground"
             >
-              <option value="">—</option>
+              <option value="">— none</option>
               <option value="cm">cm</option>
               <option value="inch">inch</option>
             </select>
