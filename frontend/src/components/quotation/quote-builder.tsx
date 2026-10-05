@@ -55,7 +55,33 @@ import {
   sizeText,
   type AutoRate,
   type ItemRow,
+  type StoneRow,
 } from "@/components/quotation/quote-item-editor";
+
+/*
+ * A stone row somebody added and never filled in.
+ *
+ * "+ Diamond" appends an empty row, and until this it made the whole quote
+ * unsaveable: validation reported "a diamond has no code" about a row the
+ * person had not typed into and could not see was the problem. An untouched
+ * row is not an error, it is one they changed their mind about — so it is
+ * dropped, both from validation and from what is saved.
+ *
+ * Only a WHOLLY blank row. A row carrying any figure at all must still name
+ * its stone, or a half-filled line would vanish without a word.
+ */
+export function blankStone(s: StoneRow): boolean {
+  return (
+    !s.code.trim() &&
+    !s.size.trim() &&
+    !(num(s.pieces) ?? 0) &&
+    !(num(s.carats) ?? 0) &&
+    !(num(s.rate) ?? 0) &&
+    !(num(s.discount) ?? 0)
+  );
+}
+
+const realStones = (it: ItemRow) => it.stones.filter((s) => !blankStone(s));
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 
@@ -318,8 +344,8 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
           metalDiscountPercent: pct(it.metalDiscount),
           makingDiscountPercent: pct(it.makingDiscount),
           remark: it.remark.trim() || undefined,
-          stones: it.stones.length
-            ? it.stones.map((s) => ({
+          stones: realStones(it).length
+            ? realStones(it).map((s) => ({
                 type: s.type,
                 code: s.code.trim(),
                 size: s.size.trim() || undefined,
@@ -335,7 +361,7 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
 
   /** What stops the items being priced, if anything. */
   function itemProblem(): string | null {
-    const priced = items.filter((it) => (num(it.weight) ?? 0) > 0 || it.stones.length > 0);
+    const priced = items.filter((it) => (num(it.weight) ?? 0) > 0 || realStones(it).length > 0);
     if (!priced.length) return "Add a gold weight or a diamond to an item.";
     for (const [i, it] of items.entries()) {
       if (!priced.includes(it)) continue;
@@ -349,7 +375,7 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
         // like today's: with either, the person confirms today's by typing it.
         if (a.fallback || a.stale) return `${n}: the ${karatOf(it)}K rate is not today's — type today's rate.`;
       }
-      for (const s of it.stones) {
+      for (const s of realStones(it)) {
         const list = s.type === "D" ? lists.diamonds : lists.stones;
         if (!s.code.trim()) return `${n}: a ${s.type === "D" ? "diamond" : "colour stone"} has no code.`;
         if (list.length && !list.some((m) => m.code === s.code.trim())) {
