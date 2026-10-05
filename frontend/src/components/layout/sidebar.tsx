@@ -150,19 +150,19 @@ export function Sidebar() {
             }}
             placeholder="Find a screen…"
             aria-label="Find a screen"
-            className="w-full rounded-lg border border-white/10 bg-white/[0.04] py-2 pl-9 pr-8 text-sm text-sidebar-foreground placeholder:text-sidebar-foreground/50 outline-none transition-colors focus:border-white/25 focus:bg-white/[0.07] [&::-webkit-search-cancel-button]:hidden"
+            className="w-full rounded-lg border border-sidebar-border bg-sidebar-accent py-2 pl-9 pr-8 text-sm text-sidebar-foreground placeholder:text-sidebar-foreground/50 outline-none transition-colors focus:border-sidebar-ring focus:bg-sidebar-accent [&::-webkit-search-cancel-button]:hidden"
           />
           {find ? (
             <button
               type="button"
               onClick={() => setFind("")}
-              className="absolute right-2 top-2 rounded p-0.5 text-sidebar-foreground/60 hover:text-white"
+              className="absolute right-2 top-2 rounded p-0.5 text-sidebar-foreground/60 hover:text-sidebar-accent-foreground"
             >
               <X className="h-4 w-4" />
               <span className="sr-only">Clear</span>
             </button>
           ) : (
-            <kbd className="pointer-events-none absolute right-2.5 top-2 rounded border border-white/15 px-1.5 py-0.5 text-[10px] font-medium text-sidebar-foreground/50">
+            <kbd className="pointer-events-none absolute right-2.5 top-2 rounded border border-sidebar-border px-1.5 py-0.5 text-[10px] font-medium text-sidebar-foreground/50">
               /
             </kbd>
           )}
@@ -175,7 +175,7 @@ export function Sidebar() {
         <button
           type="button"
           onClick={() => toggleAll(isAllCollapsed)}
-          className="rounded px-1.5 py-0.5 text-[10px] hover:bg-white/[0.06] hover:text-sidebar-foreground/80 transition-colors"
+          className="rounded px-1.5 py-0.5 text-[10px] hover:bg-sidebar-accent hover:text-sidebar-foreground/80 transition-colors"
           title={isAllCollapsed ? "Expand all sections" : "Collapse all sections"}
         >
           {isAllCollapsed ? "Expand all" : "Collapse all"}
@@ -202,8 +202,8 @@ export function Sidebar() {
                 className={cn(
                   "flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-bold uppercase tracking-wider transition-colors",
                   activeInside
-                    ? "text-sidebar-foreground font-bold bg-white/[0.04]"
-                    : "text-sidebar-foreground/60 hover:text-sidebar-foreground/90 hover:bg-white/[0.02]",
+                    ? "text-sidebar-foreground font-bold bg-sidebar-accent"
+                    : "text-sidebar-foreground/60 hover:text-sidebar-foreground/90 hover:bg-sidebar-accent/50",
                 )}
               >
                 <ChevronDown
@@ -245,7 +245,7 @@ export function Sidebar() {
 
       {/* System info & Footer */}
       <div className="border-t border-sidebar-border px-4 py-3">
-        <div className="flex items-center justify-between rounded-lg bg-white/[0.025] px-2.5 py-2">
+        <div className="flex items-center justify-between rounded-lg bg-sidebar-accent/60 px-2.5 py-2">
           <div className="flex items-center gap-2 min-w-0">
             <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
             <p className="truncate text-xs font-medium text-sidebar-foreground/80">
@@ -280,8 +280,8 @@ function NavRow({
         className={cn(
           "group relative flex items-center gap-3 rounded-lg py-2.5 pl-3.5 pr-3 text-sm font-medium transition-all duration-150",
           active
-            ? "bg-white/[0.09] font-semibold text-white shadow-[inset_0_1px_0_0_rgba(255,255,255,0.09),0_0_18px_-6px_var(--sidebar-primary)]"
-            : "text-sidebar-foreground/80 hover:bg-white/[0.04] hover:text-white",
+            ? "bg-sidebar-accent font-semibold text-sidebar-accent-foreground shadow-[0_0_18px_-6px_var(--sidebar-primary)]"
+            : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
         )}
       >
         <Icon
@@ -289,7 +289,7 @@ function NavRow({
             "h-4.5 w-4.5 shrink-0 transition-colors",
             active
               ? "text-[var(--sidebar-primary)]"
-              : "text-sidebar-foreground/60 group-hover:text-white",
+              : "text-sidebar-foreground/60 group-hover:text-sidebar-accent-foreground",
           )}
         />
         <span className="truncate text-[13.5px]">{label}</span>
@@ -394,11 +394,11 @@ function SearchPill() {
     <button
       type="button"
       onClick={() => window.dispatchEvent(new Event(OPEN_SEARCH_EVENT))}
-      className="flex w-full items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-sidebar-foreground/60 transition-colors hover:bg-white/[0.07] hover:text-white"
+      className="flex w-full items-center gap-2 rounded-lg border border-sidebar-border bg-sidebar-accent px-3 py-2 text-sm text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
     >
       <Search className="h-4 w-4 shrink-0" aria-hidden />
       <span>Search…</span>
-      <kbd className="ml-auto rounded border border-white/15 px-1.5 py-0.5 text-[10px] font-medium tracking-wide">
+      <kbd className="ml-auto rounded border border-sidebar-border px-1.5 py-0.5 text-[10px] font-medium tracking-wide">
         Ctrl K
       </kbd>
     </button>

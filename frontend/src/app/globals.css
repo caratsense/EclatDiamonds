@@ -96,16 +96,29 @@
   --chart-5: #10b981; /* emerald */
   --chart-6: #a855f7; /* violet  */
 
-  /* Obsidian sidebar rail with an indigo active accent. Dark in BOTH themes:
-     the rail is the app's fixed frame, and a rail that inverts with the theme
-     stops being a frame. */
-  --sidebar: #0b0f19;
-  --sidebar-foreground: #94a3b8;
-  --sidebar-primary: #6366f1;
+  /*
+   * The rail follows the theme, rather than staying obsidian in both.
+   *
+   * It was dark in light mode too, on the argument that a fixed frame should
+   * not invert. Two things were wrong with that in practice. The wordmark
+   * renders `text-slate-900 dark:text-white`, so in light mode it drew near
+   * black on a near-black rail and all but vanished — the "Carat OS" that
+   * reads as washed out in every light-mode screenshot. And a dark column
+   * beside a porcelain page is simply the heaviest object on screen, which is
+   * not what a navigation rail is for.
+   *
+   * So light mode gets a white rail on the porcelain page, separated by the
+   * same hairline every other surface uses, with the indigo wash for the
+   * active row. The chrome inside it is painted with these tokens rather than
+   * hard-coded white alphas, which is what let it be dark-only before.
+   */
+  --sidebar: #ffffff;
+  --sidebar-foreground: #475569;
+  --sidebar-primary: #4f46e5;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #171e2e;
-  --sidebar-accent-foreground: #f8fafc;
-  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-accent: #eef2ff;
+  --sidebar-accent-foreground: #0b1120;
+  --sidebar-border: #e2e8f0;
   --sidebar-ring: #6366f1;
 }
 
