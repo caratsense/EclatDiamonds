@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -1106,6 +1106,38 @@ function ThreadView({
   const send = useSendReply(id);
   const update = useUpdateConversation(id);
 
+  /**
+   * Is WhatsApp's 24-hour customer-care window still open?
+   *
+   * A business may reply freely for 24 hours after the customer's last
+   * message; after that only an approved template may be sent. The server
+   * enforces this already — `OmnichannelPolicy` holds the same constant and a
+   * reply posted outside the window comes back "Saved — not sent" — so this is
+   * purely the affordance, computed from the same `lastInboundAt` the policy
+   * reads. Duplicating the number is the price of not shipping a composer that
+   * looks usable and silently is not; the server remains the authority.
+   */
+  const lastInboundAt = data?.conversation?.lastInboundAt ?? null;
+  /*
+   * A clock that ticks, rather than a timestamp captured once.
+   *
+   * The deadline passes while somebody has the thread open — the normal case
+   * for a manager working an inbox all afternoon — so a value derived once at
+   * render would never expire, and the composer would stay enabled past it:
+   * the exact failure this exists to prevent.
+   *
+   * Shaped as "current time in state, window derived from it" so the
+   * derivation stays a pure expression and the only impure call sits inside
+   * the timer callback, where it belongs.
+   */
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  const windowOpen =
+    !!lastInboundAt && now - new Date(lastInboundAt).getTime() < 24 * 60 * 60 * 1000;
+
   /*
    * Read here rather than further down beside `party`, because the early returns
    * for loading and error sit between the two and a hook cannot be called after
@@ -1616,45 +1648,81 @@ function ThreadView({
 
         {/* WhatsApp Web Input Dock & Quick Templates */}
         <div className="border-t border-border/70 bg-card p-3 space-y-2">
-          {/* Quick Pre-Approved Templates Chips */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap pl-1">
-              Quick replies:
-            </span>
-            <button
-              type="button"
-              onClick={() =>
-                setDraft(
-                  "Hello Priya! Would you like us to reserve a 0.50 ct solitaire ring for your visit this Saturday?",
-                )
-              }
-              className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/50 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted hover:border-[#25D366]/40 transition-colors whitespace-nowrap"
-            >
-              💎 Confirm Saturday Visit
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                setDraft(
-                  "Our Surat showroom is at: Éclat Diamonds, Ring Road, Surat. Store hours: 10:30 AM to 8:30 PM.",
-                )
-              }
-              className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/50 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted hover:border-[#25D366]/40 transition-colors whitespace-nowrap"
-            >
-              📍 Store Location
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                setDraft(
-                  "All solitaires come with certified IGI laser-inscribed documentation and lifetime buyback guarantee.",
-                )
-              }
-              className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/50 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted hover:border-[#25D366]/40 transition-colors whitespace-nowrap"
-            >
-              📜 IGI Certificate Info
-            </button>
-          </div>
+          {windowOpen ? (
+            /*
+              Quick replies, with no emoji.
+
+              The chips carried a gem, a pin and a scroll. They had already been
+              through one cp1252 round-trip and rendered as mojibake in
+              production, and a decorative glyph on an internal shortcut is not
+              worth a second encoding incident. The words say what each one is.
+            */
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap pl-1">
+                Quick replies:
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  setDraft(
+                    `Hello${party?.name ? ` ${party.name}` : ""}! Would you like us to reserve a 0.50 ct solitaire ring for your visit this Saturday?`,
+                  )
+                }
+                className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/50 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted hover:border-[#25D366]/40 transition-colors whitespace-nowrap"
+              >
+                Confirm Saturday Visit
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setDraft(
+                    `Our ${conversation.store?.name ?? "Éclat Diamonds"} showroom is open 10:30 AM to 8:30 PM. Shall I send you the address?`,
+                  )
+                }
+                className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/50 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted hover:border-[#25D366]/40 transition-colors whitespace-nowrap"
+              >
+                Store Location
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setDraft(
+                    "All solitaires come with certified IGI laser-inscribed documentation and lifetime buyback guarantee.",
+                  )
+                }
+                className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/50 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted hover:border-[#25D366]/40 transition-colors whitespace-nowrap"
+              >
+                IGI Certificate Info
+              </button>
+            </div>
+          ) : (
+            /*
+              The 24-hour customer-care window has closed.
+
+              WhatsApp only allows a free-form reply within 24 hours of the
+              customer's last message; after that a business may send an
+              approved template and nothing else. The server already enforces
+              this — a reply posted now comes back "Saved — not sent" — but the
+              composer looked exactly as it does at any other time, so the only
+              way to discover the rule was to write a message and watch it not
+              arrive.
+
+              The server stays the authority. This is the affordance, computed
+              from the same `lastInboundAt` the policy uses.
+            */
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-400">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              <span className="min-w-0">
+                {conversation.lastInboundAt
+                  ? `It is over 24 hours since ${party?.name ?? "this customer"} last wrote, so WhatsApp no longer allows a free-form reply.`
+                  : `${party?.name ?? "This customer"} has not written yet, so WhatsApp does not allow a free-form message.`}{" "}
+                An approved template can still reach them.
+              </span>
+              <Button asChild size="sm" variant="outline" className="h-7 shrink-0 text-[11px]">
+                <Link href="/campaigns">Send a template</Link>
+              </Button>
+            </div>
+          )}
 
           {/* Action Row: Emoji + Plus + Input + Mic/Send */}
           <div className="flex items-end gap-2">
@@ -1691,13 +1759,18 @@ function ThreadView({
                     onSend();
                   }
                 }}
-                placeholder="Type a message…"
+                disabled={!windowOpen}
+                placeholder={
+                  windowOpen
+                    ? "Type a message…"
+                    : "You can only send an approved template now"
+                }
                 rows={draft.includes("\n") ? 3 : 1}
-                className="w-full resize-none rounded-xl border border-input bg-background/80 px-3.5 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#25D366] transition-all min-h-[38px]"
+                className="w-full resize-none rounded-xl border border-input bg-background/80 px-3.5 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#25D366] transition-all min-h-[38px] disabled:cursor-not-allowed disabled:opacity-60"
               />
             </div>
 
-            {draft.trim() ? (
+            {draft.trim() && windowOpen ? (
               <Button
                 size="icon"
                 onClick={onSend}
