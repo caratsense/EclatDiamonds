@@ -1172,11 +1172,7 @@ function ThreadView({
   };
 
   return (
-    <div
-      className={`grid min-h-0 grid-rows-[minmax(0,1fr)] gap-3 ${
-        "xl:grid-cols-[1fr_290px]"
-      }`}
-    >
+    <div className="grid min-h-0 grid-rows-[minmax(0,1fr)] gap-3 xl:grid-cols-[1fr_290px]">
       {/* ── CENTER COLUMN: WhatsApp Web Chat Window ───────────────────── */}
       <Card className={`flex flex-col ${PANE_HEIGHT} overflow-hidden border-border/80 shadow-sm`}>
         {/* WhatsApp Header + Zithara Quick Action Icons */}
@@ -1208,8 +1204,28 @@ function ThreadView({
                 */}
               </div>
               <div className="flex items-center gap-1 text-[11px] text-muted-foreground mt-0.5 min-w-0 truncate">
-                <span className="shrink-0 inline-block h-1.5 w-1.5 rounded-full bg-[#25D366] animate-pulse" />
-                <span className="shrink-0 text-[#25D366] font-medium text-[11px]">Online</span>
+                {/*
+                  When they last wrote, which we know — not "Online", which we
+                  do not.
+
+                  A pulsing green dot and the word "Online" sat here on every
+                  conversation ever opened. The WhatsApp Cloud API carries no
+                  presence signal at all, so it was decoration that read as
+                  fact, and the fact it asserted was one a salesperson would
+                  act on: somebody seeing "Online" has every reason to call
+                  that second.
+                */}
+                {conversation.lastInboundAt ? (
+                  <span className="shrink-0">
+                    Last wrote{" "}
+                    {new Date(conversation.lastInboundAt).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </span>
+                ) : (
+                  <span className="shrink-0">No reply yet</span>
+                )}
                 <span className="shrink-0 text-muted-foreground/30">·</span>
                 <span className="truncate">{conversation.store?.name ?? "No store yet"}</span>
                 <span className="shrink-0 text-muted-foreground/30">·</span>
