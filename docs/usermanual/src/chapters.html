@@ -3,7 +3,7 @@
   <div class="sub">Operations Manual</div>
   <div class="rule"></div>
   <p style="max-width:124mm; color:var(--muted); font-size:11pt;">
-    How to run the Éclat Diamonds business on CaratSense — screen by screen, in
+    How to run the Éclat Diamonds business on CaratOS — screen by screen, in
     the order you will meet them. Every instruction here was checked against the
     running application.
   </p>
@@ -68,66 +68,71 @@
   <table>
     <tr><th style="width:52mm;">Field</th><th>What goes in it</th></tr>
     <tr><td><strong>Login ID or mobile number</strong></td>
-        <td>Either works. The Login ID looks like an email address but is not one
-            — the Team screen labels it <em>“a sign-in identifier, not an
-            inbox”</em>. The 10-digit mobile number on the account works just as
-            well.</td></tr>
+        <td>Either identifies the account. The <strong>Login ID</strong> is
+            generated for them when the account is created — it looks like an
+            email address but is not one, and the Team screen labels it
+            <em>“a sign-in identifier, not an inbox”</em>. The
+            <strong>10-digit mobile number</strong> on the account works in the
+            same box; the Add staff dialog says so twice.</td></tr>
     <tr><td><strong>Password</strong></td>
-        <td>At least 8 characters. Set by whoever created the account, or chosen
-            by the person if they requested their own.</td></tr>
+        <td>At least 8 characters, set with the account and shared privately.
+            Staff can change it later in their own Settings.</td></tr>
   </table>
-  <div class="box ok">
-    <span class="lbl">Tell shop-floor staff to use their mobile number</span>
-    <p>It is the same number they already give customers, so there is nothing new
-       to remember and nothing to mistype. Keep the Login ID for head office and
-       managers, who are used to an email-shaped login.</p>
+  <div class="box warn">
+    <span class="lbl">Nothing is sent to a new member of staff</span>
+    <p>The Login ID is not an address that can receive anything, so no invitation
+       goes out. Whoever creates the account has to pass on the password — and
+       the Login ID too, unless they are going to sign in with their number.
+       Until that happens the person cannot get in, however many times they try.</p>
   </div>
   <div class="box stop">
-    <span class="lbl">“That Login ID or mobile number and password do not match”</span>
-    <p>One message covers both a wrong identifier and a wrong password — it does
-       not say which, deliberately. Check the exact Login ID on
+    <span class="lbl">If sign-in is refused</span>
+    <p>The message does not say whether it was the ID or the password that was
+       wrong, deliberately. Read the exact Login ID off
        <strong>Settings → Team</strong> before resetting anything: most of the
-       time somebody is guessing at their login, not their password.</p>
+       time somebody is guessing at their ID, not their password.</p>
+    <p>Repeated wrong attempts lock that ID for a few minutes. Waiting is the
+       only fix — a reset does not clear it.</p>
   </div>
-  <p>There is no “forgot password” link and no one-time code. A password can only
-     be reset by somebody with access to Team or Stores, or changed by the person
-     themselves once they are in.</p>
+  <p>There is no “forgot password” link. A password is reset by somebody with
+     access to Team or Stores, or changed by the person themselves once they are
+     in.</p>
 </div>
 
 <div class="page">
   <h2>The three ways an account is created</h2>
 
-  <h3>1. An admin adds the person — Settings → Team → Add staff</h3>
+  <h3>1. Somebody adds them — Settings → Team → Add staff</h3>
+  <p>The usual way, and the one to standardise on.</p>
   <ol class="steps">
-    <li>Fill in name, 10-digit number, role and store.</li>
-    <li>Set a password of at least 8 characters.</li>
-    <li>Save. The account works immediately.</li>
+    <li>Enter <strong>Name</strong>, <strong>Phone</strong> (10 digits) and
+        <strong>Personal email</strong>. All three are required, and so is a
+        <strong>Store</strong>.</li>
+    <li><strong>Role</strong> starts at <em>Salesperson</em>. Leave it — the
+        dialog notes you can promote them later.</li>
+    <li>Set a <strong>Password</strong> of at least 8 characters, or leave it
+        blank and set one afterwards with <strong>Reset password</strong>. An
+        account with no password cannot be signed into yet.</li>
+    <li><strong>Add staff</strong>. A <strong>Login ID</strong> is generated in
+        your organisation's own format and <strong>shown to you once</strong>,
+        there and then.</li>
   </ol>
-  <p>Give them their Login ID and password yourself. Nothing is sent to them
-     automatically — there is no invitation email in the system.</p>
-
-  <h3>2. The person asks for an account themselves</h3>
-  <p>The sign-in screen has a sign-up side, so somebody on their first morning can
-     start without waiting for an admin:</p>
-  <ol class="steps">
-    <li>They enter full name, a password and their mobile number, choose
-        <strong>I am a…</strong> (<em>Salesperson</em> or <em>Store Manager</em>)
-        and pick their <strong>Location / store</strong>.</li>
-    <li>They see <strong>Request sent</strong>. They cannot sign in yet.</li>
-    <li>The request appears on <strong>Settings → Team</strong> under
-        <strong>Account requests</strong>.</li>
-    <li>An approver presses <strong>Approve</strong>, correcting the role if the
-        person chose the wrong one. The confirmation names the Login ID just
-        issued — <em>“Aarav Shah approved — Login ID …”</em>. Write it down and
-        pass it on.</li>
-  </ol>
-  <div class="box warn">
-    <span class="lbl">Who may approve whom</span>
-    <p>An approver can only grant roles below their own, and <strong>only head
-       office can approve a Store Manager</strong>. A store manager approving
-       their own new salesperson is routine; a store manager cannot create
-       another manager.</p>
+  <div class="box stop">
+    <span class="lbl">Write the Login ID down as it appears</span>
+    <p>It is shown once, when the person is added. Nothing is emailed to them.
+       If it is missed, the ID can still be read off the person's row on Team —
+       but the password cannot, and would have to be reset.</p>
   </div>
+
+  <h3>2. A request arrives from the sign-in screen</h3>
+  <p>The sign-in screen has a sign-up side, so a person can ask for an account
+     themselves. The request does not create a login: it appears on
+     <strong>Settings → Team</strong> under <strong>Account requests</strong>,
+     where an approver grants it and the Login ID is issued at that moment. An
+     approver can only grant roles below their own, and only head office can
+     approve a Store Manager.</p>
+  <p>Éclat creates accounts with <strong>Add staff</strong> instead, so treat
+     this as something you may see rather than a route to use.</p>
 
   <h3>3. Pending assignment — an account with no branch</h3>
   <p>An account not linked to a store is listed on Team under <strong>Pending
@@ -172,9 +177,22 @@
   <p>Everyone except head office lands on the attendance screen, which passes
      them through to their own home page once the day is started.</p>
 
-  <h3>Narrowing one person — Settings → People &amp; Access</h3>
-  <p>Search by name or store, then grant or withdraw individual screens. Left
-     alone, each role keeps its standard set, which suits most people.</p>
+  <h3>Who may change other people's access</h3>
+  <table>
+    <tr><th style="width:46mm;">Screen</th><th>Who can open it</th></tr>
+    <tr><td><strong>Settings → Team</strong></td>
+        <td>Head office, area managers and store managers — but
+            <em>within your scope</em>. A store manager sees and adds only their
+            own branch's staff; head office sees everyone in the
+            organisation.</td></tr>
+    <tr><td><strong>Settings → People &amp; Access</strong></td>
+        <td><strong>Head office only.</strong> Nobody else can grant or withdraw
+            an individual screen, and nobody else can change another person's
+            access at all.</td></tr>
+  </table>
+  <p>On <strong>People &amp; Access</strong>, search by name or store and grant
+     or withdraw individual screens. Left alone, each role keeps its standard
+     set, which suits most people.</p>
   <p>There is also one setting for staff who should only ever clock in and out,
      described on the screen as <strong>“Only Check in / Check out, leave and
      regularisation”</strong>. Use it for cleaning, security or workshop staff who
@@ -567,11 +585,6 @@
        empty row you added and never used is ignored. A row with figures but no
        stone code must be completed or cleared.</p>
   </div>
-
-  <h3>Sending it</h3>
-  <p><strong>Send Quotation on WhatsApp</strong> delivers it from the branch's own
-     number. A quote can also be attached from inside a conversation, which is
-     quicker when you are already talking to them.</p>
 
   <h3>Two things only head office sees</h3>
   <p><em>Kaccha</em> estimates — rough quotes marked with <code>@</code> — are
@@ -971,7 +984,7 @@
   <p>Grouped as <strong>Your connections</strong>, <strong>Available to
      connect</strong> and <strong>Not available yet</strong>, so it is clear what
      is on, what could be, and what is not offered at all. A connection needing
-     work outside CaratSense says <strong>Platform setup required</strong> rather
+     work outside CaratOS says <strong>Platform setup required</strong> rather
      than failing quietly.</p>
   <p>For WhatsApp you add a <strong>phone number ID</strong> from Meta and the
      <strong>WhatsApp Business Account ID</strong> from WhatsApp Manager, and each
@@ -988,7 +1001,7 @@
   <h3>Message Templates</h3>
   <p>Each template with its language, what the <em>provider says</em> about it, and
      whether it <strong>can be sent</strong>. That last column is the one to read:
-     Meta's approval decides it, not anything in CaratSense.</p>
+     Meta's approval decides it, not anything in CaratOS.</p>
 
   <h3>When a message does not go out</h3>
   <p><strong>Outbound messages</strong> shows everything composed and its state.
@@ -1058,7 +1071,7 @@
   <!--FEATURE_MAP-->
 
   <div class="foot">
-    CaratSense · Operations Manual · Issued 5 October 2026 ·
+    CaratOS · Operations Manual · Issued 5 October 2026 ·
     Prepared for Éclat Diamonds &amp; Company
   </div>
 </div>

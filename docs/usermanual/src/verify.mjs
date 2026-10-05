@@ -17,7 +17,7 @@ const here = (rel) => fileURLToPath(new URL(rel, import.meta.url));
 const pdfParse = createRequire(pathToFileURL(here("../../../backend/package.json")))("pdf-parse");
 
 const screens = readNavigation(here("../../../frontend/src/lib/navigation.ts"));
-const { numpages, text } = await pdfParse(readFileSync(here("../CaratSense-Operations-Manual.pdf")));
+const { numpages, text } = await pdfParse(readFileSync(here("../CaratOS-Operations-Manual.pdf")));
 
 let failures = 0;
 const check = (label, ok, detail = "") => {
@@ -50,11 +50,11 @@ const FACTS = [
   // manual claimed a WhatsApp OTP option: the API has one, the screen does not,
   // so no reader could ever have used it. These assert the real field label and
   // the real workflow names.
-  "Login ID or mobile number", "Account requests", "Pending assignment",
+  "Login ID or mobile number", "Account requests", "CaratOS", "Pending assignment",
   "Skip for now", "a sign-in identifier, not an inbox",
   "regularisation",
   // Workflows a reader is sent to by name.
-  "Fix attendance", "Send Quotation on WhatsApp", "Create Deal / Quotation",
+  "Fix attendance", "Create Deal / Quotation",
   "HUID", "Log walk-in", "Lead QR codes",
   // The advert addresses the client hands out; a broken one is worse than none.
   "fb.me/2mtHMsKeUcTN8Ih", "fb.me/2jDp44BRWvLmQ4m",
