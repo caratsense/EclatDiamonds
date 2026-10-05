@@ -38,14 +38,24 @@ const MOJIBAKE = ["â‚¹", "Ã©", "Ã¨", "â€”", "â€™", "Â·", "ï
 const seen = MOJIBAKE.filter((b) => text.includes(b));
 check("no mojibake", !seen.length, seen.join(" "));
 
-for (const g of ["₹", "É", "È", "—", "·"]) check(`glyph ${g} renders`, text.includes(g));
+for (const g of ["₹", "É", "—", "·"]) check(`glyph ${g} renders`, text.includes(g));
 
 // Facts the client acts on. Each was verified against the code or a live check
 // before being written, so a missing one means the render lost it.
 const FACTS = [
   "72080 17690", "72089 12616", "wa.me/917208017690", "wa.me/917208912616",
-  "eclat-diamonds-pi.vercel.app", "24 hours", "10 minutes", "5 minutes",
-  "Click-to-WhatsApp", "nine", "twenty", "Settings → Stores",
+  "eclat-diamonds-pi.vercel.app", "24 hours", "10 minutes",
+  "Click-to-WhatsApp", "nine", "twenty",
+  // Sign-in is Login ID or mobile + password, and nothing else. The first
+  // manual claimed a WhatsApp OTP option: the API has one, the screen does not,
+  // so no reader could ever have used it. These assert the real field label and
+  // the real workflow names.
+  "Login ID or mobile number", "Account requests", "Pending assignment",
+  "Skip for now", "a sign-in identifier, not an inbox",
+  "regularisation",
+  // Workflows a reader is sent to by name.
+  "Fix attendance", "Send Quotation on WhatsApp", "Create Deal / Quotation",
+  "HUID", "Log walk-in", "Lead QR codes",
   // The advert addresses the client hands out; a broken one is worse than none.
   "fb.me/2mtHMsKeUcTN8Ih", "fb.me/2jDp44BRWvLmQ4m",
   "instagram.com/p/DdwKr6isgcO/", "instagram.com/p/DdwKr8wM4h5/",

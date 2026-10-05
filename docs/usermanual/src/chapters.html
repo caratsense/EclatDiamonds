@@ -2,52 +2,53 @@
   <div class="mark">Carat<span>Sense</span></div>
   <div class="sub">Operations Manual</div>
   <div class="rule"></div>
-  <p style="max-width:122mm; color:var(--muted); font-size:11pt;">
-    The complete working guide to the Éclat Diamonds platform — all
-    <!--COUNT--> screens, the two WhatsApp bots, and how to run each part of
-    the business on it.
+  <p style="max-width:124mm; color:var(--muted); font-size:11pt;">
+    How to run the Éclat Diamonds business on CaratSense — screen by screen, in
+    the order you will meet them. Every instruction here was checked against the
+    running application.
   </p>
-  <dl style="margin-top:2.6em;">
+  <dl style="margin-top:2.4em;">
     <dt>Prepared for</dt><dd>Éclat Diamonds &amp; Company</dd>
-    <dt>Platform</dt><dd>CaratSense v2.4</dd>
+    <dt>Covers</dt><dd>All <!--COUNT--> screens, both WhatsApp numbers</dd>
     <dt>Dashboard</dt><dd class="mono">eclat-diamonds-pi.vercel.app</dd>
     <dt>Issued</dt><dd>5 October 2026</dd>
   </dl>
-  <div class="box warn" style="margin-top:2.6em; max-width:132mm;">
-    <span class="lbl">Passwords are not in this document</span>
-    <p>Login IDs are listed so you know who holds what. Passwords are shared
-       separately — a manual gets forwarded.</p>
+  <div class="box warn" style="margin-top:2.4em; max-width:132mm;">
+    <span class="lbl">No passwords in this document</span>
+    <p>It names who holds which account, never the password. A manual gets
+       forwarded; a password should not.</p>
   </div>
 </div>
 
 <div class="page">
-  <h2>Contents</h2>
+  <h2>How to use this manual</h2>
+  <p class="lead">Parts One to Three follow the working day of a salesperson and
+     a store manager, in order. Parts Four to Seven cover each department's own
+     screens. Part Eight lists every screen in the system.</p>
   <ol class="toc">
-    <li><span class="pn">Part One</span> — <strong>Getting started</strong>
-      <ul><li>Signing in · Roles and what each sees · Giving people access</li></ul></li>
-    <li><span class="pn">Part Two</span> — <strong>Every screen</strong>
+    <li><span class="pn">Part One</span> — <strong>Getting an account, and getting in</strong>
+      <ul><li>The sign-in screen · Login IDs · The three ways an account is created · Who sees what</li></ul></li>
+    <li><span class="pn">Part Two</span> — <strong>Starting the day</strong>
+      <ul><li>The attendance screen · What it asks away from the branch · HRMS</li></ul></li>
+    <li><span class="pn">Part Three</span> — <strong>Customers and enquiries</strong>
+      <ul><li>Where leads arrive from · Conversations · Follow-ups · A customer's record</li></ul></li>
+    <li><span class="pn">Part Four</span> — <strong>Quoting and selling</strong>
+      <ul><li>Quotations · Discounts and approvals · Payments · Returns · Loyalty</li></ul></li>
+    <li><span class="pn">Part Five</span> — <strong>Stock</strong>
+      <ul><li>Inventory · Transfers · Dead stock</li></ul></li>
+    <li><span class="pn">Part Six</span> — <strong>Reporting</strong>
+      <ul><li>The daily report over WhatsApp · Dashboards · Scheduled reports</li></ul></li>
+    <li><span class="pn">Part Seven</span> — <strong>Administration</strong>
+      <ul><li>Branches · Configuration · Adverts · Integrations · Audit</li></ul></li>
+    <li><span class="pn">Part Eight</span> — <strong>Every screen</strong>
       <ul><li>All <!--COUNT--> screens, grouped as the menu groups them</li></ul></li>
-    <li><span class="pn">Part Three</span> — <strong>Customers and leads</strong>
-      <ul><li>The two WhatsApp bots · Conversations · Advert routing · Lead scoring · Campaigns</li></ul></li>
-    <li><span class="pn">Part Four</span> — <strong>Selling</strong>
-      <ul><li>Quotations and orders · Discounts · Payments · Returns</li></ul></li>
-    <li><span class="pn">Part Five</span> — <strong>People</strong>
-      <ul><li>Attendance · Daily reporting · Roster and pay</li></ul></li>
-    <li><span class="pn">Part Six</span> — <strong>Running the system</strong>
-      <ul><li>Settings · Integrations · Data · Audit</li></ul></li>
   </ol>
 
-  <h3>Live addresses</h3>
-  <p class="lead">Each was opened and confirmed working on the day this manual
-     was issued.</p>
+  <h3>The addresses you will need</h3>
   <table class="kv">
     <tr><td>Dashboard</td><td class="mono">https://eclat-diamonds-pi.vercel.app</td></tr>
-    <tr><td>Customer WhatsApp bot</td><td class="mono">+91 72080 17690 · wa.me/917208017690</td></tr>
-    <tr><td>Staff reporting bot</td><td class="mono">+91 72089 12616 · wa.me/917208912616</td></tr>
-    <tr><td>Quotations</td><td class="mono">/quotation · new quote at /quotation/new</td></tr>
-    <tr><td>Attendance punch</td><td class="mono">/check-in</td></tr>
-    <tr><td>Conversations</td><td class="mono">/conversations</td></tr>
-    <tr><td>Reporting &amp; DSR</td><td class="mono">/reporting</td></tr>
+    <tr><td>Customer WhatsApp number</td><td class="mono">+91 72080 17690 · wa.me/917208017690</td></tr>
+    <tr><td>Staff reporting number</td><td class="mono">+91 72089 12616 · wa.me/917208912616</td></tr>
     <tr><td>Live adverts</td><td class="mono">fb.me/2mtHMsKeUcTN8Ih (Bandra) · fb.me/2jDp44BRWvLmQ4m (Surat)</td></tr>
   </table>
 </div>
@@ -55,335 +56,474 @@
 <!-- ══════════════════════ PART ONE ══════════════════════ -->
 <div class="divider">
   <div class="pn">Part One</div>
-  <h1>Getting started</h1>
-  <p>Signing in, what each role sees, and how to give somebody the access they
-     need — including the two things that most often go wrong.</p>
+  <h1>Getting an account,<br>and getting in</h1>
+  <p>There is exactly one way to sign in, and three ways an account comes to
+     exist. Most questions in the first month are about this one page.</p>
 </div>
 
 <div class="page">
-  <h2>Signing in</h2>
-  <p class="lead">Opening the address goes straight to sign-in. There is no
-     public landing page to click past.</p>
-
+  <h2>The sign-in screen</h2>
+  <p class="lead">Opening the dashboard goes straight to sign-in. Two fields, and
+     nothing else.</p>
   <table>
-    <tr><th style="width:38mm;">Method</th><th>Who uses it</th></tr>
-    <tr><td><strong>Login ID + password</strong></td>
-        <td>Head office, managers, and anyone an admin has set a password for.</td></tr>
-    <tr><td><strong>WhatsApp OTP</strong></td>
-        <td>Shop-floor staff. They enter their mobile number and receive a code,
-            valid for <strong>5 minutes</strong>. Nothing to forget or share.</td></tr>
+    <tr><th style="width:52mm;">Field</th><th>What goes in it</th></tr>
+    <tr><td><strong>Login ID or mobile number</strong></td>
+        <td>Either works. The Login ID looks like an email address but is not one
+            — the Team screen labels it <em>“a sign-in identifier, not an
+            inbox”</em>. The 10-digit mobile number on the account works just as
+            well.</td></tr>
+    <tr><td><strong>Password</strong></td>
+        <td>At least 8 characters. Set by whoever created the account, or chosen
+            by the person if they requested their own.</td></tr>
   </table>
-
-  <h3>Login IDs follow a pattern</h3>
-  <p>Accounts are created as <code>firstname.storename@eclatdiamonds.in</code> —
-     for example <code>anjali.mumbaibandra@eclatdiamonds.in</code>. Nothing tells
-     staff this automatically, so an admin must pass it on.</p>
-
+  <div class="box ok">
+    <span class="lbl">Tell shop-floor staff to use their mobile number</span>
+    <p>It is the same number they already give customers, so there is nothing new
+       to remember and nothing to mistype. Keep the Login ID for head office and
+       managers, who are used to an email-shaped login.</p>
+  </div>
   <div class="box stop">
-    <span class="lbl">The most common sign-in failure</span>
-    <p>“Email ID not found” almost always means somebody is guessing their login.
-       Read the exact ID from <strong>Settings → Team</strong>. An account made
-       outside the pattern keeps whatever address it was created with, and a
-       login ID cannot be changed afterwards.</p>
+    <span class="lbl">“That Login ID or mobile number and password do not match”</span>
+    <p>One message covers both a wrong identifier and a wrong password — it does
+       not say which, deliberately. Check the exact Login ID on
+       <strong>Settings → Team</strong> before resetting anything: most of the
+       time somebody is guessing at their login, not their password.</p>
   </div>
-
-  <h3>Where each role lands</h3>
-  <table>
-    <tr><th style="width:34mm;">Role</th><th>Sees</th><th style="width:30mm;">Lands on</th></tr>
-    <tr><td>Head office</td><td>Every branch, every screen, all reporting.</td><td>Dashboards</td></tr>
-    <tr><td>Area manager</td><td>The branches in their area.</td><td>Punch screen</td></tr>
-    <tr><td>Store manager</td><td>Their branch: inbox, leads, team, attendance, stock.</td><td>Punch screen</td></tr>
-    <tr><td>Salesperson</td><td>Their branch's customers, and their own attendance.</td><td>Punch screen</td></tr>
-  </table>
-  <p>Everyone except head office lands on the attendance punch screen, which
-     passes them through to their own home once the day is started.</p>
+  <p>There is no “forgot password” link and no one-time code. A password can only
+     be reset by somebody with access to Team or Stores, or changed by the person
+     themselves once they are in.</p>
 </div>
 
 <div class="page">
-  <h2>Giving people access</h2>
+  <h2>The three ways an account is created</h2>
 
-  <h3>Add a person — Settings → Team</h3>
+  <h3>1. An admin adds the person — Settings → Team → Add staff</h3>
   <ol class="steps">
-    <li>Open <strong>Settings → Team</strong> and choose <strong>Add staff</strong>.</li>
-    <li>Enter name, mobile number and branch, and pick a role.</li>
-    <li>Optionally set a password. Leave it blank and they sign in by WhatsApp OTP.</li>
-    <li>The screen shows their Login ID. <strong>Write it down and give it to
-        them</strong> — nothing sends it automatically.</li>
+    <li>Fill in name, 10-digit number, role and store.</li>
+    <li>Set a password of at least 8 characters.</li>
+    <li>Save. The account works immediately.</li>
   </ol>
+  <p>Give them their Login ID and password yourself. Nothing is sent to them
+     automatically — there is no invitation email in the system.</p>
 
-  <h3>Set or reset a password — Settings → Stores</h3>
+  <h3>2. The person asks for an account themselves</h3>
+  <p>The sign-in screen has a sign-up side, so somebody on their first morning can
+     start without waiting for an admin:</p>
+  <ol class="steps">
+    <li>They enter full name, a password and their mobile number, choose
+        <strong>I am a…</strong> (<em>Salesperson</em> or <em>Store Manager</em>)
+        and pick their <strong>Location / store</strong>.</li>
+    <li>They see <strong>Request sent</strong>. They cannot sign in yet.</li>
+    <li>The request appears on <strong>Settings → Team</strong> under
+        <strong>Account requests</strong>.</li>
+    <li>An approver presses <strong>Approve</strong>, correcting the role if the
+        person chose the wrong one. The confirmation names the Login ID just
+        issued — <em>“Aarav Shah approved — Login ID …”</em>. Write it down and
+        pass it on.</li>
+  </ol>
   <div class="box warn">
-    <span class="lbl">Not on the Team screen</span>
-    <p>Password reset lives under <strong>Settings → Stores</strong>: open the
-       branch, find the person, choose <strong>Reset password</strong>. The Team
-       screen says “reset on their row”, which is misleading — the control is on
-       Stores.</p>
+    <span class="lbl">Who may approve whom</span>
+    <p>An approver can only grant roles below their own, and <strong>only head
+       office can approve a Store Manager</strong>. A store manager approving
+       their own new salesperson is routine; a store manager cannot create
+       another manager.</p>
   </div>
 
-  <h3>Choose which screens — Settings → People &amp; Access</h3>
-  <p>Head office can grant or withdraw individual screens per person. Left alone,
-     each role gets its standard set, which suits most people.</p>
+  <h3>3. Pending assignment — an account with no branch</h3>
+  <p>An account not linked to a store is listed on Team under <strong>Pending
+     assignment</strong>, which says it plainly: <em>these accounts are set up but
+     not yet linked to a store, assign each to a store so they can start
+     working</em>. The section is hidden when nobody is in it, so if you cannot
+     see it there is nothing waiting.</p>
+
+  <h3>Resetting a password</h3>
+  <p>There is a <strong>Reset password</strong> action in two places and either
+     will do: on <strong>Settings → Team</strong> against the person, and on
+     <strong>Settings → Stores</strong> against their branch. Use whichever screen
+     you are already on.</p>
+  <p>Staff can also change their own without an admin: their own
+     <strong>Settings</strong> has a <strong>Security</strong> card taking
+     <em>Current password</em>, <em>New password</em> and <em>Confirm new
+     password</em>, and a <strong>Contact details</strong> card for their mobile
+     number and personal email.</p>
+</div>
+
+<div class="page">
+  <h2>Who sees what</h2>
+  <p class="lead">The role sets the default. Head office can then narrow or widen
+     any individual.</p>
+  <table>
+    <tr><th style="width:32mm;">Role</th><th>Scope</th><th style="width:26mm;">Lands on</th></tr>
+    <tr><td><strong>Head office</strong></td>
+        <td>Every branch, every screen, all reporting. The only role that can
+            approve managers, and the only one that sees <em>kaccha</em>
+            estimates on quotations.</td><td>Dashboards</td></tr>
+    <tr><td><strong>Area manager</strong></td><td>The branches in their area.</td><td>Attendance</td></tr>
+    <tr><td><strong>Store manager</strong></td>
+        <td>Their branch — inbox, leads, team, attendance, stock — and the
+            approvals routed to them.</td><td>Attendance</td></tr>
+    <tr><td><strong>Salesperson</strong></td>
+        <td>Their branch's customers and their own attendance. On Branch
+            Requests they see only the requests they raised.</td><td>Attendance</td></tr>
+    <tr><td><strong>Storeperson</strong></td>
+        <td>Shares the front-line rank, but is only notified about things
+            addressed to storepeople.</td><td>Attendance</td></tr>
+  </table>
+  <p>Everyone except head office lands on the attendance screen, which passes
+     them through to their own home page once the day is started.</p>
+
+  <h3>Narrowing one person — Settings → People &amp; Access</h3>
+  <p>Search by name or store, then grant or withdraw individual screens. Left
+     alone, each role keeps its standard set, which suits most people.</p>
+  <p>There is also one setting for staff who should only ever clock in and out,
+     described on the screen as <strong>“Only Check in / Check out, leave and
+     regularisation”</strong>. Use it for cleaning, security or workshop staff who
+     belong on the register but have no reason to see customers. The attendance
+     screen becomes their home and they stay on it.</p>
+
   <div class="box warn">
-    <span class="lbl">One setting that silently breaks lead routing</span>
+    <span class="lbl">One withdrawal that quietly breaks lead routing</span>
     <p>A store manager who cannot open <strong>Conversations</strong> is skipped
        when the system looks for an owner for a new lead. The lead reaches the
-       branch and sits unowned. If leads stop being assigned, check this first.</p>
-  </div>
-
-  <h3>Grant daily-report access — Settings → WhatsApp Reporting</h3>
-  <ol class="steps">
-    <li>Open <strong>Settings → WhatsApp Reporting</strong>. Everyone in your
-        branches is listed with who can already file.</li>
-    <li>Choose <strong>Set up</strong> on their row. A code appears and is copied
-        to your clipboard. It lasts <strong>10 minutes</strong>.</li>
-    <li>Read the code to them. They send it from the handset they want to use, to
-        the staff reporting number.</li>
-    <li>That handset is now theirs for reporting. <strong>Remove</strong> undoes it.</li>
-  </ol>
-  <div class="box ok">
-    <span class="lbl">Why you never type their phone number</span>
-    <p>The number is learnt from the message carrying the code, so nobody can
-       bind a handset they are not holding. The bot also cannot message a number
-       that has never written to it — WhatsApp only lets a business open a
-       conversation with an approved template, and a one-time code is not
-       something Meta approves.</p>
+       branch and then sits unowned, with nobody notified. If leads stop being
+       assigned, check this before anything else.</p>
   </div>
 </div>
 
 <!-- ══════════════════════ PART TWO ══════════════════════ -->
 <div class="divider">
   <div class="pn">Part Two</div>
-  <h1>Every screen</h1>
-  <p>All <!--COUNT--> screens in the platform, grouped exactly as the menu groups
-     them. This list is generated from the application itself, so it cannot drift
-     out of step with what you see.</p>
+  <h1>Starting the day</h1>
+  <p>Attendance is recorded on its own screen, not by signing in. What that
+     screen does, what it asks when somebody is away from the branch, and how a
+     manager puts a bad day right.</p>
 </div>
 
 <div class="page">
-  <h2>The complete feature map</h2>
-  <p class="lead">Screens appear in your menu only if your industry package
-     includes them and your role may open them — so not every person sees every
-     row below.</p>
-  <!--FEATURE_MAP-->
+  <h2>The attendance screen</h2>
+  <p class="lead">At <code>/check-in</code>. Everyone except head office is taken
+     here on sign-in, and it is the only place a day gets recorded.</p>
+
+  <h3>What you see</h3>
+  <p>A greeting and today's date, your last shift, and a <strong>Check in for
+     today</strong> button. Once you are in it becomes <strong>Checked
+     out</strong> and then <strong>Done for today</strong>; anybody only passing
+     through gets <strong>Continue to app</strong>. Some branches also ask for an
+     <strong>Attendance photo</strong> with the punch.</p>
+
+  <h3>What it does about your location</h3>
+  <table>
+    <tr><th style="width:54mm;">What the phone reports</th><th>What happens</th></tr>
+    <tr><td><strong>Inside the branch fence</strong><br>
+            <em>“Within store range.”</em></td>
+        <td>Checks in by itself as soon as the location is confirmed. Nothing to
+            type.</td></tr>
+    <tr><td><strong>Outside the fence</strong></td>
+        <td>Asks for a <strong>Reason</strong>, then records the punch and reports
+            it.</td></tr>
+    <tr><td><strong>A fix too vague to judge</strong><br>
+            <em>“GPS accuracy cannot confirm your location”</em></td>
+        <td>Offers the choice in as many words: <em>continue with a reason, or
+            wait for a more accurate GPS reading</em>.</td></tr>
+    <tr><td><strong>No fix at all</strong><br>
+            <em>“We couldn't read your location”</em></td>
+        <td>A reason is required. The punch is saved and marked <em>“Location
+            unavailable — recorded without GPS.”</em></td></tr>
+    <tr><td><strong>The fence could not be loaded</strong></td>
+        <td>Also treated as unconfirmed, and asks for a reason.</td></tr>
+  </table>
+
+  <div class="box ok">
+    <span class="lbl">Nobody is ever locked out</span>
+    <p>A punch is never refused for being in the wrong place. A phone inside a
+       concrete showroom can be wrong by 50–150 m, and refusing the punch does
+       not move the person — it only destroys the record that they came to work.
+       The fence decides whether a punch is <em>verified</em>, not whether it is
+       allowed. A reason is still required, because an unexplained punch from
+       outside the branch is indistinguishable from one person punching for
+       another.</p>
+  </div>
+
+  <div class="box stop">
+    <span class="lbl">“Skip for now” exists, and it records nothing</span>
+    <p>The screen has a <strong>Skip for now</strong> button, so somebody who
+       needs the system urgently is not held hostage by a failing GPS. It does
+       <strong>not</strong> mark them present — it only moves them past the
+       screen. Anyone who skips every morning shows as absent all month with no
+       reason recorded. If a month's attendance looks too thin, the register is
+       the first place to look and this is usually why.</p>
+  </div>
+
+  <h3>Who is told</h3>
+  <p>Every punch the fence could not confirm notifies the branch manager
+     <strong>and</strong> head office, carrying the distance, the branch's allowed
+     radius and the reason typed. Head office is reached whichever branch it was,
+     because the notification goes to everyone ranked at or above store manager.
+     The person who punched is not notified — they know where they were.</p>
+</div>
+
+<div class="page">
+  <h2>HRMS &amp; Attendance</h2>
+  <p class="lead">The manager's side of the same data, in eight tabs.</p>
+  <table>
+    <tr><th style="width:40mm;">Tab</th><th>What it is for</th></tr>
+    <tr><td><strong>Today</strong></td><td>Who is in and who is not, as it stands now.</td></tr>
+    <tr><td><strong>Employees</strong></td><td>The people on this branch's roster.</td></tr>
+    <tr><td><strong>Register</strong></td><td>The month's attendance day by day — the record an audit asks for.</td></tr>
+    <tr><td><strong>Shifts &amp; Schedule</strong></td><td>Who works when: the store default shift and any batch.</td></tr>
+    <tr><td><strong>Reports</strong></td><td>Attendance summaries, exportable.</td></tr>
+    <tr><td><strong>Leave</strong></td><td>Requests and balances. A request raised here lands in Approvals.</td></tr>
+    <tr><td><strong>Fix attendance</strong></td><td>Missed and wrong punches, including the off-site ones flagged for review.</td></tr>
+    <tr><td><strong>Late flags</strong></td><td>Arrivals after the shift start.</td></tr>
+  </table>
+
+  <h3>Marking somebody present by hand</h3>
+  <p>The <strong>Mark attendance</strong> dialog takes a <em>Status</em>, a
+     <em>Check-in time</em> and a <em>Shift / batch</em>, defaulting to the store
+     default shift. Use it for a phone that died, not as routine: every change is
+     written to the audit log with your name on it.</p>
+
+  <h3>Putting a flagged punch right</h3>
+  <ol class="steps">
+    <li>Open <strong>Fix attendance</strong>. Flagged punches are listed with the
+        distance and the reason the person typed.</li>
+    <li>Accept it as it stands, or correct the record.</li>
+    <li>Corrections needing a higher sign-off go to <strong>Approvals →
+        Attendance fixes</strong>, described there as <em>missed / wrong-punch
+        corrections awaiting your decision</em>.</li>
+  </ol>
+
+  <h3>Roster and pay</h3>
+  <p><strong>Roster &amp; Pay</strong> turns the register into a payroll month.
+     Driven by a <em>Month</em> written <code>2026-09</code>, it shows
+     <em>Present</em>, <em>Off / holiday</em>, <em>Unpaid</em>, <em>Overtime</em>
+     and <em>Net pay</em> per employee, with each run tracked through
+     <em>Drafted</em>, <em>Skipped</em> and <em>Issued</em>.</p>
 </div>
 
 <!-- ══════════════════════ PART THREE ══════════════════════ -->
 <div class="divider">
   <div class="pn">Part Three</div>
-  <h1>Customers and leads</h1>
-  <p>How an enquiry arrives, who it reaches, how it is scored, and the two
-     WhatsApp numbers that carry it.</p>
+  <h1>Customers and enquiries</h1>
+  <p>Six doors an enquiry can arrive through, one inbox it lands in, and the
+     record that remembers everything a customer has ever done.</p>
 </div>
 
 <div class="page">
-  <h2>The two WhatsApp bots</h2>
-  <p class="lead">Two numbers, two jobs. A message is answered by whichever
-     number it arrives on.</p>
+  <h2>Where leads arrive from</h2>
+  <p class="lead">The Leads screen says it plainly: <em>leads from ads, the
+     website, WhatsApp and the counter all appear here</em>. Each door is set up
+     once and then runs itself.</p>
   <table>
-    <tr><th style="width:28mm;"></th><th>Customer bot</th><th>Staff reporting bot</th></tr>
-    <tr><td><strong>Number</strong></td><td class="mono">+91 72080 17690</td><td class="mono">+91 72089 12616</td></tr>
-    <tr><td><strong>Shows as</strong></td><td>Èclat diamonds and Company</td><td>Èclat diamonds Internal</td></tr>
-    <tr><td><strong>Answers</strong></td>
-        <td>Anybody who writes in, and anyone tapping a Click-to-WhatsApp advert.</td>
-        <td>Only handsets bound to a staff member.</td></tr>
-    <tr><td><strong>Does</strong></td>
-        <td>Asks four qualifying questions, then hands to a person.</td>
-        <td>Walks the daily sales report; passes messages to head office.</td></tr>
-    <tr><td><strong>Link</strong></td><td class="mono">wa.me/917208017690</td><td class="mono">wa.me/917208912616</td></tr>
+    <tr><th style="width:38mm;">Door</th><th>How it is set up</th></tr>
+    <tr><td><strong>A Click-to-WhatsApp advert</strong></td>
+        <td>The customer taps it and WhatsApp opens. A routing rule sends the lead
+            to the right branch — Part Seven.</td></tr>
+    <tr><td><strong>Writing to the number</strong></td>
+        <td>Nothing to set up. Anyone messaging <span class="mono">+91 72080
+            17690</span> is answered.</td></tr>
+    <tr><td><strong>A form on your website</strong></td>
+        <td><strong>Website enquiry forms</strong>: name the form, pick the
+            branch, say what it is about, publish it and paste its link into your
+            site. The customer sees a public page, then “Thank you”.</td></tr>
+    <tr><td><strong>A QR code in the showroom</strong></td>
+        <td><strong>Lead QR codes</strong>: choose the branch, optionally where it
+            will stand (“Front counter”) and what it advertises (“Bridal
+            collection”), and set <em>stop working after</em> a date. The customer
+            scans, sees <em>“Scan to enquire”</em> and <em>“Tell us what you are
+            looking for”</em>, and the lead arrives tagged to that code.</td></tr>
+    <tr><td><strong>A walk-in at the counter</strong></td>
+        <td><strong>Customer Check-ins</strong> → <strong>Log walk-in &amp;
+            visit</strong>.</td></tr>
+    <tr><td><strong>Typed in by hand</strong></td>
+        <td><strong>Leads &amp; Follow-ups</strong> → <strong>Add lead</strong>.</td></tr>
   </table>
-
-  <h3>What the customer bot asks</h3>
-  <ol>
-    <li>What are you looking for <em>(engagement ring · wedding jewellery · daily wear · other)</em></li>
-    <li>Approximate budget <em>(under ₹50K · ₹50K–₹1L · ₹1L–₹2L · above ₹2L)</em></li>
-    <li>When you need it <em>(within 7 days · this month · in a few months · just exploring)</em></li>
-    <li>Shall we call <em>(yes now · later · not now)</em></li>
-  </ol>
-  <p>Customers may answer in their own words — the options are a prompt, not a
-     menu. After the last answer the bot stops and the branch is notified.</p>
-
   <div class="box ok">
-    <span class="lbl">One phone, both bots, no collision</span>
-    <p>The same mobile can hold a customer conversation on one line and a staff
-       reporting conversation on the other at once. Neither overwrites the other,
-       so staff can safely test the customer bot from their own phone.</p>
+    <span class="lbl">The QR code is the cheapest one to start with</span>
+    <p>It needs no website change and no advertising spend — print it, stand it on
+       the counter, and every scan is a lead attributed to that spot. Give each
+       position its own code and you can see which part of the showroom actually
+       produces enquiries.</p>
   </div>
-  <div class="box warn">
-    <span class="lbl">The bot stops once a person takes over</span>
-    <p>After hand-over the thread is marked for a human and the bot stays silent
-       in it. When testing, always use a number that has never written in, or it
-       will look as though nothing is happening.</p>
-  </div>
+
+  <h3>Logging a walk-in</h3>
+  <p>The dialog records <em>Phone</em>, <em>Purpose</em>, an <em>Item code</em>
+     (<em>scan or type the code</em>), <em>What happened</em>, an <em>Item
+     note</em> — the example given is <em>“wanted it in rose gold, size
+     smaller”</em> — an <em>Outcome</em>, the <em>Customer feedback / remark</em>,
+     and <strong>Remind me at</strong>, which creates the follow-up so the visit
+     does not quietly go cold.</p>
 </div>
 
 <div class="page">
   <h2>Conversations</h2>
-  <h3>What happens when a lead arrives</h3>
+  <p class="lead">The WhatsApp inbox, and the busiest screen in the system. Pick a
+     thread on the left to read it, judge it and reply.</p>
+
+  <h3>What happens before you open it</h3>
   <ol class="steps">
-    <li>The customer taps an advert or writes to the customer number.</li>
-    <li>If they came from an advert, a routing rule matches it to a showroom and
-        stamps the conversation with that branch.</li>
-    <li>The bot asks its four questions.</li>
-    <li>The conversation is handed to that branch's store manager, who is
-        notified by name.</li>
-    <li>The thread shows the advert tapped, the answers given, and a lead score.</li>
+    <li>The customer taps an advert or writes in.</li>
+    <li>If they came from an advert, a routing rule stamps the thread with the
+        branch that paid for it.</li>
+    <li>The bot asks its four qualifying questions.</li>
+    <li>The thread is handed to that branch's store manager, who is notified by
+        name, and is marked as needing a person.</li>
   </ol>
 
-  <h3>Moving a lead to someone else</h3>
-  <p>Open the conversation and use <strong>Reassign</strong>. Choose the branch
-     first, then the owner — the list only offers people who work at that branch.
-     The new owner is notified; the person making the change is not.</p>
-
-  <h3>The 24-hour rule</h3>
-  <div class="box warn">
-    <span class="lbl">Why the message box sometimes will not type</span>
-    <p>WhatsApp allows a free reply only within <strong>24 hours</strong> of the
-       customer's last message. After that the box is disabled and says so; an
-       approved template can still reach them. This is WhatsApp's rule, not a
-       setting, and the clock restarts whenever the customer writes again.</p>
-  </div>
-
-  <h3>Reading the inbox</h3>
+  <h3>What you can do in a thread</h3>
   <table>
-    <tr><th style="width:38mm;">What you see</th><th>What it means</th></tr>
-    <tr><td><strong>Facebook / Instagram Ad</strong></td><td>Where the lead came from, read from the advert.</td></tr>
-    <tr><td><strong>Needs a person</strong></td><td>The bot has finished; somebody must reply.</td></tr>
-    <tr><td><strong>Routing check</strong></td><td>A later advert disagreed with where the thread sits. Left alone for a person to decide.</td></tr>
-    <tr><td><strong>No store yet</strong></td><td>No rule matched, so no branch owns it. It waits in the head-office queue.</td></tr>
-    <tr><td><strong>Last wrote …</strong></td><td>When the customer last messaged — this drives the 24-hour rule.</td></tr>
+    <tr><th style="width:50mm;">Action</th><th>What it is for</th></tr>
+    <tr><td><strong>Reply</strong></td><td>Free text, with emoji, and an attachment button for a catalogue item or a quotation.</td></tr>
+    <tr><td><strong>Create Deal / Quotation</strong></td><td>Turns the conversation into a quote without retyping the customer. Takes a <em>Deal Name</em> and an <em>Estimated Value</em>.</td></tr>
+    <tr><td><strong>Schedule Follow-up Task</strong></td><td>A <em>Task Title</em>, <em>Due Date</em> and <em>Priority</em> — e.g. “WhatsApp follow-up for solitaire certificate”.</td></tr>
+    <tr><td><strong>Add customer note</strong></td><td>Context for whoever picks the thread up next.</td></tr>
+    <tr><td><strong>Star as VIP Lead</strong></td><td>Keeps the thread findable in a busy inbox.</td></tr>
+    <tr><td><strong>Reassign conversation</strong></td><td>Branch first, then owner — the list only offers people at that branch. The new owner is notified; you are not.</td></tr>
+    <tr><td><strong>Close</strong> / <strong>Reopen</strong></td><td>Close when it is finished; reopen if they come back.</td></tr>
+    <tr><td><strong>Check for new messages</strong></td><td>Forces a refresh when you are expecting a reply.</td></tr>
   </table>
-</div>
-
-<div class="page">
-  <h2>Advert routing</h2>
-  <p class="lead">A rule sends each campaign's leads to the showroom that paid
-     for it, so the right manager is notified within seconds.</p>
-
-  <h3>Setting a rule — Settings → Business Configuration → Ad routing</h3>
-  <table>
-    <tr><th style="width:42mm;">Match on</th><th>Use when</th></tr>
-    <tr><td><strong>Ad-set name contains</strong></td>
-        <td>The recommended choice. One rule per showroom, matching words your
-            marketing team already puts in the ad-set name — “Bandra”,
-            “Udaipur”. Every future advert in that ad set routes with no
-            further work.</td></tr>
-    <tr><td><strong>Exact ad ID</strong></td>
-        <td>Pinning one advert somewhere different, or a campaign whose ad-set
-            name carries no location.</td></tr>
-  </table>
-  <p>Where two rules match, the more specific wins — “Bandra Broadway” beats
-     “Bandra” with no manual ordering.</p>
-
-  <div class="box warn">
-    <span class="lbl">Ad-set name matching needs the Meta Ads connection</span>
-    <p>A Click-to-WhatsApp tap reports the advert's ID and nothing else. To turn
-       that into an ad-set name, connect <strong>Meta Ads</strong> under Settings
-       → Integrations with a token that can read adverts. Without it, only
-       exact-ad-ID rules can match.</p>
-  </div>
-
-  <h3>If a lead arrives unrouted</h3>
-  <ol>
-    <li>Open the thread and read the advert card — it names the advert.</li>
-    <li>Add a rule for that advert or its ad set.</li>
-    <li>Use <strong>Reassign</strong> to place the lead that already arrived.
-        Existing threads are never re-routed automatically, by design.</li>
-  </ol>
+  <p>Each message carries its own state — <strong>Queued</strong>,
+     <strong>Sent</strong>, <strong>Delivered</strong>, <strong>Read</strong> — so
+     “they never replied” can be told apart from “it never reached them”.</p>
 
   <div class="box stop">
-    <span class="lbl">A branch with no manager notifies nobody</span>
-    <p>A rule can send leads to a showroom with no active store manager. The lead
-       arrives correctly and then sits, because there is nobody to tell. Before
-       adding a rule for a branch, make sure it has an active manager who can
-       open Conversations.</p>
+    <span class="lbl">Why the message box sometimes will not accept typing</span>
+    <p>WhatsApp allows a free reply only within <strong>24 hours</strong> of the
+       customer's last message. After that the box is disabled and says so, and
+       only an approved template can reach them. This is WhatsApp's rule, not a
+       setting, and the clock restarts every time the customer writes again.</p>
+  </div>
+  <div class="box warn">
+    <span class="lbl">The bot goes quiet once a person takes over</span>
+    <p>After hand-over the thread is marked for a human and the bot stays silent
+       in it. When testing, message from a number that has never written in
+       before, or it will look as though nothing is working.</p>
   </div>
 </div>
 
 <div class="page">
-  <h2>Sharing a live advert</h2>
-  <p>Each advert has three addresses. The Facebook and Instagram posts are the
-     advert as it was published; the preview link is the one that shows it with
-     the WhatsApp button attached, which is usually what you want when showing
-     somebody how the journey works.</p>
+  <h2>Leads, follow-ups and reply times</h2>
+
+  <h3>The leads list</h3>
+  <p>Filter by <em>Source</em>, outcome, tags and a <em>From</em>/<em>To</em> date
+     range, or search by <em>name, ref or phone</em>. When a filter returns
+     nothing the screen says which knob to turn: <em>adjust the outcome, source,
+     tags, search or date range to see more</em>.</p>
+  <p><strong>Add lead</strong> captures name, 10-digit mobile, <em>where did this
+     lead come from</em>, <em>what are they asking about</em>, address, birthday,
+     anniversary and remarks. Birthday and anniversary are not decoration: they
+     drive the occasion prompts that push a lead up the list.</p>
+  <p>A row is marked priority when there is recent activity, an imminent
+     follow-up, or a nearby occasion — and the screen says which, rather than
+     leaving you to guess why something is near the top. <strong>Open
+     WhatsApp</strong> on a row starts a thread with that person.</p>
+
+  <h3>Follow-ups</h3>
+  <p><strong>Follow-ups &amp; Reminders</strong> is the day's list. Marking one
+     done takes an optional remark — the example is <em>“Spoke to customer —
+     coming in Saturday to finalise.”</em> A due date can be edited if they asked
+     for later. Two standard follow-ups are tracked per lead, and the screen tells
+     you when <strong>both SOP follow-ups are done</strong>.</p>
+  <p><strong>Calling</strong> splits into <strong>My tasks</strong> and
+     <strong>All tasks</strong>, and can also <strong>Send WhatsApp
+     Follow-up</strong>. The phone icon hands the number to your own device's
+     dialler — the system records that a call happened, it does not place it.</p>
+
+  <h3>Reply-time promise</h3>
+  <p><strong>Response &amp; SLA</strong> is off until you set it. Enter <em>Reply
+     within (minutes)</em> and <em>Tell a manager after (minutes)</em>, then press
+     <strong>Start measuring</strong>. The table then shows, per conversation, when
+     <em>they messaged</em>, how long they <em>waited</em>, who <em>answered</em>,
+     and whether <strong>a manager was told</strong>. Until then it says <em>no
+     reply target is set</em> and measures nothing.</p>
+
+  <h3>Consent</h3>
+  <p><strong>Messaging consent</strong> is recorded per customer and per channel,
+     split into <strong>Marketing</strong> and <strong>Service replies</strong>.
+     Find somebody by name, phone or email and record what they told you; the
+     history shows what happened, on which channel, recorded by whom and when.
+     Campaigns check this for every recipient, so an opt-out is honoured without
+     anybody having to remember it.</p>
+
+  <h3>Campaigns</h3>
+  <p>To message a customer outside the 24-hour window you need a template Meta has
+     approved. <strong>New campaign</strong> then walks six questions in plain
+     English: <em>what is this campaign?</em>, <em>who should receive it?</em>,
+     <em>who this reaches</em>, <em>what does it say?</em>, <em>when should it go
+     out?</em> and <em>check it over</em>. Audience rules combine as <em>all of
+     these</em> or <em>any of these</em>. Afterwards each campaign reports its
+     <em>Delivery</em> and per-recipient status with a <em>Why</em> column when
+     somebody was skipped.</p>
+</div>
+
+<div class="page">
+  <h2>A customer's record</h2>
+  <p class="lead">Nine tabs — and the reason the system is worth having: one
+     person's whole history in one place, however they reached you.</p>
   <table>
-    <tr><th style="width:26mm;">Advert</th><th>Where</th><th style="width:62mm;">Address</th></tr>
-    <tr><td rowspan="3"><strong>Bandra</strong></td>
-        <td>Facebook post</td><td class="mono">facebook.com/1281780938358230/<wbr>posts/1293013417234982</td></tr>
-    <tr><td>Instagram post</td><td class="mono">instagram.com/p/DdwKr6isgcO/</td></tr>
-    <tr><td>Advert preview</td><td class="mono">fb.me/2mtHMsKeUcTN8Ih</td></tr>
-    <tr><td rowspan="3"><strong>Surat</strong></td>
-        <td>Facebook post</td><td class="mono">facebook.com/1281780938358230/<wbr>posts/1293013430568314</td></tr>
-    <tr><td>Instagram post</td><td class="mono">instagram.com/p/DdwKr8wM4h5/</td></tr>
-    <tr><td>Advert preview</td><td class="mono">fb.me/2jDp44BRWvLmQ4m</td></tr>
+    <tr><th style="width:30mm;">Tab</th><th>What is on it</th></tr>
+    <tr><td><strong>Timeline</strong></td><td>Everything, newest first — the <em>omnichannel journey and history</em>.</td></tr>
+    <tr><td><strong>Identity</strong></td><td>Who they are and <em>how we reach this customer</em>: numbers, email, consent.</td></tr>
+    <tr><td><strong>Leads</strong></td><td>Every enquiry they have raised.</td></tr>
+    <tr><td><strong>Visits</strong></td><td><em>When they came in</em> — check-ins logged at the counter.</td></tr>
+    <tr><td><strong>Products</strong></td><td><em>What they looked at.</em> Record what somebody was shown or tried and it appears here.</td></tr>
+    <tr><td><strong>Purchases</strong></td><td>Quotes, invoices, payments, returns and exchanges.</td></tr>
+    <tr><td><strong>Conversations</strong></td><td>WhatsApp and other channel threads with this customer.</td></tr>
+    <tr><td><strong>Qualification</strong></td><td>The lead score and the signals behind it.</td></tr>
+    <tr><td><strong>Attribution</strong></td><td><em>How they found us</em> — the advert, form or code that brought them.</td></tr>
   </table>
   <div class="box ok">
-    <span class="lbl">Most of the traffic is Instagram, not Facebook</span>
-    <p>Placements are left to Meta to choose, and it has settled on Instagram:
-       over the week before this manual was issued, Instagram carried
-       <strong>96%</strong> of the Bandra advert's views and <strong>82%</strong>
-       of Surat's, with Reels the single largest placement. Worth knowing before
-       judging an advert by how it looks in a Facebook feed.</p>
+    <span class="lbl">Products is the tab most shops forget</span>
+    <p>Writing down what somebody tried on and did not buy is the cheapest sales
+       intelligence in the building. It is what makes the next call specific —
+       “the rose-gold band you tried, in your size” instead of “any update?”</p>
   </div>
 
-</div>
-
-<div class="page">
-  <h2>Lead scoring</h2>
-  <p class="lead">Every conversation is scored out of 100, so a manager can see
-     who is worth calling first.</p>
+  <h3>How a lead is scored</h3>
+  <p>Every conversation is scored out of 100, so a manager can see who is worth
+     calling first.</p>
   <table>
-    <tr><th>Signal</th><th class="num" style="width:18mm;">Weight</th><th>Recognises</th></tr>
+    <tr><th>Signal</th><th class="num" style="width:16mm;">Weight</th><th>Recognises</th></tr>
     <tr><td>Says they want to buy</td><td class="num">+30</td><td>“want to buy”, “ready to buy”, “yes, call me now”</td></tr>
-    <tr><td>Mentions a budget</td><td class="num">+20</td><td>“budget”, “under ₹50k”, “above ₹2L”</td></tr>
-    <tr><td>Needs it soon</td><td class="num">+20</td><td>“this week”, “within 7 days”, “urgent”</td></tr>
+    <tr><td>Mentions a budget</td><td class="num">+20</td><td>“budget”, “under ₹50k”</td></tr>
+    <tr><td>Needs it soon</td><td class="num">+20</td><td>“this week”, “urgent”</td></tr>
     <tr><td>Wants to visit</td><td class="num">+15</td><td>“visit”, “appointment”, “timings”</td></tr>
     <tr><td>Asks about a specific item</td><td class="num">+10</td><td>“do you have”, “in stock”</td></tr>
     <tr><td>Comparing with others</td><td class="num">+5</td><td>“cheaper”, “other shop”</td></tr>
-    <tr><td>Raising a complaint</td><td class="num">−25</td><td>“refund”, “broken”, “not happy”</td></tr>
-    <tr><td>Says they are not interested</td><td class="num">−40</td><td>“stop messaging”, “remove my number”</td></tr>
+    <tr><td>Raising a complaint</td><td class="num">−25</td><td>“refund”, “broken”</td></tr>
+    <tr><td>Says they are not interested</td><td class="num">−40</td><td>“stop messaging”</td></tr>
   </table>
-  <p>Only the <strong>customer's</strong> words are read. The bot's own questions
-     are excluded, or “What is your budget?” would score every conversation.</p>
-  <p>Edit it under <strong>Settings → Business Configuration → Lead scoring</strong>:
-     phrases, weights, bands and the minimum number of messages.</p>
-  <div class="box warn">
-    <span class="lbl">Saving the policy freezes your own copy</span>
-    <p>The first time you save it, your organisation keeps its own copy and later
-       improvements no longer reach you automatically. If the bot's wording
-       changes, add the new phrases yourself.</p>
-  </div>
-  <p>A score is calculated when asked for and stored. Changing the policy does not
-     rewrite old scores — press the refresh arrow on the Intent panel.</p>
-
-  <h3>Campaigns and message templates</h3>
-  <p>To message a customer outside the 24-hour window you need an approved
-     template. Write one under <strong>Settings → Message Templates</strong> and
-     submit it to Meta; approval usually takes minutes to a day. Approved
-     templates become available in <strong>Campaigns</strong>, where you pick an
-     audience and send. Consent is checked for every recipient, and anyone who
-     opted out is excluded automatically.</p>
+  <p>Only the customer's words are read; the bot's own questions are excluded, or
+     “What is your budget?” would score every thread. Bands run from
+     <strong>Early</strong> at 1, <strong>Interested</strong> at 30, and the top
+     band at 60 — where the system asks for a person. A thread is not scored until
+     it has at least two messages.</p>
+  <p>All of it is editable under <strong>Settings → Business Configuration → Lead
+     scoring</strong>. Scores are stored when calculated, so changing the policy
+     does not rewrite old ones — use the refresh arrow on the Intent panel.</p>
 </div>
 
 <!-- ══════════════════════ PART FOUR ══════════════════════ -->
 <div class="divider">
   <div class="pn">Part Four</div>
-  <h1>Selling</h1>
-  <p>Quoting a piece, discounting it, taking the money and handling what comes
-     back.</p>
+  <h1>Quoting and selling</h1>
+  <p>Pricing a piece, getting a discount signed off, taking the money, and
+     handling what comes back.</p>
 </div>
 
 <div class="page">
-  <h2>Quotations and orders</h2>
-  <p class="lead">One quotation can carry several pieces — a necklace, earrings
-     and a ring — each priced in full and totalled together.</p>
+  <h2>Quotations</h2>
+  <p class="lead">Two tabs: <strong>Quotes</strong>, and <strong>Custom Orders
+     &amp; Timeline</strong> for pieces being made. The list shows
+     <em>Quote&nbsp;#</em>, <em>Customer</em>, <em>Origin store</em>,
+     <em>Status</em> and <em>Total</em>.</p>
 
   <h3>Building one</h3>
   <ol class="steps">
-    <li>Open <strong>Quotation &amp; Orders → New</strong>. Enter the customer's
-        name and number.</li>
-    <li>Choose the item type, and the style number if there is one. The download
+    <li><strong>New</strong>. Enter the customer's name and number.</li>
+    <li>Choose the item type, and the style number if there is one — the download
         arrow pulls that design's materials in automatically.</li>
-    <li>Fill the materials table — gold, stones, making.</li>
+    <li>Fill the materials table: gold, each stone, making.</li>
     <li><strong>+ Add item</strong> for a second piece. Each keeps its own metal,
         stones, making and discounts.</li>
     <li><strong>Create quotation</strong>. GST is added and the total shown.</li>
@@ -402,10 +542,14 @@
   <p>Those four lines total <strong>₹1,29,480</strong> before GST, matching the
      shop's own sheet exactly.</p>
 
+</div>
+
+<div class="page">
+  <h2>Quotations — stones, sizes and sending</h2>
   <h3>Finding a stone</h3>
   <p>Type what you know — <code>round</code>, <code>VVS</code>, <code>ruby</code>,
-     or the code itself. The box searches shape, quality and group, not just the
-     code. The carats box offers the standard per-stone weights.</p>
+     or the code itself. The box searches shape, quality and group, not only the
+     code, and the carats box offers the standard per-stone weights.</p>
 
   <h3>Size, remark and metal colour</h3>
   <ul>
@@ -413,134 +557,190 @@
         2.6, chain 16 — with cm, inch, or blank for Indian ring sizes.</li>
     <li><strong>Remark</strong> carries bespoke instructions: engraving, finish, a
         customer's own stone.</li>
-    <li><strong>Metal colour</strong> is not asked. The metal code already says it:
-        <code>G14YG</code> is 14K yellow, <code>G14WG</code> white.</li>
+    <li><strong>Metal colour</strong> is not asked, because the metal code says
+        it: <code>G14YG</code> is 14K yellow, <code>G14WG</code> white.</li>
   </ul>
+
   <div class="box ok">
     <span class="lbl">If it will not save</span>
     <p>The message names the row — “Item 1, stone 2 of 3: … needs its carats”. An
-       empty row you added and did not use is ignored. A row with figures but no
+       empty row you added and never used is ignored. A row with figures but no
        stone code must be completed or cleared.</p>
   </div>
-  <p>The gold rate every new quote is priced from comes from
-     <strong>Settings → Gold Rate</strong>. A quote freezes the rate it was priced
-     at; if the rate is stale the system asks you to confirm today's before
-     saving.</p>
+
+  <h3>Sending it</h3>
+  <p><strong>Send Quotation on WhatsApp</strong> delivers it from the branch's own
+     number. A quote can also be attached from inside a conversation, which is
+     quicker when you are already talking to them.</p>
+
+  <h3>Two things only head office sees</h3>
+  <p><em>Kaccha</em> estimates — rough quotes marked with <code>@</code> — are
+     hidden from everyone else, with a toggle to show them. The rate a quote is
+     priced from comes from <strong>Settings → Gold Rate</strong>; a quote freezes
+     the rate it was priced at, and if the stored rate is stale the system asks
+     you to confirm today's before saving.</p>
 </div>
 
 <div class="page">
-  <h2>Discounts, payments and returns</h2>
+  <h2>Discounts, approvals, payments and returns</h2>
 
   <h3>Discounts</h3>
-  <p>Beyond the per-row discounts in a quote, <strong>Discounts</strong> carries
-     requests that need approval, with a live margin check as the figure is
-     typed. Requests appear in <strong>Approvals</strong> for whoever may decide,
-     and every decision is kept in the audit log.</p>
+  <p>The screen states the rule: <em>raise a discount on diamond or making; within
+     store-manager caps it auto-approves, higher amounts escalate for
+     approval</em>. <em>Selling</em>, <em>Cost</em> and <em>Margin</em> sit side by
+     side so the cost of the discount is visible as it is asked for, and a
+     <em>Required</em> column names the approval level needed. Caps are listed per
+     role as a <em>Diamond cap</em>, a <em>Making cap</em> and a <em>Quote
+     cap</em>.</p>
+  <p>A rejection needs a <strong>Reason for rejection</strong> — <em>“e.g. Margin
+     too thin at this price.”</em> The requester sees it, which is what stops the
+     same request coming straight back unchanged.</p>
+
+  <h3>Approvals</h3>
+  <p>One queue, four kinds of thing, each labelled on the screen:</p>
+  <ul>
+    <li><strong>Discounts</strong> — diamond / making discount requests routed to you for sign-off.</li>
+    <li><strong>Returns</strong> — returns, exchanges and buybacks awaiting approval.</li>
+    <li><strong>Leave</strong> — staff leave requests pending your decision.</li>
+    <li><strong>Attendance fixes</strong> — missed / wrong-punch corrections awaiting your decision.</li>
+  </ul>
+  <p>Empty, it says <em>nothing is awaiting your approval</em> — so a blank screen
+     is an answer, not a failure to load.</p>
+  <p><strong>Branch Requests</strong> is the other side of this. Any member of
+     staff can ask their manager, the area office or head office for a decision —
+     a diamond rate, a price override, a transfer — and follow it by <em>Ref</em>,
+     <em>Status</em> and who it is <em>With</em>.</p>
 
   <h3>Sales &amp; Payments</h3>
-  <p>Records a sale with its advance and balance, and tracks collection against
-     it. Outstanding balances feed the follow-up lists, so a part-paid order does
-     not quietly go cold.</p>
-
-  <h3>Orders in production</h3>
-  <p>A custom order from a quotation routes to production and appears under
-     <strong>Orders in Production</strong> with its stage. Orders imported from
-     the factory system appear here too, so one screen covers both.</p>
+  <p>Three tabs. <strong>Sales</strong> records the sale.
+     <strong>Collections</strong> is the ledger of money actually received —
+     <strong>Record payment</strong> takes an amount, a mode and a
+     <em>Reference</em> (<em>UPI txn id, cheque no.</em>), and every row shows who
+     recorded it. <strong>Reconciliation</strong> sets <em>store reported</em>
+     against <em>bank statement</em> and shows the <em>Variance</em>.</p>
+  <div class="box warn">
+    <span class="lbl">Rows with nobody against them</span>
+    <p>Payments brought across from the old system are labelled <em>imported from
+       the legacy system — no Eclat user behind it</em>. That is expected for
+       historic rows. A <em>new</em> payment with nobody against it is not, and is
+       worth asking about.</p>
+  </div>
 
   <h3>Returns &amp; Exchange</h3>
-  <p>Returns, exchanges, buyback, repairs and old-gold trade-ins. Like discounts,
-     a return above the permitted threshold raises an approval rather than
-     completing silently.</p>
+  <p>Returns, exchanges and buybacks, with <strong>Photo intake</strong> so a
+     piece's condition is recorded as it crosses the counter rather than argued
+     about later. Anything above the permitted threshold raises an approval, and a
+     rejection needs a reason — <em>“e.g. Piece condition does not match the
+     intake photos.”</em></p>
 
-  <h3>Loyalty, referral and targets</h3>
-  <ul>
-    <li><strong>Loyalty &amp; Referral</strong> — gold-savings schemes and the
-        referral wallet.</li>
-    <li><strong>Points Programme</strong> — what a purchase earns and what a point
-        is worth, including the key your own website uses.</li>
-    <li><strong>Targets</strong> — monthly sales targets per store, with
-        achievement tracked against them.</li>
-    <li><strong>Sales Performance</strong> — the leaderboard, commission and
-        incentives.</li>
-  </ul>
+  <h3>Loyalty</h3>
+  <p>Two tabs: the <strong>Gold savings scheme</strong>, with enrollment, a
+     <strong>maturity calculator</strong> and members listed by <em>Plan</em>,
+     <em>Installment</em> and <em>Maturity</em>; and <strong>Earn with
+     Éclat</strong>, the points programme. Members appear <em>whether they join at
+     the counter or on your website</em>, and movements can be announced to your
+     own site over an <em>https</em> address.</p>
+  <p><strong>Targets</strong> sets a monthly figure per store and tracks
+     <em>Achieved</em> against it. <strong>Sales Performance</strong> is the
+     <strong>Leaderboard</strong> and <strong>Incentives &amp;
+     Commission</strong>.</p>
 </div>
 
 <!-- ══════════════════════ PART FIVE ══════════════════════ -->
 <div class="divider">
   <div class="pn">Part Five</div>
-  <h1>People</h1>
-  <p>Attendance, the daily sales report, and the roster behind them.</p>
+  <h1>Stock</h1>
+  <p>What you hold, what it is worth, what is moving between branches, and what
+     has stopped moving altogether.</p>
 </div>
 
 <div class="page">
-  <h2>Attendance</h2>
+  <h2>Inventory &amp; Stock</h2>
+  <p class="lead">Four tabs: <strong>Stock</strong>, <strong>Rotation</strong>,
+     <strong>Melting &amp; Scrap</strong> and <strong>Reorder</strong>.</p>
 
-  <h3>Where attendance is recorded</h3>
-  <p>Signing in does <strong>not</strong> mark anybody present. Everyone except
-     head office is taken to the punch screen at <code>/check-in</code>, and the
-     day is recorded only when a punch is made there.</p>
-  <table>
-    <tr><th style="width:44mm;">Situation</th><th>What happens</th></tr>
-    <tr><td><strong>Inside the branch fence</strong></td>
-        <td>Checks in automatically the moment the phone confirms the location.
-            The time is recorded by itself — nothing to tap.</td></tr>
-    <tr><td><strong>Outside it</strong></td>
-        <td>Asks why, records the punch, and reports it.</td></tr>
-    <tr><td><strong>GPS unclear, or no fix</strong></td>
-        <td>Same — a reason is required, then it is recorded.</td></tr>
-    <tr><td><strong>Fence cannot be read</strong></td>
-        <td>Also asks for a reason. Not knowing where somebody is is never
-            treated as knowing they are at work.</td></tr>
-  </table>
-  <p>Check-out works the same way, from the punch screen or from HRMS.</p>
-
+  <h3>Entering a piece</h3>
+  <p><strong>Stock entry</strong> records a name and SKU (<em>e.g.
+     NK-22K-0142</em>), metal and purity, karat, and the weights a jewellery
+     business has to keep apart: <em>Gross</em>, <em>Net</em> and <em>Pure</em>,
+     plus <em>Diamond count</em>, <em>Diamond wt (ct)</em> and <em>Stone wt
+     (ct)</em>. Then <em>Tag price</em> and <em>MRP</em>, and the compliance
+     fields — <strong>HUID (BIS Hallmark Unique ID)</strong>, <em>Hallmark
+     no.</em> and <em>Certificate no.</em></p>
   <div class="box ok">
-    <span class="lbl">Nobody is ever locked out</span>
-    <p>A punch is never refused for being in the wrong place. A phone inside a
-       concrete showroom can be wrong by 50–150 metres, and refusing the punch
-       does not move the person — it only removes the record that they came to
-       work. The fence decides whether a punch is <em>verified</em>, not whether
-       it is allowed.</p>
-    <p>A reason is still required. An unexplained punch from outside the branch
-       would be indistinguishable from one person punching for another.</p>
+    <span class="lbl">Fill in the HUID as the piece arrives</span>
+    <p>Hallmarking is a legal requirement, and the HUID is the one field nobody
+       can reconstruct later from the piece in their hand. Entering it at intake
+       costs seconds; finding it afterwards means going back to the supplier.</p>
   </div>
+  <p>Stock can be brought in in bulk with <strong>Import stock from Excel</strong>,
+     and many pieces changed at once with <strong>Bulk update status</strong>. A
+     status change needs a reason, and the note field shows the kind of thing
+     wanted: <em>“Reserved for Priya Sharma, or flagged for melting”</em>.</p>
 
-  <h3>Head office is told</h3>
-  <p>Every punch the fence cannot confirm notifies the branch manager
-     <em>and</em> head office, carrying the distance, the allowed radius and the
-     reason typed. The person who punched is not notified — they know where they
-     were.</p>
+  <h3>Reading the stock list</h3>
+  <p>Filter by category, purity, status, age and store. The cards above give
+     <strong>Aging distribution</strong>, <strong>Store-wise stock</strong>,
+     <strong>Auto-reorder alerts</strong> and <strong>Slow-moving stock</strong>.
+     If reorder alerts are blank the screen says <em>reorder points are not set up
+     yet</em> rather than implying all is well.</p>
 
-  <h3>Putting it right — regularisation</h3>
-  <ol class="steps">
-    <li>Open <strong>HRMS &amp; Attendance</strong>. Flagged punches are marked.</li>
-    <li>Read the reason and the distance.</li>
-    <li>Accept it, or correct the record. Every change is kept in the audit log
-        with who made it.</li>
-  </ol>
+  <h3>Melting</h3>
+  <p>Nothing appears under <strong>Melting &amp; Scrap</strong> until a piece is
+     sent there, and the screen says exactly how: <em>adjust a piece's status to
+     “Sent for melting” in the stock ledger and it will appear here</em>.</p>
 
-  <h3>Branch fences</h3>
-  <p>Each showroom has its own radius, set with the branch under
-     <strong>Settings → Store Setup</strong>, where the current value for each
-     branch is shown. Set it wide enough to absorb indoor drift in a concrete
-     building — a phone indoors is routinely 50–150 m out — but short of the
-     distance to the next showroom. Anything under about 100 m will flag staff
-     who are standing at their own counter.</p>
+  <h3>Transfers between branches</h3>
+  <p><strong>Stock Transfers</strong> lists each movement by <em>Ref</em>,
+     <em>Route</em>, <em>Pieces</em>, <em>Status</em> and who requested it,
+     filtered as <em>Incoming</em>, <em>Outgoing</em> or <em>In &amp; out</em>.
+     Many pieces can be moved at once with <strong>Bulk transfer</strong>.</p>
 
-  <h3>Roster and pay</h3>
-  <p><strong>Roster &amp; Pay</strong> turns the attendance register into shifts,
-     leave balances and payroll. Leave requests raised by staff appear in
-     <strong>Approvals</strong>.</p>
+  <h3>Dead stock</h3>
+  <p>You define what dead means, per category: <em>Dead after (days)</em> and
+     <em>Warn after (days)</em> — the suggested figure is 180 — then
+     <strong>Save rule</strong>. The list then shows each piece with its
+     <em>Threshold</em>, how far it is <em>Over by</em>, its <em>Tag price</em> and
+     a <em>Suggested</em> action. <strong>Scan a piece tag</strong> looks one up
+     from the counter by piece number.</p>
+</div>
+
+<!-- ══════════════════════ PART SIX ══════════════════════ -->
+<div class="divider">
+  <div class="pn">Part Six</div>
+  <h1>Reporting</h1>
+  <p>The daily sheet filed from a phone, the dashboards built out of it, and the
+     reports that send themselves.</p>
 </div>
 
 <div class="page">
-  <h2>Daily reporting over WhatsApp</h2>
-  <p class="lead">The day's sheet is filed by messaging the staff number. No app,
-     no login.</p>
+  <h2>The daily report, over WhatsApp</h2>
+  <p class="lead">Filed by messaging <span class="mono">+91 72089 12616</span>. No
+     app, no login, no dashboard.</p>
+
+  <h3>Giving somebody access — Settings → WhatsApp Reporting</h3>
+  <ol class="steps">
+    <li>Open the screen. Everyone in your branches is listed with their
+        <em>Access</em> and when they <em>last used</em> it.</li>
+    <li>Choose <strong>Set up</strong> on their row. A code appears and is copied
+        to your clipboard. It lasts <strong>10 minutes</strong>.</li>
+    <li>Read the code to them. They send it from the handset they want to use, to
+        the staff number.</li>
+    <li>That handset is now theirs for reporting. <strong>Remove</strong> undoes
+        it.</li>
+  </ol>
+  <div class="box ok">
+    <span class="lbl">Why you never type their phone number</span>
+    <p>The number is learnt from the message carrying the code, so nobody can bind
+       a handset they are not holding. The bot also cannot open a conversation
+       with a number that has never written to it — WhatsApp only allows that with
+       an approved template, and a one-time code is not something Meta
+       approves.</p>
+  </div>
 
   <h3>Filing a report</h3>
   <ol class="steps">
-    <li>Message <strong>+91 72089 12616</strong> and say <em>hi</em>.</li>
+    <li>Message the number and say <em>hi</em>.</li>
     <li>Choose <strong>1</strong> — send today's daily report.</li>
     <li>Answer each question. Reply <code>0</code> for none, or <code>skip</code>
         where offered.</li>
@@ -551,21 +751,21 @@
 
   <h3>What it asks, in the order of the sheet</h3>
   <table>
-    <tr><th style="width:38mm;">Section</th><th>Questions</th></tr>
+    <tr><th style="width:36mm;">Section</th><th>Questions</th></tr>
     <tr><td><strong>Footfall</strong></td><td>Walk-ins · serious enquiries · conversions</td></tr>
     <tr><td><strong>Table A — counter sale</strong></td>
         <td>Sale value, then cash · card · UPI · old gold taken and its value</td></tr>
     <tr><td><strong>Table B — customised sale</strong></td>
-        <td>Booking value, open bookings, bookings closed, amount received, then its
-            own cash · card · UPI · bank transfer · old gold</td></tr>
+        <td>Booking value, open bookings, bookings closed, amount received, then
+            its own cash · card · UPI · bank transfer · old gold</td></tr>
     <tr><td><strong>Remark</strong></td><td>Anything worth noting about the day</td></tr>
   </table>
-
   <div class="box ok">
     <span class="lbl">It only asks what applies</span>
     <p>Nothing sold at the counter? Those payment questions are skipped entirely.
        No old gold? It does not ask what the gold was worth. A quiet day is
-       <strong>nine</strong> questions; a full trading day is twenty.</p>
+       <strong>nine</strong> questions; a full trading day is
+       <strong>twenty</strong>.</p>
   </div>
   <div class="box warn">
     <span class="lbl">The two payment blocks are kept apart</span>
@@ -574,58 +774,291 @@
        question says which table you are filling, and each block must add up to
        its own total or the bot asks again.</p>
   </div>
-
-  <h3>Where reports appear</h3>
-  <p>Head office is notified as each report arrives. They are read under
-     <strong>Reporting &amp; DSR</strong> and can be downloaded as the standard
-     DSR sheet in PDF or Excel. Reports filed by WhatsApp are marked as such, so
-     they can be told apart from those entered on the dashboard.
-     <strong>Scheduled Reports</strong> sends month-end summaries automatically,
-     and <strong>Morning Digest</strong> tells each person what they owe a
-     customer that day.</p>
-</div>
-
-<!-- ══════════════════════ PART SIX ══════════════════════ -->
-<div class="divider">
-  <div class="pn">Part Six</div>
-  <h1>Running the system</h1>
-  <p>Configuration, the systems it connects to, and an honest account of what it
-     does not do.</p>
+  <p>Amounts can be typed the way a jeweller says them — <code>450000</code>,
+     <code>4,50,000</code>, <code>4.5L</code>, <code>₹4.5 lakh</code>,
+     <code>1.2cr</code> — and all mean the same thing.</p>
 </div>
 
 <div class="page">
-  <h2>Settings and administration</h2>
+  <h2>Reading the numbers</h2>
+
+  <h3>Reporting &amp; DSR</h3>
+  <p>Two tabs — <strong>This view</strong> and <strong>All stores
+     reports</strong>. <strong>Today's DSR</strong> opens the day's sheet, which
+     can be downloaded as the standard DSR in PDF or Excel, or sent to a
+     <em>Recipient WhatsApp number</em>. Reports filed by WhatsApp are marked as
+     such, so they can be told apart from those typed on the dashboard.</p>
+
+  <h3>Dashboards and Business Activity</h3>
+  <p><strong>Dashboards</strong> is the morning screen, with a
+     <strong>Tasks</strong> card — <strong>New task</strong> takes a detail, a
+     <em>Priority</em> (Low / Normal / High / Urgent), a due date and an assignee.
+     <strong>Business Activity</strong> answers four questions directly:
+     <em>when it came in</em>, <em>what sold</em>, <em>what has not sold</em>, and
+     <em>every document</em>. When a window looks empty it offers the likely
+     cause — <em>try a wider period, this shop's history may be older than the
+     window</em>.</p>
+
+  <h3>Management and Store Comparison</h3>
+  <p><strong>Management</strong> is the cross-business view: leads by source, by
+     branch and by stage; conversations by channel and <em>who replied first</em>;
+     follow-ups and calling; the floor; quotations by state; feedback; and
+     conversion by source, by branch and by owner.</p>
+  <div class="box ok">
+    <span class="lbl">It refuses to show a half-answer</span>
+    <p>If a figure cannot be worked out, the screen says <em>nothing is being shown
+       rather than a partial total</em> and asks for a narrower date range. A blank
+       here means “we will not guess”, not “you sold nothing”.</p>
+  </div>
+  <p><strong>Store Comparison</strong> ranks branches by revenue.</p>
+
+  <h3>Reports that send themselves</h3>
+  <p><strong>Scheduled Reports</strong>: give it a <em>Name</em>, <em>How
+     often</em>, the <em>Hour at the branch</em>, a branch, who to <strong>Send
+     to</strong> (comma-separated addresses) and which <em>Columns</em>. You can
+     also download or re-send the last completed period by hand. With none set up
+     it suggests where most shops start: <em>a month-end lead report is the usual
+     first one</em>.</p>
+  <p><strong>Morning Digest</strong> tells each person what they owe a customer
+     that day, at an <em>Hour (0–23)</em> you choose, using a named template. The
+     <strong>What mine says right now</strong> card previews your own and says
+     <em>nothing owed today</em> when there is nothing to send.</p>
+
+  <h3>Feedback</h3>
+  <p>Two tabs — <strong>All answers</strong> and <strong>Needs a person</strong>.
+     A Google review link can be set so a happy customer is pointed at it
+     automatically.</p>
+</div>
+
+<!-- ══════════════════════ PART SEVEN ══════════════════════ -->
+<div class="divider">
+  <div class="pn">Part Seven</div>
+  <h1>Administration</h1>
+  <p>Branches, what your business calls things, the adverts, and the connections
+     to Meta and your website.</p>
+</div>
+
+<div class="page">
+  <h2>Branches</h2>
+  <p class="lead">Settings → Store Setup. Regions first, then branches.</p>
+  <ul>
+    <li><strong>Add region</strong> — e.g. <em>West India</em>, code
+        <em>WEST</em>. A branch can sit without one, listed as <em>no region
+        yet</em>.</li>
+    <li><strong>Add store</strong> — name (<em>Surat — Main</em>), city, code
+        (<em>SRT-01</em>), region and phone.</li>
+    <li><strong>Edit store &amp; geofence</strong> — <em>Latitude</em>,
+        <em>Longitude</em> and <strong>Geofence Radius (metres)</strong>. The
+        suggested value is <strong>150</strong>.</li>
+    <li><strong>Add store manager</strong> — name, Login ID, mobile, and a
+        password of at least 8 characters.</li>
+    <li><strong>Reset password</strong>, and <strong>Close store</strong> when a
+        branch stops trading.</li>
+  </ul>
+  <div class="box warn">
+    <span class="lbl">Setting the geofence radius</span>
+    <p>Too tight and staff standing at their own counter are asked to explain
+       themselves every morning: a phone indoors is routinely 50–150 m out, and
+       the stored coordinate is usually a street centroid rather than the door.
+       Too wide and it stops meaning anything. Start at the suggested 150 m, then
+       widen a branch if its staff are being flagged while genuinely at work — the
+       flagged punches on <strong>Fix attendance</strong> carry the distances that
+       tell you by how much.</p>
+  </div>
+  <p>Branches arriving from a connected system land in an <strong>Import holding
+     area</strong> as <strong>Branches to review</strong>, rather than going live
+     unseen.</p>
+
+  <h3>Opening a new showroom</h3>
+  <p><strong>New-Store Setup</strong> runs a launch as a project: a
+     <strong>five-department launch checklist</strong>, milestones (<em>e.g.
+     T-30</em>, <em>Stock &amp; dry-run complete</em>) and <strong>Vendor
+     assignments</strong> with amounts and due dates. Each project has a launch
+     date and a project lead.</p>
+</div>
+
+<div class="page">
+  <h2>What your business calls things</h2>
+  <p class="lead">Settings → Business Configuration. Six tabs, and the first
+     changes wording across the whole system.</p>
   <table>
-    <tr><th style="width:46mm;">Screen</th><th>What you do there</th></tr>
-    <tr><td><strong>Getting Started</strong></td><td>What is set up and what is left: industry, locations, team, data, channels.</td></tr>
-    <tr><td><strong>Business Configuration</strong></td><td>Your industry package, what your business calls things, custom fields, sales stages, lead scoring, advert routing and customer-identity matching.</td></tr>
-    <tr><td><strong>Store Setup</strong></td><td>Branches, their coordinates and geofence radius, and password resets.</td></tr>
-    <tr><td><strong>People &amp; Access</strong></td><td>Screen-by-screen access per person.</td></tr>
-    <tr><td><strong>Gold Rate</strong></td><td>The live rate new quotes are priced from.</td></tr>
-    <tr><td><strong>Integrations</strong></td><td>WhatsApp, Meta Ads, the website catalogue and other connections, with the live state of each.</td></tr>
-    <tr><td><strong>Messaging Routes</strong></td><td>Which number each branch answers on, and which is the staff-only line.</td></tr>
-    <tr><td><strong>Message Templates</strong></td><td>Write a template and submit it to Meta for approval.</td></tr>
-    <tr><td><strong>WhatsApp Reporting</strong></td><td>Who may file a daily report from their phone.</td></tr>
-    <tr><td><strong>Channels</strong></td><td>What can actually reach a customer today, and what is missing where it cannot.</td></tr>
-    <tr><td><strong>Data &amp; Imports</strong></td><td>Import existing records; see what each connected system last delivered.</td></tr>
-    <tr><td><strong>Product Images</strong></td><td>Match a folder of photographs to products you already hold.</td></tr>
-    <tr><td><strong>Audit Log</strong></td><td>Approvals, role changes and other sensitive actions, with who did them.</td></tr>
+    <tr><th style="width:36mm;">Tab</th><th>What it controls</th></tr>
+    <tr><td><strong>Vocabulary</strong></td>
+        <td>Your industry's terms. Choose an industry for a starting set, then
+            edit.</td></tr>
+    <tr><td><strong>Custom fields</strong></td>
+        <td>Extra fields on your records — <em>applies to</em> picks the record,
+            then name the field (<em>e.g. Warranty period</em>).</td></tr>
+    <tr><td><strong>Sales stages</strong></td><td>The stages a lead moves through.</td></tr>
+    <tr><td><strong>Lead scoring</strong></td><td>The phrases, weights and bands from Part Three.</td></tr>
+    <tr><td><strong>Ad routing</strong></td><td>Which branch an advert's leads go to.</td></tr>
+    <tr><td><strong>Customer identity</strong></td>
+        <td>How two records are judged to be the same person, with a
+            <strong>possible duplicates</strong> list.</td></tr>
   </table>
 
-  <h3>Checks worth making monthly</h3>
-  <ul>
-    <li>Every trading branch has an <strong>active store manager</strong> who can
-        open Conversations.</li>
-    <li>New campaigns have a <strong>routing rule</strong>, or their leads land in
-        the head-office queue.</li>
-    <li>The Meta access token is still valid —
-        <strong>Settings → Integrations</strong> reports the connection state.</li>
-    <li>Branch coordinates and fence radii still match where the shops actually
-        are.</li>
-  </ul>
+  <h3>Advert routing</h3>
+  <table>
+    <tr><th style="width:40mm;">Match on</th><th>Use when</th></tr>
+    <tr><td><strong>Ad-set name contains</strong></td>
+        <td>The one to prefer. One rule per showroom, matching a word your
+            marketing team already puts in the ad-set name — “Bandra”, “Udaipur”.
+            Every future advert in that ad set routes with no further work.</td></tr>
+    <tr><td><strong>Exact ad ID</strong></td>
+        <td>Pinning one advert somewhere different, or a campaign whose ad-set
+            name carries no location.</td></tr>
+  </table>
+  <p>Where two rules match, the more specific wins — “Bandra Broadway” beats
+     “Bandra”, with no manual ordering.</p>
+  <div class="box warn">
+    <span class="lbl">Name matching needs the Meta Ads connection</span>
+    <p>A Click-to-WhatsApp tap reports the advert's ID and nothing else. Turning
+       that into an ad-set name needs <strong>Meta Ads</strong> connected with a
+       token that can read adverts. Without it, only exact-ad-ID rules can
+       match.</p>
+  </div>
+  <div class="box stop">
+    <span class="lbl">A branch with no manager notifies nobody</span>
+    <p>A rule can send leads to a showroom that has no active store manager. The
+       lead arrives correctly and then sits, because there is nobody to tell.
+       Before adding a rule for a branch, make sure it has an active manager who
+       can open Conversations.</p>
+  </div>
+  <p>If a lead arrives unrouted: open the thread, read the advert card, add a rule
+     for that advert or its ad set, then <strong>Reassign</strong> the lead that
+     already arrived. Existing threads are never re-routed automatically, by
+     design.</p>
+</div>
+
+<div class="page">
+  <h2>Sharing a live advert</h2>
+  <p class="lead">Each advert has three addresses. The posts are the advert as
+     published; the preview link shows it with the WhatsApp button attached, which
+     is usually what you want when demonstrating it.</p>
+  <table>
+    <tr><th style="width:24mm;">Advert</th><th>Where</th><th style="width:62mm;">Address</th></tr>
+    <tr><td rowspan="3"><strong>Bandra</strong></td>
+        <td>Facebook post</td><td class="mono">facebook.com/1281780938358230/<wbr>posts/1293013417234982</td></tr>
+    <tr><td>Instagram post</td><td class="mono">instagram.com/p/DdwKr6isgcO/</td></tr>
+    <tr><td>Advert preview</td><td class="mono">fb.me/2mtHMsKeUcTN8Ih</td></tr>
+    <tr><td rowspan="3"><strong>Surat</strong></td>
+        <td>Facebook post</td><td class="mono">facebook.com/1281780938358230/<wbr>posts/1293013430568314</td></tr>
+    <tr><td>Instagram post</td><td class="mono">instagram.com/p/DdwKr8wM4h5/</td></tr>
+    <tr><td>Advert preview</td><td class="mono">fb.me/2jDp44BRWvLmQ4m</td></tr>
+  </table>
+  <div class="box ok">
+    <span class="lbl">Most of the traffic is Instagram, not Facebook</span>
+    <p>Placements are left to Meta to choose, and it has settled on Instagram: over
+       the week before this manual was issued, Instagram carried
+       <strong>96%</strong> of the Bandra advert's views and <strong>82%</strong>
+       of Surat's, Reels largest of all. Worth knowing before judging an advert by
+       how it looks in a Facebook feed.</p>
+  </div>
+
+  <h3>Where advert money went</h3>
+  <p><strong>Ad performance</strong> puts <em>Spend</em>, <em>Clicks</em>,
+     <em>Revenue</em> and <em>Return</em> side by side per campaign, with a
+     <em>Mapping</em> column showing whether that campaign is tied to a branch.
+     <strong>Lead capture failures</strong> lists enquiries Meta sent that could
+     not be taken in, with why and how many attempts were made — so a broken
+     connection shows up as a number rather than as silence.</p>
+</div>
+
+<div class="page">
+  <h2>Connections, messaging and records</h2>
+
+  <h3>Integrations</h3>
+  <p>Grouped as <strong>Your connections</strong>, <strong>Available to
+     connect</strong> and <strong>Not available yet</strong>, so it is clear what
+     is on, what could be, and what is not offered at all. A connection needing
+     work outside CaratSense says <strong>Platform setup required</strong> rather
+     than failing quietly.</p>
+  <p>For WhatsApp you add a <strong>phone number ID</strong> from Meta and the
+     <strong>WhatsApp Business Account ID</strong> from WhatsApp Manager, and each
+     number records <em>who writes to it</em>. Meta assets can be registered by
+     <em>Type</em> and <em>Meta id</em> with a label — <em>what your team calls
+     it</em> — and <strong>Connection health</strong> re-checks each against Meta
+     and shows when it was last confirmed.</p>
+
+  <h3>Messaging Routes</h3>
+  <p>Maps each branch to the number it answers on, and shows which number
+     <em>sends from</em> where. With nothing connected it says <em>no WhatsApp
+     number is connected</em> and points at Integrations first.</p>
+
+  <h3>Message Templates</h3>
+  <p>Each template with its language, what the <em>provider says</em> about it, and
+     whether it <strong>can be sent</strong>. That last column is the one to read:
+     Meta's approval decides it, not anything in CaratSense.</p>
+
+  <h3>When a message does not go out</h3>
+  <p><strong>Outbound messages</strong> shows everything composed and its state.
+     <strong>Waiting for a person</strong> is the one to watch, and it is written
+     to reassure when empty: <em>every outbound message is either delivered or
+     already attached to a delivery job that will run on its own</em>.
+     <em>Nothing is stuck</em> means exactly that.</p>
+
+  <h3>Channels</h3>
+  <p>One table: each <strong>Channel</strong>, what it can do <strong>right
+     now</strong>, <strong>why</strong> if it cannot, and when it was last
+     <strong>confirmed with provider</strong>. The quickest answer to “can we
+     message customers today?”.</p>
+
+</div>
+
+<div class="page">
+  <h2>Records, imports and the audit trail</h2>
+  <h3>Data &amp; Imports</h3>
+  <p>Tabs for <strong>Sources</strong>, <strong>Import a file</strong>,
+     <strong>History</strong>, <strong>AI knowledge</strong> and <strong>Where
+     data came from</strong>. Every import is listed <em>with exactly what it
+     did</em>. Map a file's columns once and save the mapping — <em>next month it
+     is one click</em>. <strong>Product Images</strong> matches a folder of
+     photographs to products by reading the filename, with the prefix and suffix
+     to ignore set by you.</p>
+
+  <h3>Catalogue</h3>
+  <p>Search by <em>style no, SKU or name</em>. <strong>Catalogue
+     integration</strong> connects your website and the Gati connector, explains
+     <strong>what each number counts</strong>, and maintains the <strong>visual
+     search index</strong> behind image search.</p>
+
+  <h3>Audit Log</h3>
+  <p>Every sensitive action with <em>When</em>, <em>Actor</em>, <em>Action</em>, a
+     summary and the branch, filterable by action, store and date. This is where a
+     hand-marked attendance, a role change or a discount approval is answered
+     for.</p>
+
+  <h3>Ticketing</h3>
+  <p>For when something in the shop is broken rather than something a customer
+     wants: <em>raise an internal ticket for an operational issue; it auto-routes
+     to a resolver team by category</em>. The example sets the tone — <em>“POS
+     terminal freezes during billing”</em> — and the description asks for
+     <em>what happened, since when, and what you already tried</em>.</p>
+
+  <h3>Getting Started</h3>
+  <p><strong>Settings → Getting Started</strong> lists what is set up and what is
+     still outstanding. Worth revisiting a month in, when the gaps are the things
+     nobody got round to.</p>
+</div>
+
+<!-- ══════════════════════ PART EIGHT ══════════════════════ -->
+<div class="divider">
+  <div class="pn">Part Eight</div>
+  <h1>Every screen</h1>
+  <p>All <!--COUNT--> screens, grouped as the menu groups them. This list is
+     generated from the application itself, so it cannot fall out of step with
+     what you see.</p>
+</div>
+
+<div class="page">
+  <h2>The complete screen reference</h2>
+  <p class="lead">A screen appears in your menu only if your industry package
+     includes it and your role may open it — so not every person sees every row
+     below.</p>
+  <!--FEATURE_MAP-->
 
   <div class="foot">
-    CaratSense v2.4 · Operations Manual · Issued 5 October 2026 ·
+    CaratSense · Operations Manual · Issued 5 October 2026 ·
     Prepared for Éclat Diamonds &amp; Company
   </div>
 </div>
