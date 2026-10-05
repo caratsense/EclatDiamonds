@@ -712,25 +712,23 @@ function ConversationsContent() {
             Offered only to someone who can see more than one branch.
           */}
           {/*
-            Which inbox the lead came in on — WhatsApp, a phone call, and so on.
+            Nothing renders here while the tenant has one channel.
 
-            Always PRESENT, never a dropdown that cannot filter.
+            Three versions of this control have now been wrong in three
+            different ways. It hid itself below two options, and vanished
+            exactly when somebody wanted to confirm a filter existed. It was
+            made permanent, and became a dropdown whose two entries selected
+            the identical set of threads. It was demoted to a plain "WhatsApp"
+            label, and was still read as a chip that does nothing.
 
-            This control used to hide itself below two options, which was wrong:
-            it vanished exactly when somebody wanted to confirm a filter existed,
-            and reappeared unannounced the first time a second channel showed up.
-            Always rendering it fixed that and introduced the opposite complaint —
-            with only WhatsApp connected, "All channels" opened a menu whose two
-            entries select the identical set of threads. A filter that cannot
-            change the result is furniture pretending to be a control.
-
-            So: a real selector once there is a genuine choice, and a plain label
-            stating the one channel otherwise. The information ("this inbox is
-            WhatsApp") survives either way; only the false affordance goes.
+            The label was the last mistake: a reader does not need telling that
+            a WhatsApp inbox is WhatsApp. Every row already carries its own
+            channel, and the selector returns in full the moment a second
+            channel exists — which is the only moment it has ever been useful.
           */}
-          <div className="flex items-center gap-1.5">
-            <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
-            {channelOptions.length > 1 ? (
+          {channelOptions.length > 1 ? (
+            <div className="flex items-center gap-1.5">
+              <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
               <select
                 aria-label="Filter conversations by channel"
                 value={channelFilter}
@@ -748,15 +746,8 @@ function ConversationsContent() {
                   </option>
                 ))}
               </select>
-            ) : (
-              <span
-                className="flex h-8 items-center rounded-md border border-border bg-muted/40 px-2 text-xs font-medium text-muted-foreground"
-                title="This organisation has one messaging channel connected. The filter appears once there is a second."
-              >
-                {CHANNEL_LABELS[channelOptions[0]] ?? channelOptions[0]}
-              </span>
-            )}
-          </div>
+            </div>
+          ) : null}
 
           {/*
             Which Meta surface the ad was tapped on.
