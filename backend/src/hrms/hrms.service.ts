@@ -2980,7 +2980,20 @@ export class HrmsService {
       this.scope.assertStoreAllowed(user, headerStore);
       return headerStore;
     }
-    const first = fallback[0];
+    /*
+     * "All Stores" is a view, not a place anybody punches.
+     *
+     * The fallback used to take `fallback[0]` as-is, and that list can lead
+     * with the synthetic aggregate — so `GET /hrms/geofence` with no store
+     * header, or with "all", looked it up and returned 404 "Store not found".
+     *
+     * A 404 there was far worse than it reads. The punch screen could not tell
+     * a failed lookup from a branch with no fence, treated it as unfenced, and
+     * let the punch through from anywhere without asking for a reason. The
+     * browser side now fails safe as well, but the lookup should simply work:
+     * somebody with one branch punches at that branch.
+     */
+    const first = fallback.find((id) => id && id !== 'all');
     if (!first) throw new BadRequestException('No store resolved for this action');
     return first;
   }

@@ -1,0 +1,78 @@
+@page { size: A4; margin: 18mm 15mm 20mm 15mm; }
+:root {
+  --ink: #11151c; --muted: #5b6676; --line: #d8dee7;
+  --accent: #4f46e5; --accent-soft: #eef2ff;
+  --warn-bg: #fff7ed; --warn-line: #f59e0b;
+  --stop-bg: #fef2f2; --stop-line: #e11d48;
+  --ok-bg: #ecfdf5; --ok-line: #059669;
+}
+* { box-sizing: border-box; }
+body { font: 10.2pt/1.52 "Segoe UI","Helvetica Neue",Arial,sans-serif; color: var(--ink); margin: 0; }
+h1,h2,h3,h4 { line-height: 1.22; margin: 0 0 .4em; font-weight: 650; }
+h2 { font-size: 15.5pt; margin: 0 0 .7em; padding-bottom: .28em;
+     border-bottom: 2.5px solid var(--accent); color: var(--accent); }
+h3 { font-size: 11.6pt; margin-top: 1.4em; }
+h3 .cnt { font-size: 8.4pt; font-weight: 500; color: var(--muted); margin-left: .5em; }
+h4 { font-size: 9pt; margin-top: 1.1em; color: var(--muted);
+     text-transform: uppercase; letter-spacing: .06em; }
+p,li { margin: 0 0 .5em; }
+ul,ol { margin: 0 0 .65em; padding-left: 1.25em; }
+li { margin-bottom: .26em; }
+code { font-family: Consolas,"SF Mono",monospace; font-size: 8.6pt;
+       background: #f1f4f8; padding: .08em .3em; border-radius: 3px; }
+.mono { font-family: Consolas,"SF Mono",monospace; font-size: 9pt; }
+.part { page-break-before: always; }
+.page { page-break-after: always; }
+.page:last-child { page-break-after: auto; }
+section { page-break-inside: avoid; }
+
+.cover { height: 246mm; display: flex; flex-direction: column; justify-content: center; }
+.cover .mark { font-size: 33pt; font-weight: 750; letter-spacing: -.02em; }
+.cover .mark span { color: var(--accent); }
+.cover .sub { font-size: 13.5pt; color: var(--muted); margin-top: .15em; }
+.cover .rule { height: 3px; background: var(--accent); width: 68px; margin: 1.3em 0; }
+.cover dl { display: grid; grid-template-columns: 33mm 1fr; gap: .4em 0; font-size: 9.8pt; }
+.cover dt { color: var(--muted); }
+
+.divider { page-break-before: always; height: 243mm; display: flex;
+           flex-direction: column; justify-content: center; }
+.divider .pn { font-size: 9pt; letter-spacing: .22em; text-transform: uppercase;
+               color: var(--accent); font-weight: 700; }
+.divider h1 { font-size: 27pt; margin: .15em 0 .35em; letter-spacing: -.02em; }
+.divider p { font-size: 11.5pt; color: var(--muted); max-width: 118mm; }
+
+table { width: 100%; border-collapse: collapse; margin: .45em 0 .9em; font-size: 9.2pt; }
+th,td { border: 1px solid var(--line); padding: .38em .55em; text-align: left; vertical-align: top; }
+th { background: var(--accent-soft); font-weight: 650; }
+td.num,th.num { text-align: right; font-family: Consolas,monospace; }
+table.feat td:first-child { width: 46mm; }
+table.feat code { font-size: 7.8pt; background: none; padding: 0; color: var(--muted); }
+.kv td:first-child { width: 42mm; color: var(--muted); }
+.gnote { color: var(--muted); font-size: 9.4pt; margin: -.2em 0 .5em; }
+
+.box { border-left: 3.5px solid; padding: .55em .85em; margin: .7em 0; border-radius: 0 4px 4px 0; }
+.box p:last-child { margin-bottom: 0; }
+.box .lbl { font-weight: 700; font-size: 8.4pt; letter-spacing: .07em;
+            text-transform: uppercase; display: block; margin-bottom: .22em; }
+.warn { background: var(--warn-bg); border-color: var(--warn-line); }
+.warn .lbl { color: #b45309; }
+.stop { background: var(--stop-bg); border-color: var(--stop-line); }
+.stop .lbl { color: #be123c; }
+.ok { background: var(--ok-bg); border-color: var(--ok-line); }
+.ok .lbl { color: #047857; }
+
+.toc { font-size: 10pt; list-style: none; padding-left: 0; }
+.toc > li { margin-bottom: .75em; }
+.toc .pn { color: var(--accent); font-weight: 700; font-size: 8.4pt;
+           letter-spacing: .14em; text-transform: uppercase; }
+.toc ul { list-style: none; padding-left: 0; margin: .25em 0 0; }
+.toc ul li { color: var(--muted); font-size: 9.4pt; margin-bottom: .18em; }
+
+.steps { counter-reset: s; list-style: none; padding-left: 0; }
+.steps > li { counter-increment: s; position: relative; padding-left: 7.5mm; margin-bottom: .5em; }
+.steps > li::before { content: counter(s); position: absolute; left: 0; top: .06em;
+  width: 5mm; height: 5mm; border-radius: 50%; background: var(--accent);
+  color: #fff; font-size: 7.6pt; font-weight: 700; text-align: center; line-height: 5mm; }
+.lead { font-size: 10.6pt; color: var(--muted); margin-bottom: 1em; }
+.foot { margin-top: 2em; padding-top: .8em; border-top: 1px solid var(--line);
+        color: var(--muted); font-size: 8.6pt; }
