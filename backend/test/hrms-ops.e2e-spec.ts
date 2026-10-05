@@ -229,14 +229,47 @@ describe('Attendance operations (e2e)', () => {
 
   // --- 4. Geofence P0 --------------------------------------------------------
 
-  it('refuses a check-in with a confident fix outside the fence, even with a note', async () => {
+  it('refuses a check-in outside the fence when NO reason is given', async () => {
+    /*
+     * This asserted that an outside check-in was refused EVEN WITH a note,
+     * which locked staff out of their own shift: a phone indoors reports
+     * 50-150 m of drift against a coordinate that is a street centroid.
+     * What must stay strict is the unexplained punch — without a reason it is
+     * indistinguishable from a buddy punch. Run on repA, who must still have
+     * no punch for the ledger test that follows.
+     */
     const res = await request(server())
       .post('/hrms/attendance/check-in')
       .set(as(U.repA))
-      .send({ lat: MUMBAI.lat + 0.01, lng: MUMBAI.lng, accuracyM: 10, note: 'customer visit' })
+      .send({ lat: MUMBAI.lat + 0.01, lng: MUMBAI.lng, accuracyM: 10 })
       .expect(400);
-    expect(res.body.message).toMatch(/must be at the store/);
+    expect(res.body.message).toMatch(/Add a reason/);
     expect(await prisma.rawPunchEvent.count({ where: { userId: U.repA } })).toBe(0);
+  });
+
+  it('records an out-of-fence check-in WITH a reason, flagged for review', async () => {
+    // A different person, so the ledger assertions below still count one punch.
+    const res = await request(server())
+      .post('/hrms/attendance/check-in')
+      .set(as(U.repB))
+      .send({ lat: MUMBAI.lat + 0.01, lng: MUMBAI.lng, accuracyM: 10, note: 'customer visit' })
+      .expect(201);
+    expect(res.body.withinFence).toBe(false);
+    const punches = await prisma.rawPunchEvent.findMany({ where: { userId: U.repB } });
+    expect(punches).toHaveLength(1);
+    expect(punches[0]).toMatchObject({ kind: 'in', note: 'customer visit' });
+
+    /*
+     * Put the day back as it was found.
+     *
+     * Later tests in this file assert the day's rollup — that the seven states
+     * sum to the denominator — and an extra present body changes those totals.
+     * The behaviour under test is the punch being accepted at all, which is
+     * already proved above; leaving it behind would make a passing suite
+     * depend on the order its files happen to run in.
+     */
+    await prisma.attendanceRecord.deleteMany({ where: { staffId: U.repB } });
+    await prisma.rawPunchEvent.deleteMany({ where: { userId: U.repB } });
   });
 
   it('a check-in with no fix still needs a note, and with one it is recorded for review + in the ledger', async () => {
