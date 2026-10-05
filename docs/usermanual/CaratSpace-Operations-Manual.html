@@ -108,7 +108,7 @@ table.feat code { font-size: 7.8pt; background: none; padding: 0; color: var(--m
      screens. Part Eight lists every screen in the system.</p>
   <ol class="toc">
     <li><span class="pn">Part One</span> — <strong>Getting an account, and getting in</strong>
-      <ul><li>The sign-in screen · Login IDs · The three ways an account is created · Who sees what</li></ul></li>
+      <ul><li>The sign-in screen · Login IDs · How an account is created · Who sees what</li></ul></li>
     <li><span class="pn">Part Two</span> — <strong>Starting the day</strong>
       <ul><li>The attendance screen · What it asks away from the branch · HRMS</li></ul></li>
     <li><span class="pn">Part Three</span> — <strong>Customers and enquiries</strong>
@@ -148,13 +148,11 @@ table.feat code { font-size: 7.8pt; background: none; padding: 0; color: var(--m
      nothing else.</p>
   <table>
     <tr><th style="width:52mm;">Field</th><th>What goes in it</th></tr>
-    <tr><td><strong>Login ID or mobile number</strong></td>
-        <td>Either identifies the account. The <strong>Login ID</strong> is
-            generated for them when the account is created — it looks like an
-            email address but is not one, and the Team screen labels it
-            <em>“a sign-in identifier, not an inbox”</em>. The
-            <strong>10-digit mobile number</strong> on the account works in the
-            same box; the Add staff dialog says so twice.</td></tr>
+    <tr><td><strong>Login ID</strong></td>
+        <td>Generated when the account is created and shown to whoever created
+            it. It looks like an email address but is not one — the Team screen
+            labels it <em>“a sign-in identifier, not an inbox”</em>, so nothing
+            is ever sent to it.</td></tr>
     <tr><td><strong>Password</strong></td>
         <td>At least 8 characters, set with the account and shared privately.
             Staff can change it later in their own Settings.</td></tr>
@@ -181,10 +179,10 @@ table.feat code { font-size: 7.8pt; background: none; padding: 0; color: var(--m
 </div>
 
 <div class="page">
-  <h2>The three ways an account is created</h2>
+  <h2>How an account is created</h2>
 
-  <h3>1. Somebody adds them — Settings → Team → Add staff</h3>
-  <p>The usual way, and the one to standardise on.</p>
+  <h3>Settings → Team → Add staff</h3>
+  <p>This is the only way. Head office or a store manager creates the account, the Login ID and the password; there is no self-service sign-up and nothing for staff to fill in themselves.</p>
   <ol class="steps">
     <li>Enter <strong>Name</strong>, <strong>Phone</strong> (10 digits) and
         <strong>Personal email</strong>. All three are required, and so is a
@@ -205,23 +203,6 @@ table.feat code { font-size: 7.8pt; background: none; padding: 0; color: var(--m
        but the password cannot, and would have to be reset.</p>
   </div>
 
-  <h3>2. A request arrives from the sign-in screen</h3>
-  <p>The sign-in screen has a sign-up side, so a person can ask for an account
-     themselves. The request does not create a login: it appears on
-     <strong>Settings → Team</strong> under <strong>Account requests</strong>,
-     where an approver grants it and the Login ID is issued at that moment. An
-     approver can only grant roles below their own, and only head office can
-     approve a Store Manager.</p>
-  <p>Éclat creates accounts with <strong>Add staff</strong> instead, so treat
-     this as something you may see rather than a route to use.</p>
-
-  <h3>3. Pending assignment — an account with no branch</h3>
-  <p>An account not linked to a store is listed on Team under <strong>Pending
-     assignment</strong>, which says it plainly: <em>these accounts are set up but
-     not yet linked to a store, assign each to a store so they can start
-     working</em>. The section is hidden when nobody is in it, so if you cannot
-     see it there is nothing waiting.</p>
-
   <h3>Resetting a password</h3>
   <p>There is a <strong>Reset password</strong> action in two places and either
      will do: on <strong>Settings → Team</strong> against the person, and on
@@ -236,24 +217,14 @@ table.feat code { font-size: 7.8pt; background: none; padding: 0; color: var(--m
 
 <div class="page">
   <h2>Who sees what</h2>
-  <p class="lead">The role sets the default. Head office can then narrow or widen
-     any individual.</p>
+  <p class="lead">Four roles are in use. The role sets the default; head office
+     can then narrow or widen any individual.</p>
   <table>
     <tr><th style="width:32mm;">Role</th><th>Scope</th><th style="width:26mm;">Lands on</th></tr>
     <tr><td><strong>Head office</strong></td>
         <td>Every branch, every screen, all reporting. The only role that can
             approve managers, and the only one that sees <em>kaccha</em>
             estimates on quotations.</td><td>Dashboards</td></tr>
-    <tr><td><strong>Area manager</strong></td><td>The branches in their area.</td><td>Attendance</td></tr>
-    <tr><td><strong>Store manager</strong></td>
-        <td>Their branch — inbox, leads, team, attendance, stock — and the
-            approvals routed to them.</td><td>Attendance</td></tr>
-    <tr><td><strong>Salesperson</strong></td>
-        <td>Their branch's customers and their own attendance. On Branch
-            Requests they see only the requests they raised.</td><td>Attendance</td></tr>
-    <tr><td><strong>Storeperson</strong></td>
-        <td>Shares the front-line rank, but is only notified about things
-            addressed to storepeople.</td><td>Attendance</td></tr>
   </table>
   <p>Everyone except head office lands on the attendance screen, which passes
      them through to their own home page once the day is started.</p>
@@ -262,10 +233,9 @@ table.feat code { font-size: 7.8pt; background: none; padding: 0; color: var(--m
   <table>
     <tr><th style="width:46mm;">Screen</th><th>Who can open it</th></tr>
     <tr><td><strong>Settings → Team</strong></td>
-        <td>Head office, area managers and store managers — but
-            <em>within your scope</em>. A store manager sees and adds only their
-            own branch's staff; head office sees everyone in the
-            organisation.</td></tr>
+        <td>Head office and store managers, <em>within your scope</em>. A store
+            manager sees and adds only their own branch's staff; head office sees
+            everyone in the organisation.</td></tr>
     <tr><td><strong>Settings → People &amp; Access</strong></td>
         <td><strong>Head office only.</strong> Nobody else can grant or withdraw
             an individual screen, and nobody else can change another person's
@@ -286,6 +256,69 @@ table.feat code { font-size: 7.8pt; background: none; padding: 0; color: var(--m
        when the system looks for an owner for a new lead. The lead reaches the
        branch and then sits unowned, with nobody notified. If leads stop being
        assigned, check this before anything else.</p>
+  </div>
+</div>
+
+<div class="page">
+  <h2>Finding your way around</h2>
+  <p class="lead">The furniture is the same on every screen. Five minutes here
+     saves a new starter a fortnight of asking.</p>
+
+  <h3>Down the left — the menu</h3>
+  <p>Screens are grouped, and the groups collapse. <strong>Collapse all</strong>
+     at the top folds everything away; a group reopens with a click. A number
+     beside a group is how many things in it want attention. The product name and
+     version sit at the very bottom — worth quoting if you ever report a
+     problem.</p>
+  <p>Faster than hunting: the <strong>search box</strong> at the top of the menu
+     finds a screen by name. Press <code>/</code> from anywhere to jump into it,
+     type a few letters, and press <strong>Enter</strong>.
+     <strong>Escape</strong> closes it.</p>
+
+  <h3>Across the top</h3>
+  <table>
+    <tr><th style="width:44mm;">What it is</th><th>What it does</th></tr>
+    <tr><td><strong>Branch name</strong></td>
+        <td>Which branch you are looking at. If you cover more than one, this
+            switches between them, and <strong>All Stores</strong> shows them
+            together. Everything on the screen follows it — so a figure that
+            looks wrong is often the right figure for a different
+            branch.</td></tr>
+    <tr><td><strong>Gold rate</strong></td>
+        <td>Today's rate per gram, the one new quotations price from. If it looks
+            stale, it is — it is set by hand under Settings → Gold Rate.</td></tr>
+    <tr><td><strong>Bell</strong></td>
+        <td>Notifications, with a count of the unread. Open one to go straight to
+            what it is about. <strong>Mark all read</strong> clears the count;
+            <strong>Clear read</strong> tidies the ones already dealt
+            with.</td></tr>
+    <tr><td><strong>Your name</strong></td>
+        <td>Your role is printed beside it — a quick way to answer “why can I not
+            see that screen?”. The menu holds <strong>Profile &amp;
+            Settings</strong>, <strong>Install app</strong>, <strong>Show welcome
+            tour</strong> and <strong>Sign out</strong>.</td></tr>
+    <tr><td><strong>Sun / moon</strong></td>
+        <td>Light or dark. A personal preference, remembered.</td></tr>
+  </table>
+
+  <div class="box ok">
+    <span class="lbl">Start a new person on the welcome tour</span>
+    <p>Your name → <strong>Show welcome tour</strong> walks the screen in place.
+       It can be replayed as often as you like, so it is the right first thing to
+       hand somebody on their first morning — before this manual, not after
+       it.</p>
+  </div>
+
+  <h3>Put it on the phone</h3>
+  <p><strong>Install app</strong> in the same menu adds CaratSpace to the home
+     screen like any other app. Worth doing for anyone who punches attendance,
+     since that happens on a phone at the door rather than at a desk.</p>
+
+  <div class="box warn">
+    <span class="lbl">If a screen is missing from your menu</span>
+    <p>It is not broken. A screen shows only when your role may open it — so a
+       salesperson will not find Team, and only head office finds People &amp;
+       Access. Check the role printed beside your name before reporting it.</p>
   </div>
 </div>
 

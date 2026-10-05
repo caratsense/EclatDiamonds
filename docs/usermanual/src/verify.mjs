@@ -50,8 +50,7 @@ const FACTS = [
   // manual claimed a WhatsApp OTP option: the API has one, the screen does not,
   // so no reader could ever have used it. These assert the real field label and
   // the real workflow names.
-  "Login ID or mobile number", "Account requests", "CaratSpace", "Pending assignment",
-  "Skip for now", "a sign-in identifier, not an inbox",
+  "a sign-in identifier, not an inbox", "Show welcome tour", "Marketing", "Add staff", "CaratSpace", "Skip for now", "not an inbox",
   "regularisation",
   // Workflows a reader is sent to by name.
   "Fix attendance", "Create Deal / Quotation",
@@ -61,7 +60,12 @@ const FACTS = [
   "instagram.com/p/DdwKr6isgcO/", "instagram.com/p/DdwKr8wM4h5/",
   "posts/1293013417234982", "posts/1293013430568314",
 ];
-for (const f of FACTS) check(`"${f}"`, text.includes(f));
+// Checked against whitespace-normalised text: the PDF wraps lines wherever the
+// column ends, so any phrase long enough to be worth asserting will sooner or
+// later straddle a newline and fail for no reason. Three different facts have
+// already been "lost" that way and were present all along.
+const flat = text.replace(/\s+/g, " ");
+for (const f of FACTS) check(`"${f}"`, flat.includes(f.replace(/\s+/g, " ")));
 
 // Names the product has been called before. The cover wordmark is split as
 // Carat<span>Space</span>, so a plain find-and-replace silently skips it — that
