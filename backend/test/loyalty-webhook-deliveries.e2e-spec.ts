@@ -67,6 +67,27 @@ describe('Loyalty webhook delivery log (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let jobs: JobsService;
+
+  /**
+   * Drain until the queue is empty, rather than a fixed number of jobs.
+   *
+   * A fixed allowance is a hidden coupling to how much OTHER background work
+   * the system queues. Lead scoring now enqueues a requalification job per
+   * inbound message, which consumed the budget before the jobs under test were
+   * reached, and these suites failed on records that were merely still
+   * pending. Bounded, so a permanently failing job cannot spin forever.
+   */
+  const drainAll = async (rounds = 20) => {
+    const total = { processed: 0, succeeded: 0, failed: 0 };
+    for (let i = 0; i < rounds; i += 1) {
+      const round = await jobs.drain(50);
+      total.processed += round.processed;
+      total.succeeded += round.succeeded;
+      total.failed += round.failed;
+      if (round.processed === 0) break;
+    }
+    return total;
+  };
   let loyaltyApi: LoyaltyApiService;
 
   let hoT = '';
@@ -228,7 +249,7 @@ describe('Loyalty webhook delivery log (e2e)', () => {
     expect(queued.jobId).toBeTruthy();
     deliveredId = queued.id;
 
-    await jobs.drain(20);
+    await drainAll();
 
     const hits = requestsFor(queued.id);
     expect(hits).toHaveLength(1);
@@ -279,7 +300,7 @@ describe('Loyalty webhook delivery log (e2e)', () => {
     expect(retry.body.requeued).toBe(false);
     expect(retry.body.delivery.status).toBe('delivered');
 
-    await jobs.drain(20);
+    await drainAll();
     expect(requestsFor(deliveredId)).toHaveLength(1);
     expect(
       await prisma.loyaltyWebhookDelivery.count({ where: { organisationId: A.org, entryId: deliveredEntry } }),
@@ -300,7 +321,7 @@ describe('Loyalty webhook delivery log (e2e)', () => {
 
     // One job per drain, so each step is exactly one attempt whatever the
     // database's session timezone does to the queue's `runAt <= NOW()`.
-    await jobs.drain(1);
+    await drainAll();
     let row = await prisma.loyaltyWebhookDelivery.findUniqueOrThrow({ where: { id: deadId } });
     expect(row.status).toBe('failed');
     expect(row.responseCode).toBe(500);
@@ -312,7 +333,7 @@ describe('Loyalty webhook delivery log (e2e)', () => {
     for (let attempt = 2; attempt <= WEBHOOK_MAX_ATTEMPTS; attempt++) {
       // Skip the backoff wait, not the attempt: the row becomes due now.
       await prisma.jobTask.update({ where: { id: row.jobId! }, data: { runAt: new Date() } });
-      await jobs.drain(1);
+      await drainAll();
       row = await prisma.loyaltyWebhookDelivery.findUniqueOrThrow({ where: { id: deadId } });
     }
 
@@ -398,8 +419,8 @@ describe('Loyalty webhook delivery log (e2e)', () => {
     expect(pending.status).toBe('pending');
     expect(pending.manualRetries).toBe(1);
 
-    await jobs.drain(20);
-    await jobs.drain(20);
+    await drainAll();
+    await drainAll();
 
     const hits = requestsFor(deadId);
     expect(hits).toHaveLength(before + 1);
@@ -416,7 +437,7 @@ describe('Loyalty webhook delivery log (e2e)', () => {
       .set(auth(hoT))
       .expect(200);
     expect(again.body.requeued).toBe(false);
-    await jobs.drain(20);
+    await drainAll();
     expect(requestsFor(deadId)).toHaveLength(before + 1);
 
     expect(

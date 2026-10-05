@@ -109,7 +109,13 @@ export function Sidebar() {
       : "CaratOS Platform";
 
   return (
-    <aside className="hidden w-68 shrink-0 flex-col bg-sidebar text-sidebar-foreground md:flex">
+    /*
+      `border-r` is new. Colour alone used to separate the rail from the page,
+      which is unmistakable when they are #0b0f19 and #f7f8fa apart and all but
+      invisible once dark mode puts them two values apart. An explicit edge
+      holds in either theme.
+    */
+    <aside className="hidden w-68 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex">
       {/* Brand */}
       <div className="flex h-16 items-center border-b border-sidebar-border px-5">
         <Link

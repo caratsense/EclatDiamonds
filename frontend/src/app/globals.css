@@ -164,13 +164,28 @@
   --brand-deep: #06080d;
   --brand-foreground: #f8fafc;
 
-  --sidebar: #07090e;
+  /*
+   * In dark mode the sidebar has to be a SURFACE, not another shade of page.
+   *
+   * It was #07090e against a #090b10 background — roughly two values per
+   * channel apart, with an 8%-white hairline for an edge. In light mode the
+   * same token is #0b0f19 on #f7f8fa, and that contrast IS the design: a dark
+   * rail against a pale app. Carried into dark mode the intent inverts into
+   * nothing, because there is no darker left to go, so the rail dissolves into
+   * the background and the app looks like one undifferentiated sheet.
+   *
+   * It now sits slightly ABOVE the page rather than below it, which is the
+   * convention this palette already uses for every other surface (`--card` is
+   * #0e131f on the same background). The divider and the hover tint move with
+   * it, because a surface this close to its background is read by its edge.
+   */
+  --sidebar: #0d121c;
   --sidebar-foreground: #94a3b8;
   --sidebar-primary: #818cf8;
   --sidebar-primary-foreground: #0b1120;
-  --sidebar-accent: #121826;
+  --sidebar-accent: #1a2234;
   --sidebar-accent-foreground: #f8fafc;
-  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-border: rgba(255, 255, 255, 0.14);
   --sidebar-ring: #818cf8;
 }
 
