@@ -55,33 +55,11 @@ import {
   sizeText,
   type AutoRate,
   type ItemRow,
-  type StoneRow,
 } from "@/components/quotation/quote-item-editor";
-
-/*
- * A stone row somebody added and never filled in.
- *
- * "+ Diamond" appends an empty row, and until this it made the whole quote
- * unsaveable: validation reported "a diamond has no code" about a row the
- * person had not typed into and could not see was the problem. An untouched
- * row is not an error, it is one they changed their mind about — so it is
- * dropped, both from validation and from what is saved.
- *
- * Only a WHOLLY blank row. A row carrying any figure at all must still name
- * its stone, or a half-filled line would vanish without a word.
- */
-export function blankStone(s: StoneRow): boolean {
-  return (
-    !s.code.trim() &&
-    !s.size.trim() &&
-    !(num(s.pieces) ?? 0) &&
-    !(num(s.carats) ?? 0) &&
-    !(num(s.rate) ?? 0) &&
-    !(num(s.discount) ?? 0)
-  );
-}
-
-const realStones = (it: ItemRow) => it.stones.filter((s) => !blankStone(s));
+import {
+  itemProblem as validateItems,
+  realStones,
+} from "@/components/quotation/quote-validation";
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 
@@ -359,37 +337,16 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
       });
   }
 
-  /** What stops the items being priced, if anything. */
+  /**
+   * What stops the items being priced, if anything.
+   *
+   * The rules live in `quote-validation.ts` so they can be tested without
+   * rendering the builder; this only supplies what the component knows — the
+   * material lists, the karat of an item and whether today's gold rate is
+   * trustworthy.
+   */
   function itemProblem(): string | null {
-    const priced = items.filter((it) => (num(it.weight) ?? 0) > 0 || realStones(it).length > 0);
-    if (!priced.length) return "Add a gold weight or a diamond to an item.";
-    for (const [i, it] of items.entries()) {
-      if (!priced.includes(it)) continue;
-      const n = `Item ${i + 1}`;
-      if (!it.itemType) return `${n}: pick the item type.`;
-      if ((num(it.weight) ?? 0) > 0 && !karatOf(it)) return `${n}: pick the metal (${QUOTE_KARATS_TEXT}).`;
-      if ((num(it.weight) ?? 0) > 0 && !num(it.manualRate)) {
-        const a = autoRate(karatOf(it));
-        // A quote freezes the gold rate it was priced at. It must not freeze a
-        // built-in default or a rate that has gone out of date while looking
-        // like today's: with either, the person confirms today's by typing it.
-        if (a.fallback || a.stale) return `${n}: the ${karatOf(it)}K rate is not today's — type today's rate.`;
-      }
-      for (const s of realStones(it)) {
-        const list = s.type === "D" ? lists.diamonds : lists.stones;
-        if (!s.code.trim()) return `${n}: a ${s.type === "D" ? "diamond" : "colour stone"} has no code.`;
-        if (list.length && !list.some((m) => m.code === s.code.trim())) {
-          return `${n}: ${s.code} is not a ${s.type === "D" ? "diamond" : "colour stone"} code — pick one from the list.`;
-        }
-        if (!((num(s.carats) ?? 0) > 0)) return `${n}: ${s.code} needs its carats.`;
-        if ((num(s.discount) ?? 0) > 100) return `${n}: ${s.code} has a discount over 100%.`;
-      }
-      if ((num(it.metalDiscount) ?? 0) > 100 || (num(it.makingDiscount) ?? 0) > 100) {
-        return `${n}: a discount cannot be more than 100%.`;
-      }
-      if (sizeText(it).length > 30) return `${n}: the size is too long.`;
-    }
-    return null;
+    return validateItems(items, lists, karatOf, (k) => autoRate(k), QUOTE_KARATS_TEXT);
   }
 
   /** Best-effort upload of every picked reference photo. */
