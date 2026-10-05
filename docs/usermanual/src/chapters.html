@@ -1,91 +1,10 @@
-<meta charset="utf-8">
-<title>CaratSense — Operations Manual</title>
-<style>@page { size: A4; margin: 18mm 15mm 20mm 15mm; }
-:root {
-  --ink: #11151c; --muted: #5b6676; --line: #d8dee7;
-  --accent: #4f46e5; --accent-soft: #eef2ff;
-  --warn-bg: #fff7ed; --warn-line: #f59e0b;
-  --stop-bg: #fef2f2; --stop-line: #e11d48;
-  --ok-bg: #ecfdf5; --ok-line: #059669;
-}
-* { box-sizing: border-box; }
-body { font: 10.2pt/1.52 "Segoe UI","Helvetica Neue",Arial,sans-serif; color: var(--ink); margin: 0; }
-h1,h2,h3,h4 { line-height: 1.22; margin: 0 0 .4em; font-weight: 650; }
-h2 { font-size: 15.5pt; margin: 0 0 .7em; padding-bottom: .28em;
-     border-bottom: 2.5px solid var(--accent); color: var(--accent); }
-h3 { font-size: 11.6pt; margin-top: 1.4em; }
-h3 .cnt { font-size: 8.4pt; font-weight: 500; color: var(--muted); margin-left: .5em; }
-h4 { font-size: 9pt; margin-top: 1.1em; color: var(--muted);
-     text-transform: uppercase; letter-spacing: .06em; }
-p,li { margin: 0 0 .5em; }
-ul,ol { margin: 0 0 .65em; padding-left: 1.25em; }
-li { margin-bottom: .26em; }
-code { font-family: Consolas,"SF Mono",monospace; font-size: 8.6pt;
-       background: #f1f4f8; padding: .08em .3em; border-radius: 3px; }
-.mono { font-family: Consolas,"SF Mono",monospace; font-size: 9pt; }
-.part { page-break-before: always; }
-.page { page-break-after: always; }
-.page:last-child { page-break-after: auto; }
-section { page-break-inside: avoid; }
-
-.cover { height: 246mm; display: flex; flex-direction: column; justify-content: center; }
-.cover .mark { font-size: 33pt; font-weight: 750; letter-spacing: -.02em; }
-.cover .mark span { color: var(--accent); }
-.cover .sub { font-size: 13.5pt; color: var(--muted); margin-top: .15em; }
-.cover .rule { height: 3px; background: var(--accent); width: 68px; margin: 1.3em 0; }
-.cover dl { display: grid; grid-template-columns: 33mm 1fr; gap: .4em 0; font-size: 9.8pt; }
-.cover dt { color: var(--muted); }
-
-.divider { page-break-before: always; height: 243mm; display: flex;
-           flex-direction: column; justify-content: center; }
-.divider .pn { font-size: 9pt; letter-spacing: .22em; text-transform: uppercase;
-               color: var(--accent); font-weight: 700; }
-.divider h1 { font-size: 27pt; margin: .15em 0 .35em; letter-spacing: -.02em; }
-.divider p { font-size: 11.5pt; color: var(--muted); max-width: 118mm; }
-
-table { width: 100%; border-collapse: collapse; margin: .45em 0 .9em; font-size: 9.2pt; }
-th,td { border: 1px solid var(--line); padding: .38em .55em; text-align: left; vertical-align: top; }
-th { background: var(--accent-soft); font-weight: 650; }
-td.num,th.num { text-align: right; font-family: Consolas,monospace; }
-table.feat td:first-child { width: 46mm; }
-table.feat code { font-size: 7.8pt; background: none; padding: 0; color: var(--muted); }
-.kv td:first-child { width: 42mm; color: var(--muted); }
-.gnote { color: var(--muted); font-size: 9.4pt; margin: -.2em 0 .5em; }
-
-.box { border-left: 3.5px solid; padding: .55em .85em; margin: .7em 0; border-radius: 0 4px 4px 0; }
-.box p:last-child { margin-bottom: 0; }
-.box .lbl { font-weight: 700; font-size: 8.4pt; letter-spacing: .07em;
-            text-transform: uppercase; display: block; margin-bottom: .22em; }
-.warn { background: var(--warn-bg); border-color: var(--warn-line); }
-.warn .lbl { color: #b45309; }
-.stop { background: var(--stop-bg); border-color: var(--stop-line); }
-.stop .lbl { color: #be123c; }
-.ok { background: var(--ok-bg); border-color: var(--ok-line); }
-.ok .lbl { color: #047857; }
-
-.toc { font-size: 10pt; list-style: none; padding-left: 0; }
-.toc > li { margin-bottom: .75em; }
-.toc .pn { color: var(--accent); font-weight: 700; font-size: 8.4pt;
-           letter-spacing: .14em; text-transform: uppercase; }
-.toc ul { list-style: none; padding-left: 0; margin: .25em 0 0; }
-.toc ul li { color: var(--muted); font-size: 9.4pt; margin-bottom: .18em; }
-
-.steps { counter-reset: s; list-style: none; padding-left: 0; }
-.steps > li { counter-increment: s; position: relative; padding-left: 7.5mm; margin-bottom: .5em; }
-.steps > li::before { content: counter(s); position: absolute; left: 0; top: .06em;
-  width: 5mm; height: 5mm; border-radius: 50%; background: var(--accent);
-  color: #fff; font-size: 7.6pt; font-weight: 700; text-align: center; line-height: 5mm; }
-.lead { font-size: 10.6pt; color: var(--muted); margin-bottom: 1em; }
-.foot { margin-top: 2em; padding-top: .8em; border-top: 1px solid var(--line);
-        color: var(--muted); font-size: 8.6pt; }
-</style>
 <div class="page cover">
   <div class="mark">Carat<span>Sense</span></div>
   <div class="sub">Operations Manual</div>
   <div class="rule"></div>
   <p style="max-width:122mm; color:var(--muted); font-size:11pt;">
     The complete working guide to the Éclat Diamonds platform — all
-    57 screens, the two WhatsApp bots, and how to run each part of
+    <!--COUNT--> screens, the two WhatsApp bots, and how to run each part of
     the business on it.
   </p>
   <dl style="margin-top:2.6em;">
@@ -107,7 +26,7 @@ table.feat code { font-size: 7.8pt; background: none; padding: 0; color: var(--m
     <li><span class="pn">Part One</span> — <strong>Getting started</strong>
       <ul><li>Signing in · Roles and what each sees · Giving people access</li></ul></li>
     <li><span class="pn">Part Two</span> — <strong>Every screen</strong>
-      <ul><li>All 57 screens, grouped as the menu groups them</li></ul></li>
+      <ul><li>All <!--COUNT--> screens, grouped as the menu groups them</li></ul></li>
     <li><span class="pn">Part Three</span> — <strong>Customers and leads</strong>
       <ul><li>The two WhatsApp bots · Conversations · Advert routing · Lead scoring · Campaigns</li></ul></li>
     <li><span class="pn">Part Four</span> — <strong>Selling</strong>
@@ -234,7 +153,7 @@ table.feat code { font-size: 7.8pt; background: none; padding: 0; color: var(--m
 <div class="divider">
   <div class="pn">Part Two</div>
   <h1>Every screen</h1>
-  <p>All 57 screens in the platform, grouped exactly as the menu groups
+  <p>All <!--COUNT--> screens in the platform, grouped exactly as the menu groups
      them. This list is generated from the application itself, so it cannot drift
      out of step with what you see.</p>
 </div>
@@ -244,191 +163,7 @@ table.feat code { font-size: 7.8pt; background: none; padding: 0; color: var(--m
   <p class="lead">Screens appear in your menu only if your industry package
      includes them and your role may open them — so not every person sees every
      row below.</p>
-  <section>
-  <h3>Today <span class="cnt">4 screens</span></h3>
-  <p class="gnote">What needs attention this morning.</p>
-  <table class="feat">
-    <tr><th style="width:46mm;">Screen</th><th>What it is for</th></tr>
-    <tr>
-  <td><strong>Dashboards</strong><br><code>/dashboards</code></td>
-  <td>Your store's key numbers and shared team tasks.</td></tr><tr>
-  <td><strong>Business Activity</strong><br><code>/activity</code></td>
-  <td>When it sold, what sold, and what is still sitting.</td></tr><tr>
-  <td><strong>Approvals</strong><br><code>/approvals</code></td>
-  <td>Discount, return and leave requests awaiting your approval.</td></tr><tr>
-  <td><strong>Branch Requests</strong><br><code>/requests</code></td>
-  <td>Ask your manager, area office or head office for a decision — diamond rates, price overrides, transfers and more.</td></tr>
-  </table>
-</section><section>
-  <h3>People <span class="cnt">9 screens</span></h3>
-  <p class="gnote">Every customer conversation, lead and follow-up.</p>
-  <table class="feat">
-    <tr><th style="width:46mm;">Screen</th><th>What it is for</th></tr>
-    <tr>
-  <td><strong>Conversations</strong><br><code>/conversations</code></td>
-  <td>Every customer message, on every channel, in one place.</td></tr><tr>
-  <td><strong>CRM &amp; Leads</strong><br><code>/crm</code></td>
-  <td>Leads and follow-ups for every customer enquiry.</td></tr><tr>
-  <td><strong>Calling</strong><br><code>/calling</code></td>
-  <td>Every follow-up owed to a customer, oldest first, with the history on one screen before you dial.</td></tr><tr>
-  <td><strong>Reminders</strong><br><code>/reminders</code></td>
-  <td>Today's and overdue lead follow-ups.</td></tr><tr>
-  <td><strong>Customers</strong><br><code>/customers</code></td>
-  <td>Your store's customer directory — contacts, purchase history and key dates.</td></tr><tr>
-  <td><strong>Feedback</strong><br><code>/feedback</code></td>
-  <td>Ask a customer how it went; an unhappy answer reaches a person, not a public review page.</td></tr><tr>
-  <td><strong>Response SLA</strong><br><code>/conversations/sla</code></td>
-  <td>The promise to answer within five minutes, measured — who is late, and who was told.</td></tr><tr>
-  <td><strong>Archived Contacts</strong><br><code>/customers/archived</code></td>
-  <td>People taken out of the working lists. Their consent history is kept, which is what stops them being messaged again.</td></tr><tr>
-  <td><strong>Tasks</strong><br><code>/tasks</code></td>
-  <td>Everything owed to a customer or a colleague, in one list.</td></tr>
-  </table>
-</section><section>
-  <h3>Showroom <span class="cnt">3 screens</span></h3>
-  <p class="gnote">The shop floor — walk-ins, the counter, the catalogue.</p>
-  <table class="feat">
-    <tr><th style="width:46mm;">Screen</th><th>What it is for</th></tr>
-    <tr>
-  <td><strong>In-Store App</strong><br><code>/instore</code></td>
-  <td>Find a walk-in, see what they came for, and record the visit from a phone.</td></tr><tr>
-  <td><strong>Check-ins &amp; Footfall</strong><br><code>/checkins</code></td>
-  <td>Log walk-ins and assign each customer to a sales rep.</td></tr><tr>
-  <td><strong>Catalogue</strong><br><code>/catalogue</code></td>
-  <td>Browse products across stores; search by photo.</td></tr>
-  </table>
-</section><section>
-  <h3>Selling <span class="cnt">4 screens</span></h3>
-  <p class="gnote">Quoting, discounting and what happens after a sale is agreed.</p>
-  <table class="feat">
-    <tr><th style="width:46mm;">Screen</th><th>What it is for</th></tr>
-    <tr>
-  <td><strong>Quotation &amp; Orders</strong><br><code>/quotation</code></td>
-  <td>Build quotes and custom orders; custom orders route to production.</td></tr><tr>
-  <td><strong>Orders in Production</strong><br><code>/timelines</code></td>
-  <td>Every order being made, booked here or imported from the factory, and its stage.</td></tr><tr>
-  <td><strong>Discounts</strong><br><code>/discounts</code></td>
-  <td>Request and approve discounts with live margin checks.</td></tr><tr>
-  <td><strong>Returns &amp; Exchange</strong><br><code>/returns</code></td>
-  <td>Returns, exchanges, buyback, repairs and old-gold trade-ins.</td></tr>
-  </table>
-</section><section>
-  <h3>After the sale <span class="cnt">5 screens</span></h3>
-  <p class="gnote">Collections, loyalty, performance and targets.</p>
-  <table class="feat">
-    <tr><th style="width:46mm;">Screen</th><th>What it is for</th></tr>
-    <tr>
-  <td><strong>Sales &amp; Payments</strong><br><code>/payments</code></td>
-  <td>Record sales with advance and balance, and track collections and bank reconciliation.</td></tr><tr>
-  <td><strong>Loyalty &amp; Referral</strong><br><code>/loyalty</code></td>
-  <td>Gold-savings schemes and the customer referral wallet.</td></tr><tr>
-  <td><strong>Sales Performance</strong><br><code>/sales-performance</code></td>
-  <td>Sales leaderboard, commission and incentives.</td></tr><tr>
-  <td><strong>Targets</strong><br><code>/settings/targets</code></td>
-  <td>Set monthly sales targets per store and track achievement.</td></tr><tr>
-  <td><strong>Points Programme</strong><br><code>/loyalty/programme</code></td>
-  <td>What a purchase earns, what a point is worth, and the key your own website signs in with.</td></tr>
-  </table>
-</section><section>
-  <h3>Stock <span class="cnt">3 screens</span></h3>
-  <p class="gnote">What you hold, what moves and what will not.</p>
-  <table class="feat">
-    <tr><th style="width:46mm;">Screen</th><th>What it is for</th></tr>
-    <tr>
-  <td><strong>Inventory &amp; Stock</strong><br><code>/inventory</code></td>
-  <td>Stock levels, aging lines and scrap recovery.</td></tr><tr>
-  <td><strong>Stock Transfers</strong><br><code>/stock-transfers</code></td>
-  <td>Move stock between branches — request, Head-Office approval, dispatch and receipt.</td></tr><tr>
-  <td><strong>Dead Stock</strong><br><code>/inventory/dead-stock</code></td>
-  <td>Pieces that have not moved, against thresholds you set per category rather than one number for everything.</td></tr>
-  </table>
-</section><section>
-  <h3>Reports <span class="cnt">5 screens</span></h3>
-  <p class="gnote">The numbers, for a branch and across the business.</p>
-  <table class="feat">
-    <tr><th style="width:46mm;">Screen</th><th>What it is for</th></tr>
-    <tr>
-  <td><strong>Reporting &amp; DSR</strong><br><code>/reporting</code></td>
-  <td>Automated daily sales reports and store analytics.</td></tr><tr>
-  <td><strong>Store Comparison</strong><br><code>/store-comparison</code></td>
-  <td>Revenue, orders and staff across all stores, side by side.</td></tr><tr>
-  <td><strong>Finance &amp; Fund Planning</strong><br><code>/finance</code></td>
-  <td>Ledgers, budgets, cash flow and expansion costs.</td></tr><tr>
-  <td><strong>Management View</strong><br><code>/management</code></td>
-  <td>Leads, conversations, follow-ups, the floor, quotes and feedback across every branch, over a period you choose.</td></tr><tr>
-  <td><strong>Scheduled Reports</strong><br><code>/reporting/scheduled</code></td>
-  <td>Reports that send themselves at month-end, and what happened to the last one.</td></tr>
-  </table>
-</section><section>
-  <h3>Team <span class="cnt">3 screens</span></h3>
-  <p class="gnote">Who works here, their attendance and their pay.</p>
-  <table class="feat">
-    <tr><th style="width:46mm;">Screen</th><th>What it is for</th></tr>
-    <tr>
-  <td><strong>Team</strong><br><code>/settings/team</code></td>
-  <td>Add staff, assign roles and stores within your scope.</td></tr><tr>
-  <td><strong>HRMS &amp; Attendance</strong><br><code>/hrms</code></td>
-  <td>Geo-attendance, rosters, leave and regularization.</td></tr><tr>
-  <td><strong>Roster &amp; Pay</strong><br><code>/hrms/payroll</code></td>
-  <td>Each person's own weekly off, and a payslip counted from the attendance register.</td></tr>
-  </table>
-</section><section>
-  <h3>Setup <span class="cnt">20 screens</span></h3>
-  <p class="gnote">Configuration, integrations and administration.</p>
-  <table class="feat">
-    <tr><th style="width:46mm;">Screen</th><th>What it is for</th></tr>
-    <tr>
-  <td><strong>Campaigns</strong><br><code>/campaigns</code></td>
-  <td>Send one approved message to a group of customers, with consent checked per person.</td></tr><tr>
-  <td><strong>Enquiry Forms</strong><br><code>/lead-forms</code></td>
-  <td>Publish a form for your own website that files enquiries straight into a branch.</td></tr><tr>
-  <td><strong>Marketing</strong><br><code>/marketing</code></td>
-  <td>Plan campaigns and track agency deliverables.</td></tr><tr>
-  <td><strong>Ticketing</strong><br><code>/ticketing</code></td>
-  <td>Raise and track operational issues with the back office.</td></tr><tr>
-  <td><strong>Getting Started</strong><br><code>/settings/onboarding</code></td>
-  <td>What is set up and what is left — industry, locations, team, data and channels.</td></tr><tr>
-  <td><strong>People &amp; Access</strong><br><code>/settings/access</code></td>
-  <td>Choose, person by person, which screens they can open and how far.</td></tr><tr>
-  <td><strong>Store Setup</strong><br><code>/settings/stores</code></td>
-  <td>Add branches, review the ones a connected system has sent through, and assign logins.</td></tr><tr>
-  <td><strong>New-Store Setup</strong><br><code>/new-store</code></td>
-  <td>Tasks and timelines for opening new stores.</td></tr><tr>
-  <td><strong>Business Configuration</strong><br><code>/settings/configuration</code></td>
-  <td>Your industry, what your business calls things, and which fields your team fills in.</td></tr><tr>
-  <td><strong>Gold Rate</strong><br><code>/settings/rates</code></td>
-  <td>The live gold rate every new quote is priced from — auto-updates from the market; override it here if needed.</td></tr><tr>
-  <td><strong>Integrations</strong><br><code>/settings/integrations</code></td>
-  <td>Connect the systems and channels your business already uses.</td></tr><tr>
-  <td><strong>WhatsApp Reporting</strong><br><code>/settings/dsr-access</code></td>
-  <td>Who can file a daily report over WhatsApp, and who still needs setting up.</td></tr><tr>
-  <td><strong>Message Templates</strong><br><code>/settings/integrations/templates</code></td>
-  <td>Write a WhatsApp message and put it to Meta for approval. Approved ones are what campaigns send.</td></tr><tr>
-  <td><strong>Data &amp; Imports</strong><br><code>/data</code></td>
-  <td>Import your existing records and check what each connected system has delivered.</td></tr><tr>
-  <td><strong>Audit Log</strong><br><code>/settings/audit</code></td>
-  <td>A record of approvals, role changes and other sensitive actions.</td></tr><tr>
-  <td><strong>Morning Digest</strong><br><code>/settings/staff-digest</code></td>
-  <td>The message that tells somebody what they owe a customer today, and exactly what it would say.</td></tr><tr>
-  <td><strong>Lead Tags</strong><br><code>/settings/lead-tags</code></td>
-  <td>Your own labels for a lead, and what they mean.</td></tr><tr>
-  <td><strong>Product Images</strong><br><code>/data/images</code></td>
-  <td>Match a folder of photographs to the products you already have, and reuse the column mapping you worked out last month.</td></tr><tr>
-  <td><strong>Messaging Routes</strong><br><code>/settings/messaging-routes</code></td>
-  <td>Which of your numbers each branch answers on, so a customer is replied to by the shop they wrote to.</td></tr><tr>
-  <td><strong>Channels</strong><br><code>/settings/channels</code></td>
-  <td>What can actually reach a customer today, and what is missing where it cannot.</td></tr>
-  </table>
-</section><section>
-  <h3>Outside the menu <span class="cnt">1 screen</span></h3>
-  <p class="gnote">Screens the application opens for you rather than listing in the menu.</p>
-  <table class="feat">
-    <tr><th style="width:46mm;">Screen</th><th>What it is for</th></tr>
-    <tr>
-  <td><strong>Attendance</strong><br><code>/check-in</code></td>
-  <td>Check in and check out. <em>Reached automatically after signing in, not from the menu.</em></td></tr>
-  </table>
-</section>
+  <!--FEATURE_MAP-->
 </div>
 
 <!-- ══════════════════════ PART THREE ══════════════════════ -->
