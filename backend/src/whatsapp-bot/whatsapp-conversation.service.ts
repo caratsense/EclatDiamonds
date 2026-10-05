@@ -10,11 +10,14 @@ import {
   DRAFT_DATE_KEY,
   DSR_FIELDS,
   MAX_BACKDATE_DAYS,
+  fillSkipped,
   formatDateLabel,
   isSkip,
   isoDate,
+  nextAskableStep,
   parseField,
   parseReportDate,
+  paymentSplitError,
   promptFor,
   summarise,
 } from './dsr-flow';
@@ -171,20 +174,40 @@ export class WhatsAppConversationService {
       const value = parseField(field, text);
       if (value == null) {
         // Re-ask rather than store a guess.
-        return `I couldn't read "${text}" as a number.\n\n${promptFor(field, session.step)}`;
+        return `I couldn't read "${text}" as a number.\n\n${promptFor(field, session.step, draft)}`;
       }
       draft[field.key] = value;
     }
 
-    const nextStep = session.step + 1;
-    if (nextStep < DSR_FIELDS.length) {
-      await this.setSession(phoneE164, user.id, { flow: 'dsr', step: nextStep, draft });
-      return promptFor(DSR_FIELDS[nextStep], nextStep);
+    /*
+     * Refuse a split that exceeds what came in, before it reaches the summary.
+     *
+     * Only once UPI is answered: cash on its own being larger than the total
+     * is not yet a contradiction, because card and UPI could be negative of
+     * nothing — it is the completed set that has to reconcile. Re-asking the
+     * last question is the cheapest correction that keeps the earlier answers.
+     */
+    if (field.key === 'upi') {
+      const complaint = paymentSplitError(draft);
+      if (complaint) {
+        return `${complaint}\n\n${promptFor(field, session.step, draft)}`;
+      }
     }
 
-    await this.setSession(phoneE164, user.id, { flow: 'dsr_confirm', step: nextStep, draft });
+    // Skip any question whose premise just failed, rather than asking it and
+    // accepting an answer that contradicts the answer it depends on.
+    const nextStep = nextAskableStep(draft, session.step + 1);
+    if (nextStep < DSR_FIELDS.length) {
+      await this.setSession(phoneE164, user.id, { flow: 'dsr', step: nextStep, draft });
+      return promptFor(DSR_FIELDS[nextStep], nextStep, draft);
+    }
+
+    // Everything the skip logic passed over still needs a value, or the report
+    // carries nulls that read as missing rather than as a genuine zero.
+    const complete = fillSkipped(draft);
+    await this.setSession(phoneE164, user.id, { flow: 'dsr_confirm', step: nextStep, draft: complete });
     const { label } = await this.storeContext(session.storeId!);
-    return summarise(draft, label, formatDateLabel(this.draftDate(draft)));
+    return summarise(complete, label, formatDateLabel(this.draftDate(complete)));
   }
 
   private async onDsrConfirm(

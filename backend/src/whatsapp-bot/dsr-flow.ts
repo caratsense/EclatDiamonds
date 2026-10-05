@@ -75,6 +75,39 @@ export interface DsrField {
   kind: 'count' | 'amount' | 'weight';
   /** Optional fields store null when skipped; required ones store 0. */
   optional?: boolean;
+  /**
+   * Ask this only when the answers so far make it meaningful.
+   *
+   * A follow-up whose premise failed is worse than a wasted question: it
+   * invites an answer that contradicts the thing it depends on. A real report
+   * filed on 4 Oct read "Advance received: ₹0" and "UPI ₹3,00,000", because
+   * the split was asked after the advance came back zero and the number was
+   * taken at face value.
+   *
+   * Absent means always ask.
+   */
+  askWhen?: (draft: DsrDraft) => boolean;
+}
+
+/** Answers collected so far. `null` is a skipped optional field. */
+export type DsrDraft = Record<string, number | null | string | undefined>;
+
+/** A field's answer as a number, treating skipped and unasked alike as zero. */
+function amount(draft: DsrDraft, key: string): number {
+  const v = draft[key];
+  return typeof v === 'number' ? v : 0;
+}
+
+/**
+ * Money actually taken today — the premise of the cash/card/UPI split.
+ *
+ * Deliberately billed PLUS advance rather than the advance alone. "Of that"
+ * reads as the advance, but a day with ₹5L billed and no advance still has a
+ * payment mix worth recording, and gating on the advance alone would skip it.
+ * The split is only meaningless when nothing came in at all.
+ */
+export function moneyReceived(draft: DsrDraft): number {
+  return amount(draft, 'deliveredBilled') + amount(draft, 'advanceReceived');
 }
 
 /**
@@ -87,12 +120,76 @@ export const DSR_FIELDS: DsrField[] = [
   { key: 'deliveredBilled', prompt: '*Delivered & billed* today?', kind: 'amount' },
   { key: 'bookingsNew', prompt: '*New bookings* (approx)?', kind: 'amount' },
   { key: 'advanceReceived', prompt: '*Advance received*?', kind: 'amount' },
-  { key: 'cash', prompt: 'Of that — *cash*?', kind: 'amount' },
-  { key: 'card', prompt: '*Card*?', kind: 'amount' },
-  { key: 'upi', prompt: '*UPI*?', kind: 'amount' },
+  // The payment split. Skipped entirely on a day nothing was taken, rather
+  // than asked three times to be told zero three times.
+  {
+    key: 'cash',
+    prompt: 'Of what came in — how much *cash*?',
+    kind: 'amount',
+    askWhen: (d) => moneyReceived(d) > 0,
+  },
+  { key: 'card', prompt: 'How much *card*?', kind: 'amount', askWhen: (d) => moneyReceived(d) > 0 },
+  { key: 'upi', prompt: 'How much *UPI*?', kind: 'amount', askWhen: (d) => moneyReceived(d) > 0 },
   { key: 'oldGoldWtG', prompt: '*Old gold* taken (grams)?', kind: 'weight', optional: true },
-  { key: 'oldGoldValue', prompt: 'Old gold *value*?', kind: 'amount', optional: true },
+  // Valuing old gold that was never taken is the same mistake as the split
+  // above, one question later.
+  {
+    key: 'oldGoldValue',
+    prompt: 'Old gold *value*?',
+    kind: 'amount',
+    optional: true,
+    askWhen: (d) => amount(d, 'oldGoldWtG') > 0,
+  },
 ];
+
+/** Is this question meaningful given what has been answered so far? */
+export function shouldAsk(field: DsrField, draft: DsrDraft): boolean {
+  return field.askWhen ? field.askWhen(draft) : true;
+}
+
+/**
+ * The next question to put, skipping any whose premise has failed.
+ *
+ * Returns `DSR_FIELDS.length` when nothing is left to ask, which the caller
+ * reads as "go to the summary".
+ */
+export function nextAskableStep(draft: DsrDraft, from: number): number {
+  let i = Math.max(0, from);
+  while (i < DSR_FIELDS.length && !shouldAsk(DSR_FIELDS[i], draft)) i += 1;
+  return i;
+}
+
+/**
+ * Fill in everything the skip logic passed over.
+ *
+ * A question that was never asked still needs a value, or the report would
+ * carry nulls that look like missing data rather than a genuine zero. Optional
+ * fields stay null — "no old gold" is honestly nothing, not zero grams.
+ */
+export function fillSkipped(draft: DsrDraft): DsrDraft {
+  const out: DsrDraft = { ...draft };
+  for (const f of DSR_FIELDS) {
+    if (out[f.key] === undefined && !shouldAsk(f, out)) out[f.key] = f.optional ? null : 0;
+  }
+  return out;
+}
+
+/**
+ * Does the payment split exceed what was actually taken?
+ *
+ * Returns the complaint to send back, or null when the numbers are coherent.
+ * Checked at the END of the split rather than per answer, because cash alone
+ * exceeding the total is only wrong once card and UPI are known to be zero.
+ */
+export function paymentSplitError(draft: DsrDraft): string | null {
+  const received = moneyReceived(draft);
+  const split = amount(draft, 'cash') + amount(draft, 'card') + amount(draft, 'upi');
+  if (split <= received) return null;
+  return (
+    `That adds up to ${inr(split)} in payments, but only ${inr(received)} came in ` +
+    `(${inr(amount(draft, 'deliveredBilled'))} billed + ${inr(amount(draft, 'advanceReceived'))} advance).`
+  );
+}
 
 /** Parse one answer for a field. `null` means "could not read it — re-ask". */
 export function parseField(field: DsrField, raw: string): number | null {
@@ -190,16 +287,39 @@ export const DRAFT_DATE_KEY = '_reportDate';
 
 export { iso as isoDate, addDays as addDaysUtc };
 
-/** The question text, with the hint that a field can be skipped. */
-export function promptFor(field: DsrField, index: number): string {
-  const counter = `${index + 1}/${DSR_FIELDS.length}`;
+/**
+ * The question text, with the hint that a field can be skipped.
+ *
+ * The counter numbers the questions ACTUALLY being asked, not positions in the
+ * full list. Once questions can be skipped, "7/10" followed by the summary
+ * reads as three lost answers; counting what is really being put makes the
+ * last question say so.
+ *
+ * The total is the best estimate from what is known now — a later answer can
+ * still open or close a follow-up — so it can move. That is honest: the
+ * alternative is a fixed denominator that is wrong for every report with a
+ * skip in it.
+ */
+export function promptFor(field: DsrField, index: number, draft: DsrDraft = {}): string {
+  let asked = 0;
+  let total = 0;
+  for (let i = 0; i < DSR_FIELDS.length; i += 1) {
+    if (!shouldAsk(DSR_FIELDS[i], draft)) continue;
+    total += 1;
+    if (i <= index) asked += 1;
+  }
+  const counter = `${Math.max(1, asked)}/${Math.max(total, asked)}`;
   const hint = field.optional ? ' (reply *skip* if none)' : ' (reply *0* if none)';
   return `${counter} — ${field.prompt}${hint}`;
 }
 
 /** The summary shown before anything is written. */
 export function summarise(
-  draft: Record<string, number | null>,
+  // `DsrDraft`, not `Record<string, number | null>`: the draft really does hold
+  // a string under DRAFT_DATE_KEY, and fields skipped by `askWhen` are absent
+  // until `fillSkipped` runs. The narrower type was never true of the value
+  // being passed in.
+  draft: DsrDraft,
   storeName: string,
   dateLabel: string,
 ): string {
