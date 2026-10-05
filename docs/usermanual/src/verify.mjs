@@ -50,11 +50,13 @@ const FACTS = [
   // manual claimed a WhatsApp OTP option: the API has one, the screen does not,
   // so no reader could ever have used it. These assert the real field label and
   // the real workflow names.
-  "a sign-in identifier, not an inbox", "Show welcome tour", "Marketing", "Add staff", "CaratSpace", "Skip for now", "not an inbox",
+  "a sign-in identifier, not an inbox", "Show the quick guide", "Marketing", "Add staff", "CaratSpace", "Skip for now", "not an inbox",
   "regularisation",
   // Workflows a reader is sent to by name.
   "Fix attendance", "Create Deal / Quotation",
   "HUID", "Log walk-in", "Lead QR codes",
+  // Verified against the live build on 5 October 2026.
+  "Quote approvals", "Every quote", "Gati daily rate", "Quick Action", "Marketing",
   // The advert addresses the client hands out; a broken one is worse than none.
   "fb.me/2mtHMsKeUcTN8Ih", "fb.me/2jDp44BRWvLmQ4m",
   "instagram.com/p/DdwKr6isgcO/", "instagram.com/p/DdwKr8wM4h5/",

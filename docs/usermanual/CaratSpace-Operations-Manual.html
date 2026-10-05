@@ -148,11 +148,13 @@ table.feat code { font-size: 7.8pt; background: none; padding: 0; color: var(--m
      nothing else.</p>
   <table>
     <tr><th style="width:52mm;">Field</th><th>What goes in it</th></tr>
-    <tr><td><strong>Login ID</strong></td>
-        <td>Generated when the account is created and shown to whoever created
-            it. It looks like an email address but is not one — the Team screen
-            labels it <em>“a sign-in identifier, not an inbox”</em>, so nothing
-            is ever sent to it.</td></tr>
+    <tr><td><strong>Login ID or mobile number</strong></td>
+        <td>That is how the box is labelled. <strong>Use the Login ID</strong> —
+            it is generated when the account is created and shown to whoever
+            created it, and head office can read it back off Team at any time. It
+            looks like an email address but is not one; the Team screen labels it
+            <em>“a sign-in identifier, not an inbox”</em>, so nothing is ever sent
+            to it.</td></tr>
     <tr><td><strong>Password</strong></td>
         <td>At least 8 characters, set with the account and shared privately.
             Staff can change it later in their own Settings.</td></tr>
@@ -265,6 +267,8 @@ table.feat code { font-size: 7.8pt; background: none; padding: 0; color: var(--m
      saves a new starter a fortnight of asking.</p>
 
   <h3>Down the left — the menu</h3>
+  <p><strong>Quick Action</strong> sits at the very top, above everything else: it
+     starts the common jobs without first finding the screen they live on.</p>
   <p>Screens are grouped, and the groups collapse. <strong>Collapse all</strong>
      at the top folds everything away; a group reopens with a click. A number
      beside a group is how many things in it want attention. The product name and
@@ -295,24 +299,25 @@ table.feat code { font-size: 7.8pt; background: none; padding: 0; color: var(--m
     <tr><td><strong>Your name</strong></td>
         <td>Your role is printed beside it — a quick way to answer “why can I not
             see that screen?”. The menu holds <strong>Profile &amp;
-            Settings</strong>, <strong>Install app</strong>, <strong>Show welcome
-            tour</strong> and <strong>Sign out</strong>.</td></tr>
+            Settings</strong>, <strong>Show the quick guide</strong> and
+            <strong>Sign out</strong>.</td></tr>
     <tr><td><strong>Sun / moon</strong></td>
         <td>Light or dark. A personal preference, remembered.</td></tr>
   </table>
 
   <div class="box ok">
-    <span class="lbl">Start a new person on the welcome tour</span>
-    <p>Your name → <strong>Show welcome tour</strong> walks the screen in place.
-       It can be replayed as often as you like, so it is the right first thing to
-       hand somebody on their first morning — before this manual, not after
-       it.</p>
+    <span class="lbl">Start a new person on the quick guide</span>
+    <p>Your name → <strong>Show the quick guide</strong> walks the screen in
+       place, and can be replayed as often as you like. It is the right first
+       thing to hand somebody on their first morning — before this manual, not
+       after it.</p>
   </div>
 
   <h3>Put it on the phone</h3>
-  <p><strong>Install app</strong> in the same menu adds CaratSpace to the home
-     screen like any other app. Worth doing for anyone who punches attendance,
-     since that happens on a phone at the door rather than at a desk.</p>
+  <p>The sign-in screen carries an <strong>Install app</strong> button, which adds
+     CaratSpace to the home screen like any other app. Worth doing for anyone who
+     punches attendance, since that happens on a phone at the door rather than at
+     a desk.</p>
 
   <div class="box warn">
     <span class="lbl">If a screen is missing from your menu</span>
@@ -402,6 +407,7 @@ table.feat code { font-size: 7.8pt; background: none; padding: 0; color: var(--m
     <tr><td><strong>Today</strong></td><td>Who is in and who is not, as it stands now.</td></tr>
     <tr><td><strong>Employees</strong></td><td>The people on this branch's roster.</td></tr>
     <tr><td><strong>Register</strong></td><td>The month's attendance day by day — the record an audit asks for.</td></tr>
+    <tr><td><strong>Approvals</strong></td><td>Attendance decisions waiting on you, with a count of how many.</td></tr>
     <tr><td><strong>Shifts &amp; Schedule</strong></td><td>Who works when: the store default shift and any batch.</td></tr>
     <tr><td><strong>Reports</strong></td><td>Attendance summaries, exportable.</td></tr>
     <tr><td><strong>Leave</strong></td><td>Requests and balances. A request raised here lands in Approvals.</td></tr>
@@ -678,6 +684,28 @@ table.feat code { font-size: 7.8pt; background: none; padding: 0; color: var(--m
 
 <div class="page">
   <h2>Quotations — stones, sizes and sending</h2>
+  <h3>Before a quote can be sent: Quote approvals</h3>
+  <p>At the top of the Quotes tab is the rule that decides when a quote needs a
+     manager's yes. The screen is blunt about the consequence: a quote waiting
+     for a decision <strong>cannot be sent to the customer</strong> until
+     somebody approves or rejects it.</p>
+  <table>
+    <tr><th style="width:40mm;">Setting</th><th>What it means</th></tr>
+    <tr><td><strong>Every quote</strong></td>
+        <td>Nothing reaches a customer without a manager. Safe, and the reason a
+            salesperson may report that sending “does nothing”.</td></tr>
+    <tr><td><strong>From this amount</strong></td>
+        <td>Only quotes at or above a figure you set need a yes.</td></tr>
+    <tr><td><strong>Never</strong></td>
+        <td>No quote is held for approval on value alone.</td></tr>
+  </table>
+  <div class="box warn">
+    <span class="lbl">A discount always escalates, whatever this is set to</span>
+    <p>Setting this to <strong>Never</strong> does not remove discount control: a
+       discount above a salesperson's own limit still needs approval. The two
+       rules are separate, and only this one is about the size of the quote.</p>
+  </div>
+
   <h3>Finding a stone</h3>
   <p>Type what you know — <code>round</code>, <code>VVS</code>, <code>ruby</code>,
      or the code itself. The box searches shape, quality and group, not only the
@@ -702,10 +730,19 @@ table.feat code { font-size: 7.8pt; background: none; padding: 0; color: var(--m
 
   <h3>Two things only head office sees</h3>
   <p><em>Kaccha</em> estimates — rough quotes marked with <code>@</code> — are
-     hidden from everyone else, with a toggle to show them. The rate a quote is
-     priced from comes from <strong>Settings → Gold Rate</strong>; a quote freezes
-     the rate it was priced at, and if the stored rate is stale the system asks
-     you to confirm today's before saving.</p>
+     hidden from everyone else, and a <strong>Show kaccha estimates</strong>
+     toggle brings them into the list.</p>
+  <h3>The gold rate quotes are priced from</h3>
+  <p><strong>Settings → Gold Rate</strong> describes itself exactly: <em>the live
+     gold rate every new quote is priced from — auto-updates from the market;
+     override it here if needed</em>. It arrives on its own from the Gati daily
+     rate and is stamped with the day it is for, so normally there is nothing to
+     do. <strong>Set today's rate</strong> overrides it when the market rate is
+     not the rate you are quoting at; 24K and 18K are then derived
+     automatically. Gold and silver each have their own tab, and 24K, 22K, 18K
+     and 14K are published, with 12K and 9K derived by purity.</p>
+  <p>A quote freezes the rate it was priced at, so an old quote never silently
+     reprices.</p>
 </div>
 
 <div class="page">
