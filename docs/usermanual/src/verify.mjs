@@ -45,7 +45,11 @@ for (const g of ["₹", "É", "È", "—", "·"]) check(`glyph ${g} renders`, te
 const FACTS = [
   "72080 17690", "72089 12616", "wa.me/917208017690", "wa.me/917208912616",
   "eclat-diamonds-pi.vercel.app", "24 hours", "10 minutes", "5 minutes",
-  "Click-to-WhatsApp", "899", "nine", "twenty", "Settings → Stores",
+  "Click-to-WhatsApp", "nine", "twenty", "Settings → Stores",
+  // The advert addresses the client hands out; a broken one is worse than none.
+  "fb.me/2mtHMsKeUcTN8Ih", "fb.me/2jDp44BRWvLmQ4m",
+  "instagram.com/p/DdwKr6isgcO/", "instagram.com/p/DdwKr8wM4h5/",
+  "posts/1293013417234982", "posts/1293013430568314",
 ];
 for (const f of FACTS) check(`"${f}"`, text.includes(f));
 
