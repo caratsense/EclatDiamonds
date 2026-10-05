@@ -147,6 +147,34 @@ export function priceItem(item: ItemRow, goldRate: number) {
 }
 
 /** The master with fallbacks, so the builder works before the master is loaded. */
+/**
+ * The words a stone is actually searched by: its shape, its quality and the
+ * group it belongs to. The code and name carry none of them — "LG-RND-VVS-E-F"
+ * has no "round" in it that a text match can find.
+ */
+function withStoneKeywords(m: MaterialOption) {
+  return {
+    ...m,
+    keywords: [m.shape, m.quality, m.groupName, m.groupCode].filter(Boolean).join(" "),
+  };
+}
+
+/**
+ * Every per-stone weight the size chart knows, largest first.
+ *
+ * Offered on the carats box so a weight can be picked rather than remembered.
+ * The sizes are not tied to a particular stone code in the master, so this is
+ * the whole chart rather than a filtered list — a suggestion, never a
+ * restriction, and the field stays free text.
+ */
+export function stoneWeights(lists: Lists): string[] {
+  const seen = new Set<string>();
+  for (const s of lists.sizes) {
+    if (s.caratPerPiece && s.caratPerPiece > 0) seen.add(s.caratPerPiece.toFixed(3));
+  }
+  return [...seen].sort((a, b) => Number(b) - Number(a));
+}
+
 export function masterLists(master: MaterialMaster | undefined) {
   const metals = master?.metals.filter((m) => m.karat != null && QUOTE_KARATS.includes(m.karat)) ?? [];
   // The ERP has no 12K items; any karat it lacks still gets its YG/WG/PG codes.
@@ -158,29 +186,30 @@ export function masterLists(master: MaterialMaster | undefined) {
       // A metal is also found by its karat and colour as the screen writes
       // them ("18K", "14K WG"); its code and name (G18WG GOLD18WG) have no K.
       .map((m) => ({ ...m, keywords: `${m.karat}K ${m.tone ?? ""}` })),
-    diamonds: master?.diamonds ?? [],
-    stones: master?.stones ?? [],
+    // A stone is looked for the way it is spoken about on the floor — "round",
+    // "VVS", "oval ruby" — not by the code, which is what the box used to
+    // match on alone. Same treatment the metals above already had.
+    diamonds: (master?.diamonds ?? []).map(withStoneKeywords),
+    stones: (master?.stones ?? []).map(withStoneKeywords),
     sizes: master?.sizes ?? [],
   };
 }
 
 export type Lists = ReturnType<typeof masterLists>;
 
-/** Diamond and colour-stone codes for their type-to-search boxes; rendered once per builder. */
+/**
+ * The stone weights offered on every carats box; rendered once per builder.
+ *
+ * The two code datalists that used to live here are gone: the code boxes are
+ * SearchSelects now, which search the shape and quality a datalist could not.
+ */
 export function MaterialDatalists({ lists }: { lists: Lists }) {
   return (
-    <>
-      <datalist id="qb-codes-D">
-        {lists.diamonds.map((m) => (
-          <option key={m.code} value={m.code}>{m.name}</option>
-        ))}
-      </datalist>
-      <datalist id="qb-codes-C">
-        {lists.stones.map((m) => (
-          <option key={m.code} value={m.code}>{m.name}</option>
-        ))}
-      </datalist>
-    </>
+    <datalist id="qb-stone-weights">
+      {stoneWeights(lists).map((w) => (
+        <option key={w} value={w} />
+      ))}
+    </datalist>
   );
 }
 
@@ -302,9 +331,6 @@ export function QuoteItemEditor({
   const set = (patch: Partial<ItemRow>) => onChange({ ...item, ...patch });
   const setStone = (id: number, patch: Partial<StoneRow>) =>
     set({ stones: item.stones.map((s) => (s.id === id ? nextStone(s, patch, lists) : s)) });
-  const known = (s: StoneRow) =>
-    !s.code.trim() || !(s.type === "D" ? lists.diamonds : lists.stones).length ||
-    (s.type === "D" ? lists.diamonds : lists.stones).some((m) => m.code === s.code.trim());
 
   async function loadStyle(code = item.styleNumber.trim()) {
     if (!code || loading) return;
@@ -541,15 +567,19 @@ export function QuoteItemEditor({
             >
               {s.type}
             </button>
-            <Input
+            {/*
+              The same type-to-search box the metal row uses, instead of a bare
+              <datalist>. A datalist matches the start of the code only, so
+              "round" or "VVS" found nothing and a consultant had to know
+              LG-RND-VVS-E-F by heart; the shape, quality and group are now
+              searched too.
+            */}
+            <SearchSelect
               aria-label={`${s.type === "D" ? "Diamond" : "Colour stone"} code`}
-              list={`qb-codes-${s.type}`}
+              options={s.type === "D" ? lists.diamonds : lists.stones}
               value={s.code}
-              onChange={(e) => setStone(s.id, { code: e.target.value.toUpperCase() })}
-              placeholder={s.type === "D" ? "LG-RND-VVS-E-F" : "LG-RB-OVL"}
-              autoComplete="off"
-              aria-invalid={!known(s)}
-              className={cn(!known(s) && "border-destructive")}
+              onChange={(code) => setStone(s.id, { code: code.toUpperCase() })}
+              placeholder={s.type === "D" ? "Round, VVS, LG-RND…" : "Ruby, oval, LG-RB…"}
             />
             <Button type="button" variant="ghost" size="icon" className="md:order-last" onClick={() => set({ stones: item.stones.filter((x) => x.id !== s.id) })}>
               <Trash2 className="h-4 w-4" />
@@ -572,6 +602,8 @@ export function QuoteItemEditor({
               <Input
                 aria-label="Carats"
               className="px-2"
+                // The size chart's per-stone weights, offered not enforced.
+                list="qb-stone-weights"
                 inputMode="decimal"
                 value={s.carats}
                 onChange={(e) => setStone(s.id, { carats: unsigned(e.target.value) })}
