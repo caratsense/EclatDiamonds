@@ -8,7 +8,6 @@ import {
   MAX_REPROMPTS,
   closingFor,
   firstUnanswered,
-  greeting,
   handoffSummary,
   isStop,
   labelFor,
@@ -20,6 +19,7 @@ import {
   stopConfirmation,
   wantsHuman,
 } from './customer-flow';
+import { applyScript, resolveBotScript, scriptedGreeting, type BotScript } from './bot-script';
 
 /**
  * The customer-facing qualification bot.
@@ -79,6 +79,23 @@ export class CustomerBotService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
+   * This tenant's wording for the bot, or the built-in wording.
+   *
+   * Read once per inbound message and threaded down, rather than re-read for
+   * each question: a shop that has edited nothing should not pay a query per
+   * reply for a feature it does not use, and a script edited mid-conversation
+   * would otherwise reword a question between the ask and the re-prompt.
+   */
+  private async scriptFor(organisationId: string): Promise<BotScript> {
+    const org = await this.prisma.organisation.findUnique({
+      where: { id: organisationId },
+      select: { settings: true },
+    });
+    const settings = (org?.settings ?? {}) as Record<string, unknown>;
+    return resolveBotScript(settings.botScript);
+  }
+
+  /**
    * Handle one inbound customer message.
    *
    * `known` carries anything the lead form already captured, keyed by step. Those
@@ -97,6 +114,8 @@ export class CustomerBotService {
     const session = await this.load(phoneE164);
     const draft = (session.draft ?? {}) as Draft;
     const answers = this.answersOf(draft, known);
+    // This shop's wording, resolved once for the whole of this message.
+    const script = await this.scriptFor(organisationId);
 
     // Opt-out is checked before anything else, on every message, whatever the
     // conversation was doing. A customer who says stop while mid-question must
@@ -151,9 +170,9 @@ export class CustomerBotService {
       if (!first) {
         // The form answered everything. Go straight to the call ask rather than
         // inventing a question to justify the bot's existence.
-        return this.ask(phoneE164, organisationId, draft, 'call', greeting(firstName));
+        return this.ask(phoneE164, organisationId, draft, 'call', script, scriptedGreeting(firstName, script));
       }
-      return this.ask(phoneE164, organisationId, draft, first, greeting(firstName));
+      return this.ask(phoneE164, organisationId, draft, first, script, scriptedGreeting(firstName, script));
     }
 
     const step = stepByKey(currentKey);
@@ -179,7 +198,7 @@ export class CustomerBotService {
         };
       }
       await this.save(phoneE164, organisationId, { ...draft, [REPROMPT_KEY]: tries });
-      return { text: `${reprompt()}\n\n${promptFor(step)}` };
+      return { text: `${reprompt()}\n\n${promptFor(applyScript(step, script))}` };
     }
 
     const nextDraft: Draft = { ...draft, [step.key]: value, [REPROMPT_KEY]: 0 };
@@ -187,7 +206,7 @@ export class CustomerBotService {
     const nextKey = resolveNext(step, value, nextAnswers);
 
     if (nextKey) {
-      return this.ask(phoneE164, organisationId, nextDraft, nextKey);
+      return this.ask(phoneE164, organisationId, nextDraft, nextKey, script);
     }
 
     // The flow is over. Which ending depends on the last answer.
@@ -209,6 +228,7 @@ export class CustomerBotService {
     organisationId: string,
     draft: Draft,
     stepKey: string,
+    script: BotScript,
     preamble?: string,
   ): Promise<CustomerBotReply> {
     const step = stepByKey(stepKey);
@@ -222,7 +242,7 @@ export class CustomerBotService {
       [STEP_KEY]: stepKey,
       [REPROMPT_KEY]: 0,
     });
-    const body = promptFor(step);
+    const body = promptFor(applyScript(step, script));
     return { text: preamble ? `${preamble}\n\n${body}` : body };
   }
 
