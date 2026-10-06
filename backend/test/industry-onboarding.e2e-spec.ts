@@ -103,6 +103,8 @@ const JEWELLERY_ONLY_ROUTES = [
 const UNIVERSAL_ROUTES = [
   'crm',
   'conversations',
+  // Every vertical with the CRM gets the bot, so every one gets to word it.
+  'bot-script',
   'customers',
   'reminders',
   'catalogue',

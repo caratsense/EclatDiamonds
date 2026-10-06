@@ -87,6 +87,10 @@ const NEUTRAL_PRODUCT_CATEGORY: PackTaxonomy = {
 const CORE_NAVIGATION = [
   'crm',
   'conversations',
+  // The bot's own wording, beside the inbox it speaks into. Core rather than
+  // jewellery-only: every vertical with the CRM gets the bot, so every one of
+  // them gets to choose its words.
+  'bot-script',
   'customers',
   'reminders',
   'catalogue',
