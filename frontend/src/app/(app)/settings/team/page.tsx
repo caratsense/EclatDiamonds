@@ -10,7 +10,6 @@ import {
   MoreHorizontal,
   Phone,
   Shield,
-  Store as StoreIcon,
   UserCheck,
   UserMinus,
   UserPlus,
@@ -71,7 +70,6 @@ import {
   useSignupPolicy,
   useStaff,
   useUnassignedStaff,
-  useUpdateStaffRole,
   useUpdateStaffStore,
   type ApprovalEmailDelivery,
   type PendingSignup,
@@ -245,7 +243,7 @@ function UserRow({
   roster: StaffUser[];
 }) {
   const [dialog, setDialog] = useState<
-    "role" | "store" | "deactivate" | "reset" | "leave" | null
+    "deactivate" | "reset" | "leave" | null
   >(null);
 
   const activate = useActivateStaff();
@@ -338,12 +336,6 @@ function UserRow({
             <DropdownMenuContent align="end" className="w-48">
               {canRoleOrStore ? (
                 <>
-                  <DropdownMenuItem onSelect={() => setDialog("role")}>
-                    <Shield className="h-4 w-4" /> Change role
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => setDialog("store")}>
-                    <StoreIcon className="h-4 w-4" /> Reassign store
-                  </DropdownMenuItem>
                 </>
               ) : null}
               <DropdownMenuItem onSelect={() => setDialog("leave")}>
@@ -377,18 +369,7 @@ function UserRow({
         )}
       </TableCell>
 
-      <ChangeRoleDialog
-        user={user}
-        viewerRole={viewerRole}
-        open={dialog === "role"}
-        onOpenChange={(o) => setDialog(o ? "role" : null)}
-      />
-      <ReassignStoreDialog
-        user={user}
-        open={dialog === "store"}
-        onOpenChange={(o) => setDialog(o ? "store" : null)}
-      />
-      <DeactivateDialog
+<DeactivateDialog
         user={user}
         roster={roster}
         open={dialog === "deactivate"}
@@ -502,174 +483,6 @@ function LeaveQuotaDialog({
           </Button>
           <Button onClick={save} disabled={setQuota.isPending}>
             {setQuota.isPending ? "Saving…" : "Save quota"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Change role                                                        */
-/* ------------------------------------------------------------------ */
-
-function ChangeRoleDialog({
-  user,
-  viewerRole,
-  open,
-  onOpenChange,
-}: {
-  user: StaffUser;
-  viewerRole: Role;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const updateRole = useUpdateStaffRole();
-  const options = assignableRoles(viewerRole);
-  const [role, setRole] = useState<StaffRole>(user.role);
-
-  function save() {
-    if (role === user.role) {
-      onOpenChange(false);
-      return;
-    }
-    updateRole.mutate(
-      { id: user.id, role },
-      {
-        onSuccess: () => {
-          toast.success(`${user.name} is now ${ROLE_LABELS[role]}`);
-          onOpenChange(false);
-        },
-        onError: (err) =>
-          toast.error(apiErrorMessage(err, "Could not update the role.")),
-      },
-    );
-  }
-
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(o) => {
-        if (o) setRole(user.role);
-        onOpenChange(o);
-      }}
-    >
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle>Change role</DialogTitle>
-          <DialogDescription>
-            Set the role for {user.name}. You can only grant roles below your
-            own.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="grid gap-1.5">
-          <Label htmlFor="change-role">Role</Label>
-          <Select value={role} onValueChange={(v) => setRole(v as StaffRole)}>
-            <SelectTrigger id="change-role">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {options.map((r) => (
-                <SelectItem key={r} value={r}>
-                  {ROLE_LABELS[r]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button onClick={save} disabled={updateRole.isPending}>
-            {updateRole.isPending ? "Saving…" : "Save role"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Reassign store                                                     */
-/* ------------------------------------------------------------------ */
-
-function ReassignStoreDialog({
-  user,
-  open,
-  onOpenChange,
-}: {
-  user: StaffUser;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const updateStore = useUpdateStaffStore();
-  const stores = useSession((s) => s.stores);
-  const assignable = useMemo(
-    () => stores.filter((s) => !s.isAggregate),
-    [stores],
-  );
-  const primaryStoreId = user.stores[0]?.id ?? "";
-  const [storeId, setStoreId] = useState(primaryStoreId);
-
-  function save() {
-    if (!storeId) {
-      toast.error("Select a store.");
-      return;
-    }
-    if (storeId === primaryStoreId) {
-      onOpenChange(false);
-      return;
-    }
-    updateStore.mutate(
-      { id: user.id, storeId },
-      {
-        onSuccess: () => {
-          toast.success("Store reassigned");
-          onOpenChange(false);
-        },
-        onError: (err) =>
-          toast.error(apiErrorMessage(err, "Could not reassign the store.")),
-      },
-    );
-  }
-
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(o) => {
-        if (o) setStoreId(primaryStoreId);
-        onOpenChange(o);
-      }}
-    >
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle>Reassign store</DialogTitle>
-          <DialogDescription>
-            Move {user.name} to another store within your scope.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="grid gap-1.5">
-          <Label htmlFor="reassign-store">Store</Label>
-          <Select value={storeId || undefined} onValueChange={setStoreId}>
-            <SelectTrigger id="reassign-store">
-              <SelectValue placeholder="Select a store" />
-            </SelectTrigger>
-            <SelectContent>
-              {assignable.map((store) => (
-                <SelectItem key={store.id} value={store.id}>
-                  {store.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button onClick={save} disabled={updateStore.isPending}>
-            {updateStore.isPending ? "Saving…" : "Reassign"}
           </Button>
         </DialogFooter>
       </DialogContent>
