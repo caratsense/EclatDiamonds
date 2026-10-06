@@ -19,7 +19,6 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { BotScriptConfig } from "@/components/crm/bot-script-config";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PipelineConfig } from "@/components/crm/pipeline-config";
 import { QualificationConfig } from "@/components/crm/qualification-config";
@@ -162,7 +161,6 @@ export default function ConfigurationPage() {
           <TabsTrigger value="fields">Custom fields</TabsTrigger>
           <TabsTrigger value="pipeline">Sales stages</TabsTrigger>
           <TabsTrigger value="qualification">Lead scoring</TabsTrigger>
-          <TabsTrigger value="bot-script">Bot script</TabsTrigger>
           <TabsTrigger value="ad-routing">Ad routing</TabsTrigger>
           <TabsTrigger value="identity">Customer identity</TabsTrigger>
         </TabsList>
@@ -191,10 +189,6 @@ export default function ConfigurationPage() {
 
         <TabsContent value="qualification" className="mt-4 space-y-4">
           <QualificationConfig />
-        </TabsContent>
-
-        <TabsContent value="bot-script" className="mt-4 space-y-4">
-          <BotScriptConfig />
         </TabsContent>
 
         <TabsContent value="ad-routing" className="mt-4 space-y-4">

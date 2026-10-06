@@ -7,6 +7,7 @@ import {
   RotateCcw,
   Percent,
   PiggyBank,
+  Bot,
   Boxes,
   Fingerprint,
   DoorOpen,
@@ -182,6 +183,25 @@ export const NAV_ITEMS: NavItem[] = [
     primaryAction: "",
     icon: Inbox,
     group: "People",
+  },
+  {
+    /*
+     * The bot's own script, next to the inbox it speaks into.
+     *
+     * It began life as a tab under Settings -> Business Configuration, which
+     * read as a thing you configure once. It is not: it is the wording of the
+     * conversations on the next screen up, and the person rewording it is
+     * thinking about customers, not about settings. The client asked for it
+     * here by position, and they were right.
+     */
+    module: 1,
+    slug: "bot-script",
+    title: "Bot Script",
+    purpose: "The questions the bot asks a customer, in your own words.",
+    primaryAction: "",
+    icon: Bot,
+    group: "People",
+    roles: ["store_manager", "area_manager", "head_office"],
   },
   {
     module: 1,
