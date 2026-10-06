@@ -7,6 +7,7 @@ import { FollowUpRemindersService } from '../crm/follow-up-reminders.service';
 import { VisitFeedbackService } from '../crm/visit-feedback.service';
 import { ResponseSlaService } from '../crm/response-sla.service';
 import { ScheduledReportsService } from '../reporting/scheduled-reports.service';
+import { DsrDigestService } from '../reporting/dsr-digest.service';
 import { LoyaltyApiService } from '../loyalty/website/loyalty-api.service';
 import { JobAlertsService } from '../jobs/job-alerts.service';
 import { Role } from '@prisma/client';
@@ -83,6 +84,7 @@ export class SchedulerService {
     private readonly visitFeedback: VisitFeedbackService,
     private readonly responseSla: ResponseSlaService,
     private readonly scheduledReports: ScheduledReportsService,
+    private readonly dsrDigest: DsrDigestService,
     private readonly loyaltyApi: LoyaltyApiService,
     private readonly payroll: PayrollService,
   ) {}
@@ -369,6 +371,22 @@ export class SchedulerService {
    * mid-send. A second replica ticking the same hour loses the insert and does
    * nothing.
    */
+  /**
+   * The evening DSR digest to head office. Every 15 minutes rather than hourly
+   * so "at 19:00" means within a quarter-hour of it; the per-org lastSentOn
+   * stamp inside the service is the once-per-day guard.
+   */
+  @Cron('*/15 * * * *', { name: 'reporting.dsr-digest' })
+  async sendDsrDigests(): Promise<void> {
+    if (!this.enabled) return;
+    try {
+      const res = await this.dsrDigest.sweep();
+      if (res.sent) this.logger.log(`DSR digest: sent for ${res.sent} organisation(s)`);
+    } catch (e) {
+      this.logger.error(`DSR digest sweep failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   @Cron(CronExpression.EVERY_HOUR, { name: 'reporting.scheduled' })
   async sendScheduledReports(): Promise<void> {
     if (!this.enabled) return;

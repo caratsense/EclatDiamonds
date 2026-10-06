@@ -290,11 +290,13 @@ describe('two WhatsApp lines, one webhook (e2e)', () => {
     expect(await conversationFor(STAFF_PHONE)).toBeNull();
   });
 
-  it('starts the daily report from the internal line', async () => {
-    await send(INTERNAL_LINE, STAFF_PHONE, '1');
+  it('a daily-report request on the internal line is pointed at the dashboard', async () => {
+    // The questionnaire is retired: filing lives on the dashboard, and the
+    // line's remaining inbound job is messages to head office. Asking the old
+    // way must never reopen the flow.
+    await send(INTERNAL_LINE, STAFF_PHONE, 'dsr');
     const session = await sessionFor(STAFF_PHONE);
-    // One store, so no branch question: straight into the questionnaire.
-    expect(session?.flow).toBe('dsr');
+    expect(session?.flow ?? null).not.toBe('dsr');
   });
 
   /*
@@ -365,26 +367,26 @@ describe('two WhatsApp lines, one webhook (e2e)', () => {
    * Found by testing the thing somebody actually does: use their own handset
    * for both.
    */
-  it('keeps a half-finished report alive while the same number talks to the customer bot', async () => {
+  it('keeps a half-finished staff flow alive while the same number talks to the customer bot', async () => {
     await prisma.whatsAppSession.deleteMany({ where: { phoneE164: STAFF_PHONE } });
     await prisma.conversation.deleteMany({
       where: { organisationId: ORG, externalThreadId: STAFF_PHONE },
     });
 
-    // Two answers into a daily report on the internal line.
+    // Into the message-to-head-office flow on the internal line. The DSR
+    // questionnaire is retired, so this is the flow dual-session isolation
+    // protects now — the mechanism under test is unchanged.
     await send(INTERNAL_LINE, STAFF_PHONE, 'hi');
     await send(INTERNAL_LINE, STAFF_PHONE, '1');
-    await send(INTERNAL_LINE, STAFF_PHONE, '21');
 
     // The detour that used to destroy it.
     await send(CUSTOMER_LINE, STAFF_PHONE, 'hi do you have rings');
 
     const staff = await prisma.whatsAppSession.findFirst({
       where: { phoneE164: STAFF_PHONE, kind: 'staff' },
-      select: { flow: true, draft: true },
+      select: { flow: true },
     });
-    expect(staff?.flow).toBe('dsr');
-    expect((staff?.draft as Record<string, unknown>)?.walkIns).toBe(21);
+    expect(staff?.flow).toBe('message');
 
     // And the customer side is live in its own row, not instead of it.
     const customer = await prisma.whatsAppSession.findFirst({
@@ -395,18 +397,20 @@ describe('two WhatsApp lines, one webhook (e2e)', () => {
     expect(await conversationFor(STAFF_PHONE)).not.toBeNull();
   });
 
-  it('carries the report on from where it was left', async () => {
-    await send(INTERNAL_LINE, STAFF_PHONE, '9');
+  it('a session caught mid-questionnaire is told where filing lives now', async () => {
+    // Frozen at deploy time, exactly as the retirement leaves a live session.
+    await prisma.whatsAppSession.updateMany({
+      where: { phoneE164: STAFF_PHONE, kind: 'staff' },
+      data: { flow: 'dsr', step: 2, draft: { walkIns: 21 } },
+    });
+
+    await send(INTERNAL_LINE, STAFF_PHONE, '9'); // would have been the next answer
 
     const staff = await prisma.whatsAppSession.findFirst({
       where: { phoneE164: STAFF_PHONE, kind: 'staff' },
-      select: { draft: true },
+      select: { flow: true },
     });
-    const draft = staff?.draft as Record<string, unknown>;
-    // The earlier answer is still there beside the new one, which is the whole
-    // point: the detour cost nothing.
-    expect(draft?.walkIns).toBe(21);
-    expect(draft?.seriousEnquiries).toBe(9);
+    expect(staff?.flow ?? null).not.toBe('dsr');
   });
 
   /* ----------------------------------------------------- the classification */

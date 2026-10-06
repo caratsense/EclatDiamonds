@@ -11,6 +11,7 @@ import { MoversTable } from "@/components/reporting/movers-table";
 import { PeriodRollup } from "@/components/reporting/period-rollup";
 import { SendReportDialog } from "@/components/reporting/send-report-dialog";
 import { DailyReportSection } from "@/components/reporting/daily-report-section";
+import { DsrDigestCard } from "@/components/reporting/dsr-digest-card";
 import { AllStoresReports } from "@/components/reporting/all-stores-reports";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSession } from "@/store/use-session";
@@ -143,6 +144,12 @@ function ManagerReporting() {
       <div className="my-6 h-px bg-gradient-to-r from-border via-border to-transparent" />
 
       <DailyReportSection />
+
+      {role === "head_office" ? (
+        <div className="mt-6">
+          <DsrDigestCard />
+        </div>
+      ) : null}
 
       <div className="my-6 h-px bg-gradient-to-r from-border via-border to-transparent" />
 

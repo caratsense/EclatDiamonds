@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Header, Param, Post, Query, Res, StreamableFile } from '@nestjs/common';
+import { Body, Controller, Get, Header, Param, Post, Put, Query, Res, StreamableFile } from '@nestjs/common';
 import type { Response } from 'express';
 import { ReportingService } from './reporting.service';
+import { DsrDigestService } from './dsr-digest.service';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
 import { Roles } from '../auth/roles.decorator';
@@ -17,7 +18,8 @@ import {
 
 @Controller('reporting')
 export class ReportingController {
-  constructor(private readonly reporting: ReportingService) {}
+  constructor(
+    private readonly dsrDigest: DsrDigestService,private readonly reporting: ReportingService) {}
 
   /*
    * The DSR, the movers and the period roll-up are a branch's takings, stock
@@ -142,6 +144,29 @@ export class ReportingController {
    * WhatsApp or email. Manager+ like every other send: it ships a branch's
    * takings to an arbitrary external recipient.
    */
+  /**
+   * The evening digest to head office: configuration, and a send-now for
+   * testing. Head office only — it names external recipients for every
+   * branch's takings at once.
+   */
+  @Roles('head_office')
+  @Get('dsr-digest')
+  dsrDigestConfig(@CurrentUser() user: AuthUser) {
+    return this.dsrDigest.describe(user);
+  }
+
+  @Roles('head_office')
+  @Put('dsr-digest')
+  saveDsrDigest(@CurrentUser() user: AuthUser, @Body() body: unknown) {
+    return this.dsrDigest.save(user, body);
+  }
+
+  @Roles('head_office')
+  @Post('dsr-digest/send-now')
+  sendDsrDigestNow(@CurrentUser() user: AuthUser) {
+    return this.dsrDigest.sendNow(user.organisationId, { actor: user });
+  }
+
   @Roles('store_manager', 'head_office')
   @Post('daily/sheet/send')
   sendDailySheet(@CurrentUser() user: AuthUser, @Body() dto: SendDailySheetDto) {

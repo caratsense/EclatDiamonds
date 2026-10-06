@@ -40,10 +40,21 @@ export interface BotUser {
 const MENU = [
   'What would you like to do?',
   '',
-  '*1* — Send today’s daily report',
-  '*2* — Send a message to Head Office',
+  '*1* — Send a message to Head Office',
   '',
-  'Reply with 1 or 2. Say *cancel* any time to stop.',
+  'Reply with 1. Say *cancel* any time to stop.',
+].join('\n');
+
+/**
+ * Where the questionnaire used to begin. The DSR now travels the other way:
+ * staff file the day's figures on the dashboard, and this line delivers the
+ * evening summary to head office. Anyone asking the old way is told the new
+ * one rather than met with an unrecognised-option menu.
+ */
+const DSR_MOVED = [
+  'Daily reports are filed on the *dashboard* now — open *Reporting & DSR* and use *Today’s DSR*.',
+  '',
+  'This number sends head office the evening summary once stores have filed.',
 ].join('\n');
 
 /**
@@ -82,12 +93,14 @@ export class WhatsAppConversationService {
     }
 
     switch (session.flow) {
+      // A session caught mid-questionnaire when the flow was retired: told
+      // where filing lives now, and the dangling session cleared.
       case 'pick_store':
-        return this.onPickStore(phoneE164, user, text);
       case 'dsr':
-        return this.onDsrAnswer(phoneE164, user, session, text);
-      case 'dsr_confirm':
-        return this.onDsrConfirm(phoneE164, user, session, text);
+      case 'dsr_confirm': {
+        await this.reset(phoneE164, user.id);
+        return DSR_MOVED;
+      }
       case 'message':
         return this.onMessage(phoneE164, user, session, text);
       default:
@@ -98,10 +111,10 @@ export class WhatsAppConversationService {
   // ── idle ───────────────────────────────────────────────────────────────────
 
   private async onIdle(phoneE164: string, user: BotUser, lower: string): Promise<string> {
-    if (['1', 'report', 'dsr', 'daily', 'daily report'].includes(lower)) {
-      return this.startDsr(phoneE164, user);
+    if (['report', 'dsr', 'daily', 'daily report'].includes(lower)) {
+      return DSR_MOVED;
     }
-    if (['2', 'message', 'msg'].includes(lower)) {
+    if (['1', '2', 'message', 'msg'].includes(lower)) {
       await this.setSession(phoneE164, user.id, { flow: 'message', step: 0 });
       return 'What should I send to Head Office? Type your message.';
     }

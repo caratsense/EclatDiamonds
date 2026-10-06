@@ -247,76 +247,62 @@ describe('WhatsApp reporting bot — tenancy (e2e)', () => {
     expect(bound).toBeNull();
   });
 
-  // ── DSR: full bot chain + org stamping + upsert unique ──────────────────────
+  // ── DSR: the questionnaire is retired; filing lives on the dashboard ──────
 
-  it('a bot daily report is written org-scoped, source=whatsapp, and is idempotent', async () => {
-    // Surat manager is attached to one store, so no store-pick step.
+  /*
+   * The bot used to walk staff through a twenty-field questionnaire and write a
+   * DailyReport row. The client reversed the flow: staff file on the dashboard,
+   * and the bot's one remaining job is the evening digest OUT to head office.
+   * What this protects now is the retirement itself — no path through the staff
+   * bot may ever write a daily report again, and anyone asking is told where
+   * filing lives, whether they ask fresh or were mid-questionnaire when the
+   * flow was retired.
+   */
+  it('asking for a daily report points at the dashboard and writes nothing', async () => {
+    const before = await prisma.dailyReport.count({ where: { organisationId: 'org_eclat' } });
+
     await sendInbound(PHONE_A_SURAT, 'hi');
-    await sendInbound(PHONE_A_SURAT, '1'); // start daily report
-    /*
-     * The full sheet, in order, with both tables reconciling.
-     *
-     * Footfall 10/4/2. Counter sale ₹5L paid 2L cash + 1.5L card + 1.5L UPI,
-     * no old gold. Bookings 3L new, 1L open, 50k closed, 1.2L received, split
-     * 20k/50k/50k and nothing by transfer, no gold. Then a remark.
-     *
-     * Each split is checked against ITS OWN table total, so these have to add
-     * up to ₹5,00,000 and ₹1,20,000 respectively or the bot re-asks.
-     */
-    const answers = [
-      '10', '4', '2',
-      '500000', '200000', '150000', '150000', 'skip',
-      '300000', '100000', '50000', '120000',
-      '20000', '50000', '50000', '0', 'skip',
-      'Busy evening, two walk-ins returning Saturday',
-    ];
-    for (const a of answers) await sendInbound(PHONE_A_SURAT, a);
-    await sendInbound(PHONE_A_SURAT, 'yes'); // submit
+    await sendInbound(PHONE_A_SURAT, 'dsr');
+    // The old happy path: numbers that would have been questionnaire answers.
+    for (const a of ['10', '4', '2', '500000', 'yes']) await sendInbound(PHONE_A_SURAT, a);
 
-    const store = await prisma.store.findFirstOrThrow({ where: { id: SURAT }, select: { id: true } });
-    const rows = await prisma.dailyReport.findMany({
-      where: { storeId: store.id, source: 'whatsapp' },
-      orderBy: { createdAt: 'desc' },
+    expect(await prisma.dailyReport.count({ where: { organisationId: 'org_eclat' } })).toBe(before);
+    // And no questionnaire session is left dangling behind the refusal.
+    const session = await prisma.whatsAppSession.findFirst({
+      where: { phoneE164: PHONE_A_SURAT, kind: 'staff' },
+      select: { flow: true },
     });
-    expect(rows.length).toBeGreaterThanOrEqual(1);
-    const row = rows[0];
-    expect(row.organisationId).toBe('org_eclat');
-    expect(row.walkIns).toBe(10);
-    expect(row.seriousEnquiries).toBe(4);
+    expect(['dsr', 'dsr_confirm', 'pick_store']).not.toContain(session?.flow ?? null);
+  });
 
-    /*
-     * The columns the bot used to leave at their defaults.
-     *
-     * Before the questionnaire matched the sheet, every WhatsApp-filed report
-     * carried conversions, the booking movements, the whole customised-sale
-     * split and the remark as zeros and nulls — indistinguishable, once in the
-     * column, from figures somebody had actually counted.
-     */
-    expect(row.conversions).toBe(2);
-    expect(Number(row.bookingsOpen)).toBe(100000);
-    expect(Number(row.bookingsClosed)).toBe(50000);
-    expect(Number(row.customCash)).toBe(20000);
-    expect(Number(row.customCard)).toBe(50000);
-    expect(Number(row.customUpi)).toBe(50000);
-    expect(Number(row.customBankTransfer)).toBe(0);
-    expect(row.remark).toContain('Busy evening');
-    // Table A gold was skipped, so it stays null rather than becoming 0 g.
-    expect(row.oldGoldWtG).toBeNull();
+  it('a session caught mid-questionnaire is reset, not resumed', async () => {
+    // A draft frozen at deploy time, exactly as the migration leaves it.
+    await prisma.whatsAppSession.deleteMany({ where: { phoneE164: PHONE_A_SURAT } });
+    const staff = await prisma.whatsAppIdentity.findUniqueOrThrow({
+      where: { phoneE164: PHONE_A_SURAT },
+      select: { userId: true, organisationId: true },
+    });
+    await prisma.whatsAppSession.create({
+      data: {
+        phoneE164: PHONE_A_SURAT,
+        kind: 'staff',
+        userId: staff.userId,
+        organisationId: staff.organisationId,
+        flow: 'dsr',
+        step: 3,
+        draft: { walkIns: 21 },
+        expiresAt: new Date(Date.now() + 60 * 60_000),
+      },
+    });
 
-    // Re-file the same day → upsert updates in place, no second row.
-    const before = await prisma.dailyReport.count({ where: { storeId: store.id, reportDate: row.reportDate } });
-    await sendInbound(PHONE_A_SURAT, 'hi');
-    await sendInbound(PHONE_A_SURAT, '1');
-    // A quiet re-file: nothing sold, so both payment splits are skipped
-    // entirely and the day collapses to nine questions.
-    for (const a of ['11', '5', '0', '0', '0', '0', '0', '0', 'skip']) {
-      await sendInbound(PHONE_A_SURAT, a);
-    }
-    await sendInbound(PHONE_A_SURAT, 'yes');
-    const after = await prisma.dailyReport.count({ where: { storeId: store.id, reportDate: row.reportDate } });
-    expect(after).toBe(before); // still one row for that store-day
-    const updated = await prisma.dailyReport.findUniqueOrThrow({ where: { storeId_reportDate: { storeId: store.id, reportDate: row.reportDate } } });
-    expect(updated.walkIns).toBe(11);
+    await sendInbound(PHONE_A_SURAT, '350000'); // would have been the next answer
+
+    const session = await prisma.whatsAppSession.findFirst({
+      where: { phoneE164: PHONE_A_SURAT, kind: 'staff' },
+      select: { flow: true },
+    });
+    expect(session?.flow ?? null).not.toBe('dsr');
+    expect(await prisma.dailyReport.count({ where: { organisationId: 'org_eclat', source: 'whatsapp' } })).toBe(0);
   });
 
   // ── Compliance: org-scoped, store-timezone, no default store ────────────────
