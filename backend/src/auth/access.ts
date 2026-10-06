@@ -30,7 +30,7 @@ export const MODULES = [
   'dashboards', 'activity', 'reporting', 'store-comparison', 'management', 'reporting/scheduled',
   // CRM
   'conversations', 'crm', 'calling', 'reminders', 'customers', 'feedback', 'tasks',
-  'conversations/sla', 'customers/archived',
+  'conversations/sla', 'customers/archived', 'bot-script',
   // Showroom floor
   'instore', 'checkins',
   // Commerce & Orders
@@ -77,6 +77,13 @@ const STORE_MANAGER: ModuleSlug[] = [
    * further -- the screen is safe at store level because the API is.
    */
   'settings/dsr-access',
+  /*
+   * Reading the bot's wording, beside the inbox it speaks into. Safe at store
+   * level for the same reason as dsr-access: the screen may be open, but
+   * SAVING the script is head-office-only at the API, so a manager sees the
+   * words and cannot change them.
+   */
+  'bot-script',
   'dashboards', 'feedback', 'conversations/sla', 'customers/archived',
   /*
    * Bulk sending, at STORE level.

@@ -829,6 +829,7 @@ export const NAV_GROUPS: NavGroup[] = NAV_GROUP_ORDER.map((label) => ({
 export const CORE_NAVIGATION: readonly string[] = Object.freeze([
   "crm",
   "conversations",
+  "bot-script",
   "customers",
   "customers/archived",
   "conversations/sla",
