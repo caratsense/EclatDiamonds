@@ -385,12 +385,6 @@ function CheckInScreen({ onNewDay }: { onNewDay: () => void }) {
     router.replace(home);
   }
 
-  function skip() {
-    clearWatcher();
-    markAttendanceHandled();
-    router.replace(home);
-  }
-
   function prepareCheckIn(pos: PunchPosition | null, photo?: string) {
     const decision = evaluatePunchLocation(pos, geofence);
     /*
@@ -518,19 +512,12 @@ function CheckInScreen({ onNewDay }: { onNewDay: () => void }) {
     prepareCheckIn(await getPosition(), photo);
   }
 
-  /** "Skip for now" leads on to the person's home, so someone already there is not offered it. */
-  const skipLink = (wrap = "text-center") =>
-    isHome ? null : (
-      <div className={wrap}>
-        <button
-          type="button"
-          onClick={skip}
-          className="text-sm font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
-        >
-          Skip for now
-        </button>
-      </div>
-    );
+  /*
+   * "Skip for now" is gone (client, 7 Oct): attendance is recorded every day,
+   * and a bypass next to the punch button made skipping cheaper than punching.
+   * Nothing dead-ends without it — inside the fence the check-in is automatic,
+   * and every face the fence cannot confirm carries "Continue with reason".
+   */
 
   return (
     <div className="mx-auto flex min-h-[70vh] w-full max-w-md flex-col justify-center px-4 py-8">
@@ -642,7 +629,6 @@ function CheckInScreen({ onNewDay }: { onNewDay: () => void }) {
               >
                 Retry
               </Button>
-              {skipLink("mt-3")}
             </div>
           ) : screen === "check-out" ? (
             /* ── Home screen, checked in: the rest of the day is one button ── */
@@ -852,7 +838,6 @@ function CheckInScreen({ onNewDay }: { onNewDay: () => void }) {
               <p className="text-center text-xs text-muted-foreground">
                 Automatic detection unavailable for this store.
               </p>
-              {skipLink()}
             </div>
           ) : geoDenied ? (
             /* ── Permission denied / unsupported → manual fallback ─── */
@@ -896,7 +881,6 @@ function CheckInScreen({ onNewDay }: { onNewDay: () => void }) {
                 <Camera className="h-5 w-5" />
                 Add optional photo
               </Button>
-              {skipLink()}
             </div>
           ) : inRange ? (
             /* ── In range → auto check-in firing ───────────────────── */
@@ -918,31 +902,29 @@ function CheckInScreen({ onNewDay }: { onNewDay: () => void }) {
             <div className="rounded-xl border bg-card p-6 text-center">
               <Loader2 className="mx-auto h-8 w-8 animate-spin text-muted-foreground" />
               <p className="mt-3 text-sm text-muted-foreground">Locating you…</p>
-              {skipLink("mt-4 text-center")}
               {/* A phone that is allowed to read the location but never gets a
-                  fix stays here for good. Everyone else skips and punches from
-                  HRMS; someone with no Skip needs the way in on this face. */}
-              {isHome ? (
-                <Button
-                  variant="secondary"
-                  size="lg"
-                  className="mt-4 h-12 w-full text-base"
-                  disabled={checkIn.isPending}
-                  onClick={startManual}
-                >
-                  {checkIn.isPending ? (
-                    <>
-                      <Loader2 className="h-5 w-5 animate-spin" />
-                      Marking…
-                    </>
-                  ) : (
-                    <>
-                      <LogIn className="h-5 w-5" />
-                      Continue with reason
-                    </>
-                  )}
-                </Button>
-              ) : null}
+                  fix stays here for good. Skip is gone (attendance is recorded
+                  every day), so EVERYONE needs the way in on this face — with a
+                  reason, which is what an unverifiable punch costs. */}
+              <Button
+                variant="secondary"
+                size="lg"
+                className="mt-4 h-12 w-full text-base"
+                disabled={checkIn.isPending}
+                onClick={startManual}
+              >
+                {checkIn.isPending ? (
+                  <>
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    Marking…
+                  </>
+                ) : (
+                  <>
+                    <LogIn className="h-5 w-5" />
+                    Continue with reason
+                  </>
+                )}
+              </Button>
             </div>
           ) : (
             /* ── Outside range → live distance, closing the gap ────── */
@@ -999,7 +981,6 @@ function CheckInScreen({ onNewDay }: { onNewDay: () => void }) {
               </Button>
               </>
               ) : null}
-              {skipLink()}
             </div>
           )}
         </CardContent>

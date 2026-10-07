@@ -183,7 +183,7 @@ const UNIVERSAL_ROUTES = [
    * The jewellery-only list above is still untouched — no pack gains finance,
    * loyalty, returns or stock.
    */
-  'settings/dsr-access',
+  // settings/dsr-access retired 7 Oct: DSR filing moved to the dashboard.
   'settings/integrations/templates',
 ] as const;
 

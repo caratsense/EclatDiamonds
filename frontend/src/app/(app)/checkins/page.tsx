@@ -5,6 +5,7 @@ import { DoorOpen, Users, UserCheck, TrendingUp, ScanLine, Loader2 } from "lucid
 import { toast } from "sonner";
 import { useRecordInteraction } from "@/lib/queries/crm";
 
+import { ExcelExportButton } from "@/components/common/excel-export-button";
 import { SectionHeader } from "@/components/section/section-header";
 import {
   Dialog,
@@ -189,6 +190,10 @@ export default function CheckinsPage() {
         primaryAction={nav?.primaryAction}
         onPrimaryAction={() => setAddDialogOpen(true)}
       />
+
+      <div className="mb-3 flex justify-end">
+        <ExcelExportButton path="/checkins/export.xlsx" fallbackName="walk-ins.xlsx" />
+      </div>
 
       <div className="space-y-4">
         <StatTiles

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Ban, Contact, Search } from "lucide-react";
 import { toast } from "sonner";
 
+import { ExcelExportButton } from "@/components/common/excel-export-button";
 import { SectionHeader } from "@/components/section/section-header";
 import {
   StoreScopeField,
@@ -107,8 +108,8 @@ export default function CustomersPage() {
         onPrimaryAction={() => setAddOpen(true)}
       />
 
-      <div className="mb-4">
-        <div className="relative">
+      <div className="mb-4 flex items-start gap-2">
+        <div className="relative flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={rawQ}
@@ -120,6 +121,7 @@ export default function CustomersPage() {
             className="pl-9"
           />
         </div>
+        <ExcelExportButton path="/parties/export.xlsx" fallbackName="customers.xlsx" />
       </div>
 
       {isError ? (

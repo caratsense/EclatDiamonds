@@ -112,6 +112,76 @@ export class CheckinsService {
   ) {}
 
   /** GET /checkins — footfall log, store-scoped (most recent first). */
+  /**
+   * The walk-in log as a workbook (client, 7 Oct: every data-collection screen
+   * offers its data as Excel). Same scoping as the list — a salesperson
+   * exports only their own visits — and the survey answers come out of
+   * `metadata` as columns, so the sheet matches the paper form they replaced.
+   */
+  async exportXlsx(user: AuthUser, headerStore?: string): Promise<{ buffer: Buffer; rows: number }> {
+    const where: Prisma.CheckInWhereInput = {
+      ...this.scope.storeFilter(user, headerStore),
+    };
+    if (user.role === 'salesperson') {
+      where.OR = [{ repId: user.id }, { attendedById: user.id }];
+    }
+    const rows = await this.prisma.checkIn.findMany({
+      where,
+      orderBy: { timeIn: 'desc' },
+      take: 5000,
+      include: { store: { select: { name: true, timezone: true } } },
+    });
+
+    const { Workbook } = await import('exceljs');
+    const wb = new Workbook();
+    const ws = wb.addWorksheet('Walk-ins');
+    ws.columns = [
+      { header: 'Date', key: 'date', width: 12 },
+      { header: 'Time in', key: 'timeIn', width: 10 },
+      { header: 'Store', key: 'store', width: 22 },
+      { header: 'Customer', key: 'customer', width: 24 },
+      { header: 'Phone', key: 'phone', width: 14 },
+      { header: 'Type', key: 'customerType', width: 10 },
+      { header: 'Purpose', key: 'purpose', width: 14 },
+      { header: 'Source', key: 'source', width: 16 },
+      { header: 'Occasion', key: 'occasion', width: 16 },
+      { header: 'Category', key: 'productCategory', width: 16 },
+      { header: 'Budget', key: 'budgetRange', width: 10 },
+      { header: 'Outcome', key: 'outcome', width: 14 },
+      { header: 'Attended by', key: 'rep', width: 18 },
+      { header: 'Non-purchase reason', key: 'nonPurchaseReason', width: 28 },
+      { header: 'Saving scheme', key: 'savingScheme', width: 12 },
+      { header: 'Scheme reason', key: 'savingSchemeReason', width: 24 },
+      { header: 'Remark', key: 'remark', width: 30 },
+    ];
+    ws.getRow(1).font = { bold: true };
+    for (const r of rows) {
+      const tz = r.store?.timezone || 'Asia/Kolkata';
+      const survey = (r.metadata ?? {}) as Record<string, string>;
+      ws.addRow({
+        date: r.timeIn.toLocaleDateString('en-IN', { timeZone: tz }),
+        timeIn: r.timeIn.toLocaleTimeString('en-IN', { timeZone: tz, hour: '2-digit', minute: '2-digit' }),
+        store: r.store?.name ?? '',
+        customer: r.customerName,
+        phone: r.phone ?? '',
+        customerType: survey.customerType ?? '',
+        purpose: r.purpose,
+        source: survey.source ?? '',
+        occasion: survey.occasion ?? '',
+        productCategory: survey.productCategory ?? '',
+        budgetRange: survey.budgetRange ?? '',
+        outcome: r.outcome,
+        rep: r.repName ?? '',
+        nonPurchaseReason: survey.nonPurchaseReason ?? '',
+        savingScheme: survey.savingScheme ?? '',
+        savingSchemeReason: survey.savingSchemeReason ?? '',
+        remark: r.remark ?? '',
+      });
+    }
+    const buffer = Buffer.from(await wb.xlsx.writeBuffer());
+    return { buffer, rows: rows.length };
+  }
+
   async list(user: AuthUser, headerStore?: string) {
     const where: Prisma.CheckInWhereInput = {
       ...this.scope.storeFilter(user, headerStore),

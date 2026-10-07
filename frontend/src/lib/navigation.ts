@@ -520,7 +520,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Choose, person by person, which screens they can open and how far.",
     primaryAction: "",
     icon: ShieldCheck,
-    group: "Setup",
+    group: "Team",
     roles: ["head_office"],
   },
   {
@@ -590,24 +590,6 @@ export const NAV_ITEMS: NavItem[] = [
     icon: Plug,
     group: "Setup",
     roles: ["head_office"],
-  },
-  {
-    /*
-     * Who can file a daily report from their phone.
-     *
-     * The bot answers a handset only when that number is bound to a user, and
-     * before this screen the only way to bind one was an API call by hand --
-     * so the feature shipped unusable by anybody who could not run curl.
-     */
-    module: 1,
-    slug: "settings/dsr-access",
-    title: "WhatsApp Reporting",
-    purpose:
-      "Who can file a daily report over WhatsApp, and who still needs setting up.",
-    primaryAction: "",
-    icon: Smartphone,
-    group: "Setup",
-    roles: ["store_manager", "area_manager", "head_office"],
   },
   {
     /*
@@ -851,7 +833,6 @@ export const CORE_NAVIGATION: readonly string[] = Object.freeze([
   "data/images",
   "settings/integrations",
   "settings/integrations/templates",
-  "settings/dsr-access",
   "settings/audit",
   "settings/access",
 ]);

@@ -275,14 +275,77 @@ describe('Attendance operations (e2e)', () => {
      */
     const told = await prisma.notification.findMany({
       where: { entityType: 'AttendanceRecord', kind: 'attendance_review' },
-      select: { userId: true, body: true },
+      select: { userId: true, title: true, body: true },
     });
     expect(told.length).toBeGreaterThan(0);
     // Never the person who punched — they know where they were.
     expect(told.some((n) => n.userId === U.repB)).toBe(false);
     // Head office asked to be told, and sees every branch.
     expect(told.some((n) => n.userId === U.ho)).toBe(true);
-    expect(told[0].body).toContain('customer visit');
+    // Picked by TITLE, not by index: the third-strike flag is also an
+    // attendance_review row, and this punch may well be the strike that
+    // raises it. Both rows are legitimate; this assertion is about the
+    // per-punch notice carrying the typed reason.
+    const perPunch = told.find((n) => n.title.startsWith('Check-in needs review'));
+    expect(perPunch?.body).toContain('customer visit');
+
+    // ONE off-site punch is not a pattern. The third-strike flag must stay
+    // silent here — it has its own test below.
+    expect(told.some((n) => n.title.startsWith('Flagged:'))).toBe(false);
+
+    await prisma.notification.deleteMany({ where: { entityType: 'AttendanceRecord' } });
+    await prisma.attendanceRecord.deleteMany({ where: { staffId: U.repB } });
+    await prisma.rawPunchEvent.deleteMany({ where: { userId: U.repB } });
+  });
+
+  it('flags the THIRD off-site check-in of the month to head office', async () => {
+    /*
+     * One drifted GPS fix is noise; three in a month is a pattern, and the
+     * client asked for patterns to reach head office flagged, not merely
+     * listed. Two earlier unverified days are seeded directly, then the third
+     * arrives through the real API.
+     *
+     * The seeded days are picked to never collide with today's unique
+     * (storeId, staffId, date) — the first two days of the month, shifted
+     * along when today IS one of them.
+     */
+    const now = new Date();
+    const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const day = (d: number) => new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), d));
+    const seedDays = [1, 2, 3].filter((d) => day(d).getTime() !== today.getTime()).slice(0, 2);
+    for (const d of seedDays) {
+      await prisma.attendanceRecord.create({
+        data: {
+          organisationId: A.org,
+          storeId: A.s1,
+          staffId: U.repB,
+          staffName: 'repB',
+          date: day(d),
+          status: 'present',
+          geoVerified: false,
+          checkInAt: new Date(day(d).getTime() + 10 * 3600_000),
+          checkInNote: 'site visit',
+        },
+      });
+    }
+
+    await request(server())
+      .post('/hrms/attendance/check-in')
+      .set(as(U.repB))
+      .send({ lat: MUMBAI.lat + 0.01, lng: MUMBAI.lng, accuracyM: 10, note: 'customer visit' })
+      .expect(201);
+
+    const flagged = await prisma.notification.findMany({
+      where: { kind: 'attendance_review', title: { startsWith: 'Flagged:' } },
+      select: { userId: true, title: true, priority: true },
+    });
+    expect(flagged.length).toBeGreaterThan(0);
+    // The flag names the count and goes to head office, at high priority.
+    expect(flagged[0].title).toContain('3 off-site check-ins');
+    expect(flagged.some((f) => f.userId === U.ho)).toBe(true);
+    expect(flagged[0].priority).toBe('high');
+    // Head office ONLY: the per-punch notice already told the branch manager.
+    expect(flagged.every((f) => f.userId === U.ho)).toBe(true);
 
     await prisma.notification.deleteMany({ where: { entityType: 'AttendanceRecord' } });
     await prisma.attendanceRecord.deleteMany({ where: { staffId: U.repB } });
