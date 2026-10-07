@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Header, Param, Post, Put, Query, Res, StreamableFile } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Header, Param, Post, Put, Query, Res, StreamableFile } from '@nestjs/common';
 import type { Response } from 'express';
 import { ReportingService } from './reporting.service';
 import { DsrDigestService } from './dsr-digest.service';
@@ -104,6 +104,24 @@ export class ReportingController {
     @StoreHeader() store?: string,
   ) {
     return this.reporting.listDaily(user, query, store);
+  }
+
+  /**
+   * GET /reporting/daily/opening?storeId=&date=YYYY-MM-DD — the opening booking
+   * figure carried from the last filed report before `date`, for the form to
+   * prefill. Declared before `daily/:id`, which would otherwise eat "opening".
+   */
+  @Roles('salesperson')
+  @Get('daily/opening')
+  carriedOpening(
+    @CurrentUser() user: AuthUser,
+    @Query('storeId') storeId: string,
+    @Query('date') date: string,
+  ) {
+    if (!storeId?.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(date ?? '')) {
+      throw new BadRequestException('storeId and date=YYYY-MM-DD are required');
+    }
+    return this.reporting.carriedOpening(user, storeId.trim(), date);
   }
 
   /**

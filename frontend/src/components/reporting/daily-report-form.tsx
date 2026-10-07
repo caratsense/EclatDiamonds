@@ -28,7 +28,7 @@ import {
   composeDailyReportText,
   type DailyReportInput,
 } from "@/lib/mock/reporting";
-import { useCreateDailyReport } from "@/lib/queries/reporting";
+import { useCarriedOpening, useCreateDailyReport } from "@/lib/queries/reporting";
 import { cn, positiveNumberInput } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
@@ -285,8 +285,26 @@ export function DailyReportForm() {
   const [bookingsNew, setBookingsNew] = useState("");
   const [advanceReceived, setAdvanceReceived] = useState("");
   const [customSplit, setCustomSplit] = useState<PaymentSplit>(EMPTY_SPLIT);
-  // The customised-order book
-  const [bookingsOpen, setBookingsOpen] = useState("");
+  // The customised-order book.
+  //
+  // The opening figure CARRIES FORWARD: yesterday's closing arrives from the
+  // server and fills the field by itself (client, 7 Oct meeting 2 - nobody
+  // looks up the previous report to retype a number). It stays editable - the
+  // first-ever report, and a correction after an audit, must win over the
+  // automation - so a hand-typed value is never overwritten: the effect only
+  // writes while the field still holds what the carry itself put there.
+  const carried = useCarriedOpening(storeId, reportDate);
+  // Edits are kept PER store+date, and the displayed value is derived: the
+  // user's edit for this key if one exists, else the carried figure. No effect
+  // syncs anything, so switching store or date can never clobber a typed value
+  // and the carried number can never overwrite an edit.
+  const openKey = `${storeId}|${reportDate}`;
+  const [openEdits, setOpenEdits] = useState<Record<string, string>>({});
+  const carriedText = carried.data?.opening != null ? String(carried.data.opening) : "";
+  const bookingsOpen = openEdits[openKey] ?? carriedText;
+  const setBookingsOpen = (value: string) =>
+    setOpenEdits((prev) => ({ ...prev, [openKey]: value }));
+  const openIsCarried = openEdits[openKey] === undefined && carried.data?.fromDate != null;
   const [bookingsClosed, setBookingsClosed] = useState("");
   const [remark, setRemark] = useState("");
   const [submittedBy, setSubmittedBy] = useState(user.name);
@@ -372,6 +390,7 @@ export function DailyReportForm() {
     // Opening is deliberately kept: tomorrow morning's opening book is tonight's
     // closing, so the manager carries it forward rather than looking it up again.
     setBookingsOpen(String(closing));
+    void closing;
   }
 
   async function submit() {
@@ -495,7 +514,7 @@ export function DailyReportForm() {
 
           {/* Traffic funnel */}
           <div className="space-y-2.5">
-            <GroupLabel>Traffic</GroupLabel>
+            <GroupLabel>1 · Footfall</GroupLabel>
             <p className="text-[11px] text-muted-foreground">
               Counts only — a walk-in is logged whether or not the customer left
               a name or number.
@@ -532,7 +551,7 @@ export function DailyReportForm() {
 
           {/* Table A — counter sale */}
           <div className="space-y-3 rounded-lg border p-3.5">
-            <GroupLabel>Table A · Counter sale</GroupLabel>
+            <GroupLabel>2 · Table A — counter sale</GroupLabel>
             <div className="grid gap-3 sm:grid-cols-2">
               <NumberField
                 id="dsr-counter-value"
@@ -552,7 +571,7 @@ export function DailyReportForm() {
 
           {/* Table B — customised sale */}
           <div className="space-y-3 rounded-lg border p-3.5">
-            <GroupLabel>Table B · Customised sale</GroupLabel>
+            <GroupLabel>3 · Table B — customised sale</GroupLabel>
             <div className="grid gap-3 sm:grid-cols-2">
               <NumberField
                 id="dsr-booking-value"
@@ -580,15 +599,23 @@ export function DailyReportForm() {
 
           {/* The customised-order book */}
           <div className="space-y-2.5">
-            <GroupLabel>Customised order book</GroupLabel>
+            <GroupLabel>4 · Customised order book</GroupLabel>
             <div className="grid gap-3 sm:grid-cols-3">
-              <NumberField
-                id="dsr-book-open"
-                label="Open bookings"
-                value={bookingsOpen}
-                onChange={setBookingsOpen}
-                prefix="₹"
-              />
+              <div className="grid gap-1.5">
+                <NumberField
+                  id="dsr-book-open"
+                  label="Open bookings"
+                  value={bookingsOpen}
+                  onChange={setBookingsOpen}
+                  prefix="₹"
+                />
+                {openIsCarried ? (
+                  <p className="text-[11px] text-muted-foreground">
+                    Carried from {carried.data?.fromDate}&rsquo;s closing — edit only
+                    to correct.
+                  </p>
+                ) : null}
+              </div>
               <NumberField
                 id="dsr-book-closed"
                 label="Closed — sale completed"
@@ -617,7 +644,7 @@ export function DailyReportForm() {
           {/* Remark */}
           <div className="grid gap-1.5">
             <Label htmlFor="dsr-remark" className="text-xs">
-              Remark
+              5 · Remark
             </Label>
             <Textarea
               id="dsr-remark"
@@ -658,10 +685,10 @@ export function DailyReportForm() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <MessageCircle className="h-4 w-4 text-[var(--gold)]" />
-            WhatsApp preview
+            Report preview
           </CardTitle>
           <CardDescription>
-            Exactly what gets sent — updates as you type
+            The day as head office will read it — updates as you type
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">

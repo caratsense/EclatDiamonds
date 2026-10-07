@@ -842,6 +842,30 @@ export class ReportingService {
   }
 
   /** POST /reporting/daily — capture a store-close DSR. Store-scoped write. */
+  /**
+   * Yesterday's closing is today's opening (client, 7 Oct meeting 2):
+   * the latest report BEFORE the filing date supplies the opening booking
+   * figure, so nobody looks a day up to retype a number. "Latest before",
+   * not "the day before": a store that was shut on Sunday carries Friday's
+   * book into Monday rather than opening at zero.
+   */
+  async carriedOpening(
+    user: AuthUser,
+    storeId: string,
+    date: string,
+  ): Promise<{ opening: number | null; fromDate: string | null }> {
+    this.scope.assertStoreAllowed(user, storeId);
+    const prev = await this.prisma.dailyReport.findFirst({
+      where: { storeId, reportDate: { lt: new Date(`${date}T00:00:00.000Z`) } },
+      orderBy: { reportDate: 'desc' },
+    });
+    if (!prev) return { opening: null, fromDate: null };
+    return {
+      opening: closingBooking(prev),
+      fromDate: fmtISODateUTC(prev.reportDate),
+    };
+  }
+
   async createDaily(user: AuthUser, dto: CreateDailyReportDto) {
     // A DSR belongs to ONE concrete store. An "All Stores" caller (head_office
     // with no store selected) must pick one — never silently fall through to a
@@ -888,7 +912,12 @@ export class ReportingService {
       deliveredBilled: new Prisma.Decimal(dto.deliveredBilled ?? 0),
       bookingsNew: new Prisma.Decimal(dto.bookingsNew ?? 0),
       advanceReceived: new Prisma.Decimal(dto.advanceReceived ?? 0),
-      bookingsOpen: new Prisma.Decimal(dto.bookingsOpen ?? 0),
+      // Omitted opening carries forward from the last report's closing, so the
+      // chain holds even for a caller that never asks. An explicit value - the
+      // first-ever report, or a correction - always wins.
+      bookingsOpen: new Prisma.Decimal(
+        dto.bookingsOpen ?? (await this.carriedOpening(user, storeId, dto.reportDate)).opening ?? 0,
+      ),
       bookingsClosed: new Prisma.Decimal(dto.bookingsClosed ?? 0),
       cash: new Prisma.Decimal(dto.cash ?? 0),
       card: new Prisma.Decimal(dto.card ?? 0),

@@ -174,6 +174,24 @@ export function useDailyReports(date?: string) {
 export type CreateDailyReportInput = DailyReportInput;
 
 /** POST /reporting/daily — file a store-close report (returns composed text). */
+/**
+ * The opening booking figure carried from the last filed report before `date`.
+ * Null when the store has never filed — the first report types its own opening.
+ */
+export function useCarriedOpening(storeId: string, date: string) {
+  return useQuery({
+    queryKey: ["reporting", "daily-opening", storeId, date],
+    enabled: Boolean(storeId && date),
+    queryFn: async () =>
+      (
+        await api.get<{ opening: number | null; fromDate: string | null }>(
+          "/reporting/daily/opening",
+          { params: { storeId, date } },
+        )
+      ).data,
+  });
+}
+
 export function useCreateDailyReport() {
   const qc = useQueryClient();
   return useMutation({
