@@ -852,6 +852,65 @@ export class QuotesService {
     return isSalesScoped(user) ? { assignedRepId: user.id } : {};
   }
 
+  /**
+   * The quote book as a workbook — same scope and kaccha rule as the list, so
+   * the sheet never shows a row the screen would not.
+   */
+  async exportXlsx(
+    user: AuthUser,
+    headerStore?: string,
+  ): Promise<{ buffer: Buffer; rows: number }> {
+    const quotes = await this.prisma.quote.findMany({
+      where: {
+        ...this.scope.storeFilter(user, headerStore),
+        ...this.ownQuotes(user),
+        // Kaccha estimates never leave the building in a spreadsheet, even for
+        // head office: the screen's toggle is a glance, a file is a handout.
+        isKaccha: false,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 5000,
+      select: {
+        ref: true,
+        customerName: true,
+        phone: true,
+        status: true,
+        grandTotal: true,
+        createdAt: true,
+        store: { select: { name: true } },
+        assignedRep: { select: { name: true } },
+      },
+    });
+    const { Workbook } = await import('exceljs');
+    const wb = new Workbook();
+    const ws = wb.addWorksheet('Quotations');
+    ws.columns = [
+      { header: 'Quote #', key: 'ref', width: 14 },
+      { header: 'Date', key: 'date', width: 12 },
+      { header: 'Customer', key: 'customer', width: 24 },
+      { header: 'Phone', key: 'phone', width: 14 },
+      { header: 'Store', key: 'store', width: 22 },
+      { header: 'Status', key: 'status', width: 14 },
+      { header: 'Salesperson', key: 'rep', width: 18 },
+      { header: 'Grand total (₹)', key: 'total', width: 16 },
+    ];
+    ws.getRow(1).font = { bold: true };
+    for (const q of quotes) {
+      ws.addRow({
+        ref: q.ref,
+        date: q.createdAt.toISOString().slice(0, 10),
+        customer: q.customerName,
+        phone: q.phone ?? '',
+        store: q.store?.name ?? '',
+        status: q.status,
+        rep: q.assignedRep?.name ?? '',
+        total: Number(q.grandTotal),
+      });
+    }
+    const buffer = Buffer.from(await wb.xlsx.writeBuffer());
+    return { buffer, rows: quotes.length };
+  }
+
   async list(user: AuthUser, headerStore?: string, includeKaccha = false) {
     // "@" kaccha provision: rough no-GST estimates are hidden from the normal
     // list. Only head_office may opt back in (includeKaccha); any non-HO request

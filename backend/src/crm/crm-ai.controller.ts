@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Put, Query } from '@nestjs/common';
 import {
   IsArray,
   IsBoolean,
@@ -17,6 +17,7 @@ import { Roles } from '../auth/roles.decorator';
 import { AuthUser, CurrentUser } from '../common/auth-user';
 import { AttributionService } from './attribution.service';
 import { QualificationService } from './qualification.service';
+import { BotScriptService } from './bot-script.service';
 import type { QualificationPolicy } from './qualification-policy';
 import { AdSetRulesService, type AdSetAutomationRule } from './adset-rules.service';
 import { ConversationAiGate } from './ai-responder';
@@ -124,6 +125,7 @@ export class AttributionModelQuery {
 export class CrmQualificationController {
   constructor(
     private readonly qualification: QualificationService,
+    private readonly botScript: BotScriptService,
     private readonly adSetRules: AdSetRulesService,
     private readonly aiGate: ConversationAiGate,
     private readonly audit: AuditService,
@@ -193,6 +195,25 @@ export class CrmQualificationController {
   @Post('conversations/:id')
   assessConversation(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.qualification.assessConversation(user, id);
+  }
+
+  /**
+   * The customer bot's wording.
+   *
+   * Reading is open to any signed-in user: a salesperson picking up a handed-off
+   * thread should be able to see what the customer was already asked, without
+   * needing the rights to change it. Writing is head office, like every other
+   * setting that changes what every branch says.
+   */
+  @Get('bot-script')
+  botScriptSettings(@CurrentUser() user: AuthUser) {
+    return this.botScript.describe(user);
+  }
+
+  @Put('bot-script')
+  @Roles('head_office')
+  saveBotScript(@CurrentUser() user: AuthUser, @Body() body: unknown) {
+    return this.botScript.save(user, body);
   }
 
   @Post('leads/:id')

@@ -43,6 +43,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { getNavItem } from "@/lib/navigation";
 import { ROLE_RANK } from "@/lib/types";
+import { AnnounceDialog } from "@/components/dashboards/announce-dialog";
 import { useSession } from "@/store/use-session";
 import {
   useKpis,
@@ -130,6 +131,11 @@ export default function DashboardsPage() {
             {p.label}
           </Button>
         ))}
+        {role === "head_office" ? (
+          <span className="ml-auto">
+            <AnnounceDialog />
+          </span>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

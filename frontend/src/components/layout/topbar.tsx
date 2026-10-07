@@ -2,7 +2,6 @@
 
 import { GlobalSearch } from "@/components/layout/global-search";
 import { SEARCH_ENABLED } from "@/lib/features";
-import { GoldRateChip } from "@/components/layout/gold-rate-chip";
 import { NotificationBell } from "@/components/layout/notification-bell";
 import { RoleBadge } from "@/components/layout/role-badge";
 import { StoreSwitcher } from "@/components/layout/store-switcher";
@@ -26,7 +25,6 @@ export function Topbar() {
 
       <div className="ml-auto flex items-center gap-2">
         <div className="hidden sm:block">
-          <GoldRateChip />
         </div>
         <NotificationBell />
         <RoleBadge />

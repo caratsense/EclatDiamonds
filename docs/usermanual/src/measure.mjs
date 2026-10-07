@@ -28,7 +28,7 @@ const widthPx = Math.round((210 - 32) * MM);
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: widthPx, height: 1200 } });
-await page.goto(pathToFileURL(here("../CaratSense-Operations-Manual.html")).href, {
+await page.goto(pathToFileURL(here("../CaratSpace-Operations-Manual.html")).href, {
   waitUntil: "networkidle",
 });
 await page.emulateMedia({ media: "print" });

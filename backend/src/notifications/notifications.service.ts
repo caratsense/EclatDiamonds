@@ -207,6 +207,37 @@ export class NotificationsService {
   }
 
   /** Convenience: emit to whoever can act on `requiredRole` at a store. */
+  /**
+   * A head-office announcement: one message, every active person in the
+   * organisation, immediately.
+   *
+   * "Immediately" costs nothing extra — the bell already streams over SSE, so
+   * every open dashboard shows it the moment the rows are written. Deliberately
+   * the bell rather than a new banner surface: one notification channel that is
+   * already on every screen, with read/dismiss semantics people already know.
+   *
+   * The sender is excluded; they wrote it. The audit row is the controller's
+   * job, beside the role guard.
+   */
+  async announce(
+    user: AuthUser,
+    input: { title: string; body?: string | null },
+  ): Promise<{ recipients: number }> {
+    const users = await this.prisma.user.findMany({
+      where: { organisationId: user.organisationId, isActive: true, id: { not: user.id } },
+      select: { id: true },
+    });
+    await this.emit(users.map((u) => u.id), {
+      kind: 'system',
+      title: input.title,
+      body: input.body ?? null,
+      priority: 'high',
+      actorId: user.id,
+      actorName: user.name,
+    });
+    return { recipients: users.length };
+  }
+
   async emitToApprovers(
     storeId: string | null,
     requiredRole: Role,

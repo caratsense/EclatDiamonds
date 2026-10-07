@@ -848,6 +848,63 @@ export class HrmsService {
             }`,
           );
         });
+
+      /*
+       * THE THIRD STRIKE (client, 7 Oct): one off-site punch is a drifted GPS
+       * or a site visit; three in a month is a pattern, and head office wants
+       * patterns flagged, not just punches listed.
+       *
+       * Counted on geoVerified=false check-ins in the store-local calendar
+       * month, which includes today's row just written. From the third one
+       * onwards head office gets a high-priority flag naming the count — once
+       * per day at most (the dedupe key carries the date), so a check-in and a
+       * correction on the same day cannot double-fire, while a fourth offence
+       * next week rings again rather than hiding behind the third's dedupe.
+       */
+      const monthStart = new Date(`${date.toISOString().slice(0, 7)}-01T00:00:00.000Z`);
+      const offsiteThisMonth = await this.prisma.attendanceRecord.count({
+        where: {
+          organisationId: user.organisationId,
+          staffId: user.id,
+          geoVerified: false,
+          checkInAt: { not: null },
+          date: { gte: monthStart },
+        },
+      });
+      if (offsiteThisMonth >= 3) {
+        await this.notifications
+          .emitToApprovers(
+            storeId,
+            'head_office',
+            {
+              kind: 'attendance_review',
+              title: `Flagged: ${user.name} — ${offsiteThisMonth} off-site check-ins this month`,
+              body:
+                `Today: ${
+                  distanceM != null
+                    ? `${distanceM} m from ${store.name}`
+                    : `no location fix at ${store.name}`
+                }${payload.checkInNote ? ` — "${payload.checkInNote}"` : ''}. ` +
+                `Review the month on Fix attendance.`,
+              href: '/hrms',
+              storeId,
+              priority: 'high',
+              entityType: 'AttendanceRecord',
+              entityId: row.id,
+              actorId: user.id,
+              actorName: user.name,
+              dedupeKey: `attendance:flag3:${user.id}:${date.toISOString().slice(0, 10)}`,
+            },
+            user.id,
+          )
+          .catch((error: unknown) => {
+            this.logger.warn(
+              `offsite flag notification failed for ${row.id}: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          });
+      }
     }
 
     return this.toSelfAttendanceView(row, store.tz);

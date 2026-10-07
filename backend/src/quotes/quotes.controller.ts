@@ -37,6 +37,20 @@ export class QuotesController {
     private readonly approval: QuoteApprovalService,
   ) {}
 
+  /** The quote book as Excel — same scope as the list; kaccha never exports. */
+  @Get('export.xlsx')
+  @Header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  async exportXlsx(
+    @CurrentUser() user: AuthUser,
+    @Res({ passthrough: true }) res: Response,
+    @StoreHeader() store?: string,
+  ) {
+    const { buffer, rows } = await this.quotes.exportXlsx(user, store);
+    res.setHeader('Content-Disposition', 'attachment; filename="quotations.xlsx"');
+    res.setHeader('X-Export-Rows', String(rows));
+    return new StreamableFile(buffer);
+  }
+
   @Get()
   list(
     @CurrentUser() user: AuthUser,

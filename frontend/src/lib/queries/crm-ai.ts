@@ -118,6 +118,59 @@ export function useSaveQualificationPolicy() {
   });
 }
 
+/* ------------------------------------------------------------- bot script */
+
+/** One answer the customer can tap, with the built-in label beside any override. */
+export interface BotScriptOption {
+  value: string;
+  defaultLabel: string;
+  label?: string;
+}
+
+export interface BotScriptStep {
+  key: string;
+  defaultPrompt: string;
+  defaultHint?: string;
+  prompt?: string;
+  hint?: string;
+  options: BotScriptOption[];
+}
+
+/**
+ * Defaults travel with the overrides so the editor can show the built-in
+ * wording as placeholder text. That is what makes "clear the box to go back to
+ * the default" read as an obvious action rather than a destructive one.
+ */
+export interface BotScriptSetup {
+  intro: { default: string; value?: string };
+  introHint: { default: string; value?: string };
+  steps: BotScriptStep[];
+  limits: { prompt: number; hint: number; optionLabel: number };
+}
+
+/** Only the overrides are sent; anything omitted goes back to the default. */
+export interface BotScriptInput {
+  intro?: string;
+  introHint?: string;
+  steps?: Record<string, { prompt?: string; hint?: string; options?: Record<string, string> }>;
+}
+
+export function useBotScript() {
+  return useQuery({
+    queryKey: ["crm", "bot-script"],
+    queryFn: async () => (await api.get<BotScriptSetup>("/crm/qualification/bot-script")).data,
+  });
+}
+
+export function useSaveBotScript() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: BotScriptInput) =>
+      (await api.put<BotScriptSetup>("/crm/qualification/bot-script", input)).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["crm", "bot-script"] }),
+  });
+}
+
 /* ------------------------------------------------------- ad-set automation */
 
 export interface AdSetAutomationRule {

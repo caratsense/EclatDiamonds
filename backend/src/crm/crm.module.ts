@@ -13,6 +13,7 @@ import { Customer360Service } from './customer360.service';
 import { IdentityService } from './identity.service';
 import { PipelinesService } from './pipelines.service';
 import { QualificationService } from './qualification.service';
+import { BotScriptService } from './bot-script.service';
 import { AttributionService } from './attribution.service';
 import { CrmAiProvider } from './crm-ai.provider';
 import { AdSetRulesService } from './adset-rules.service';
@@ -118,6 +119,7 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
     FollowUpRemindersController,
   ],
   providers: [
+    BotScriptService,
     IdentityService,
     ActivityService,
     LeadTagsService,

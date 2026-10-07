@@ -175,12 +175,16 @@ describe("the punch screen for someone set to attendance only", () => {
 });
 
 describe("the punch screen for everyone else", () => {
-  it("still offers 'Skip for now', and nothing that belongs to the one-screen app", () => {
+  it("offers no Skip and no dead end: punch, or punch with a reason", () => {
     for (const person of [SALES, NO_CRM]) {
       const html = shown(person, null);
       expect(html).toContain("Locating you");
-      expect(html).toContain("Skip for now");
-      expect(html).not.toContain("Continue with reason");
+      // Skip is gone (7 Oct): attendance is recorded every day, so the only
+      // ways off this screen are a punch — automatic in range, or with a
+      // reason when the fence cannot confirm. Nobody is left stranded by a
+      // phone that never produces a fix.
+      expect(html).not.toContain("Skip for now");
+      expect(html).toContain("Continue with reason");
       expect(html).not.toContain('href="/hrms"');
     }
   });

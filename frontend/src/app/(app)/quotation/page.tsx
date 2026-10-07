@@ -6,6 +6,7 @@ import { FileText, MessageCircle } from "lucide-react";
 import { toast } from "sonner";
 
 import { QuoteDetailDialog } from "@/components/quotation/quote-detail-dialog";
+import { ExcelExportButton } from "@/components/common/excel-export-button";
 import { SectionHeader } from "@/components/section/section-header";
 import { OrdersTimelineView } from "@/components/timelines/orders-timeline-view";
 import { Badge } from "@/components/ui/badge";
@@ -127,10 +128,13 @@ export default function QuotationPage() {
       />
 
       <Tabs defaultValue="quotes" className="space-y-4">
-        <TabsList>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <TabsList>
           <TabsTrigger value="quotes">Quotes</TabsTrigger>
           <TabsTrigger value="orders">Custom Orders &amp; Timeline</TabsTrigger>
         </TabsList>
+          <ExcelExportButton path="/quotes/export.xlsx" fallbackName="quotations.xlsx" />
+        </div>
 
         <TabsContent value="quotes" className="space-y-4">
           <QuoteApprovalsCard />

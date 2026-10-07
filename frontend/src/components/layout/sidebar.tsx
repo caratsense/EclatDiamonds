@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ChevronDown, DoorOpen, FileText, Plus, Search, UserPlus, X } from "lucide-react";
 
+import { GoldRateChip } from "@/components/layout/gold-rate-chip";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/brand/logo";
 import {
@@ -245,6 +246,11 @@ export function Sidebar() {
 
       {/* System info & Footer */}
       <div className="border-t border-sidebar-border px-4 py-3">
+        {/* The gold rate moved here from the top bar (client, 7 Oct): a rail
+            item rather than a number broadcast at the top of every screen. */}
+        <div className="mb-2">
+          <GoldRateChip />
+        </div>
         <div className="flex items-center justify-between rounded-lg bg-sidebar-accent/60 px-2.5 py-2">
           <div className="flex items-center gap-2 min-w-0">
             <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />

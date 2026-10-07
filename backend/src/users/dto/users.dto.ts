@@ -19,7 +19,13 @@ import { IsIndianMobile, IsRealName } from '../../common/contact.util';
  * Roles a head-office admin may assign here — never `head_office` (HO cannot
  * mint another HO), and never the retired area manager or storeperson.
  */
-export const ASSIGNABLE_ROLES: Role[] = ['salesperson', 'marketing', 'store_manager'];
+/**
+ * Roles a request may carry. head_office is in the LIST so the DTO does not
+ * refuse it before the service can decide — the real rule lives in
+ * assertAssignableRole: only head office may grant it, everyone else is
+ * strictly below their own rank.
+ */
+export const ASSIGNABLE_ROLES: Role[] = ['salesperson', 'marketing', 'store_manager', 'head_office'];
 
 /**
  * POST /users — a manager onboards a staff member (defaults to salesperson).

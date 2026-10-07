@@ -5,6 +5,7 @@ import { DoorOpen, Users, UserCheck, TrendingUp, ScanLine, Loader2 } from "lucid
 import { toast } from "sonner";
 import { useRecordInteraction } from "@/lib/queries/crm";
 
+import { ExcelExportButton } from "@/components/common/excel-export-button";
 import { SectionHeader } from "@/components/section/section-header";
 import {
   Dialog,
@@ -190,6 +191,10 @@ export default function CheckinsPage() {
         onPrimaryAction={() => setAddDialogOpen(true)}
       />
 
+      <div className="mb-3 flex justify-end">
+        <ExcelExportButton path="/checkins/export.xlsx" fallbackName="walk-ins.xlsx" />
+      </div>
+
       <div className="space-y-4">
         <StatTiles
           tiles={[
@@ -310,6 +315,25 @@ function UnifiedWalkinDialog({
 }) {
   const { targetStoreId, storeLabel, pickedStoreId, setPickedStoreId } =
     useStoreScope();
+  /* The New Customer Data form's option lists, verbatim. */
+  const WALKIN_SOURCES = [
+    "Word of Mouth", "Direct Walk In", "Social Media", "Google Search",
+    "Hoardings", "Newspaper", "Radio", "Website", "Whatsapp", "Exhibition",
+    "Other",
+  ];
+  const WALKIN_CATEGORIES = [
+    "Rings", "Earrings", "Pendants", "Mangalsutra", "Necklace Sets",
+    "Bracelets/Bangles", "Other",
+  ];
+  const WALKIN_BUDGETS = [
+    { value: "<50k", label: "Under \u20B950k" },
+    { value: "50k-2L", label: "\u20B950k \u2013 2L" },
+    { value: "2-5L", label: "\u20B92 \u2013 5L" },
+    { value: "5-10L", label: "\u20B95 \u2013 10L" },
+    { value: "10-20L", label: "\u20B910 \u2013 20L" },
+    { value: ">20L", label: "Above \u20B920L" },
+    { value: "na", label: "Not applicable" },
+  ];
   const createCheckin = useCreateCheckin();
   const checkoutCheckin = useCheckoutCheckin();
   const recordInteraction = useRecordInteraction();
@@ -331,6 +355,26 @@ function UnifiedWalkinDialog({
   const [itemNote, setItemNote] = useState("");
 
   // Outcome & follow-up
+  /*
+   * The New Customer Data form (7 Oct): the client collects walk-ins on a
+   * Google Form today, and these are its remaining questions. Everything is
+   * optional — the person is standing at the counter whether or not the survey
+   * gets answered — and an "Other" choice opens a free-text box, as the form's
+   * own Other: lines do.
+   */
+  const [customerType, setCustomerType] = useState<"" | "new" | "existing">("");
+  const [birthday, setBirthday] = useState("");
+  const [anniversary, setAnniversary] = useState("");
+  const [source, setSource] = useState("");
+  const [sourceOther, setSourceOther] = useState("");
+  const [occasion, setOccasion] = useState("");
+  const [productCategory, setProductCategory] = useState("");
+  const [productCategoryOther, setProductCategoryOther] = useState("");
+  const [budgetRange, setBudgetRange] = useState("");
+  const [nonPurchaseReason, setNonPurchaseReason] = useState("");
+  const [savingScheme, setSavingScheme] = useState<"" | "yes" | "no">("");
+  const [savingSchemeReason, setSavingSchemeReason] = useState("");
+
   const [outcome, setOutcome] = useState<CheckinOutcomeInput>("in_store");
   const [remark, setRemark] = useState("");
   const [followUpDate, setFollowUpDate] = useState("");
@@ -362,6 +406,18 @@ function UnifiedWalkinDialog({
     setSku("");
     setItemKind("shown");
     setItemNote("");
+    setCustomerType("");
+    setBirthday("");
+    setAnniversary("");
+    setSource("");
+    setSourceOther("");
+    setOccasion("");
+    setProductCategory("");
+    setProductCategoryOther("");
+    setBudgetRange("");
+    setNonPurchaseReason("");
+    setSavingScheme("");
+    setSavingSchemeReason("");
     setOutcome("in_store");
     setRemark("");
     setFollowUpDate("");
@@ -410,11 +466,27 @@ function UnifiedWalkinDialog({
     setSaving(true);
     try {
       // Step 1: Create check-in
+      // "Other" wins over the list choice when its box is filled, exactly as
+      // the form's Other: lines behave.
+      const chosenSource = source === "Other" ? sourceOther.trim() : source;
+      const chosenCategory =
+        productCategory === "Other" ? productCategoryOther.trim() : productCategory;
       const row = await createCheckin.mutateAsync({
         storeId: targetStoreId,
         customerName,
         phone: normalizedPhone ?? undefined,
         purpose,
+        customerType: !anonymous && customerType ? customerType : undefined,
+        birthday: !anonymous && birthday ? birthday : undefined,
+        anniversary: !anonymous && anniversary ? anniversary : undefined,
+        source: chosenSource || undefined,
+        occasion: occasion.trim() || undefined,
+        productCategory: chosenCategory || undefined,
+        budgetRange: budgetRange || undefined,
+        nonPurchaseReason: nonPurchaseReason.trim() || undefined,
+        savingScheme: savingScheme || undefined,
+        savingSchemeReason:
+          savingScheme === "no" ? savingSchemeReason.trim() || undefined : undefined,
       });
 
       // Step 2: Record item shown if an item code was scanned or entered
@@ -569,6 +641,132 @@ function UnifiedWalkinDialog({
                 </SelectContent>
               </Select>
             </div>
+
+            {!anonymous ? (
+              <>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="ci-ctype">Type of customer</Label>
+                    <Select
+                      value={customerType || undefined}
+                      onValueChange={(v) => setCustomerType(v as "new" | "existing")}
+                    >
+                      <SelectTrigger id="ci-ctype">
+                        <SelectValue placeholder="New / Existing" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="new">New customer</SelectItem>
+                        <SelectItem value="existing">Existing customer</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="ci-birthday">Birthday</Label>
+                    <Input
+                      id="ci-birthday"
+                      type="date"
+                      value={birthday}
+                      onChange={(e) => setBirthday(e.target.value)}
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="ci-anniversary">Anniversary</Label>
+                    <Input
+                      id="ci-anniversary"
+                      type="date"
+                      value={anniversary}
+                      onChange={(e) => setAnniversary(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Birthday and anniversary go on the customer&rsquo;s record, where
+                  the occasion reminders read them.
+                </p>
+              </>
+            ) : null}
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-1.5">
+                <Label htmlFor="ci-source">How did they hear about us?</Label>
+                <Select value={source || undefined} onValueChange={setSource}>
+                  <SelectTrigger id="ci-source">
+                    <SelectValue placeholder="Source" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {WALKIN_SOURCES.map((o) => (
+                      <SelectItem key={o} value={o}>
+                        {o}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="ci-occasion">Purchase occasion</Label>
+                <Input
+                  id="ci-occasion"
+                  placeholder="e.g. Wedding, Diwali, gift"
+                  value={occasion}
+                  onChange={(e) => setOccasion(e.target.value)}
+                />
+              </div>
+            </div>
+            {source === "Other" ? (
+              <div className="grid gap-1.5">
+                <Label htmlFor="ci-source-other">Source — other</Label>
+                <Input
+                  id="ci-source-other"
+                  placeholder="How exactly?"
+                  value={sourceOther}
+                  onChange={(e) => setSourceOther(e.target.value)}
+                />
+              </div>
+            ) : null}
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-1.5">
+                <Label htmlFor="ci-category">Product category</Label>
+                <Select value={productCategory || undefined} onValueChange={setProductCategory}>
+                  <SelectTrigger id="ci-category">
+                    <SelectValue placeholder="Category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {WALKIN_CATEGORIES.map((o) => (
+                      <SelectItem key={o} value={o}>
+                        {o}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="ci-budget">Budget range</Label>
+                <Select value={budgetRange || undefined} onValueChange={setBudgetRange}>
+                  <SelectTrigger id="ci-budget">
+                    <SelectValue placeholder="Budget" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {WALKIN_BUDGETS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>
+                        {o.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            {productCategory === "Other" ? (
+              <div className="grid gap-1.5">
+                <Label htmlFor="ci-category-other">Category — other</Label>
+                <Input
+                  id="ci-category-other"
+                  placeholder="Which product?"
+                  value={productCategoryOther}
+                  onChange={(e) => setProductCategoryOther(e.target.value)}
+                />
+              </div>
+            ) : null}
           </div>
 
           {/* Section 2: Items Shown / Interest */}
@@ -588,7 +786,7 @@ function UnifiedWalkinDialog({
                 <Input
                   id="ri-sku"
                   className="pl-8"
-                  placeholder="Scan or type the code"
+                  placeholder="Type the item code"
                   value={sku}
                   onChange={(e) => setSku(e.target.value)}
                 />
@@ -664,6 +862,45 @@ function UnifiedWalkinDialog({
                 onChange={(e) => setRemark(e.target.value)}
                 placeholder="What did the customer say? e.g. liked the necklace, will return this weekend"
               />
+            </div>
+
+            <div className="grid gap-1.5">
+              <Label htmlFor="ci-nonpurchase">Reason for non-purchase</Label>
+              <Input
+                id="ci-nonpurchase"
+                placeholder="Only if they left without buying"
+                value={nonPurchaseReason}
+                onChange={(e) => setNonPurchaseReason(e.target.value)}
+              />
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-1.5">
+                <Label htmlFor="ci-scheme">Saving scheme enrolled?</Label>
+                <Select
+                  value={savingScheme || undefined}
+                  onValueChange={(v) => setSavingScheme(v as "yes" | "no")}
+                >
+                  <SelectTrigger id="ci-scheme">
+                    <SelectValue placeholder="Yes / No" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="yes">Yes</SelectItem>
+                    <SelectItem value="no">No</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {savingScheme === "no" ? (
+                <div className="grid gap-1.5">
+                  <Label htmlFor="ci-scheme-reason">Reason if not enrolled</Label>
+                  <Input
+                    id="ci-scheme-reason"
+                    placeholder="What held them back?"
+                    value={savingSchemeReason}
+                    onChange={(e) => setSavingSchemeReason(e.target.value)}
+                  />
+                </div>
+              ) : null}
             </div>
 
             {(outcome === "follow_up" || followUpDate) ? (

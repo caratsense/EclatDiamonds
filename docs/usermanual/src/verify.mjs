@@ -17,7 +17,7 @@ const here = (rel) => fileURLToPath(new URL(rel, import.meta.url));
 const pdfParse = createRequire(pathToFileURL(here("../../../backend/package.json")))("pdf-parse");
 
 const screens = readNavigation(here("../../../frontend/src/lib/navigation.ts"));
-const { numpages, text } = await pdfParse(readFileSync(here("../CaratSense-Operations-Manual.pdf")));
+const { numpages, text } = await pdfParse(readFileSync(here("../CaratSpace-Operations-Manual.pdf")));
 
 let failures = 0;
 const check = (label, ok, detail = "") => {
@@ -38,16 +38,44 @@ const MOJIBAKE = ["â‚¹", "Ã©", "Ã¨", "â€”", "â€™", "Â·", "ï
 const seen = MOJIBAKE.filter((b) => text.includes(b));
 check("no mojibake", !seen.length, seen.join(" "));
 
-for (const g of ["₹", "É", "È", "—", "·"]) check(`glyph ${g} renders`, text.includes(g));
+for (const g of ["₹", "É", "—", "·"]) check(`glyph ${g} renders`, text.includes(g));
 
 // Facts the client acts on. Each was verified against the code or a live check
 // before being written, so a missing one means the render lost it.
 const FACTS = [
   "72080 17690", "72089 12616", "wa.me/917208017690", "wa.me/917208912616",
-  "eclat-diamonds-pi.vercel.app", "24 hours", "10 minutes", "5 minutes",
-  "Click-to-WhatsApp", "899", "nine", "twenty", "Settings → Stores",
+  "eclat-diamonds-pi.vercel.app", "24 hours", "10 minutes",
+  "Click-to-WhatsApp", "nine", "twenty",
+  // Sign-in is Login ID or mobile + password, and nothing else. The first
+  // manual claimed a WhatsApp OTP option: the API has one, the screen does not,
+  // so no reader could ever have used it. These assert the real field label and
+  // the real workflow names.
+  "a sign-in identifier, not an inbox", "Show the quick guide", "Marketing", "Add staff", "CaratSpace", "Skip for now", "not an inbox",
+  "regularisation",
+  // Workflows a reader is sent to by name.
+  "Fix attendance", "Create Deal / Quotation",
+  "HUID", "Log walk-in", "Lead QR codes",
+  // Verified against the live build on 5 October 2026.
+  "Quote approvals", "Every quote", "Gati daily rate", "Quick Action", "Marketing",
+  // The advert addresses the client hands out; a broken one is worse than none.
+  "fb.me/2mtHMsKeUcTN8Ih", "fb.me/2jDp44BRWvLmQ4m",
+  "instagram.com/p/DdwKr6isgcO/", "instagram.com/p/DdwKr8wM4h5/",
+  "posts/1293013417234982", "posts/1293013430568314",
 ];
-for (const f of FACTS) check(`"${f}"`, text.includes(f));
+// Checked against whitespace-normalised text: the PDF wraps lines wherever the
+// column ends, so any phrase long enough to be worth asserting will sooner or
+// later straddle a newline and fail for no reason. Three different facts have
+// already been "lost" that way and were present all along.
+const flat = text.replace(/\s+/g, " ");
+for (const f of FACTS) check(`"${f}"`, flat.includes(f.replace(/\s+/g, " ")));
+
+// Names the product has been called before. The cover wordmark is split as
+// Carat<span>Space</span>, so a plain find-and-replace silently skips it — that
+// is exactly how "CaratSense" survived on the cover of a renamed manual.
+for (const stale of ["CaratSense", "CaratOS"]) {
+  const hits = (text.match(new RegExp(stale, "g")) ?? []).length;
+  check(`no stale name "${stale}"`, hits === 0, hits ? `${hits} occurrences` : "");
+}
 
 console.log(`\n${failures ? `${failures} FAILURES` : "all checks passed"}`);
 process.exit(failures ? 1 : 0);

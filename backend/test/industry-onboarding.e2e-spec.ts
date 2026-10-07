@@ -103,6 +103,8 @@ const JEWELLERY_ONLY_ROUTES = [
 const UNIVERSAL_ROUTES = [
   'crm',
   'conversations',
+  // Every vertical with the CRM gets the bot, so every one gets to word it.
+  'bot-script',
   'customers',
   'reminders',
   'catalogue',
@@ -181,7 +183,7 @@ const UNIVERSAL_ROUTES = [
    * The jewellery-only list above is still untouched — no pack gains finance,
    * loyalty, returns or stock.
    */
-  'settings/dsr-access',
+  // settings/dsr-access retired 7 Oct: DSR filing moved to the dashboard.
   'settings/integrations/templates',
 ] as const;
 

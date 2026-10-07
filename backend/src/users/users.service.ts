@@ -91,12 +91,21 @@ export class UsersService {
   // but is still bound by the strictly-below-rank rule (it can never mint an HO).
 
   /**
-   * A user may only assign/target a role strictly below their own rank, and
-   * `head_office` is never assignable by anyone.
+   * A user may only assign/target a role strictly below their own rank — with
+   * one exception the client asked for by name (7 Oct): HEAD OFFICE MAY CREATE
+   * ANOTHER HEAD OFFICE. There was no UI or API path to onboard a second
+   * executive; every HO account had to be seeded at the database, which made
+   * "add the owner" a developer task.
+   *
+   * The asymmetry that keeps this safe: minting an equal is allowed, MANAGING
+   * one is still not — assertCanManage below keeps its strict inequality, so
+   * one HO account cannot demote, deactivate or reset another from the UI.
+   * Creation is auditable and additive; takeover is neither.
    */
   private assertAssignableRole(actor: AuthUser, role: Role): void {
     if (role === 'head_office') {
-      throw new ForbiddenException('head_office cannot be assigned');
+      if (actor.role === 'head_office') return;
+      throw new ForbiddenException('Only head office can create a head office account');
     }
     if (ROLE_RANK[role] >= ROLE_RANK[actor.role]) {
       throw new ForbiddenException('You can only assign roles below your own');

@@ -87,6 +87,10 @@ const NEUTRAL_PRODUCT_CATEGORY: PackTaxonomy = {
 const CORE_NAVIGATION = [
   'crm',
   'conversations',
+  // The bot's own wording, beside the inbox it speaks into. Core rather than
+  // jewellery-only: every vertical with the CRM gets the bot, so every one of
+  // them gets to choose its words.
+  'bot-script',
   'customers',
   'reminders',
   'catalogue',
@@ -173,7 +177,10 @@ const CORE_NAVIGATION = [
    * who may file a report from a handset, and any business messaging customers
    * needs to see which templates its numbers actually hold.
    */
-  'settings/dsr-access',
+  // settings/dsr-access was here until 7 Oct 2026: it existed to bind staff
+  // handsets so they could FILE the DSR over WhatsApp, and that flow was
+  // retired when the DSR reversed (staff file on the dashboard; the bot sends
+  // the evening digest out). A screen whose purpose is gone is clutter.
   'settings/integrations/templates',
 ] as const;
 

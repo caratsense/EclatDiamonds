@@ -35,7 +35,13 @@ import { api } from "@/lib/api";
 
 /** Roles that can be assigned from the Team page (a subset of the full Role
  *  union; head_office itself is provisioned separately, not granted here). */
-export type StaffRole = "salesperson" | "storeperson" | "store_manager" | "area_manager" | "marketing";
+export type StaffRole =
+  | "salesperson"
+  | "storeperson"
+  | "store_manager"
+  | "area_manager"
+  | "marketing"
+  | "head_office";
 
 export interface StaffUserStore {
   id: string;

@@ -6,7 +6,6 @@ import { Coins, ExternalLink } from "lucide-react";
 
 import { useMetalRates } from "@/lib/queries/integrations";
 import { useRouteEnabled } from "@/lib/queries/tenant-config";
-import { formatINR } from "@/lib/format";
 import { ROLE_RANK } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
@@ -66,8 +65,13 @@ export function GoldRateChip() {
             )}
           />
           <Coins className="h-3.5 w-3.5 text-[var(--gold)]" />
-          <span className="num">{formatINR(rate.ratePerGram)}</span>
-          <span className="text-muted-foreground">/g 22K</span>
+          {/* The figure is deliberately NOT shown here. The top bar is visible
+              to anyone glancing at a counter screen, and the client asked for
+              the rate on request rather than on display — so the chip is the
+              button, and the number lives in the dialog it opens. The dot
+              still says fresh-or-stale at a glance, and a stale rate keeps its
+              date so "old" is visible without the price being so. */}
+          <span>Gold rate</span>
           {rate.stale && asOfLabel ? (
             <span className="text-[var(--warning)]">· {asOfLabel}</span>
           ) : null}

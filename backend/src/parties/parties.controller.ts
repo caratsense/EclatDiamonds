@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Header, Param, Post, Query, Res, StreamableFile } from '@nestjs/common';
+import type { Response } from 'express';
 import { PartyType } from '@prisma/client';
 import { PartiesService } from './parties.service';
 import { ArchivePartyDto, CreatePartyDto } from './dto/party.dto';
@@ -20,6 +21,20 @@ export class PartiesController {
     private readonly parties: PartiesService,
     private readonly archiveSvc: PartyArchiveService,
   ) {}
+
+  /** The directory as Excel — same scope as the list, archived rows excluded. */
+  @Get('export.xlsx')
+  @Header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  async exportXlsx(
+    @CurrentUser() user: AuthUser,
+    @Res({ passthrough: true }) res: Response,
+    @StoreHeader() store?: string,
+  ) {
+    const { buffer, rows } = await this.parties.exportXlsx(user, store);
+    res.setHeader('Content-Disposition', 'attachment; filename="customers.xlsx"');
+    res.setHeader('X-Export-Rows', String(rows));
+    return new StreamableFile(buffer);
+  }
 
   @Get()
   list(

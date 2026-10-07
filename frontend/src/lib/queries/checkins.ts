@@ -47,6 +47,18 @@ export interface CreateCheckInInput {
   purpose?: CheckinPurposeInput;
   repId?: string;
   repName?: string;
+  /* The New Customer Data survey (7 Oct). All optional; stored on the visit's
+     metadata, with birthday/anniversary written to the customer record. */
+  customerType?: "new" | "existing";
+  birthday?: string;
+  anniversary?: string;
+  source?: string;
+  occasion?: string;
+  productCategory?: string;
+  budgetRange?: string;
+  nonPurchaseReason?: string;
+  savingScheme?: "yes" | "no";
+  savingSchemeReason?: string;
 }
 
 /** GET /checkins — footfall log (most recent first), store-scoped. */

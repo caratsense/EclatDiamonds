@@ -1,21 +1,23 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Clock, RotateCcw, Search } from "lucide-react";
+import { Clock, RotateCcw, Search, Shield, Store as StoreIcon } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { SectionHeader } from "@/components/section/section-header";
+import { ChangeRoleDialog, ReassignStoreDialog } from "@/components/team/staff-dialogs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { NAV_GROUPS, getNavItem } from "@/lib/navigation";
-import { useStaff } from "@/lib/queries/users";
+import { useStaff, type StaffUser } from "@/lib/queries/users";
 import { api } from "@/lib/api";
 import { useSetUserAccess, useUserAccess, type AccessOverride, type UserAccess } from "@/lib/queries/access";
 import { ROLE_LABELS } from "@/lib/types";
+import { useSession } from "@/store/use-session";
 import { apiErrorMessage, cn } from "@/lib/utils";
 
 import { bulkAttendanceOnlyPrompt, startingPointLine } from "./wording";
@@ -143,7 +145,11 @@ export default function AccessPage() {
         </Card>
 
         {userId ? (
-          <PersonAccess key={userId} userId={userId} />
+          <PersonAccess
+            key={userId}
+            userId={userId}
+            person={people.find((u) => u.id === userId)}
+          />
         ) : (
           <Card>
             <CardContent className="py-16 text-center text-sm text-muted-foreground">
@@ -156,7 +162,15 @@ export default function AccessPage() {
   );
 }
 
-function PersonAccess({ userId }: { userId: string }) {
+function PersonAccess({ userId, person }: { userId: string; person?: StaffUser }) {
+  const viewerRole = useSession((s) => s.baseRole);
+  /*
+   * Role and store moved here from Team. A role is a bundle of screens, so
+   * changing it IS an access decision — and this screen is where access
+   * decisions live now, singular on purpose: the same control on two screens is
+   * how two people make contradictory changes.
+   */
+  const [dialog, setDialog] = useState<"role" | "store" | null>(null);
   const access = useUserAccess(userId);
   const save = useSetUserAccess();
   // Only what head office has touched in this session; the rest reads through.
@@ -201,6 +215,7 @@ function PersonAccess({ userId }: { userId: string }) {
   const changedCount = Object.keys(merged()).length;
 
   return (
+    <>
     <Card>
       <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3 space-y-0">
         <div className="space-y-1">
@@ -213,6 +228,16 @@ function PersonAccess({ userId }: { userId: string }) {
           </CardDescription>
         </div>
         <div className="flex flex-wrap gap-2">
+          {person ? (
+            <>
+              <Button variant="outline" size="sm" onClick={() => setDialog("role")}>
+                <Shield className="h-3.5 w-3.5" /> Change role
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setDialog("store")}>
+                <StoreIcon className="h-3.5 w-3.5" /> Reassign store
+              </Button>
+            </>
+          ) : null}
           <Button
             variant="outline"
             size="sm"
@@ -290,5 +315,22 @@ function PersonAccess({ userId }: { userId: string }) {
         })}
       </CardContent>
     </Card>
+
+      {person ? (
+        <>
+          <ChangeRoleDialog
+            user={person}
+            viewerRole={viewerRole}
+            open={dialog === "role"}
+            onOpenChange={(o) => setDialog(o ? "role" : null)}
+          />
+          <ReassignStoreDialog
+            user={person}
+            open={dialog === "store"}
+            onOpenChange={(o) => setDialog(o ? "store" : null)}
+          />
+        </>
+      ) : null}
+    </>
   );
 }

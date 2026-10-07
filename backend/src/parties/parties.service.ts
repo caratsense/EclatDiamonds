@@ -121,6 +121,45 @@ export class PartiesService {
     private readonly scope: StoreScopeService,
   ) {}
 
+  /** The customer directory as a workbook — same scope as the list. */
+  async exportXlsx(user: AuthUser, headerStore?: string): Promise<{ buffer: Buffer; rows: number }> {
+    const rows = await this.prisma.party.findMany({
+      where: {
+        ...this.scope.storeFilter(user, headerStore),
+        ...(isSalesScoped(user) ? { AND: [partyWorkedBy(user.id)] } : {}),
+        archivedAt: null,
+      },
+      orderBy: { name: 'asc' },
+      take: 10000,
+      select: {
+        name: true, phone: true, email: true, city: true,
+        birthday: true, anniversary: true, createdAt: true,
+      },
+    });
+    const { Workbook } = await import('exceljs');
+    const wb = new Workbook();
+    const ws = wb.addWorksheet('Customers');
+    ws.columns = [
+      { header: 'Name', key: 'name', width: 26 },
+      { header: 'Phone', key: 'phone', width: 14 },
+      { header: 'Email', key: 'email', width: 26 },
+      { header: 'City', key: 'city', width: 16 },
+      { header: 'Birthday', key: 'birthday', width: 12 },
+      { header: 'Anniversary', key: 'anniversary', width: 12 },
+      { header: 'Added', key: 'createdAt', width: 12 },
+    ];
+    ws.getRow(1).font = { bold: true };
+    const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : '');
+    for (const r of rows) {
+      ws.addRow({
+        name: r.name, phone: r.phone ?? '', email: r.email ?? '', city: r.city ?? '',
+        birthday: day(r.birthday), anniversary: day(r.anniversary), createdAt: day(r.createdAt),
+      });
+    }
+    const buffer = Buffer.from(await wb.xlsx.writeBuffer());
+    return { buffer, rows: rows.length };
+  }
+
   async list(
     user: AuthUser,
     f: PartyFilters,

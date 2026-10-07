@@ -3,6 +3,7 @@ import { ReportingController } from './reporting.controller';
 import { ReportingService } from './reporting.service';
 import { ScheduledReportsController } from './scheduled-reports.controller';
 import { ScheduledReportsService } from './scheduled-reports.service';
+import { DsrDigestService } from './dsr-digest.service';
 
 /**
  * Reporting, and the reports that send themselves.
@@ -14,7 +15,7 @@ import { ScheduledReportsService } from './scheduled-reports.service';
  */
 @Module({
   controllers: [ReportingController, ScheduledReportsController],
-  providers: [ReportingService, ScheduledReportsService],
-  exports: [ScheduledReportsService],
+  providers: [ReportingService, ScheduledReportsService, DsrDigestService],
+  exports: [ScheduledReportsService, DsrDigestService],
 })
 export class ReportingModule {}

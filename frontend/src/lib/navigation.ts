@@ -7,6 +7,7 @@ import {
   RotateCcw,
   Percent,
   PiggyBank,
+  Bot,
   Boxes,
   Fingerprint,
   DoorOpen,
@@ -182,6 +183,25 @@ export const NAV_ITEMS: NavItem[] = [
     primaryAction: "",
     icon: Inbox,
     group: "People",
+  },
+  {
+    /*
+     * The bot's own script, next to the inbox it speaks into.
+     *
+     * It began life as a tab under Settings -> Business Configuration, which
+     * read as a thing you configure once. It is not: it is the wording of the
+     * conversations on the next screen up, and the person rewording it is
+     * thinking about customers, not about settings. The client asked for it
+     * here by position, and they were right.
+     */
+    module: 1,
+    slug: "bot-script",
+    title: "Bot Script",
+    purpose: "The questions the bot asks a customer, in your own words.",
+    primaryAction: "",
+    icon: Bot,
+    group: "People",
+    roles: ["store_manager", "area_manager", "head_office"],
   },
   {
     module: 1,
@@ -500,7 +520,7 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Choose, person by person, which screens they can open and how far.",
     primaryAction: "",
     icon: ShieldCheck,
-    group: "Setup",
+    group: "Team",
     roles: ["head_office"],
   },
   {
@@ -570,24 +590,6 @@ export const NAV_ITEMS: NavItem[] = [
     icon: Plug,
     group: "Setup",
     roles: ["head_office"],
-  },
-  {
-    /*
-     * Who can file a daily report from their phone.
-     *
-     * The bot answers a handset only when that number is bound to a user, and
-     * before this screen the only way to bind one was an API call by hand --
-     * so the feature shipped unusable by anybody who could not run curl.
-     */
-    module: 1,
-    slug: "settings/dsr-access",
-    title: "WhatsApp Reporting",
-    purpose:
-      "Who can file a daily report over WhatsApp, and who still needs setting up.",
-    primaryAction: "",
-    icon: Smartphone,
-    group: "Setup",
-    roles: ["store_manager", "area_manager", "head_office"],
   },
   {
     /*
@@ -809,6 +811,7 @@ export const NAV_GROUPS: NavGroup[] = NAV_GROUP_ORDER.map((label) => ({
 export const CORE_NAVIGATION: readonly string[] = Object.freeze([
   "crm",
   "conversations",
+  "bot-script",
   "customers",
   "customers/archived",
   "conversations/sla",
@@ -830,7 +833,6 @@ export const CORE_NAVIGATION: readonly string[] = Object.freeze([
   "data/images",
   "settings/integrations",
   "settings/integrations/templates",
-  "settings/dsr-access",
   "settings/audit",
   "settings/access",
 ]);
