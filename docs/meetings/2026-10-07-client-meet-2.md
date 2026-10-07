@@ -11,7 +11,7 @@ clarifications, or ops.
 
 ---
 
-## 1. DSR booking carry-forward — BUILD
+## 1. DSR booking carry-forward — BUILT (b73afa4)
 
 **Ask.** Day 1's **closing** booking amount automatically becomes Day 2's
 **opening** booking amount, every consecutive day — nobody looks up yesterday's
@@ -30,7 +30,7 @@ value server-side when the client omits it, so the chain holds even for a
 filing that skips the field. The value stays editable: the first-ever report,
 or a correction after an audit, must not fight the automation.
 
-## 2. DSR UI/UX — BUILD
+## 2. DSR UI/UX — BUILT (b73afa4)
 
 **Ask.** The DSR screens feel cluttered: improve layout, field grouping,
 sequence, navigation across creation, generation and the reporting section.
@@ -49,7 +49,7 @@ PR #37 and are live. The one operational step: each recipient texts the staff
 line once so their 24-hour window is open (verified today — a fresh recipient
 shows "sent to 0 of 1" until they do).
 
-## 4. RBAC — ON/OFF only, Area Manager returns — BUILD (then reconfirm)
+## 4. RBAC — ON/OFF only, Area Manager returns — BUILT (c3bc936; names + HR await reconfirm)
 
 **Asks.**
 - Per-screen permissions become **ON/OFF only**; Own/Store disappears from the
@@ -85,7 +85,7 @@ the UI just never assigns more than one).
   stores, attendance only) is a new role key — raised for the reconfirmation
   rather than invented unilaterally.
 
-## 5. Quotation — Send to WhatsApp — BUILD (default answered, flagged)
+## 5. Quotation — Send to WhatsApp — BUILT (7940bdb; default answered, flagged)
 
 **Ask.** A Send-to-WhatsApp button in the quotation flow, sending to the
 number supplied by whoever creates the quote. The meeting left open which
@@ -105,7 +105,7 @@ is respected: a quote awaiting approval says so instead of sending.
 
 Fields, store list and the survey shipped in PR #37 and are live.
 
-## 7. WhatsApp bot — natural typing, campaign content, greeting switch — PART BUILD
+## 7. WhatsApp bot — natural typing, campaign content, greeting switch — PART BUILT (greeting switch in 95817ad)
 
 **Asks.** (a) Customers type naturally and get the right answer or catalogue
 link. (b) For Meta ad enquiries, recognise the campaign/product and send its
@@ -113,8 +113,9 @@ pricing; a place to configure campaign links, CTAs, pricing, follow-ups.
 (c) ON/OFF for the opening greeting. 1–3 days allowed, after the sales module.
 
 **Plan, split honestly.**
-- **Greeting ON/OFF** — small; goes on the Bot Script page and into the
-  greeting path. Built in this round.
+- **Greeting ON/OFF** — built: an Off/On control on the Bot Script page;
+  off, the bot opens with question 1 directly and the questions are never
+  skipped.
 - **Campaign content** — a per-ad configuration (link, price line, CTA,
   follow-up link) that the bot sends when a tap's referral matches; needs its
   own config surface beside Ad routing. Built next, within the allotted days.
