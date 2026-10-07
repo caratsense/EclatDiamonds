@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { configuredOrgSlug, isUsableOrgSlug, normaliseOrgSlug } from "./page";
+import { configuredOrgSlug, isUsableOrgSlug, normaliseOrgSlug } from "./org-slug";
 
 /**
  * The signup form's tenant resolution (MM4, MM3-01).
