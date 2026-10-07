@@ -10,12 +10,15 @@ import {
   Sse,
 } from '@nestjs/common';
 import { Permit } from '../auth/permissions';
+import { Roles } from '../auth/roles.decorator';
+import { AuditService } from '../common/audit.service';
 import { SkipThrottle } from '@nestjs/throttler';
 import { Observable, interval, map, merge } from 'rxjs';
 import { NotificationsService } from './notifications.service';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
 import {
+  AnnounceDto,
   DismissAllQueryDto,
   FeedQueryDto,
   MarkReadDto,
@@ -29,7 +32,29 @@ interface StreamMessage {
 
 @Controller('notifications')
 export class NotificationsController {
-  constructor(private readonly notifications: NotificationsService) {}
+  constructor(
+    private readonly notifications: NotificationsService,
+    private readonly audit: AuditService,
+  ) {}
+
+  /**
+   * POST /notifications/announce — head office speaks to every active person in
+   * the organisation at once, through the bell they already have. Audited: a
+   * message pushed to the whole company is a sensitive act with an author.
+   */
+  @Roles('head_office')
+  @Post('announce')
+  async announce(@CurrentUser() user: AuthUser, @Body() dto: AnnounceDto) {
+    const result = await this.notifications.announce(user, dto);
+    await this.audit.record(user, {
+      action: 'notifications.announcement_sent',
+      entityType: 'Organisation',
+      entityId: user.organisationId,
+      summary: `Announcement to ${result.recipients} people: ${dto.title}`,
+      metadata: { recipients: result.recipients },
+    });
+    return result;
+  }
 
   /** GET /notifications/summary — actionable counts for the current user/store. */
   @Permit('session')

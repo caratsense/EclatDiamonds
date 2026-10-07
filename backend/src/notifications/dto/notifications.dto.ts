@@ -1,5 +1,5 @@
 import { Transform, Type } from 'class-transformer';
-import { IsBoolean, IsEnum, IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { NotificationKind } from '@prisma/client';
 
 /**
@@ -40,6 +40,19 @@ export class FeedQueryDto {
 }
 
 /** PATCH /notifications/:id/read */
+/** POST /notifications/announce — a head-office broadcast to the whole org. */
+export class AnnounceDto {
+  @IsString()
+  @MinLength(3)
+  @MaxLength(120)
+  title!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  body?: string;
+}
+
 export class MarkReadDto {
   /** false marks it back to unread. Defaults to true. */
   @IsOptional()

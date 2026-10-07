@@ -901,12 +901,14 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
             </p>
             <div className="flex gap-2">
               <Button variant="outline" onClick={() => void submit(false)} disabled={busy}>
-                {busy ? "Working…" : "Create Quote"}
+                {busy ? "Working…" : "Save Quote"}
               </Button>
-              <Button variant="gold" onClick={onCustomOrderClick} disabled={busy}>
-                <Sparkles className="h-4 w-4" />
-                {customOpen ? "Create Custom Order" : "Custom Order"}
-              </Button>
+              {customOpen ? (
+                <Button variant="gold" onClick={onCustomOrderClick} disabled={busy}>
+                  <Sparkles className="h-4 w-4" />
+                  Create Custom Order
+                </Button>
+              ) : null}
             </div>
           </div>
         </div>

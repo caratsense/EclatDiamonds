@@ -189,6 +189,20 @@ export class CheckinsService {
     });
     const partyId = identity.partyId;
 
+    /*
+     * The walk-in form's survey answers live in `metadata` — the column that
+     * exists precisely for tenant-defined visit fields — written sparsely so a
+     * row only carries what was actually answered.
+     */
+    const survey: Record<string, string> = {};
+    for (const key of [
+      'customerType', 'source', 'occasion', 'productCategory', 'budgetRange',
+      'nonPurchaseReason', 'savingScheme', 'savingSchemeReason',
+    ] as const) {
+      const value = dto[key]?.trim();
+      if (value) survey[key] = value;
+    }
+
     const row = await this.prisma.checkIn.create({
       data: {
         organisationId: user.organisationId,
@@ -201,8 +215,26 @@ export class CheckinsService {
         repId: dto.repId ?? user.id,
         repName: dto.repName ?? user.name,
         timeIn: new Date(),
+        ...(Object.keys(survey).length ? { metadata: survey } : {}),
       },
     });
+
+    /*
+     * Birthday and anniversary belong on the CUSTOMER, not the visit: the CRM's
+     * occasion prompts read the party record, and a date trapped in one visit's
+     * metadata would never ring. Written only when given — and only onto an
+     * identified customer, since an anonymous walk-in has nobody to attach a
+     * birthday to.
+     */
+    if (partyId && (dto.birthday || dto.anniversary)) {
+      await this.prisma.party.update({
+        where: { id: partyId },
+        data: {
+          ...(dto.birthday ? { birthday: new Date(`${dto.birthday}T00:00:00.000Z`) } : {}),
+          ...(dto.anniversary ? { anniversary: new Date(`${dto.anniversary}T00:00:00.000Z`) } : {}),
+        },
+      });
+    }
 
     const tz = await this.scope.resolveTimezone(user, dto.storeId);
 

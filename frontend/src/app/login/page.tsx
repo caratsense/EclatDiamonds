@@ -1033,9 +1033,10 @@ function LoginPage() {
             </div>
           )}
 
-          {/* The sign-in screen has no way into sign-up: a manager makes staff
-              logins, and sign-up opens only from a direct ?start=join or
-              ?start=create link. Whoever came by one still gets a way back. */}
+          {/* Sign-up used to open only from a direct ?start=join link; the
+              client asked for a visible way in (7 Oct). It is still a REQUEST:
+              nothing signs in until an approver grants it on Team -> Account
+              requests, so the button adds a door, not a hole. */}
           {mode === "signup" ? (
             <button
               type="button"
@@ -1044,7 +1045,18 @@ function LoginPage() {
             >
               <ArrowLeft className="h-3.5 w-3.5" /> Back to sign in
             </button>
-          ) : null}
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setSignupKind("join");
+                setMode("signup");
+              }}
+              className="flex w-full items-center justify-center gap-1.5 text-sm text-slate-600 dark:text-[#f8fafc]/70 transition-colors hover:text-[#6366f1] dark:hover:text-[#818cf8]"
+            >
+              New here? Request an account
+            </button>
+          )}
         </div>
 
         {/* PWA Install Footer Notice */}
