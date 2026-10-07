@@ -470,10 +470,22 @@ export class QuotesService {
    * `dryRun: true` means WhatsApp is not connected on this deployment and the
    * customer received nothing.
    */
-  async share(user: AuthUser, id: string) {
+  async share(user: AuthUser, id: string, toOverride?: string) {
     const quote = await this.get(user, id); // scope + kaccha checks live here
-    if (!quote.phone) {
+    /*
+     * The recipient defaults to the quote's own customer, and the person
+     * raising the quote may supply a different number (client, 7 Oct meeting
+     * 2) - a husband's quote sent to the wife's phone is an everyday ask at a
+     * jewellery counter. Validated here as well as in the DTO so a service
+     * caller cannot slip an arbitrary string into a WhatsApp send.
+     */
+    const to = (toOverride ?? '').replace(/\D/g, '');
+    const recipient = to ? (to.length === 10 ? `91${to}` : to) : quote.phone;
+    if (!recipient) {
       throw new BadRequestException('This quote has no phone number to send to');
+    }
+    if (to && (recipient.length < 12 || recipient.length > 15)) {
+      throw new BadRequestException('Enter a valid 10-digit mobile number');
     }
 
     /*
@@ -508,7 +520,7 @@ export class QuotesService {
     // From the branch that RAISED the quote, not one it can be redeemed at.
     // With several numbers connected an unrouted send is refused rather than
     // going out as another branch, so the branch has to be named here.
-    const result = await this.whatsapp.sendText(user.organisationId, quote.phone, body, {
+    const result = await this.whatsapp.sendText(user.organisationId, recipient, body, {
       storeId: quote.originStoreId,
     });
     return {

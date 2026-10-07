@@ -21,6 +21,7 @@ import { DecideQuoteDto, QuoteApprovalSettingsDto } from './dto/quote-approval.d
 import {
   ConvertToOrderDto,
   CreateQuoteDto,
+  ShareQuoteDto,
   QuotePhotoDto,
   SendQuotePdfDto,
   UpdateQuoteDetailsDto,
@@ -136,8 +137,12 @@ export class QuotesController {
    * so this is not a general-purpose "message anyone" route.
    */
   @Post(':id/share')
-  share(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.quotes.share(user, id);
+  share(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: ShareQuoteDto,
+  ) {
+    return this.quotes.share(user, id, dto?.to);
   }
 
   /* ------------------------------------------------------------ approval */
