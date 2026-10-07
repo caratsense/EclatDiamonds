@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { toast } from "sonner";
 
 import { SectionHeader } from "@/components/section/section-header";
 import { KpiCard } from "@/components/dashboards/kpi-card";
@@ -25,16 +24,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { api } from "@/lib/api";
 import { formatINR, formatNumber } from "@/lib/format";
 import { getNavItem } from "@/lib/navigation";
 import type { DsrResponse, ReportPeriod } from "@/lib/queries/reporting";
 import { useDsr, useMovers } from "@/lib/queries/reporting";
-import { ChannelStatusNotice } from "@/components/integrations/channel-status-notice";
-import { phoneInputValue } from "@/lib/utils";
 
 /** Build a plain-text DSR summary from the data already on the page. */
 function buildDsrSummary(dsr?: DsrResponse): string {
@@ -226,16 +220,21 @@ function ManagerReporting() {
       <SectionHeader
         title="Reporting & Daily Sales Report (DSR)"
         purpose={item?.purpose ?? ""}
-        primaryAction={item?.primaryAction}
+        // The preview shows the consolidated message the evening digest sends,
+        // which only head office receives — a store manager has no use for it,
+        // and their own figures are already on the page below.
+        primaryAction={role === "head_office" ? item?.primaryAction : undefined}
         onPrimaryAction={() => setDsrOpen(true)}
       />
 
-      <GenerateDsrDialog
-        open={dsrOpen}
-        onOpenChange={setDsrOpen}
-        summary={dsrSummary}
-        isLoading={dsrQuery.isLoading}
-      />
+      {role === "head_office" ? (
+        <GenerateDsrDialog
+          open={dsrOpen}
+          onOpenChange={setDsrOpen}
+          summary={dsrSummary}
+          isLoading={dsrQuery.isLoading}
+        />
+      ) : null}
 
       {showAllStores ? (
         <Tabs defaultValue="overview" className="space-y-4">
@@ -255,6 +254,16 @@ function ManagerReporting() {
   );
 }
 
+/**
+ * Preview only, head office only.
+ *
+ * This dialog used to carry a "Recipient WhatsApp number" box and a Send
+ * button — any manager could text the day's takings to any number they typed.
+ * Delivery now has exactly one route: the evening digest, which sends ONE
+ * consolidated message to head office on a schedule. So the send machinery is
+ * gone, and what remains is a preview of that message for the people who will
+ * receive it.
+ */
 function GenerateDsrDialog({
   open,
   onOpenChange,
@@ -266,57 +275,14 @@ function GenerateDsrDialog({
   summary: string;
   isLoading: boolean;
 }) {
-  const [sending, setSending] = useState(false);
-  // The recipient is entered/confirmed by the user rather than hardcoded.
-  const [recipient, setRecipient] = useState("");
-
-  async function sendToOwner() {
-    if (!summary) {
-      toast.error("No DSR data to send yet.");
-      return;
-    }
-    const to = recipient.trim();
-    if (!to) {
-      toast.error("Enter the recipient's WhatsApp number.");
-      return;
-    }
-    setSending(true);
-    try {
-      // The API answers 200 even when WhatsApp is not connected — the send is a
-      // logged no-op in that case. Claiming "sent" off the status code alone told
-      // a manager their owner had the day's takings when nothing had left the
-      // building, so read the result and say which of the two happened.
-      const { data } = await api.post<{ delivered: boolean; dryRun?: boolean }>(
-        "/integrations/whatsapp/send",
-        { to, body: summary },
-      );
-      if (data?.delivered) {
-        toast.success("DSR sent over WhatsApp");
-        onOpenChange(false);
-      } else if (data?.dryRun) {
-        toast.warning("WhatsApp is not connected yet — the DSR was NOT sent.", {
-          description:
-            "Copy the text and send it by hand for now. Ask your administrator to connect WhatsApp.",
-          duration: 8000,
-        });
-      } else {
-        toast.error("WhatsApp rejected the message — the DSR was not sent.");
-      }
-    } catch {
-      toast.error("Could not send the DSR.");
-    } finally {
-      setSending(false);
-    }
-  }
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Today&apos;s DSR</DialogTitle>
           <DialogDescription>
-            Generated from today&apos;s figures. Send a copy to the owner over
-            WhatsApp.
+            Generated from today&apos;s figures — what the evening digest sends
+            to head office.
           </DialogDescription>
         </DialogHeader>
         {isLoading ? (
@@ -330,28 +296,9 @@ function GenerateDsrDialog({
             No DSR data available yet.
           </p>
         )}
-        <ChannelStatusNotice channel="whatsapp" />
-        <div className="grid gap-1.5">
-          <Label htmlFor="dsr-recipient">Recipient WhatsApp number</Label>
-          <Input
-            id="dsr-recipient"
-            type="tel"
-            inputMode="numeric"
-            maxLength={10}
-            placeholder="e.g. 9876543210"
-            value={recipient}
-            onChange={(e) => setRecipient(phoneInputValue(e.target.value))}
-          />
-        </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Close
-          </Button>
-          <Button
-            onClick={sendToOwner}
-            disabled={sending || !summary || !recipient.trim()}
-          >
-            {sending ? "Sending…" : "Send DSR"}
           </Button>
         </DialogFooter>
       </DialogContent>
