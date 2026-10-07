@@ -101,7 +101,10 @@ const STAFF_ROLES: StaffRole[] = ["salesperson", "marketing", "store_manager"];
  * from ever offering an illegal role.
  */
 function assignableRoles(viewer: Role): StaffRole[] {
-  return STAFF_ROLES.filter((r) => ROLE_RANK[r] < ROLE_RANK[viewer]);
+  const below = STAFF_ROLES.filter((r) => ROLE_RANK[r] < ROLE_RANK[viewer]);
+  // Head office may mint an equal — creation only; managing an existing head
+  // office account stays impossible from the UI (the server refuses it).
+  return viewer === "head_office" ? [...below, "head_office"] : below;
 }
 
 function roleBadge(role: StaffRole) {
