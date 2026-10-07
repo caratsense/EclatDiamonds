@@ -41,6 +41,8 @@ export function BotScriptConfig() {
   const [draft, setDraft] = useState<BotScriptInput>({});
   const [touched, setTouched] = useState(false);
 
+  const greetingOn = draft.greeting ?? data?.greeting.enabled ?? true;
+
   if (isLoading || !data) {
     return (
       <Card>
@@ -106,6 +108,7 @@ export function BotScriptConfig() {
       };
     }
     return {
+      greeting: greetingOn,
       intro: draft.intro ?? data.intro.value ?? "",
       introHint: draft.introHint ?? data.introHint.value ?? "",
       steps,
@@ -150,11 +153,49 @@ export function BotScriptConfig() {
           </p>
 
           <div className="space-y-3 rounded-lg border p-3">
-            <h3 className="text-sm font-semibold">The opening message</h3>
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold">The opening message</h3>
+              {/* Off/On pills, the same control as People &amp; Access — a bot
+                  that opens straight with question 1 is a wording decision,
+                  and it lives beside the wording it replaces. */}
+              <div role="radiogroup" aria-label="Opening greeting" className="flex rounded-md border p-0.5">
+                {([
+                  { on: false, label: "Off" },
+                  { on: true, label: "On" },
+                ] as const).map((o) => (
+                  <button
+                    key={o.label}
+                    type="button"
+                    role="radio"
+                    aria-checked={greetingOn === o.on}
+                    onClick={() => {
+                      setTouched(true);
+                      setDraft((d) => ({ ...d, greeting: o.on }));
+                    }}
+                    className={
+                      greetingOn === o.on
+                        ? o.on
+                          ? "rounded bg-primary px-4 py-1 text-xs font-medium text-primary-foreground"
+                          : "rounded bg-muted px-4 py-1 text-xs font-medium text-foreground"
+                        : "rounded px-4 py-1 text-xs font-medium text-muted-foreground hover:bg-muted/60"
+                    }
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {!greetingOn ? (
+              <p className="text-xs text-muted-foreground">
+                The bot skips the greeting and opens with question 1 directly.
+                The questions themselves are always asked.
+              </p>
+            ) : null}
             <div className="space-y-1.5">
               <Label htmlFor="bot-intro">First line</Label>
               <Input
                 id="bot-intro"
+                disabled={!greetingOn}
                 value={draft.intro ?? data.intro.value ?? ""}
                 placeholder={data.intro.default}
                 maxLength={data.limits.prompt}
@@ -168,6 +209,7 @@ export function BotScriptConfig() {
               <Label htmlFor="bot-intro-hint">Line underneath</Label>
               <Input
                 id="bot-intro-hint"
+                disabled={!greetingOn}
                 value={draft.introHint ?? data.introHint.value ?? ""}
                 placeholder={data.introHint.default}
                 maxLength={data.limits.hint}

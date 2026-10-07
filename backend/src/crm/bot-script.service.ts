@@ -67,6 +67,7 @@ export class BotScriptService {
     }));
 
     const changed = [
+      script.greeting === false ? 'greeting switched off' : null,
       script.intro ? 'opening line' : null,
       script.introHint ? 'opening hint' : null,
       ...Object.keys(script.steps ?? {}),

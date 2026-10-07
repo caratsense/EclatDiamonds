@@ -56,6 +56,14 @@ export interface BotScript {
   intro?: string;
   /** The line under it, explaining why questions are coming. */
   introHint?: string;
+  /**
+   * Whether the opening greeting is sent at all (client, 7 Oct meeting 2:
+   * greeting ON/OFF). Stored only as `false` — sparse like everything else, so
+   * an untouched script keeps greeting and a cleared one goes back to it. OFF
+   * means the bot opens with question 1 directly; the questions themselves are
+   * never skipped.
+   */
+  greeting?: boolean;
 }
 
 /** The built-in opening lines, so the editor can show what it is overriding. */
@@ -88,6 +96,9 @@ export function resolveBotScript(raw: unknown): BotScript {
   if (intro) script.intro = intro;
   const introHint = text(input.introHint);
   if (introHint) script.introHint = introHint;
+  // Only the explicit boolean false switches the greeting off; any other shape
+  // (absent, truthy, a stray string) keeps the default of greeting.
+  if (input.greeting === false) script.greeting = false;
 
   if (input.steps && typeof input.steps === 'object') {
     const steps: Record<string, BotStepOverride> = {};
@@ -150,8 +161,16 @@ export function scriptedSteps(script: BotScript | undefined): FlowStep[] {
   return FLOW_STEPS.map((step) => applyScript(step, script));
 }
 
-/** The opening message, worded for this tenant. */
-export function scriptedGreeting(firstName: string | undefined, script: BotScript | undefined): string {
+/**
+ * The opening message, worded for this tenant — or nothing at all when the
+ * tenant switched the greeting off, in which case the first question stands
+ * alone.
+ */
+export function scriptedGreeting(
+  firstName: string | undefined,
+  script: BotScript | undefined,
+): string | undefined {
+  if (script?.greeting === false) return undefined;
   return [
     firstName ? `Hi ${firstName} 👋` : 'Hi 👋',
     '',
@@ -222,12 +241,14 @@ export interface BotScriptStepView {
  * the default" an obvious action rather than a destructive-looking one.
  */
 export function describeBotScript(script: BotScript): {
+  greeting: { enabled: boolean };
   intro: { default: string; value?: string };
   introHint: { default: string; value?: string };
   steps: BotScriptStepView[];
   limits: { prompt: number; hint: number; optionLabel: number };
 } {
   return {
+    greeting: { enabled: script.greeting !== false },
     intro: { default: DEFAULT_INTRO, value: script.intro },
     introHint: { default: DEFAULT_INTRO_HINT, value: script.introHint },
     steps: FLOW_STEPS.map((step) => {
