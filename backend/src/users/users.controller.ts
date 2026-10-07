@@ -10,6 +10,7 @@ import {
   UpdateSignupPolicyDto,
   UpdateUserRoleDto,
   UpdateUserStoreDto,
+  SetUserStoresDto,
 } from './dto/users.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { Roles } from '../auth/roles.decorator';
@@ -114,6 +115,16 @@ export class UsersController {
 
   /** PATCH /users/:id/store — reassign the user's primary store within scope. */
   @Roles('store_manager')
+  /** PATCH /users/:id/stores — the exact set of branches an area manager covers. */
+  @Patch(':id/stores')
+  setStores(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: SetUserStoresDto,
+  ) {
+    return this.users.setStores(user, id, dto.storeIds);
+  }
+
   @Patch(':id/store')
   updateStore(
     @CurrentUser() user: AuthUser,

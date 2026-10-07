@@ -23,8 +23,12 @@ export const ROLE_LABELS: Record<Role, string> = {
   marketing: "Marketing",
 };
 
-/** The roles in use. Area manager and storeperson are retired: nobody can be given them. */
-export const ACTIVE_ROLES: Role[] = ["salesperson", "store_manager", "marketing", "head_office"];
+/**
+ * The roles in use. Storeperson stays retired (nobody can be given it); area
+ * manager returned on the client's ask (7 Oct meeting 2) — one person covering
+ * 4-5 assigned branches.
+ */
+export const ACTIVE_ROLES: Role[] = ["salesperson", "store_manager", "area_manager", "marketing", "head_office"];
 
 /**
  * How far a person may go in one screen: `own` = their own records, `store` =

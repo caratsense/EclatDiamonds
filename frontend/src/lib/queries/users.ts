@@ -260,6 +260,20 @@ export function useUpdateStaffRole() {
 
 /** PATCH /users/:id/store — assign / reassign a staff member's store
  *  (area_manager+). Also used to place a pending (unassigned) user. */
+/** PATCH /users/:id/stores — the exact branch set an area manager covers. */
+export function useSetStaffStores() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, storeIds }: { id: string; storeIds: string[] }) => {
+      const { data } = await api.patch<StaffUser>(`/users/${id}/stores`, { storeIds });
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["staff"] });
+    },
+  });
+}
+
 export function useUpdateStaffStore() {
   const qc = useQueryClient();
   return useMutation({

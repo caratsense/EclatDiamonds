@@ -14,7 +14,8 @@ import type { PrismaService } from '../src/prisma/prisma.service';
  *     on the server, one switched on really works (store level, own store).
  *  3. Head-office-only screens are never given away, head office itself is
  *     never limited, and nobody else may edit access.
- *  4. Area manager and storeperson are retired: nobody can be given them.
+ *  4. Storeperson is retired; an area manager is minted by head office and
+ *     covers an exact set of stores (PATCH /users/:id/stores).
  *  5. A salesperson files the day's DSR but cannot overwrite a filed one.
  *  6. A person changes their own contact details, nothing else.
  */
@@ -85,9 +86,9 @@ describe('Screen access by role and by person (e2e)', () => {
     expect(mkt.quotation).toBeUndefined();
     expect(mkt.inventory).toBeUndefined();
     const mgr = (await get('mgr', '/auth/me').expect(200)).body.access;
-    expect(mgr).toMatchObject({ inventory: 'store', hrms: 'store', approvals: 'store' });
+    // campaigns: managers send to their own branch's lapsed customers (8ba7efd).
+    expect(mgr).toMatchObject({ inventory: 'store', hrms: 'store', approvals: 'store', campaigns: 'store' });
     expect(mgr.finance).toBeUndefined();
-    expect(mgr.campaigns).toBeUndefined();
   });
 
   it('marketing works CRM at store level and is refused stock and quotes', async () => {
@@ -126,15 +127,33 @@ describe('Screen access by role and by person (e2e)', () => {
     await request(server()).get('/users/u_acc_rep/access').set(as('mgr')).expect(403);
   });
 
-  it('nobody can be given the retired roles', async () => {
-    for (const role of ['area_manager', 'storeperson']) {
-      await request(server())
-        .post('/users')
-        .set(as('ho'))
-        .send({ name: 'Retired Role', phone: '9876500011', email: 'r@acc.local', storeId: A.store, role })
-        .expect(400);
-      await request(server()).patch('/users/u_acc_rep/role').set(as('ho')).send({ role }).expect(400);
-    }
+  it('storeperson stays retired; an area manager is minted and covers an exact store set', async () => {
+    await request(server())
+      .post('/users')
+      .set(as('ho'))
+      .send({ name: 'Retired Role', phone: '9876500011', email: 'r@acc.local', storeId: A.store, role: 'storeperson' })
+      .expect(400);
+    await request(server()).patch('/users/u_acc_rep/role').set(as('ho')).send({ role: 'storeperson' }).expect(400);
+
+    await prisma.store.create({ data: { id: 'store_acc_2', name: 'Juhu', city: 'Mumbai', organisationId: A.org } });
+    const am = await request(server())
+      .post('/users')
+      .set(as('ho'))
+      .send({ name: 'Asha Mehta', phone: '9876500013', email: 'asha@acc.local', storeId: A.store, role: 'area_manager' })
+      .expect(201);
+    const amId = am.body.id as string;
+
+    // Rank gate: a store manager is BELOW an area manager, so may not set their stores.
+    await request(server()).patch(`/users/${amId}/stores`).set(as('mgr')).send({ storeIds: [A.store] }).expect(403);
+    const set = await request(server())
+      .patch(`/users/${amId}/stores`)
+      .set(as('ho'))
+      .send({ storeIds: ['store_acc_2', A.store] })
+      .expect(200);
+    expect(set.body.stores.map((st: { id: string }) => st.id).sort()).toEqual([A.store, 'store_acc_2'].sort());
+    expect(set.body.passwordHash).toBeUndefined();
+    await request(server()).patch(`/users/${amId}/stores`).set(as('ho')).send({ storeIds: [] }).expect(400);
+
     await request(server())
       .post('/users')
       .set(as('ho'))

@@ -111,8 +111,11 @@ const ROLE_ACCESS: Record<Role, AccessMap> = {
   store_manager: at('store', STORE_MANAGER),
   marketing: MARKETING,
   head_office: at('store', [...MODULES]),
-  // Retired roles (nobody holds them; not assignable). Kept closed.
+  // An area manager is a store manager over SEVERAL branches: same screens at
+  // 'store' depth, and the scope layer widens "their store" to every assigned
+  // store (plus region roll-up). Revived 7 Oct on the client's ask.
   area_manager: at('store', STORE_MANAGER),
+  // Retired role (nobody holds it; not assignable). Kept closed.
   storeperson: at('own', ['hrms', 'catalogue', 'inventory', 'inventory/dead-stock', 'data/images']),
 };
 

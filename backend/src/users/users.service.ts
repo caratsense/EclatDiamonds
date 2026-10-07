@@ -337,6 +337,57 @@ export class UsersService {
    * actor — a currently-assigned target must already have a store inside that scope
    * (you cannot poach a user assigned to a store you don't own).
    */
+  /**
+   * Set the EXACT branches a person covers — the area-manager shape (client,
+   * 7 Oct meeting 2: one person over 4-5 stores). Replaces the link set; the
+   * first id becomes primary. Same gates as a single reassignment: rank
+   * strictly below the actor, every destination in the actor's scope, and
+   * neither the aggregate view nor the import bucket is a real branch.
+   */
+  async setStores(actor: AuthUser, id: string, storeIds: string[]) {
+    const existing = await this.getOrThrow(actor, id);
+    this.assertCanManage(actor, existing.role);
+
+    const ids = [...new Set(storeIds.map((s) => s.trim()).filter(Boolean))];
+    if (!ids.length) throw new BadRequestException('Pick at least one store');
+
+    const stores = await this.prisma.store.findMany({ where: { id: { in: ids } } });
+    if (stores.length !== ids.length) throw new NotFoundException('Store not found');
+    for (const store of stores) {
+      if (store.isAggregate) {
+        throw new BadRequestException('Cannot assign a user to the aggregate "All Stores" view');
+      }
+      if (store.isHolding) {
+        throw new BadRequestException('Cannot assign a user to the unassigned import bucket');
+      }
+      this.scope.assertStoreAllowed(actor, store.id);
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.userStore.deleteMany({ where: { userId: id, storeId: { notIn: ids } } }),
+      ...ids.map((storeId, index) =>
+        this.prisma.userStore.upsert({
+          where: { userId_storeId: { userId: id, storeId } },
+          update: { isPrimary: index === 0 },
+          create: { userId: id, storeId, isPrimary: index === 0 },
+        }),
+      ),
+    ]);
+
+    await this.audit.record(actor, {
+      action: 'users.stores_set',
+      entityType: 'User',
+      entityId: id,
+      summary: `${existing.name} now covers ${ids.length} store(s)`,
+      metadata: { storeIds: ids },
+    });
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id },
+      include: USER_INCLUDE,
+    });
+    return this.toView(user);
+  }
+
   async updateStore(actor: AuthUser, id: string, dto: UpdateUserStoreDto) {
     const existing = await this.getOrThrow(actor, id);
     // Rank gate: never reassign a peer/superior.
