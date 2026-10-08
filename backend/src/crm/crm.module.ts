@@ -156,6 +156,9 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
     { provide: AI_RESPONDER, useClass: ProviderAiResponder },
   ],
   exports: [
+    // The token, not the class: the campaign bot (whatsapp-bot module) answers
+    // ad conversations through whichever responder is bound here.
+    AI_RESPONDER,
     LeadExportService,
     LeadTagsService,
     StaffDigestService,

@@ -55,6 +55,22 @@ export interface AiReplyContext {
   knowledgeDocumentIds?: string[];
   /** The tenant's own name, so the prompt need not hardcode any brand. */
   businessName?: string;
+  /**
+   * The CAMPAIGN-SCRIPTED mode (client, 8 Oct): the conversation belongs to an
+   * ad campaign whose owner wrote what the assistant knows and what it should
+   * work toward. When set, the adapter answers AS the shop (sent, not drafted
+   * — the campaign bot service owns that decision), from the campaign brief
+   * instead of retrieved documents, with no menus or numbered options ever.
+   * The brief and questions are tenant-authored but still fenced as data.
+   */
+  campaign?: {
+    name: string;
+    brief?: string | null;
+    guardrails?: string | null;
+    questions?: string[];
+  };
+  /** Recent turns, oldest first, already rendered one per line ("Customer: …"). */
+  historyText?: string;
 }
 
 export interface AiReply {
