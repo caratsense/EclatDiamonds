@@ -13,6 +13,15 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -75,10 +84,12 @@ export function DailyReportsTable() {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const download = useDownloadDsrSheet();
 
-  // The consolidated from–to download (client, 8 Oct): every store the card's
-  // filter allows, summed over the range — one column per store plus a Total —
-  // or just the filtered store. Lives HERE because this card is the archive it
-  // draws from; the control above the form downloads what that form filed.
+  // The consolidated from–to download (client, 8 Oct): a button beside the
+  // filters opens a dialog asking the store, the range and the format, so the
+  // card header stays a header. All stores = one column per store plus a
+  // Total; one store = that branch summed over the range.
+  const [rangeOpen, setRangeOpen] = useState(false);
+  const [rangeStore, setRangeStore] = useState(ALL_STORES);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [rangeFormat, setRangeFormat] = useState<DsrSheetFormat>("pdf");
@@ -91,9 +102,10 @@ export function DailyReportsTable() {
         fromDate,
         toDate,
         format: rangeFormat,
-        ...(storeFilter !== ALL_STORES ? { storeId: storeFilter } : {}),
+        ...(rangeStore !== ALL_STORES ? { storeId: rangeStore } : {}),
       },
       {
+        onSuccess: () => setRangeOpen(false),
         onError: (e) =>
           toast.error(apiErrorMessage(e, "Could not download the consolidated report.")),
         onSettled: () => setRangeBusy(false),
@@ -173,56 +185,20 @@ export function DailyReportsTable() {
                   Clear
                 </Button>
               ) : null}
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9"
+                onClick={() => {
+                  // The dialog opens on whatever the card is filtered to.
+                  setRangeStore(storeFilter);
+                  setRangeOpen(true);
+                }}
+              >
+                <Download className="h-4 w-4" />
+                Download reports
+              </Button>
             </div>
-          </div>
-          {/* The consolidated download: from this date to this date, one file. */}
-          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 p-2.5">
-            <span className="text-xs font-medium text-muted-foreground">
-              Consolidated report
-            </span>
-            <Input
-              type="date"
-              aria-label="From date"
-              className="h-9 w-40"
-              max={toDate || undefined}
-              value={fromDate}
-              onChange={(e) => setFromDate(e.target.value)}
-            />
-            <span className="text-xs text-muted-foreground">to</span>
-            <Input
-              type="date"
-              aria-label="To date"
-              className="h-9 w-40"
-              min={fromDate || undefined}
-              value={toDate}
-              onChange={(e) => setToDate(e.target.value)}
-            />
-            <Select
-              value={rangeFormat}
-              onValueChange={(v) => setRangeFormat(v as DsrSheetFormat)}
-            >
-              <SelectTrigger className="h-9 w-28" aria-label="Format">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="pdf">PDF</SelectItem>
-                <SelectItem value="xlsx">Excel</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!fromDate || !toDate || rangeBusy}
-              onClick={downloadRange}
-            >
-              <Download className="h-4 w-4" />
-              {rangeBusy ? "Preparing…" : "Download"}
-            </Button>
-            <span className="text-[11px] text-muted-foreground">
-              {storeFilter === ALL_STORES
-                ? "Every store in your scope, one column each, with a total."
-                : "Just the filtered store, summed over the range."}
-            </span>
           </div>
         </CardHeader>
         <CardContent>
@@ -340,6 +316,91 @@ export function DailyReportsTable() {
         open={open}
         onOpenChange={setOpen}
       />
+
+      {/* The consolidated download: which stores, from when to when, what file. */}
+      <Dialog open={rangeOpen} onOpenChange={setRangeOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Download reports</DialogTitle>
+            <DialogDescription>
+              One consolidated file over the dates you pick — every store as its
+              own column with a total, or a single store summed.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4">
+            {realStores.length > 1 ? (
+              <div className="grid gap-1.5">
+                <Label>Stores</Label>
+                <Select value={rangeStore} onValueChange={setRangeStore}>
+                  <SelectTrigger aria-label="Stores">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ALL_STORES}>All stores</SelectItem>
+                    {realStores.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
+            <div className="grid gap-1.5 sm:grid-cols-2">
+              <div className="grid gap-1.5">
+                <Label htmlFor="dsr-range-from">From</Label>
+                <Input
+                  id="dsr-range-from"
+                  type="date"
+                  max={toDate || undefined}
+                  value={fromDate}
+                  onChange={(e) => setFromDate(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="dsr-range-to">To</Label>
+                <Input
+                  id="dsr-range-to"
+                  type="date"
+                  min={fromDate || undefined}
+                  value={toDate}
+                  onChange={(e) => setToDate(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="grid gap-1.5">
+              <Label>Format</Label>
+              <Select
+                value={rangeFormat}
+                onValueChange={(v) => setRangeFormat(v as DsrSheetFormat)}
+              >
+                <SelectTrigger aria-label="Format">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pdf">PDF</SelectItem>
+                  <SelectItem value="xlsx">Excel</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Up to 92 days at a time — a full quarter in one file.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRangeOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={!fromDate || !toDate || rangeBusy}
+              onClick={downloadRange}
+            >
+              <Download className="h-4 w-4" />
+              {rangeBusy ? "Preparing…" : "Download"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
