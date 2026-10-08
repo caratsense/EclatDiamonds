@@ -406,6 +406,12 @@ export class UpdateQuoteDetailsDto {
  * DOCUMENT and the PDF rides in that header.
  */
 export class SendQuotePdfDto {
+  /** Overrides the quote's own customer number — same rule as ShareQuoteDto. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(16)
+  to?: string;
+
   @IsOptional()
   @IsString()
   @Matches(/^[a-z0-9_]{1,512}$/)

@@ -950,8 +950,8 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
           <DialogHeader>
             <DialogTitle>Send quote {sendStep?.ref} on WhatsApp</DialogTitle>
             <DialogDescription>
-              Goes out from this branch&rsquo;s own number. Change the recipient if
-              the quote should reach a different phone.
+              The detailed quotation PDF goes out from this branch&rsquo;s own
+              number. Change the recipient if it should reach a different phone.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-1.5">
@@ -982,16 +982,16 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
                 if (!sendStep) return;
                 setSendBusy(true);
                 try {
-                  const { data } = await api.post<{ delivered: boolean; dryRun?: boolean }>(
-                    `/quotes/${sendStep.id}/share`,
+                  // The detailed PDF, not a text summary — queued through the
+                  // branch's own line, to the number typed in this box.
+                  const { data } = await api.post<{ queued: boolean; dryRun: boolean }>(
+                    `/quotes/${sendStep.id}/send-pdf`,
                     { to: sendTo },
                   );
-                  if (data.delivered) {
-                    toast.success(`Quote ${sendStep.ref} sent on WhatsApp`);
-                  } else if (data.dryRun) {
-                    toast.warning("WhatsApp is not connected — nothing was sent.");
+                  if (data.dryRun) {
+                    toast.warning("WhatsApp is not connected — the PDF will not be delivered.");
                   } else {
-                    toast.error("WhatsApp refused the message — it was not sent.");
+                    toast.success(`Quote ${sendStep.ref} PDF queued for WhatsApp`);
                   }
                   setSendStep(null);
                   reset();
@@ -1005,7 +1005,7 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
                 }
               }}
             >
-              {sendBusy ? "Sending…" : "Send to WhatsApp"}
+              {sendBusy ? "Sending…" : "Send PDF on WhatsApp"}
             </Button>
           </DialogFooter>
         </DialogContent>

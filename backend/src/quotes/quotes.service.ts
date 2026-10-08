@@ -557,8 +557,16 @@ export class QuotesService {
    */
   async sendPdf(user: AuthUser, id: string, dto: SendQuotePdfDto) {
     const quote = await this.get(user, id);
-    if (!quote.phone) {
+    // Same recipient rule as share(): default to the quote's own customer,
+    // allow the sender to redirect it (husband's quote to the wife's phone),
+    // and re-validate here so a service caller cannot slip in a bad string.
+    const to = (dto.to ?? '').replace(/\D/g, '');
+    const recipient = to ? (to.length === 10 ? `91${to}` : to) : quote.phone;
+    if (!recipient) {
       throw new BadRequestException('This quote has no phone number to send to');
+    }
+    if (to && (recipient.length < 12 || recipient.length > 15)) {
+      throw new BadRequestException('Enter a valid 10-digit mobile number');
     }
     const gate = await this.approval.assertCleared(user.organisationId, id);
     const doc = await this.issuePdf(user, id, gate);
@@ -578,7 +586,7 @@ export class QuotesService {
     const queued = await this.omnichannel.queueToContact(
       user,
       {
-        to: quote.phone,
+        to: recipient,
         purpose: 'service',
         body: caption,
         templateName: dto.templateName,

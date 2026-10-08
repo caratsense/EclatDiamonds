@@ -81,41 +81,33 @@ export default function QuotationPage() {
   // A screen of its own: with two or three items the form is long.
   const openBuilder = () => router.push("/quotation/new");
 
+  /*
+   * The row's WhatsApp action sends the DETAILED PDF, queued through the
+   * branch's own business line — not a text summary, and never a wa.me link.
+   * The old fallback opened web WhatsApp on whatever account the terminal had
+   * logged in, with the price as prefilled text: it could not attach the
+   * document, and it read as the feature being broken. A refusal here is
+   * final — the approval gate's no must never be worked around by hand.
+   */
   async function handleSendQuoteWhatsApp(e: React.MouseEvent, q: Quote) {
     e.stopPropagation();
-    const total = computeQuoteTotals(q).grandTotal;
-    const cleanPhone = q.phone?.replace(/[^0-9]/g, "") || "";
-
     try {
-      const { data } = await api.post<{ delivered: boolean; dryRun?: boolean }>(
-        `/quotes/${q.id}/share`,
+      const { data } = await api.post<{ queued: boolean; dryRun: boolean }>(
+        `/quotes/${q.id}/send-pdf`,
+        {},
       );
-      if (data?.delivered) {
-        toast.success(`Quotation #${q.ref} delivered via WhatsApp`, {
+      if (data.dryRun) {
+        toast.warning("WhatsApp is not connected yet — the PDF will not be delivered.", {
+          description: "Open the quote and use Download PDF to share it another way.",
+        });
+      } else {
+        toast.success(`Quote ${q.ref} PDF queued for WhatsApp`, {
           description: `${q.customer} · ${q.phone}`,
         });
-        return;
       }
     } catch (err) {
-      /*
-       * A refusal is final. The server says no when a manager has not approved
-       * this amount (or it changed after approval); falling back to a wa.me link
-       * here would send the price anyway and make the approval meaningless.
-       * The fallback below is only for a quote the server cleared but could not
-       * deliver itself because WhatsApp is not connected.
-       */
       toast.error(apiErrorMessage(err, "The quote could not be sent."));
-      return;
     }
-
-    const text = `Hello ${q.customer}, here is your quotation #${q.ref} from Éclat Diamonds for ${formatINR(total)}. Please let us know if you would like to proceed or have any customizations!`;
-    const targetUrl = cleanPhone
-      ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`
-      : `https://wa.me/?text=${encodeURIComponent(text)}`;
-    window.open(targetUrl, "_blank");
-    toast.success(`Opening WhatsApp for Quotation #${q.ref}`, {
-      description: `${q.customer} · ${formatINR(total)}`,
-    });
   }
 
   return (
