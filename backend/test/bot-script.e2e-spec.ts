@@ -133,6 +133,22 @@ describe('customer bot script', () => {
     });
   });
 
+  describe('the greeting can be switched off entirely', () => {
+    it('stores only the explicit false, and anything else keeps greeting', () => {
+      expect(resolveBotScript({ greeting: false }).greeting).toBe(false);
+      expect(resolveBotScript({ greeting: true }).greeting).toBeUndefined();
+      expect(resolveBotScript({ greeting: 'no' }).greeting).toBeUndefined();
+      expect(resolveBotScript({}).greeting).toBeUndefined();
+    });
+
+    it('says nothing before question 1 while off, and the editor is told', () => {
+      const script = resolveBotScript({ greeting: false });
+      expect(scriptedGreeting('Priya', script)).toBeUndefined();
+      expect(describeBotScript(script).greeting.enabled).toBe(false);
+      expect(describeBotScript({}).greeting.enabled).toBe(true);
+    });
+  });
+
   describe('overrides are sparse, not a snapshot', () => {
     /*
      * The lead-scoring policy stores a full copy, so the moment a tenant saved

@@ -4,7 +4,6 @@ import { format, parseISO } from "date-fns";
 import {
   IndianRupee,
   Package,
-  Send,
   Wallet,
   type LucideIcon,
 } from "lucide-react";
@@ -107,16 +106,16 @@ function RollupTile({
 /**
  * Module 10 — period rollup. Daily / Weekly / Monthly segmented control that
  * fetches GET /reporting/summary and renders Sales / Orders / Payments tiles
- * with the covered from–to range. "Send report" opens the delivery dialog.
+ * with the covered from–to range. Reading and downloading only — the DSR
+ * reaches head office through the automated evening digest, so nothing on
+ * this screen sends (client, 8 Oct).
  */
 export function PeriodRollup({
   period,
   onPeriodChange,
-  onSendReport,
 }: {
   period: ReportPeriod;
   onPeriodChange: (period: ReportPeriod) => void;
-  onSendReport: () => void;
 }) {
   const query = useReportSummary(period);
   const s = query.data;
@@ -151,10 +150,6 @@ export function PeriodRollup({
               ))}
             </TabsList>
           </Tabs>
-          <Button onClick={onSendReport} className="shrink-0">
-            <Send className="h-4 w-4" />
-            Send report
-          </Button>
         </div>
       </div>
 

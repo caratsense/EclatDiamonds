@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Download, Send } from "lucide-react";
+import { Download } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -9,7 +9,6 @@ import {
   todayLocal,
 } from "@/components/reporting/daily-report-form";
 import { DailyReportsTable } from "@/components/reporting/daily-reports-table";
-import { DsrSheetSendDialog } from "@/components/reporting/dsr-sheet-send-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -28,9 +27,10 @@ import { apiErrorMessage } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
 /**
- * Download or send the filed DSRs as the store's paper sheet — the day, its
- * Mon–Sun week or its month, to print (PDF) or to work on (Excel). One store
- * per sheet, so on "All Stores" pick one.
+ * Download what the form beside this files: one store's sheet for the day,
+ * its Mon–Sun week, or its month, as PDF or Excel. The consolidated from–to
+ * download lives on the Submitted-reports card below, with the archive it
+ * draws from (client, 8 Oct).
  */
 function DsrSheetDownload() {
   const { currentStore, stores } = useSession();
@@ -39,7 +39,6 @@ function DsrSheetDownload() {
   const [period, setPeriod] = useState<DsrSheetPeriod>("day");
   const [date, setDate] = useState(todayLocal());
   const [format, setFormat] = useState<DsrSheetFormat>("xlsx");
-  const [sending, setSending] = useState(false);
   const download = useDownloadDsrSheet();
 
   const onDownload = () =>
@@ -54,7 +53,7 @@ function DsrSheetDownload() {
   return (
     <div className="flex flex-wrap items-center gap-2">
       {currentStore.isAggregate ? (
-        <Select value={storeId} onValueChange={setPickedStoreId}>
+        <Select value={storeId || undefined} onValueChange={setPickedStoreId}>
           <SelectTrigger className="h-9 w-40" aria-label="Store">
             <SelectValue placeholder="Choose a store" />
           </SelectTrigger>
@@ -111,20 +110,6 @@ function DsrSheetDownload() {
         <Download className="h-4 w-4" />
         {download.isPending ? "Preparing…" : "Download"}
       </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        disabled={!storeId || !date}
-        onClick={() => setSending(true)}
-      >
-        <Send className="h-4 w-4" />
-        Send
-      </Button>
-      <DsrSheetSendDialog
-        sheet={{ storeId, period, date, format }}
-        open={sending}
-        onOpenChange={setSending}
-      />
     </div>
   );
 }
@@ -136,14 +121,14 @@ function DsrSheetDownload() {
  */
 export function DailyReportSection() {
   return (
-    <section className="space-y-4">
+    <section id="file-dsr" className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="font-display text-lg font-bold tracking-tight text-foreground">
             Daily Report (DSR)
           </h2>
           <p className="text-sm text-muted-foreground">
-            Type it once. Saved here, ready to send on WhatsApp
+            Type it once. Head office reads every store’s evening digest.
           </p>
         </div>
         <DsrSheetDownload />

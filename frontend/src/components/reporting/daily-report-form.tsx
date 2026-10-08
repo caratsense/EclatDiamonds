@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { MessageCircle } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -23,12 +22,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatINR } from "@/lib/format";
-import {
-  closingBooking,
-  composeDailyReportText,
-  type DailyReportInput,
-} from "@/lib/mock/reporting";
-import { useCreateDailyReport } from "@/lib/queries/reporting";
+import { closingBooking, type DailyReportInput } from "@/lib/mock/reporting";
+import { useCarriedOpening, useCreateDailyReport } from "@/lib/queries/reporting";
 import { cn, positiveNumberInput } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
@@ -253,8 +248,12 @@ function PaymentSplitFields({
  * Daily Report (DSR) entry form — the store-close sheet the manager keeps,
  * field for field: the traffic funnel, TABLE A (counter sale), TABLE B
  * (customised sale), each with its own mode-of-payment split, and the
- * customised-order book. A live WhatsApp-style `<pre>` preview updates as the
- * user types. Submit → POST /reporting/daily.
+ * customised-order book. Submit → POST /reporting/daily.
+ *
+ * No live preview beside it any more (client, 8 Oct): the composed text that
+ * card mirrored is readable after filing from the Submitted-reports View, and
+ * delivery is the automated head-office digest, so previewing a message nobody
+ * sends by hand was clutter. The form reads as one column, like the sheet.
  */
 export function DailyReportForm() {
   const { currentStore, user, stores } = useSession();
@@ -285,8 +284,26 @@ export function DailyReportForm() {
   const [bookingsNew, setBookingsNew] = useState("");
   const [advanceReceived, setAdvanceReceived] = useState("");
   const [customSplit, setCustomSplit] = useState<PaymentSplit>(EMPTY_SPLIT);
-  // The customised-order book
-  const [bookingsOpen, setBookingsOpen] = useState("");
+  // The customised-order book.
+  //
+  // The opening figure CARRIES FORWARD: yesterday's closing arrives from the
+  // server and fills the field by itself (client, 7 Oct meeting 2 - nobody
+  // looks up the previous report to retype a number). It stays editable - the
+  // first-ever report, and a correction after an audit, must win over the
+  // automation - so a hand-typed value is never overwritten: the effect only
+  // writes while the field still holds what the carry itself put there.
+  const carried = useCarriedOpening(storeId, reportDate);
+  // Edits are kept PER store+date, and the displayed value is derived: the
+  // user's edit for this key if one exists, else the carried figure. No effect
+  // syncs anything, so switching store or date can never clobber a typed value
+  // and the carried number can never overwrite an edit.
+  const openKey = `${storeId}|${reportDate}`;
+  const [openEdits, setOpenEdits] = useState<Record<string, string>>({});
+  const carriedText = carried.data?.opening != null ? String(carried.data.opening) : "";
+  const bookingsOpen = openEdits[openKey] ?? carriedText;
+  const setBookingsOpen = (value: string) =>
+    setOpenEdits((prev) => ({ ...prev, [openKey]: value }));
+  const openIsCarried = openEdits[openKey] === undefined && carried.data?.fromDate != null;
   const [bookingsClosed, setBookingsClosed] = useState("");
   const [remark, setRemark] = useState("");
   const [submittedBy, setSubmittedBy] = useState(user.name);
@@ -338,10 +355,6 @@ export function DailyReportForm() {
     ],
   );
 
-  // Composed inline: it is a pure function of `draft` (already memoised) and a
-  // label, so a second manual memo only gave the compiler a dependency list to
-  // disagree with.
-  const preview = composeDailyReportText(draft, storeLabel);
   const closing = closingBooking(draft);
 
   // Footfall funnel: each row is a subset of the one above it, so it can only
@@ -372,6 +385,7 @@ export function DailyReportForm() {
     // Opening is deliberately kept: tomorrow morning's opening book is tonight's
     // closing, so the manager carries it forward rather than looking it up again.
     setBookingsOpen(String(closing));
+    void closing;
   }
 
   async function submit() {
@@ -402,17 +416,8 @@ export function DailyReportForm() {
     }
   }
 
-  async function copyPreview() {
-    try {
-      await navigator.clipboard.writeText(preview);
-      toast.success("Report text copied — paste into WhatsApp");
-    } catch {
-      toast.error("Couldn't copy. Select the text and copy manually.");
-    }
-  }
-
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+    <div className="max-w-3xl">
       {/* Entry form */}
       <Card>
         <CardHeader>
@@ -495,7 +500,7 @@ export function DailyReportForm() {
 
           {/* Traffic funnel */}
           <div className="space-y-2.5">
-            <GroupLabel>Traffic</GroupLabel>
+            <GroupLabel>1 · Footfall</GroupLabel>
             <p className="text-[11px] text-muted-foreground">
               Counts only — a walk-in is logged whether or not the customer left
               a name or number.
@@ -532,7 +537,7 @@ export function DailyReportForm() {
 
           {/* Table A — counter sale */}
           <div className="space-y-3 rounded-lg border p-3.5">
-            <GroupLabel>Table A · Counter sale</GroupLabel>
+            <GroupLabel>2 · Table A — counter sale</GroupLabel>
             <div className="grid gap-3 sm:grid-cols-2">
               <NumberField
                 id="dsr-counter-value"
@@ -552,7 +557,7 @@ export function DailyReportForm() {
 
           {/* Table B — customised sale */}
           <div className="space-y-3 rounded-lg border p-3.5">
-            <GroupLabel>Table B · Customised sale</GroupLabel>
+            <GroupLabel>3 · Table B — customised sale</GroupLabel>
             <div className="grid gap-3 sm:grid-cols-2">
               <NumberField
                 id="dsr-booking-value"
@@ -580,15 +585,23 @@ export function DailyReportForm() {
 
           {/* The customised-order book */}
           <div className="space-y-2.5">
-            <GroupLabel>Customised order book</GroupLabel>
+            <GroupLabel>4 · Customised order book</GroupLabel>
             <div className="grid gap-3 sm:grid-cols-3">
-              <NumberField
-                id="dsr-book-open"
-                label="Open bookings"
-                value={bookingsOpen}
-                onChange={setBookingsOpen}
-                prefix="₹"
-              />
+              <div className="grid gap-1.5">
+                <NumberField
+                  id="dsr-book-open"
+                  label="Open bookings"
+                  value={bookingsOpen}
+                  onChange={setBookingsOpen}
+                  prefix="₹"
+                />
+                {openIsCarried ? (
+                  <p className="text-[11px] text-muted-foreground">
+                    Carried from {carried.data?.fromDate}&rsquo;s closing — edit only
+                    to correct.
+                  </p>
+                ) : null}
+              </div>
               <NumberField
                 id="dsr-book-closed"
                 label="Closed — sale completed"
@@ -617,7 +630,7 @@ export function DailyReportForm() {
           {/* Remark */}
           <div className="grid gap-1.5">
             <Label htmlFor="dsr-remark" className="text-xs">
-              Remark
+              5 · Remark
             </Label>
             <Textarea
               id="dsr-remark"
@@ -650,33 +663,6 @@ export function DailyReportForm() {
               {createReport.isPending ? "Filing…" : "File report"}
             </Button>
           </div>
-        </CardContent>
-      </Card>
-
-      {/* Live WhatsApp-style preview */}
-      <Card className="self-start lg:sticky lg:top-6">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <MessageCircle className="h-4 w-4 text-[var(--gold)]" />
-            WhatsApp preview
-          </CardTitle>
-          <CardDescription>
-            Exactly what gets sent — updates as you type
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg border bg-muted/40 p-3 font-mono text-[12.5px] leading-relaxed text-foreground">
-            {preview}
-          </pre>
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full"
-            onClick={copyPreview}
-          >
-            <MessageCircle className="h-4 w-4" />
-            Copy text
-          </Button>
         </CardContent>
       </Card>
     </div>

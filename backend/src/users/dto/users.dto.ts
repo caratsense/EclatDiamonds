@@ -11,6 +11,9 @@ import {
   MaxLength,
   Min,
   MinLength,
+  IsArray,
+  ArrayNotEmpty,
+  ArrayMaxSize,
 } from 'class-validator';
 import { LeaveType, Role } from '@prisma/client';
 import { IsIndianMobile, IsRealName } from '../../common/contact.util';
@@ -25,7 +28,7 @@ import { IsIndianMobile, IsRealName } from '../../common/contact.util';
  * assertAssignableRole: only head office may grant it, everyone else is
  * strictly below their own rank.
  */
-export const ASSIGNABLE_ROLES: Role[] = ['salesperson', 'marketing', 'store_manager', 'head_office'];
+export const ASSIGNABLE_ROLES: Role[] = ['salesperson', 'marketing', 'store_manager', 'area_manager', 'head_office'];
 
 /**
  * POST /users — a manager onboards a staff member (defaults to salesperson).
@@ -89,6 +92,19 @@ export class UpdateUserStoreDto {
   @IsString()
   @IsNotEmpty()
   storeId!: string;
+}
+
+/**
+ * PATCH /users/:id/stores — the area-manager shape: the exact set of branches
+ * this person covers (client, 7 Oct meeting 2: 4-5 assigned stores). Replaces
+ * the user's links; the first id becomes the primary.
+ */
+export class SetUserStoresDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(10)
+  @IsString({ each: true })
+  storeIds!: string[];
 }
 
 /**

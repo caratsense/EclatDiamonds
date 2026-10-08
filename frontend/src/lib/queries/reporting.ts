@@ -174,6 +174,24 @@ export function useDailyReports(date?: string) {
 export type CreateDailyReportInput = DailyReportInput;
 
 /** POST /reporting/daily — file a store-close report (returns composed text). */
+/**
+ * The opening booking figure carried from the last filed report before `date`.
+ * Null when the store has never filed — the first report types its own opening.
+ */
+export function useCarriedOpening(storeId: string, date: string) {
+  return useQuery({
+    queryKey: ["reporting", "daily-opening", storeId, date],
+    enabled: Boolean(storeId && date),
+    queryFn: async () =>
+      (
+        await api.get<{ opening: number | null; fromDate: string | null }>(
+          "/reporting/daily/opening",
+          { params: { storeId, date } },
+        )
+      ).data,
+  });
+}
+
 export function useCreateDailyReport() {
   const qc = useQueryClient();
   return useMutation({
@@ -187,42 +205,18 @@ export function useCreateDailyReport() {
   });
 }
 
-export interface SendDailyReportInput {
-  id: string;
-  channel: ReportChannel;
-  /** Phone number (WhatsApp) or email address. */
-  to: string;
-}
-
-export interface SendDailyReportResult {
-  sent: boolean;
-  /** True when that channel isn't configured yet — preview only, NOT an error. */
-  disabled?: boolean;
-  /** The composed report text the backend would deliver. */
-  preview: string;
-}
-
-/** POST /reporting/daily/:id/send — deliver a filed DSR over WhatsApp/email. */
-export function useSendDailyReport() {
-  return useMutation({
-    mutationFn: async ({ id, ...body }: SendDailyReportInput) => {
-      const { data } = await api.post<SendDailyReportResult>(
-        `/reporting/daily/${id}/send`,
-        body,
-      );
-      return data;
-    },
-  });
-}
-
 export type DsrSheetPeriod = "day" | "week" | "month";
 export type DsrSheetFormat = "pdf" | "xlsx";
 
 export interface DsrSheetInput {
-  storeId: string;
-  period: DsrSheetPeriod;
+  /** Omitted in range mode = every store in the viewer's scope, consolidated. */
+  storeId?: string;
+  period?: DsrSheetPeriod;
   /** Any day in the period (YYYY-MM-DD). */
-  date: string;
+  date?: string;
+  /** Consolidated range mode (inclusive): one column per store, plus a Total. */
+  fromDate?: string;
+  toDate?: string;
   /** Defaults to the printable PDF. */
   format?: DsrSheetFormat;
 }
@@ -267,30 +261,6 @@ export function useDownloadDsrSheet() {
         URL.revokeObjectURL(url);
       }
       return { filename };
-    },
-  });
-}
-
-export interface SendDsrSheetInput extends DsrSheetInput {
-  channel: ReportChannel;
-  /** Phone number (WhatsApp) or email address. */
-  to: string;
-}
-
-export interface SendDsrSheetResult extends SendDailyReportResult {
-  /** The file that was attached, as the recipient sees it named. */
-  filename: string;
-}
-
-/** POST /reporting/daily/sheet/send — the sheet as a file, over WhatsApp/email. */
-export function useSendDsrSheet() {
-  return useMutation({
-    mutationFn: async (input: SendDsrSheetInput) => {
-      const { data } = await api.post<SendDsrSheetResult>(
-        "/reporting/daily/sheet/send",
-        input,
-      );
-      return data;
     },
   });
 }

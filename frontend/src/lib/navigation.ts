@@ -143,7 +143,7 @@ export const NAV_ITEMS: NavItem[] = [
     slug: "reporting",
     title: "Reporting & DSR",
     purpose: "Automated daily sales reports and store analytics.",
-    primaryAction: "Generate DSR",
+    primaryAction: "File DSR",
     icon: BarChart3,
     group: "Reports",
     roles: ["store_manager", "area_manager", "head_office"],

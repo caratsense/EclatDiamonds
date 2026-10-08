@@ -16,7 +16,7 @@ import { NAV_GROUPS, getNavItem } from "@/lib/navigation";
 import { useStaff, type StaffUser } from "@/lib/queries/users";
 import { api } from "@/lib/api";
 import { useSetUserAccess, useUserAccess, type AccessOverride, type UserAccess } from "@/lib/queries/access";
-import { ROLE_LABELS } from "@/lib/types";
+import { ROLE_LABELS, ROLE_RANK, type Role } from "@/lib/types";
 import { useSession } from "@/store/use-session";
 import { apiErrorMessage, cn } from "@/lib/utils";
 
@@ -32,11 +32,16 @@ const HEAD_OFFICE_ONLY = new Set([
   "settings/access",
 ]);
 
-const LEVELS: { value: AccessOverride; label: string; hint: string }[] = [
-  { value: "none", label: "Off", hint: "Not in their sidebar, and the server refuses it" },
-  { value: "own", label: "Own", hint: "Only their own records" },
-  { value: "store", label: "Store", hint: "Everything at their store, as a manager" },
-];
+/*
+ * ON/OFF ONLY (client, 7 Oct meeting 2): Own/Store disappeared from the
+ * controls. The server still stores a depth — the scoping layer needs one —
+ * so ON grants the screen at the ROLE's natural depth: store-manager rank and
+ * above work a screen across their branch, everyone below works their own
+ * records. The depth question moved from every toggle to the role itself,
+ * which is what the client's attendance table describes.
+ */
+const onLevel = (role: Role): AccessOverride =>
+  ROLE_RANK[role] >= ROLE_RANK.store_manager ? "store" : "own";
 
 /**
  * Head office decides, person by person, which screens someone can open and
@@ -281,31 +286,37 @@ function PersonAccess({ userId, person }: { userId: string; person?: StaffUser }
                       <span className="font-medium">{i.title}</span>
                       {changed ? (
                         <Badge variant="outline" className="text-[10px] font-normal">
-                          changed · role: {LEVELS.find((l) => l.value === byDefault(i.slug))?.label}
+                          changed · role default:{" "}
+                          {byDefault(i.slug) === "none" ? "Off" : "On"}
                         </Badge>
                       ) : null}
                     </div>
                     <div role="radiogroup" aria-label={i.title} className="flex rounded-md border p-0.5">
-                      {LEVELS.map((l) => (
-                        <button
-                          key={l.value}
-                          type="button"
-                          role="radio"
-                          aria-checked={value === l.value}
-                          title={l.hint}
-                          onClick={() => setDraft((d) => ({ ...d, [i.slug]: l.value }))}
-                          className={cn(
-                            "rounded px-3 py-1 text-xs font-medium",
-                            value === l.value
-                              ? l.value === "none"
-                                ? "bg-muted text-foreground"
-                                : "bg-primary text-primary-foreground"
-                              : "text-muted-foreground hover:bg-muted/60",
-                          )}
-                        >
-                          {l.label}
-                        </button>
-                      ))}
+                      {([
+                        { value: "none" as AccessOverride, label: "Off" },
+                        { value: onLevel(data.role), label: "On" },
+                      ]).map((l) => {
+                        const active = l.value === "none" ? value === "none" : value !== "none";
+                        return (
+                          <button
+                            key={l.label}
+                            type="button"
+                            role="radio"
+                            aria-checked={active}
+                            onClick={() => setDraft((d) => ({ ...d, [i.slug]: l.value }))}
+                            className={cn(
+                              "rounded px-4 py-1 text-xs font-medium",
+                              active
+                                ? l.value === "none"
+                                  ? "bg-muted text-foreground"
+                                  : "bg-primary text-primary-foreground"
+                                : "text-muted-foreground hover:bg-muted/60",
+                            )}
+                          >
+                            {l.label}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 );

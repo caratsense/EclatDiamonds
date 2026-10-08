@@ -944,12 +944,14 @@ function CheckInScreen({ onNewDay }: { onNewDay: () => void }) {
                   {liveDecision.state === "imprecise" ? (
                     "You may continue with a reason, or wait for a more accurate GPS reading."
                   ) : (
-                    <>Move closer — check-in is blocked until you are within <span className="num">{radius}</span> m.</>
+                    <>
+                      Within <span className="num">{radius}</span> m you&apos;re checked in
+                      automatically. Working off-site today? Continue with a reason —
+                      it&apos;s recorded for your manager to review.
+                    </>
                   )}
                 </p>
               </div>
-              {liveDecision.state === "imprecise" ? (
-              <>
               <Button
                 variant="secondary"
                 size="lg"
@@ -979,8 +981,6 @@ function CheckInScreen({ onNewDay }: { onNewDay: () => void }) {
                 <Camera className="h-5 w-5" />
                 Add optional photo
               </Button>
-              </>
-              ) : null}
             </div>
           )}
         </CardContent>

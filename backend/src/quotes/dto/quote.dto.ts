@@ -28,6 +28,14 @@ export const QUOTE_KARATS = [0, 9, 12, 14, 18, 22, 24];
  * master, its size, and carats priced per carat. The server works out the
  * amount; the multiplier is the staff's lever and is never printed.
  */
+/** POST /quotes/:id/share — optionally send to a number other than the quote's. */
+export class ShareQuoteDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(16)
+  to?: string;
+}
+
 export class QuoteStoneDto {
   @IsIn(['D', 'C'])
   type!: 'D' | 'C';
@@ -398,6 +406,12 @@ export class UpdateQuoteDetailsDto {
  * DOCUMENT and the PDF rides in that header.
  */
 export class SendQuotePdfDto {
+  /** Overrides the quote's own customer number — same rule as ShareQuoteDto. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(16)
+  to?: string;
+
   @IsOptional()
   @IsString()
   @Matches(/^[a-z0-9_]{1,512}$/)

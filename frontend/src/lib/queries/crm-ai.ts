@@ -142,6 +142,8 @@ export interface BotScriptStep {
  * the default" read as an obvious action rather than a destructive one.
  */
 export interface BotScriptSetup {
+  /** Whether the opening greeting is sent at all; off means question 1 opens. */
+  greeting: { enabled: boolean };
   intro: { default: string; value?: string };
   introHint: { default: string; value?: string };
   steps: BotScriptStep[];
@@ -150,6 +152,8 @@ export interface BotScriptSetup {
 
 /** Only the overrides are sent; anything omitted goes back to the default. */
 export interface BotScriptInput {
+  /** Only `false` is stored; anything else keeps the greeting. */
+  greeting?: boolean;
   intro?: string;
   introHint?: string;
   steps?: Record<string, { prompt?: string; hint?: string; options?: Record<string, string> }>;

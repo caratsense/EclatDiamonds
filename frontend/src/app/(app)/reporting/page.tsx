@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { SectionHeader } from "@/components/section/section-header";
 import { KpiCard } from "@/components/dashboards/kpi-card";
@@ -8,63 +8,19 @@ import { PaymentPie } from "@/components/reporting/payment-pie";
 import { StoreRevenueTable } from "@/components/reporting/store-revenue-table";
 import { MoversTable } from "@/components/reporting/movers-table";
 import { PeriodRollup } from "@/components/reporting/period-rollup";
-import { SendReportDialog } from "@/components/reporting/send-report-dialog";
 import { DailyReportSection } from "@/components/reporting/daily-report-section";
 import { DsrDigestCard } from "@/components/reporting/dsr-digest-card";
 import { AllStoresReports } from "@/components/reporting/all-stores-reports";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSession } from "@/store/use-session";
 import { ROLE_RANK } from "@/lib/types";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatINR, formatNumber } from "@/lib/format";
 import { getNavItem } from "@/lib/navigation";
-import type { DsrResponse, ReportPeriod } from "@/lib/queries/reporting";
+import type { ReportPeriod } from "@/lib/queries/reporting";
 import { useDsr, useMovers } from "@/lib/queries/reporting";
 
-/** Build a plain-text DSR summary from the data already on the page. */
-function buildDsrSummary(dsr?: DsrResponse): string {
-  if (!dsr) return "";
-  const today = new Date().toLocaleDateString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-  const find = (id: string) => dsr.headline.find((h) => h.id === id)?.value;
-  const fmt = (id: string) => {
-    const k = dsr.headline.find((h) => h.id === id);
-    if (!k) return "—";
-    return k.format === "inr" ? formatINR(k.value) : formatNumber(k.value);
-  };
-
-  const lines = [
-    `Daily Sales Report — ${today}`,
-    `Walk-ins: ${fmt("walkins")}`,
-    `Bills generated: ${fmt("bills")}`,
-    `Total sales: ${fmt("sales")}`,
-  ];
-  if (find("atv") != null) lines.push(`Avg. ticket value: ${fmt("atv")}`);
-
-  if (dsr.storeRevenue.length > 0) {
-    lines.push("", "Store-wise:");
-    for (const s of dsr.storeRevenue) {
-      lines.push(
-        `• ${s.store}: ${formatINR(s.revenue)} (${formatNumber(s.bills)} bills, ${formatNumber(s.walkins)} walk-ins)`,
-      );
-    }
-  }
-  return lines.join("\n");
-}
-
-/** Where each DSR headline tile drills to when tapped. */
+/** Where a headline KPI tile links: the screen that explains its number. */
 function dsrKpiHref(id: string): string | undefined {
   switch (id) {
     case "sales":
@@ -99,8 +55,6 @@ function FrontLineReporting() {
 
 function ManagerReporting() {
   const item = getNavItem("reporting");
-  const [dsrOpen, setDsrOpen] = useState(false);
-  const [sendOpen, setSendOpen] = useState(false);
   const [period, setPeriod] = useState<ReportPeriod>("daily");
   // Head office, or anyone who sees more than one branch, reads them side by side.
   const { role, stores } = useSession();
@@ -116,24 +70,9 @@ function ManagerReporting() {
   const storeRevenue = dsrQuery.data?.storeRevenue ?? [];
   const movers = moversQuery.data ?? [];
 
-  const dsrSummary = useMemo(
-    () => buildDsrSummary(dsrQuery.data),
-    [dsrQuery.data],
-  );
-
   const overview = (
     <>
-      <PeriodRollup
-        period={period}
-        onPeriodChange={setPeriod}
-        onSendReport={() => setSendOpen(true)}
-      />
-
-      <SendReportDialog
-        open={sendOpen}
-        onOpenChange={setSendOpen}
-        initialPeriod={period}
-      />
+      <PeriodRollup period={period} onPeriodChange={setPeriod} />
 
       <div className="my-6 h-px bg-gradient-to-r from-border via-border to-transparent" />
 
@@ -220,21 +159,16 @@ function ManagerReporting() {
       <SectionHeader
         title="Reporting & Daily Sales Report (DSR)"
         purpose={item?.purpose ?? ""}
-        // The preview shows the consolidated message the evening digest sends,
-        // which only head office receives — a store manager has no use for it,
-        // and their own figures are already on the page below.
-        primaryAction={role === "head_office" ? item?.primaryAction : undefined}
-        onPrimaryAction={() => setDsrOpen(true)}
+        // Filing is the page's one action (client, 8 Oct) — the old button
+        // previewed the digest text, which the digest already delivers. This
+        // one takes you to the form.
+        primaryAction={item?.primaryAction}
+        onPrimaryAction={() =>
+          document
+            .getElementById("file-dsr")
+            ?.scrollIntoView({ behavior: "smooth", block: "start" })
+        }
       />
-
-      {role === "head_office" ? (
-        <GenerateDsrDialog
-          open={dsrOpen}
-          onOpenChange={setDsrOpen}
-          summary={dsrSummary}
-          isLoading={dsrQuery.isLoading}
-        />
-      ) : null}
 
       {showAllStores ? (
         <Tabs defaultValue="overview" className="space-y-4">
@@ -254,54 +188,3 @@ function ManagerReporting() {
   );
 }
 
-/**
- * Preview only, head office only.
- *
- * This dialog used to carry a "Recipient WhatsApp number" box and a Send
- * button — any manager could text the day's takings to any number they typed.
- * Delivery now has exactly one route: the evening digest, which sends ONE
- * consolidated message to head office on a schedule. So the send machinery is
- * gone, and what remains is a preview of that message for the people who will
- * receive it.
- */
-function GenerateDsrDialog({
-  open,
-  onOpenChange,
-  summary,
-  isLoading,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  summary: string;
-  isLoading: boolean;
-}) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Today&apos;s DSR</DialogTitle>
-          <DialogDescription>
-            Generated from today&apos;s figures — what the evening digest sends
-            to head office.
-          </DialogDescription>
-        </DialogHeader>
-        {isLoading ? (
-          <Skeleton className="h-48 rounded-lg" />
-        ) : summary ? (
-          <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-lg border bg-muted/40 p-3 text-sm leading-relaxed">
-            {summary}
-          </pre>
-        ) : (
-          <p className="rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground">
-            No DSR data available yet.
-          </p>
-        )}
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Close
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}

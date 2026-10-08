@@ -330,10 +330,18 @@ export interface SendQuotePdfResult {
   dryRun: boolean;
 }
 
-/** POST /quotes/:id/send-pdf — queue the PDF to the quote's customer on WhatsApp. */
+/**
+ * POST /quotes/:id/send-pdf — queue the PDF on WhatsApp: to the quote's own
+ * customer, or to a different number the sender typed (string form keeps the
+ * detail dialog's one-argument call working).
+ */
 export function useSendQuotePdf() {
   return useMutation({
-    mutationFn: async (id: string) =>
-      (await api.post<SendQuotePdfResult>(`/quotes/${id}/send-pdf`, {})).data,
+    mutationFn: async (input: string | { id: string; to?: string }) => {
+      const { id, to } = typeof input === "string" ? { id: input, to: undefined } : input;
+      return (
+        await api.post<SendQuotePdfResult>(`/quotes/${id}/send-pdf`, to ? { to } : {})
+      ).data;
+    },
   });
 }

@@ -36,6 +36,15 @@ import {
 import { useMetalRates } from "@/lib/queries/integrations";
 import { useMaterials } from "@/lib/queries/materials";
 import { staleNote } from "@/components/rates/metal-rates-widget";
+import { api } from "@/lib/api";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { apiErrorMessage, cn, normalizeIndianMobile, phoneInputValue } from "@/lib/utils";
 import {
   StoreScopeField,
@@ -141,6 +150,16 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
 
   // Custom-order details (revealed for the "Custom Order" action)
   const [customOpen, setCustomOpen] = useState(false);
+  /*
+   * The send step after Save (client, 7 Oct meeting 2): a saved quote offers
+   * "Send to WhatsApp" with the customer's number prefilled and EDITABLE -
+   * that answers the meeting's open question (which number? selectable?) with
+   * the sensible default while keeping the choice. reset()/onDone() are
+   * deferred until this closes, so the dialog outlives the form it came from.
+   */
+  const [sendStep, setSendStep] = useState<{ id: string; ref: string; phone: string } | null>(null);
+  const [sendTo, setSendTo] = useState("");
+  const [sendBusy, setSendBusy] = useState(false);
   const [deliveryDate, setDeliveryDate] = useState("");
   const [advance, setAdvance] = useState("");
   const [advanceMode, setAdvanceMode] = useState("");
@@ -501,6 +520,10 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
           description: `${formatINR(quote.totals?.grandTotal ?? preview.grand)} · ready for ${name}.`,
           action: { label: "Print", onClick: () => printSummary(html) },
         });
+        // The send step takes over; reset/onDone run when it closes.
+        setSendStep({ id: quote.id, ref: quote.ref, phone: phone.trim() });
+        setSendTo(phone.trim());
+        return;
       }
       reset();
       onDone();
@@ -912,6 +935,81 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
             </div>
           </div>
         </div>
+
+      <Dialog
+        open={sendStep !== null}
+        onOpenChange={(o: boolean) => {
+          if (!o) {
+            setSendStep(null);
+            reset();
+            onDone();
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Send quote {sendStep?.ref} on WhatsApp</DialogTitle>
+            <DialogDescription>
+              The detailed quotation PDF goes out from this branch&rsquo;s own
+              number. Change the recipient if it should reach a different phone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-1.5">
+            <Label htmlFor="qb-send-to">Recipient mobile</Label>
+            <Input
+              id="qb-send-to"
+              type="tel"
+              inputMode="numeric"
+              maxLength={10}
+              value={sendTo}
+              onChange={(e) => setSendTo(e.target.value.replace(/\D/g, ""))}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setSendStep(null);
+                reset();
+                onDone();
+              }}
+            >
+              Not now
+            </Button>
+            <Button
+              disabled={sendBusy || sendTo.replace(/\D/g, "").length !== 10}
+              onClick={async () => {
+                if (!sendStep) return;
+                setSendBusy(true);
+                try {
+                  // The detailed PDF, not a text summary — queued through the
+                  // branch's own line, to the number typed in this box.
+                  const { data } = await api.post<{ queued: boolean; dryRun: boolean }>(
+                    `/quotes/${sendStep.id}/send-pdf`,
+                    { to: sendTo },
+                  );
+                  if (data.dryRun) {
+                    toast.warning("WhatsApp is not connected — the PDF will not be delivered.");
+                  } else {
+                    toast.success(`Quote ${sendStep.ref} PDF queued for WhatsApp`);
+                  }
+                  setSendStep(null);
+                  reset();
+                  onDone();
+                } catch (e) {
+                  // The approval gate answers here: a quote awaiting a manager
+                  // says so, and the dialog stays open for Not now.
+                  toast.error(apiErrorMessage(e, "Could not send the quote."));
+                } finally {
+                  setSendBusy(false);
+                }
+              }}
+            >
+              {sendBusy ? "Sending…" : "Send PDF on WhatsApp"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

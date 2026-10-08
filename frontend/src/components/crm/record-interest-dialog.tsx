@@ -112,7 +112,7 @@ export function RecordInterestDialog({
                 id="ri-sku"
                 autoFocus
                 className="pl-8"
-                placeholder="Scan or type the code"
+                placeholder="Type the item code"
                 value={sku}
                 onChange={(e) => setSku(e.target.value)}
                 onKeyDown={(e) => {
