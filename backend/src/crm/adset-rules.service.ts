@@ -40,6 +40,11 @@ export type AdSetMatchField =
  */
 export const AI_CONTEXT_MAX = 5000;
 export const AI_GUARDRAILS_MAX = 2000;
+/** The campaign's configured conversation (client, 8 Oct): same shared limits. */
+export const FIRST_REPLY_MAX = 1200;
+export const CAMPAIGN_QUESTION_MAX = 300;
+export const CAMPAIGN_QUESTIONS_MAX = 5;
+export const AD_LINK_MAX = 500;
 
 export type AdSetHandling = 'ai' | 'human';
 
@@ -55,6 +60,16 @@ export interface AdSetAutomationRule {
   handling: AdSetHandling;
   aiContext?: string | null;
   aiGuardrails?: string | null;
+  /**
+   * The campaign's conversation, as the client configures it (8 Oct): the ad
+   * link pasted from Meta (kept, and PARSED — see `adIdFromLink`), the exact
+   * first message a customer arriving from this campaign receives, and the
+   * questions the assistant should work toward. All optional: a rule without
+   * them keeps today's behaviour.
+   */
+  adLink?: string | null;
+  firstReply?: string | null;
+  questions?: string[];
 }
 
 export interface AdSetRoutingContext {
@@ -76,6 +91,26 @@ export interface AdSetRoutingDecision {
   handling: AdSetHandling;
   aiContext?: string | null;
   aiGuardrails?: string | null;
+  firstReply?: string | null;
+  questions?: string[];
+}
+
+/**
+ * The ad id buried in a pasted Meta link, or null.
+ *
+ * "Pasting a campaign link must connect to routing" (client, 8 Oct) — so a
+ * link is parsed, not filed. Meta puts the ad id in several shapes of URL
+ * (ads manager `selected_ad_ids=`, ads library `?id=`, permalinks); all of
+ * them carry it as the longest pure-digit run, and real ad ids are long.
+ * Anything under 10 digits is a year or a pixel size, never an ad id.
+ */
+export function adIdFromLink(link: string | null | undefined): string | null {
+  if (!link) return null;
+  const named = /(?:selected_ad_ids|ad_id|adid|id)=(\d{10,})/i.exec(link);
+  if (named) return named[1];
+  const runs = link.match(/\d{10,}/g);
+  if (!runs?.length) return null;
+  return runs.reduce((a, b) => (b.length > a.length ? b : a));
 }
 
 /** Tenant-owned rules for routing an ad response before it reaches the inbox. */
@@ -229,6 +264,8 @@ export class AdSetRulesService {
           handling: rule.handling,
           aiContext: rule.aiContext ?? null,
           aiGuardrails: rule.aiGuardrails ?? null,
+          firstReply: rule.firstReply ?? null,
+          ...(rule.questions?.length ? { questions: rule.questions } : {}),
         }
       : null;
   }
@@ -308,27 +345,54 @@ function normaliseRules(value: unknown): AdSetAutomationRule[] {
     const rule = candidate as Partial<AdSetAutomationRule>;
     const id = typeof rule.id === 'string' ? rule.id.trim() : '';
     const name = typeof rule.name === 'string' ? rule.name.trim() : '';
-    const matchValue = typeof rule.matchValue === 'string' ? rule.matchValue.trim() : '';
+    const adLink =
+      typeof rule.adLink === 'string' && rule.adLink.trim()
+        ? rule.adLink.trim().slice(0, AD_LINK_MAX)
+        : null;
+    // A pasted ad link IS a match: when no match value was typed, the ad id
+    // parsed out of the link becomes an exact ad_id rule. The link never sits
+    // as a dead text field (client, 8 Oct).
+    let matchField = rule.matchField;
+    let matchValue = typeof rule.matchValue === 'string' ? rule.matchValue.trim() : '';
+    if (!matchValue && adLink) {
+      const parsed = adIdFromLink(adLink);
+      if (parsed) {
+        matchField = 'ad_id';
+        matchValue = parsed;
+      }
+    }
     if (!id || !name || !matchValue || seen.has(id)) return [];
     if (
-      !['ad_id', 'ad_set_id', 'ad_set_name', 'campaign_name', 'tag'].includes(rule.matchField ?? '')
+      !['ad_id', 'ad_set_id', 'ad_set_name', 'campaign_name', 'tag'].includes(matchField ?? '')
     ) {
       return [];
     }
     if (!['ai', 'human'].includes(rule.handling ?? '')) return [];
     seen.add(id);
+    const questions = Array.isArray(rule.questions)
+      ? rule.questions
+          .filter((q): q is string => typeof q === 'string' && Boolean(q.trim()))
+          .map((q) => q.trim().slice(0, CAMPAIGN_QUESTION_MAX))
+          .slice(0, CAMPAIGN_QUESTIONS_MAX)
+      : [];
     return [{
       id,
       name,
       enabled: rule.enabled !== false,
       priority: Number.isInteger(rule.priority) ? Math.max(0, Math.min(1000, rule.priority!)) : 100,
-      matchField: rule.matchField!,
+      matchField: matchField!,
       matchValue,
       storeId: typeof rule.storeId === 'string' && rule.storeId ? rule.storeId : null,
       assignedUserId: typeof rule.assignedUserId === 'string' && rule.assignedUserId ? rule.assignedUserId : null,
       handling: rule.handling!,
       aiContext: typeof rule.aiContext === 'string' && rule.aiContext.trim() ? rule.aiContext.trim().slice(0, AI_CONTEXT_MAX) : null,
       aiGuardrails: typeof rule.aiGuardrails === 'string' && rule.aiGuardrails.trim() ? rule.aiGuardrails.trim().slice(0, AI_GUARDRAILS_MAX) : null,
+      adLink,
+      firstReply:
+        typeof rule.firstReply === 'string' && rule.firstReply.trim()
+          ? rule.firstReply.trim().slice(0, FIRST_REPLY_MAX)
+          : null,
+      ...(questions.length ? { questions } : {}),
     }];
   });
 }
