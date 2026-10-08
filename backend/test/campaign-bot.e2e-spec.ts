@@ -201,6 +201,11 @@ describe('Campaign-scripted bot conversations (e2e)', () => {
             storeId: A.store,
             assignedUserId: null,
             handling: 'ai',
+            // A pre-existing rule may carry the OLD prompt box's text from the
+            // days nothing executed it. That alone must NOT opt the campaign
+            // into the scripted conversation (client, 8 Oct: no behaviour
+            // change to existing campaigns) — only a written firstReply does.
+            aiContext: 'legacy prompt text that nothing ever executed',
           },
         ],
       })
@@ -344,7 +349,7 @@ describe('Campaign-scripted bot conversations (e2e)', () => {
 
   /* ------------------------------------------------ not-a-campaign threads */
 
-  it('a routing-only rule has no script, so the existing bot path is untouched', async () => {
+  it('a rule without a first reply has no script - even with the legacy prompt filled', async () => {
     const conversationId = await arrive(AD_PLAIN);
     expect(await campaignBot.scriptFor(A.org, conversationId)).toBeNull();
   });

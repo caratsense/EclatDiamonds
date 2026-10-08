@@ -67,8 +67,12 @@ export class CampaignBotService {
       (r) => r.id === conversation.matchedRuleId,
     );
     if (!rule || !rule.enabled || rule.handling !== 'ai') return null;
-    // A rule without a configured conversation is plain routing, not a script.
-    return rule.firstReply || rule.aiContext ? rule : null;
+    // STRICTLY OPT-IN on the new field. `firstReply` exists only on campaigns
+    // saved through the new editor, so every rule configured before this
+    // feature — including ones whose old "AI prompt" box was filled when
+    // nothing executed it — keeps exactly its current behaviour until somebody
+    // deliberately writes the campaign's first reply.
+    return rule.firstReply ? rule : null;
   }
 
   /**
