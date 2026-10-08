@@ -150,19 +150,21 @@ export function DailyReportsTable() {
               </CardDescription>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <Select value={storeFilter} onValueChange={setStoreFilter}>
-                <SelectTrigger className="h-9 w-44" aria-label="Filter by store">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL_STORES}>All stores</SelectItem>
-                  {realStores.map((s) => (
-                    <SelectItem key={s.id} value={s.id}>
-                      {s.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {realStores.length > 1 ? (
+                <Select value={storeFilter} onValueChange={setStoreFilter}>
+                  <SelectTrigger className="h-9 w-44" aria-label="Filter by store">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ALL_STORES}>All stores</SelectItem>
+                    {realStores.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : null}
               <Input
                 type="date"
                 aria-label="Filter by date"
@@ -326,22 +328,24 @@ export function DailyReportsTable() {
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4">
-            <div className="grid gap-1.5">
-              <Label>Stores</Label>
-              <Select value={rangeStore} onValueChange={setRangeStore}>
-                <SelectTrigger aria-label="Stores">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL_STORES}>All stores</SelectItem>
-                  {realStores.map((s) => (
-                    <SelectItem key={s.id} value={s.id}>
-                      {s.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {realStores.length > 1 ? (
+              <div className="grid gap-1.5">
+                <Label>Stores</Label>
+                <Select value={rangeStore} onValueChange={setRangeStore}>
+                  <SelectTrigger aria-label="Stores">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ALL_STORES}>All stores</SelectItem>
+                    {realStores.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
             <div className="grid gap-1.5 sm:grid-cols-2">
               <div className="grid gap-1.5">
                 <Label htmlFor="dsr-range-from">From</Label>
