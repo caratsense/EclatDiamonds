@@ -200,6 +200,29 @@ export interface AdSetAutomationRule {
   handling: "ai" | "human";
   aiContext?: string | null;
   aiGuardrails?: string | null;
+  /**
+   * The campaign's configured conversation (client, 8 Oct). A pasted ad link
+   * is parsed server-side too: with no typed match value, the ad id inside it
+   * becomes the exact match. firstReply goes out verbatim on arrival;
+   * questions guide the free-text conversation — never as menus.
+   */
+  adLink?: string | null;
+  firstReply?: string | null;
+  questions?: string[];
+}
+
+/**
+ * The ad id buried in a pasted Meta link, or null — the same parse the server
+ * runs, duplicated here so the editor can show what a link will match before
+ * saving. Real ad ids are long; anything under 10 digits is not one.
+ */
+export function adIdFromLink(link: string): string | null {
+  if (!link) return null;
+  const named = /(?:selected_ad_ids|ad_id|adid|id)=(\d{10,})/i.exec(link);
+  if (named) return named[1];
+  const runs = link.match(/\d{10,}/g);
+  if (!runs?.length) return null;
+  return runs.reduce((a, b) => (b.length > a.length ? b : a));
 }
 
 export function useAdSetRules() {

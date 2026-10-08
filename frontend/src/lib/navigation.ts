@@ -196,8 +196,8 @@ export const NAV_ITEMS: NavItem[] = [
      */
     module: 1,
     slug: "bot-script",
-    title: "Bot Script",
-    purpose: "The questions the bot asks a customer, in your own words.",
+    title: "Bot Scripts",
+    purpose: "What the bot says per campaign, and for walk-in chats.",
     primaryAction: "",
     icon: Bot,
     group: "People",
