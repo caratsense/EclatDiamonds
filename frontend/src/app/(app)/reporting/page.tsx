@@ -8,7 +8,6 @@ import { PaymentPie } from "@/components/reporting/payment-pie";
 import { StoreRevenueTable } from "@/components/reporting/store-revenue-table";
 import { MoversTable } from "@/components/reporting/movers-table";
 import { PeriodRollup } from "@/components/reporting/period-rollup";
-import { SendReportDialog } from "@/components/reporting/send-report-dialog";
 import { DailyReportSection } from "@/components/reporting/daily-report-section";
 import { DsrDigestCard } from "@/components/reporting/dsr-digest-card";
 import { AllStoresReports } from "@/components/reporting/all-stores-reports";
@@ -100,7 +99,6 @@ function FrontLineReporting() {
 function ManagerReporting() {
   const item = getNavItem("reporting");
   const [dsrOpen, setDsrOpen] = useState(false);
-  const [sendOpen, setSendOpen] = useState(false);
   const [period, setPeriod] = useState<ReportPeriod>("daily");
   // Head office, or anyone who sees more than one branch, reads them side by side.
   const { role, stores } = useSession();
@@ -123,17 +121,7 @@ function ManagerReporting() {
 
   const overview = (
     <>
-      <PeriodRollup
-        period={period}
-        onPeriodChange={setPeriod}
-        onSendReport={() => setSendOpen(true)}
-      />
-
-      <SendReportDialog
-        open={sendOpen}
-        onOpenChange={setSendOpen}
-        initialPeriod={period}
-      />
+      <PeriodRollup period={period} onPeriodChange={setPeriod} />
 
       <div className="my-6 h-px bg-gradient-to-r from-border via-border to-transparent" />
 

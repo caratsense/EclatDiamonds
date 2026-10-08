@@ -205,34 +205,6 @@ export function useCreateDailyReport() {
   });
 }
 
-export interface SendDailyReportInput {
-  id: string;
-  channel: ReportChannel;
-  /** Phone number (WhatsApp) or email address. */
-  to: string;
-}
-
-export interface SendDailyReportResult {
-  sent: boolean;
-  /** True when that channel isn't configured yet — preview only, NOT an error. */
-  disabled?: boolean;
-  /** The composed report text the backend would deliver. */
-  preview: string;
-}
-
-/** POST /reporting/daily/:id/send — deliver a filed DSR over WhatsApp/email. */
-export function useSendDailyReport() {
-  return useMutation({
-    mutationFn: async ({ id, ...body }: SendDailyReportInput) => {
-      const { data } = await api.post<SendDailyReportResult>(
-        `/reporting/daily/${id}/send`,
-        body,
-      );
-      return data;
-    },
-  });
-}
-
 export type DsrSheetPeriod = "day" | "week" | "month";
 export type DsrSheetFormat = "pdf" | "xlsx";
 
@@ -285,30 +257,6 @@ export function useDownloadDsrSheet() {
         URL.revokeObjectURL(url);
       }
       return { filename };
-    },
-  });
-}
-
-export interface SendDsrSheetInput extends DsrSheetInput {
-  channel: ReportChannel;
-  /** Phone number (WhatsApp) or email address. */
-  to: string;
-}
-
-export interface SendDsrSheetResult extends SendDailyReportResult {
-  /** The file that was attached, as the recipient sees it named. */
-  filename: string;
-}
-
-/** POST /reporting/daily/sheet/send — the sheet as a file, over WhatsApp/email. */
-export function useSendDsrSheet() {
-  return useMutation({
-    mutationFn: async (input: SendDsrSheetInput) => {
-      const { data } = await api.post<SendDsrSheetResult>(
-        "/reporting/daily/sheet/send",
-        input,
-      );
-      return data;
     },
   });
 }

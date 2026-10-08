@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { format, parseISO } from "date-fns";
-import { Check, Minus, Send } from "lucide-react";
+import { Check, Eye, Minus } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { DailyReportSendDialog } from "@/components/reporting/daily-report-send-dialog";
+import { DailyReportViewDialog } from "@/components/reporting/daily-report-view-dialog";
 import { formatINR, formatNumber } from "@/lib/format";
 import type { DailyReport } from "@/lib/mock/reporting";
 import { useDailyReports, useDsrCompliance } from "@/lib/queries/reporting";
@@ -157,7 +157,7 @@ export function AllStoresReports() {
                       <TableCell className="text-right">
                         {r ? (
                           <Button variant="outline" size="sm" onClick={() => setOpen(r)}>
-                            <Send className="h-3.5 w-3.5" />
+                            <Eye className="h-3.5 w-3.5" />
                             View
                           </Button>
                         ) : null}
@@ -184,7 +184,7 @@ export function AllStoresReports() {
         </CardContent>
       </Card>
 
-      <DailyReportSendDialog report={open} open={open !== null} onOpenChange={(o) => (o ? null : setOpen(null))} />
+      <DailyReportViewDialog report={open} open={open !== null} onOpenChange={(o) => (o ? null : setOpen(null))} />
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { format, parseISO } from "date-fns";
-import { Send } from "lucide-react";
+import { Eye } from "lucide-react";
 
 import {
   Card,
@@ -24,7 +24,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatINR, formatINRCompact, formatNumber } from "@/lib/format";
 import type { DailyReport } from "@/lib/mock/reporting";
 import { useDailyReports } from "@/lib/queries/reporting";
-import { DailyReportSendDialog } from "@/components/reporting/daily-report-send-dialog";
+import { DailyReportViewDialog } from "@/components/reporting/daily-report-view-dialog";
 
 /** yyyy-mm-dd -> "05 Jul 2026" (falls back to the raw value if unparsable). */
 function dateLabel(iso: string): string {
@@ -35,7 +35,7 @@ function dateLabel(iso: string): string {
   }
 }
 
-/** Recent filed DSRs with a View / Send action per row. */
+/** Recent filed DSRs, each readable in full. Nothing here sends. */
 export function DailyReportsTable() {
   const query = useDailyReports();
   const reports = query.data ?? [];
@@ -141,8 +141,8 @@ export function DailyReportsTable() {
                         size="sm"
                         onClick={() => view(r)}
                       >
-                        <Send className="h-3.5 w-3.5" />
-                        View / Send
+                        <Eye className="h-3.5 w-3.5" />
+                        View
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -153,7 +153,7 @@ export function DailyReportsTable() {
         </CardContent>
       </Card>
 
-      <DailyReportSendDialog
+      <DailyReportViewDialog
         report={selected}
         open={open}
         onOpenChange={setOpen}

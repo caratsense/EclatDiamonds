@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Download, Send } from "lucide-react";
+import { Download } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -9,7 +9,6 @@ import {
   todayLocal,
 } from "@/components/reporting/daily-report-form";
 import { DailyReportsTable } from "@/components/reporting/daily-reports-table";
-import { DsrSheetSendDialog } from "@/components/reporting/dsr-sheet-send-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -39,7 +38,6 @@ function DsrSheetDownload() {
   const [period, setPeriod] = useState<DsrSheetPeriod>("day");
   const [date, setDate] = useState(todayLocal());
   const [format, setFormat] = useState<DsrSheetFormat>("xlsx");
-  const [sending, setSending] = useState(false);
   const download = useDownloadDsrSheet();
 
   const onDownload = () =>
@@ -111,20 +109,6 @@ function DsrSheetDownload() {
         <Download className="h-4 w-4" />
         {download.isPending ? "Preparing…" : "Download"}
       </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        disabled={!storeId || !date}
-        onClick={() => setSending(true)}
-      >
-        <Send className="h-4 w-4" />
-        Send
-      </Button>
-      <DsrSheetSendDialog
-        sheet={{ storeId, period, date, format }}
-        open={sending}
-        onOpenChange={setSending}
-      />
     </div>
   );
 }
@@ -143,7 +127,7 @@ export function DailyReportSection() {
             Daily Report (DSR)
           </h2>
           <p className="text-sm text-muted-foreground">
-            Type it once. Saved here, ready to send on WhatsApp
+            Type it once. Head office reads every store’s evening digest.
           </p>
         </div>
         <DsrSheetDownload />
