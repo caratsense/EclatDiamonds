@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { MessageCircle } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -23,11 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatINR } from "@/lib/format";
-import {
-  closingBooking,
-  composeDailyReportText,
-  type DailyReportInput,
-} from "@/lib/mock/reporting";
+import { closingBooking, type DailyReportInput } from "@/lib/mock/reporting";
 import { useCarriedOpening, useCreateDailyReport } from "@/lib/queries/reporting";
 import { cn, positiveNumberInput } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
@@ -253,8 +248,12 @@ function PaymentSplitFields({
  * Daily Report (DSR) entry form — the store-close sheet the manager keeps,
  * field for field: the traffic funnel, TABLE A (counter sale), TABLE B
  * (customised sale), each with its own mode-of-payment split, and the
- * customised-order book. A live WhatsApp-style `<pre>` preview updates as the
- * user types. Submit → POST /reporting/daily.
+ * customised-order book. Submit → POST /reporting/daily.
+ *
+ * No live preview beside it any more (client, 8 Oct): the composed text that
+ * card mirrored is readable after filing from the Submitted-reports View, and
+ * delivery is the automated head-office digest, so previewing a message nobody
+ * sends by hand was clutter. The form reads as one column, like the sheet.
  */
 export function DailyReportForm() {
   const { currentStore, user, stores } = useSession();
@@ -356,10 +355,6 @@ export function DailyReportForm() {
     ],
   );
 
-  // Composed inline: it is a pure function of `draft` (already memoised) and a
-  // label, so a second manual memo only gave the compiler a dependency list to
-  // disagree with.
-  const preview = composeDailyReportText(draft, storeLabel);
   const closing = closingBooking(draft);
 
   // Footfall funnel: each row is a subset of the one above it, so it can only
@@ -421,17 +416,8 @@ export function DailyReportForm() {
     }
   }
 
-  async function copyPreview() {
-    try {
-      await navigator.clipboard.writeText(preview);
-      toast.success("Report text copied — paste into WhatsApp");
-    } catch {
-      toast.error("Couldn't copy. Select the text and copy manually.");
-    }
-  }
-
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+    <div className="max-w-3xl">
       {/* Entry form */}
       <Card>
         <CardHeader>
@@ -677,33 +663,6 @@ export function DailyReportForm() {
               {createReport.isPending ? "Filing…" : "File report"}
             </Button>
           </div>
-        </CardContent>
-      </Card>
-
-      {/* Live WhatsApp-style preview */}
-      <Card className="self-start lg:sticky lg:top-6">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <MessageCircle className="h-4 w-4 text-[var(--gold)]" />
-            Report preview
-          </CardTitle>
-          <CardDescription>
-            The day as head office will read it — updates as you type
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg border bg-muted/40 p-3 font-mono text-[12.5px] leading-relaxed text-foreground">
-            {preview}
-          </pre>
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full"
-            onClick={copyPreview}
-          >
-            <MessageCircle className="h-4 w-4" />
-            Copy text
-          </Button>
         </CardContent>
       </Card>
     </div>

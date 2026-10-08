@@ -53,7 +53,7 @@ export function DailyReportsTable() {
         <CardHeader>
           <CardTitle>Submitted reports</CardTitle>
           <CardDescription>
-            Recent store-close reports — view the full text or send it on
+            Recent store-close reports — open any to read the full text
           </CardDescription>
         </CardHeader>
         <CardContent>
