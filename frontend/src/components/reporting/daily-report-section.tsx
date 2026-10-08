@@ -121,7 +121,7 @@ function DsrSheetDownload() {
  */
 export function DailyReportSection() {
   return (
-    <section className="space-y-4">
+    <section id="file-dsr" className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="font-display text-lg font-bold tracking-tight text-foreground">
