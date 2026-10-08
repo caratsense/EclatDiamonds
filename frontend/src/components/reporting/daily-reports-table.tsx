@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { format, parseISO } from "date-fns";
-import { Eye, FileDown } from "lucide-react";
+import { Download, Eye, FileDown } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -32,7 +32,11 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatINR, formatINRCompact, formatNumber } from "@/lib/format";
 import type { DailyReport } from "@/lib/mock/reporting";
-import { useDailyReports, useDownloadDsrSheet } from "@/lib/queries/reporting";
+import {
+  useDailyReports,
+  useDownloadDsrSheet,
+  type DsrSheetFormat,
+} from "@/lib/queries/reporting";
 import { apiErrorMessage } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 import { DailyReportViewDialog } from "@/components/reporting/daily-report-view-dialog";
@@ -71,6 +75,32 @@ export function DailyReportsTable() {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const download = useDownloadDsrSheet();
 
+  // The consolidated from–to download (client, 8 Oct): every store the card's
+  // filter allows, summed over the range — one column per store plus a Total —
+  // or just the filtered store. Lives HERE because this card is the archive it
+  // draws from; the control above the form downloads what that form filed.
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [rangeFormat, setRangeFormat] = useState<DsrSheetFormat>("pdf");
+  const [rangeBusy, setRangeBusy] = useState(false);
+
+  function downloadRange() {
+    setRangeBusy(true);
+    download.mutate(
+      {
+        fromDate,
+        toDate,
+        format: rangeFormat,
+        ...(storeFilter !== ALL_STORES ? { storeId: storeFilter } : {}),
+      },
+      {
+        onError: (e) =>
+          toast.error(apiErrorMessage(e, "Could not download the consolidated report.")),
+        onSettled: () => setRangeBusy(false),
+      },
+    );
+  }
+
   function view(report: DailyReport) {
     setSelected(report);
     setOpen(true);
@@ -103,8 +133,8 @@ export function DailyReportsTable() {
             <div>
               <CardTitle>Submitted reports</CardTitle>
               <CardDescription>
-                Recent store-close reports — open any to read the full text, or
-                save it as PDF
+                Recent store-close reports — open any to read the full text,
+                save a row as PDF, or download the whole range consolidated
               </CardDescription>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -144,6 +174,55 @@ export function DailyReportsTable() {
                 </Button>
               ) : null}
             </div>
+          </div>
+          {/* The consolidated download: from this date to this date, one file. */}
+          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 p-2.5">
+            <span className="text-xs font-medium text-muted-foreground">
+              Consolidated report
+            </span>
+            <Input
+              type="date"
+              aria-label="From date"
+              className="h-9 w-40"
+              max={toDate || undefined}
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+            />
+            <span className="text-xs text-muted-foreground">to</span>
+            <Input
+              type="date"
+              aria-label="To date"
+              className="h-9 w-40"
+              min={fromDate || undefined}
+              value={toDate}
+              onChange={(e) => setToDate(e.target.value)}
+            />
+            <Select
+              value={rangeFormat}
+              onValueChange={(v) => setRangeFormat(v as DsrSheetFormat)}
+            >
+              <SelectTrigger className="h-9 w-28" aria-label="Format">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="pdf">PDF</SelectItem>
+                <SelectItem value="xlsx">Excel</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!fromDate || !toDate || rangeBusy}
+              onClick={downloadRange}
+            >
+              <Download className="h-4 w-4" />
+              {rangeBusy ? "Preparing…" : "Download"}
+            </Button>
+            <span className="text-[11px] text-muted-foreground">
+              {storeFilter === ALL_STORES
+                ? "Every store in your scope, one column each, with a total."
+                : "Just the filtered store, summed over the range."}
+            </span>
           </div>
         </CardHeader>
         <CardContent>

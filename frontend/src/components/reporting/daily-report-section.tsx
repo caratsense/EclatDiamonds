@@ -26,40 +26,24 @@ import {
 import { apiErrorMessage } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
-const ALL = "__all__";
-
 /**
- * Download the filed DSRs as the store's paper sheet — the day, its Mon–Sun
- * week, its month, or an arbitrary from–to range. A single store per sheet in
- * the fixed periods; the RANGE consolidates — one column per store with a
- * Total — which is the head-office ask (client, 8 Oct): "the consolidated DSR
- * from this to this date", in PDF or Excel.
+ * Download what the form beside this files: one store's sheet for the day,
+ * its Mon–Sun week, or its month, as PDF or Excel. The consolidated from–to
+ * download lives on the Submitted-reports card below, with the archive it
+ * draws from (client, 8 Oct).
  */
 function DsrSheetDownload() {
   const { currentStore, stores } = useSession();
   const [pickedStoreId, setPickedStoreId] = useState("");
   const storeId = currentStore.isAggregate ? pickedStoreId : currentStore.id;
-  const [period, setPeriod] = useState<DsrSheetPeriod | "range">("day");
+  const [period, setPeriod] = useState<DsrSheetPeriod>("day");
   const [date, setDate] = useState(todayLocal());
-  const [toDate, setToDate] = useState(todayLocal());
   const [format, setFormat] = useState<DsrSheetFormat>("xlsx");
   const download = useDownloadDsrSheet();
 
-  const isRange = period === "range";
-  const ready = isRange
-    ? Boolean(date && toDate)
-    : Boolean(storeId && storeId !== ALL && date);
-
   const onDownload = () =>
     download.mutate(
-      isRange
-        ? {
-            format,
-            fromDate: date,
-            toDate,
-            ...(storeId && storeId !== ALL ? { storeId } : {}),
-          }
-        : { storeId, period: period as DsrSheetPeriod, date, format },
+      { storeId, period, date, format },
       {
         onError: (e) =>
           toast.error(apiErrorMessage(e, "Could not download the DSR sheet.")),
@@ -74,8 +58,6 @@ function DsrSheetDownload() {
             <SelectValue placeholder="Choose a store" />
           </SelectTrigger>
           <SelectContent>
-            {/* The consolidated range is the only mode that spans stores. */}
-            {isRange ? <SelectItem value={ALL}>All stores</SelectItem> : null}
             {stores
               .filter((s) => !s.isAggregate)
               .map((s) => (
@@ -88,45 +70,25 @@ function DsrSheetDownload() {
       ) : null}
       <Select
         value={period}
-        onValueChange={(v) => {
-          setPeriod(v as DsrSheetPeriod | "range");
-          // Leaving range mode with "All stores" picked would arm a Download
-          // the fixed periods must refuse; clearing beats a dead button.
-          if (v !== "range" && pickedStoreId === ALL) setPickedStoreId("");
-        }}
+        onValueChange={(v) => setPeriod(v as DsrSheetPeriod)}
       >
-        <SelectTrigger className="h-9 w-32" aria-label="Period">
+        <SelectTrigger className="h-9 w-28" aria-label="Period">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="day">Day</SelectItem>
           <SelectItem value="week">Week</SelectItem>
           <SelectItem value="month">Month</SelectItem>
-          <SelectItem value="range">Date range</SelectItem>
         </SelectContent>
       </Select>
       <Input
         type="date"
-        aria-label={isRange ? "From date" : "Date"}
+        aria-label="Date"
         className="h-9 w-40"
         max={todayLocal()}
         value={date}
         onChange={(e) => setDate(e.target.value)}
       />
-      {isRange ? (
-        <>
-          <span className="text-xs text-muted-foreground">to</span>
-          <Input
-            type="date"
-            aria-label="To date"
-            className="h-9 w-40"
-            min={date || undefined}
-            max={todayLocal()}
-            value={toDate}
-            onChange={(e) => setToDate(e.target.value)}
-          />
-        </>
-      ) : null}
       <Select
         value={format}
         onValueChange={(v) => setFormat(v as DsrSheetFormat)}
@@ -142,7 +104,7 @@ function DsrSheetDownload() {
       <Button
         variant="outline"
         size="sm"
-        disabled={!ready || download.isPending}
+        disabled={!storeId || !date || download.isPending}
         onClick={onDownload}
       >
         <Download className="h-4 w-4" />
