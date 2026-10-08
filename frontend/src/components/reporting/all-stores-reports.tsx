@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { format, parseISO } from "date-fns";
-import { Check, Eye, Minus } from "lucide-react";
+import { Check, Eye, FileDown, Minus } from "lucide-react";
+import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,8 +20,8 @@ import {
 import { DailyReportViewDialog } from "@/components/reporting/daily-report-view-dialog";
 import { formatINR, formatNumber } from "@/lib/format";
 import type { DailyReport } from "@/lib/mock/reporting";
-import { useDailyReports, useDsrCompliance } from "@/lib/queries/reporting";
-import { cn } from "@/lib/utils";
+import { useDailyReports, useDownloadDsrSheet, useDsrCompliance } from "@/lib/queries/reporting";
+import { apiErrorMessage, cn } from "@/lib/utils";
 
 const via = (source?: string | null) => (source === "whatsapp" ? "WhatsApp" : "App");
 const day = (iso: string) => format(parseISO(iso), "EEE d MMM");
@@ -37,6 +38,20 @@ export function AllStoresReports() {
   const date = picked ?? compliance.data?.to ?? null;
   const reports = useDailyReports(date ?? undefined);
   const [open, setOpen] = useState<DailyReport | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const download = useDownloadDsrSheet();
+
+  /** That branch's filed day, as the printable sheet. */
+  function downloadPdf(r: DailyReport) {
+    setDownloadingId(r.id);
+    download.mutate(
+      { storeId: r.storeId, period: "day", date: r.reportDate, format: "pdf" },
+      {
+        onError: (e) => toast.error(apiErrorMessage(e, "Could not download the report PDF.")),
+        onSettled: () => setDownloadingId(null),
+      },
+    );
+  }
 
   const stores = compliance.data?.stores ?? [];
   const dates = stores[0]?.entries.map((e) => e.date) ?? [];
@@ -156,10 +171,22 @@ export function AllStoresReports() {
                       <TableCell className="num text-right">{r ? formatINR(r.advanceReceived) : "—"}</TableCell>
                       <TableCell className="text-right">
                         {r ? (
-                          <Button variant="outline" size="sm" onClick={() => setOpen(r)}>
-                            <Eye className="h-3.5 w-3.5" />
-                            View
-                          </Button>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Button variant="outline" size="sm" onClick={() => setOpen(r)}>
+                              <Eye className="h-3.5 w-3.5" />
+                              View
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={downloadingId === r.id}
+                              title="Download this report as PDF"
+                              onClick={() => downloadPdf(r)}
+                            >
+                              <FileDown className="h-3.5 w-3.5" />
+                              {downloadingId === r.id ? "…" : "PDF"}
+                            </Button>
+                          </div>
                         ) : null}
                       </TableCell>
                     </TableRow>

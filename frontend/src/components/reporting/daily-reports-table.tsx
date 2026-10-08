@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { format, parseISO } from "date-fns";
-import { Eye } from "lucide-react";
+import { Eye, FileDown } from "lucide-react";
+import { toast } from "sonner";
 
 import {
   Card,
@@ -12,6 +13,13 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
@@ -20,10 +28,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatINR, formatINRCompact, formatNumber } from "@/lib/format";
 import type { DailyReport } from "@/lib/mock/reporting";
-import { useDailyReports } from "@/lib/queries/reporting";
+import { useDailyReports, useDownloadDsrSheet } from "@/lib/queries/reporting";
+import { apiErrorMessage } from "@/lib/utils";
+import { useSession } from "@/store/use-session";
 import { DailyReportViewDialog } from "@/components/reporting/daily-report-view-dialog";
 
 /** yyyy-mm-dd -> "05 Jul 2026" (falls back to the raw value if unparsable). */
@@ -35,26 +46,105 @@ function dateLabel(iso: string): string {
   }
 }
 
-/** Recent filed DSRs, each readable in full. Nothing here sends. */
+const ALL_STORES = "__all__";
+
+/**
+ * Recent filed DSRs, each readable in full and downloadable as that day's
+ * sheet. Nothing here sends — delivery is the head-office digest.
+ *
+ * The date filter narrows the LIST (it travels to the server, which returns
+ * that day across the viewer's scope); the store filter narrows what is shown
+ * (the rows are already loaded, so it costs nothing). Both empty = recent.
+ */
 export function DailyReportsTable() {
-  const query = useDailyReports();
-  const reports = query.data ?? [];
+  const stores = useSession((s) => s.stores);
+  const realStores = stores.filter((s) => !s.isAggregate);
+  const [date, setDate] = useState("");
+  const [storeFilter, setStoreFilter] = useState(ALL_STORES);
+  const query = useDailyReports(date || undefined);
+  const reports = (query.data ?? []).filter(
+    (r) => storeFilter === ALL_STORES || r.storeId === storeFilter,
+  );
   const [selected, setSelected] = useState<DailyReport | null>(null);
   const [open, setOpen] = useState(false);
+  // One download at a time, named by row, so the spinner sits on the right row.
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const download = useDownloadDsrSheet();
 
   function view(report: DailyReport) {
     setSelected(report);
     setOpen(true);
   }
 
+  function downloadPdf(report: DailyReport) {
+    setDownloadingId(report.id);
+    download.mutate(
+      {
+        storeId: report.storeId,
+        period: "day",
+        date: report.reportDate,
+        format: "pdf",
+      },
+      {
+        onError: (e) =>
+          toast.error(apiErrorMessage(e, "Could not download the report PDF.")),
+        onSettled: () => setDownloadingId(null),
+      },
+    );
+  }
+
+  const filtering = Boolean(date) || storeFilter !== ALL_STORES;
+
   return (
     <>
       <Card>
         <CardHeader>
-          <CardTitle>Submitted reports</CardTitle>
-          <CardDescription>
-            Recent store-close reports — open any to read the full text
-          </CardDescription>
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <CardTitle>Submitted reports</CardTitle>
+              <CardDescription>
+                Recent store-close reports — open any to read the full text, or
+                save it as PDF
+              </CardDescription>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {realStores.length > 1 ? (
+                <Select value={storeFilter} onValueChange={setStoreFilter}>
+                  <SelectTrigger className="h-9 w-44" aria-label="Filter by store">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ALL_STORES}>All stores</SelectItem>
+                    {realStores.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : null}
+              <Input
+                type="date"
+                aria-label="Filter by date"
+                className="h-9 w-40"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+              />
+              {filtering ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground"
+                  onClick={() => {
+                    setDate("");
+                    setStoreFilter(ALL_STORES);
+                  }}
+                >
+                  Clear
+                </Button>
+              ) : null}
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           <Table>
@@ -103,8 +193,9 @@ export function DailyReportsTable() {
                     colSpan={10}
                     className="py-10 text-center text-sm text-muted-foreground"
                   >
-                    No reports filed yet. Fill the form above to file the first
-                    one.
+                    {filtering
+                      ? "No report matches these filters."
+                      : "No reports filed yet. Fill the form above to file the first one."}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -136,14 +227,26 @@ export function DailyReportsTable() {
                       {formatINRCompact(r.upi)}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => view(r)}
-                      >
-                        <Eye className="h-3.5 w-3.5" />
-                        View
-                      </Button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => view(r)}
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                          View
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={downloadingId === r.id}
+                          title="Download this report as PDF"
+                          onClick={() => downloadPdf(r)}
+                        >
+                          <FileDown className="h-3.5 w-3.5" />
+                          {downloadingId === r.id ? "…" : "PDF"}
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))
