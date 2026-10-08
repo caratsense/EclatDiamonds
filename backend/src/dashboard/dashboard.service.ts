@@ -384,7 +384,13 @@ export class DashboardService {
   /** GET /dashboard/charts — sales trend + store comparison, store-scoped. */
   async charts(user: AuthUser, headerStore?: string, period: DashboardPeriod = 'today') {
     const storeIds = this.scope.effectiveStoreIds(user, headerStore);
-    if (storeIds.length === 0) return { salesTrend: [], storeComparison: [] };
+    if (storeIds.length === 0) {
+      return {
+        salesTrend: [],
+        storeComparison: [],
+        leadFunnel: { days: [], totals: { came: 0, converted: 0 } },
+      };
+    }
 
     const tz = await this.scope.resolveTimezone(user, headerStore);
     const storeWhere = { storeId: { in: storeIds }, isCancelled: false, docType: 'sale' as const };
@@ -473,7 +479,64 @@ export class DashboardService {
       }),
     );
 
-    return { salesTrend, storeComparison };
+    /*
+     * ── Lead funnel (client, 8 Oct): came vs converted, day by day ──────────
+     *
+     * "Came" is a lead CREATED that day; "converted" is a lead CLOSED WON that
+     * day (`closedAt`, stamped alongside `outcome='won'` when a lead reaches
+     * order_placed). Two separate day-keys on purpose: a lead that arrives on
+     * Monday and converts on Thursday counts once in each — the client reads
+     * this as activity ("what happened today"), not as a cohort study.
+     *
+     * The strip always covers at least 7 days ending today, whatever the
+     * period: a one-day strip has nothing to compare against, and "every day"
+     * is the ask. Totals, though, follow the selected period exactly, like
+     * every other number on this screen.
+     */
+    const { from: periodFrom } = windowFor(tz, period);
+    const stripDays = Math.max(DASHBOARD_PERIODS[period].days, 7);
+    const stripFrom = dayStartInTz(tz, stripDays - 1);
+    const leadWhere = { organisationId: user.organisationId, storeId: { in: storeIds } };
+    const [cameRows, wonRows, cameTotal, wonTotal] = await Promise.all([
+      this.prisma.lead.findMany({
+        where: { ...leadWhere, createdAt: { gte: stripFrom } },
+        select: { createdAt: true },
+      }),
+      this.prisma.lead.findMany({
+        where: { ...leadWhere, outcome: 'won', closedAt: { gte: stripFrom } },
+        select: { closedAt: true },
+      }),
+      this.prisma.lead.count({ where: { ...leadWhere, createdAt: { gte: periodFrom } } }),
+      this.prisma.lead.count({
+        where: { ...leadWhere, outcome: 'won', closedAt: { gte: periodFrom } },
+      }),
+    ]);
+    const cameByDay = new Map<string, number>();
+    for (const r of cameRows) {
+      const key = dateOnly(businessDate(r.createdAt, tz));
+      cameByDay.set(key, (cameByDay.get(key) ?? 0) + 1);
+    }
+    const wonByDay = new Map<string, number>();
+    for (const r of wonRows) {
+      if (!r.closedAt) continue;
+      const key = dateOnly(businessDate(r.closedAt, tz));
+      wonByDay.set(key, (wonByDay.get(key) ?? 0) + 1);
+    }
+    const leadDays: { date: string; came: number; converted: number }[] = [];
+    for (let i = stripDays - 1; i >= 0; i--) {
+      const key = dateOnly(businessDate(dayStartInTz(tz, i), tz));
+      leadDays.push({
+        date: key,
+        came: cameByDay.get(key) ?? 0,
+        converted: wonByDay.get(key) ?? 0,
+      });
+    }
+    const leadFunnel = {
+      days: leadDays,
+      totals: { came: cameTotal, converted: wonTotal },
+    };
+
+    return { salesTrend, storeComparison, leadFunnel };
   }
 
   /** GET /dashboard/tasks — store-scoped task list, newest first. */
