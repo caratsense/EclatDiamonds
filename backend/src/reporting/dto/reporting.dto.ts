@@ -233,14 +233,34 @@ export const DSR_SHEET_MIME: Record<DsrSheetFormat, string> = {
 
 /** GET /reporting/daily/sheet?storeId=&period=&date=&format= (and its `daily/pdf` alias) */
 export class DailySheetQueryDto {
-  /** One store per sheet (must be in scope). */
+  /**
+   * One store per sheet (must be in scope). Optional only in the consolidated
+   * range mode (`from`/`to`), where omitting it means every store in scope.
+   */
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
   @MaxLength(64)
-  storeId!: string;
+  storeId?: string;
 
+  @IsOptional()
   @IsIn(DSR_SHEET_PERIODS)
-  period!: DsrSheetPeriod;
+  period?: DsrSheetPeriod;
+
+  /**
+   * Consolidated range, inclusive: one column per store, summed over the days
+   * from `fromDate` to `toDate` (client, 8 Oct — "the consolidated DSR from
+   * this to this date"). Both or neither; with these set, `period`/`date` are
+   * ignored. Named fromDate/toDate because the send subclass already uses `to`
+   * for the recipient.
+   */
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'fromDate must be in YYYY-MM-DD format' })
+  fromDate?: string;
+
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'toDate must be in YYYY-MM-DD format' })
+  toDate?: string;
 
   /** Any day in the period (YYYY-MM-DD). Defaults to today at the store. */
   @IsOptional()

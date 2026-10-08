@@ -209,10 +209,14 @@ export type DsrSheetPeriod = "day" | "week" | "month";
 export type DsrSheetFormat = "pdf" | "xlsx";
 
 export interface DsrSheetInput {
-  storeId: string;
-  period: DsrSheetPeriod;
+  /** Omitted in range mode = every store in the viewer's scope, consolidated. */
+  storeId?: string;
+  period?: DsrSheetPeriod;
   /** Any day in the period (YYYY-MM-DD). */
-  date: string;
+  date?: string;
+  /** Consolidated range mode (inclusive): one column per store, plus a Total. */
+  fromDate?: string;
+  toDate?: string;
   /** Defaults to the printable PDF. */
   format?: DsrSheetFormat;
 }

@@ -995,8 +995,10 @@ export class ReportingService {
    * so the figures on a printed sheet and on an exported one cannot drift.
    */
   private async dsrSheetModel(user: AuthUser, query: DailySheetQueryDto) {
-    const storeId = query.storeId.trim();
-    if (storeId === 'all') throw new BadRequestException('Select a store to download the DSR for');
+    const storeId = (query.storeId ?? '').trim();
+    if (!storeId || storeId === 'all') {
+      throw new BadRequestException('Select a store to download the DSR for');
+    }
     this.scope.assertStoreAllowed(user, storeId);
     const store = await this.prisma.store.findUniqueOrThrow({
       where: { id: storeId },
@@ -1004,7 +1006,8 @@ export class ReportingService {
     });
     const tz = resolveTz(store.timezone);
     const base = anchorDay(query.date, tz);
-    const range = ({ day: 'daily', week: 'weekly', month: 'monthly' } as const)[query.period];
+    const period = query.period ?? 'day';
+    const range = ({ day: 'daily', week: 'weekly', month: 'monthly' } as const)[period];
     const { fromDay, toDayInclusive } = periodRange(range, base, tz);
 
     const rows = await this.prisma.dailyReport.findMany({
@@ -1017,23 +1020,23 @@ export class ReportingService {
     // new column each Monday, a day or a week has one per day.
     const groups: Date[][] = [];
     for (let d = fromDay; d <= toDayInclusive; d = new Date(d.getTime() + 86_400_000)) {
-      if (query.period === 'month' && groups.length && d.getUTCDay() !== 1) groups[groups.length - 1].push(d);
+      if (period === 'month' && groups.length && d.getUTCDay() !== 1) groups[groups.length - 1].push(d);
       else groups.push([d]);
     }
     const columns = groups.map((g, i) => ({
-      title: query.period === 'month' ? `Week ${i + 1}` : DOW_FULL[g[0].getUTCDay()],
+      title: period === 'month' ? `Week ${i + 1}` : DOW_FULL[g[0].getUTCDay()],
       values: sheetValues(g.flatMap((d) => byDay.get(fmtISODateUTC(d)) ?? [])),
     }));
     // A week's sheet is seven days and nothing else, as the store's own copy is.
     // A month's columns are weeks — a shape the paper sheet has no version of —
     // so that one gets the Total the owner would otherwise add by hand.
-    if (query.period === 'month') columns.push({ title: 'Total', values: sheetValues(rows) });
+    if (period === 'month') columns.push({ title: 'Total', values: sheetValues(rows) });
 
     const year = toDayInclusive.getUTCFullYear();
     const periodLabel =
-      query.period === 'day'
+      period === 'day'
         ? `${DOW[base.getUTCDay()]} ${dayMon(base)} ${year}`
-        : query.period === 'week'
+        : period === 'week'
           ? `Mon ${dayMon(fromDay)} – Sun ${dayMon(toDayInclusive)} ${year}`
           : `${MON[base.getUTCMonth()]} ${year}`;
     const now = new Date();
@@ -1042,7 +1045,7 @@ export class ReportingService {
     const data: DsrSheetData = {
       organisation: store.organisation.name,
       store: store.name,
-      period: query.period,
+      period,
       periodLabel,
       generatedAt: `${dayMon(today)} ${today.getUTCFullYear()} ${formatHHMMInTz(now, tz)}`,
       columns,
@@ -1054,17 +1057,106 @@ export class ReportingService {
         })),
     };
     const slug = store.name.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '') || storeId;
-    return { data, stem: `DSR-${slug}-${query.period}-${dateOnly(base)}` };
+    return { data, stem: `DSR-${slug}-${period}-${dateOnly(base)}` };
+  }
+
+  /**
+   * The consolidated sheet (client, 8 Oct): every store in scope — or the one
+   * named — summed over an arbitrary from–to range, ONE COLUMN PER STORE, with
+   * a Total column when there is more than one. Reuses the sheet renderers
+   * unchanged: `period` is claimed as 'month' when a Total exists (landscape,
+   * bold last column) and 'week' when not (landscape, no bold).
+   */
+  private async dsrRangeModel(user: AuthUser, query: DailySheetQueryDto) {
+    if (!query.fromDate || !query.toDate) {
+      throw new BadRequestException('Pick both dates of the range');
+    }
+    const fromDay = new Date(`${query.fromDate}T00:00:00Z`);
+    const toDay = new Date(`${query.toDate}T00:00:00Z`);
+    if (Number.isNaN(fromDay.getTime()) || Number.isNaN(toDay.getTime())) {
+      throw new BadRequestException('Dates must be real days in YYYY-MM-DD format');
+    }
+    if (toDay < fromDay) throw new BadRequestException('The range starts after it ends');
+    const days = Math.round((toDay.getTime() - fromDay.getTime()) / 86_400_000) + 1;
+    // A year of days renders; a sheet of them does not. 92 covers a quarter.
+    if (days > 92) throw new BadRequestException('Pick a range of 92 days or fewer');
+
+    const pickedStoreId = (query.storeId ?? '').trim();
+    const stores = await this.prisma.store.findMany({
+      where: {
+        organisationId: user.organisationId,
+        isAggregate: false,
+        isHolding: false,
+        ...(pickedStoreId && pickedStoreId !== 'all'
+          ? { id: pickedStoreId }
+          : user.allStores
+            ? {}
+            : { id: { in: user.storeIds } }),
+      },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true, timezone: true },
+    });
+    if (!stores.length) throw new NotFoundException('Store not found');
+    if (pickedStoreId && pickedStoreId !== 'all') {
+      this.scope.assertStoreAllowed(user, pickedStoreId);
+    }
+
+    const rows = await this.prisma.dailyReport.findMany({
+      where: {
+        organisationId: user.organisationId,
+        storeId: { in: stores.map((st) => st.id) },
+        reportDate: { gte: fromDay, lte: toDay },
+      },
+      orderBy: { reportDate: 'asc' },
+    });
+    const byStore = new Map(stores.map((st) => [st.id, [] as typeof rows]));
+    for (const r of rows) byStore.get(r.storeId)?.push(r);
+
+    const columns = stores.map((st) => ({
+      title: st.name,
+      values: sheetValues(byStore.get(st.id) ?? []),
+    }));
+    if (stores.length > 1) columns.push({ title: 'Total', values: sheetValues(rows) });
+
+    const org = await this.prisma.organisation.findUniqueOrThrow({
+      where: { id: user.organisationId },
+      select: { name: true },
+    });
+    const tz = resolveTz(stores[0].timezone);
+    const now = new Date();
+    const today = businessDate(now, tz);
+    const sameYear = fromDay.getUTCFullYear() === toDay.getUTCFullYear();
+    const periodLabel = `${dayMon(fromDay)}${sameYear ? '' : ` ${fromDay.getUTCFullYear()}`} – ${dayMon(toDay)} ${toDay.getUTCFullYear()}`;
+
+    const data: DsrSheetData = {
+      organisation: org.name,
+      store: stores.length === 1 ? stores[0].name : `All stores (${stores.length})`,
+      period: stores.length > 1 ? 'month' : 'week',
+      periodLabel,
+      generatedAt: `${dayMon(today)} ${today.getUTCFullYear()} ${formatHHMMInTz(now, tz)}`,
+      columns,
+      remarks: rows
+        .filter((r) => r.remark?.trim())
+        .map((r) => ({
+          day: `${dayMon(r.reportDate)} · ${stores.find((st) => st.id === r.storeId)?.name ?? r.storeId}`,
+          text: r.remark!.trim(),
+        })),
+    };
+    return { data, stem: `DSR-consolidated-${query.fromDate}-to-${query.toDate}` };
   }
 
   /**
    * GET /reporting/daily/sheet — the sheet as a file: the paper layout as a PDF,
    * or the same grid as a workbook the owner can sort and total in Excel.
-   * `daily/pdf` is the same thing with the format fixed.
+   * `daily/pdf` is the same thing with the format fixed. With `fromDate`/`toDate`
+   * it is the consolidated range sheet instead.
    */
   async dailySheet(user: AuthUser, query: DailySheetQueryDto) {
     const format = query.format ?? 'pdf';
-    const { data, stem } = await this.dsrSheetModel(user, query);
+    const { data, stem } =
+      query.fromDate || query.toDate
+        ? await this.dsrRangeModel(user, query)
+        : await this.dsrSheetModel(user, query);
     const buffer =
       format === 'xlsx' ? await renderDsrSheetXlsx(data) : await renderDsrSheetPdf(data);
     return {
@@ -1093,6 +1185,10 @@ export class ReportingService {
     filename: string;
   }> {
     const to = this.assertRecipient(dto.channel, dto.to);
+    // A sheet send is always ONE named store; the consolidated range mode is
+    // download-only (delivery to head office is the digest's job).
+    const sheetStoreId = (dto.storeId ?? '').trim();
+    if (!sheetStoreId) throw new BadRequestException('Select a store to send the DSR for');
     const sheet = await this.dailySheet(user, dto);
     const preview = sheet.summary;
 
@@ -1109,7 +1205,7 @@ export class ReportingService {
           mimeType: sheet.mimeType,
           caption: preview,
         },
-        { storeId: dto.storeId.trim() },
+        { storeId: sheetStoreId },
       );
       sent = result.delivered;
       disabled = result.dryRun;
@@ -1129,7 +1225,7 @@ export class ReportingService {
       action: 'report.send_dsr_sheet',
       entityType: 'DailyReport',
       entityId: sheet.filename,
-      storeId: dto.storeId.trim(),
+      storeId: sheetStoreId,
       summary: `Sent ${preview} via ${dto.channel} to ${maskRecipient(dto.to)}`,
       metadata: {
         channel: dto.channel,
