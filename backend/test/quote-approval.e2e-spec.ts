@@ -186,6 +186,25 @@ describe('Quote approval (e2e)', () => {
     }
   });
 
+  it('a manager deletes a quote; a salesperson and an accepted quote are refused', async () => {
+    await makeQuote('q_qa_del', 'QT-QA-DEL', 10_000);
+
+    // The floor role cannot erase a priced offer.
+    await request(server()).delete('/quotes/q_qa_del').set(auth(repA)).expect(403);
+
+    // A manager can, and the row is gone whole (lines cascade).
+    await request(server()).delete('/quotes/q_qa_del').set(auth(mgrA)).expect(200);
+    expect(await prisma.quote.findUnique({ where: { id: 'q_qa_del' } })).toBeNull();
+
+    // The quote that became an order is the record that must survive.
+    await makeQuote('q_qa_del2', 'QT-QA-DEL2', 10_000);
+    await prisma.quote.update({ where: { id: 'q_qa_del2' }, data: { status: 'accepted' } });
+    const refused = await request(server()).delete('/quotes/q_qa_del2').set(auth(hoA));
+    expect(refused.status).toBe(400);
+    expect(JSON.stringify(refused.body)).toMatch(/order/i);
+    await prisma.quote.delete({ where: { id: 'q_qa_del2' } });
+  });
+
   it('a salesperson may ask but not decide', async () => {
     await request(server())
       .post('/quotes/q_qa_big/request-approval')

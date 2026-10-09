@@ -560,7 +560,9 @@ export async function renderQuotePdf(data: QuotePdfData): Promise<Buffer> {
     'Subject to Mumbai Jurisdiction only',
     'For Return Policy',
     'A) Get 100% value of metal at the prevailing market rate. *T&C apply',
-    'B) Eclat Diamonds offers 80% value of diamonds at prevailing market price. *T&C apply',
+    // The business's own name, not a hardcoded tenant: the buy-back promise is
+    // made by whoever issues the document (client, 9 Oct: Nibhana branding).
+    `B) ${data.business.name} offers 80% value of diamonds at prevailing market price. *T&C apply`,
     'C) Making Charged will be deducted while any returns made. *T&C apply',
     'D) Incase of any discount given at the time of original purchase will be deducted from the exchange amount. *T&C apply',
     'E) Products once sold will not be eligible for return or exchange if damaged post-purchase. *T&C apply',
@@ -573,16 +575,12 @@ export async function renderQuotePdf(data: QuotePdfData): Promise<Buffer> {
   });
   y = termsTop - termsHeight;
 
-  /* --------------------------------------------------------- signatures */
-  const signTop = y;
-  const signHeight = 54;
-  box(MARGIN, signTop, width, signHeight);
-  text(`For, ${data.business.name.toUpperCase()}`, right - 6, { size: 7.5, align: 'right', at: signTop - 12 });
-  line(MARGIN + 20, signTop - 44, MARGIN + 170, signTop - 44);
-  line(right - 170, signTop - 44, right - 20, signTop - 44);
-  text('Customer Signature', MARGIN + 95, { size: 7, align: 'center', at: signTop - 52 });
-  text('Authorized Signature', right - 95, { size: 7, align: 'center', at: signTop - 52 });
-  y = signTop - signHeight;
+  /*
+   * No signature block. The client removed it on the 9 Oct call: a quotation
+   * is an offer, not a contract — nobody was ever signing the two lines, and
+   * the empty box read as an unfinished document. Scoped to quotations only.
+   */
+  y -= 6;
 
   if (data.approval) {
     text(

@@ -983,6 +983,40 @@ export class QuotesService {
     return toView(q);
   }
 
+  /**
+   * DELETE /quotes/:id (client, 9 Oct).
+   *
+   * The one quote that must survive is the one that became an order - refuse
+   * it. Everything else deletes whole: lines, photos and redeemable stores
+   * cascade, and nothing outside the quote family references the row. The
+   * audit entry carries ref, status and total, so what was offered and
+   * withdrawn stays on the record after the row is gone. Managers and above
+   * only (controller): a priced offer disappearing on a salesperson's say-so
+   * is exactly what the approval gate exists to prevent.
+   */
+  async remove(user: AuthUser, id: string) {
+    const current = await this.prisma.quote.findFirst({
+      where: { id, ...this.scope.storeFilter(user), ...this.ownQuotes(user) },
+      select: { id: true, ref: true, status: true, storeId: true, grandTotal: true, isKaccha: true },
+    });
+    if (!current) throw new NotFoundException('Quote not found');
+    if (current.isKaccha && !isAllStoreRole(user.role)) throw new NotFoundException('Quote not found');
+    this.scope.assertStoreAllowed(user, current.storeId);
+    if (current.status === 'accepted') {
+      throw new BadRequestException('This quote has become an order and cannot be deleted.');
+    }
+    await this.prisma.quote.delete({ where: { id: current.id } });
+    await this.audit.record(user, {
+      action: 'quotes.deleted',
+      entityType: 'Quote',
+      entityId: id,
+      storeId: current.storeId,
+      summary: `Quote ${current.ref} deleted (was ${current.status.replace('_', ' ')})`,
+      metadata: { ref: current.ref, status: current.status, grandTotal: current.grandTotal.toString() },
+    });
+    return { deleted: true };
+  }
+
   async create(user: AuthUser, dto: CreateQuoteDto) {
     this.scope.assertStoreAllowed(user, dto.storeId);
     await this.scope.assertTradingStore(dto.storeId);

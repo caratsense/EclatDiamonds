@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Header,
   Param,
@@ -106,6 +107,16 @@ export class QuotesController {
     res.setHeader('Content-Length', String(buffer.byteLength));
     res.setHeader('X-Content-Type-Options', 'nosniff');
     return new StreamableFile(buffer);
+  }
+
+  /**
+   * Remove a quotation (client, 9 Oct). Managers and above; a quote that
+   * became an order is refused in the service.
+   */
+  @Roles('store_manager', 'head_office')
+  @Delete(':id')
+  remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.quotes.remove(user, id);
   }
 
   /** Queue the detailed quote PDF to the quote's own customer on WhatsApp. */

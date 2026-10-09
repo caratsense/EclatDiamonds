@@ -113,6 +113,15 @@ export function useUpdateQuoteDetails() {
   });
 }
 
+/** DELETE /quotes/:id — managers and above; an accepted quote is refused. */
+export function useDeleteQuote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await api.delete<{ deleted: boolean }>(`/quotes/${id}`)).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["quotes"] }),
+  });
+}
+
 /** Custom-order fields captured when converting a quote into a timeline order. */
 export interface ConvertQuoteInput {
   id: string;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Download, FileText, MessageCircle, Store as StoreIcon, Wrench } from "lucide-react";
+import { Download, FileText, MessageCircle, Store as StoreIcon, Trash2, Wrench } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -38,6 +38,7 @@ import { ChannelStatusNotice } from "@/components/integrations/channel-status-no
 import { QuoteApprovalPanel } from "@/components/quotation/quote-approval-panel";
 import { QuoteDetailsPanel } from "@/components/quotation/quote-details-panel";
 import {
+  useDeleteQuote,
   useDownloadQuotePdf,
   useQuoteApproval,
   useSendQuotePdf,
@@ -62,9 +63,31 @@ export function QuoteDetailDialog({
 }: QuoteDetailDialogProps) {
   const { stores, currentStore, role } = useSession();
   const [sharing, setSharing] = useState(false);
+  // Deleting is deliberate: the first tap arms the button, the second deletes.
+  const [armDelete, setArmDelete] = useState(false);
   const gate = useQuoteApproval(quote?.id ?? null);
   const downloadPdf = useDownloadQuotePdf();
   const sendPdf = useSendQuotePdf();
+  const deleteQuote = useDeleteQuote();
+
+  const onDelete = () => {
+    if (!quote) return;
+    if (!armDelete) {
+      setArmDelete(true);
+      return;
+    }
+    deleteQuote.mutate(quote.id, {
+      onSuccess: () => {
+        toast.success(`Quote ${quote.ref} deleted.`);
+        setArmDelete(false);
+        onOpenChange(false);
+      },
+      onError: (e) => {
+        setArmDelete(false);
+        toast.error(apiErrorMessage(e, "Could not delete the quote."));
+      },
+    });
+  };
   if (!quote) return null;
   // Held until the server says the quote may leave. The server refuses anyway;
   // this only stops a salesperson pressing a button that will be refused.
@@ -74,6 +97,7 @@ export function QuoteDetailDialog({
   // sends them a DRAFT-stamped copy until it clears. Sending stays held.
   const canDownloadDraft = ROLE_RANK[role] >= ROLE_RANK.store_manager;
   const downloadHeld = awaitingApproval && !canDownloadDraft;
+  const canDelete = ROLE_RANK[role] >= ROLE_RANK.store_manager && quote.status !== "accepted";
 
   const onDownloadPdf = () =>
     downloadPdf.mutate(quote.id, {
@@ -457,6 +481,18 @@ export function QuoteDetailDialog({
         <ChannelStatusNotice channel="whatsapp" className="mt-2" />
 
         <DialogFooter className="flex-wrap gap-2">
+          {canDelete ? (
+            <Button
+              variant="ghost"
+              className="mr-auto text-destructive hover:text-destructive"
+              disabled={deleteQuote.isPending}
+              onClick={onDelete}
+              title="Removes the quote and its lines. An accepted quote cannot be deleted."
+            >
+              <Trash2 className="h-4 w-4" />
+              {deleteQuote.isPending ? "Deleting…" : armDelete ? "Tap again to delete" : "Delete"}
+            </Button>
+          ) : null}
           <Button
             variant="outline"
             disabled={downloadPdf.isPending || downloadHeld}
