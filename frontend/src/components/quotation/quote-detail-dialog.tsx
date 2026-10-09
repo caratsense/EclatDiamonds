@@ -32,6 +32,7 @@ import {
   QUOTE_STATUS_LABELS,
   type Quote,
 } from "@/lib/mock/quotation";
+import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
 import { ChannelStatusNotice } from "@/components/integrations/channel-status-notice";
 import { QuoteApprovalPanel } from "@/components/quotation/quote-approval-panel";
@@ -59,7 +60,7 @@ export function QuoteDetailDialog({
   open,
   onOpenChange,
 }: QuoteDetailDialogProps) {
-  const { stores, currentStore } = useSession();
+  const { stores, currentStore, role } = useSession();
   const [sharing, setSharing] = useState(false);
   const gate = useQuoteApproval(quote?.id ?? null);
   const downloadPdf = useDownloadQuotePdf();
@@ -69,6 +70,10 @@ export function QuoteDetailDialog({
   // this only stops a salesperson pressing a button that will be refused.
   const awaitingApproval = !!gate.data && gate.data.required && !gate.data.cleared;
   const heldTitle = awaitingApproval ? "A manager must approve this quote first" : undefined;
+  // The people deciding the approval may always READ the document - the server
+  // sends them a DRAFT-stamped copy until it clears. Sending stays held.
+  const canDownloadDraft = ROLE_RANK[role] >= ROLE_RANK.store_manager;
+  const downloadHeld = awaitingApproval && !canDownloadDraft;
 
   const onDownloadPdf = () =>
     downloadPdf.mutate(quote.id, {
@@ -454,12 +459,22 @@ export function QuoteDetailDialog({
         <DialogFooter className="flex-wrap gap-2">
           <Button
             variant="outline"
-            disabled={downloadPdf.isPending || awaitingApproval}
-            title={heldTitle}
+            disabled={downloadPdf.isPending || downloadHeld}
+            title={
+              downloadHeld
+                ? heldTitle
+                : awaitingApproval
+                  ? "Downloads stamped DRAFT until a manager approves"
+                  : undefined
+            }
             onClick={onDownloadPdf}
           >
             <Download className="h-4 w-4" />
-            {downloadPdf.isPending ? "Preparing…" : "Download PDF"}
+            {downloadPdf.isPending
+              ? "Preparing…"
+              : awaitingApproval && canDownloadDraft
+                ? "Download draft PDF"
+                : "Download PDF"}
           </Button>
           <Button
             variant="outline"

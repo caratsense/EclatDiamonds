@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -14,7 +15,7 @@ import { OmnichannelService } from '../omnichannel/omnichannel.service';
 import { ApprovalGate, approvalResetFor, QuoteApprovalService } from './quote-approval.service';
 import { renderQuotePdf } from './quote-pdf';
 import { StoreScopeService } from '../common/store-scope.service';
-import { isAllStoreRole } from '../common/role.util';
+import { ROLE_RANK, isAllStoreRole } from '../common/role.util';
 import { SequenceService } from '../common/sequence.service';
 import { StorageService } from '../storage/storage.service';
 import { WhatsAppService } from '../integrations/whatsapp.service';
@@ -542,8 +543,20 @@ export class QuotesService {
    */
   async pdf(user: AuthUser, id: string) {
     await this.get(user, id);
-    const gate = await this.approval.assertCleared(user.organisationId, id);
-    return this.issuePdf(user, id, gate);
+    /*
+     * Whoever DECIDES the approval must be able to read the document they are
+     * deciding (client, 9 Oct: "head office should be able to download it").
+     * So a manager or head office always gets the PDF - stamped DRAFT on every
+     * page until the gate clears, so a forwarded copy cannot pass as final.
+     * A salesperson still waits: for them the gate is the whole point. The
+     * customer-facing exits (share, send-pdf) stay refused for EVERYONE until
+     * the gate clears - this loosens reading, never sending.
+     */
+    const gate = await this.approval.gate(user.organisationId, id);
+    if (!gate.cleared && ROLE_RANK[user.role] < ROLE_RANK.store_manager) {
+      throw new ForbiddenException(gate.reason ?? 'This quote cannot be sent yet.');
+    }
+    return this.issuePdf(user, id, gate, { draft: !gate.cleared });
   }
 
   /**
@@ -624,7 +637,12 @@ export class QuotesService {
    * copy. The quote is re-read here; if it moved on since the gate looked, the
    * PDF is refused rather than printed for a revision nobody cleared.
    */
-  private async issuePdf(user: AuthUser, id: string, gate: ApprovalGate) {
+  private async issuePdf(
+    user: AuthUser,
+    id: string,
+    gate: ApprovalGate,
+    opts: { draft?: boolean } = {},
+  ) {
     const organisationId = user.organisationId;
     const q = await this.prisma.quote.findFirst({
       where: { id, organisationId },
@@ -709,19 +727,24 @@ export class QuotesService {
               decidedAt: q.decidedAt ? q.decidedAt.toISOString().slice(0, 10) : null,
             }
           : null,
+      draft: opts.draft === true,
       generatedAt: new Date(),
     });
 
+    // A draft copy gets its own key and filename: it must never overwrite the
+    // cleared revision's stored copy (the one the outbox attaches), and the
+    // file a manager saves should say what it is.
+    const suffix = opts.draft ? '-draft' : '';
     const storageKey = await this.storage.savePrivate(
       organisationId,
       'quote-pdfs',
-      `${q.id}-r${q.revision}.pdf`,
+      `${q.id}-r${q.revision}${suffix}.pdf`,
       buffer,
     );
     return {
       buffer,
       storageKey,
-      filename: `${q.ref}-r${q.revision}.pdf`,
+      filename: `${q.ref}-r${q.revision}${suffix}.pdf`,
       revision: q.revision,
       grandTotal: Number(q.grandTotal),
     };
