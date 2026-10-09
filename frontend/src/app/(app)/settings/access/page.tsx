@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Clock, RotateCcw, Search, Shield, Store as StoreIcon } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -56,6 +57,7 @@ const attendanceOnly = (defaults: Record<string, unknown>): Record<string, Acces
   Object.fromEntries(Object.keys(defaults).filter((slug) => slug !== "hrms").map((slug) => [slug, "none"]));
 
 export default function AccessPage() {
+  const router = useRouter();
   const item = getNavItem("settings/access");
   const staff = useStaff();
   const qc = useQueryClient();
@@ -97,7 +99,12 @@ export default function AccessPage() {
 
   return (
     <>
-      <SectionHeader title={item?.title ?? "People & Access"} purpose={item?.purpose ?? ""} />
+      <SectionHeader
+        title={item?.title ?? "People & Access"}
+        purpose={item?.purpose ?? ""}
+        primaryAction="Add Staff"
+        onPrimaryAction={() => router.push("/settings/team")}
+      />
       <div className="grid gap-4 lg:grid-cols-[18rem_1fr]">
         <Card className="h-fit">
           <CardHeader className="pb-2">

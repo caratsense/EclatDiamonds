@@ -196,38 +196,14 @@ export default function CheckinsPage() {
       </div>
 
       <div className="space-y-4">
-        <StatTiles
-          tiles={[
-            { label: "Footfall today", value: String(today), icon: DoorOpen },
-            {
-              label: "Converted today",
-              value: String(converted),
-              hint: "sale closed",
-              icon: Users,
-            },
-            {
-              label: "In store now",
-              value: String(live),
-              hint: "being attended",
-              icon: UserCheck,
-            },
-            {
-              label: "Conversion",
-              value: formatPercent(convRate, 0),
-              hint: `${converted} closed`,
-              icon: TrendingUp,
-            },
-          ]}
-        />
-
         {isLoading ? (
           <>
-            <Skeleton className="h-40 rounded-xl" />
+            <Skeleton className="h-72 rounded-xl" />
+            <Skeleton className="h-24 rounded-xl" />
             <div className="grid gap-4 lg:grid-cols-2">
               <Skeleton className="h-64 rounded-xl" />
               <Skeleton className="h-64 rounded-xl" />
             </div>
-            <Skeleton className="h-72 rounded-xl" />
           </>
         ) : isError ? (
           <div className="mx-auto max-w-md rounded-lg border bg-muted/30 p-4 text-center">
@@ -246,8 +222,32 @@ export default function CheckinsPage() {
           </div>
         ) : (
           <>
-            <LiveInStore
-              checkins={checkins}
+            {/* The log first: logging and finding today's visits is the job
+                this page is opened for (client, 9 Oct). Analysis reads below. */}
+            <CheckInLog checkins={checkins} />
+
+            <StatTiles
+              tiles={[
+                { label: "Footfall today", value: String(today), icon: DoorOpen },
+                {
+                  label: "Converted today",
+                  value: String(converted),
+                  hint: "sale closed",
+                  icon: Users,
+                },
+                {
+                  label: "In store now",
+                  value: String(live),
+                  hint: "being attended",
+                  icon: UserCheck,
+                },
+                {
+                  label: "Conversion",
+                  value: formatPercent(convRate, 0),
+                  hint: `${converted} closed`,
+                  icon: TrendingUp,
+                },
+              ]}
             />
 
             <div className="grid gap-4 lg:grid-cols-2">
@@ -257,7 +257,9 @@ export default function CheckinsPage() {
               ) : null}
             </div>
 
-            <CheckInLog checkins={checkins} />
+            <LiveInStore
+              checkins={checkins}
+            />
           </>
         )}
       </div>

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { ChevronDown, DoorOpen, FileText, Plus, Search, UserPlus, X } from "lucide-react";
+import { CalendarCheck, ChevronDown, DoorOpen, FileText, Plus, Search, Upload, UserPlus, X } from "lucide-react";
 
 import { GoldRateChip } from "@/components/layout/gold-rate-chip";
 import { cn } from "@/lib/utils";
@@ -364,6 +364,36 @@ function QuickActionMenu() {
       label: "Quick quote",
       icon: FileText,
       run: () => router.push("/quotation"),
+    },
+    {
+      // Gated on the hrms slug (visible to every ladder role) because the
+      // self-punch screen /check-in deliberately has no nav entry of its own.
+      // A manager lands on HRMS with the marking dialog already open; everyone
+      // else goes to their own punch screen.
+      slug: "hrms",
+      label: "Mark attendance",
+      icon: CalendarCheck,
+      run: () => {
+        if (role === "store_manager" || role === "area_manager") {
+          request("attendance");
+          router.push("/hrms");
+        } else if (role === "head_office") {
+          router.push("/hrms");
+        } else {
+          router.push("/check-in");
+        }
+      },
+    },
+    {
+      // Manager-and-above by the data slug's own nav roles, which mirror the
+      // import endpoints' guard — a salesperson never sees this shortcut.
+      slug: "data",
+      label: "Customer Data & Imports",
+      icon: Upload,
+      run: () => {
+        request("import");
+        router.push("/data");
+      },
     },
     // Nothing this role cannot reach. Offering a shortcut into a screen the
     // route guard then refuses is worse than not offering it.

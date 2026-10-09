@@ -10,6 +10,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ImportWizard } from "@/components/data/import-wizard";
+import { useQuickAction } from "@/store/use-quick-action";
 import { SourcePanel } from "@/components/data/source-panel";
 import { ConnectAgents } from "@/components/data/connect-agents";
 import { RemoveDemoData } from "@/components/data/remove-demo-data";
@@ -29,7 +30,17 @@ import {
  * reconciliation that answers the go-live question honestly.
  */
 export default function DataPage() {
-  const [tab, setTab] = useState("sources");
+  const quickImport = useQuickAction((s) => s.pending) === "import";
+  const clearQuickAction = useQuickAction((s) => s.clear);
+  const [ownTab, setOwnTab] = useState("sources");
+  // The sidebar's "Customer Data & Imports" quick action lands on the Import
+  // tab, read as derived state like the walk-in dialog does; the first tab
+  // click the user makes consumes the request.
+  const tab = quickImport ? "import" : ownTab;
+  const setTab = (value: string) => {
+    if (quickImport) clearQuickAction();
+    setOwnTab(value);
+  };
   const [entity, setEntity] = useState<string | undefined>(undefined);
   const [importOrigin, setImportOrigin] = useState<FileImportOrigin>("spreadsheet");
   const { data: sources } = useConnectorRuntime();

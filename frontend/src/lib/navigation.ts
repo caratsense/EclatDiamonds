@@ -453,6 +453,9 @@ export const NAV_ITEMS: NavItem[] = [
     icon: UsersRound,
     group: "Setup",
     rank: 30,
+    // Off the sidebar (client, 9 Oct: one people entry). People & Access is
+    // the door; this page keeps its route, header and Add Staff flow intact.
+    hidden: true,
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
