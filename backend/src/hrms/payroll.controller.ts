@@ -13,6 +13,7 @@ import {
   Max,
   Min,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 
 import { HumansOnly } from '../auth/machine.decorator';
@@ -37,6 +38,33 @@ export class SetWeekOffsDto {
   @Min(0, { each: true })
   @Max(6, { each: true })
   days!: number[];
+}
+
+export class DayOffEntryDto {
+  @IsString()
+  userId!: string;
+
+  /** YYYY-MM-DD, all inside the request's month. Empty clears the month. */
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsString({ each: true })
+  dates!: string[];
+}
+
+export class SetDayOffsDto {
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  storeId?: string | null;
+
+  /** YYYY-MM. */
+  @IsString()
+  month!: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => DayOffEntryDto)
+  entries!: DayOffEntryDto[];
 }
 
 export class SetCompensationDto {
@@ -116,6 +144,29 @@ export class PayrollController {
   @Put('week-offs')
   setWeekOffs(@CurrentUser() user: AuthUser, @Body() dto: SetWeekOffsDto) {
     return this.payroll.setWeekOffs(user, dto);
+  }
+
+  // ── The dated roster (client, 9 Oct) ─────────────────────────────────────
+
+  /** The month's weeks and each person's planned off dates. */
+  @Roles('store_manager', 'head_office')
+  @Get('day-offs')
+  dayOffs(
+    @CurrentUser() user: AuthUser,
+    @Query('month') month: string,
+    @Query('storeId') storeId?: string,
+  ) {
+    return this.payroll.dayOffsFor(user, storeId || undefined, month);
+  }
+
+  /**
+   * Plan (or re-plan) the month: each listed person's exact off dates. The
+   * area manager plans weeks ahead; a swap is two edited cells.
+   */
+  @Roles('store_manager', 'head_office')
+  @Put('day-offs')
+  setDayOffs(@CurrentUser() user: AuthUser, @Body() dto: SetDayOffsDto) {
+    return this.payroll.setDayOffs(user, dto);
   }
 
   // ── Compensation ──────────────────────────────────────────────────────────

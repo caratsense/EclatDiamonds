@@ -8,6 +8,7 @@ import {
 import { PayrollRun, Payslip, Prisma, Role } from '@prisma/client';
 
 import { AuditService } from '../common/audit.service';
+import { buildOffCalendar, isOffOn, weekKeyOf } from './day-off.util';
 import { AuthUser } from '../common/auth-user';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
@@ -244,6 +245,154 @@ export class PayrollService {
       select: { weekOffDay: true },
     });
     return store?.weekOffDay != null ? new Set([store.weekOffDay]) : new Set();
+  }
+
+  /**
+   * This person's dated off rows between two dates INCLUSIVE, as YYYY-MM-DD
+   * keys. Store-matched like the weekly pattern: this branch's rows or
+   * branch-less ones.
+   */
+  private async datedOffsFor(
+    userId: string,
+    storeId: string | null,
+    start: Date,
+    end: Date,
+  ): Promise<string[]> {
+    const rows = await this.prisma.staffDayOff.findMany({
+      where: {
+        userId,
+        ...(storeId ? { OR: [{ storeId }, { storeId: null }] } : {}),
+        date: { gte: start, lte: end },
+      },
+      select: { date: true },
+    });
+    return rows.map((r) => dateOnly(r.date));
+  }
+
+  // ==========================================================================
+  // The dated roster (client, 9 Oct)
+  // ==========================================================================
+
+  /**
+   * GET /hrms/payroll/day-offs - the month's weeks and each person's planned
+   * off DATES, beside the pattern they fall back to.
+   */
+  async dayOffsFor(user: AuthUser, storeId: string | undefined, month: string) {
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      throw new BadRequestException('Give the month as YYYY-MM.');
+    }
+    const base = await this.weekOffsFor(user, storeId);
+    const monthStart = new Date(`${month}-01T00:00:00.000Z`);
+    const monthEnd = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 0));
+
+    // The month's weeks, Monday-based, clipped to the month, oldest first.
+    const weeks: { start: string; end: string; dates: string[] }[] = [];
+    let cursor = new Date(`${weekKeyOf(dateOnly(monthStart))}T00:00:00.000Z`);
+    while (cursor <= monthEnd) {
+      const dates: string[] = [];
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(cursor.getTime() + i * DAY_MS);
+        if (d >= monthStart && d <= monthEnd) dates.push(dateOnly(d));
+      }
+      if (dates.length) weeks.push({ start: dates[0], end: dates[dates.length - 1], dates });
+      cursor = new Date(cursor.getTime() + 7 * DAY_MS);
+    }
+
+    const rows = await this.prisma.staffDayOff.findMany({
+      where: {
+        organisationId: user.organisationId,
+        userId: { in: base.staff.map((s) => s.userId) },
+        date: { gte: monthStart, lte: monthEnd },
+      },
+      select: { userId: true, date: true },
+    });
+    const byUser = new Map<string, string[]>();
+    for (const r of rows) {
+      const list = byUser.get(r.userId) ?? [];
+      list.push(dateOnly(r.date));
+      byUser.set(r.userId, list);
+    }
+
+    return {
+      month,
+      weeks,
+      staff: base.staff.map((s) => ({
+        ...s,
+        offDates: (byUser.get(s.userId) ?? []).sort(),
+      })),
+    };
+  }
+
+  /**
+   * PUT /hrms/payroll/day-offs - replace the listed people's dated offs for one
+   * month. Dates must fall inside the month; the month must be payroll-open.
+   * A manager plans the whole month ahead and swaps two people by editing two
+   * cells - there is no separate swap ceremony.
+   */
+  async setDayOffs(
+    user: AuthUser,
+    dto: { storeId?: string | null; month: string; entries: { userId: string; dates: string[] }[] },
+  ) {
+    if (!/^\d{4}-\d{2}$/.test(dto.month)) {
+      throw new BadRequestException('Give the month as YYYY-MM.');
+    }
+    const monthStart = new Date(`${dto.month}-01T00:00:00.000Z`);
+    const monthEnd = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 0));
+    await assertMonthOpen(this.prisma, user.organisationId, monthStart);
+    if (dto.storeId) this.scope.assertStoreAllowed(user, dto.storeId);
+
+    // Only people the caller could see on the roster screen can be planned.
+    const visible = new Set(
+      (await this.weekOffsFor(user, dto.storeId ?? undefined)).staff.map((s) => s.userId),
+    );
+    for (const entry of dto.entries) {
+      if (!visible.has(entry.userId)) {
+        throw new BadRequestException('One of these people is not on your roster.');
+      }
+      if (entry.dates.length > 10) {
+        throw new BadRequestException('Ten off days in a month is not a roster, it is a mistake.');
+      }
+      for (const d of entry.dates) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !d.startsWith(dto.month)) {
+          throw new BadRequestException(`${d} is not a date inside ${dto.month}.`);
+        }
+      }
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.staffDayOff.deleteMany({
+        where: {
+          organisationId: user.organisationId,
+          userId: { in: dto.entries.map((e) => e.userId) },
+          date: { gte: monthStart, lte: monthEnd },
+        },
+      });
+      for (const entry of dto.entries) {
+        if (!entry.dates.length) continue;
+        await tx.staffDayOff.createMany({
+          data: [...new Set(entry.dates)].map((d) => ({
+            organisationId: user.organisationId,
+            userId: entry.userId,
+            storeId: dto.storeId ?? null,
+            date: new Date(`${d}T00:00:00.000Z`),
+            createdById: user.id,
+          })),
+        });
+      }
+    });
+
+    await this.audit.record(user, {
+      action: 'hrms.day_offs_set',
+      entityType: 'StaffDayOff',
+      entityId: dto.month,
+      storeId: dto.storeId ?? undefined,
+      summary: `Dated offs planned for ${dto.month} (${dto.entries.length} people)`,
+      metadata: {
+        month: dto.month,
+        entries: dto.entries.map((e) => ({ userId: e.userId, dates: [...e.dates].sort() })),
+      },
+    });
+    return this.dayOffsFor(user, dto.storeId ?? undefined, dto.month);
   }
 
   // ==========================================================================
@@ -653,7 +802,7 @@ export class PayrollService {
    * a month where nobody punched must not silently produce a full month's pay.
    */
   private async countDays(userId: string, storeId: string | null, start: Date, end: Date) {
-    const [records, holidays, offDays, store] = await Promise.all([
+    const [records, holidays, offDays, store, datedOffs] = await Promise.all([
       this.prisma.attendanceRecord.findMany({
         where: { staffId: userId, date: { gte: start, lte: end } },
         select: {
@@ -670,11 +819,21 @@ export class PayrollService {
       storeId
         ? this.prisma.store.findUnique({ where: { id: storeId }, select: { timezone: true } })
         : Promise.resolve(null),
+      // Week-buffered: a dated row just outside the month still governs the
+      // week its days fall in.
+      this.datedOffsFor(
+        userId,
+        storeId,
+        new Date(start.getTime() - 6 * DAY_MS),
+        new Date(end.getTime() + 6 * DAY_MS),
+      ),
     ]);
 
     const tz = resolveTz(store?.timezone);
     const byDate = new Map(records.map((r) => [dateOnly(r.date), r]));
     const holidayDates = new Set(holidays.map((h) => dateOnly(h.date)));
+    // A week with dated rows is governed by them; others follow the pattern.
+    const offCalendar = buildOffCalendar(offDays, datedOffs);
 
     const days: PayslipDay[] = [];
     let presentDays = 0;
@@ -691,7 +850,7 @@ export class PayrollService {
       const weekday = weekdayInTz(instantFromLocalTime(day, 12 * 60, tz), tz);
       const record = byDate.get(key);
       const isHoliday = holidayDates.has(key);
-      const isOff = offDays.has(weekday);
+      const isOff = isOffOn(offCalendar, key, weekday);
 
       if (record) {
         overtimeMins += record.overtimeMins ?? 0;

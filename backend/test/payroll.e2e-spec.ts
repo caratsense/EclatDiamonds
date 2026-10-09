@@ -53,6 +53,7 @@ async function teardown(prisma: PrismaService) {
   await prisma.payslip.deleteMany({ where: { organisationId: A.org } });
   await prisma.staffCompensation.deleteMany({ where: { organisationId: A.org } });
   await prisma.staffWeekOff.deleteMany({ where: { organisationId: A.org } });
+  await prisma.staffDayOff.deleteMany({ where: { organisationId: A.org } });
   await prisma.auditLog.deleteMany({ where: { organisationId: A.org } });
   await prisma.attendanceRecord.deleteMany({ where: { organisationId: A.org } });
   await prisma.rawPunchEvent.deleteMany({ where: { organisationId: A.org } });
@@ -652,5 +653,70 @@ describe('Individual weekly offs and attendance-based payslips (e2e)', () => {
     // The day rate is the MONTH's, so a short month's absence costs slightly
     // more per day — which is how a monthly salary actually works.
     expect(ordinary.body.perDayRate).toBe(1000);
+  });
+
+  /* ------------------------------------------- the dated roster (9 Oct) */
+
+  it('a dated off governs its week; other weeks follow the pattern', async () => {
+    // A person of their own, so the earlier cases' rosters cannot leak in.
+    const hash = await bcrypt.hash(PASSWORD, 10);
+    await prisma.user.create({
+      data: {
+        id: 'u_pay_rep3', email: 'rep3.pay@pay-a.local', name: 'Rep3', role: 'salesperson',
+        passwordHash: hash, isActive: true, approvalStatus: 'approved', organisationId: A.org,
+        userStores: { create: { storeId: A.store, isPrimary: true } },
+      },
+    });
+
+    // Pattern: Wednesdays off. September 2026 Wednesdays: 2, 9, 16, 23, 30.
+    await request(server())
+      .put('/hrms/payroll/week-offs')
+      .set(auth(mgrT))
+      .send({ userId: 'u_pay_rep3', storeId: A.store, days: [3] })
+      .expect(200);
+
+    // The dated roster plans Friday the 11th for the week of 7–13 September.
+    const put = await request(server())
+      .put('/hrms/payroll/day-offs')
+      .set(auth(mgrT))
+      .send({ storeId: A.store, month: PERIOD, entries: [{ userId: 'u_pay_rep3', dates: ['2026-09-11'] }] })
+      .expect(200);
+    const mine = put.body.staff.find((x: { userId: string }) => x.userId === 'u_pay_rep3');
+    expect(mine.offDates).toEqual(['2026-09-11']);
+
+    // A date outside the month is refused whole.
+    await request(server())
+      .put('/hrms/payroll/day-offs')
+      .set(auth(mgrT))
+      .send({ storeId: A.store, month: PERIOD, entries: [{ userId: 'u_pay_rep3', dates: ['2026-10-02'] }] })
+      .expect(400);
+
+    await request(server())
+      .put('/hrms/payroll/compensation')
+      .set(auth(hoT))
+      .send({ userId: 'u_pay_rep3', basis: 'monthly', amount: 30_000 })
+      .expect(200);
+
+    const res = await request(server())
+      .post('/hrms/payroll/payslips/generate')
+      .set(auth(mgrT))
+      .send({ userId: 'u_pay_rep3', periodKey: PERIOD })
+      .expect(201);
+
+    // The frozen day-by-day breakdown rides on the slip detail.
+    const detail = await request(server())
+      .get(`/hrms/payroll/payslips/${res.body.id}`)
+      .set(auth(mgrT))
+      .expect(200);
+    const byDate = new Map(
+      (detail.body.breakdown as { date: string; kind: string }[]).map((d) => [d.date, d.kind]),
+    );
+    // The planned Friday is the week's off; the pattern Wednesday in THAT week
+    // is an ordinary (unmarked) day; Wednesdays in unplanned weeks stay off.
+    expect(byDate.get('2026-09-11')).toBe('week_off');
+    expect(byDate.get('2026-09-09')).not.toBe('week_off');
+    expect(byDate.get('2026-09-16')).toBe('week_off');
+    // 4 pattern Wednesdays (2, 16, 23, 30) + the dated Friday the 11th.
+    expect(res.body.weeklyOffDays).toBe(5);
   });
 });
