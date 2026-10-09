@@ -597,6 +597,7 @@ model Organisation {
   importMappingProfiles        ImportMappingProfile[]
   deadStockPolicies            DeadStockPolicy[]
   staffWeekOffs                StaffWeekOff[]
+  staffDayOffs                 StaffDayOff[]
   staffCompensations           StaffCompensation[]
   payslips                     Payslip[]
   payrollRuns                  PayrollRun[]
@@ -951,6 +952,14 @@ model User {
   staffDigestRuns          StaffDigestRun[]              @relation("StaffDigestRecipient")
   slaResponses             ConversationResponseSla[]     @relation("SlaResponder")
   weekOffs                 StaffWeekOff[]
+  dayOffs                  StaffDayOff[]
+
+  /// This person's punches are NOT held to a store geofence (client, 9 Oct):
+  /// they rotate between branches, work remotely, or travel for sales. Their
+  /// attendance records as location-waived — never as geo-verified, and never
+  /// into the off-site review queue or the three-strike count. Default OFF:
+  /// a new employee is held to the fence until head office exempts them.
+  geoExempt                Boolean                       @default(false)
   compensation             StaffCompensation?
   employeeProfile          EmployeeProfile?              @relation("EmployeeProfileUser")
   shiftAssignments         ShiftAssignment[]
@@ -2842,6 +2851,10 @@ model AttendanceRecord {
   dayFraction       Decimal? @db.Decimal(3, 2)
   /// Device reported a mock/spoofed GPS provider at punch time.
   isMockLocation    Boolean  @default(false)
+  /// The fence was deliberately not checked: the person is geo-exempt (see
+  /// User.geoExempt). Distinct from geoVerified=false, which means CHECKED and
+  /// outside — a waived punch is neither flagged nor counted as a strike.
+  geoWaived         Boolean  @default(false)
   /// Mandatory justification when a punch lands OUTSIDE the store geofence.
   checkInNote       String?
   checkOutNote      String?
@@ -5982,6 +5995,36 @@ model StaffWeekOff {
 
   @@unique([userId, storeId, dayOfWeek])
   @@index([organisationId, storeId])
+}
+
+/// One employee's off day on one DATE — the dated roster (client, 9 Oct).
+///
+/// Staff do not rest on the same weekday every week: Monday off this week,
+/// Friday the next. A row here names the exact store-local date. The rule the
+/// readers apply: within a week that has ANY dated rows for this person, the
+/// dated rows ARE that week's offs; a week with none falls back to the
+/// StaffWeekOff pattern, then to the store's weekOffDay — so a tenant that
+/// never opens the dated roster behaves exactly as today.
+model StaffDayOff {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The branch whose register this off belongs to, for dual-mapped staff.
+  storeId String?
+
+  /// The off DATE, store-local, date-only.
+  date DateTime @db.Date
+
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  /// One person is off or not off on a date — never both, whatever the branch.
+  @@unique([userId, date])
+  @@index([organisationId, storeId, date])
 }
 
 /// What an employee is paid, and on what basis.

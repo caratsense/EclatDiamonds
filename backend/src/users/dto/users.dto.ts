@@ -111,6 +111,12 @@ export class SetUserStoresDto {
  * PATCH /users/:id/deactivate — offboard a user, optionally handing off their
  * open work (owned leads + check-ins) to another active in-scope user.
  */
+export class LocationCheckDto {
+  /** true = held to the store geofence (default for everyone); false = exempt. */
+  @IsBoolean()
+  required!: boolean;
+}
+
 export class DeactivateUserDto {
   /** If given, the deactivated user's open leads/check-ins are reassigned here. */
   @IsOptional()

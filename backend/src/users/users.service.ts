@@ -156,6 +156,7 @@ export class UsersService {
       email: user.email,
       phone: user.phone ?? null,
       role: user.role as Role,
+      geoExempt: user.geoExempt === true,
       stores: links.map((us: any) => ({
         id: us.store.id,
         name: us.store.name,
@@ -461,6 +462,25 @@ export class UsersService {
    * another ACTIVE, in-scope user. Nothing is deleted — only `isActive` flips false
    * and ownership is moved.
    */
+  /**
+   * PATCH /users/:id/location-check (client, 9 Oct): whether this person's
+   * punches are held to the store geofence. Off = exempt - a traveller,
+   * a remote worker, a rotating floater. Head office only (controller): an
+   * exemption waives an anti-fraud check, so it is set where the audit lands.
+   */
+  async setLocationCheck(actor: AuthUser, id: string, required: boolean) {
+    const target = await this.getOrThrow(actor, id);
+    await this.prisma.user.update({ where: { id: target.id }, data: { geoExempt: !required } });
+    await this.audit.record(actor, {
+      action: 'users.location_check_set',
+      entityType: 'User',
+      entityId: id,
+      summary: `${target.name}: location check ${required ? 'required again' : 'waived (geo-exempt)'}`,
+      metadata: { geoExempt: !required },
+    });
+    return { id: target.id, geoExempt: !required };
+  }
+
   async deactivate(actor: AuthUser, id: string, dto: DeactivateUserDto) {
     const target = await this.getOrThrow(actor, id);
     const storeId = await this.primaryStoreId(id);

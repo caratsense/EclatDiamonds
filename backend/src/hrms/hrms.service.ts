@@ -294,6 +294,15 @@ export class HrmsService {
    * verify against, so the punch is allowed but explicitly left unverified —
    * a missing fence must never lock staff out or manufacture GPS assurance.
    */
+  /** Whether this person's punches skip the geofence (User.geoExempt). */
+  private async isGeoExempt(userId: string): Promise<boolean> {
+    const row = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { geoExempt: true },
+    });
+    return row?.geoExempt === true;
+  }
+
   private evaluateFence(
     store: StoreCtx,
     lat: number | undefined,
@@ -673,14 +682,16 @@ export class HrmsService {
     const date = businessDate(now, store.tz);
     await assertMonthOpen(this.prisma, user.organisationId, date);
 
-    const { distanceM, withinFence } = this.evaluateFence(
-      store,
-      dto.lat,
-      dto.lng,
-      dto.note,
-      'check-in',
-      dto.accuracyM,
-    );
+    /*
+     * A geo-exempt person (travelling sales, remote, rotating branches -
+     * client, 9 Oct) is not held to the fence at all: no reason demanded, no
+     * review-queue entry, no strike. Their record says WAIVED, never verified
+     * - the register stays honest about what was and was not checked.
+     */
+    const geoExempt = await this.isGeoExempt(user.id);
+    const { distanceM, withinFence } = geoExempt
+      ? { distanceM: null, withinFence: false }
+      : this.evaluateFence(store, dto.lat, dto.lng, dto.note, 'check-in', dto.accuracyM);
 
     // Lateness vs the shift given, else the one assigned for today, else the
     // store's first shift. Never for a flexible shift.
@@ -703,6 +714,7 @@ export class HrmsService {
       checkInLng: dto.lng,
       checkInPhotoUrl: photoUrl,
       geoVerified: withinFence,
+      geoWaived: geoExempt,
       checkInDistanceM: distanceM,
       checkInNote: dto.note?.trim() || null,
       isMockLocation: dto.isMockLocation ?? false,
@@ -789,7 +801,7 @@ export class HrmsService {
     // A punch away from the store, or one from a device reporting a mock GPS
     // provider, is the classic buddy-punching signature — trail it immediately
     // rather than relying on someone opening the report.
-    if (!withinFence || payload.isMockLocation) {
+    if (!geoExempt && (!withinFence || payload.isMockLocation)) {
       await this.audit.record(user, {
         action: 'attendance.offsite_punch',
         entityType: 'AttendanceRecord',
@@ -867,6 +879,8 @@ export class HrmsService {
           organisationId: user.organisationId,
           staffId: user.id,
           geoVerified: false,
+          // A waived punch was never checked - it is not an off-site strike.
+          geoWaived: false,
           checkInAt: { not: null },
           date: { gte: monthStart },
         },
@@ -959,14 +973,10 @@ export class HrmsService {
     }
     await assertMonthOpen(this.prisma, user.organisationId, record.date);
 
-    const { distanceM, withinFence } = this.evaluateFence(
-      store,
-      dto.lat,
-      dto.lng,
-      dto.note,
-      'check-out',
-      dto.accuracyM,
-    );
+    const geoExempt = await this.isGeoExempt(user.id);
+    const { distanceM, withinFence } = geoExempt
+      ? { distanceM: null, withinFence: false }
+      : this.evaluateFence(store, dto.lat, dto.lng, dto.note, 'check-out', dto.accuracyM);
 
     const frozenShift = shiftFromSnapshot(record.shiftSnapshot);
     const liveShift =

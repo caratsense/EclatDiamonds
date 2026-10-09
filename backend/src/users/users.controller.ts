@@ -4,13 +4,14 @@ import {
   ApproveUserDto,
   CreateUserDto,
   DeactivateUserDto,
+  LocationCheckDto,
   RejectUserDto,
   SetLeaveAllocationDto,
   SetUserAccessDto,
+  SetUserStoresDto,
   UpdateSignupPolicyDto,
   UpdateUserRoleDto,
   UpdateUserStoreDto,
-  SetUserStoresDto,
 } from './dto/users.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { Roles } from '../auth/roles.decorator';
@@ -143,6 +144,21 @@ export class UsersController {
     @Body() dto: DeactivateUserDto,
   ) {
     return this.users.deactivate(user, id, dto);
+  }
+
+  /**
+   * PATCH /users/:id/location-check — hold this person's punches to the store
+   * geofence (true, the default) or exempt them (false): travelling sales,
+   * remote staff, branch floaters. Head office only - it waives a check.
+   */
+  @Roles('head_office')
+  @Patch(':id/location-check')
+  setLocationCheck(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: LocationCheckDto,
+  ) {
+    return this.users.setLocationCheck(user, id, dto.required);
   }
 
   /** PATCH /users/:id/activate — reactivate an offboarded user. */

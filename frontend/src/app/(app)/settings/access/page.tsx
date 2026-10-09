@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Clock, RotateCcw, Search, Shield, Store as StoreIcon } from "lucide-react";
+import { Clock, MapPin, RotateCcw, Search, Shield, Store as StoreIcon } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -14,7 +14,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { NAV_GROUPS, getNavItem } from "@/lib/navigation";
-import { useStaff, type StaffUser } from "@/lib/queries/users";
+import { useSetLocationCheck, useStaff, type StaffUser } from "@/lib/queries/users";
 import { api } from "@/lib/api";
 import { useSetUserAccess, useUserAccess, type AccessOverride, type UserAccess } from "@/lib/queries/access";
 import { ROLE_LABELS, ROLE_RANK, type Role } from "@/lib/types";
@@ -185,6 +185,7 @@ function PersonAccess({ userId, person }: { userId: string; person?: StaffUser }
   const [dialog, setDialog] = useState<"role" | "store" | null>(null);
   const access = useUserAccess(userId);
   const save = useSetUserAccess();
+  const locationCheck = useSetLocationCheck();
   // Only what head office has touched in this session; the rest reads through.
   const [draft, setDraft] = useState<Record<string, AccessOverride>>({});
 
@@ -247,6 +248,33 @@ function PersonAccess({ userId, person }: { userId: string; person?: StaffUser }
               </Button>
               <Button variant="outline" size="sm" onClick={() => setDialog("store")}>
                 <StoreIcon className="h-3.5 w-3.5" /> Reassign store
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={locationCheck.isPending}
+                title={
+                  person.geoExempt
+                    ? "Punches are NOT checked against the store location (traveller/remote). Click to require it again."
+                    : "Punches are checked against the store location. Click to exempt this person (traveller/remote)."
+                }
+                onClick={() =>
+                  locationCheck.mutate(
+                    { userId, required: person.geoExempt === true },
+                    {
+                      onSuccess: (r) =>
+                        toast.success(
+                          r.geoExempt
+                            ? `${data!.name} is exempt from the location check.`
+                            : `${data!.name} is held to the store location again.`,
+                        ),
+                      onError: (e) => toast.error(apiErrorMessage(e, "Could not change the location check.")),
+                    },
+                  )
+                }
+              >
+                <MapPin className="h-3.5 w-3.5" />
+                {person.geoExempt ? "Location: Off" : "Location: On"}
               </Button>
             </>
           ) : null}

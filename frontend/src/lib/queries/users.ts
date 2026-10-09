@@ -56,6 +56,21 @@ export interface StaffUser {
   role: StaffRole;
   stores: StaffUserStore[];
   isActive: boolean;
+  /** Punches NOT held to the store geofence (traveller / remote / floater). */
+  geoExempt?: boolean;
+}
+
+/**
+ * PATCH /users/:id/location-check — hold this person to the store geofence
+ * (true, everyone's default) or exempt them. Head office only.
+ */
+export function useSetLocationCheck() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ userId, required }: { userId: string; required: boolean }) =>
+      (await api.patch<{ id: string; geoExempt: boolean }>(`/users/${userId}/location-check`, { required })).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["users"] }),
+  });
 }
 
 export interface CreateStaffInput {
