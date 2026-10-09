@@ -1,4 +1,4 @@
-import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from 'pdf-lib';
+import { PDFDocument, PDFFont, PDFPage, StandardFonts, degrees, rgb } from 'pdf-lib';
 
 /** Everything printed on a detailed quote, already resolved and in scope. */
 export interface QuotePdfData {
@@ -27,6 +27,12 @@ export interface QuotePdfData {
   customer: { name: string; phone: string; address?: string | null; state?: string | null; gstin?: string | null; pan?: string | null };
   kind: 'sale' | 'repair';
   isKaccha: boolean;
+  /**
+   * True when the approval gate has NOT cleared this revision. The document
+   * still renders — the people deciding it need to read it — but every page is
+   * stamped so a forwarded copy cannot pass as a final quotation.
+   */
+  draft?: boolean;
   remarks: string;
   lines: {
     description: string;
@@ -600,5 +606,30 @@ export async function renderQuotePdf(data: QuotePdfData): Promise<Buffer> {
 
   // Classic cross-reference table rather than object streams: older PDF
   // readers (and some phone previewers) still cannot open the latter.
+  if (data.draft) {
+    // Stamped last, across everything already drawn: a pale diagonal band on
+    // every page plus a plain line under the title area, so both a skim and a
+    // print read it. Light enough to leave the figures legible for the
+    // approver, unmistakable enough that nobody quotes a customer from it.
+    for (const p of pdf.getPages()) {
+      const { width: pw, height: ph } = p.getSize();
+      p.drawText('DRAFT - AWAITING APPROVAL', {
+        x: pw * 0.12,
+        y: ph * 0.35,
+        size: 42,
+        font: bold,
+        color: rgb(0.82, 0.3, 0.3),
+        opacity: 0.16,
+        rotate: degrees(35),
+      });
+      p.drawText('DRAFT - not approved for the customer', {
+        x: MARGIN,
+        y: ph - MARGIN + 6,
+        size: 9,
+        font: bold,
+        color: rgb(0.75, 0.25, 0.25),
+      });
+    }
+  }
   return Buffer.from(await pdf.save({ useObjectStreams: false }));
 }

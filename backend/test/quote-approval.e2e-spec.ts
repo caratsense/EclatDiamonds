@@ -162,6 +162,30 @@ describe('Quote approval (e2e)', () => {
     expect(JSON.stringify(share.body)).toMatch(/approval/i);
   });
 
+  it('an undecided quote still reads for the people deciding it - as a stamped draft', async () => {
+    // The rep is refused: for them the gate is the whole point.
+    const repPdf = await request(server()).get('/quotes/q_qa_big/pdf').set(auth(repA));
+    expect(repPdf.status).toBe(403);
+
+    // Manager and head office get the document - filed as a DRAFT, so the copy
+    // cannot pass as a final quotation (client, 9 Oct).
+    for (const t of [mgrA, hoA]) {
+      const pdf = await request(server())
+        .get('/quotes/q_qa_big/pdf')
+        .set(auth(t))
+        .buffer(true)
+        .parse((res, cb) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (c) => chunks.push(c));
+          res.on('end', () => cb(null, Buffer.concat(chunks)));
+        });
+      expect(pdf.status).toBe(200);
+      expect(pdf.headers['content-type']).toContain('application/pdf');
+      expect(pdf.headers['content-disposition']).toContain('-draft.pdf');
+      expect((pdf.body as Buffer).subarray(0, 5).toString()).toBe('%PDF-');
+    }
+  });
+
   it('a salesperson may ask but not decide', async () => {
     await request(server())
       .post('/quotes/q_qa_big/request-approval')
