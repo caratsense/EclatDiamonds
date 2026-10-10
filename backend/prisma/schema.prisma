@@ -5837,6 +5837,11 @@ model ScheduledReport {
   /// that nobody was configured to receive it, rather than failing silently.
   recipients String[]
 
+  /// WhatsApp numbers (staff), digits only. The file leaves on the INTERNAL
+  /// staff line, like the evening DSR digest — never a customer line. Empty =
+  /// no WhatsApp delivery. Independent of email: either leg may run alone.
+  phoneRecipients String[] @default([])
+
   isActive    Boolean   @default(true)
   lastRunAt   DateTime?
   createdById String?
@@ -5886,6 +5891,10 @@ model ScheduledReportRun {
   emailStatus String   @default("no_recipients")
   emailDetail String?
   recipients  String[]
+
+  /// 'sent' | 'dry_run' | 'no_recipients' | 'failed' — the WhatsApp leg.
+  whatsappStatus String  @default("no_recipients")
+  whatsappDetail String?
 
   createdAt DateTime @default(now())
 

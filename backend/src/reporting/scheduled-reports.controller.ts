@@ -40,7 +40,7 @@ export class UpsertScheduledReportDto {
   name!: string;
 
   @IsOptional()
-  @IsIn(['leads'])
+  @IsIn(['leads', 'walkins'])
   kind?: string;
 
   /** Null or absent = every branch the report's reader can see. */
@@ -72,6 +72,13 @@ export class UpsertScheduledReportDto {
   @IsString({ each: true })
   @ArrayMaxSize(20)
   recipients?: string[];
+
+  /** Staff WhatsApp numbers; the file leaves on the INTERNAL line. */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @ArrayMaxSize(20)
+  phoneRecipients?: string[];
 
   @IsOptional()
   @IsBoolean()
@@ -112,6 +119,13 @@ export class PatchScheduledReportDto {
   @IsString({ each: true })
   @ArrayMaxSize(20)
   recipients?: string[];
+
+  /** Staff WhatsApp numbers; the file leaves on the INTERNAL line. */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @ArrayMaxSize(20)
+  phoneRecipients?: string[];
 
   @IsOptional()
   @IsBoolean()
