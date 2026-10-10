@@ -24,6 +24,7 @@ import {
   UpdateTaskStatusDto,
 } from './dto/dashboard.dto';
 import { NotificationsService } from '../notifications/notifications.service';
+import { resolveEffectiveTargets } from '../targets/effective-targets';
 
 function num(v: Prisma.Decimal | number | null | undefined): number {
   return v == null ? 0 : Number(v);
@@ -427,10 +428,9 @@ export class DashboardService {
         where: { ...storeWhere, docDate: { gte: yearAgo } },
         select: { docDate: true, totalAmount: true },
       }),
-      this.prisma.salesTarget.findMany({
-        where: { storeId: { in: storeIds }, staffId: null, period: { in: months.map((m) => m.key) } },
-        select: { period: true, amount: true },
-      }),
+      // Effective targets: a month with no typed row carries the latest earlier
+      // month's target forward (client, 9 Oct) — same resolution as the Targets page.
+      resolveEffectiveTargets(this.prisma, { storeIds, periods: months.map((m) => m.key) }),
     ]);
 
     const salesByMonth = new Map<string, number>();
@@ -456,10 +456,7 @@ export class DashboardService {
         where: { id: { in: storeIds }, attendanceOnly: false },
         select: { id: true, name: true, city: true },
       }),
-      this.prisma.salesTarget.findMany({
-        where: { storeId: { in: storeIds }, staffId: null, period: currentPeriod },
-        select: { storeId: true, amount: true },
-      }),
+      resolveEffectiveTargets(this.prisma, { storeIds, periods: [currentPeriod] }),
     ]);
     const targetByStore = new Map(storeMonthTargets.map((t) => [t.storeId, num(t.amount)]));
     const storeComparison = await Promise.all(

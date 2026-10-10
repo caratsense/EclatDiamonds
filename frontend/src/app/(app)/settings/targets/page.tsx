@@ -183,7 +183,14 @@ export default function TargetsPage() {
                     <TableCell className="font-medium">{r.storeName}</TableCell>
                     <TableCell className="num text-right">
                       {r.target > 0 ? (
-                        formatINR(r.target)
+                        <>
+                          {formatINR(r.target)}
+                          {r.carriedFrom ? (
+                            <span className="block text-xs font-normal text-muted-foreground">
+                              (carried from {r.carriedFrom})
+                            </span>
+                          ) : null}
+                        </>
                       ) : (
                         <span className="text-muted-foreground">Not set</span>
                       )}

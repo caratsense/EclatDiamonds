@@ -5,6 +5,7 @@ import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuditService } from '../common/audit.service';
 import { SetTargetDto, UpdateTargetDto } from './dto/target.dto';
+import { resolveEffectiveTargets } from './effective-targets';
 
 function num(v: Prisma.Decimal | number | null | undefined): number {
   return v == null ? 0 : Number(v);
@@ -30,23 +31,46 @@ export class TargetsService {
     private readonly audit: AuditService,
   ) {}
 
-  /** GET /targets — targets for a period (default current month), store-scoped. */
+  /**
+   * GET /targets — effective targets for a period (default current month),
+   * store-scoped. A month with no typed row carries the latest earlier month's
+   * target forward (client, 9 Oct); such rows come back with `carriedFrom` set
+   * and `id: null` — there is no row for THIS period to patch or delete, and
+   * setting one (POST /targets) overrides the carry-forward from that month on.
+   */
   async list(user: AuthUser, period?: string, headerStore?: string) {
     const p = period || currentPeriod();
-    const rows = await this.prisma.salesTarget.findMany({
-      where: { ...this.scope.storeFilter(user, headerStore), period: p },
-      include: { store: { select: { name: true } }, staff: { select: { name: true } } },
-      orderBy: [{ storeId: 'asc' }, { staffId: 'asc' }],
+    const storeIds = this.scope.effectiveStoreIds(user, headerStore);
+    const effective = await resolveEffectiveTargets(this.prisma, {
+      storeIds,
+      periods: [p],
+      includeStaff: true,
     });
+    effective.sort((a, b) => a.storeId.localeCompare(b.storeId) || (a.staffId ?? '').localeCompare(b.staffId ?? ''));
+
+    // `id: { in: [] }` is a cheap no-match query, so no special-casing for
+    // periods with no per-staff rows.
+    const staffIds = [...new Set(effective.flatMap((r) => (r.staffId ? [r.staffId] : [])))];
+    const [stores, staff] = await Promise.all([
+      this.prisma.store.findMany({
+        where: { id: { in: [...new Set(effective.map((r) => r.storeId))] } },
+        select: { id: true, name: true },
+      }),
+      this.prisma.user.findMany({ where: { id: { in: staffIds } }, select: { id: true, name: true } }),
+    ]);
+    const storeName = new Map(stores.map((s) => [s.id, s.name]));
+    const staffName = new Map(staff.map((s) => [s.id, s.name]));
+
     return {
-      items: rows.map((r) => ({
-        id: r.id,
+      items: effective.map((r) => ({
+        id: r.carriedFrom ? null : r.id,
         storeId: r.storeId,
-        storeName: r.store?.name ?? '',
-        staffId: r.staffId ?? null,
-        staffName: r.staff?.name ?? null,
+        storeName: storeName.get(r.storeId) ?? '',
+        staffId: r.staffId,
+        staffName: r.staffId ? (staffName.get(r.staffId) ?? null) : null,
         period: r.period,
         amount: num(r.amount),
+        carriedFrom: r.carriedFrom,
       })),
     };
   }
@@ -63,12 +87,13 @@ export class TargetsService {
         where: { id: { in: storeIds }, attendanceOnly: false },
         select: { id: true, name: true },
       }),
-      this.prisma.salesTarget.findMany({
-        where: { storeId: { in: storeIds }, staffId: null, period: p },
-        select: { storeId: true, amount: true },
-      }),
+      // Carry-forward: a month without a typed row inherits the latest earlier
+      // month's whole-store target (flagged via carriedFrom for the UI).
+      resolveEffectiveTargets(this.prisma, { storeIds, periods: [p] }),
     ]);
-    const targetByStore = new Map(targets.map((t) => [t.storeId, num(t.amount)]));
+    const targetByStore = new Map(
+      targets.map((t) => [t.storeId, { amount: num(t.amount), carriedFrom: t.carriedFrom }]),
+    );
 
     const items = await Promise.all(
       stores.map(async (st) => {
@@ -81,10 +106,18 @@ export class TargetsService {
             docDate: { gte: start, lt: end },
           },
         });
-        const target = targetByStore.get(st.id) ?? 0;
+        const t = targetByStore.get(st.id);
+        const target = t?.amount ?? 0;
         const achieved = num(agg._sum.totalAmount);
         const pct = target > 0 ? Math.round((achieved / target) * 100) : 0;
-        return { storeId: st.id, storeName: st.name, target, achieved, pct };
+        return {
+          storeId: st.id,
+          storeName: st.name,
+          target,
+          achieved,
+          pct,
+          carriedFrom: t?.carriedFrom ?? null,
+        };
       }),
     );
 
