@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import {
+import { Pencil, Trash2,
   Building2,
   CalendarDays,
   Check,
@@ -59,6 +59,8 @@ import {
 import { getNavItem } from "@/lib/navigation";
 import { useResetPassword } from "@/lib/queries/auth";
 import {
+  useUpdateStaffDetails,
+  useDeleteStaff,
   useActivateStaff,
   useApproveSignup,
   useCreateStaff,
@@ -246,8 +248,7 @@ function UserRow({
   roster: StaffUser[];
 }) {
   const [dialog, setDialog] = useState<
-    "deactivate" | "reset" | "leave" | null
-  >(null);
+    "deactivate" | "reset" | "leave" | "edit" | null>(null);
 
   const activate = useActivateStaff();
 
@@ -255,6 +256,22 @@ function UserRow({
   const canManage = ROLE_RANK[user.role] < ROLE_RANK[viewerRole];
   const canRoleOrStore = ROLE_RANK[viewerRole] >= ROLE_RANK.store_manager;
   const canDeactivate = ROLE_RANK[viewerRole] >= ROLE_RANK.store_manager;
+  const deleteStaff = useDeleteStaff();
+  // Deleting is deliberate: first tap arms, second deletes. The server refuses
+  // anyone with history and names what they hold.
+  const [armDelete, setArmDelete] = useState(false);
+  const onDelete = (e: Event) => {
+    if (!armDelete) {
+      e.preventDefault(); // keep the menu open for the second tap
+      setArmDelete(true);
+      return;
+    }
+    deleteStaff.mutate(user.id, {
+      onSuccess: () => toast.success(`${user.name} deleted.`),
+      onError: (err) => toast.error(apiErrorMessage(err, "Could not delete.")),
+      onSettled: () => setArmDelete(false),
+    });
+  };
 
   function reactivate() {
     activate.mutate(
@@ -341,6 +358,9 @@ function UserRow({
                 <>
                 </>
               ) : null}
+              <DropdownMenuItem onSelect={() => setDialog("edit")}>
+                <Pencil className="h-4 w-4" /> Edit details
+              </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setDialog("leave")}>
                 <CalendarDays className="h-4 w-4" /> Set leave quota
               </DropdownMenuItem>
@@ -357,14 +377,26 @@ function UserRow({
                     >
                       <UserMinus className="h-4 w-4" /> Deactivate
                     </DropdownMenuItem>
-                  ) : (
+                  ) : null}
+                  {viewerRole === "head_office" ? (
+                    <DropdownMenuItem
+                      className="text-destructive focus:text-destructive"
+                      onSelect={onDelete}
+                      disabled={deleteStaff.isPending}
+                      title="Only an account with no history can be deleted"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      {armDelete ? "Tap again to delete" : "Delete"}
+                    </DropdownMenuItem>
+                  ) : null}
+                  {!user.isActive ? (
                     <DropdownMenuItem
                       onSelect={reactivate}
                       disabled={activate.isPending}
                     >
                       <UserCheck className="h-4 w-4" /> Reactivate
                     </DropdownMenuItem>
-                  )}
+                  ) : null}
                 </>
               ) : null}
             </DropdownMenuContent>
@@ -387,7 +419,96 @@ function UserRow({
         open={dialog === "leave"}
         onOpenChange={(o) => setDialog(o ? "leave" : null)}
       />
+      <EditDetailsDialog
+        user={user}
+        open={dialog === "edit"}
+        onOpenChange={(o) => setDialog(o ? "edit" : null)}
+      />
     </TableRow>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Edit details (client, 9 Oct): fix a person without recreating them */
+/* ------------------------------------------------------------------ */
+
+function EditDetailsDialog({
+  user,
+  open,
+  onOpenChange,
+}: {
+  user: StaffUser;
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+}) {
+  const update = useUpdateStaffDetails();
+  const [name, setName] = useState(user.name);
+  const [email, setEmail] = useState(user.email ?? "");
+  const [phone, setPhone] = useState(user.phone ?? "");
+
+  const save = () => {
+    update.mutate(
+      {
+        id: user.id,
+        ...(name.trim() && name.trim() !== user.name ? { name: name.trim() } : {}),
+        ...(email.trim() && email.trim() !== (user.email ?? "") ? { email: email.trim() } : {}),
+        ...(phone.trim() !== (user.phone ?? "") ? { phone: phone.trim() } : {}),
+      },
+      {
+        onSuccess: () => {
+          toast.success(`${name.trim() || user.name} updated.`);
+          onOpenChange(false);
+        },
+        onError: (e) => toast.error(apiErrorMessage(e, "Could not save the changes.")),
+      },
+    );
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Edit {user.name}</DialogTitle>
+          <DialogDescription>
+            Fix a detail in place — nothing else about the person changes.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="grid gap-1.5">
+            <Label htmlFor={`edit-name-${user.id}`}>Name</Label>
+            <Input id={`edit-name-${user.id}`} value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor={`edit-email-${user.id}`}>Login ID</Label>
+            <Input
+              id={`edit-email-${user.id}`}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              What they sign in with. Must be unique.
+            </p>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor={`edit-phone-${user.id}`}>Phone</Label>
+            <Input
+              id={`edit-phone-${user.id}`}
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              maxLength={10}
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={update.isPending}>
+            {update.isPending ? "Saving…" : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
