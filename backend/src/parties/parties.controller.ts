@@ -45,13 +45,14 @@ export class PartiesController {
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
     @Query('archived') archived?: string,
+    @Query('tagId') tagId?: string,
   ) {
     // New endpoint → always the paginated envelope (default page 1).
     const pagination =
       parsePagination(page ?? '1', pageSize) ?? { page: 1, pageSize: DEFAULT_PAGE_SIZE };
     return this.parties.list(
       user,
-      { q, type: type ?? 'customer', archived: archived === 'true' },
+      { q, type: type ?? 'customer', archived: archived === 'true', tagId: tagId || undefined },
       store,
       pagination,
     );

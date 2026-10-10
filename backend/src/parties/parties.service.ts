@@ -26,6 +26,8 @@ export interface PartyFilters {
   type?: PartyType | 'all';
   /** true = the Archived Contacts screen. Omitted = active contacts only. */
   archived?: boolean;
+  /** Show only customers wearing this tag. */
+  tagId?: string;
 }
 
 export interface PartyRow {
@@ -48,6 +50,8 @@ export interface PartyRow {
   isBlacklisted: boolean;
   /** Bills this party is linked to — the quick "how much of a customer" signal. */
   salesCount: number;
+  /** The customer's tags (client, 10 Oct): chips on the directory row. */
+  tags: { id: string; name: string; colour: string | null }[];
   createdAt: string | null;
   /** Present only on the archived list, so the screen can show who and why. */
   archivedAt: string | null;
@@ -79,6 +83,9 @@ const PARTY_SELECT = {
   archiveReason: true,
   archivedBy: { select: { name: true } },
   _count: { select: { sales: true } },
+  partyTagAssignments: {
+    select: { tag: { select: { id: true, name: true, colour: true, sortOrder: true } } },
+  },
 } satisfies Prisma.PartySelect;
 
 type PartySelected = Prisma.PartyGetPayload<{ select: typeof PARTY_SELECT }>;
@@ -103,6 +110,9 @@ function toPartyRow(p: PartySelected): PartyRow {
     creditLimit: num(p.creditLimit),
     isBlacklisted: p.isBlacklisted,
     salesCount: p._count.sales,
+    tags: [...p.partyTagAssignments]
+      .sort((a, b) => a.tag.sortOrder - b.tag.sortOrder)
+      .map((a) => ({ id: a.tag.id, name: a.tag.name, colour: a.tag.colour })),
     createdAt: iso(p.createdAt),
     archivedAt: iso(p.archivedAt),
     archivedByName: p.archivedBy?.name ?? null,
@@ -242,6 +252,10 @@ export class PartiesService {
     // than 500-ing on an invalid enum; 'all' skips the filter entirely.
     if (f.type && f.type !== 'all' && VALID_TYPES.has(f.type)) {
       where.types = { has: f.type as PartyType };
+    }
+    // Filter by one tag: the chips on the rows are also the way to slice them.
+    if (f.tagId) {
+      where.partyTagAssignments = { some: { tagId: f.tagId } };
     }
 
     const q = f.q?.trim();

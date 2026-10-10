@@ -42,6 +42,7 @@ import {
   type PartyRow,
   type PartyTypeName,
 } from "@/lib/queries/parties";
+import { useLeadTags } from "@/lib/queries/lead-tags";
 import { useDebouncedValue } from "@/lib/queries/search";
 import {
   apiErrorMessage,
@@ -89,11 +90,15 @@ export default function CustomersPage() {
   const [active, setActive] = useState<PartyRow | null>(null);
   const [addOpen, setAddOpen] = useState(false);
 
+  const [tagId, setTagId] = useState<string>("");
+  const allTags = useLeadTags();
+
   const { data, isLoading, isError, refetch } = useParties({
     page,
     pageSize,
     q: q.trim() || undefined,
     type: "customer",
+    tagId: tagId || undefined,
   });
 
   const rows = data?.items ?? [];
@@ -121,6 +126,24 @@ export default function CustomersPage() {
             className="pl-9"
           />
         </div>
+        {(allTags.data ?? []).length ? (
+          <select
+            aria-label="Filter by tag"
+            className="h-9 rounded-md border bg-background px-2 text-sm"
+            value={tagId}
+            onChange={(e) => {
+              setTagId(e.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="">All tags</option>
+            {(allTags.data ?? []).map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        ) : null}
         <ExcelExportButton path="/parties/export.xlsx" fallbackName="customers.xlsx" />
       </div>
 
@@ -196,6 +219,25 @@ export default function CustomersPage() {
                       <span className="num text-xs text-muted-foreground">
                         {p.code ?? "—"}
                       </span>
+                      {p.tags.length ? (
+                        /* The tags, right on the directory row (client, 10 Oct).
+                           Managing them lives on the customer's own page. */
+                        <span className="mt-0.5 flex flex-wrap gap-1">
+                          {p.tags.map((t) => (
+                            <span
+                              key={t.id}
+                              className="inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[10px] font-medium"
+                            >
+                              <span
+                                aria-hidden="true"
+                                className="h-1.5 w-1.5 rounded-full"
+                                style={{ background: t.colour ?? "var(--muted-foreground)" }}
+                              />
+                              {t.name}
+                            </span>
+                          ))}
+                        </span>
+                      ) : null}
                     </TableCell>
                     <TableCell className="num">{p.phone ?? "—"}</TableCell>
                     <TableCell className="hidden md:table-cell text-muted-foreground">

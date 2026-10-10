@@ -39,6 +39,8 @@ export interface PartyRow {
   creditLimit: number | null;
   isBlacklisted: boolean;
   salesCount: number;
+  /** The customer's tags — chips on the directory row (client, 10 Oct). */
+  tags: { id: string; name: string; colour: string | null }[];
   createdAt: string | null;
   /** Set only on the archived list — who took them out of the directory, and why. */
   archivedAt: string | null;
@@ -57,6 +59,8 @@ export interface PartyListParams {
    * mistake.
    */
   archived?: boolean;
+  /** Show only customers wearing this tag. */
+  tagId?: string;
 }
 
 export function useParties(params: PartyListParams) {
