@@ -29,8 +29,14 @@ function num(v: Prisma.Decimal | number | null | undefined): number {
 // Module 17 "Earn with Éclat" defaults (client rules, CLIENT-CALL-2026-07).
 /** Diamond discount the referee (Y) receives, as a percent of the bill. */
 const DIAMOND_DISCOUNT_PCT = 5;
-/** Commission the referrer (X) earns, as a percent of the referee's total bill. */
-const COMMISSION_PCT = 5;
+/**
+ * Credit the referrer earns, as a percent of the referred bill. The client's
+ * example (9 Oct 2026, referral-accounts rework) was 5%. There is no tenant
+ * setting for this yet, so the default lives here — but the percent actually
+ * applied is stored per entry (Referral.commissionPct), and a store_manager+
+ * may override it per purchase, so it stays configurable without a migration.
+ */
+const REFERRAL_CREDIT_PERCENT = 5;
 
 /** billAmount * pct/100, rounded to whole paise (2dp) — exact Decimal math. */
 function pctOf(bill: Prisma.Decimal, pct: number): Prisma.Decimal {
@@ -389,11 +395,16 @@ export class LoyaltyService {
   }
 
   /**
-   * POST /loyalty/referrals — apply a code on a referee's purchase.
-   * Y gets DIAMOND_DISCOUNT_PCT off diamond; X earns COMMISSION_PCT of the total
-   * bill into commissionBalance. Enforces the usage cap and updates atomically.
+   * POST /loyalty/referrals — record a referred purchase against a referrer
+   * account (by `referrerId`; legacy callers may still pass the coupon `code`).
+   * Y gets DIAMOND_DISCOUNT_PCT off diamond; X earns REFERRAL_CREDIT_PERCENT of
+   * the total bill into commissionBalance. Enforces the usage cap and updates
+   * atomically.
    */
   async createReferral(user: AuthUser, dto: CreateReferralDto) {
+    if (!dto.referrerId && !dto.code) {
+      throw new BadRequestException('referrerId or code is required');
+    }
     if (dto.storeId) {
       this.scope.assertStoreAllowed(user, dto.storeId);
       await this.scope.assertTradingStore(dto.storeId);
@@ -407,18 +418,21 @@ export class LoyaltyService {
       ? dto.diamondDiscountPct ?? DIAMOND_DISCOUNT_PCT
       : DIAMOND_DISCOUNT_PCT;
     const commissionPct = canOverridePct
-      ? dto.commissionPct ?? COMMISSION_PCT
-      : COMMISSION_PCT;
+      ? dto.commissionPct ?? REFERRAL_CREDIT_PERCENT
+      : REFERRAL_CREDIT_PERCENT;
     const bill = new Prisma.Decimal(dto.billAmount);
     const diamondDiscountAmount = pctOf(bill, diamondDiscountPct);
     const commissionAmount = pctOf(bill, commissionPct);
 
     return this.prisma.$transaction(async (tx) => {
-      // Referral codes are unique PER ORGANISATION — resolve within the caller's org.
+      // Resolve the referrer account within the caller's org — by id (the
+      // account-based flow) or by coupon code (legacy rows stay usable).
       const code = await tx.referralCode.findFirst({
-        where: { code: dto.code, organisationId: user.organisationId },
+        where: dto.referrerId
+          ? { id: dto.referrerId, organisationId: user.organisationId }
+          : { code: dto.code, organisationId: user.organisationId },
       });
-      if (!code) throw new NotFoundException('referral code not found');
+      if (!code) throw new NotFoundException('referrer account not found');
       this.assertCodeAccess(user, code.storeId);
 
       const effectiveStoreId = dto.storeId ?? code.storeId;
@@ -460,6 +474,7 @@ export class LoyaltyService {
         id: referral.id,
         codeId: referral.codeId,
         code: code.code,
+        referrerName: code.referrerName,
         refereeName: referral.refereeName,
         refereePhone: referral.refereePhone ?? '',
         storeId: referral.storeId,

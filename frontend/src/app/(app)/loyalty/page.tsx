@@ -36,7 +36,6 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { InstallmentProgress } from "@/components/loyalty/installment-progress";
-import { TENANT_NAME } from "@/lib/brand";
 import { formatINR } from "@/lib/format";
 import { getNavItem } from "@/lib/navigation";
 import { SCHEME_STATUS_LABELS, type SchemeStatus } from "@/lib/mock/loyalty";
@@ -183,7 +182,7 @@ export default function LoyaltyPage() {
       <Tabs value={tab} onValueChange={setTab} className="space-y-4">
         <TabsList>
           <TabsTrigger value="scheme">Gold savings scheme</TabsTrigger>
-          <TabsTrigger value="referral">Earn with {TENANT_NAME}</TabsTrigger>
+          <TabsTrigger value="referral">Referral accounts</TabsTrigger>
         </TabsList>
 
         <TabsContent value="scheme" className="space-y-4">
@@ -433,7 +432,7 @@ export default function LoyaltyPage() {
             <ReferralProgram />
           ) : (
             <p className="text-sm text-muted-foreground">
-              Referral codes and payouts are managed by store managers and head office.
+              Referral accounts are managed by store managers and head office.
             </p>
           )}
         </TabsContent>
