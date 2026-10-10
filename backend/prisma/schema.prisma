@@ -493,6 +493,7 @@ model Organisation {
   diamondRates                 DiamondRate[]
   discountLimits               DiscountLimit[]
   discountPresets              DiscountPreset[]
+  commissionPlans              CommissionPlan[]
   schemePlans                  SchemePlan[]
   syncStates                   SyncState[]
   legacyRows                   LegacyRow[]
@@ -818,6 +819,7 @@ model Store {
   campaignStores        CampaignStore[]
   dailyReports          DailyReport[]
   salesTargets          SalesTarget[]
+  commissionPlan        CommissionPlan?
   handoffs              Handoff[]
   specialRequests       SpecialRequest[]
   // CaratOS Phase A3.
@@ -2087,6 +2089,8 @@ model Product {
   /// updates do not rewrite creation provenance; legacyId identifies its source.
   importBatchId       String?
   importBatch         ImportBatch?           @relation(fields: [importBatchId], references: [id])
+  /// Reorder asks against this design (SpecialRequest kind = reorder).
+  reorderRequests     SpecialRequest[]
 
   @@unique([organisationId, sku])
   @@unique([organisationId, legacyId])
@@ -2515,6 +2519,36 @@ model Sale {
   @@unique([organisationId, legacyId])
   @@index([storeId, docDate])
   @@index([docType])
+  @@index([organisationId])
+}
+
+/// STORE-level monthly sales commission plan (client call 9 Oct 2026, item 13).
+///
+///   commission = max(0, qualifying monthly sales − threshold) × ratePercent/100
+///
+/// e.g. Bandra ₹15,00,000 at 1%, Kala Ghoda ₹25,00,000 — configuration rows set
+/// by head office, never constants in code. One plan per store (storeId unique).
+///
+/// STRICTLY separate from (a) the per-staff HRMS `Commission` rows (rate ×
+/// attributed sales, Module 6) and (b) the Module 17 customer referral credit
+/// (ReferralCode / Referral / ReferralPayout). Do not fold these together.
+model CommissionPlan {
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  id             String       @id @default(cuid())
+  storeId        String       @unique
+  store          Store        @relation(fields: [storeId], references: [id])
+  /// Monthly qualifying-sales threshold (INR). Decimal like every Sale amount —
+  /// money is never a float (CLAUDE.md rule #4).
+  threshold      Decimal      @db.Decimal(14, 2)
+  /// Commission percent applied to the excess ABOVE the threshold (1.00 = 1%).
+  ratePercent    Decimal      @db.Decimal(5, 2)
+  isActive       Boolean      @default(true)
+  createdById    String?
+  updatedById    String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
   @@index([organisationId])
 }
 
@@ -3428,6 +3462,10 @@ enum SpecialRequestKind {
   diamond_rate
   price_override
   stock_transfer
+  /// More pieces of a design that sells (client 9 Oct item 16). Carries a
+  /// product reference + quantity; approved means "source more", fulfilment is
+  /// a purchase or an inter-store transfer done outside this request.
+  reorder
   purchase
   expense
   staff
@@ -3490,16 +3528,24 @@ model SpecialRequest {
   /// DiamondRate row written when an approved rate request was applied.
   appliedRateId         String?
 
+  // --- reorder payload --------------------------------------------------------
+  /// The DESIGN more pieces of which are being asked for (kind = reorder).
+  productId String?
+  /// How many more pieces the branch wants (kind = reorder).
+  quantity  Int?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   store       Store                   @relation(fields: [storeId], references: [id])
   requestedBy User                    @relation("SpecialRequestRequester", fields: [requestedById], references: [id])
+  product     Product?                @relation(fields: [productId], references: [id])
   messages    SpecialRequestMessage[]
 
   @@index([storeId, createdAt])
   @@index([status, requiredRole])
   @@index([requestedById])
+  @@index([productId])
   @@index([organisationId])
 }
 

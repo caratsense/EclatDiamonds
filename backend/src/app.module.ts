@@ -45,6 +45,7 @@ import { SpecialRequestsModule } from './special-requests/special-requests.modul
 import { AssistantModule } from './assistant/assistant.module';
 import { AuditModule } from './audit/audit.module';
 import { TargetsModule } from './targets/targets.module';
+import { CommissionsModule } from './commissions/commissions.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { IntegrationModule } from './integration/integration.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
@@ -106,6 +107,7 @@ import { AttributionModule } from './attribution/attribution.module';
     AssistantModule,
     AuditModule,
     TargetsModule,
+    CommissionsModule,
     OnboardingModule,
     IntegrationModule,
     TenantConfigModule,
