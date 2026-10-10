@@ -14,7 +14,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { NAV_GROUPS, getNavItem } from "@/lib/navigation";
-import { useSetLocationCheck, useStaff, type StaffUser } from "@/lib/queries/users";
+import { useCustomRoles, useUpdateCustomRole, useSetLocationCheck, useStaff, type StaffUser } from "@/lib/queries/users";
 import { api } from "@/lib/api";
 import { useSetUserAccess, useUserAccess, type AccessOverride, type UserAccess } from "@/lib/queries/access";
 import { ROLE_LABELS, ROLE_RANK, type Role } from "@/lib/types";
@@ -186,6 +186,13 @@ function PersonAccess({ userId, person }: { userId: string; person?: StaffUser }
   const access = useUserAccess(userId);
   const save = useSetUserAccess();
   const locationCheck = useSetLocationCheck();
+  const customRoles = useCustomRoles();
+  const updateCustomRole = useUpdateCustomRole();
+  // The template this person was stamped with, when it still exists: the
+  // "Save screens to role" button writes THIS person's screen set back onto it.
+  const stampedRole = person?.customRoleName
+    ? (customRoles.data ?? []).find((r) => r.name === person.customRoleName)
+    : undefined;
   // Only what head office has touched in this session; the rest reads through.
   const [draft, setDraft] = useState<Record<string, AccessOverride>>({});
 
@@ -234,6 +241,11 @@ function PersonAccess({ userId, person }: { userId: string; person?: StaffUser }
         <div className="space-y-1">
           <CardTitle className="text-base">
             {data.name} · {ROLE_LABELS[data.role]}
+            {person?.customRoleName ? (
+              <span className="ml-2 text-xs font-normal text-muted-foreground">
+                ({person.customRoleName})
+              </span>
+            ) : null}
           </CardTitle>
           <CardDescription>
             {startingPointLine(data)}
@@ -295,6 +307,28 @@ function PersonAccess({ userId, person }: { userId: string; person?: StaffUser }
           >
             <RotateCcw className="h-3.5 w-3.5" /> Role defaults
           </Button>
+          {stampedRole ? (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={updateCustomRole.isPending}
+              title={`Make "${stampedRole.name}" grant exactly the screens configured here`}
+              onClick={() =>
+                updateCustomRole.mutate(
+                  { roleId: stampedRole.id, overrides: merged() },
+                  {
+                    onSuccess: () =>
+                      toast.success(`Role "${stampedRole.name}" now carries these screens.`, {
+                        description: "It applies to people given the role from now on.",
+                      }),
+                    onError: (e) => toast.error(apiErrorMessage(e, "Could not save the role.")),
+                  },
+                )
+              }
+            >
+              <Shield className="h-3.5 w-3.5" /> Save screens to {stampedRole.name}
+            </Button>
+          ) : null}
           <Button size="sm" disabled={!dirty || save.isPending} onClick={() => submit(merged())}>
             {save.isPending ? "Saving…" : "Save"}
           </Button>

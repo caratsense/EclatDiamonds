@@ -598,6 +598,8 @@ model Organisation {
   deadStockPolicies            DeadStockPolicy[]
   staffWeekOffs                StaffWeekOff[]
   staffDayOffs                 StaffDayOff[]
+  customRoles                  CustomRole[]
+  partyTagAssignments          PartyTagAssignment[]
   staffCompensations           StaffCompensation[]
   payslips                     Payslip[]
   payrollRuns                  PayrollRun[]
@@ -868,6 +870,9 @@ model User {
   /// role's defaults (auth/access.ts): `{ "<screen>": "none" | "own" | "store" }`.
   /// Null = the role's defaults exactly.
   accessOverrides Json?
+  /// The custom role last APPLIED to this person, for display only — access is
+  /// always User.role + accessOverrides. Cleared by a manual role change.
+  customRoleName  String?
 
   /// Self-signup approval workflow. Self-registered users start `pending` +
   /// `isActive=false` and hold NO role/store until an authorised approver grants
@@ -959,14 +964,14 @@ model User {
   /// attendance records as location-waived — never as geo-verified, and never
   /// into the off-site review queue or the three-strike count. Default OFF:
   /// a new employee is held to the fence until head office exempts them.
-  geoExempt                Boolean                       @default(false)
-  compensation             StaffCompensation?
-  employeeProfile          EmployeeProfile?              @relation("EmployeeProfileUser")
-  shiftAssignments         ShiftAssignment[]
-  payslips                 Payslip[]
-  quotesApprovalRequested  Quote[]                       @relation("QuoteApprovalRequestedBy")
-  quotesApprovalDecided    Quote[]                       @relation("QuoteApprovalDecidedBy")
-  callsHandled             CallLog[]                     @relation("CallLogAgent")
+  geoExempt               Boolean            @default(false)
+  compensation            StaffCompensation?
+  employeeProfile         EmployeeProfile?   @relation("EmployeeProfileUser")
+  shiftAssignments        ShiftAssignment[]
+  payslips                Payslip[]
+  quotesApprovalRequested Quote[]            @relation("QuoteApprovalRequestedBy")
+  quotesApprovalDecided   Quote[]            @relation("QuoteApprovalDecidedBy")
+  callsHandled            CallLog[]          @relation("CallLogAgent")
 
   @@unique([organisationId, legacyId])
   @@index([role])
@@ -1305,13 +1310,14 @@ model Party {
 
   /// Phase A7 — the file or Connect import run that created this row. Later
   /// updates do not rewrite creation provenance; legacyId identifies its source.
-  importBatchId      String?
-  importBatch        ImportBatch?        @relation(fields: [importBatchId], references: [id])
-  tasks              Task[]
-  leadQualifications LeadQualification[]
-  callLogs           CallLog[]
-  feedbackRequests   FeedbackRequest[]
-  loyaltyAccounts    LoyaltyAccount[]
+  importBatchId       String?
+  importBatch         ImportBatch?         @relation(fields: [importBatchId], references: [id])
+  tasks               Task[]
+  leadQualifications  LeadQualification[]
+  callLogs            CallLog[]
+  feedbackRequests    FeedbackRequest[]
+  loyaltyAccounts     LoyaltyAccount[]
+  partyTagAssignments PartyTagAssignment[]
 
   @@unique([organisationId, legacyId])
   @@index([storeId, createdAt])
@@ -1513,7 +1519,8 @@ model LeadTag {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  assignments LeadTagAssignment[]
+  assignments         LeadTagAssignment[]
+  partyTagAssignments PartyTagAssignment[]
 
   /// Tenant-scoped, so two organisations may both have "Potential Lead".
   @@unique([organisationId, slug])
@@ -1768,6 +1775,7 @@ model Quote {
   /// Money rollup snapshot (recomputed from lines, persisted for fast listing).
   /**
    * /**
+   * /**
    * /*
    * Approval.
    * `approvedTotal` is the amount that was actually approved, snapshotted at the
@@ -1880,19 +1888,19 @@ model QuoteLine {
   perCaratRate    Decimal? @db.Decimal(12, 2)
 
   /// The design this item was priced from, when there is one (StyleBom).
-  styleNumber       String?
+  styleNumber           String?
   /// The piece's size as the customer gives it: "12", "2.6", "16 inch", "5.5 cm".
-  size              String?
+  size                  String?
   /// Item-master code of the metal (G14YG …) and its making rate per gram;
   /// making charges = rate x weight.
-  metalCode         String?
-  makingRatePerGram Decimal? @db.Decimal(12, 2)
+  metalCode             String?
+  makingRatePerGram     Decimal? @db.Decimal(12, 2)
   /// Diamonds (D) and colour stones (C), one entry per code and size:
   /// [{ type, code, name?, size?, pieces?, carats, ratePerCt, multiplier,
   /// discountPercent?, amount }]. `amount` is before the discount. The
   /// multiplier is from quotes made before 30 Sep 2026; the builder no longer
   /// offers it and it is 1 on every quote since.
-  stones            Json?
+  stones                Json?
   /// % off this item's gold and off its making, as the shop gives them: line by
   /// line, the way its bill prints them. NULL means the quote's own
   /// making % applies (quotes made before discounts were per line).
@@ -1900,7 +1908,7 @@ model QuoteLine {
   makingDiscountPercent Decimal? @db.Decimal(5, 2)
   /// Anything about this item the lists cannot say: a stone that is not in the
   /// master, an engraving, what the customer asked for.
-  remark            String?
+  remark                String?
 
   quote   Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
   product Product? @relation(fields: [productId], references: [id])
@@ -5995,6 +6003,53 @@ model StaffWeekOff {
 
   @@unique([userId, storeId, dayOfWeek])
   @@index([organisationId, storeId])
+}
+
+/// A customer wearing a tag (client, 9 Oct). Same vocabulary as leads — one
+/// LeadTag list, two targets — so "VIP" means the same thing on a lead and on
+/// the customer the lead became.
+model PartyTagAssignment {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  partyId String
+  party   Party  @relation(fields: [partyId], references: [id], onDelete: Cascade)
+
+  tagId String
+  tag   LeadTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@unique([partyId, tagId])
+  @@index([organisationId, tagId])
+}
+
+/// A tenant-named role: a BASE role plus a saved set of screen overrides
+/// (client, 9 Oct: "create a role, not only choose one").
+///
+/// Applying it to a person copies the base role and the overrides onto them —
+/// the person is then governed by the same User.role + accessOverrides
+/// machinery as everyone else, and deleting the template later strips nobody.
+/// The template is a stamp, not a live pointer: that keeps every existing
+/// access decision, gate and test exactly as it is.
+model CustomRole {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  name      String
+  /// The role whose rank and defaults the template starts from. Never head_office.
+  baseRole  Role
+  /// Screen overrides in the same shape as User.accessOverrides.
+  overrides Json?
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([organisationId, name])
 }
 
 /// One employee's off day on one DATE — the dated roster (client, 9 Oct).
