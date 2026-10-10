@@ -11,7 +11,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useLeadTags, useLeadTagsFor, useSetLeadTags } from "@/lib/queries/lead-tags";
+import {
+  useLeadTags,
+  useLeadTagsFor,
+  usePartyTagsFor,
+  useSetLeadTags,
+  useSetPartyTags,
+} from "@/lib/queries/lead-tags";
 import { apiErrorMessage } from "@/lib/utils";
 
 /**
@@ -24,11 +30,30 @@ import { apiErrorMessage } from "@/lib/utils";
  * never leave the lead with a tag list neither click intended.
  */
 export function LeadTagsField({ leadId }: { leadId: string }) {
-  const all = useLeadTags();
   const current = useLeadTagsFor(leadId);
   const save = useSetLeadTags(leadId);
+  return <TagsField id={leadId} current={current.data} save={save} />;
+}
 
-  const on = current.data ?? [];
+/** The same chips on a CUSTOMER (client, 9 Oct) — one vocabulary, two targets. */
+export function PartyTagsField({ partyId }: { partyId: string }) {
+  const current = usePartyTagsFor(partyId);
+  const save = useSetPartyTags(partyId);
+  return <TagsField id={partyId} current={current.data} save={save} />;
+}
+
+function TagsField({
+  id,
+  current,
+  save,
+}: {
+  id: string;
+  current: { id: string; name: string; colour: string | null }[] | undefined;
+  save: { isPending: boolean; mutate: (ids: string[], opts: { onError: (e: unknown) => void }) => void };
+}) {
+  const all = useLeadTags();
+
+  const on = current ?? [];
   const onIds = new Set(on.map((t) => t.id));
   const available = (all.data ?? []).filter((t) => !onIds.has(t.id));
 
@@ -71,7 +96,7 @@ export function LeadTagsField({ leadId }: { leadId: string }) {
             disabled={save.isPending}
             onValueChange={(id) => write([...on.map((t) => t.id), id])}
           >
-            <SelectTrigger id={`lead-tag-add-${leadId}`} className="h-7 w-auto gap-1 px-2 text-xs">
+            <SelectTrigger id={`lead-tag-add-${id}`} className="h-7 w-auto gap-1 px-2 text-xs">
               <SelectValue placeholder="+ Add tag" />
             </SelectTrigger>
             <SelectContent>

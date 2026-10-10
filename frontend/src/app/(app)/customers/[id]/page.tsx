@@ -36,6 +36,8 @@ import {
 } from "@/lib/queries/tenant-config";
 import { AttributionPanel } from "@/components/crm/attribution-panel";
 import { ArchiveContactButton } from "@/components/crm/archive-contact-button";
+import { DeleteContactButton } from "@/components/crm/delete-contact-button";
+import { PartyTagsField } from "@/components/crm/lead-tags-field";
 import { QualificationPanel } from "@/components/crm/qualification-panel";
 import { formatINR } from "@/lib/format";
 
@@ -189,8 +191,12 @@ export default function Customer360Page({
             </div>
           )}
           <ArchiveContactButton partyId={customer.id} name={customer.name} />
+          <DeleteContactButton partyId={customer.id} name={customer.name} />
         </div>
       </div>
+
+      {/* Tags: the same vocabulary the CRM uses, on the customer themselves. */}
+      <PartyTagsField partyId={customer.id} />
 
       {/* Summary. `scopeNote` is rendered verbatim: two users legitimately see
           different totals here, and the number alone would look like a bug. */}
