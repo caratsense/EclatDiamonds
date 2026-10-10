@@ -43,6 +43,7 @@ import {
   type PartyTypeName,
 } from "@/lib/queries/parties";
 import { useLeadTags } from "@/lib/queries/lead-tags";
+import { PartyTagsField } from "@/components/crm/lead-tags-field";
 import { useDebouncedValue } from "@/lib/queries/search";
 import {
   apiErrorMessage,
@@ -470,6 +471,10 @@ function CustomerDetailDialog({
                 {party.code ? ` · ${party.code}` : ""}
               </DialogDescription>
             </DialogHeader>
+
+            {/* Tag the customer right here — "imp", "bought" — without leaving
+                the directory (client, 10 Oct). Typing a new name creates it. */}
+            <PartyTagsField partyId={party.id} />
 
             <div className="divide-y">
               <DetailRow label="Phone" value={party.phone ?? "—"} />

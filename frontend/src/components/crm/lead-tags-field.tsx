@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { Tag, X } from "lucide-react";
 import { toast } from "sonner";
 
@@ -11,13 +10,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useState } from "react";
+
 import {
+  useCreateLeadTag,
   useLeadTags,
   useLeadTagsFor,
   usePartyTagsFor,
   useSetLeadTags,
   useSetPartyTags,
 } from "@/lib/queries/lead-tags";
+import { ROLE_RANK } from "@/lib/types";
+import { useSession } from "@/store/use-session";
 import { apiErrorMessage } from "@/lib/utils";
 
 /**
@@ -52,6 +56,12 @@ function TagsField({
   save: { isPending: boolean; mutate: (ids: string[], opts: { onError: (e: unknown) => void }) => void };
 }) {
   const all = useLeadTags();
+  const create = useCreateLeadTag();
+  const role = useSession((st) => st.baseRole);
+  // Creating vocabulary is a manager act (the server enforces it too);
+  // applying existing tags stays open to the floor.
+  const canCreate = ROLE_RANK[role] >= ROLE_RANK.store_manager;
+  const [newTag, setNewTag] = useState("");
 
   const on = current ?? [];
   const onIds = new Set(on.map((t) => t.id));
@@ -108,13 +118,54 @@ function TagsField({
             </SelectContent>
           </Select>
         ) : null}
-        {all.isSuccess && (all.data ?? []).length === 0 ? (
+        {canCreate ? (
+          /* Type a tag that does not exist yet — "imp", "bought" — and it is
+             created and put on this customer in one move (client, 10 Oct). */
+          <form
+            className="inline-flex items-center gap-1"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const name = newTag.trim();
+              if (!name) return;
+              const existing = (all.data ?? []).find(
+                (t) => t.name.toLowerCase() === name.toLowerCase(),
+              );
+              if (existing) {
+                if (!onIds.has(existing.id)) write([...on.map((t) => t.id), existing.id]);
+                setNewTag("");
+                return;
+              }
+              create.mutate(
+                { name },
+                {
+                  onSuccess: (made) => {
+                    setNewTag("");
+                    write([...on.map((t) => t.id), made.id]);
+                  },
+                  onError: (err) => toast.error(apiErrorMessage(err, "Could not create the tag.")),
+                },
+              );
+            }}
+          >
+            <input
+              aria-label="New tag"
+              value={newTag}
+              onChange={(e) => setNewTag(e.target.value)}
+              maxLength={40}
+              placeholder="New tag…"
+              className="h-7 w-24 rounded-md border bg-background px-2 text-xs"
+            />
+            <button
+              type="submit"
+              disabled={!newTag.trim() || create.isPending || save.isPending}
+              className="h-7 rounded-md border px-2 text-xs font-medium text-muted-foreground hover:bg-muted/60 disabled:opacity-50"
+            >
+              {create.isPending ? "…" : "Tag"}
+            </button>
+          </form>
+        ) : all.isSuccess && (all.data ?? []).length === 0 ? (
           <span className="text-xs text-muted-foreground">
-            No tags yet —{" "}
-            <Link href="/settings/lead-tags" className="text-primary hover:underline">
-              create them in Settings
-            </Link>
-            .
+            No tags yet — ask a manager to add one here.
           </span>
         ) : null}
       </div>
