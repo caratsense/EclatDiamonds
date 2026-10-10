@@ -395,9 +395,9 @@ export const NAV_ITEMS: NavItem[] = [
     icon: ArrowLeftRight,
     group: "Stock Management",
     rank: 20,
-    // Salespeople have no actions here; store managers run the movements,
-    // area/HO oversee + approve.
-    roles: ["store_manager", "area_manager", "head_office"],
+    // Salespeople raise and track transfer requests (client, 9 Oct: staff
+    // initiate); store managers run the movements, area/HO oversee + approve.
+    roles: ["salesperson", "store_manager", "area_manager", "head_office"],
   },
 
   /* ------------------------------------------- Marketing & Inbound */

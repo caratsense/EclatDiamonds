@@ -21,6 +21,10 @@ const KIND_MIN_ROLE: Record<SpecialRequestKind, Role> = {
   price_override: Role.store_manager,
   purchase: Role.store_manager,
   stock_transfer: Role.store_manager,
+  // Merchandising is a store-level call: the manager knows what sells at their
+  // counter. A manager's own reorder still climbs to HO via the one-rank-above
+  // rule, and a big ask climbs via the amount ladder.
+  reorder: Role.store_manager,
   expense: Role.store_manager,
   staff: Role.store_manager,
   other: Role.store_manager,
@@ -41,6 +45,7 @@ export const REQUEST_KIND_LABELS: Record<SpecialRequestKind, string> = {
   diamond_rate: 'Diamond rate',
   price_override: 'Price override',
   stock_transfer: 'Stock transfer',
+  reorder: 'Reorder',
   purchase: 'Purchase',
   expense: 'Expense',
   staff: 'Staffing',

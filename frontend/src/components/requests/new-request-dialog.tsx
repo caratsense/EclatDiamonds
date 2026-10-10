@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useSession } from "@/store/use-session";
+import { DesignSearchField } from "@/components/requests/design-search-field";
 import {
   REQUEST_KIND_LABELS,
   REQUEST_KINDS,
@@ -30,6 +31,7 @@ import {
   type RequestPriority,
   type SpecialRequestKind,
 } from "@/lib/queries/special-requests";
+import type { Product } from "@/lib/mock/catalogue";
 import { apiErrorMessage, isRealName, positiveNumberInput } from "@/lib/utils";
 
 const PRIORITIES: RequestPriority[] = ["low", "medium", "high", "urgent"];
@@ -59,10 +61,14 @@ export function NewRequestDialog({
   const [neededBy, setNeededBy] = useState("");
   const [diamondSpec, setDiamondSpec] = useState("");
   const [rate, setRate] = useState("");
+  // Reorder: the design asked for and how many more pieces (M9, 9 Oct item 16).
+  const [design, setDesign] = useState<Product | null>(null);
+  const [qty, setQty] = useState("");
   // On "All Stores" the branch is a choice, never silently the first one.
   const [pickedStore, setPickedStore] = useState("");
 
   const isDiamond = kind === "diamond_rate";
+  const isReorder = kind === "reorder";
 
   const branches = stores.filter((s) => !s.isAggregate);
   const targetStoreId = currentStore.isAggregate ? pickedStore : currentStore.id;
@@ -76,6 +82,8 @@ export function NewRequestDialog({
     setNeededBy("");
     setDiamondSpec("");
     setRate("");
+    setDesign(null);
+    setQty("");
     setPickedStore("");
   }
 
@@ -84,11 +92,19 @@ export function NewRequestDialog({
       toast.error("Pick the branch this request is for.");
       return;
     }
-    if (title.trim().length < 3) {
+    if (isReorder && (!design || !(Number(qty) >= 1))) {
+      toast.error("Pick the design and how many more pieces you need.");
+      return;
+    }
+    // A reorder's title can be derived — the design and count say it all.
+    const finalTitle =
+      title.trim() ||
+      (isReorder && design ? `Reorder ${Number(qty)} × ${design.name}` : "");
+    if (finalTitle.length < 3) {
       toast.error("Give the request a short title.");
       return;
     }
-    if (!isRealName(title)) {
+    if (!isRealName(finalTitle)) {
       toast.error("The title needs letters, not just a number.");
       return;
     }
@@ -101,13 +117,15 @@ export function NewRequestDialog({
       {
         storeId: targetStoreId,
         kind,
-        title: title.trim(),
+        title: finalTitle,
         details: details.trim() || undefined,
         amount: amount ? Number(amount) : undefined,
         priority,
         neededBy: neededBy || undefined,
         diamondSpec: isDiamond ? diamondSpec.trim() : undefined,
         requestedRatePerCarat: isDiamond ? Number(rate) : undefined,
+        productId: isReorder && design ? design.id : undefined,
+        quantity: isReorder ? Number(qty) : undefined,
       },
       {
         onSuccess: (r) => {
@@ -172,7 +190,39 @@ export function NewRequestDialog({
                 them. Approving it publishes the new rate for this branch.
               </p>
             ) : null}
+            {isReorder ? (
+              <p className="text-xs text-muted-foreground">
+                Ask for more pieces of a design that sells — even when its
+                current piece sits unsold at another branch. Your store manager
+                or above signs it off.
+              </p>
+            ) : null}
           </div>
+
+          {isReorder ? (
+            <>
+              <div className="grid gap-1.5">
+                <Label htmlFor="req-design">Design</Label>
+                <DesignSearchField
+                  inputId="req-design"
+                  value={design}
+                  onChange={setDesign}
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="req-qty">Pieces needed</Label>
+                <Input
+                  id="req-qty"
+                  type="number"
+                  min={1}
+                  className="w-32"
+                  placeholder="e.g. 3"
+                  value={qty}
+                  onChange={(e) => setQty(positiveNumberInput(e.target.value))}
+                />
+              </div>
+            </>
+          ) : null}
 
           <div className="grid gap-1.5">
             <Label htmlFor="req-title">Title</Label>
@@ -181,7 +231,9 @@ export function NewRequestDialog({
               placeholder={
                 isDiamond
                   ? "e.g. Rate for Mehta wedding set"
-                  : "e.g. Transfer 3 bangles from Surat"
+                  : isReorder
+                    ? "Optional — filled in from the design and count"
+                    : "e.g. Transfer 3 bangles from Surat"
               }
               value={title}
               onChange={(e) => setTitle(e.target.value)}

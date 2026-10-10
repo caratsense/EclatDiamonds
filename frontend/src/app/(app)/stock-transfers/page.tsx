@@ -69,8 +69,10 @@ export default function StockTransfersPage() {
   const nav = getNavItem("stock-transfers");
   const { role, currentStore } = useSession();
   const isHeadOffice = role === "head_office";
-  // Only store managers create transfers (source store); HO approves, others read.
-  const canCreate = role === "store_manager";
+  // Branch staff raise transfer requests (client, 9 Oct: staff initiate, not
+  // only administrators); HO approves. Per-stage actions in the detail dialog
+  // stay gated by the server.
+  const canCreate = role === "store_manager" || role === "salesperson";
 
   const [status, setStatus] = React.useState<TransferStatus | "all">("all");
   const [direction, setDirection] = React.useState<TransferDirection>("all");

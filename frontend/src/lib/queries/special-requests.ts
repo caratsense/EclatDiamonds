@@ -20,6 +20,7 @@ export type SpecialRequestKind =
   | "diamond_rate"
   | "price_override"
   | "stock_transfer"
+  | "reorder"
   | "purchase"
   | "expense"
   | "staff"
@@ -38,6 +39,7 @@ export const REQUEST_KIND_LABELS: Record<SpecialRequestKind, string> = {
   diamond_rate: "Diamond rate",
   price_override: "Price override",
   stock_transfer: "Stock transfer",
+  reorder: "Reorder",
   purchase: "Purchase",
   expense: "Expense",
   staff: "Staffing",
@@ -49,6 +51,7 @@ export const REQUEST_KINDS: SpecialRequestKind[] = [
   "diamond_rate",
   "price_override",
   "stock_transfer",
+  "reorder",
   "purchase",
   "expense",
   "staff",
@@ -91,6 +94,10 @@ export interface SpecialRequest {
   currentRatePerCarat: number | null;
   requestedRatePerCarat: number | null;
   appliedRateId: string | null;
+  /** Reorder requests: the design asked for, and how many more pieces. */
+  productId: string | null;
+  quantity: number | null;
+  product: { sku: string; name: string; styleNumber: string | null } | null;
   createdAt: string;
   /**
    * Whether THIS viewer may act — computed server-side from the escalation
@@ -152,6 +159,9 @@ export interface CreateSpecialRequestInput {
   /** Required when kind is `diamond_rate`. */
   diamondSpec?: string;
   requestedRatePerCarat?: number;
+  /** Required when kind is `reorder`: the design, and how many more pieces. */
+  productId?: string;
+  quantity?: number;
 }
 
 function invalidate(qc: ReturnType<typeof useQueryClient>) {
