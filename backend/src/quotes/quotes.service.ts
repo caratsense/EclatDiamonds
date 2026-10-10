@@ -598,14 +598,34 @@ export class QuotesService {
       .filter(Boolean)
       .join('\n');
 
+    /*
+     * Which template rides along (client, 10 Oct). Outside the 24-hour
+     * customer-care window the outbox refuses a free-form document; the
+     * approved quotation template is what lets the PDF land anyway - the
+     * document becomes the template's header (the delivery path builds that)
+     * and the quote's own facts fill its body. Attached only when the tenant
+     * actually holds the template, synced and APPROVED; otherwise the send
+     * behaves exactly as before: delivered inside the window, held with the
+     * reason outside it. An explicit template on the request always wins.
+     */
+    const template = dto.templateName
+      ? { name: dto.templateName, languageCode: dto.languageCode, components: undefined }
+      : await this.quotationTemplate(user.organisationId, {
+          customer: quote.customer,
+          ref: quote.ref,
+          total: inr(doc.grandTotal),
+          validUntil: quote.validUntil || 'the quote date',
+        });
+
     const queued = await this.omnichannel.queueToContact(
       user,
       {
         to: recipient,
         purpose: 'service',
         body: caption,
-        templateName: dto.templateName,
-        languageCode: dto.languageCode,
+        templateName: template?.name,
+        languageCode: template?.languageCode,
+        templateComponents: template?.components,
       },
       { storageKey: doc.storageKey, filename: doc.filename, mimeType: 'application/pdf' },
       // `get` above already held the caller to this quote.
@@ -631,6 +651,56 @@ export class QuotesService {
       policy: queued.policy,
       // Not connected means the job will fail and say why — never "sent".
       dryRun: !(await this.whatsapp.enabledFor(user.organisationId)),
+    };
+  }
+
+  /**
+   * The tenant's approved quotation template, with this quote's body values,
+   * or null when it is not synced/approved yet - the caller then sends the
+   * plain document, exactly the pre-template behaviour. The name is the one
+   * submitted to Meta on 10 Oct; the body is five parameters:
+   * {{1}} customer, {{2}} ref, {{3}} business, {{4}} total, {{5}} valid-until.
+   */
+  private async quotationTemplate(
+    organisationId: string,
+    values: { customer: string; ref: string; total: string; validUntil: string },
+  ): Promise<{ name: string; languageCode: string; components: unknown[] } | null> {
+    const name = 'quotation_pdf_v1';
+    const asset = await this.prisma.integrationAsset.findFirst({
+      where: {
+        organisationId,
+        kind: 'message_template',
+        externalId: `${name}:en`,
+        isActive: true,
+        integration: { providerCode: 'whatsapp_cloud', status: { notIn: ['disabled'] } },
+      },
+      select: { metadata: true, lastVerifiedAt: true },
+    });
+    if (!asset) return null;
+    // The same bar queue() applies (templateSendability): the PROVIDER said
+    // APPROVED, and said it recently enough that the sync has seen it. A
+    // template this misses is left off, and the send stays a plain document.
+    const metadata = asset.metadata as { providerStatus?: string } | null;
+    if (metadata?.providerStatus !== 'APPROVED' || !asset.lastVerifiedAt) return null;
+    const org = await this.prisma.organisation.findUnique({
+      where: { id: organisationId },
+      select: { name: true, legalName: true },
+    });
+    return {
+      name,
+      languageCode: 'en',
+      components: [
+        {
+          type: 'body',
+          parameters: [
+            values.customer,
+            values.ref,
+            org?.legalName || org?.name || 'our store',
+            values.total,
+            values.validUntil,
+          ].map((text) => ({ type: 'text', text })),
+        },
+      ],
     };
   }
 
