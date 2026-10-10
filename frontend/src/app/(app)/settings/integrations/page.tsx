@@ -25,6 +25,7 @@ import {
   type ProviderRow,
 } from "@/lib/queries/tenant-config";
 import { useWhatsAppSender } from "@/lib/queries/crm-ai";
+import { PRODUCT_NAME } from "@/lib/brand";
 import { apiErrorMessage } from "@/lib/utils";
 
 /**
@@ -481,7 +482,7 @@ function IntegrationCard({
             <p className="w-full text-xs text-muted-foreground">
               The numeric Phone Number ID from WhatsApp Manager, not the visible phone number.{" "}
               {purpose === "internal"
-                ? "A staff line answers people linked to a CaratOS account and says nothing to anybody else."
+                ? `A staff line answers people linked to a ${PRODUCT_NAME} account and says nothing to anybody else.`
                 : "A customer line answers anyone who writes in, and is where ad clicks arrive."}
             </p>
           </div>
@@ -681,7 +682,7 @@ function TelephonyWebhookPanel() {
         <code className="font-[family-name:var(--font-mono-face)]">
           POST {issued?.path ?? "/integrations/telephony/webhook"}
         </code>{" "}
-        on your CaratOS API host, sending the token below as the{" "}
+        on your {PRODUCT_NAME} API host, sending the token below as the{" "}
         <code className="font-[family-name:var(--font-mono-face)]">
           {issued?.header ?? "x-caratos-telephony-token"}
         </code>{" "}

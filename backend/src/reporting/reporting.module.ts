@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { CheckinsModule } from '../checkins/checkins.module';
 import { ReportingController } from './reporting.controller';
 import { ReportingService } from './reporting.service';
 import { ScheduledReportsController } from './scheduled-reports.controller';
@@ -14,6 +15,9 @@ import { DsrDigestService } from './dsr-digest.service';
  * the emailed file and the downloaded one come to disagree.
  */
 @Module({
+  // CheckinsModule supplies the walk-ins workbook for scheduled reports —
+  // the same builder as the page's export button, never a second copy.
+  imports: [CheckinsModule],
   controllers: [ReportingController, ScheduledReportsController],
   providers: [ReportingService, ScheduledReportsService, DsrDigestService],
   exports: [ScheduledReportsService, DsrDigestService],

@@ -46,6 +46,7 @@ import {
   useWebhookDelivery,
 } from "@/lib/queries/loyalty-programme";
 import { formatINR, formatNumber } from "@/lib/format";
+import { PRODUCT_NAME } from "@/lib/brand";
 import { apiErrorMessage, positiveNumberInput } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
@@ -176,7 +177,7 @@ export default function LoyaltyProgrammePage() {
         <CardHeader>
           <CardTitle className="text-base">The rate</CardTitle>
           <CardDescription>
-            CaratOS computes what a purchase earns. Your website reports the spend, not the
+            {PRODUCT_NAME} computes what a purchase earns. Your website reports the spend, not the
             points &mdash; so this stays the one place the rule lives.
           </CardDescription>
         </CardHeader>

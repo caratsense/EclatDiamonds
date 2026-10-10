@@ -16,7 +16,7 @@ import { create } from "zustand";
  * clear it on close. Nothing here is written from inside an effect, so there is
  * no render-then-correct flash and nothing to synchronise.
  */
-export type QuickActionKind = "lead" | "checkin";
+export type QuickActionKind = "lead" | "checkin" | "attendance" | "import";
 
 interface QuickActionState {
   /** What the user asked to start, until the owning screen picks it up. */

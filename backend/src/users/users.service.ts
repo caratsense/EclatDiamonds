@@ -156,6 +156,8 @@ export class UsersService {
       email: user.email,
       phone: user.phone ?? null,
       role: user.role as Role,
+      customRoleName: user.customRoleName ?? null,
+      geoExempt: user.geoExempt === true,
       stores: links.map((us: any) => ({
         id: us.store.id,
         name: us.store.name,
@@ -295,6 +297,11 @@ export class UsersService {
   /** PATCH /users/:id/role — change a user's role (delegated, strictly below actor). */
   async updateRole(actor: AuthUser, id: string, dto: UpdateUserRoleDto) {
     const existing = await this.getOrThrow(actor, id);
+    // A hand-picked role replaces whatever template was stamped before.
+    await this.prisma.user.updateMany({
+      where: { id, organisationId: actor.organisationId, NOT: { customRoleName: null } },
+      data: { customRoleName: null },
+    });
     const storeId = await this.primaryStoreId(id);
     // Cannot touch a peer/superior or someone out of scope; new role must be below actor.
     this.assertCanManage(actor, existing.role, storeId);
@@ -461,6 +468,121 @@ export class UsersService {
    * another ACTIVE, in-scope user. Nothing is deleted — only `isActive` flips false
    * and ownership is moved.
    */
+  /**
+   * PATCH /users/:id/location-check (client, 9 Oct): whether this person's
+   * punches are held to the store geofence. Off = exempt - a traveller,
+   * a remote worker, a rotating floater. Head office only (controller): an
+   * exemption waives an anti-fraud check, so it is set where the audit lands.
+   */
+  /**
+   * PATCH /users/:id (client, 9 Oct): fix a name, a login ID, a contact email
+   * or a phone WITHOUT recreating the employee. Same delegation rule as every
+   * other user mutation: strictly below the actor's rank, inside their scope.
+   */
+  async updateDetails(
+    actor: AuthUser,
+    id: string,
+    dto: { name?: string; email?: string; contactEmail?: string; phone?: string },
+  ) {
+    const target = await this.getOrThrow(actor, id);
+    const storeId = await this.primaryStoreId(id);
+    this.assertCanManage(actor, target.role, storeId);
+
+    const data: Record<string, string> = {};
+    if (dto.name?.trim()) data.name = dto.name.trim();
+    if (dto.email?.trim()) data.email = dto.email.trim().toLowerCase();
+    if (dto.contactEmail !== undefined) data.contactEmail = dto.contactEmail.trim();
+    if (dto.phone !== undefined) data.phone = dto.phone.replace(/\D/g, '');
+    if (!Object.keys(data).length) {
+      throw new BadRequestException('Nothing to change.');
+    }
+
+    try {
+      await this.prisma.user.update({ where: { id: target.id }, data });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new BadRequestException('That Login ID is already taken by somebody else.');
+      }
+      throw err;
+    }
+    await this.audit.record(actor, {
+      action: 'users.details_updated',
+      entityType: 'User',
+      entityId: id,
+      summary: `${target.name}: ${Object.keys(data).join(', ')} changed`,
+      metadata: { changed: Object.keys(data) },
+    });
+    const fresh = await this.prisma.user.findUniqueOrThrow({
+      where: { id: target.id },
+      include: USER_INCLUDE,
+    });
+    return this.toView(fresh);
+  }
+
+  /**
+   * DELETE /users/:id (client, 9 Oct) — for the account that should never have
+   * existed: a typo, a duplicate, a demo row. A person with HISTORY is never
+   * deleted: their attendance backs payslips, their leads and quotes carry the
+   * shop's numbers, and the foreign keys refuse it anyway. The refusal names
+   * the counts and points at Deactivate, which keeps the record and hands off
+   * the work. Head office only (controller).
+   */
+  async remove(actor: AuthUser, id: string) {
+    const target = await this.getOrThrow(actor, id);
+    if (target.id === actor.id) {
+      throw new BadRequestException('You cannot delete your own account.');
+    }
+    const storeId = await this.primaryStoreId(id);
+    this.assertCanManage(actor, target.role, storeId);
+
+    const [attendance, leads, quotes, checkIns, conversations] = await Promise.all([
+      this.prisma.attendanceRecord.count({ where: { staffId: id } }),
+      this.prisma.lead.count({ where: { ownerId: id } }),
+      this.prisma.quote.count({ where: { assignedRepId: id } }),
+      this.prisma.checkIn.count({ where: { attendedById: id } }),
+      this.prisma.conversation.count({ where: { assignedUserId: id } }),
+    ]);
+    const history: [string, number][] = [
+      ['attendance days', attendance],
+      ['leads', leads],
+      ['quotes', quotes],
+      ['walk-ins attended', checkIns],
+      ['conversations', conversations],
+    ];
+    const held = history.filter(([, count]) => count > 0);
+    if (held.length) {
+      throw new BadRequestException(
+        `${target.name} has ${held
+          .map(([what, count]) => `${count} ${what}`)
+          .join(', ')} on record. Deactivate them instead — the record stays and their open work is handed over.`,
+      );
+    }
+
+    await this.prisma.userStore.deleteMany({ where: { userId: id } });
+    await this.prisma.user.delete({ where: { id: target.id } });
+    await this.audit.record(actor, {
+      action: 'users.deleted',
+      entityType: 'User',
+      entityId: id,
+      summary: `${target.name} (${target.email}) deleted — no operational history`,
+      metadata: { email: target.email, role: target.role },
+    });
+    return { deleted: true };
+  }
+
+  async setLocationCheck(actor: AuthUser, id: string, required: boolean) {
+    const target = await this.getOrThrow(actor, id);
+    await this.prisma.user.update({ where: { id: target.id }, data: { geoExempt: !required } });
+    await this.audit.record(actor, {
+      action: 'users.location_check_set',
+      entityType: 'User',
+      entityId: id,
+      summary: `${target.name}: location check ${required ? 'required again' : 'waived (geo-exempt)'}`,
+      metadata: { geoExempt: !required },
+    });
+    return { id: target.id, geoExempt: !required };
+  }
+
   async deactivate(actor: AuthUser, id: string, dto: DeactivateUserDto) {
     const target = await this.getOrThrow(actor, id);
     const storeId = await this.primaryStoreId(id);
@@ -1005,16 +1127,17 @@ export class UsersService {
   }
 
   /** PUT /users/:id/access — replace head office's changes for one person. */
-  async setAccess(actor: AuthUser, id: string, overrides: Record<string, string>) {
-    const u = await this.prisma.user.findFirst({
-      where: { id, organisationId: actor.organisationId },
-      select: { id: true, name: true, role: true, accessOverrides: true },
-    });
-    if (!u) throw new NotFoundException('User not found');
-    if (u.role === 'head_office') {
-      throw new BadRequestException('Head office always has every screen.');
-    }
-    const defaults = roleDefaults(u.role, actor.organisationId);
+  /**
+   * The ONE validator for screen overrides — direct per-person edits and role
+   * templates both pass through it, so a template can never grant what a
+   * direct edit could not. Entries equal to the role's default are dropped.
+   */
+  private cleanOverridesFor(
+    role: Role,
+    organisationId: string,
+    overrides: Record<string, string> | null | undefined,
+  ): Record<string, AccessOverride> {
+    const defaults = roleDefaults(role, organisationId);
     const clean: Record<string, AccessOverride> = {};
     for (const [slug, level] of Object.entries(overrides ?? {})) {
       if (!(MODULES as readonly string[]).includes(slug)) {
@@ -1030,6 +1153,167 @@ export class UsersService {
       if ((defaults[slug] ?? 'none') === level) continue;
       clean[slug] = level;
     }
+    return clean;
+  }
+
+  // ==========================================================================
+  // Custom roles (client, 9 Oct): create a role, not only choose one
+  // ==========================================================================
+
+  /**
+   * What a base role opens by default — the starting matrix for the role
+   * editor, which builds a NEW role without routing through any person.
+   */
+  roleDefaultsFor(actor: AuthUser, role: Role) {
+    if (role === 'head_office') {
+      throw new BadRequestException('Head office always has every screen.');
+    }
+    return { role, defaults: roleDefaults(role, actor.organisationId) };
+  }
+
+  async listRoles(actor: AuthUser) {
+    return this.prisma.customRole.findMany({
+      where: { organisationId: actor.organisationId },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true, baseRole: true, overrides: true, updatedAt: true },
+    });
+  }
+
+  /**
+   * A template = a base role (for rank and defaults) + saved screen overrides,
+   * validated by the same rules as a direct access edit.
+   */
+  async createRole(
+    actor: AuthUser,
+    dto: { name: string; baseRole: Role; overrides?: Record<string, string> },
+  ) {
+    const name = dto.name.trim();
+    if (!name) throw new BadRequestException('Give the role a name.');
+    if (dto.baseRole === 'head_office') {
+      throw new BadRequestException('Head office cannot be a template.');
+    }
+    this.assertAssignableRole(actor, dto.baseRole);
+    const overrides = this.cleanOverridesFor(dto.baseRole, actor.organisationId, dto.overrides);
+    try {
+      const role = await this.prisma.customRole.create({
+        data: {
+          organisationId: actor.organisationId,
+          name,
+          baseRole: dto.baseRole,
+          overrides: Object.keys(overrides).length ? overrides : Prisma.DbNull,
+          createdById: actor.id,
+        },
+      });
+      await this.audit.record(actor, {
+        action: 'users.custom_role_created',
+        entityType: 'CustomRole',
+        entityId: role.id,
+        summary: `Role "${name}" created on ${ROLE_LABELS[dto.baseRole] ?? dto.baseRole}`,
+        metadata: { baseRole: dto.baseRole, overrides },
+      });
+      return role;
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new BadRequestException(`A role named "${name}" already exists.`);
+      }
+      throw err;
+    }
+  }
+
+  /** Re-save a template's screens. People already stamped keep what they have. */
+  async updateRoleTemplate(
+    actor: AuthUser,
+    roleId: string,
+    dto: { overrides: Record<string, string> },
+  ) {
+    const role = await this.prisma.customRole.findFirst({
+      where: { id: roleId, organisationId: actor.organisationId },
+    });
+    if (!role) throw new NotFoundException('Role not found');
+    const overrides = this.cleanOverridesFor(role.baseRole, actor.organisationId, dto.overrides);
+    await this.prisma.customRole.update({
+      where: { id: role.id },
+      data: { overrides: Object.keys(overrides).length ? overrides : Prisma.DbNull },
+    });
+    await this.audit.record(actor, {
+      action: 'users.custom_role_updated',
+      entityType: 'CustomRole',
+      entityId: role.id,
+      summary: `Role "${role.name}" screens re-saved`,
+      metadata: { overrides },
+    });
+    return this.prisma.customRole.findUniqueOrThrow({ where: { id: role.id } });
+  }
+
+  /** Delete the template. Nobody loses anything — it was a stamp, not a pointer. */
+  async deleteRole(actor: AuthUser, roleId: string) {
+    const role = await this.prisma.customRole.findFirst({
+      where: { id: roleId, organisationId: actor.organisationId },
+    });
+    if (!role) throw new NotFoundException('Role not found');
+    await this.prisma.customRole.delete({ where: { id: role.id } });
+    await this.audit.record(actor, {
+      action: 'users.custom_role_deleted',
+      entityType: 'CustomRole',
+      entityId: roleId,
+      summary: `Role "${role.name}" deleted`,
+      metadata: { baseRole: role.baseRole },
+    });
+    return { deleted: true };
+  }
+
+  /**
+   * Stamp a template onto a person: their base role and screen overrides become
+   * the template's, under the same rank and scope rules as a manual change.
+   */
+  async applyRole(actor: AuthUser, userId: string, roleId: string) {
+    const role = await this.prisma.customRole.findFirst({
+      where: { id: roleId, organisationId: actor.organisationId },
+    });
+    if (!role) throw new NotFoundException('Role not found');
+
+    const target = await this.getOrThrow(actor, userId);
+    const storeId = await this.primaryStoreId(userId);
+    this.assertCanManage(actor, target.role, storeId);
+    this.assertAssignableRole(actor, role.baseRole);
+
+    const overrides = this.cleanOverridesFor(
+      role.baseRole,
+      actor.organisationId,
+      (role.overrides ?? {}) as Record<string, string>,
+    );
+    await this.prisma.user.update({
+      where: { id: target.id },
+      data: {
+        role: role.baseRole,
+        accessOverrides: Object.keys(overrides).length ? overrides : Prisma.DbNull,
+        customRoleName: role.name,
+      },
+    });
+    await this.audit.record(actor, {
+      action: 'users.custom_role_applied',
+      entityType: 'User',
+      entityId: userId,
+      summary: `${target.name} given the "${role.name}" role (${ROLE_LABELS[role.baseRole] ?? role.baseRole} + ${Object.keys(overrides).length} screen changes)`,
+      metadata: { roleId, roleName: role.name, baseRole: role.baseRole, overrides },
+    });
+    const fresh = await this.prisma.user.findUniqueOrThrow({
+      where: { id: target.id },
+      include: USER_INCLUDE,
+    });
+    return this.toView(fresh);
+  }
+
+  async setAccess(actor: AuthUser, id: string, overrides: Record<string, string>) {
+    const u = await this.prisma.user.findFirst({
+      where: { id, organisationId: actor.organisationId },
+      select: { id: true, name: true, role: true, accessOverrides: true },
+    });
+    if (!u) throw new NotFoundException('User not found');
+    if (u.role === 'head_office') {
+      throw new BadRequestException('Head office always has every screen.');
+    }
+    const clean = this.cleanOverridesFor(u.role, actor.organisationId, overrides);
     const before = (u.accessOverrides ?? {}) as Record<string, AccessOverride>;
     await this.prisma.user.update({
       where: { id: u.id },

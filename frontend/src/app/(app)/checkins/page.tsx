@@ -36,6 +36,7 @@ import {
   useStoreScope,
 } from "@/components/common/store-scope-field";
 import { getNavItem } from "@/lib/navigation";
+import { useLiveOccupancyEnabled } from "@/lib/queries/tenant-config";
 import { formatPercent } from "@/lib/format";
 import { StatTiles } from "@/components/hrms/stat-tiles";
 import {
@@ -128,6 +129,7 @@ export default function CheckinsPage() {
   const isAggregate = currentStore.isAggregate;
 
   const { data: checkins = [], isLoading, isError, refetch } = useCheckins();
+  const liveOccupancy = useLiveOccupancyEnabled();
   const [addOpen, setAddOpen] = useState(false);
 
   /*
@@ -196,38 +198,14 @@ export default function CheckinsPage() {
       </div>
 
       <div className="space-y-4">
-        <StatTiles
-          tiles={[
-            { label: "Footfall today", value: String(today), icon: DoorOpen },
-            {
-              label: "Converted today",
-              value: String(converted),
-              hint: "sale closed",
-              icon: Users,
-            },
-            {
-              label: "In store now",
-              value: String(live),
-              hint: "being attended",
-              icon: UserCheck,
-            },
-            {
-              label: "Conversion",
-              value: formatPercent(convRate, 0),
-              hint: `${converted} closed`,
-              icon: TrendingUp,
-            },
-          ]}
-        />
-
         {isLoading ? (
           <>
-            <Skeleton className="h-40 rounded-xl" />
+            <Skeleton className="h-72 rounded-xl" />
+            <Skeleton className="h-24 rounded-xl" />
             <div className="grid gap-4 lg:grid-cols-2">
               <Skeleton className="h-64 rounded-xl" />
               <Skeleton className="h-64 rounded-xl" />
             </div>
-            <Skeleton className="h-72 rounded-xl" />
           </>
         ) : isError ? (
           <div className="mx-auto max-w-md rounded-lg border bg-muted/30 p-4 text-center">
@@ -246,8 +224,38 @@ export default function CheckinsPage() {
           </div>
         ) : (
           <>
-            <LiveInStore
-              checkins={checkins}
+            {/* The log first: logging and finding today's visits is the job
+                this page is opened for (client, 9 Oct). Analysis reads below. */}
+            <CheckInLog checkins={checkins} />
+
+            <StatTiles
+              tiles={[
+                { label: "Footfall today", value: String(today), icon: DoorOpen },
+                {
+                  label: "Converted today",
+                  value: String(converted),
+                  hint: "sale closed",
+                  icon: Users,
+                },
+                // Live occupancy is a tenant choice: a one-person store logs the
+                // visit after serving, so "in store now" would always be fiction.
+                ...(liveOccupancy
+                  ? [
+                      {
+                        label: "In store now",
+                        value: String(live),
+                        hint: "being attended",
+                        icon: UserCheck,
+                      },
+                    ]
+                  : []),
+                {
+                  label: "Conversion",
+                  value: formatPercent(convRate, 0),
+                  hint: `${converted} closed`,
+                  icon: TrendingUp,
+                },
+              ]}
             />
 
             <div className="grid gap-4 lg:grid-cols-2">
@@ -257,7 +265,7 @@ export default function CheckinsPage() {
               ) : null}
             </div>
 
-            <CheckInLog checkins={checkins} />
+            {liveOccupancy ? <LiveInStore checkins={checkins} /> : null}
           </>
         )}
       </div>

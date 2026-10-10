@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useSubmitTemplate, type TemplateDraftInput } from "@/lib/queries/meta-admin";
+import { TENANT_NAME } from "@/lib/brand";
 import { apiErrorMessage } from "@/lib/utils";
 
 /**
@@ -295,7 +296,7 @@ export function TemplateComposer({
               value={footer}
               maxLength={60}
               onChange={(e) => setFooter(e.target.value)}
-              placeholder="Éclat Diamonds"
+              placeholder={TENANT_NAME}
             />
           </div>
 

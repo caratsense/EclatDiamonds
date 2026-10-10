@@ -4,6 +4,8 @@
  * hooks in Phase 2. All amounts in ₹, dates ISO (yyyy-MM-dd).
  */
 
+import { PRODUCT_NAME } from "@/lib/brand";
+
 export type DepartmentKey =
   | "it"
   | "inventory"
@@ -102,7 +104,7 @@ export const NEW_STORE_PROJECT: NewStoreProject = {
         { id: "it-2", label: "POS terminals & billing rack installed", status: "in_progress", dependsOn: "it-1" },
         { id: "it-3", label: "CCTV & burglar alarm wiring", status: "in_progress" },
         { id: "it-4", label: "Legacy attendance device connected", status: "todo", dependsOn: "it-2" },
-        { id: "it-5", label: "CaratOS terminal onboarding", status: "blocked", dependsOn: "it-2" },
+        { id: "it-5", label: `${PRODUCT_NAME} terminal onboarding`, status: "blocked", dependsOn: "it-2" },
       ],
     },
     {

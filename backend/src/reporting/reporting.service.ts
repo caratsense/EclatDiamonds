@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { isFrontLine } from '../common/role.util';
+import { PRODUCT_NAME } from '../common/brand';
 import { DailyReport, MetalKind, PaymentMode, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
@@ -678,7 +679,7 @@ export class ReportingService {
       sent = result.delivered;
       disabled = result.dryRun;
     } else if (this.email.enabled) {
-      const subject = `CaratSense ${PERIOD_LABEL[dto.period]} Report — ${summary.from} to ${summary.to}`;
+      const subject = `${PRODUCT_NAME} ${PERIOD_LABEL[dto.period]} Report — ${summary.from} to ${summary.to}`;
       sent = (await this.email.send(to, subject, preview)).sent;
     } else {
       disabled = true;
@@ -726,7 +727,7 @@ export class ReportingService {
     const stores = s.storeScope.count === 1 ? '1 store' : `${s.storeScope.count} stores`;
 
     return [
-      `CaratSense ${PERIOD_LABEL[s.period]} Report`,
+      `${PRODUCT_NAME} ${PERIOD_LABEL[s.period]} Report`,
       `${s.from} to ${s.to} · ${stores}`,
       '',
       'SALES',

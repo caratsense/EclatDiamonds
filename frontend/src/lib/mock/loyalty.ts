@@ -204,9 +204,11 @@ export interface ReferralCode {
   storeId?: string;
 }
 
-/** A single redemption of a code against a referee's bill. */
+/** A single referred purchase recorded against a referrer account. */
 export interface Referral {
   id: string;
+  /** The referrer account credited; echoed by the API on create. */
+  referrerName?: string;
   refereeName: string;
   /** Present when the API echoes it back; optional per contract. */
   refereePhone?: string;

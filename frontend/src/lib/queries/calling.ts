@@ -119,7 +119,14 @@ export interface CallingWorkspace {
     store: { id: string; name: string } | null;
     owner: { id: string; name: string } | null;
   } | null;
-  notes: { id: string; body: string; createdAt: string }[];
+  notes: {
+    id: string;
+    body: string;
+    /** 'note' | 'call' | 'visit' | 'whatsapp' — how the note was captured. */
+    kind: string;
+    author: string | null;
+    createdAt: string;
+  }[];
   activity: {
     id: string;
     type: string;
@@ -172,6 +179,28 @@ export function useCallingQueue(params: {
       return data;
     },
   });
+}
+
+/**
+ * The tasks a call session walks: everything OVERDUE, then everything due
+ * TODAY, fetched at the moment the session starts.
+ *
+ * Fetched here rather than snapshotted from whichever tab is open, because the
+ * button sits beside all four buckets: started from "Upcoming" it used to walk
+ * calls that are not owed yet, and on an empty "Due today" it silently did
+ * nothing at all. A session is work owed NOW, which is exactly these two
+ * buckets and nothing else.
+ */
+export async function fetchSessionQueue(params: { mine?: boolean; search?: string }) {
+  const load = async (bucket: CallingBucket) => {
+    const { data } = await api.get<{ items: QueueTask[]; nextCursor: string | null }>(
+      "/calling/queue",
+      { params: { ...params, bucket, limit: 100 } },
+    );
+    return data.items;
+  };
+  const [overdue, today] = await Promise.all([load("overdue"), load("today")]);
+  return [...overdue, ...today];
 }
 
 export function useCallingWorkspace(taskId: string | undefined) {

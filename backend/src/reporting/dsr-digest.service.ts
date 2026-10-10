@@ -24,6 +24,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
 import type { AuthUser } from '../common/auth-user';
 import { updateOrgSettings } from '../config/org-settings';
+import { WhatsAppCredentialsService } from '../integrations/whatsapp-credentials.service';
 import { WhatsAppService } from '../integrations/whatsapp.service';
 
 /** Digits-only E.164, the shape Meta uses inbound and WhatsAppService expects. */
@@ -95,6 +96,7 @@ export class DsrDigestService {
     private readonly prisma: PrismaService,
     private readonly whatsapp: WhatsAppService,
     private readonly audit: AuditService,
+    private readonly credentials: WhatsAppCredentialsService,
   ) {}
 
   private async read(organisationId: string): Promise<DsrDigestConfig> {
@@ -221,19 +223,9 @@ export class DsrDigestService {
     return { body: lines.join('\n'), stores: days };
   }
 
-  /** The internal staff line, so the digest arrives from the number staff know. */
-  private async internalRoute(organisationId: string): Promise<{ assetId: string } | undefined> {
-    const asset = await this.prisma.integrationAsset.findFirst({
-      where: {
-        organisationId,
-        kind: 'phone_number',
-        purpose: 'internal',
-        isActive: true,
-        integration: { providerCode: 'whatsapp_cloud', status: { notIn: ['disabled'] } },
-      },
-      select: { id: true },
-    });
-    return asset ? { assetId: asset.id } : undefined;
+  /** The internal staff line — resolution shared with scheduled reports. */
+  private internalRoute(organisationId: string) {
+    return this.credentials.internalRoute(organisationId);
   }
 
   /** Compose and deliver now, whatever the hour. The test button, and the sweep's worker. */

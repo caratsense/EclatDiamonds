@@ -44,6 +44,9 @@ export interface ScheduledReportRun {
   /** `dry_run` means the file was built and email is not configured here. */
   emailStatus: "sent" | "dry_run" | "no_recipients" | "failed";
   emailDetail: string | null;
+  /** The staff-line WhatsApp leg, independent of email. */
+  whatsappStatus: "sent" | "dry_run" | "no_recipients" | "failed";
+  whatsappDetail: string | null;
   recipients: string[];
   createdAt: string;
 }
@@ -59,21 +62,32 @@ export interface ScheduledReport {
   /** Empty means every column. */
   columns: string[];
   recipients: string[];
+  /** Staff WhatsApp numbers; delivery rides the internal line. */
+  phoneRecipients: string[];
   isActive: boolean;
   lastRunAt: string | null;
   lastRun: Pick<
     ScheduledReportRun,
-    "periodKey" | "rows" | "status" | "emailStatus" | "emailDetail" | "createdAt"
+    | "periodKey"
+    | "rows"
+    | "status"
+    | "emailStatus"
+    | "emailDetail"
+    | "whatsappStatus"
+    | "whatsappDetail"
+    | "createdAt"
   > | null;
 }
 
 export interface ScheduledReportInput {
   name?: string;
+  kind?: "leads" | "walkins";
   storeId?: string | null;
   cadence?: "monthly" | "weekly";
   sendHour?: number;
   columns?: string[];
   recipients?: string[];
+  phoneRecipients?: string[];
   isActive?: boolean;
 }
 

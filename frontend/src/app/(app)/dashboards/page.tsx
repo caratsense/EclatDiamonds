@@ -10,6 +10,7 @@ import { KpiCard } from "@/components/dashboards/kpi-card";
 import { AgendaPanel } from "@/components/dashboards/agenda-panel";
 import { HandoffsPanel } from "@/components/dashboards/handoffs-panel";
 import {
+  LeadFunnelChart,
   SalesTrendChart,
   StoreComparisonChart,
 } from "@/components/dashboards/dashboard-charts";
@@ -108,6 +109,9 @@ export default function DashboardsPage() {
   const isMultiStore = ROLE_RANK[role] >= ROLE_RANK.area_manager;
   const trend = chartsQuery.data?.salesTrend ?? [];
   const storeComparison = chartsQuery.data?.storeComparison ?? [];
+  const leadFunnel = chartsQuery.data?.leadFunnel;
+  const periodLabel =
+    DASHBOARD_PERIODS.find((p) => p.value === period)?.label ?? "This period";
 
   return (
     <>
@@ -176,6 +180,17 @@ export default function DashboardsPage() {
               <AgendaPanel />
             )}
           </div>
+
+          {leadFunnel ? (
+            <div className="mt-4">
+              <LeadFunnelChart
+                totals={leadFunnel.totals}
+                days={leadFunnel.days}
+                periodLabel={periodLabel}
+                href="/crm"
+              />
+            </div>
+          ) : null}
 
           <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
             {isMultiStore ? <AgendaPanel /> : <HandoffsPanel />}

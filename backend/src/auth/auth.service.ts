@@ -10,6 +10,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { effectiveAccess } from './access';
+import { PRODUCT_NAME } from '../common/brand';
 import { Prisma } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -174,7 +175,7 @@ export class AuthService {
 
     // One message for every failure below, so we don't leak which emails exist.
     const rejected = new UnauthorizedException(
-      'No CaratSense account for this Google email — ask an admin to add you.',
+      `No ${PRODUCT_NAME} account for this Google email — ask an admin to add you.`,
     );
 
     let user = await this.prisma.user.findUnique({ where: { googleSub: sub } });
@@ -422,8 +423,10 @@ export class AuthService {
        * the two things a real signer-up can actually do about it.
        */
       throw new ConflictException(
+        // The login page string-matches this message ("already have a … account"
+        // / "sign in instead") — keep both sides in lockstep.
         'We could not create an organisation with those details. If you already have a ' +
-          'CaratOS account, sign in instead — or ask your administrator to invite you.',
+          `${PRODUCT_NAME} account, sign in instead — or ask your administrator to invite you.`,
       );
     }
 
@@ -834,7 +837,7 @@ export class AuthService {
     const result = await this.whatsapp.sendText(
       user.organisationId!,
       user.phone!,
-      `Your Eclat sign-in code is ${code}. It expires in 5 minutes. Do not share it.`,
+      `Your ${PRODUCT_NAME} sign-in code is ${code}. It expires in 5 minutes. Do not share it.`,
       { storeId: primaryStore?.storeId ?? null },
     );
     const dryRun = result.dryRun;

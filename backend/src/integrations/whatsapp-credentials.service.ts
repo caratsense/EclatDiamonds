@@ -449,6 +449,26 @@ export class WhatsAppCredentialsService {
    * The platform binding participates here too — but only the explicit one, and
    * only for the number the platform actually owns.
    */
+  /**
+   * The INTERNAL staff line's route, or undefined when none is configured.
+   * The evening DSR digest established the pattern: staff-facing automation
+   * leaves from the number staff already know, never from a customer line.
+   * Shared here so every scheduled staff delivery picks the same sender.
+   */
+  async internalRoute(organisationId: string): Promise<{ assetId: string } | undefined> {
+    const asset = await this.prisma.integrationAsset.findFirst({
+      where: {
+        organisationId,
+        kind: 'phone_number',
+        purpose: 'internal',
+        isActive: true,
+        integration: { providerCode: 'whatsapp_cloud', status: { notIn: ['disabled'] } },
+      },
+      select: { id: true },
+    });
+    return asset ? { assetId: asset.id } : undefined;
+  }
+
   async organisationForPhoneNumberId(phoneNumberId: string): Promise<{
     organisationId: string;
     integrationId: string | null;

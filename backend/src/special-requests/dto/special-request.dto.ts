@@ -2,11 +2,13 @@ import { Type } from 'class-transformer';
 import {
   IsEnum,
   IsIn,
+  IsInt,
   IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
   Matches,
+  Max,
   MaxLength,
   Min,
   MinLength,
@@ -69,6 +71,22 @@ export class CreateSpecialRequestDto {
   @IsNumber()
   @Min(0)
   requestedRatePerCarat?: number;
+
+  // --- reorder payload (required when kind is reorder) ------------------------
+
+  /** The design (Product id) more pieces of which are being asked for. */
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  productId?: string;
+
+  /** How many more pieces. Whole pieces only — there is no half a bangle. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(999)
+  quantity?: number;
 }
 
 /** PATCH /requests/:id/decide — approve or reject. */

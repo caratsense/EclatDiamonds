@@ -7,7 +7,6 @@ import {
   Download,
   FileSpreadsheet,
   Flame,
-  PackageSearch,
   Search,
   Upload,
   X,
@@ -18,6 +17,7 @@ import { toast } from "sonner";
 import { SectionHeader } from "@/components/section/section-header";
 import { AgingChart } from "@/components/inventory/aging-chart";
 import { CreateTransferDialog } from "@/components/inventory/create-transfer-dialog";
+import { ReorderTab } from "@/components/inventory/reorder-tab";
 import { KpiCard } from "@/components/dashboards/kpi-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -721,28 +721,10 @@ export default function InventoryPage() {
         </TabsContent>
 
         <TabsContent value="reorder">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="flex items-center gap-2 text-base">
-                Auto-reorder alerts
-              </CardTitle>
-              <CardDescription>
-                On-hand below a reorder point, with a suggested purchase quantity.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {/* No reorder points are recorded anywhere in the system, so there
-                  is nothing to compare on-hand against. This used to show
-                  invented items and quantities, which is worse than showing
-                  nothing: a manager acting on them would order stock against
-                  numbers no one set. */}
-              <EmptyState
-                icon={PackageSearch}
-                title="Reorder points are not set up yet"
-                description="Once a minimum quantity is recorded against your items, anything that falls below it will be listed here with a suggested order. Until then no recommendation can be made."
-              />
-            </CardContent>
-          </Card>
+          {/* Manual reorder requests (client 9 Oct, item 16): "reorder" is a
+              merchandising ask — more pieces of a design that sells — routed
+              through Branch Requests, NOT a reorder-point/low-stock alert. */}
+          <ReorderTab />
         </TabsContent>
       </Tabs>
     </>

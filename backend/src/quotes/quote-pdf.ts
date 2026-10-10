@@ -1,4 +1,6 @@
-import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from 'pdf-lib';
+import { PDFDocument, PDFFont, PDFPage, StandardFonts, degrees, rgb } from 'pdf-lib';
+
+import { PRODUCT_NAME } from '../common/brand';
 
 /** Everything printed on a detailed quote, already resolved and in scope. */
 export interface QuotePdfData {
@@ -27,6 +29,12 @@ export interface QuotePdfData {
   customer: { name: string; phone: string; address?: string | null; state?: string | null; gstin?: string | null; pan?: string | null };
   kind: 'sale' | 'repair';
   isKaccha: boolean;
+  /**
+   * True when the approval gate has NOT cleared this revision. The document
+   * still renders — the people deciding it need to read it — but every page is
+   * stamped so a forwarded copy cannot pass as a final quotation.
+   */
+  draft?: boolean;
   remarks: string;
   lines: {
     description: string;
@@ -219,7 +227,7 @@ export async function renderQuotePdf(data: QuotePdfData): Promise<Buffer> {
   const pdf = await PDFDocument.create();
   pdf.setTitle(`Quotation ${data.ref}`);
   pdf.setAuthor(data.business.name);
-  pdf.setCreator('CaratOS');
+  pdf.setCreator(PRODUCT_NAME);
   pdf.setCreationDate(data.generatedAt);
 
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
@@ -554,7 +562,9 @@ export async function renderQuotePdf(data: QuotePdfData): Promise<Buffer> {
     'Subject to Mumbai Jurisdiction only',
     'For Return Policy',
     'A) Get 100% value of metal at the prevailing market rate. *T&C apply',
-    'B) Eclat Diamonds offers 80% value of diamonds at prevailing market price. *T&C apply',
+    // The business's own name, not a hardcoded tenant: the buy-back promise is
+    // made by whoever issues the document (client, 9 Oct: Nibhana branding).
+    `B) ${data.business.name} offers 80% value of diamonds at prevailing market price. *T&C apply`,
     'C) Making Charged will be deducted while any returns made. *T&C apply',
     'D) Incase of any discount given at the time of original purchase will be deducted from the exchange amount. *T&C apply',
     'E) Products once sold will not be eligible for return or exchange if damaged post-purchase. *T&C apply',
@@ -567,16 +577,12 @@ export async function renderQuotePdf(data: QuotePdfData): Promise<Buffer> {
   });
   y = termsTop - termsHeight;
 
-  /* --------------------------------------------------------- signatures */
-  const signTop = y;
-  const signHeight = 54;
-  box(MARGIN, signTop, width, signHeight);
-  text(`For, ${data.business.name.toUpperCase()}`, right - 6, { size: 7.5, align: 'right', at: signTop - 12 });
-  line(MARGIN + 20, signTop - 44, MARGIN + 170, signTop - 44);
-  line(right - 170, signTop - 44, right - 20, signTop - 44);
-  text('Customer Signature', MARGIN + 95, { size: 7, align: 'center', at: signTop - 52 });
-  text('Authorized Signature', right - 95, { size: 7, align: 'center', at: signTop - 52 });
-  y = signTop - signHeight;
+  /*
+   * No signature block. The client removed it on the 9 Oct call: a quotation
+   * is an offer, not a contract — nobody was ever signing the two lines, and
+   * the empty box read as an unfinished document. Scoped to quotations only.
+   */
+  y -= 6;
 
   if (data.approval) {
     text(
@@ -600,5 +606,30 @@ export async function renderQuotePdf(data: QuotePdfData): Promise<Buffer> {
 
   // Classic cross-reference table rather than object streams: older PDF
   // readers (and some phone previewers) still cannot open the latter.
+  if (data.draft) {
+    // Stamped last, across everything already drawn: a pale diagonal band on
+    // every page plus a plain line under the title area, so both a skim and a
+    // print read it. Light enough to leave the figures legible for the
+    // approver, unmistakable enough that nobody quotes a customer from it.
+    for (const p of pdf.getPages()) {
+      const { width: pw, height: ph } = p.getSize();
+      p.drawText('DRAFT - AWAITING APPROVAL', {
+        x: pw * 0.12,
+        y: ph * 0.35,
+        size: 42,
+        font: bold,
+        color: rgb(0.82, 0.3, 0.3),
+        opacity: 0.16,
+        rotate: degrees(35),
+      });
+      p.drawText('DRAFT - not approved for the customer', {
+        x: MARGIN,
+        y: ph - MARGIN + 6,
+        size: 9,
+        font: bold,
+        color: rgb(0.75, 0.25, 0.25),
+      });
+    }
+  }
   return Buffer.from(await pdf.save({ useObjectStreams: false }));
 }

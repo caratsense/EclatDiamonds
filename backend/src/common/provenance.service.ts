@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
+import { PRODUCT_NAME } from './brand';
 import type { SourceSystem } from '../integration/contracts/provenance';
 
 /**
@@ -155,7 +156,7 @@ export class ProvenanceService {
       sourceSystem: 'manual',
       externalId: null,
       importBatchId: null,
-      description: 'Entered in CaratOS.',
+      description: `Entered in ${PRODUCT_NAME}.`,
     };
   }
 
@@ -204,7 +205,7 @@ export class ProvenanceService {
       ...descriptor,
       sourceSystem,
       description: connected
-        ? `Synced from ${sourceLabel} through CaratOS Connect.`
+        ? `Synced from ${sourceLabel} through ${PRODUCT_NAME} Connect.`
         : `Imported from a ${sourceLabel} file.`,
       batch,
     };

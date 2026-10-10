@@ -16,7 +16,9 @@ import { karatToMetal, parseKarat } from '../metal';
  */
 
 /** Bump when the mapping changes, so an unchanged payload is re-persisted once. */
-export const WEBSITE_NORMALIZER_VERSION = 1;
+// v2: the carat rule — spec ≤ BOM total no longer conflicts, so the bump lets
+// the next sync re-visit unchanged products and auto-resolve the old noise.
+export const WEBSITE_NORMALIZER_VERSION = 2;
 
 type Raw = Record<string, unknown>;
 
@@ -322,6 +324,13 @@ function normalisePrices(p: Raw, variants: NormalizedVariant[]): NormalizedPrice
  * weight is compared with that karat's metal line; a clause stating carats is
  * compared with the diamond lines, and a diamond line measured in grams while
  * the text says carats is a unit mismatch. Nothing is corrected.
+ *
+ * Carat rule (client, 9 Oct): the spec's carat figure names the CENTRE stone,
+ * not the total stone weight — a 3 ct solitaire whose BOM totals 3.7 ct
+ * (centre + side stones) is expected structure, not a data fault. So spec ≤
+ * BOM total is fine; a conflict is raised only when the spec promises MORE
+ * carats than the materials add up to, or when the spec states carats but the
+ * BOM carries no diamond weight at all.
  */
 function specConflicts(externalId: string, spec: string | null, variants: NormalizedVariant[]): NormalizedConflict[] {
   if (!spec) return [];
@@ -355,12 +364,23 @@ function specConflicts(externalId: string, spec: string | null, variants: Normal
       const specCt = Number(carats[1]);
       for (const v of variants) {
         const bomCt = v.bom.filter((l) => l.isDiamond).reduce((s, l) => s + (l.weight ?? 0), 0) || v.diamondWeight;
-        if (bomCt != null && Math.abs(bomCt - specCt) > 0.005) {
+        // The spec names the centre stone; the BOM totals every stone. Spec ≤
+        // total is the expected shape, so only two things are wrong: the spec
+        // promising more carats than the materials total, or carats specified
+        // with no diamond weight in the BOM at all.
+        if (bomCt == null) {
           out.push({
             kind: 'spec_mismatch',
             key: `${externalId}:spec_mismatch:${v.sourceKey}:diamond_weight`,
-            summary: `Specification says ${specCt} ct of diamond; the bill of material says ${bomCt}.`,
-            detail: { field: 'diamond_weight', variantKey: v.sourceKey, spec: specCt, bom: bomCt, specText: clause },
+            summary: `Specification says ${specCt} ct of diamond, but the bill of material lists no diamond weight.`,
+            detail: { field: 'diamond_weight', reason: 'bom_missing', variantKey: v.sourceKey, spec: specCt, bom: null, specText: clause },
+          });
+        } else if (specCt - bomCt > 0.005) {
+          out.push({
+            kind: 'spec_mismatch',
+            key: `${externalId}:spec_mismatch:${v.sourceKey}:diamond_weight`,
+            summary: `Specification says ${specCt} ct of diamond, but the materials total only ${bomCt} ct.`,
+            detail: { field: 'diamond_weight', reason: 'spec_exceeds_bom', variantKey: v.sourceKey, spec: specCt, bom: bomCt, specText: clause },
           });
         }
       }

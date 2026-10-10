@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -14,7 +15,7 @@ import { OmnichannelService } from '../omnichannel/omnichannel.service';
 import { ApprovalGate, approvalResetFor, QuoteApprovalService } from './quote-approval.service';
 import { renderQuotePdf } from './quote-pdf';
 import { StoreScopeService } from '../common/store-scope.service';
-import { isAllStoreRole } from '../common/role.util';
+import { ROLE_RANK, isAllStoreRole } from '../common/role.util';
 import { SequenceService } from '../common/sequence.service';
 import { StorageService } from '../storage/storage.service';
 import { WhatsAppService } from '../integrations/whatsapp.service';
@@ -505,7 +506,9 @@ export class QuotesService {
     });
 
     const body = [
-      store?.name ?? 'CaratSense',
+      // Tenant stationery, not the product: when the origin store has no name
+      // we say "our store" rather than branding another business's quote.
+      store?.name ?? 'our store',
       `Quote ${quote.ref}`,
       quote.customer,
       '',
@@ -542,8 +545,20 @@ export class QuotesService {
    */
   async pdf(user: AuthUser, id: string) {
     await this.get(user, id);
-    const gate = await this.approval.assertCleared(user.organisationId, id);
-    return this.issuePdf(user, id, gate);
+    /*
+     * Whoever DECIDES the approval must be able to read the document they are
+     * deciding (client, 9 Oct: "head office should be able to download it").
+     * So a manager or head office always gets the PDF - stamped DRAFT on every
+     * page until the gate clears, so a forwarded copy cannot pass as final.
+     * A salesperson still waits: for them the gate is the whole point. The
+     * customer-facing exits (share, send-pdf) stay refused for EVERYONE until
+     * the gate clears - this loosens reading, never sending.
+     */
+    const gate = await this.approval.gate(user.organisationId, id);
+    if (!gate.cleared && ROLE_RANK[user.role] < ROLE_RANK.store_manager) {
+      throw new ForbiddenException(gate.reason ?? 'This quote cannot be sent yet.');
+    }
+    return this.issuePdf(user, id, gate, { draft: !gate.cleared });
   }
 
   /**
@@ -583,14 +598,34 @@ export class QuotesService {
       .filter(Boolean)
       .join('\n');
 
+    /*
+     * Which template rides along (client, 10 Oct). Outside the 24-hour
+     * customer-care window the outbox refuses a free-form document; the
+     * approved quotation template is what lets the PDF land anyway - the
+     * document becomes the template's header (the delivery path builds that)
+     * and the quote's own facts fill its body. Attached only when the tenant
+     * actually holds the template, synced and APPROVED; otherwise the send
+     * behaves exactly as before: delivered inside the window, held with the
+     * reason outside it. An explicit template on the request always wins.
+     */
+    const template = dto.templateName
+      ? { name: dto.templateName, languageCode: dto.languageCode, components: undefined }
+      : await this.quotationTemplate(user.organisationId, {
+          customer: quote.customer,
+          ref: quote.ref,
+          total: inr(doc.grandTotal),
+          validUntil: quote.validUntil || 'the quote date',
+        });
+
     const queued = await this.omnichannel.queueToContact(
       user,
       {
         to: recipient,
         purpose: 'service',
         body: caption,
-        templateName: dto.templateName,
-        languageCode: dto.languageCode,
+        templateName: template?.name,
+        languageCode: template?.languageCode,
+        templateComponents: template?.components,
       },
       { storageKey: doc.storageKey, filename: doc.filename, mimeType: 'application/pdf' },
       // `get` above already held the caller to this quote.
@@ -620,11 +655,66 @@ export class QuotesService {
   }
 
   /**
+   * The tenant's approved quotation template, with this quote's body values,
+   * or null when it is not synced/approved yet - the caller then sends the
+   * plain document, exactly the pre-template behaviour. The name is the one
+   * submitted to Meta on 10 Oct; the body is five parameters:
+   * {{1}} customer, {{2}} ref, {{3}} business, {{4}} total, {{5}} valid-until.
+   */
+  private async quotationTemplate(
+    organisationId: string,
+    values: { customer: string; ref: string; total: string; validUntil: string },
+  ): Promise<{ name: string; languageCode: string; components: unknown[] } | null> {
+    const name = 'quotation_pdf_v1';
+    const asset = await this.prisma.integrationAsset.findFirst({
+      where: {
+        organisationId,
+        kind: 'message_template',
+        externalId: `${name}:en`,
+        isActive: true,
+        integration: { providerCode: 'whatsapp_cloud', status: { notIn: ['disabled'] } },
+      },
+      select: { metadata: true, lastVerifiedAt: true },
+    });
+    if (!asset) return null;
+    // The same bar queue() applies (templateSendability): the PROVIDER said
+    // APPROVED, and said it recently enough that the sync has seen it. A
+    // template this misses is left off, and the send stays a plain document.
+    const metadata = asset.metadata as { providerStatus?: string } | null;
+    if (metadata?.providerStatus !== 'APPROVED' || !asset.lastVerifiedAt) return null;
+    const org = await this.prisma.organisation.findUnique({
+      where: { id: organisationId },
+      select: { name: true, legalName: true },
+    });
+    return {
+      name,
+      languageCode: 'en',
+      components: [
+        {
+          type: 'body',
+          parameters: [
+            values.customer,
+            values.ref,
+            org?.legalName || org?.name || 'our store',
+            values.total,
+            values.validUntil,
+          ].map((text) => ({ type: 'text', text })),
+        },
+      ],
+    };
+  }
+
+  /**
    * Render the PDF for the revision the gate just cleared, and keep a private
    * copy. The quote is re-read here; if it moved on since the gate looked, the
    * PDF is refused rather than printed for a revision nobody cleared.
    */
-  private async issuePdf(user: AuthUser, id: string, gate: ApprovalGate) {
+  private async issuePdf(
+    user: AuthUser,
+    id: string,
+    gate: ApprovalGate,
+    opts: { draft?: boolean } = {},
+  ) {
     const organisationId = user.organisationId;
     const q = await this.prisma.quote.findFirst({
       where: { id, organisationId },
@@ -709,19 +799,24 @@ export class QuotesService {
               decidedAt: q.decidedAt ? q.decidedAt.toISOString().slice(0, 10) : null,
             }
           : null,
+      draft: opts.draft === true,
       generatedAt: new Date(),
     });
 
+    // A draft copy gets its own key and filename: it must never overwrite the
+    // cleared revision's stored copy (the one the outbox attaches), and the
+    // file a manager saves should say what it is.
+    const suffix = opts.draft ? '-draft' : '';
     const storageKey = await this.storage.savePrivate(
       organisationId,
       'quote-pdfs',
-      `${q.id}-r${q.revision}.pdf`,
+      `${q.id}-r${q.revision}${suffix}.pdf`,
       buffer,
     );
     return {
       buffer,
       storageKey,
-      filename: `${q.ref}-r${q.revision}.pdf`,
+      filename: `${q.ref}-r${q.revision}${suffix}.pdf`,
       revision: q.revision,
       grandTotal: Number(q.grandTotal),
     };
@@ -958,6 +1053,40 @@ export class QuotesService {
     // "@" kaccha quotes are HO-only: don't reveal them by ref to anyone else.
     if (q.isKaccha && !isAllStoreRole(user.role)) throw new NotFoundException('Quote not found');
     return toView(q);
+  }
+
+  /**
+   * DELETE /quotes/:id (client, 9 Oct).
+   *
+   * The one quote that must survive is the one that became an order - refuse
+   * it. Everything else deletes whole: lines, photos and redeemable stores
+   * cascade, and nothing outside the quote family references the row. The
+   * audit entry carries ref, status and total, so what was offered and
+   * withdrawn stays on the record after the row is gone. Managers and above
+   * only (controller): a priced offer disappearing on a salesperson's say-so
+   * is exactly what the approval gate exists to prevent.
+   */
+  async remove(user: AuthUser, id: string) {
+    const current = await this.prisma.quote.findFirst({
+      where: { id, ...this.scope.storeFilter(user), ...this.ownQuotes(user) },
+      select: { id: true, ref: true, status: true, storeId: true, grandTotal: true, isKaccha: true },
+    });
+    if (!current) throw new NotFoundException('Quote not found');
+    if (current.isKaccha && !isAllStoreRole(user.role)) throw new NotFoundException('Quote not found');
+    this.scope.assertStoreAllowed(user, current.storeId);
+    if (current.status === 'accepted') {
+      throw new BadRequestException('This quote has become an order and cannot be deleted.');
+    }
+    await this.prisma.quote.delete({ where: { id: current.id } });
+    await this.audit.record(user, {
+      action: 'quotes.deleted',
+      entityType: 'Quote',
+      entityId: id,
+      storeId: current.storeId,
+      summary: `Quote ${current.ref} deleted (was ${current.status.replace('_', ' ')})`,
+      metadata: { ref: current.ref, status: current.status, grandTotal: current.grandTotal.toString() },
+    });
+    return { deleted: true };
   }
 
   async create(user: AuthUser, dto: CreateQuoteDto) {

@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { AlertCircle, ArrowRight, CheckCircle2, Gem, Wallet } from "lucide-react";
+import { format } from "date-fns";
+import { AlertCircle, ArrowRight, CheckCircle2, Receipt, Wallet } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -15,13 +16,16 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { formatINR, formatPercent } from "@/lib/format";
 import {
-  REFERRAL_COMMISSION_PCT,
-  REFERRAL_DIAMOND_DISCOUNT_PCT,
-  type Referral,
-} from "@/lib/mock/loyalty";
-import { useApplyReferral } from "@/lib/queries/loyalty";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { formatINR, formatPercent } from "@/lib/format";
+import { REFERRAL_COMMISSION_PCT, type Referral } from "@/lib/mock/loyalty";
+import { useApplyReferral, useReferralCodes } from "@/lib/queries/loyalty";
 import {
   StoreScopeField,
   useStoreScope,
@@ -38,72 +42,77 @@ function toNumber(v: string): number | undefined {
 interface ApplyReferralDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Pre-fill the code (e.g. from the "Apply" action on a code row). */
-  initialCode?: string;
+  /** Pre-select the referrer account (e.g. from a row's "Record" action). */
+  initialReferrerId?: string;
 }
 
 /**
- * Module 17 — apply an "Earn with Éclat" code at a sale.
- *
- * Referee Y gets {@link REFERRAL_DIAMOND_DISCOUNT_PCT}% off their diamond value;
- * referrer X earns {@link REFERRAL_COMMISSION_PCT}% commission on Y's total
- * bill. The server is authoritative on both amounts (it knows the diamond
- * split), so we render the returned figures. A 400 "usage limit reached" is
- * caught and shown inline — never a crash.
+ * Module 17 — record a referred purchase against a referrer account (client
+ * rework, 9 Oct 2026). No code is asked for: the referrer is picked by
+ * name/phone from the accounts list. The purchase is recorded with the referred
+ * customer, bill date, invoice number and bill amount, and the account is
+ * credited {@link REFERRAL_COMMISSION_PCT}% of the bill (the server is
+ * authoritative; the percent is stored per entry).
  */
 export function ApplyReferralDialog({
   open,
   onOpenChange,
-  initialCode,
+  initialReferrerId,
 }: ApplyReferralDialogProps) {
   const { targetStoreId, pickedStoreId, setPickedStoreId } = useStoreScope();
   const applyReferral = useApplyReferral();
+  const { data: accounts = [] } = useReferralCodes();
 
-  const [code, setCode] = React.useState(initialCode ?? "");
+  const today = format(new Date(), "yyyy-MM-dd");
+
+  const [referrerId, setReferrerId] = React.useState(initialReferrerId ?? "");
   const [refereeName, setRefereeName] = React.useState("");
   const [refereePhone, setRefereePhone] = React.useState("");
   const [bill, setBill] = React.useState("");
   const [invoiceNo, setInvoiceNo] = React.useState("");
-  const [billDate, setBillDate] = React.useState("");
+  const [billDate, setBillDate] = React.useState(today);
   const [error, setError] = React.useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>(
     {},
   );
   const [result, setResult] = React.useState<Referral | null>(null);
 
-  // Re-seed the code whenever the dialog is (re)opened for a specific row.
-  useResetOn(open ? (initialCode ?? "") : null, () => {
-    if (open) setCode(initialCode ?? "");
+  // Re-seed the referrer whenever the dialog is (re)opened for a specific row.
+  useResetOn(open ? (initialReferrerId ?? "") : null, () => {
+    if (open) setReferrerId(initialReferrerId ?? "");
   });
 
   function reset() {
-    setCode(initialCode ?? "");
+    setReferrerId(initialReferrerId ?? "");
     setRefereeName("");
     setRefereePhone("");
     setBill("");
     setInvoiceNo("");
-    setBillDate("");
+    setBillDate(today);
     setError(null);
     setFieldErrors({});
     setResult(null);
   }
 
+  const referrer = accounts.find((a) => a.id === referrerId) ?? null;
   const billAmount = toNumber(bill);
-  // Commission is a clean 5% of the total bill — safe to preview client-side.
-  const estCommission =
+  // Credit is a clean 5% of the total bill — safe to preview client-side.
+  const estCredit =
     billAmount != null ? (billAmount * REFERRAL_COMMISSION_PCT) / 100 : null;
 
   function submit() {
     setError(null);
     if (!targetStoreId) {
-      toast.error("Select a store to apply this referral at.");
+      toast.error("Select a store to record this purchase at.");
       return;
     }
     const fe: Record<string, string> = {};
-    if (!code.trim()) fe.code = "Referral code is required.";
-    if (!refereeName.trim()) fe.refereeName = "Referee name is required.";
+    if (!referrerId) fe.referrer = "Choose the referrer account.";
+    if (!refereeName.trim()) fe.refereeName = "Referred customer is required.";
     if (billAmount == null || billAmount <= 0)
-      fe.bill = "Enter the referee's total bill amount.";
+      fe.bill = "Enter the total bill amount.";
+    if (!invoiceNo.trim()) fe.invoiceNo = "Invoice number is required.";
+    if (!billDate) fe.billDate = "Purchase date is required.";
     setFieldErrors(fe);
     if (Object.keys(fe).length > 0) {
       toast.error("Please fill in the required fields.");
@@ -113,29 +122,29 @@ export function ApplyReferralDialog({
     if (billAmount == null) return;
     applyReferral.mutate(
       {
-        code: code.trim(),
+        referrerId,
         refereeName: refereeName.trim(),
         refereePhone: refereePhone.trim() || undefined,
         billAmount,
         storeId: targetStoreId,
-        invoiceNo: invoiceNo.trim() || undefined,
-        billDate: billDate || undefined,
+        invoiceNo: invoiceNo.trim(),
+        billDate,
       },
       {
         onSuccess: (rec) => {
           setResult(rec);
-          toast.success("Referral applied", {
-            description: `${formatINR(
-              rec.diamondDiscountAmount,
-            )} off diamond · ${formatINR(rec.commissionAmount)} commission`,
+          toast.success("Purchase recorded", {
+            description: `${formatINR(rec.commissionAmount)} credited to ${
+              rec.referrerName ?? referrer?.referrerName ?? "the referrer"
+            }.`,
           });
         },
         onError: (err) => {
-          // 400 = usage limit reached (or other server rule) — inline, no crash.
+          // 400 = capped legacy code / server rule — inline, no crash.
           setError(
             apiErrorMessage(
               err,
-              "Could not apply this code. Check the code and try again.",
+              "Could not record this purchase. Check the details and try again.",
             ),
           );
         },
@@ -154,61 +163,47 @@ export function ApplyReferralDialog({
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Gem className="h-4 w-4 text-gold-strong" />
-            Apply a referral
+            <Receipt className="h-4 w-4 text-gold-strong" />
+            Record referred purchase
           </DialogTitle>
           <DialogDescription>
-            {REFERRAL_DIAMOND_DISCOUNT_PCT}% off diamond for the referee ·{" "}
-            {REFERRAL_COMMISSION_PCT}% commission credited to the referrer.
+            The referrer is credited {REFERRAL_COMMISSION_PCT}% of the bill into
+            their wallet.
           </DialogDescription>
         </DialogHeader>
 
         {result ? (
-          /* ---- Outcome: the authoritative 5% / 5% split from the API ---- */
+          /* ---- Outcome: the authoritative credit from the API ---- */
           <div className="grid gap-4">
             <div className="flex items-center gap-2 rounded-lg border border-success/30 bg-success/10 p-3 text-sm text-success">
               <CheckCircle2 className="h-4 w-4 shrink-0" />
-              Applied for <span className="font-medium">{result.refereeName}</span>
+              Recorded for <span className="font-medium">{result.refereeName}</span>
               {" · "}
               <span className="num">{formatINR(result.billAmount)}</span> bill.
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded-lg border bg-card p-4">
-                <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                  <Gem className="h-3.5 w-3.5 text-primary" />
-                  Referee diamond discount
-                </div>
-                <div className="num mt-1 text-xl font-semibold">
-                  {formatINR(result.diamondDiscountAmount)}
-                </div>
-                <div className="text-[11px] text-muted-foreground">
-                  {formatPercent(result.diamondDiscountPct)} off diamond value
-                </div>
+            <div className="rounded-lg border bg-card p-4">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                <Wallet className="h-3.5 w-3.5 text-gold-strong" />
+                Credit earned by {result.referrerName ?? referrer?.referrerName ?? "the referrer"}
               </div>
-              <div className="rounded-lg border bg-card p-4">
-                <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                  <Wallet className="h-3.5 w-3.5 text-gold-strong" />
-                  Referrer commission
-                </div>
-                <div className="num mt-1 text-xl font-semibold text-gold-strong">
-                  {formatINR(result.commissionAmount)}
-                </div>
-                <div className="text-[11px] text-muted-foreground">
-                  {formatPercent(result.commissionPct)} of the total bill
-                </div>
+              <div className="num mt-1 text-xl font-semibold text-gold-strong">
+                {formatINR(result.commissionAmount)}
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                {formatPercent(result.commissionPct)} of the total bill
               </div>
             </div>
 
             <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2 text-xs">
               <span className="text-muted-foreground">
-                Code balance now{" "}
+                Wallet balance now{" "}
                 <span className="num font-medium text-foreground">
                   {formatINR(result.codeBalanceAfter)}
                 </span>
               </span>
               <span className="text-muted-foreground">
-                Uses:{" "}
+                Referrals:{" "}
                 <span className="num font-medium text-foreground">
                   {result.usesAfter}
                 </span>
@@ -226,10 +221,10 @@ export function ApplyReferralDialog({
                   setRefereePhone("");
                   setBill("");
                   setInvoiceNo("");
-                  setBillDate("");
+                  setBillDate(today);
                 }}
               >
-                Apply another
+                Record another
               </Button>
               <Button variant="gold" onClick={() => onOpenChange(false)}>
                 Done
@@ -245,25 +240,40 @@ export function ApplyReferralDialog({
             />
 
             <div className="grid gap-1.5">
-              <Label htmlFor="ar-code">
-                Referral code <span className="text-destructive">*</span>
+              <Label htmlFor="ar-referrer">
+                Referrer account <span className="text-destructive">*</span>
               </Label>
-              <Input
-                id="ar-code"
-                className="num uppercase"
-                placeholder="RTL-…"
-                value={code}
-                onChange={(e) => {
-                  setCode(e.target.value);
+              <Select
+                value={referrerId}
+                onValueChange={(v) => {
+                  setReferrerId(v);
                   setError(null);
-                  if (fieldErrors.code)
-                    setFieldErrors((p) => ({ ...p, code: "" }));
+                  if (fieldErrors.referrer)
+                    setFieldErrors((p) => ({ ...p, referrer: "" }));
                 }}
-                aria-invalid={!!fieldErrors.code}
-              />
-              {fieldErrors.code ? (
+                disabled={accounts.length === 0}
+              >
+                <SelectTrigger id="ar-referrer" aria-invalid={!!fieldErrors.referrer}>
+                  <SelectValue
+                    placeholder={
+                      accounts.length === 0
+                        ? "No referrer accounts yet"
+                        : "Choose the referrer"
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {accounts.map((a) => (
+                    <SelectItem key={a.id} value={a.id}>
+                      {a.referrerName}
+                      {a.referrerPhone ? ` · ${a.referrerPhone}` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {fieldErrors.referrer ? (
                 <p className="mt-1 text-xs text-destructive">
-                  {fieldErrors.code}
+                  {fieldErrors.referrer}
                 </p>
               ) : null}
             </div>
@@ -271,7 +281,7 @@ export function ApplyReferralDialog({
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-1.5">
                 <Label htmlFor="ar-name">
-                  Referee name <span className="text-destructive">*</span>
+                  Referred customer <span className="text-destructive">*</span>
                 </Label>
                 <Input
                   id="ar-name"
@@ -291,7 +301,7 @@ export function ApplyReferralDialog({
                 ) : null}
               </div>
               <div className="grid gap-1.5">
-                <Label htmlFor="ar-phone">Referee phone</Label>
+                <Label htmlFor="ar-phone">Phone</Label>
                 <Input
                   id="ar-phone"
                   placeholder="10-digit mobile"
@@ -326,32 +336,56 @@ export function ApplyReferralDialog({
                   {fieldErrors.bill}
                 </p>
               ) : null}
-              {estCommission != null && estCommission > 0 ? (
+              {estCredit != null && estCredit > 0 ? (
                 <p className="text-[11px] text-muted-foreground">
-                  ≈ {formatINR(estCommission)} commission ({REFERRAL_COMMISSION_PCT}
-                  % of bill). Exact diamond discount is computed on submit.
+                  ≈ {formatINR(estCredit)} credit ({REFERRAL_COMMISSION_PCT}% of
+                  the bill) to the referrer&apos;s wallet.
                 </p>
               ) : null}
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-1.5">
-                <Label htmlFor="ar-invoice">Invoice No</Label>
+                <Label htmlFor="ar-invoice">
+                  Invoice No <span className="text-destructive">*</span>
+                </Label>
                 <Input
                   id="ar-invoice"
                   placeholder="e.g. INV-2026-0481"
                   value={invoiceNo}
-                  onChange={(e) => setInvoiceNo(e.target.value)}
+                  onChange={(e) => {
+                    setInvoiceNo(e.target.value);
+                    if (fieldErrors.invoiceNo)
+                      setFieldErrors((p) => ({ ...p, invoiceNo: "" }));
+                  }}
+                  aria-invalid={!!fieldErrors.invoiceNo}
                 />
+                {fieldErrors.invoiceNo ? (
+                  <p className="mt-1 text-xs text-destructive">
+                    {fieldErrors.invoiceNo}
+                  </p>
+                ) : null}
               </div>
               <div className="grid gap-1.5">
-                <Label htmlFor="ar-billdate">Bill date</Label>
+                <Label htmlFor="ar-billdate">
+                  Purchase date <span className="text-destructive">*</span>
+                </Label>
                 <Input
                   id="ar-billdate"
                   type="date"
                   value={billDate}
-                  onChange={(e) => setBillDate(e.target.value)}
+                  onChange={(e) => {
+                    setBillDate(e.target.value);
+                    if (fieldErrors.billDate)
+                      setFieldErrors((p) => ({ ...p, billDate: "" }));
+                  }}
+                  aria-invalid={!!fieldErrors.billDate}
                 />
+                {fieldErrors.billDate ? (
+                  <p className="mt-1 text-xs text-destructive">
+                    {fieldErrors.billDate}
+                  </p>
+                ) : null}
               </div>
             </div>
 
@@ -372,10 +406,10 @@ export function ApplyReferralDialog({
                 disabled={applyReferral.isPending}
               >
                 {applyReferral.isPending ? (
-                  "Applying…"
+                  "Recording…"
                 ) : (
                   <>
-                    Apply code
+                    Record purchase
                     <ArrowRight className="h-4 w-4" />
                   </>
                 )}

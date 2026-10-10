@@ -10,8 +10,9 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { AreaChart, BarChart, useChartTokens } from "@/components/chart/echart";
-import { formatINRCompact } from "@/lib/format";
+import { AreaChart, BarChart, DonutChart, useChartTokens } from "@/components/chart/echart";
+import { formatINRCompact, formatNumber } from "@/lib/format";
+import type { LeadFunnelDay } from "@/lib/queries/dashboard";
 import {
   storeCompareLabel,
   type StoreCompare,
@@ -75,6 +76,74 @@ export function SalesTrendChart({ data, href }: { data: TrendPoint[]; href?: str
         ]}
         height={260}
       />
+    </ChartCard>
+  );
+}
+
+/** "Tue 7" from a store-local YYYY-MM-DD, without timezone re-interpretation. */
+function dayLabel(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  return `${DOW[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]} ${d}`;
+}
+
+/**
+ * Leads came vs converted (client, 8 Oct): the period's totals as a donut with
+ * the conversion rate in the middle, and the last days side by side so "every
+ * day" is readable at a glance. "Came" is a lead created that day; "converted"
+ * is a lead closed WON that day — activity, not a cohort, so a lead can count
+ * on different days for each.
+ */
+export function LeadFunnelChart({
+  totals,
+  days,
+  periodLabel,
+  href,
+}: {
+  totals: { came: number; converted: number };
+  days: LeadFunnelDay[];
+  periodLabel: string;
+  href?: string;
+}) {
+  const t = useChartTokens();
+  /*
+   * The pie reads the SAME days the bars show, not the period totals: on
+   * "Today" with nothing filed yet the period is honestly zero, and a pie
+   * that says "No data" beside bars full of this week's leads looked broken
+   * (client, 10 Oct). The header line still carries the period's own totals.
+   */
+  const stripCame = days.reduce((sum, d) => sum + d.came, 0);
+  const stripConverted = days.reduce((sum, d) => sum + d.converted, 0);
+  const open = Math.max(0, stripCame - stripConverted);
+  const rate = stripCame > 0 ? Math.round((stripConverted / stripCame) * 100) : null;
+
+  return (
+    <ChartCard
+      title="Leads — came vs converted"
+      description={`${periodLabel}: ${formatNumber(totals.came)} came · ${formatNumber(totals.converted)} converted`}
+      href={href}
+    >
+      <div className="grid gap-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+        <DonutChart
+          data={[
+            { name: "Converted", value: stripConverted, color: t.palette[4] },
+            { name: "In progress", value: open, color: t.palette[0] },
+          ]}
+          valueFormatter={formatNumber}
+          centerValue={rate != null ? `${rate}%` : "—"}
+          centerLabel="CONVERTED"
+          height={220}
+        />
+        <BarChart
+          categories={days.map((d) => dayLabel(d.date))}
+          series={[
+            { name: "Came", data: days.map((d) => d.came), color: t.palette[0] },
+            { name: "Converted", data: days.map((d) => d.converted), color: t.palette[4] },
+          ]}
+          valueFormatter={formatNumber}
+          height={220}
+        />
+      </div>
     </ChartCard>
   );
 }

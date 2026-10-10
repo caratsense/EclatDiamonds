@@ -376,7 +376,7 @@ export function greeting(firstName?: string): string {
   return [
     hi,
     '',
-    'Thanks for reaching out to *Éclat Diamonds*.',
+    'Thanks for reaching out to *Nibhana*.',
     '',
     "Just a couple of quick questions so I can show you the right pieces. Takes under a minute.",
   ].join('\n');

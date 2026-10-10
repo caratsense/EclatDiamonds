@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import {
+import { MessageCircle,
   ArrowLeft,
   CalendarClock,
   Download,
@@ -78,10 +78,12 @@ export default function ScheduledReportsPage() {
 
   const [form, setForm] = useState({
     name: "",
+    kind: "leads" as "leads" | "walkins",
     cadence: "monthly" as "monthly" | "weekly",
     sendHour: "7",
     storeId: "",
     recipients: "",
+    phones: "",
     columns: [] as string[],
   });
 
@@ -97,12 +99,16 @@ export default function ScheduledReportsPage() {
     create.mutate(
       {
         name: form.name.trim(),
+        kind: form.kind,
         cadence: form.cadence,
         sendHour: Number(form.sendHour) || 7,
         storeId: form.storeId || null,
         // Empty means every column, which is what the server does with it.
         columns: form.columns,
-        recipients: form.recipients
+        // WhatsApp only (client, 10 Oct). Email stays in the platform and the
+        // API; this tenant's screen simply does not offer it.
+        recipients: [],
+        phoneRecipients: form.phones
           .split(/[,;\s]+/)
           .map((r) => r.trim())
           .filter(Boolean),
@@ -113,10 +119,12 @@ export default function ScheduledReportsPage() {
           setShowNew(false);
           setForm({
             name: "",
+            kind: "leads",
             cadence: "monthly",
             sendHour: "7",
             storeId: "",
             recipients: "",
+            phones: "",
             columns: [],
           });
         },
@@ -166,8 +174,9 @@ export default function ScheduledReportsPage() {
               <CalendarClock className="size-5" /> Scheduled reports
             </h1>
             <p className="text-sm text-muted-foreground">
-              A lead spreadsheet that arrives by email on its own. Monthly reports cover the month
-              that ended; weekly ones cover the week that ended.
+              A lead or walk-ins spreadsheet that arrives on its own, on
+              WhatsApp from the internal staff number. Monthly reports cover
+              the month that ended; weekly ones cover the week that ended.
             </p>
           </div>
           {canManage ? (
@@ -243,18 +252,47 @@ export default function ScheduledReportsPage() {
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="rep-to">Send to</Label>
+              <Label htmlFor="rep-wa">WhatsApp to (staff line)</Label>
               <Input
-                id="rep-to"
-                placeholder="owner@example.com, manager@example.com"
-                value={form.recipients}
-                onChange={(e) => setForm((f) => ({ ...f, recipients: e.target.value }))}
+                id="rep-wa"
+                placeholder="98200 00001, 98200 00002"
+                value={form.phones}
+                onChange={(e) => setForm((f) => ({ ...f, phones: e.target.value }))}
               />
               <p className="text-xs text-muted-foreground">
-                Leave empty to produce the file without emailing it.
+                Head-office numbers, like the evening DSR digest. The file
+                arrives from the internal staff number — never a customer line.
               </p>
             </div>
 
+            <div className="space-y-1.5">
+              <Label>What the file is</Label>
+              <div className="flex gap-1.5">
+                {([
+                  { v: "leads", label: "Lead report" },
+                  { v: "walkins", label: "Walk-ins report" },
+                ] as const).map((k) => (
+                  <button
+                    key={k.v}
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, kind: k.v }))}
+                    className={
+                      form.kind === k.v
+                        ? "rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground"
+                        : "rounded-md border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted/60"
+                    }
+                  >
+                    {k.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                The walk-ins report is the Check-ins page&rsquo;s own workbook,
+                bounded to the period — columns below apply to the lead report only.
+              </p>
+            </div>
+
+            {form.kind === "leads" ? (
             <div className="space-y-2">
               <Label>Columns</Label>
               <div className="flex flex-wrap gap-1.5">
@@ -282,6 +320,7 @@ export default function ScheduledReportsPage() {
                   : `${form.columns.length} column(s), in the order you picked them.`}
               </p>
             </div>
+            ) : null}
 
             <div className="flex gap-2">
               <Button onClick={onCreate} disabled={create.isPending || form.name.trim().length < 2}>
@@ -329,9 +368,11 @@ export default function ScheduledReportsPage() {
                       {r.name}
                     </button>
                     <div className="text-xs text-muted-foreground">
-                      {r.columns.length === 0
-                        ? "All columns"
-                        : `${r.columns.length} column(s)`}
+                      {r.kind === "walkins"
+                        ? "Walk-ins"
+                        : r.columns.length === 0
+                          ? "Leads · all columns"
+                          : `Leads · ${r.columns.length} column(s)`}
                       {r.isActive ? "" : " · paused"}
                     </div>
                   </TableCell>
@@ -343,13 +384,25 @@ export default function ScheduledReportsPage() {
                     {r.storeName ?? "Every branch"}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
-                    {r.recipients.length === 0 ? (
+                    {r.recipients.length === 0 && r.phoneRecipients.length === 0 ? (
                       <span className="inline-flex items-center gap-1">
                         <MailWarning className="size-3.5" /> Nobody
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1">
-                        <Mail className="size-3.5" /> {r.recipients.length}
+                      <span className="inline-flex items-center gap-2">
+                        {r.recipients.length > 0 ? (
+                          <span className="inline-flex items-center gap-1">
+                            <Mail className="size-3.5" /> {r.recipients.length}
+                          </span>
+                        ) : null}
+                        {r.phoneRecipients.length > 0 ? (
+                          <span
+                            className="inline-flex items-center gap-1"
+                            title="WhatsApp, from the internal staff number"
+                          >
+                            <MessageCircle className="size-3.5" /> {r.phoneRecipients.length}
+                          </span>
+                        ) : null}
                       </span>
                     )}
                   </TableCell>
@@ -462,8 +515,16 @@ export default function ScheduledReportsPage() {
                       <TableCell className="num text-right">{run.rows}</TableCell>
                       <TableCell>
                         <div className="flex flex-wrap items-center gap-2">
-                          <StatusPill tone={DELIVERY_TONE[run.emailStatus] ?? "mute"}>
-                            {run.emailStatus.replace("_", " ")}
+                          {run.recipients.length > 0 ? (
+                            <StatusPill tone={DELIVERY_TONE[run.emailStatus] ?? "mute"}>
+                              mail: {run.emailStatus.replace("_", " ")}
+                            </StatusPill>
+                          ) : null}
+                          <StatusPill
+                            tone={DELIVERY_TONE[run.whatsappStatus] ?? "mute"}
+                            title={run.whatsappDetail ?? undefined}
+                          >
+                            wa: {run.whatsappStatus.replace("_", " ")}
                           </StatusPill>
                           <span className="text-xs text-muted-foreground">
                             {describeDelivery(run)}

@@ -111,6 +111,55 @@ export class SetUserStoresDto {
  * PATCH /users/:id/deactivate — offboard a user, optionally handing off their
  * open work (owned leads + check-ins) to another active in-scope user.
  */
+export class CreateCustomRoleDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(60)
+  name!: string;
+
+  @IsIn(ASSIGNABLE_ROLES)
+  baseRole!: Role;
+
+  @IsOptional()
+  @IsObject()
+  overrides?: Record<string, string>;
+}
+
+export class ApplyCustomRoleDto {
+  @IsString()
+  @IsNotEmpty()
+  roleId!: string;
+}
+
+export class UpdateUserDetailsDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  name?: string;
+
+  /** The LOGIN ID. Changing it changes how they sign in; uniqueness enforced. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(254)
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(254)
+  contactEmail?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  phone?: string;
+}
+
+export class LocationCheckDto {
+  /** true = held to the store geofence (default for everyone); false = exempt. */
+  @IsBoolean()
+  required!: boolean;
+}
+
 export class DeactivateUserDto {
   /** If given, the deactivated user's open leads/check-ins are reassigned here. */
   @IsOptional()

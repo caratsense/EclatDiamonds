@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { PRODUCT_NAME } from '../common/brand';
 import { fetchJson, safeEqual } from './integrations.util';
 
 export interface PaymentLinkInput {
@@ -91,7 +92,7 @@ export class RazorpayService {
         amount: amountPaise,
         currency: 'INR',
         accept_partial: false,
-        description: input.description ?? 'CaratSense payment',
+        description: input.description ?? `${PRODUCT_NAME} payment`,
         customer: {
           name: input.customerName,
           ...(input.email ? { email: input.email } : {}),

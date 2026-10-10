@@ -162,6 +162,76 @@ describe('Quote approval (e2e)', () => {
     expect(JSON.stringify(share.body)).toMatch(/approval/i);
   });
 
+  it('an undecided quote still reads for the people deciding it - as a stamped draft', async () => {
+    // The rep is refused: for them the gate is the whole point.
+    const repPdf = await request(server()).get('/quotes/q_qa_big/pdf').set(auth(repA));
+    expect(repPdf.status).toBe(403);
+
+    // Manager and head office get the document - filed as a DRAFT, so the copy
+    // cannot pass as a final quotation (client, 9 Oct).
+    for (const t of [mgrA, hoA]) {
+      const pdf = await request(server())
+        .get('/quotes/q_qa_big/pdf')
+        .set(auth(t))
+        .buffer(true)
+        .parse((res, cb) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (c) => chunks.push(c));
+          res.on('end', () => cb(null, Buffer.concat(chunks)));
+        });
+      expect(pdf.status).toBe(200);
+      expect(pdf.headers['content-type']).toContain('application/pdf');
+      expect(pdf.headers['content-disposition']).toContain('-draft.pdf');
+      expect((pdf.body as Buffer).subarray(0, 5).toString()).toBe('%PDF-');
+    }
+  });
+
+  it('head office decides a held draft directly - the request step is optional', async () => {
+    await makeQuote('q_qa_direct', 'QT-QA-DIR', 200_000); // over the 100k threshold
+    const gate = await request(server()).get('/quotes/q_qa_direct/approval').set(auth(hoA)).expect(200);
+    expect(gate.body.required).toBe(true);
+    expect(gate.body.cleared).toBe(false);
+
+    // No request-approval call: head office approves it on the spot.
+    await request(server())
+      .post('/quotes/q_qa_direct/decide')
+      .set(auth(hoA))
+      .send({ approve: true, revision: gate.body.revision })
+      .expect(201);
+    const q = await prisma.quote.findUnique({ where: { id: 'q_qa_direct' } });
+    expect(q?.status).toBe('approved');
+    expect(q?.decidedById).toBe('u_qa_ho');
+
+    // But a quote the gate never held cannot be stamped with a decision.
+    await makeQuote('q_qa_small2', 'QT-QA-S2', 10_000);
+    const refused = await request(server())
+      .post('/quotes/q_qa_small2/decide')
+      .set(auth(hoA))
+      .send({ approve: true });
+    expect(refused.status).toBe(400);
+    expect(JSON.stringify(refused.body)).toMatch(/needs no approval/i);
+    await prisma.quote.deleteMany({ where: { id: { in: ['q_qa_direct', 'q_qa_small2'] } } });
+  });
+
+  it('a manager deletes a quote; a salesperson and an accepted quote are refused', async () => {
+    await makeQuote('q_qa_del', 'QT-QA-DEL', 10_000);
+
+    // The floor role cannot erase a priced offer.
+    await request(server()).delete('/quotes/q_qa_del').set(auth(repA)).expect(403);
+
+    // A manager can, and the row is gone whole (lines cascade).
+    await request(server()).delete('/quotes/q_qa_del').set(auth(mgrA)).expect(200);
+    expect(await prisma.quote.findUnique({ where: { id: 'q_qa_del' } })).toBeNull();
+
+    // The quote that became an order is the record that must survive.
+    await makeQuote('q_qa_del2', 'QT-QA-DEL2', 10_000);
+    await prisma.quote.update({ where: { id: 'q_qa_del2' }, data: { status: 'accepted' } });
+    const refused = await request(server()).delete('/quotes/q_qa_del2').set(auth(hoA));
+    expect(refused.status).toBe(400);
+    expect(JSON.stringify(refused.body)).toMatch(/order/i);
+    await prisma.quote.delete({ where: { id: 'q_qa_del2' } });
+  });
+
   it('a salesperson may ask but not decide', async () => {
     await request(server())
       .post('/quotes/q_qa_big/request-approval')

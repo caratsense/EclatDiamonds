@@ -24,6 +24,7 @@ import {
 
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { PRODUCT_NAME } from "@/lib/brand";
 import { cn } from "@/lib/utils";
 import { type Role } from "@/lib/types";
 import { useSession } from "@/store/use-session";
@@ -84,7 +85,7 @@ interface TourStep {
  */
 function buildSteps(role: Role, firstName: string): TourStep[] {
   const welcome: TourStep = {
-    title: `Hello ${firstName} — welcome to CaratOS`,
+    title: `Hello ${firstName} — welcome to ${PRODUCT_NAME}`,
     where: "Everywhere",
     body:
       "Everything your business does in a day — sales, customers, orders and staff attendance — is kept here in one place, instead of across registers and phones. Press Next and this guide walks you through the handful of pages you will actually use, opening each one for you. It takes about a minute, and you can close it whenever you like.",

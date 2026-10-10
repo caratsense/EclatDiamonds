@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { SectionHeader } from "@/components/section/section-header";
+import { useQuickAction } from "@/store/use-quick-action";
 import {
   Dialog,
   DialogContent,
@@ -65,6 +66,10 @@ export default function HrmsPage() {
   const { role } = useSession();
   const nav = getNavItem("hrms");
   const [markOpen, setMarkOpen] = useState(false);
+  // The sidebar's "Mark attendance" quick action, read as derived state like
+  // the walk-in and lead dialogs do on their own pages.
+  const quickAttendance = useQuickAction((s) => s.pending) === "attendance";
+  const clearQuickAction = useQuickAction((s) => s.clear);
   // Set when "Mark" is pressed on a Today row: that person, at that store.
   const [markPreset, setMarkPreset] = useState<{ userId: string; storeId: string } | null>(null);
   // Head office does not punch (no personal punch card) and does not mark
@@ -213,11 +218,14 @@ export default function HrmsPage() {
 
       <MarkAttendanceDialog
         key={markPreset ? `${markPreset.userId}-${markPreset.storeId}` : "blank"}
-        open={markOpen}
+        open={markOpen || (quickAttendance && canMarkOthers)}
         preset={markPreset}
         onOpenChange={(o) => {
           setMarkOpen(o);
-          if (!o) setMarkPreset(null);
+          if (!o) {
+            setMarkPreset(null);
+            clearQuickAction();
+          }
         }}
       />
     </>

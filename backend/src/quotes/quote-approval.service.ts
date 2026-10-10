@@ -343,7 +343,15 @@ export class QuoteApprovalService {
       throw new ForbiddenException('Only a manager can decide on a quote.');
     }
     const quote = await this.mustReach(user, quoteId);
-    if (quote.status !== 'pending_approval') {
+    /*
+     * The REQUEST step is how a salesperson summons a decision - it was never
+     * meant to be a precondition for giving one. Head office or a manager
+     * opening a held draft may decide it on the spot (client, 9 Oct: head
+     * office acts as the admin), so 'draft' is decidable too, provided the
+     * gate actually holds it. Shared and accepted quotes already left the
+     * building; approved/rejected already carry a decision.
+     */
+    if (quote.status !== 'pending_approval' && quote.status !== 'draft') {
       throw new BadRequestException('That quote is not waiting for a decision.');
     }
     // The manager decides on what they looked at, not on whatever it has become.
@@ -352,6 +360,11 @@ export class QuoteApprovalService {
     }
 
     const reasons = await this.reasonsFor(user.organisationId, quote);
+    if (quote.status === 'draft' && reasons.length === 0) {
+      // Nothing holds this quote - a decision would stamp approval on a
+      // document the gate never asked about.
+      throw new BadRequestException('This quote needs no approval.');
+    }
     const overCap = reasons.find((r) => r.code === 'discount_over_cap');
     if (overCap) {
       /*
@@ -392,7 +405,9 @@ export class QuoteApprovalService {
     // Conditional on the revision read above: an edit that lands between the
     // read and this write must not be approved under the old revision's name.
     const written = await this.prisma.quote.updateMany({
-      where: { id: quoteId, status: 'pending_approval', revision: quote.revision },
+      // Conditional on the status read too: deciding a draft must not clobber
+      // a request (or another decision) that landed in between.
+      where: { id: quoteId, status: quote.status, revision: quote.revision },
       data: {
         status: approve ? 'approved' : 'rejected',
         decidedById: user.id,

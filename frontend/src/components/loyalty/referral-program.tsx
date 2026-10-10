@@ -2,27 +2,17 @@
 
 import * as React from "react";
 import {
-  Check,
-  Copy,
-  Gem,
   Gift,
   HandCoins,
   Plus,
-  Share2,
-  Ticket,
+  Receipt,
+  UserRound,
   Wallet,
 } from "lucide-react";
-import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -33,93 +23,62 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatINR, formatPercent } from "@/lib/format";
+import { formatINR } from "@/lib/format";
 import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
-import { cn } from "@/lib/utils";
 import {
   isCapReached,
   REFERRAL_COMMISSION_PCT,
-  REFERRAL_DIAMOND_DISCOUNT_PCT,
   type ReferralCode,
 } from "@/lib/mock/loyalty";
-import { useReferralCodes, useReferrals } from "@/lib/queries/loyalty";
+import { useReferralCodes } from "@/lib/queries/loyalty";
 import { ApplyReferralDialog } from "./apply-referral-dialog";
 import { CreateReferralCodeDialog } from "./create-referral-code-dialog";
 import { PayoutDialog } from "./payout-dialog";
 import { ReferralWalletDialog } from "./referral-wallet-dialog";
 
-/** Copy-to-clipboard button with a brief "copied" confirmation. */
-function CopyButton({ value }: { value: string }) {
-  const [copied, setCopied] = React.useState(false);
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        void navigator.clipboard?.writeText(value);
-        setCopied(true);
-        toast.success("Code copied");
-        window.setTimeout(() => setCopied(false), 1400);
-      }}
-      className="text-muted-foreground transition-colors hover:text-foreground"
-      aria-label={`Copy code ${value}`}
-    >
-      {copied ? (
-        <Check className="h-3.5 w-3.5 text-success" />
-      ) : (
-        <Copy className="h-3.5 w-3.5" />
-      )}
-    </button>
-  );
-}
-
 /**
- * Module 17 — "Earn with Éclat" referral / commission program.
+ * Module 17 — Referral Accounts (reworked per client, 9 Oct 2026).
  *
- * Referrer X gets a coupon code; referee Y gets 5% off diamond; X earns 5%
- * commission on Y's total bill, redeemable or cashable. Codes can be
- * usage-capped. This panel lists codes (with copy + cap state), lets a manager
- * apply a code at a sale, and drills into a code's commission ledger + payout.
+ * A referrer is an existing customer with an ACCOUNT, identified by name/phone —
+ * no coupon code to hand out. Each referred purchase recorded against the
+ * account credits {@link REFERRAL_COMMISSION_PCT}% of the bill into its wallet;
+ * credit is redeemed against a later purchase from the wallet. The wallet's own
+ * history (purchases + redemptions) is the record — there is no separate
+ * commission-ledger view. Accounts created under the old code workflow remain
+ * listed and usable; their code shows as a muted legacy detail.
  */
 export function ReferralProgram() {
-  const { data: codes = [], isLoading, isError } = useReferralCodes();
+  const { data: accounts = [], isLoading, isError } = useReferralCodes();
   const role = useSession((s) => s.role);
-  // Creating codes and cashing out commission both require store_manager+.
+  // Creating accounts and redeeming credit both require store_manager+.
   const canManageReferrals = ROLE_RANK[role] >= ROLE_RANK.store_manager;
 
   const [createOpen, setCreateOpen] = React.useState(false);
-  const [applyOpen, setApplyOpen] = React.useState(false);
-  const [applyCode, setApplyCode] = React.useState<string | undefined>();
+  const [recordOpen, setRecordOpen] = React.useState(false);
+  const [recordReferrerId, setRecordReferrerId] = React.useState<string | undefined>();
   const [payoutOpen, setPayoutOpen] = React.useState(false);
-  const [payoutCode, setPayoutCode] = React.useState<ReferralCode | null>(null);
-  const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const [payoutAccount, setPayoutAccount] = React.useState<ReferralCode | null>(null);
   const [walletOpen, setWalletOpen] = React.useState(false);
-  const [walletCodeId, setWalletCodeId] = React.useState<string | null>(null);
+  const [walletAccountId, setWalletAccountId] = React.useState<string | null>(null);
 
-  // Keep the selected code in sync with the freshest server data.
-  const selected =
-    codes.find((c) => c.id === selectedId) ?? codes[0] ?? null;
-  const { data: referrals = [], isLoading: ledgerLoading } = useReferrals(
-    selected?.id ?? null,
-  );
-
-  const totalOutstanding = codes.reduce(
+  const totalOutstanding = accounts.reduce(
     (sum, c) => sum + c.commissionBalance,
     0,
   );
 
-  function openApply(code?: string) {
-    setApplyCode(code);
-    setApplyOpen(true);
+  function openRecord(referrerId?: string) {
+    setRecordReferrerId(referrerId);
+    setRecordOpen(true);
   }
 
-  function openPayout(code: ReferralCode) {
-    setPayoutCode(code);
+  function openPayout(account: ReferralCode) {
+    setPayoutAccount(account);
     setPayoutOpen(true);
   }
 
-  function openWallet(codeId: string) {
-    setWalletCodeId(codeId);
+  function openWallet(accountId: string) {
+    setWalletAccountId(accountId);
     setWalletOpen(true);
   }
 
@@ -130,278 +89,168 @@ export function ReferralProgram() {
         <CardContent className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--gold)_14%,transparent)] text-gold-strong">
-              <Ticket className="h-5 w-5" />
+              <UserRound className="h-5 w-5" />
             </span>
             <div className="space-y-1">
               <h3 className="font-display text-lg font-bold leading-tight">
-                Earn with Éclat
+                Referral Accounts
               </h3>
               <p className="max-w-xl text-sm text-muted-foreground">
-                Referrer earns{" "}
+                A referrer earns{" "}
                 <span className="font-medium text-foreground">
-                  {REFERRAL_COMMISSION_PCT}% commission
+                  {REFERRAL_COMMISSION_PCT}% credit
                 </span>{" "}
-                on every referred bill; their referrals get{" "}
-                <span className="font-medium text-foreground">
-                  {REFERRAL_DIAMOND_DISCOUNT_PCT}% off diamond
-                </span>
-                . Cap a code to stop it being shared endlessly.
+                on every referred purchase, accumulated in their wallet and
+                redeemable against a later bill. Referrers are identified by
+                name and phone — no code needed.
               </p>
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap gap-2">
-            <Button variant="outline" onClick={() => openApply()}>
-              <Gem className="h-4 w-4" />
-              Apply a referral
+            <Button variant="outline" onClick={() => openRecord()}>
+              <Receipt className="h-4 w-4" />
+              Record purchase
             </Button>
             {canManageReferrals ? (
               <Button variant="gold" onClick={() => setCreateOpen(true)}>
                 <Plus className="h-4 w-4" />
-                Create code
+                New referrer account
               </Button>
             ) : null}
           </div>
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-5">
-        {/* Codes list */}
-        <Card className="lg:col-span-3">
-          <CardHeader className="flex-row items-center justify-between space-y-0">
-            <div className="space-y-1.5">
-              <CardTitle>Referral codes</CardTitle>
-              <CardDescription>
-                {codes.length} code{codes.length === 1 ? "" : "s"} ·{" "}
-                {formatINR(totalOutstanding)} commission outstanding
-              </CardDescription>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {isLoading ? (
-              <div className="space-y-2">
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <Skeleton key={i} className="h-11 w-full" />
-                ))}
-              </div>
-            ) : isError ? (
-              <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-muted-foreground">
-                Could not load referral codes. Check your connection and try
-                again.
-              </div>
-            ) : codes.length === 0 ? (
-              <EmptyState
-                icon={Gift}
-                title="No referral codes yet"
-                description="Mint an “Earn with Éclat” code so a referrer can share it and earn commission on every referred bill."
-                actionLabel="New referral code"
-                onAction={() => setCreateOpen(true)}
-              />
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Code</TableHead>
-                    <TableHead>Referrer</TableHead>
-                    <TableHead className="text-center">Uses</TableHead>
-                    <TableHead className="text-right">Balance</TableHead>
-                    <TableHead className="w-px" />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {codes.map((c) => {
-                    const capped = isCapReached(c);
-                    const isActive = selected?.id === c.id;
-                    return (
-                      <TableRow
-                        key={c.id}
-                        onClick={() => setSelectedId(c.id)}
-                        className={cn(
-                          "cursor-pointer",
-                          isActive && "bg-muted/50",
-                        )}
-                      >
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              className="num font-medium underline-offset-2 hover:underline"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openWallet(c.id);
-                              }}
-                              title="Open wallet"
-                            >
-                              {c.code}
-                            </button>
-                            <CopyButton value={c.code} />
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div>{c.referrerName}</div>
-                          {c.referrerPhone ? (
-                            <div className="text-xs text-muted-foreground">
-                              {c.referrerPhone}
-                            </div>
-                          ) : null}
-                        </TableCell>
-                        <TableCell className="text-center">
-                          {capped ? (
-                            <Badge variant="destructive">Cap reached</Badge>
-                          ) : (
-                            <span className="num text-sm">
-                              {c.uses}
-                              <span className="text-muted-foreground">
-                                {" / "}
-                                {c.maxUses ?? "∞"}
-                              </span>
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <span className="num font-medium">
-                            {formatINR(c.commissionBalance)}
-                          </span>
-                        </TableCell>
-                        <TableCell
-                          className="text-right"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <div className="flex items-center justify-end gap-1">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => openWallet(c.id)}
-                            >
-                              <Wallet className="h-3.5 w-3.5" />
-                              Wallet
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              disabled={capped}
-                              onClick={() => openApply(c.code)}
-                            >
-                              <Share2 className="h-3.5 w-3.5" />
-                              Apply
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Commission ledger + payout for the selected code */}
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="text-base">Commission ledger</CardTitle>
+      {/* Accounts list — the wallet (opened per row) is the transaction record. */}
+      <Card>
+        <CardHeader className="flex-row items-center justify-between space-y-0">
+          <div className="space-y-1.5">
+            <CardTitle>Referrer accounts</CardTitle>
             <CardDescription>
-              {selected
-                ? `${selected.referrerName} · ${selected.code}`
-                : "Select a code to see its referrals."}
+              {accounts.length} account{accounts.length === 1 ? "" : "s"} ·{" "}
+              {formatINR(totalOutstanding)} credit outstanding
             </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {selected ? (
-              <>
-                <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-4 py-3">
-                  <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
-                    <Wallet className="h-4 w-4" />
-                    Balance
-                  </span>
-                  <span className="num text-lg font-semibold text-gold-strong">
-                    {formatINR(selected.commissionBalance)}
-                  </span>
-                </div>
-
-                <Button
-                  variant="gold"
-                  className="w-full"
-                  disabled={!canManageReferrals || selected.commissionBalance <= 0}
-                  onClick={() => openPayout(selected)}
-                >
-                  <HandCoins className="h-4 w-4" />
-                  Redeem / cash out
-                </Button>
-
-                <div className="space-y-2">
-                  <div className="text-xs font-medium text-muted-foreground">
-                    Referrals ({referrals.length})
-                  </div>
-                  {ledgerLoading ? (
-                    <div className="space-y-2">
-                      {Array.from({ length: 3 }).map((_, i) => (
-                        <Skeleton key={i} className="h-12 w-full" />
-                      ))}
-                    </div>
-                  ) : referrals.length === 0 ? (
-                    <p className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
-                      No referrals redeemed on this code yet.
-                    </p>
-                  ) : (
-                    <ul className="divide-y rounded-lg border">
-                      {referrals.map((r) => (
-                        <li
-                          key={r.id}
-                          className="flex items-center justify-between gap-2 px-3 py-2.5 text-sm"
-                        >
-                          <div className="min-w-0">
-                            <div className="truncate font-medium">
-                              {r.refereeName}
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              Bill{" "}
-                              <span className="num">
-                                {formatINR(r.billAmount)}
-                              </span>{" "}
-                              · {formatPercent(r.diamondDiscountPct)} diamond off
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <div className="num font-medium text-gold-strong">
-                              + {formatINR(r.commissionAmount)}
-                            </div>
-                            <div className="text-[11px] text-muted-foreground">
-                              commission
-                            </div>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </>
-            ) : (
-              <p className="py-8 text-center text-sm text-muted-foreground">
-                No code selected.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="space-y-2">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-11 w-full" />
+              ))}
+            </div>
+          ) : isError ? (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-muted-foreground">
+              Could not load referrer accounts. Check your connection and try
+              again.
+            </div>
+          ) : accounts.length === 0 ? (
+            <EmptyState
+              icon={Gift}
+              title="No referrer accounts yet"
+              description="Open an account for an existing customer so every purchase they refer credits their wallet."
+              actionLabel={canManageReferrals ? "New referrer account" : undefined}
+              onAction={canManageReferrals ? () => setCreateOpen(true) : undefined}
+            />
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Referrer</TableHead>
+                  <TableHead className="text-center">Referrals</TableHead>
+                  <TableHead className="text-right">Wallet balance</TableHead>
+                  <TableHead className="w-px" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {accounts.map((c) => {
+                  const capped = isCapReached(c);
+                  return (
+                    <TableRow
+                      key={c.id}
+                      onClick={() => openWallet(c.id)}
+                      className="cursor-pointer"
+                    >
+                      <TableCell>
+                        <div className="font-medium">{c.referrerName}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {[c.referrerPhone || null, c.code ? `Code ${c.code}` : null]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        {capped ? (
+                          <Badge variant="destructive">Cap reached</Badge>
+                        ) : (
+                          <span className="num text-sm">{c.uses}</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <span className="num font-medium text-gold-strong">
+                          {formatINR(c.commissionBalance)}
+                        </span>
+                      </TableCell>
+                      <TableCell
+                        className="text-right"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openWallet(c.id)}
+                          >
+                            <Wallet className="h-3.5 w-3.5" />
+                            Wallet
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={capped}
+                            onClick={() => openRecord(c.id)}
+                          >
+                            <Receipt className="h-3.5 w-3.5" />
+                            Record
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={!canManageReferrals || c.commissionBalance <= 0}
+                            onClick={() => openPayout(c)}
+                          >
+                            <HandCoins className="h-3.5 w-3.5" />
+                            Redeem
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
       <CreateReferralCodeDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
       />
       <ApplyReferralDialog
-        open={applyOpen}
-        onOpenChange={setApplyOpen}
-        initialCode={applyCode}
+        open={recordOpen}
+        onOpenChange={setRecordOpen}
+        initialReferrerId={recordReferrerId}
       />
       <PayoutDialog
         open={payoutOpen}
         onOpenChange={setPayoutOpen}
-        code={payoutCode}
+        code={payoutAccount}
       />
       <ReferralWalletDialog
         open={walletOpen}
         onOpenChange={setWalletOpen}
-        codeId={walletCodeId}
+        codeId={walletAccountId}
       />
     </div>
   );

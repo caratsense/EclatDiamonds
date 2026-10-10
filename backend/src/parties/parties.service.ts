@@ -1,6 +1,7 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, PartyType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../common/audit.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuthUser } from '../common/auth-user';
 import { isSalesScoped, partyWorkedBy } from '../common/sales-scope';
@@ -25,6 +26,8 @@ export interface PartyFilters {
   type?: PartyType | 'all';
   /** true = the Archived Contacts screen. Omitted = active contacts only. */
   archived?: boolean;
+  /** Show only customers wearing this tag. */
+  tagId?: string;
 }
 
 export interface PartyRow {
@@ -47,6 +50,8 @@ export interface PartyRow {
   isBlacklisted: boolean;
   /** Bills this party is linked to — the quick "how much of a customer" signal. */
   salesCount: number;
+  /** The customer's tags (client, 10 Oct): chips on the directory row. */
+  tags: { id: string; name: string; colour: string | null }[];
   createdAt: string | null;
   /** Present only on the archived list, so the screen can show who and why. */
   archivedAt: string | null;
@@ -78,6 +83,9 @@ const PARTY_SELECT = {
   archiveReason: true,
   archivedBy: { select: { name: true } },
   _count: { select: { sales: true } },
+  partyTagAssignments: {
+    select: { tag: { select: { id: true, name: true, colour: true, sortOrder: true } } },
+  },
 } satisfies Prisma.PartySelect;
 
 type PartySelected = Prisma.PartyGetPayload<{ select: typeof PARTY_SELECT }>;
@@ -102,6 +110,9 @@ function toPartyRow(p: PartySelected): PartyRow {
     creditLimit: num(p.creditLimit),
     isBlacklisted: p.isBlacklisted,
     salesCount: p._count.sales,
+    tags: [...p.partyTagAssignments]
+      .sort((a, b) => a.tag.sortOrder - b.tag.sortOrder)
+      .map((a) => ({ id: a.tag.id, name: a.tag.name, colour: a.tag.colour })),
     createdAt: iso(p.createdAt),
     archivedAt: iso(p.archivedAt),
     archivedByName: p.archivedBy?.name ?? null,
@@ -119,7 +130,62 @@ export class PartiesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
+    private readonly audit: AuditService,
   ) {}
+
+  /**
+   * DELETE /parties/:id (client, 9 Oct): only for the row that should never
+   * have existed. A customer with ANY history is refused by name and count —
+   * their sales and ledger are the shop's own numbers, and the foreign keys
+   * refuse the delete anyway. Archive is the door for everyone else:
+   * reversible, audited, and the totals stay true.
+   */
+  async remove(user: AuthUser, id: string) {
+    const party = await this.prisma.party.findFirst({
+      where: { id, organisationId: user.organisationId },
+      select: { id: true, name: true, types: true, legacyId: true },
+    });
+    if (!party) throw new NotFoundException('Customer not found');
+    if (party.legacyId) {
+      throw new BadRequestException(
+        'This customer is synced from Gati and would come straight back. Archive them instead.',
+      );
+    }
+
+    const [sales, ledger, payments, quotes, leads, conversations, checkIns, schemes, returns] =
+      await Promise.all([
+        this.prisma.sale.count({ where: { partyId: id } }),
+        this.prisma.ledgerEntry.count({ where: { partyId: id } }),
+        this.prisma.payment.count({ where: { partyId: id } }),
+        this.prisma.quote.count({ where: { partyId: id } }),
+        this.prisma.lead.count({ where: { partyId: id } }),
+        this.prisma.conversation.count({ where: { partyId: id } }),
+        this.prisma.checkIn.count({ where: { partyId: id } }),
+        this.prisma.schemeMember.count({ where: { partyId: id } }),
+        this.prisma.returnRecord.count({ where: { partyId: id } }),
+      ]);
+    const held: [string, number][] = [
+      ['sales', sales], ['ledger entries', ledger], ['payments', payments],
+      ['quotes', quotes], ['leads', leads], ['conversations', conversations],
+      ['visits', checkIns], ['scheme memberships', schemes], ['returns', returns],
+    ].filter(([, c]) => (c as number) > 0) as [string, number][];
+    if (held.length) {
+      throw new BadRequestException(
+        `${party.name} has ${held.map(([w, c]) => `${c} ${w}`).join(', ')} on record. Archive them instead — it hides them from lists and keeps every number true.`,
+      );
+    }
+
+    // Contact points, activity, interactions, attribution and tags cascade.
+    await this.prisma.party.delete({ where: { id: party.id } });
+    await this.audit.record(user, {
+      action: 'crm.contact_deleted',
+      entityType: 'Party',
+      entityId: id,
+      summary: `${party.name} deleted — no history`,
+      metadata: { name: party.name, types: party.types },
+    });
+    return { deleted: true };
+  }
 
   /** The customer directory as a workbook — same scope as the list. */
   async exportXlsx(user: AuthUser, headerStore?: string): Promise<{ buffer: Buffer; rows: number }> {
@@ -186,6 +252,10 @@ export class PartiesService {
     // than 500-ing on an invalid enum; 'all' skips the filter entirely.
     if (f.type && f.type !== 'all' && VALID_TYPES.has(f.type)) {
       where.types = { has: f.type as PartyType };
+    }
+    // Filter by one tag: the chips on the rows are also the way to slice them.
+    if (f.tagId) {
+      where.partyTagAssignments = { some: { tagId: f.tagId } };
     }
 
     const q = f.q?.trim();

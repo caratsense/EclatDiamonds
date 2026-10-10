@@ -16,6 +16,7 @@ import {
   Shift,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { buildOffCalendar, isOffOn, weekKeyOf } from './day-off.util';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuditService } from '../common/audit.service';
@@ -308,7 +309,11 @@ export async function eligibleStaff(
   if (links.length === 0) return [];
   const userIds = [...new Set(links.map((l) => l.user.id))];
 
-  const [holidays, leaves, offs] = await Promise.all([
+  // The dated roster governs the whole WEEK its rows fall in, so fetch the
+  // surrounding week, not just the day (day-off.util holds the rule).
+  const weekStart = new Date(`${weekKeyOf(dateOnly(date))}T00:00:00.000Z`);
+  const weekEnd = new Date(weekStart.getTime() + 6 * 24 * 60 * 60 * 1000);
+  const [holidays, leaves, offs, datedRows] = await Promise.all([
     prisma.storeHoliday.findMany({ where: { storeId: { in: storeIds }, date }, select: { storeId: true } }),
     prisma.leaveRequest.findMany({
       where: { staffId: { in: userIds }, status: 'approved', fromDate: { lte: date }, toDate: { gte: date } },
@@ -317,6 +322,10 @@ export async function eligibleStaff(
     prisma.staffWeekOff.findMany({
       where: { userId: { in: userIds } },
       select: { userId: true, storeId: true, dayOfWeek: true },
+    }),
+    prisma.staffDayOff.findMany({
+      where: { userId: { in: userIds }, date: { gte: weekStart, lte: weekEnd } },
+      select: { userId: true, storeId: true, date: true },
     }),
   ]);
   const holidayStores = new Set(holidays.map((h) => h.storeId));
@@ -327,12 +336,20 @@ export async function eligibleStaff(
       const tz = resolveTz(l.store.timezone);
       // A @db.Date is a UTC-midnight stand-in: read its weekday at local noon.
       const weekday = weekdayInTz(instantFromLocalTime(date, 12 * 60, tz), tz);
-      // Same rule as PayrollService.offDaysFor: their own rows (this store or
-      // any store) REPLACE the branch's day; none → the branch's day.
+      // The pattern rule, as PayrollService.offDaysFor: their own rows (this
+      // store or any store) REPLACE the branch's day; none → the branch's day.
+      // Then the dated roster overrides the pattern for any week it plans
+      // (day-off.util holds the rule, shared with payroll).
       const own = offs.filter((o) => o.userId === l.user.id && (o.storeId === l.storeId || o.storeId === null));
-      const isWeekOff = own.length
-        ? own.some((o) => o.dayOfWeek === weekday)
-        : l.store.weekOffDay != null && l.store.weekOffDay === weekday;
+      const weekdays = own.length
+        ? new Set(own.map((o) => o.dayOfWeek))
+        : l.store.weekOffDay != null
+          ? new Set([l.store.weekOffDay])
+          : new Set<number>();
+      const dated = datedRows
+        .filter((r) => r.userId === l.user.id && (r.storeId === l.storeId || r.storeId === null))
+        .map((r) => dateOnly(r.date));
+      const isWeekOff = isOffOn(buildOffCalendar(weekdays, dated), dateOnly(date), weekday);
       const p = l.user.employeeProfile;
       return {
         userId: l.user.id,

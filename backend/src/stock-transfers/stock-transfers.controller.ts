@@ -13,17 +13,22 @@ import { Roles } from '../auth/roles.decorator';
  * Module 9 — inter-store Stock Transfer.
  *
  * RBAC is declared here as a floor (RolesGuard is rank-monotonic) and tightened
- * in the service: branch operations name `store_manager` but the service still
- * rejects head_office (it has no branch); approve/reject name `head_office`
- * which only that top role satisfies. Salespeople clear no floor. Every stage
- * also re-derives the authoritative store from the record, never the request.
+ * in the service: raising a request (create/submit) is open to branch STAFF
+ * (client, 9 Oct: staff must be able to initiate, not only administrators), but
+ * the service still rejects head_office there (it has no branch). Fulfilment
+ * (dispatch/receive/acknowledge/cancel) stays `store_manager`; approve/reject
+ * name `head_office`, which only that top role satisfies. Every stage also
+ * re-derives the authoritative store from the record, never the request. The
+ * ModuleAccessGuard runs first, so only roles holding the `stock-transfers`
+ * screen (auth/access.ts) reach these floors at all.
  */
 @Controller('stock-transfers')
 export class StockTransfersController {
   constructor(private readonly transfers: StockTransfersService) {}
 
-  // Management information: store manager and above, never a salesperson.
-  @Roles('store_manager')
+  // Open to branch staff: a salesperson who raised a request must be able to
+  // see where it stands. The service scopes rows to the caller's stores.
+  @Roles('salesperson')
   @Get()
   list(
     @CurrentUser() user: AuthUser,
@@ -33,20 +38,23 @@ export class StockTransfersController {
     return this.transfers.list(user, store, query ?? {});
   }
 
-  // Management information: store manager and above, never a salesperson.
-  @Roles('store_manager')
+  // Same visibility as the list: either side of the transfer, or head office.
+  @Roles('salesperson')
   @Get(':id')
   detail(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.transfers.detail(user, id);
   }
 
-  @Roles('store_manager')
+  // Branch staff raise the request; the piece scope and source-store checks
+  // stay in the service exactly as for a manager.
+  @Roles('salesperson')
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateStockTransferDto) {
     return this.transfers.create(user, dto);
   }
 
-  @Roles('store_manager')
+  // Submitting is part of raising (a draft nobody can submit never reaches HO).
+  @Roles('salesperson')
   @Post(':id/submit')
   submit(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.transfers.submit(user, id);

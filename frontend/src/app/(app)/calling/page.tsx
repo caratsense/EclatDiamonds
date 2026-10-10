@@ -28,11 +28,13 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { STAT_LABEL, STAT_VALUE } from "@/components/ui/stat";
 import { StatusPill } from "@/components/ui/status-pill";
 import {
+  fetchSessionQueue,
   useCallingQueue,
   useCallingSummary,
   type CallingBucket,
   type QueueTask,
 } from "@/lib/queries/calling";
+import { TENANT_NAME } from "@/lib/brand";
 import { apiErrorMessage } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
@@ -129,7 +131,7 @@ function TaskRow({ task, onAct }: { task: QueueTask; onAct: () => void }) {
               className="text-emerald-600 border-emerald-500/30 hover:bg-emerald-500/10 gap-1.5"
               title="Send WhatsApp Follow-up"
               onClick={() => {
-                const text = `Hello ${customerName}, following up from Éclat regarding our conversation. Please let us know if you have any questions!`;
+                const text = `Hello ${customerName}, following up from ${TENANT_NAME} regarding our conversation. Please let us know if you have any questions!`;
                 window.open(`https://wa.me/${dialable}?text=${encodeURIComponent(text)}`, "_blank");
               }}
             >
@@ -203,6 +205,38 @@ export default function CallingPage() {
   const [session, setSession] = useState<{ ids: string[]; at: number } | null>(
     null,
   );
+  const [startingSession, setStartingSession] = useState(false);
+
+  /*
+   * A session is work owed NOW: overdue first, then due today — whatever tab
+   * happens to be on screen. Fetched at click time (not read from the open
+   * tab's query) so an empty "Due today" tab cannot leave the button a silent
+   * no-op while four overdue calls sit one tab away. When there is truly
+   * nothing to call, it says so in words instead of doing nothing.
+   */
+  const startSession = async () => {
+    setStartingSession(true);
+    try {
+      const tasks = await fetchSessionQueue({
+        mine,
+        ...(search.trim().length >= 2 ? { search: search.trim() } : {}),
+      });
+      if (!tasks.length) {
+        toast.info(
+          search.trim().length >= 2
+            ? "No overdue or due-today follow-ups match this search."
+            : "Nothing is overdue or due today — there is no one to call right now.",
+        );
+        return;
+      }
+      setSession({ ids: tasks.map((t) => t.id), at: 0 });
+      setActOn(tasks[0].id);
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Could not start the call session."));
+    } finally {
+      setStartingSession(false);
+    }
+  };
 
   const summary = useCallingSummary({ mine });
   const queue = useCallingQueue({
@@ -280,21 +314,12 @@ export default function CallingPage() {
         */}
         {bucket !== "completed" ? (
           <Button
-            onClick={() => {
-              const ids = queue.data?.items.map((t) => t.id) ?? [];
-              if (!ids.length) return;
-              setSession({ ids, at: 0 });
-              setActOn(ids[0]);
-            }}
-            disabled={!queue.data?.items.length}
-            title={
-              queue.data?.items.length
-                ? "Work this queue one call at a time"
-                : "Nothing in this queue to call"
-            }
+            onClick={startSession}
+            disabled={startingSession}
+            title="Work everything overdue and due today, one call at a time"
           >
             <Zap className="mr-1.5 h-4 w-4" />
-            Start call session
+            {startingSession ? "Starting…" : "Start call session"}
           </Button>
         ) : null}
       </div>
@@ -311,23 +336,38 @@ export default function CallingPage() {
             {apiErrorMessage(queue.error, "Could not load the queue.")}
           </p>
         ) : !queue.data?.items.length ? (
-          <EmptyState
-            icon={Users}
-            title={
-              bucket === "overdue"
-                ? "Nothing overdue"
-                : bucket === "completed"
-                  ? "Nothing completed yet"
-                  : "Nothing here"
-            }
-            description={
-              BUCKETS.find((b) => b.value === bucket)?.label === "Overdue"
-                ? "Every follow-up is on time."
-                : "Follow-ups appear here as they fall due."
-            }
-          />
+          search.trim().length >= 2 ? (
+            /* An empty SEARCH is not an empty queue — saying "every follow-up
+               is on time" here, under a KPI card reading 4, was a lie. */
+            <EmptyState
+              icon={Search}
+              title="No matches"
+              description={`Nothing in this bucket matches “${search.trim()}”. The counts above cover the whole queue.`}
+            />
+          ) : (
+            <EmptyState
+              icon={Users}
+              title={
+                bucket === "overdue"
+                  ? "Nothing overdue"
+                  : bucket === "completed"
+                    ? "Nothing completed yet"
+                    : "Nothing here"
+              }
+              description={
+                BUCKETS.find((b) => b.value === bucket)?.label === "Overdue"
+                  ? "Every follow-up is on time."
+                  : "Follow-ups appear here as they fall due."
+              }
+            />
+          )
         ) : (
           <>
+            {search.trim().length >= 2 ? (
+              <p className="text-xs text-muted-foreground">
+                Matches for “{search.trim()}”. The counts above cover the whole queue.
+              </p>
+            ) : null}
             {queue.data.items.map((task) => (
               <TaskRow key={task.id} task={task} onAct={() => setActOn(task.id)} />
             ))}

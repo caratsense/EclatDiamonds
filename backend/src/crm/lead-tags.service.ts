@@ -277,6 +277,54 @@ export class LeadTagsService {
   }
 
   /** Fail as "not found" for another tenant's tag, never as "forbidden". */
+  /** The tags on a customer. Same vocabulary as leads, same scoping shape. */
+  async forParty(user: AuthUser, partyId: string): Promise<TagView[]> {
+    await this.mustReachParty(user, partyId);
+    const rows = await this.prisma.partyTagAssignment.findMany({
+      where: { partyId, ...this.scope.orgFilter(user) },
+      select: {
+        tag: { select: { id: true, name: true, colour: true, isActive: true, sortOrder: true } },
+      },
+      orderBy: { tag: { sortOrder: 'asc' } },
+    });
+    return rows.map((r) => r.tag);
+  }
+
+  /** Replace the tags on a customer with exactly this set (client, 9 Oct). */
+  async setForParty(user: AuthUser, partyId: string, tagIds: string[]): Promise<TagView[]> {
+    await this.mustReachParty(user, partyId);
+    const wanted = [...new Set(tagIds)];
+    if (wanted.length) {
+      const owned = await this.prisma.leadTag.count({
+        where: { id: { in: wanted }, ...this.scope.orgFilter(user) },
+      });
+      if (owned !== wanted.length) {
+        throw new BadRequestException('One of those tags does not exist.');
+      }
+    }
+    await this.prisma.$transaction([
+      this.prisma.partyTagAssignment.deleteMany({
+        where: { partyId, ...this.scope.orgFilter(user), ...(wanted.length ? { tagId: { notIn: wanted } } : {}) },
+      }),
+      ...wanted.map((tagId) =>
+        this.prisma.partyTagAssignment.upsert({
+          where: { partyId_tagId: { partyId, tagId } },
+          create: { organisationId: user.organisationId, partyId, tagId, createdById: user.id },
+          update: {},
+        }),
+      ),
+    ]);
+    return this.forParty(user, partyId);
+  }
+
+  private async mustReachParty(user: AuthUser, partyId: string): Promise<void> {
+    const party = await this.prisma.party.findFirst({
+      where: { id: partyId, ...this.scope.orgFilter(user) },
+      select: { id: true },
+    });
+    if (!party) throw new NotFoundException('Customer not found');
+  }
+
   private async mustOwn(user: AuthUser, tagId: string): Promise<void> {
     const row = await this.prisma.leadTag.findFirst({
       where: { id: tagId, ...this.scope.orgFilter(user) },

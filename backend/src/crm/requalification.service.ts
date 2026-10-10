@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Role } from '@prisma/client';
 
 import { AuthUser } from '../common/auth-user';
+import { PRODUCT_NAME } from '../common/brand';
 import { JobsService } from '../jobs/jobs.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { QualificationService } from './qualification.service';
@@ -107,7 +108,7 @@ export class RequalificationService implements OnModuleInit {
     // global authority, and an unrouted thread gets no store scope at all.
     const actor: AuthUser = {
       id: 'system-requalify',
-      name: 'CaratSense (automatic)',
+      name: `${PRODUCT_NAME} (automatic)`,
       email: 'system@caratsense.local',
       role: Role.head_office,
       organisationId,

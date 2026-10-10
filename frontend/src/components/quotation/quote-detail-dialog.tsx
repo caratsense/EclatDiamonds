@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Download, FileText, MessageCircle, Store as StoreIcon, Wrench } from "lucide-react";
+import { Download, FileText, MessageCircle, Pencil, Store as StoreIcon, Trash2, Wrench } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -32,11 +32,14 @@ import {
   QUOTE_STATUS_LABELS,
   type Quote,
 } from "@/lib/mock/quotation";
+import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
 import { ChannelStatusNotice } from "@/components/integrations/channel-status-notice";
+import { EditQuoteDialog } from "@/components/quotation/edit-quote-dialog";
 import { QuoteApprovalPanel } from "@/components/quotation/quote-approval-panel";
 import { QuoteDetailsPanel } from "@/components/quotation/quote-details-panel";
 import {
+  useDeleteQuote,
   useDownloadQuotePdf,
   useQuoteApproval,
   useSendQuotePdf,
@@ -59,16 +62,50 @@ export function QuoteDetailDialog({
   open,
   onOpenChange,
 }: QuoteDetailDialogProps) {
-  const { stores, currentStore } = useSession();
+  const { stores, currentStore, role } = useSession();
   const [sharing, setSharing] = useState(false);
+  // Deleting is deliberate: the first tap arms the button, the second deletes.
+  const [armDelete, setArmDelete] = useState(false);
+  // Mounted only while open, so the edit form seeds from the quote as it is NOW
+  // (the list row refreshes under this dialog after every save).
+  const [editOpen, setEditOpen] = useState(false);
   const gate = useQuoteApproval(quote?.id ?? null);
   const downloadPdf = useDownloadQuotePdf();
   const sendPdf = useSendQuotePdf();
+  const deleteQuote = useDeleteQuote();
+
+  const onDelete = () => {
+    if (!quote) return;
+    if (!armDelete) {
+      setArmDelete(true);
+      return;
+    }
+    deleteQuote.mutate(quote.id, {
+      onSuccess: () => {
+        toast.success(`Quote ${quote.ref} deleted.`);
+        setArmDelete(false);
+        onOpenChange(false);
+      },
+      onError: (e) => {
+        setArmDelete(false);
+        toast.error(apiErrorMessage(e, "Could not delete the quote."));
+      },
+    });
+  };
   if (!quote) return null;
   // Held until the server says the quote may leave. The server refuses anyway;
   // this only stops a salesperson pressing a button that will be refused.
   const awaitingApproval = !!gate.data && gate.data.required && !gate.data.cleared;
   const heldTitle = awaitingApproval ? "A manager must approve this quote first" : undefined;
+  // The people deciding the approval may always READ the document - the server
+  // sends them a DRAFT-stamped copy until it clears. Sending stays held.
+  const canDownloadDraft = ROLE_RANK[role] >= ROLE_RANK.store_manager;
+  const downloadHeld = awaitingApproval && !canDownloadDraft;
+  const canDelete = ROLE_RANK[role] >= ROLE_RANK.store_manager && quote.status !== "accepted";
+  // Anyone who can open the quote may re-price it (the server scopes a
+  // salesperson to their own quotes already); an accepted quote became an
+  // order and the server refuses edits — mirror that here.
+  const canEdit = quote.status !== "accepted";
 
   const onDownloadPdf = () =>
     downloadPdf.mutate(quote.id, {
@@ -452,14 +489,46 @@ export function QuoteDetailDialog({
         <ChannelStatusNotice channel="whatsapp" className="mt-2" />
 
         <DialogFooter className="flex-wrap gap-2">
+          {canDelete ? (
+            <Button
+              variant="ghost"
+              className="mr-auto text-destructive hover:text-destructive"
+              disabled={deleteQuote.isPending}
+              onClick={onDelete}
+              title="Removes the quote and its lines. An accepted quote cannot be deleted."
+            >
+              <Trash2 className="h-4 w-4" />
+              {deleteQuote.isPending ? "Deleting…" : armDelete ? "Tap again to delete" : "Delete"}
+            </Button>
+          ) : null}
+          {canEdit ? (
+            <Button
+              variant="outline"
+              onClick={() => setEditOpen(true)}
+              title="Change the items, weights, rates and discounts. Saving re-prices the quote and withdraws any approval."
+            >
+              <Pencil className="h-4 w-4" />
+              Edit quote
+            </Button>
+          ) : null}
           <Button
             variant="outline"
-            disabled={downloadPdf.isPending || awaitingApproval}
-            title={heldTitle}
+            disabled={downloadPdf.isPending || downloadHeld}
+            title={
+              downloadHeld
+                ? heldTitle
+                : awaitingApproval
+                  ? "Downloads stamped DRAFT until a manager approves"
+                  : undefined
+            }
             onClick={onDownloadPdf}
           >
             <Download className="h-4 w-4" />
-            {downloadPdf.isPending ? "Preparing…" : "Download PDF"}
+            {downloadPdf.isPending
+              ? "Preparing…"
+              : awaitingApproval && canDownloadDraft
+                ? "Download draft PDF"
+                : "Download PDF"}
           </Button>
           <Button
             variant="outline"
@@ -481,6 +550,12 @@ export function QuoteDetailDialog({
           </Button>
         </DialogFooter>
       </DialogContent>
+
+      {/* Stacks over this dialog; unmounting on close drops its form state so
+          the next open always seeds from the quote's current lines. */}
+      {editOpen ? (
+        <EditQuoteDialog quote={quote} open onOpenChange={setEditOpen} />
+      ) : null}
     </Dialog>
   );
 }
