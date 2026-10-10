@@ -24,6 +24,7 @@ import {
   StoreScopeField,
   useStoreScope,
 } from "@/components/common/store-scope-field";
+import { TENANT_NAME } from "@/lib/brand";
 import { apiErrorMessage, phoneInputValue, positiveNumberInput } from "@/lib/utils";
 
 /** Parse a numeric input into a positive integer, or undefined when blank. */
@@ -121,7 +122,7 @@ export function CreateReferralCodeDialog({
             Create referral code
           </DialogTitle>
           <DialogDescription>
-            Mint an “Earn with Éclat” code for a referrer. They earn{" "}
+            Mint an “Earn with {TENANT_NAME}” code for a referrer. They earn{" "}
             {REFERRAL_COMMISSION_PCT}% on every referred bill; their referrals
             get {REFERRAL_DIAMOND_DISCOUNT_PCT}% off diamond.
           </DialogDescription>

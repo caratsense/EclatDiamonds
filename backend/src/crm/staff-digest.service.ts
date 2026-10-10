@@ -4,6 +4,7 @@ import { Prisma, Role } from '@prisma/client';
 import { canOpen, startsAttendanceOnly } from '../auth/access';
 import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
+import { PRODUCT_NAME } from '../common/brand';
 import { StoreScopeService } from '../common/store-scope.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -183,7 +184,7 @@ export class StaffDigestService {
       `Good morning ${name.split(' ')[0]} — ${total} follow-up${total === 1 ? '' : 's'} today.`,
       overdue.length ? `${overdue.length} overdue.` : null,
       names ? `${names}${more}.` : null,
-      'Open CaratSense to call or message them.',
+      `Open ${PRODUCT_NAME} to call or message them.`,
     ]
       .filter(Boolean)
       .join(' ');

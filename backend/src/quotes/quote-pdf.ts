@@ -1,5 +1,7 @@
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, degrees, rgb } from 'pdf-lib';
 
+import { PRODUCT_NAME } from '../common/brand';
+
 /** Everything printed on a detailed quote, already resolved and in scope. */
 export interface QuotePdfData {
   business: {
@@ -225,7 +227,7 @@ export async function renderQuotePdf(data: QuotePdfData): Promise<Buffer> {
   const pdf = await PDFDocument.create();
   pdf.setTitle(`Quotation ${data.ref}`);
   pdf.setAuthor(data.business.name);
-  pdf.setCreator('CaratOS');
+  pdf.setCreator(PRODUCT_NAME);
   pdf.setCreationDate(data.generatedAt);
 
   const regular = await pdf.embedFont(StandardFonts.Helvetica);

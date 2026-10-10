@@ -33,6 +33,7 @@ import {
   type CallingBucket,
   type QueueTask,
 } from "@/lib/queries/calling";
+import { TENANT_NAME } from "@/lib/brand";
 import { apiErrorMessage } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
@@ -129,7 +130,7 @@ function TaskRow({ task, onAct }: { task: QueueTask; onAct: () => void }) {
               className="text-emerald-600 border-emerald-500/30 hover:bg-emerald-500/10 gap-1.5"
               title="Send WhatsApp Follow-up"
               onClick={() => {
-                const text = `Hello ${customerName}, following up from Éclat regarding our conversation. Please let us know if you have any questions!`;
+                const text = `Hello ${customerName}, following up from ${TENANT_NAME} regarding our conversation. Please let us know if you have any questions!`;
                 window.open(`https://wa.me/${dialable}?text=${encodeURIComponent(text)}`, "_blank");
               }}
             >

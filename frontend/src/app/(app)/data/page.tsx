@@ -15,6 +15,7 @@ import { SourcePanel } from "@/components/data/source-panel";
 import { ConnectAgents } from "@/components/data/connect-agents";
 import { RemoveDemoData } from "@/components/data/remove-demo-data";
 import { KnowledgePanel } from "@/components/data/knowledge-panel";
+import { PRODUCT_NAME } from "@/lib/brand";
 import { useImportHistory, type FileImportOrigin } from "@/lib/queries/imports";
 import {
   useConnectorRuntime,
@@ -258,7 +259,7 @@ function Reconciliation() {
           <CardTitle className="text-base">Where your records came from</CardTitle>
           <p className="text-xs text-muted-foreground">
             Counted from each record&apos;s own provenance — not from a comparison with
-            your old system, which CaratOS cannot read directly.
+            your old system, which {PRODUCT_NAME} cannot read directly.
           </p>
         </CardHeader>
         <CardContent className="overflow-x-auto">
@@ -270,7 +271,7 @@ function Reconciliation() {
                 <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
                   <th className="pb-2 pr-3 font-medium">Record type</th>
                   <th className="pb-2 pr-3 font-medium">Came from your system</th>
-                  <th className="pb-2 font-medium">Entered in CaratOS</th>
+                  <th className="pb-2 font-medium">Entered in {PRODUCT_NAME}</th>
                 </tr>
               </thead>
               <tbody>

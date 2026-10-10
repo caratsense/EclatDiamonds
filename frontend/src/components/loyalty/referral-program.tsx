@@ -33,6 +33,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { TENANT_NAME } from "@/lib/brand";
 import { formatINR, formatPercent } from "@/lib/format";
 import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
@@ -134,7 +135,7 @@ export function ReferralProgram() {
             </span>
             <div className="space-y-1">
               <h3 className="font-display text-lg font-bold leading-tight">
-                Earn with Éclat
+                Earn with {TENANT_NAME}
               </h3>
               <p className="max-w-xl text-sm text-muted-foreground">
                 Referrer earns{" "}
@@ -192,7 +193,7 @@ export function ReferralProgram() {
               <EmptyState
                 icon={Gift}
                 title="No referral codes yet"
-                description="Mint an “Earn with Éclat” code so a referrer can share it and earn commission on every referred bill."
+                description={`Mint an “Earn with ${TENANT_NAME}” code so a referrer can share it and earn commission on every referred bill.`}
                 actionLabel="New referral code"
                 onAction={() => setCreateOpen(true)}
               />

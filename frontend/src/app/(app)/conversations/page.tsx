@@ -82,6 +82,7 @@ import { IntentAnalysisPanel } from "@/components/crm/intent-analysis-panel";
 import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
 import { useFillViewport } from "@/lib/use-fill-viewport";
+import { PRODUCT_NAME, TENANT_NAME } from "@/lib/brand";
 import { apiErrorMessage, positiveNumberInput } from "@/lib/utils";
 
 /**
@@ -855,7 +856,7 @@ function ConversationsContent() {
                 HO
                 <span className="absolute bottom-0 right-0 h-2 w-2 rounded-full bg-[#25D366] ring-1 ring-background" />
               </div>
-              <span className="text-xs font-medium text-foreground">CaratOS Staff</span>
+              <span className="text-xs font-medium text-foreground">{PRODUCT_NAME} Staff</span>
             </div>
             {/*
               One button, and it does what it says.
@@ -1667,7 +1668,7 @@ function ThreadView({
                 type="button"
                 onClick={() =>
                   setDraft(
-                    `Our ${conversation.store?.name ?? "Éclat Diamonds"} showroom is open 10:30 AM to 8:30 PM. Shall I send you the address?`,
+                    `Our ${conversation.store?.name ?? TENANT_NAME} showroom is open 10:30 AM to 8:30 PM. Shall I send you the address?`,
                   )
                 }
                 className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/50 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted hover:border-[#25D366]/40 transition-colors whitespace-nowrap"

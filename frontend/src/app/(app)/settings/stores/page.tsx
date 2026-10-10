@@ -1344,7 +1344,7 @@ function AddManagerDialog({
                   id="mgr-email"
                   type="email"
                   autoComplete="off"
-                  placeholder="manager@caratos.in"
+                  placeholder="manager@caratspace.in"
                   value={email}
                   aria-invalid={!!errors.email}
                   onChange={(e) => {

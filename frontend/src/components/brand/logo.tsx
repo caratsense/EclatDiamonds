@@ -1,5 +1,16 @@
 import * as React from "react";
+import { PRODUCT_NAME } from "@/lib/brand";
 import { cn } from "@/lib/utils";
+
+/**
+ * The lockup renders the product name in two tones, split after "Carat"
+ * (e.g. "Carat" + "Space"). Derived from PRODUCT_NAME so a rename stays a
+ * one-line change in lib/brand.ts.
+ */
+const LOCKUP_PREFIX = "Carat";
+const LOCKUP_SUFFIX = PRODUCT_NAME.startsWith(LOCKUP_PREFIX)
+  ? PRODUCT_NAME.slice(LOCKUP_PREFIX.length)
+  : PRODUCT_NAME;
 
 /**
  * Modern faceted diamond prism icon for CaratOS.
@@ -80,12 +91,12 @@ export function Logo({
   alt?: string;
   showIcon?: boolean;
 }) {
-  // Any legacy or null tenant name resolves directly to the brand CaratOS
+  // Any legacy or null tenant name resolves directly to the product brand
   const isDefaultBrand =
     !name ||
     /^(eclat|éclat|caratsense)/i.test(name.trim());
 
-  const displayName = isDefaultBrand ? "CaratOS" : name.trim();
+  const displayName = isDefaultBrand ? PRODUCT_NAME : name.trim();
 
   return (
     <div
@@ -100,9 +111,11 @@ export function Logo({
       )}
       {isDefaultBrand ? (
         <span className="flex items-center text-xl font-extrabold tracking-tight text-inherit">
-          <span className="text-slate-900 dark:text-white">Carat</span>
+          {PRODUCT_NAME.startsWith(LOCKUP_PREFIX) && (
+            <span className="text-slate-900 dark:text-white">{LOCKUP_PREFIX}</span>
+          )}
           <span className="ml-1 bg-gradient-to-r from-indigo-500 via-indigo-400 to-cyan-500 dark:from-indigo-400 dark:via-indigo-300 dark:to-cyan-400 bg-clip-text font-black text-transparent">
-            OS
+            {LOCKUP_SUFFIX}
           </span>
         </span>
       ) : (
@@ -111,7 +124,7 @@ export function Logo({
             {displayName}
           </span>
           <span className="text-[9.5px] font-semibold tracking-wider uppercase text-slate-500 dark:text-slate-400">
-            CaratOS
+            {PRODUCT_NAME}
           </span>
         </div>
       )}

@@ -37,6 +37,7 @@ import {
   useWeekOffRoster,
 } from "@/lib/queries/payroll";
 import { formatINR } from "@/lib/format";
+import { PRODUCT_NAME } from "@/lib/brand";
 import { apiErrorMessage } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
@@ -327,7 +328,7 @@ export default function PayrollPage() {
               <History className="size-4" /> Payroll runs for {period}
             </CardTitle>
             <CardDescription>
-              Once a branch&rsquo;s month has closed there, CaratOS drafts its payslips and tells
+              Once a branch&rsquo;s month has closed there, {PRODUCT_NAME} drafts its payslips and tells
               the branch&rsquo;s managers and head office. It only drafts &mdash; nothing is issued
               or paid automatically. Re-run a month after late corrections or if a run failed.
             </CardDescription>

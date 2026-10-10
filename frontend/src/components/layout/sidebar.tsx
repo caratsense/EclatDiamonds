@@ -31,6 +31,7 @@ import {
 import { useSession } from "@/store/use-session";
 import { useQuickAction } from "@/store/use-quick-action";
 import { brandingName } from "@/lib/branding";
+import { PRODUCT_NAME } from "@/lib/brand";
 import { useT } from "@/lib/i18n";
 
 export function Sidebar() {
@@ -106,8 +107,8 @@ export function Sidebar() {
 
   const cleanBrandDisplay =
     brandName && !/eclat|éclat/i.test(brandName)
-      ? `${brandName} · CaratOS`
-      : "CaratOS Platform";
+      ? `${brandName} · ${PRODUCT_NAME}`
+      : `${PRODUCT_NAME} Platform`;
 
   return (
     /*
@@ -121,7 +122,7 @@ export function Sidebar() {
       <div className="flex h-16 items-center border-b border-sidebar-border px-5">
         <Link
           href={homeForRole(role, enabledNavigation, access)}
-          aria-label={brandName ?? "CaratOS"}
+          aria-label={brandName ?? PRODUCT_NAME}
           className="flex items-center"
         >
           <Logo className="h-8 w-auto" name={brandName} />

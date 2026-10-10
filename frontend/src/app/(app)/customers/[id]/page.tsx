@@ -39,6 +39,7 @@ import { ArchiveContactButton } from "@/components/crm/archive-contact-button";
 import { DeleteContactButton } from "@/components/crm/delete-contact-button";
 import { PartyTagsField } from "@/components/crm/lead-tags-field";
 import { QualificationPanel } from "@/components/crm/qualification-panel";
+import { TENANT_NAME } from "@/lib/brand";
 import { formatINR } from "@/lib/format";
 
 /**
@@ -168,7 +169,7 @@ export default function Customer360Page({
                   const dialable = customer.phone?.replace(/[^0-9]/g, "");
                   if (dialable) {
                     window.open(
-                      `https://wa.me/${dialable}?text=${encodeURIComponent(`Hello ${customer.name}, following up from Éclat Diamonds.`)}`,
+                      `https://wa.me/${dialable}?text=${encodeURIComponent(`Hello ${customer.name}, following up from ${TENANT_NAME}.`)}`,
                       "_blank",
                     );
                   }

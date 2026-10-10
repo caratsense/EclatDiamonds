@@ -1,5 +1,7 @@
 import type { MetadataRoute } from "next";
 
+import { PRODUCT_NAME } from "@/lib/brand";
+
 /**
  * Web app manifest for the CaratSense PWA (installable on phones and
  * in-store terminals). Served by Next.js at /manifest.webmanifest and linked
@@ -10,10 +12,9 @@ export default function manifest(): MetadataRoute.Manifest {
     // One manifest is served to every tenant, so it names the product. A
     // pharmacy installing this on its counter tablet was getting a home-screen
     // icon labelled after a jeweller.
-    name: "CaratOS",
-    short_name: "CaratOS",
-    description:
-      "Unified operations platform for multi-branch businesses — CaratOS.",
+    name: PRODUCT_NAME,
+    short_name: PRODUCT_NAME,
+    description: `Unified operations platform for multi-branch businesses — ${PRODUCT_NAME}.`,
     start_url: "/",
     scope: "/",
     display: "standalone",

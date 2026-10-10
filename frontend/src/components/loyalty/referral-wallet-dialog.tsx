@@ -22,6 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { TENANT_NAME } from "@/lib/brand";
 import { formatINR } from "@/lib/format";
 import { PAYOUT_TYPE_LABELS, type PayoutType } from "@/lib/mock/loyalty";
 import { useReferralWallet } from "@/lib/queries/loyalty";
@@ -66,7 +67,7 @@ export function ReferralWalletDialog({
     if (!wallet) return;
     const { code, totals, referrals } = wallet;
     const lines = [
-      "Earn with Éclat — Referral wallet",
+      `Earn with ${TENANT_NAME} — Referral wallet`,
       `Referrer: ${code.referrerName} (${code.code})`,
       `Total wallet: ${formatINR(totals.totalWallet)}`,
       `Redeemed: ${formatINR(totals.redeemed)}`,

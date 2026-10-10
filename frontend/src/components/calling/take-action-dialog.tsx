@@ -43,6 +43,7 @@ import {
   useLogCall,
   type CallRow,
 } from "@/lib/queries/calling";
+import { TENANT_NAME } from "@/lib/brand";
 import { apiErrorMessage } from "@/lib/utils";
 
 /**
@@ -297,7 +298,7 @@ export function TakeActionDialog({ taskId, open, onOpenChange, session }: Props)
                       const dialable = d.customer?.contact?.replace(/[^0-9]/g, "");
                       if (dialable) {
                         const name = d.customer?.name ?? "Customer";
-                        const text = `Hello ${name}, thank you for speaking with Éclat Diamonds. Please let us know if you have any questions regarding your enquiry or shortlisted pieces!`;
+                        const text = `Hello ${name}, thank you for speaking with ${TENANT_NAME}. Please let us know if you have any questions regarding your enquiry or shortlisted pieces!`;
                         window.open(`https://wa.me/${dialable}?text=${encodeURIComponent(text)}`, "_blank");
                       }
                     }}
@@ -311,9 +312,9 @@ export function TakeActionDialog({ taskId, open, onOpenChange, session }: Props)
                 <div className="bg-background/80 rounded p-2.5 border border-border/50 space-y-1">
                   <span className="font-semibold text-foreground block">🎯 Recommended Opening:</span>
                   <p className="leading-relaxed">
-                    {d.lead?.interest 
-                      ? `"Hello, I am calling from Éclat regarding your interest in our ${d.lead.interest} collection. We have fresh certified inventory matching your preference."` 
-                      : `"Hello, I am following up from Éclat on your recent inquiry. Have you had a chance to consider your shortlisted jewellery designs?"`}
+                    {d.lead?.interest
+                      ? `"Hello, I am calling from ${TENANT_NAME} regarding your interest in our ${d.lead.interest} collection. We have fresh certified inventory matching your preference."`
+                      : `"Hello, I am following up from ${TENANT_NAME} on your recent inquiry. Have you had a chance to consider your shortlisted jewellery designs?"`}
                   </p>
                 </div>
                 <div className="bg-background/80 rounded p-2.5 border border-border/50 space-y-1">

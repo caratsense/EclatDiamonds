@@ -60,6 +60,7 @@ import {
   type EmployeeRow,
   type EmploymentStatus,
 } from "@/lib/queries/hrms-employees";
+import { PRODUCT_NAME } from "@/lib/brand";
 import { apiErrorMessage } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
@@ -375,7 +376,7 @@ export function EmployeesTab({
                     <EmployeeStatusBadge row={r} />
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
-                    {r.source === "ezattendance" ? "EzAttendance" : r.hasProfile ? "Manual" : "CaratOS"}
+                    {r.source === "ezattendance" ? "EzAttendance" : r.hasProfile ? "Manual" : PRODUCT_NAME}
                   </TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     {canManage ? (

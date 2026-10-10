@@ -506,7 +506,9 @@ export class QuotesService {
     });
 
     const body = [
-      store?.name ?? 'CaratSense',
+      // Tenant stationery, not the product: when the origin store has no name
+      // we say "our store" rather than branding another business's quote.
+      store?.name ?? 'our store',
       `Quote ${quote.ref}`,
       quote.customer,
       '',

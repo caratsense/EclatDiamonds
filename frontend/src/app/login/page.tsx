@@ -25,6 +25,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Logo } from "@/components/brand/logo";
 import { InstallAppButton } from "@/components/pwa/install-app-button";
+import { PRODUCT_NAME } from "@/lib/brand";
 import { homeForRole } from "@/lib/navigation";
 import { clearAttendanceHandled } from "@/lib/attendance-gate";
 import {
@@ -392,7 +393,9 @@ function OrganisationSignupCard({
         onSuccess: onCreated,
         onError: (err) => {
           const msg = apiMessage(err, "Couldn't set up your organisation. Try again.");
-          if (msg.includes("already have a CaratOS account") || msg.includes("sign in instead")) {
+          // Matches the backend duplicate-signup message (auth.service.ts) —
+          // keep "sign in instead" as the stable fragment across renames.
+          if (msg.includes(`already have a ${PRODUCT_NAME} account`) || msg.includes("sign in instead")) {
             setDuplicateEmailError(email.trim());
           }
           toast.error(msg);
@@ -715,7 +718,7 @@ function LoginPage() {
               <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-indigo-500/30 bg-indigo-500/10">
                 <Bot className="h-5 w-5" />
               </div>
-              <span className="font-display text-xl font-bold">CaratOS</span>
+              <span className="font-display text-xl font-bold">{PRODUCT_NAME}</span>
             </div>
           ) : (
             <Logo className="h-10 w-auto" />
@@ -730,7 +733,7 @@ function LoginPage() {
         <div className="relative z-10 my-auto max-w-lg space-y-7 py-8">
           <div>
             <span className="text-xs font-medium uppercase tracking-[0.2em] text-[#6366f1] dark:text-[#818cf8]">
-              {creatingOrganisation ? "Built for every industry" : "CaratOS"}
+              {creatingOrganisation ? "Built for every industry" : PRODUCT_NAME}
             </span>
             <h1 className="mt-3 font-display text-4xl font-bold leading-[1.05] tracking-tight text-slate-900 dark:text-[#f8fafc] xl:text-[3.25rem]">
               {creatingOrganisation ? (
@@ -807,11 +810,11 @@ function LoginPage() {
 
         {/* Bottom Footer */}
         <div className="relative z-10 flex items-center justify-between border-t border-slate-200/80 dark:border-white/[0.08] pt-5 text-xs text-slate-500 dark:text-[#f8fafc]/45">
-          <span className="font-mono uppercase tracking-[0.16em]">CaratOS</span>
+          <span className="font-mono uppercase tracking-[0.16em]">{PRODUCT_NAME}</span>
           <span>
             {creatingOrganisation
               ? "Universal CRM · Isolated workspaces"
-              : "© 2026 CaratOS. All rights reserved."}
+              : `© 2026 ${PRODUCT_NAME}. All rights reserved.`}
           </span>
         </div>
       </aside>
@@ -825,7 +828,7 @@ function LoginPage() {
               {creatingOrganisation ? (
                 <div className="flex items-center gap-2 text-[#6366f1] dark:text-[#818cf8]">
                   <Bot className="h-6 w-6" />
-                  <span className="font-display text-xl font-bold">CaratOS</span>
+                  <span className="font-display text-xl font-bold">{PRODUCT_NAME}</span>
                 </div>
               ) : (
                 <Logo className="h-9 w-auto" />

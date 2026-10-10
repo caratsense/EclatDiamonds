@@ -57,6 +57,7 @@ import {
   StoreScopeField,
   useStoreScope,
 } from "@/components/common/store-scope-field";
+import { PRODUCT_NAME } from "@/lib/brand";
 import { apiErrorMessage, positiveNumberInput } from "@/lib/utils";
 
 const MODE_OPTIONS: { value: PaymentMode; label: string }[] = [
@@ -229,7 +230,7 @@ export default function PaymentsPage() {
                           </TableCell>
                           <TableCell className="text-muted-foreground">
                             {c.recordedBy ?? (
-                              <span title="Imported from the legacy system — no Eclat user behind it">
+                              <span title={`Imported from the legacy system — no ${PRODUCT_NAME} user behind it`}>
                                 Imported
                               </span>
                             )}
