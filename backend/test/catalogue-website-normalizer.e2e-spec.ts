@@ -78,6 +78,37 @@ describe('website normaliser (pure)', () => {
     expect(n.listing.specifications).toContain('8.07 g (18KT)');
   });
 
+  // Client, 9 Oct: the spec's carat figure names the CENTRE stone; the BOM
+  // totals every stone. A 3 ct solitaire whose BOM totals 3.7 ct is correct
+  // data, not a conflict. Only spec > BOM total, or carats with no diamond
+  // weight at all, are flagged — and the copy says which comparison failed.
+  it('does not flag centre-stone carats below the BOM total; flags spec above it or an empty BOM', () => {
+    const base = {
+      productCode: 'SOL3',
+      specifications: 'Diamond: 3 ct lab-grown solitaire',
+    };
+    const bom = (ct: number[]) =>
+      ct.map((weight, i) => ({ materialName: i ? 'Side Diamonds' : 'Solitaire', weight, unit: 'carat' }));
+
+    // Centre 3 ct, BOM totals 3.7 ct (centre + sides): expected structure, no conflict.
+    const fine = normalizeWebsiteProduct({ ...base, variants: [{ karat: '18KT', billOfMaterial: bom([3, 0.7]) }] });
+    expect(fine.conflicts.filter((c) => c.detail.field === 'diamond_weight')).toHaveLength(0);
+
+    // Spec promises 3 ct but the materials total only 2.1 ct: flagged, naming both numbers.
+    const short = normalizeWebsiteProduct({ ...base, variants: [{ karat: '18KT', billOfMaterial: bom([2.1]) }] });
+    const over = short.conflicts.filter((c) => c.detail.field === 'diamond_weight');
+    expect(over).toHaveLength(1);
+    expect(over[0].summary).toBe('Specification says 3 ct of diamond, but the materials total only 2.1 ct.');
+    expect(over[0].detail).toMatchObject({ reason: 'spec_exceeds_bom', spec: 3, bom: 2.1 });
+
+    // Spec states carats but the BOM carries no diamond weight at all: flagged.
+    const empty = normalizeWebsiteProduct({ ...base, variants: [{ karat: '18KT', billOfMaterial: [] }] });
+    const missing = empty.conflicts.filter((c) => c.detail.field === 'diamond_weight');
+    expect(missing).toHaveLength(1);
+    expect(missing[0].summary).toContain('lists no diamond weight');
+    expect(missing[0].detail).toMatchObject({ reason: 'bom_missing', spec: 3, bom: null });
+  });
+
   it('is deterministic and the hash ignores key order', () => {
     const a = golden();
     expect(payloadHash(a)).toBe(payloadHash(golden()));
