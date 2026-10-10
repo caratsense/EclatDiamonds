@@ -365,8 +365,14 @@ export function TakeActionDialog({ taskId, open, onOpenChange, session }: Props)
                 d.notes.length ? (
                   d.notes.map((n) => (
                     <div key={n.id} className="rounded-md border border-border p-3 text-sm">
+                      {n.kind !== "note" ? (
+                        <Badge variant="outline" className="mb-1 text-[10px]">
+                          {n.kind}
+                        </Badge>
+                      ) : null}
                       <p>{n.body}</p>
                       <p className="mt-1 text-xs text-muted-foreground">
+                        {n.author ? `${n.author} · ` : ""}
                         {new Date(n.createdAt).toLocaleString()}
                       </p>
                     </div>
