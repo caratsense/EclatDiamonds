@@ -105,10 +105,9 @@ export default function ScheduledReportsPage() {
         storeId: form.storeId || null,
         // Empty means every column, which is what the server does with it.
         columns: form.columns,
-        recipients: form.recipients
-          .split(/[,;\s]+/)
-          .map((r) => r.trim())
-          .filter(Boolean),
+        // WhatsApp only (client, 10 Oct). Email stays in the platform and the
+        // API; this tenant's screen simply does not offer it.
+        recipients: [],
         phoneRecipients: form.phones
           .split(/[,;\s]+/)
           .map((r) => r.trim())
@@ -175,9 +174,9 @@ export default function ScheduledReportsPage() {
               <CalendarClock className="size-5" /> Scheduled reports
             </h1>
             <p className="text-sm text-muted-foreground">
-              A lead or walk-ins spreadsheet that arrives on its own — by email,
-              and on WhatsApp from the internal staff number. Monthly reports
-              cover the month that ended; weekly ones cover the week that ended.
+              A lead or walk-ins spreadsheet that arrives on its own, on
+              WhatsApp from the internal staff number. Monthly reports cover
+              the month that ended; weekly ones cover the week that ended.
             </p>
           </div>
           {canManage ? (
@@ -250,19 +249,6 @@ export default function ScheduledReportsPage() {
                   ))}
                 </select>
               </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="rep-to">Send to</Label>
-              <Input
-                id="rep-to"
-                placeholder="owner@example.com, manager@example.com"
-                value={form.recipients}
-                onChange={(e) => setForm((f) => ({ ...f, recipients: e.target.value }))}
-              />
-              <p className="text-xs text-muted-foreground">
-                Leave empty to produce the file without emailing it.
-              </p>
             </div>
 
             <div className="space-y-1.5">
@@ -529,9 +515,11 @@ export default function ScheduledReportsPage() {
                       <TableCell className="num text-right">{run.rows}</TableCell>
                       <TableCell>
                         <div className="flex flex-wrap items-center gap-2">
-                          <StatusPill tone={DELIVERY_TONE[run.emailStatus] ?? "mute"}>
-                            mail: {run.emailStatus.replace("_", " ")}
-                          </StatusPill>
+                          {run.recipients.length > 0 ? (
+                            <StatusPill tone={DELIVERY_TONE[run.emailStatus] ?? "mute"}>
+                              mail: {run.emailStatus.replace("_", " ")}
+                            </StatusPill>
+                          ) : null}
                           <StatusPill
                             tone={DELIVERY_TONE[run.whatsappStatus] ?? "mute"}
                             title={run.whatsappDetail ?? undefined}
