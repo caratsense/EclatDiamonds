@@ -4,6 +4,7 @@ import { Workbook } from 'exceljs';
 
 import { AuditService } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
+import { PRODUCT_NAME } from '../common/brand';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { SequenceService } from '../common/sequence.service';
@@ -396,7 +397,7 @@ export class DeadStockService {
     const res = await this.list(user, { ...opts, limit: EXPORT_MAX_ROWS, maxLimit: EXPORT_MAX_ROWS });
 
     const wb = new Workbook();
-    wb.creator = 'CaratSense';
+    wb.creator = PRODUCT_NAME;
     wb.created = new Date();
     const ws = wb.addWorksheet('Dead stock', { views: [{ state: 'frozen', ySplit: 1 }] });
     ws.columns = [

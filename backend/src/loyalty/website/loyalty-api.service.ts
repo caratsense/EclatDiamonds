@@ -12,6 +12,7 @@ import { LoyaltyWebhookDelivery, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit.service';
 import { AuthUser } from '../../common/auth-user';
+import { PRODUCT_NAME } from '../../common/brand';
 import { StoreScopeService } from '../../common/store-scope.service';
 import { CredentialCrypto } from '../../integration/framework/credential-crypto';
 import { normalizeIndianMobile } from '../../common/contact.util';
@@ -554,7 +555,7 @@ export class LoyaltyApiService implements OnModuleInit {
     if (!canEarn(settings)) {
       throw new BadRequestException(
         'No earn rate is configured for this loyalty programme, so a purchase cannot ' +
-          'award points yet. Set one in CaratOS under Settings → Loyalty.',
+          `award points yet. Set one in ${PRODUCT_NAME} under Settings → Loyalty.`,
       );
     }
     // FLOOR, not round. Rounding up awards points for money nobody spent, and

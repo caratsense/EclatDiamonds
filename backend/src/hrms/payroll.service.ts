@@ -10,6 +10,7 @@ import { PayrollRun, Payslip, Prisma, Role } from '@prisma/client';
 import { AuditService } from '../common/audit.service';
 import { buildOffCalendar, isOffOn, weekKeyOf } from './day-off.util';
 import { AuthUser } from '../common/auth-user';
+import { PRODUCT_NAME } from '../common/brand';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -1319,7 +1320,7 @@ function schedulerKey(storeId: string, periodKey: string): string {
 function schedulerActor(store: { id: string; organisationId: string }): AuthUser {
   return {
     id: 'system-scheduler',
-    name: 'CaratSense (automatic)',
+    name: `${PRODUCT_NAME} (automatic)`,
     email: 'system@caratsense.local',
     role: Role.head_office,
     organisationId: store.organisationId,

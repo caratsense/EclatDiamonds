@@ -14,6 +14,7 @@ import { Role } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
+import { PRODUCT_NAME } from '../common/brand';
 import { businessDate, dateOnly, resolveTz, zonedParts } from '../common/tz.util';
 import { HrmsService } from '../hrms/hrms.service';
 import { PayrollService } from '../hrms/payroll.service';
@@ -41,7 +42,7 @@ import { TEMPLATE_SYNC_JOB, TemplateSyncService } from '../omnichannel/template-
 function systemActorForStore(store: { id: string; organisationId: string }): AuthUser {
   return {
     id: 'system-scheduler',
-    name: 'CaratSense (automatic)',
+    name: `${PRODUCT_NAME} (automatic)`,
     email: 'system@caratsense.local',
     role: Role.head_office,
     organisationId: store.organisationId,
