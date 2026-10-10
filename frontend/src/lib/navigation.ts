@@ -561,8 +561,8 @@ export const NAV_ITEMS: NavItem[] = [
     purpose: "Choose, person by person, which screens they can open and how far.",
     primaryAction: "",
     icon: ShieldCheck,
-    group: "Setup",
-    rank: 40,
+    group: "HR & Teams",
+    rank: 45,
     roles: ["head_office"],
   },
   {

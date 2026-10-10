@@ -195,8 +195,14 @@ export default function Customer360Page({
         </div>
       </div>
 
-      {/* Tags: the same vocabulary the CRM uses, on the customer themselves. */}
-      <PartyTagsField partyId={customer.id} />
+      {/* Tags: the same vocabulary the CRM uses, on the customer themselves.
+          A card of its own — a bare chip row above the summary read as page
+          furniture and the client could not find it (10 Oct). */}
+      <Card>
+        <CardContent className="pt-4">
+          <PartyTagsField partyId={customer.id} />
+        </CardContent>
+      </Card>
 
       {/* Summary. `scopeNote` is rendered verbatim: two users legitimately see
           different totals here, and the number alone would look like a bug. */}

@@ -1,20 +1,28 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import { Clock, MapPin, RotateCcw, Search, Shield, Store as StoreIcon } from "lucide-react";
+import { CalendarDays, KeyRound, MoreHorizontal, Pencil, Trash2, UserCheck, UserMinus, Clock, MapPin, RotateCcw, Search, Shield, Store as StoreIcon } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { SectionHeader } from "@/components/section/section-header";
+import { AddStaffDialog, DeactivateDialog, EditDetailsDialog, LeaveQuotaDialog, ResetPasswordDialog } from "@/components/team/staff-action-dialogs";
+import { RoleManagerDialog } from "@/components/team/role-manager";
 import { ChangeRoleDialog, ReassignStoreDialog } from "@/components/team/staff-dialogs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { NAV_GROUPS, getNavItem } from "@/lib/navigation";
-import { useCustomRoles, useUpdateCustomRole, useSetLocationCheck, useStaff, type StaffUser } from "@/lib/queries/users";
+import { useActivateStaff, useDeleteStaff, useCustomRoles, useUpdateCustomRole, useSetLocationCheck, useStaff, type StaffUser } from "@/lib/queries/users";
 import { api } from "@/lib/api";
 import { useSetUserAccess, useUserAccess, type AccessOverride, type UserAccess } from "@/lib/queries/access";
 import { ROLE_LABELS, ROLE_RANK, type Role } from "@/lib/types";
@@ -57,13 +65,17 @@ const attendanceOnly = (defaults: Record<string, unknown>): Record<string, Acces
   Object.fromEntries(Object.keys(defaults).filter((slug) => slug !== "hrms").map((slug) => [slug, "none"]));
 
 export default function AccessPage() {
-  const router = useRouter();
   const item = getNavItem("settings/access");
   const staff = useStaff();
+  const viewerRole = useSession((s) => s.baseRole);
   const qc = useQueryClient();
   const [query, setQuery] = useState("");
   const [userId, setUserId] = useState<string | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
+  // The one staff screen (client, 10 Oct): adding a person and managing roles
+  // both happen HERE, not on a second page.
+  const [addOpen, setAddOpen] = useState(false);
+  const [rolesOpen, setRolesOpen] = useState(false);
 
   const salesStaff = (staff.data ?? []).filter((u) => u.isActive && u.role === "salesperson");
   // Where sales staff start is the same for all of them, so one person's answer words the question below.
@@ -91,9 +103,8 @@ export default function AccessPage() {
   const people = useMemo(
     () =>
       (staff.data ?? [])
-        .filter((u) => u.isActive)
         .filter((u) => `${u.name} ${u.stores.map((s) => s.name).join(" ")}`.toLowerCase().includes(query.toLowerCase()))
-        .sort((a, b) => a.name.localeCompare(b.name)),
+        .sort((a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name)),
     [staff.data, query],
   );
 
@@ -103,8 +114,20 @@ export default function AccessPage() {
         title={item?.title ?? "People & Access"}
         purpose={item?.purpose ?? ""}
         primaryAction="Add Staff"
-        onPrimaryAction={() => router.push("/settings/team")}
+        onPrimaryAction={() => setAddOpen(true)}
       />
+      <div className="mb-3 flex justify-end">
+        <Button variant="outline" size="sm" onClick={() => setRolesOpen(true)}>
+          <Shield className="h-3.5 w-3.5" /> Roles
+        </Button>
+      </div>
+      <AddStaffDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        viewerRole={viewerRole}
+        roster={staff.data ?? []}
+      />
+      <RoleManagerDialog open={rolesOpen} onOpenChange={setRolesOpen} />
       <div className="grid gap-4 lg:grid-cols-[18rem_1fr]">
         <Card className="h-fit">
           <CardHeader className="pb-2">
@@ -158,6 +181,8 @@ export default function AccessPage() {
 
         {userId ? (
           <PersonAccess
+            roster={staff.data ?? []}
+            onGone={() => setUserId(null)}
             key={userId}
             userId={userId}
             person={people.find((u) => u.id === userId)}
@@ -174,7 +199,17 @@ export default function AccessPage() {
   );
 }
 
-function PersonAccess({ userId, person }: { userId: string; person?: StaffUser }) {
+function PersonAccess({
+  userId,
+  person,
+  roster,
+  onGone,
+}: {
+  userId: string;
+  person?: StaffUser;
+  roster: StaffUser[];
+  onGone: () => void;
+}) {
   const viewerRole = useSession((s) => s.baseRole);
   /*
    * Role and store moved here from Team. A role is a bundle of screens, so
@@ -182,7 +217,30 @@ function PersonAccess({ userId, person }: { userId: string; person?: StaffUser }
    * decisions live now, singular on purpose: the same control on two screens is
    * how two people make contradictory changes.
    */
-  const [dialog, setDialog] = useState<"role" | "store" | null>(null);
+  const [dialog, setDialog] = useState<
+    "role" | "store" | "edit" | "leave" | "reset" | "deactivate" | null
+  >(null);
+  const activate = useActivateStaff();
+  const deleteStaff = useDeleteStaff();
+  // Deleting is deliberate: first tap arms the item, the second deletes. The
+  // server refuses anyone with history and names what they hold.
+  const [armDelete, setArmDelete] = useState(false);
+  const onDelete = (e: Event) => {
+    if (!person) return;
+    if (!armDelete) {
+      e.preventDefault(); // keep the menu open for the second tap
+      setArmDelete(true);
+      return;
+    }
+    deleteStaff.mutate(person.id, {
+      onSuccess: () => {
+        toast.success(`${person.name} deleted.`);
+        onGone();
+      },
+      onError: (err) => toast.error(apiErrorMessage(err, "Could not delete.")),
+      onSettled: () => setArmDelete(false),
+    });
+  };
   const access = useUserAccess(userId);
   const save = useSetUserAccess();
   const locationCheck = useSetLocationCheck();
@@ -251,6 +309,16 @@ function PersonAccess({ userId, person }: { userId: string; person?: StaffUser }
             {startingPointLine(data)}
             {changedCount ? ` ${changedCount} screen${changedCount === 1 ? " differs" : "s differ"} from the role.` : ""}
           </CardDescription>
+          {person ? (
+            /* The person whole, in one place (client, 10 Oct): no second page
+               to learn who somebody is before deciding what they may open. */
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              {!person.isActive ? <Badge variant="secondary">Inactive</Badge> : null}
+              {person.email ? <span className="font-mono">{person.email}</span> : null}
+              {person.phone ? <span>{person.phone}</span> : null}
+              <span>{person.stores.map((st) => st.name).join(", ") || "No store yet"}</span>
+            </div>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
           {person ? (
@@ -332,6 +400,63 @@ function PersonAccess({ userId, person }: { userId: string; person?: StaffUser }
           <Button size="sm" disabled={!dirty || save.isPending} onClick={() => submit(merged())}>
             {save.isPending ? "Saving…" : "Save"}
           </Button>
+          {person ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  aria-label={`More actions for ${person.name}`}
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52">
+                <DropdownMenuItem onSelect={() => setDialog("edit")}>
+                  <Pencil className="h-4 w-4" /> Edit details
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setDialog("leave")}>
+                  <CalendarDays className="h-4 w-4" /> Set leave quota
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setDialog("reset")}>
+                  <KeyRound className="h-4 w-4" /> Reset password
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                {person.isActive ? (
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onSelect={() => setDialog("deactivate")}
+                  >
+                    <UserMinus className="h-4 w-4" /> Deactivate
+                  </DropdownMenuItem>
+                ) : (
+                  <DropdownMenuItem
+                    disabled={activate.isPending}
+                    onSelect={() =>
+                      activate.mutate({ id: person.id }, {
+                        onSuccess: () => toast.success(`${person.name} is active again.`),
+                        onError: (err) => toast.error(apiErrorMessage(err, "Could not reactivate.")),
+                      })
+                    }
+                  >
+                    <UserCheck className="h-4 w-4" /> Reactivate
+                  </DropdownMenuItem>
+                )}
+                {viewerRole === "head_office" ? (
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onSelect={onDelete}
+                    disabled={deleteStaff.isPending}
+                    title="Only an account with no history can be deleted"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    {armDelete ? "Tap again to delete" : "Delete"}
+                  </DropdownMenuItem>
+                ) : null}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -409,6 +534,30 @@ function PersonAccess({ userId, person }: { userId: string; person?: StaffUser }
             open={dialog === "store"}
             onOpenChange={(o) => setDialog(o ? "store" : null)}
           />
+          {person ? (
+            <>
+              <EditDetailsDialog
+                user={person}
+                open={dialog === "edit"}
+                onOpenChange={(o) => setDialog(o ? "edit" : null)}
+              />
+              <LeaveQuotaDialog
+                user={person}
+                open={dialog === "leave"}
+                onOpenChange={(o) => setDialog(o ? "leave" : null)}
+              />
+              <ResetPasswordDialog
+                user={dialog === "reset" ? person : null}
+                onOpenChange={(o) => setDialog(o ? "reset" : null)}
+              />
+              <DeactivateDialog
+                user={person}
+                roster={roster}
+                open={dialog === "deactivate"}
+                onOpenChange={(o) => setDialog(o ? "deactivate" : null)}
+              />
+            </>
+          ) : null}
         </>
       ) : null}
     </>

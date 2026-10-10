@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Download, FileText, MessageCircle, Store as StoreIcon, Trash2, Wrench } from "lucide-react";
+import { Download, FileText, MessageCircle, Pencil, Store as StoreIcon, Trash2, Wrench } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -35,6 +35,7 @@ import {
 import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
 import { ChannelStatusNotice } from "@/components/integrations/channel-status-notice";
+import { EditQuoteDialog } from "@/components/quotation/edit-quote-dialog";
 import { QuoteApprovalPanel } from "@/components/quotation/quote-approval-panel";
 import { QuoteDetailsPanel } from "@/components/quotation/quote-details-panel";
 import {
@@ -65,6 +66,9 @@ export function QuoteDetailDialog({
   const [sharing, setSharing] = useState(false);
   // Deleting is deliberate: the first tap arms the button, the second deletes.
   const [armDelete, setArmDelete] = useState(false);
+  // Mounted only while open, so the edit form seeds from the quote as it is NOW
+  // (the list row refreshes under this dialog after every save).
+  const [editOpen, setEditOpen] = useState(false);
   const gate = useQuoteApproval(quote?.id ?? null);
   const downloadPdf = useDownloadQuotePdf();
   const sendPdf = useSendQuotePdf();
@@ -98,6 +102,10 @@ export function QuoteDetailDialog({
   const canDownloadDraft = ROLE_RANK[role] >= ROLE_RANK.store_manager;
   const downloadHeld = awaitingApproval && !canDownloadDraft;
   const canDelete = ROLE_RANK[role] >= ROLE_RANK.store_manager && quote.status !== "accepted";
+  // Anyone who can open the quote may re-price it (the server scopes a
+  // salesperson to their own quotes already); an accepted quote became an
+  // order and the server refuses edits — mirror that here.
+  const canEdit = quote.status !== "accepted";
 
   const onDownloadPdf = () =>
     downloadPdf.mutate(quote.id, {
@@ -493,6 +501,16 @@ export function QuoteDetailDialog({
               {deleteQuote.isPending ? "Deleting…" : armDelete ? "Tap again to delete" : "Delete"}
             </Button>
           ) : null}
+          {canEdit ? (
+            <Button
+              variant="outline"
+              onClick={() => setEditOpen(true)}
+              title="Change the items, weights, rates and discounts. Saving re-prices the quote and withdraws any approval."
+            >
+              <Pencil className="h-4 w-4" />
+              Edit quote
+            </Button>
+          ) : null}
           <Button
             variant="outline"
             disabled={downloadPdf.isPending || downloadHeld}
@@ -532,6 +550,12 @@ export function QuoteDetailDialog({
           </Button>
         </DialogFooter>
       </DialogContent>
+
+      {/* Stacks over this dialog; unmounting on close drops its form state so
+          the next open always seeds from the quote's current lines. */}
+      {editOpen ? (
+        <EditQuoteDialog quote={quote} open onOpenChange={setEditOpen} />
+      ) : null}
     </Dialog>
   );
 }

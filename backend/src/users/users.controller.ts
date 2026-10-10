@@ -75,6 +75,13 @@ export class UsersController {
 
   // ── Custom roles (client, 9 Oct) — literal paths, declared before :id ────
 
+  /** GET /users/roles/defaults?role= — a base role's default screen map. */
+  @Roles('head_office')
+  @Get('roles/defaults')
+  roleDefaults(@CurrentUser() user: AuthUser, @Query('role') role: string) {
+    return this.users.roleDefaultsFor(user, role as never);
+  }
+
   /** GET /users/roles — the tenant's own named roles. */
   @Roles('store_manager')
   @Get('roles')

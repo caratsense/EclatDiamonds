@@ -1160,6 +1160,17 @@ export class UsersService {
   // Custom roles (client, 9 Oct): create a role, not only choose one
   // ==========================================================================
 
+  /**
+   * What a base role opens by default — the starting matrix for the role
+   * editor, which builds a NEW role without routing through any person.
+   */
+  roleDefaultsFor(actor: AuthUser, role: Role) {
+    if (role === 'head_office') {
+      throw new BadRequestException('Head office always has every screen.');
+    }
+    return { role, defaults: roleDefaults(role, actor.organisationId) };
+  }
+
   async listRoles(actor: AuthUser) {
     return this.prisma.customRole.findMany({
       where: { organisationId: actor.organisationId },

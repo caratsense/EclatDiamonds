@@ -31,7 +31,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -42,7 +41,6 @@ import {
 } from "@/components/ui/select";
 import {
   useApplyCustomRole,
-  useCreateCustomRole,
   useCustomRoles,
   useSetStaffStores,
   useUpdateStaffRole,
@@ -82,12 +80,9 @@ export function ChangeRoleDialog({
 }) {
   const updateRole = useUpdateStaffRole();
   const applyRole = useApplyCustomRole();
-  const createRole = useCreateCustomRole();
   const customRoles = useCustomRoles();
   const options = assignableRoles(viewerRole);
   const [role, setRole] = useState<string>(user.role);
-  const [newRoleName, setNewRoleName] = useState("");
-  const isHeadOffice = viewerRole === "head_office";
 
   // The one picker holds both: built-in roles by their value, the tenant's own
   // roles as custom:<id>. Only roles the viewer could assign by rank appear.
@@ -130,38 +125,6 @@ export function ChangeRoleDialog({
     );
   }
 
-  /**
-   * Create a role named here, based on the currently selected built-in role,
-   * and stamp it onto this person in the same breath. Its screens start as the
-   * base role's defaults; adjust them on People & Access and press
-   * "Save screens to role" there.
-   */
-  function createAndApply() {
-    const name = newRoleName.trim();
-    if (!name || role.startsWith("custom:")) return;
-    createRole.mutate(
-      { name, baseRole: role as StaffRole },
-      {
-        onSuccess: (created) => {
-          setNewRoleName("");
-          applyRole.mutate(
-            { userId: user.id, roleId: created.id },
-            {
-              onSuccess: () => {
-                toast.success(`Role "${created.name}" created and given to ${user.name}`, {
-                  description: "Set its screens on People & Access, then Save screens to role.",
-                });
-                onOpenChange(false);
-              },
-              onError: (err) => toast.error(apiErrorMessage(err, "Role created, but could not apply it.")),
-            },
-          );
-        },
-        onError: (err) => toast.error(apiErrorMessage(err, "Could not create the role.")),
-      },
-    );
-  }
-
   return (
     <Dialog
       open={open}
@@ -198,32 +161,6 @@ export function ChangeRoleDialog({
             </SelectContent>
           </Select>
         </div>
-        {isHeadOffice && !role.startsWith("custom:") ? (
-          <div className="grid gap-1.5 rounded-lg border p-3">
-            <Label htmlFor="new-role-name">Create a new role (head office)</Label>
-            <p className="text-xs text-muted-foreground">
-              Starts from {ROLE_LABELS[role as StaffRole]}&rsquo;s screens and is given to{" "}
-              {user.name} right away. Adjust its screens on People &amp; Access, then
-              &ldquo;Save screens to role&rdquo;.
-            </p>
-            <div className="flex gap-2">
-              <Input
-                id="new-role-name"
-                value={newRoleName}
-                maxLength={60}
-                placeholder="e.g. Floor Lead"
-                onChange={(e) => setNewRoleName(e.target.value)}
-              />
-              <Button
-                variant="outline"
-                disabled={!newRoleName.trim() || createRole.isPending || applyRole.isPending}
-                onClick={createAndApply}
-              >
-                {createRole.isPending ? "Creating…" : "Create & apply"}
-              </Button>
-            </div>
-          </div>
-        ) : null}
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
