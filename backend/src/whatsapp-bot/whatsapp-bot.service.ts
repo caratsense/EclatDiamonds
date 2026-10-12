@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { PRODUCT_NAME } from '../common/brand';
 import { PrismaService } from '../prisma/prisma.service';
 import { canOpen, canOpenById } from '../auth/access';
 import {
@@ -395,7 +396,7 @@ export class WhatsAppBotService {
           from,
           res.reason === 'phone_taken'
             ? 'This number is already linked to another account. Contact your manager.'
-            : "That code didn't work or has expired. Start again from CaratSense → Settings.",
+            : `That code didn't work or has expired. Start again from ${PRODUCT_NAME} → Settings.`,
           replyRoute,
         );
       }

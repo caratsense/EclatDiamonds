@@ -53,6 +53,7 @@ async function teardown(prisma: PrismaService) {
   await prisma.scheduledReport.deleteMany({ where: { organisationId: A.org } });
   await prisma.auditLog.deleteMany({ where: { organisationId: A.org } });
   await prisma.leadFollowUp.deleteMany({ where: { lead: { organisationId: A.org } } });
+  await prisma.checkIn.deleteMany({ where: { organisationId: A.org } });
   await prisma.lead.deleteMany({ where: { organisationId: A.org } });
   await prisma.userStore.deleteMany({ where: { user: { organisationId: A.org } } });
   await prisma.user.deleteMany({ where: { organisationId: A.org } });
@@ -155,6 +156,8 @@ describe('Scheduled reports (e2e)', () => {
           // Scheduled reports are head office's by default (auth/access.ts); this
           // manager was given them.
           ...(role === 'store_manager' ? { accessOverrides: { 'reporting/scheduled': 'store' } } : {}),
+          // The staff number the walk-ins report is sent to, as people type it.
+          ...(role === 'salesperson' ? { phone: '+91 98200 00001' } : {}),
         },
       });
     }
@@ -259,13 +262,13 @@ describe('Scheduled reports (e2e)', () => {
     await request(server())
       .post('/reporting/scheduled')
       .set(auth(mgrT))
-      .send({ name: 'Bad columns', columns: ['customerName', 'bankBalance'] })
+      .send({ name: 'Bad columns', storeId: A.store, columns: ['customerName', 'bankBalance'] })
       .expect(400);
 
     const bad = await request(server())
       .post('/reporting/scheduled')
       .set(auth(mgrT))
-      .send({ name: 'Bad address', recipients: ['owner at example.com'] })
+      .send({ name: 'Bad address', storeId: A.store, recipients: ['owner at example.com'] })
       .expect(400);
     expect(JSON.stringify(bad.body)).toMatch(/email address/i);
   });
@@ -274,7 +277,7 @@ describe('Scheduled reports (e2e)', () => {
     const dup = await request(server())
       .post('/reporting/scheduled')
       .set(auth(mgrT))
-      .send({ name: 'Month-end leads' })
+      .send({ name: 'Month-end leads', storeId: A.store })
       .expect(400);
     expect(JSON.stringify(dup.body)).toMatch(/already exists/i);
   });
@@ -285,6 +288,48 @@ describe('Scheduled reports (e2e)', () => {
       .set(auth(mgrT))
       .send({ name: 'Someone else’s branch', storeId: A.other })
       .expect(403);
+  });
+
+  it('below head office a report names a branch, and a chain-wide one is out of reach', async () => {
+    // No branch means built as head office over every branch.
+    const none = await request(server())
+      .post('/reporting/scheduled')
+      .set(auth(mgrT))
+      .send({ name: 'Every branch', cadence: 'monthly' });
+    expect(none.status).toBe(400);
+    expect(JSON.stringify(none.body)).toMatch(/branch/i);
+
+    const chain = await request(server())
+      .post('/reporting/scheduled')
+      .set(auth(hoT))
+      .send({ name: 'Chain-wide', cadence: 'monthly' })
+      .expect(201);
+    const list = await request(server()).get('/reporting/scheduled').set(auth(mgrT)).expect(200);
+    expect(list.body.map((r: { id: string }) => r.id)).not.toContain(chain.body.id);
+    await request(server())
+      .patch(`/reporting/scheduled/${chain.body.id}`)
+      .set(auth(mgrT))
+      .send({ phoneRecipients: ['98200 00001'] })
+      .expect(404);
+    await request(server()).post(`/reporting/scheduled/${chain.body.id}/run`).set(auth(mgrT)).expect(404);
+
+    // Nor does their own branch report become a chain-wide one.
+    const mine = list.body.find((r: { name: string }) => r.name === 'Month-end leads');
+    await request(server())
+      .patch(`/reporting/scheduled/${mine.id}`)
+      .set(auth(mgrT))
+      .send({ storeId: null })
+      .expect(400);
+    await request(server()).delete(`/reporting/scheduled/${chain.body.id}`).set(auth(hoT)).expect(200);
+  });
+
+  it('a WhatsApp copy goes only to a staff number', async () => {
+    const res = await request(server())
+      .post('/reporting/scheduled')
+      .set(auth(mgrT))
+      .send({ name: 'To a stranger', storeId: A.store, phoneRecipients: ['98111 22233'] });
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(res.body)).toMatch(/98111 22233.*staff/i);
   });
 
   // ==========================================================================
@@ -321,6 +366,57 @@ describe('Scheduled reports (e2e)', () => {
     expect(runs[0].emailStatus).toBe('dry_run');
     expect(runs[0].emailDetail).toMatch(/not configured/i);
     expect(runs[0].recipients).toHaveLength(2);
+  });
+
+  it('a walk-ins report with WhatsApp numbers: the staff-line leg, honestly labelled', async () => {
+    // Two September walk-ins and one October one at the branch.
+    for (const at of ['2026-09-06T06:00:00.000Z', '2026-09-21T06:00:00.000Z', '2026-10-02T06:00:00.000Z']) {
+      await prisma.checkIn.create({
+        data: {
+          organisationId: A.org,
+          storeId: A.store,
+          customerName: 'Walk In',
+          timeIn: new Date(at),
+        },
+      });
+    }
+
+    const created = await request(server())
+      .post('/reporting/scheduled')
+      .set(auth(mgrT))
+      .send({
+        name: 'Month-end walk-ins',
+        kind: 'walkins',
+        cadence: 'monthly',
+        sendHour: 7,
+        storeId: A.store,
+        recipients: [],
+        // A 10-digit number gets the country code; garbage is refused below.
+        phoneRecipients: ['98200 00001'],
+      })
+      .expect(201);
+    expect(created.body.phoneRecipients).toEqual(['919820000001']);
+
+    await request(server())
+      .post('/reporting/scheduled')
+      .set(auth(mgrT))
+      .send({ name: 'Bad phones', kind: 'walkins', storeId: A.store, phoneRecipients: ['12345'] })
+      .expect(400);
+
+    const period = reports.monthEnding(new Date('2026-10-01T03:30:00.000Z'), TZ);
+    const res = await reports.runFor(created.body.id, period);
+    expect(res).toBeTruthy();
+    // The branch's own September: two walk-ins, not three.
+    expect(res!.rows).toBe(2);
+
+    const run = await prisma.scheduledReportRun.findFirstOrThrow({
+      where: { reportId: created.body.id },
+    });
+    // No WhatsApp provider in the test environment - the honest label, never 'sent'.
+    expect(['dry_run', 'failed']).toContain(run.whatsappStatus);
+    expect(run.whatsappStatus).not.toBe('sent');
+    // And the email leg reports nobody, independently.
+    expect(run.emailStatus).toBe('no_recipients');
   });
 
   it('running the same period again delivers nothing', async () => {

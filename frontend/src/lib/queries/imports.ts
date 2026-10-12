@@ -209,7 +209,7 @@ export async function downloadTemplate(entity: string): Promise<void> {
   const url = URL.createObjectURL(new Blob([res.data], { type: "text/csv;charset=utf-8" }));
   const a = document.createElement("a");
   a.href = url;
-  a.download = `caratos-${entity}-template.csv`;
+  a.download = `caratspace-${entity}-template.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }

@@ -145,11 +145,33 @@ describe('Stock transfer workflow (e2e)', () => {
   });
 
   // ── Authorization ────────────────────────────────────────────────────────
-  it('5. salesperson cannot create a transfer', async () => {
-    const r = await post('/stock-transfers', tokens.priya, {
-      fromStoreId: SURAT, toStoreId: MUMBAI, stockItemIds: [await piece(SURAT)],
+  // Client (9 Oct, item 16): staff must be able to INITIATE a transfer request;
+  // approval and fulfilment stay gated. Creation remains source-initiated — a
+  // single-store salesperson can only raise OUTBOUND transfers (their store is
+  // the source); widening to destination-initiated pulls was deliberately NOT
+  // done here (it would also need cross-store stock reads for the piece picker).
+  it('5. salesperson creates + submits a transfer request, but cannot approve, dispatch or receive it', async () => {
+    const id = await piece(SURAT);
+    const c = await post('/stock-transfers', tokens.priya, {
+      fromStoreId: SURAT, toStoreId: MUMBAI, stockItemIds: [id],
     });
-    expect(r.status).toBe(403);
+    expect([200, 201]).toContain(c.status);
+    expect(c.body.status).toBe('draft');
+    const tid = c.body.id as string;
+
+    expect((await post(`/stock-transfers/${tid}/submit`, tokens.priya)).body.status).toBe('submitted');
+
+    // Raising is as far as a salesperson goes.
+    expect((await post(`/stock-transfers/${tid}/approve`, tokens.priya)).status).toBe(403);
+    expect((await post(`/stock-transfers/${tid}/cancel`, tokens.priya)).status).toBe(403);
+    await post(`/stock-transfers/${tid}/approve`, tokens.ho);
+    expect((await post(`/stock-transfers/${tid}/dispatch`, tokens.priya)).status).toBe(403);
+
+    // And the source must still be THEIR store — the body is not trusted.
+    const out = await post('/stock-transfers', tokens.priya, {
+      fromStoreId: MUMBAI, toStoreId: SURAT, stockItemIds: [await piece(MUMBAI)],
+    });
+    expect(out.status).toBe(403);
   });
 
   it('6. store_manager cannot approve (HO only)', async () => {

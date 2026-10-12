@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Role } from '@prisma/client';
 
 import { AuthUser } from '../../common/auth-user';
+import { PRODUCT_NAME } from '../../common/brand';
 import { KnowledgeService } from '../../knowledge/knowledge.service';
 import { MAX_CONTEXT_CHARS } from './policy';
 
@@ -44,7 +45,7 @@ export class KnowledgeRetrievalService {
   private principal(organisationId: string): AuthUser {
     return {
       id: 'system-ai-retrieval',
-      name: 'CaratSense assistant',
+      name: `${PRODUCT_NAME} assistant`,
       email: 'system@caratsense.local',
       role: Role.salesperson,
       organisationId,

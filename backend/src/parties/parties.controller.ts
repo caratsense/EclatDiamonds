@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Header, Param, Post, Query, Res, StreamableFile } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Header, Param, Post, Query, Res, StreamableFile } from '@nestjs/common';
 import type { Response } from 'express';
 import { PartyType } from '@prisma/client';
 import { PartiesService } from './parties.service';
@@ -45,13 +45,14 @@ export class PartiesController {
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
     @Query('archived') archived?: string,
+    @Query('tagId') tagId?: string,
   ) {
     // New endpoint → always the paginated envelope (default page 1).
     const pagination =
       parsePagination(page ?? '1', pageSize) ?? { page: 1, pageSize: DEFAULT_PAGE_SIZE };
     return this.parties.list(
       user,
-      { q, type: type ?? 'customer', archived: archived === 'true' },
+      { q, type: type ?? 'customer', archived: archived === 'true', tagId: tagId || undefined },
       store,
       pagination,
     );
@@ -83,6 +84,18 @@ export class PartiesController {
    * Note this does NOT make them messageable again by itself — consent, opt-out
    * and the blacklist are separate records and are untouched.
    */
+  /**
+   * DELETE /parties/:id (client, 9 Oct) — only a customer with NO history: no
+   * sales, money, quotes, leads, conversations, visits, schemes or returns.
+   * Anyone with records is refused with the counts and pointed at Archive,
+   * which hides them reversibly and keeps every number true. Head office only.
+   */
+  @Roles('head_office')
+  @Delete(':id')
+  remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.parties.remove(user, id);
+  }
+
   @Roles('store_manager')
   @Post(':id/restore')
   restore(@CurrentUser() user: AuthUser, @Param('id') id: string) {

@@ -10,9 +10,24 @@ import { api } from "@/lib/api";
 import { useStoreKey } from "@/lib/queries/keys";
 import type { Kpi, StoreCompare, TrendPoint } from "@/lib/mock/dashboards";
 
+export interface LeadFunnelDay {
+  /** Store-local YYYY-MM-DD. */
+  date: string;
+  came: number;
+  converted: number;
+}
+
 export interface DashboardCharts {
   salesTrend: TrendPoint[];
   storeComparison: StoreCompare[];
+  /**
+   * Leads that CAME (created) vs CONVERTED (closed won) — totals over the
+   * selected period, and a per-day strip of at least the last 7 days.
+   */
+  leadFunnel: {
+    days: LeadFunnelDay[];
+    totals: { came: number; converted: number };
+  };
 }
 
 export type TaskStatus = "open" | "in_progress" | "done";

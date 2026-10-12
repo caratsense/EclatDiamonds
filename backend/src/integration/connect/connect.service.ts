@@ -13,6 +13,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { StoreScopeService } from '../../common/store-scope.service';
 import { AuditService } from '../../common/audit.service';
 import { AuthUser } from '../../common/auth-user';
+import { PRODUCT_NAME } from '../../common/brand';
 import { ConnectorRegistry } from '../connectors/connector-registry';
 
 /**
@@ -336,7 +337,7 @@ export class ConnectService {
    */
   async authenticate(rawToken: string | undefined) {
     if (!rawToken?.startsWith(TOKEN_PREFIX)) {
-      throw new UnauthorizedException('A CaratOS Connect agent token is required.');
+      throw new UnauthorizedException(`A ${PRODUCT_NAME} Connect agent token is required.`);
     }
     const hash = hashToken(rawToken);
     const agent = await this.prisma.connectAgent.findUnique({ where: { tokenHash: hash } });
@@ -371,7 +372,7 @@ export class ConnectService {
     },
   ) {
     if (!rawToken?.startsWith(TOKEN_PREFIX)) {
-      throw new UnauthorizedException('A CaratOS Connect agent token is required.');
+      throw new UnauthorizedException(`A ${PRODUCT_NAME} Connect agent token is required.`);
     }
     const presentedTokenHash = hashToken(rawToken);
     const now = new Date();

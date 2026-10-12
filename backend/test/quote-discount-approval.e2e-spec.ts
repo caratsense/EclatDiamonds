@@ -58,6 +58,8 @@ async function teardown(prisma: import('../src/prisma/prisma.service').PrismaSer
     await prisma.message.deleteMany({ where: { organisationId: org } });
     await prisma.conversation.deleteMany({ where: { organisationId: org } });
     await prisma.jobTask.deleteMany({ where: { organisationId: org } });
+    await prisma.integrationAsset.deleteMany({ where: { organisationId: org } });
+    await prisma.integration.deleteMany({ where: { organisationId: org } });
     await prisma.activityEvent.deleteMany({ where: { organisationId: org } });
     await prisma.auditLog.deleteMany({ where: { organisationId: org } });
     await prisma.productInteraction.deleteMany({ where: { organisationId: org } });
@@ -304,6 +306,7 @@ describe('Quote discount approval + quote PDF (e2e)', () => {
     expect((await request(server()).get(`/quotes/${held.id}/pdf`)).status).toBe(401);
   });
 
+
   it('the PDF on WhatsApp is an outbox row with a private document — and is never reported sent', async () => {
     // The customer's thread is a colleague's. The rep's own quote still reaches them.
     const mgr = await prisma.user.findUniqueOrThrow({ where: { email: A.mgr }, select: { id: true } });
@@ -479,6 +482,52 @@ describe('Quote discount approval + quote PDF (e2e)', () => {
     expect(JSON.stringify(res.body)).toMatch(/opted out/i);
     expect(await outboundCount()).toBe(before);
   });
+
+  it('with the approved quotation template synced, the queued PDF rides it (10 Oct)', async () => {
+    // The tenant's template, as template-sync would record it after Meta's
+    // APPROVED verdict. sendPdf attaches it by DEFAULT so the PDF still lands
+    // when the 24-hour window is closed.
+    await prisma.integration.create({
+      data: {
+        id: 'int_qd_wa', organisationId: A.org, providerCode: 'whatsapp_cloud',
+        status: 'connected', name: 'WA',
+      },
+    });
+    const asset = await prisma.integrationAsset.create({
+      data: {
+        organisationId: A.org, integrationId: 'int_qd_wa', kind: 'message_template',
+        externalId: 'quotation_pdf_v1:en', name: 'quotation_pdf_v1', isActive: true,
+        lastVerifiedAt: new Date(),
+        metadata: {
+          languageCode: 'en', category: 'utility', approvalStatus: 'approved',
+          providerStatus: 'APPROVED', providerSyncedAt: new Date().toISOString(),
+        },
+      },
+    });
+
+    // A fresh recipient: the STOP case above opted the quote's own customer
+    // out, and this test is about the template, not consent.
+    const res = await request(server())
+      .post(`/quotes/${held.id}/send-pdf`)
+      .set(as('rep'))
+      .send({ to: '9822200111' });
+    expect(res.status).toBe(201);
+    const message = await prisma.message.findUniqueOrThrow({ where: { id: res.body.messageId } });
+    const instructions = (message.payload as {
+      omnichannel: { templateAssetId?: string; templateComponents?: { type: string; parameters: { text: string }[] }[] };
+    }).omnichannel;
+    expect(instructions.templateAssetId).toBe(asset.id);
+    const body = instructions.templateComponents?.find((c) => c.type === 'body');
+    const texts = (body?.parameters ?? []).map((prm) => prm.text);
+    // {{1}} customer … {{5}} valid-until, with the quote's own facts.
+    expect(texts).toHaveLength(5);
+    expect(texts[1]).toBe(held.ref);
+    expect(texts.join(' ')).toMatch(/₹|Rs|\d/);
+
+    // Leave the tenant as found: other cases assert the no-provider dry run.
+    await prisma.integrationAsset.deleteMany({ where: { organisationId: A.org } });
+    await prisma.integration.deleteMany({ where: { organisationId: A.org } });
+  });
 });
 
 /* ---------------------------------------------------------------------------
@@ -616,4 +665,5 @@ describe('quote PDF delivery (worker + provider shape)', () => {
       fetchSpy.mockRestore();
     }
   });
+
 });

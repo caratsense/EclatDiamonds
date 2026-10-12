@@ -21,6 +21,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  useDayOffRoster,
+  useSetDayOffs,
   DAY_KIND,
   DAY_NAMES,
   type PayrollRun,
@@ -35,6 +37,7 @@ import {
   useWeekOffRoster,
 } from "@/lib/queries/payroll";
 import { formatINR } from "@/lib/format";
+import { PRODUCT_NAME } from "@/lib/brand";
 import { apiErrorMessage } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
@@ -48,6 +51,17 @@ import { useSession } from "@/store/use-session";
  * a figure labelled net pay with no tax in it will otherwise be read as
  * take-home by the one person who cannot afford to be wrong about it.
  */
+/** "6 Oct" from a store-local YYYY-MM-DD, no timezone re-reading. */
+function shortDate(key: string): string {
+  const [, m, d] = key.split("-").map(Number);
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${d} ${MONTHS[m - 1]}`;
+}
+function weekdayShort(key: string): string {
+  const d = new Date(`${key}T00:00:00.000Z`);
+  return ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][d.getUTCDay()];
+}
+
 export default function PayrollPage() {
   const role = useSession((s) => s.role);
   const stores = useSession((s) => s.stores);
@@ -59,6 +73,24 @@ export default function PayrollPage() {
 
   const roster = useWeekOffRoster(storeId || undefined);
   const setWeekOffs = useSetWeekOffs();
+  const dayOffs = useDayOffRoster(period, storeId || undefined);
+  const setDayOffs = useSetDayOffs();
+
+  /*
+   * One cell = one person's off in one week. Changing a cell re-plans ONLY
+   * that person's month: their other weeks' picks ride along unchanged, and
+   * everyone else is left out of the write entirely.
+   */
+  const pickDayOff = (userId: string, weekDates: string[], value: string) => {
+    const person = dayOffs.data?.staff.find((pp) => pp.userId === userId);
+    if (!person) return;
+    const keep = person.offDates.filter((d) => !weekDates.includes(d));
+    const dates = value ? [...keep, value].sort() : keep;
+    setDayOffs.mutate(
+      { storeId: storeId || undefined, month: period, entries: [{ userId, dates }] },
+      { onError: (e) => toast.error(apiErrorMessage(e, "Could not plan that week.")) },
+    );
+  };
   const slips = usePayslips({ periodKey: period, storeId: storeId || undefined });
   const slip = usePayslip(openSlip);
   const generate = useGeneratePayslips();
@@ -229,10 +261,74 @@ export default function PayrollPage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
+              <CalendarOff className="size-4" /> Dated offs — week by week
+            </CardTitle>
+            <CardDescription>
+              Plan the exact off date for each week of {period}. A week planned here
+              overrides the weekly pattern above for that week only; a week left as
+              &ldquo;Pattern&rdquo; follows it. Swap two people by changing their two cells.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {dayOffs.isLoading ? (
+              <Skeleton className="h-40 w-full" />
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Employee</TableHead>
+                      {(dayOffs.data?.weeks ?? []).map((w) => (
+                        <TableHead key={w.start} className="text-center text-xs">
+                          {shortDate(w.start)}–{shortDate(w.end)}
+                        </TableHead>
+                      ))}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(dayOffs.data?.staff ?? []).map((p) => (
+                      <TableRow key={p.userId}>
+                        <TableCell className="font-medium">{p.name}</TableCell>
+                        {(dayOffs.data?.weeks ?? []).map((w) => {
+                          const picked = p.offDates.find((d) => w.dates.includes(d)) ?? "";
+                          return (
+                            <TableCell key={w.start} className="text-center">
+                              <select
+                                aria-label={`${p.name}: off day for ${w.start} to ${w.end}`}
+                                className="h-8 rounded-md border border-input bg-background px-1.5 text-xs"
+                                value={picked}
+                                disabled={setDayOffs.isPending}
+                                onChange={(e) => pickDayOff(p.userId, w.dates, e.target.value)}
+                              >
+                                <option value="">Pattern</option>
+                                {w.dates.map((d) => (
+                                  <option key={d} value={d}>
+                                    {weekdayShort(d)} {shortDate(d)}
+                                  </option>
+                                ))}
+                              </select>
+                            </TableCell>
+                          );
+                        })}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {/* ---------------------------------------------------------------- */}
+      {canManage ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
               <History className="size-4" /> Payroll runs for {period}
             </CardTitle>
             <CardDescription>
-              Once a branch&rsquo;s month has closed there, CaratOS drafts its payslips and tells
+              Once a branch&rsquo;s month has closed there, {PRODUCT_NAME} drafts its payslips and tells
               the branch&rsquo;s managers and head office. It only drafts &mdash; nothing is issued
               or paid automatically. Re-run a month after late corrections or if a run failed.
             </CardDescription>

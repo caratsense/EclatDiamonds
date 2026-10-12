@@ -182,7 +182,7 @@ export default function LoyaltyPage() {
       <Tabs value={tab} onValueChange={setTab} className="space-y-4">
         <TabsList>
           <TabsTrigger value="scheme">Gold savings scheme</TabsTrigger>
-          <TabsTrigger value="referral">Earn with Éclat</TabsTrigger>
+          <TabsTrigger value="referral">Referral accounts</TabsTrigger>
         </TabsList>
 
         <TabsContent value="scheme" className="space-y-4">
@@ -432,7 +432,7 @@ export default function LoyaltyPage() {
             <ReferralProgram />
           ) : (
             <p className="text-sm text-muted-foreground">
-              Referral codes and payouts are managed by store managers and head office.
+              Referral accounts are managed by store managers and head office.
             </p>
           )}
         </TabsContent>

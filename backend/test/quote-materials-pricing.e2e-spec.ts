@@ -222,10 +222,11 @@ describe('Item master + item-level quote pricing (e2e)', () => {
       'Payment', 'Received', 'Balance Payment :',
       'Invoice Issued Under Section 31 (1) of the GST Act',
       'This is a quotation and not a tax invoice',
-      'Customer Signature', 'Authorized Signature',
     ]) {
       expect(text).toContain(s);
     }
+    // A quotation is an offer, not a contract: no signature block (client, 9 Oct).
+    expect(text).not.toContain('Signature');
     // The staff's base rate and the multiplier are not what the customer is shown.
     expect(text).not.toContain('20,000.00');
     expect(text).not.toMatch(/multiplier/i);

@@ -61,7 +61,7 @@ const QUOTE_SELECT = {
   id: true, ref: true, status: true, storeId: true, requestedById: true,
   grandTotal: true, approvedTotal: true, revision: true, approvedRevision: true,
   approvalSnapshot: true, discountPercent: true, discountAmount: true,
-  pricedById: true, pricedByRole: true,
+  pricedById: true, pricedByRole: true, assignedRepId: true,
 } satisfies Prisma.QuoteSelect;
 
 type GateQuote = Prisma.QuoteGetPayload<{ select: typeof QUOTE_SELECT }>;
@@ -343,7 +343,15 @@ export class QuoteApprovalService {
       throw new ForbiddenException('Only a manager can decide on a quote.');
     }
     const quote = await this.mustReach(user, quoteId);
-    if (quote.status !== 'pending_approval') {
+    /*
+     * The REQUEST step is how a salesperson summons a decision - it was never
+     * meant to be a precondition for giving one. Head office or a manager
+     * opening a held draft may decide it on the spot (client, 9 Oct: head
+     * office acts as the admin), so 'draft' is decidable too, provided the
+     * gate actually holds it. Shared and accepted quotes already left the
+     * building; approved/rejected already carry a decision.
+     */
+    if (quote.status !== 'pending_approval' && quote.status !== 'draft') {
       throw new BadRequestException('That quote is not waiting for a decision.');
     }
     // The manager decides on what they looked at, not on whatever it has become.
@@ -352,6 +360,14 @@ export class QuoteApprovalService {
     }
 
     const reasons = await this.reasonsFor(user.organisationId, quote);
+    if (quote.status === 'draft' && reasons.length === 0) {
+      // Nothing holds this quote - a decision would stamp approval on a
+      // document the gate never asked about.
+      throw new BadRequestException('This quote needs no approval.');
+    }
+    // A held draft decided on the spot was never requested: whoever works it
+    // is the one asking, so the self-approval rules still have someone to test.
+    const askedBy = quote.requestedById ?? quote.assignedRepId ?? quote.pricedById;
     const overCap = reasons.find((r) => r.code === 'discount_over_cap');
     if (overCap) {
       /*
@@ -360,7 +376,7 @@ export class QuoteApprovalService {
        * set the discount may clear it. `allowSelfApproval` is a quote-total
        * setting and deliberately does not reach this far.
        */
-      assertNotSelfApproval(user, quote.requestedById, 'quote discount');
+      assertNotSelfApproval(user, askedBy, 'quote discount');
       assertNotSelfApproval(user, quote.pricedById, 'quote discount');
       if (approve && overCap.requiredRole && ROLE_RANK[user.role] < ROLE_RANK[overCap.requiredRole]) {
         throw new ForbiddenException(
@@ -369,7 +385,7 @@ export class QuoteApprovalService {
       }
     } else {
       const settings = await this.settingsFor(user.organisationId);
-      if (!settings.allowSelfApproval && quote.requestedById === user.id) {
+      if (!settings.allowSelfApproval && askedBy === user.id) {
         // Separation is the entire point. A tenant may switch it off deliberately;
         // it is not off by accident.
         throw new ForbiddenException('You cannot approve a quote you asked for yourself.');
@@ -392,7 +408,9 @@ export class QuoteApprovalService {
     // Conditional on the revision read above: an edit that lands between the
     // read and this write must not be approved under the old revision's name.
     const written = await this.prisma.quote.updateMany({
-      where: { id: quoteId, status: 'pending_approval', revision: quote.revision },
+      // Conditional on the status read too: deciding a draft must not clobber
+      // a request (or another decision) that landed in between.
+      where: { id: quoteId, status: quote.status, revision: quote.revision },
       data: {
         status: approve ? 'approved' : 'rejected',
         decidedById: user.id,

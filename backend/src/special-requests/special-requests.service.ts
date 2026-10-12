@@ -36,6 +36,11 @@ import {
 /** States a request can no longer be decided from. */
 const TERMINAL: readonly string[] = ['approved', 'rejected', 'cancelled'];
 
+/** The design behind a reorder request, as the list and detail views show it. */
+const PRODUCT_SELECT = {
+  select: { sku: true, name: true, styleNumber: true },
+} as const;
+
 function num(v: Prisma.Decimal | number | null | undefined): number | null {
   return v == null ? null : Number(v);
 }
@@ -87,6 +92,23 @@ export class SpecialRequestsService {
       );
     }
 
+    // A reorder without a design and a count is equally unanswerable — "more of
+    // what, and how many" IS the request. The design must exist in this tenant;
+    // anything in the org's catalogue may be reordered even when its current
+    // piece sits (unsold) at another branch — that is the point of the feature.
+    if (dto.kind === SpecialRequestKind.reorder) {
+      if (!dto.productId || dto.quantity == null) {
+        throw new BadRequestException(
+          'A reorder request needs both the design and how many pieces you want',
+        );
+      }
+      const product = await this.prisma.product.findFirst({
+        where: { id: dto.productId, organisationId: user.organisationId },
+        select: { id: true },
+      });
+      if (!product) throw new BadRequestException('Design not found');
+    }
+
     const requiredRole = resolveRequiredRole(dto.kind, user.role, dto.amount ?? null);
 
     const store = await this.prisma.store.findUnique({
@@ -123,8 +145,10 @@ export class SpecialRequestsService {
           dto.requestedRatePerCarat != null
             ? new Prisma.Decimal(dto.requestedRatePerCarat)
             : null,
+        productId: dto.kind === SpecialRequestKind.reorder ? dto.productId : null,
+        quantity: dto.kind === SpecialRequestKind.reorder ? dto.quantity : null,
       },
-      include: { messages: true },
+      include: { messages: true, product: PRODUCT_SELECT },
     });
 
     await this.notifications.emitToApprovers(
@@ -215,7 +239,7 @@ export class SpecialRequestsService {
 
     const rows = await this.prisma.specialRequest.findMany({
       where,
-      include: { store: { select: { name: true } } },
+      include: { store: { select: { name: true } }, product: PRODUCT_SELECT },
       orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
       take: 200,
     });
@@ -228,6 +252,7 @@ export class SpecialRequestsService {
       where: { id, ...this.scope.storeFilter(user) },
       include: {
         store: { select: { name: true } },
+        product: PRODUCT_SELECT,
         messages: { orderBy: { createdAt: 'asc' } },
       },
     });
@@ -284,6 +309,16 @@ export class SpecialRequestsService {
       currentRatePerCarat: num(r.currentRatePerCarat),
       requestedRatePerCarat: num(r.requestedRatePerCarat),
       appliedRateId: r.appliedRateId ?? null,
+      // Reorder payload: the design asked for, and how many more pieces.
+      productId: r.productId ?? null,
+      quantity: r.quantity ?? null,
+      product: r.product
+        ? {
+            sku: r.product.sku,
+            name: r.product.name,
+            styleNumber: r.product.styleNumber ?? null,
+          }
+        : null,
       createdAt: r.createdAt.toISOString(),
       /// Whether THIS viewer may decide it — drives the UI without the client
       /// having to reimplement the ladder.
@@ -308,7 +343,7 @@ export class SpecialRequestsService {
   async decide(user: AuthUser, id: string, dto: DecideSpecialRequestDto) {
     const row = await this.prisma.specialRequest.findFirst({
       where: { id, ...this.scope.storeFilter(user) },
-      include: { store: { select: { name: true } } },
+      include: { store: { select: { name: true } }, product: PRODUCT_SELECT },
     });
     if (!row) throw new NotFoundException('Request not found');
 
@@ -366,7 +401,7 @@ export class SpecialRequestsService {
             ? { requestedRatePerCarat: new Prisma.Decimal(appliedRate) }
             : {}),
         },
-        include: { store: { select: { name: true } } },
+        include: { store: { select: { name: true } }, product: PRODUCT_SELECT },
       });
     });
 
@@ -423,7 +458,7 @@ export class SpecialRequestsService {
   async escalate(user: AuthUser, id: string, dto: EscalateSpecialRequestDto) {
     const row = await this.prisma.specialRequest.findFirst({
       where: { id, ...this.scope.storeFilter(user) },
-      include: { store: { select: { name: true } } },
+      include: { store: { select: { name: true } }, product: PRODUCT_SELECT },
     });
     if (!row) throw new NotFoundException('Request not found');
     assertUndecided(row.status, TERMINAL, 'request');
@@ -442,7 +477,7 @@ export class SpecialRequestsService {
     const updated = await this.prisma.specialRequest.update({
       where: { id },
       data: { status: 'escalated', requiredRole: next },
-      include: { store: { select: { name: true } } },
+      include: { store: { select: { name: true } }, product: PRODUCT_SELECT },
     });
 
     if (dto.note?.trim()) {
@@ -507,7 +542,7 @@ export class SpecialRequestsService {
         decidedAt: new Date(),
         decisionNote: dto.reason?.trim() || null,
       },
-      include: { store: { select: { name: true } } },
+      include: { store: { select: { name: true } }, product: PRODUCT_SELECT },
     });
 
     await this.audit.record(user, {
@@ -535,7 +570,7 @@ export class SpecialRequestsService {
   async addMessage(user: AuthUser, id: string, dto: AddRequestMessageDto) {
     const row = await this.prisma.specialRequest.findFirst({
       where: { id, ...this.scope.storeFilter(user) },
-      include: { store: { select: { name: true } } },
+      include: { store: { select: { name: true } }, product: PRODUCT_SELECT },
     });
     if (!row) throw new NotFoundException('Request not found');
 

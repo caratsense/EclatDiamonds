@@ -514,7 +514,7 @@ describe('CaratOS import engine (e2e)', () => {
     expect(provenance.status).toBe(200);
     expect(provenance.body).toMatchObject({
       sourceSystem: 'tally',
-      description: 'Synced from TALLY through CaratOS Connect.',
+      description: 'Synced from TALLY through CaratSpace Connect.',
     });
   });
 

@@ -64,4 +64,20 @@ export class LeadTagsController {
   ) {
     return this.tags.setForLead(user, leadId, dto.tagIds);
   }
+
+  /** GET /lead-tags/party/:partyId — the tags on a customer (client, 9 Oct). */
+  @Get('party/:partyId')
+  forParty(@CurrentUser() user: AuthUser, @Param('partyId') partyId: string) {
+    return this.tags.forParty(user, partyId);
+  }
+
+  /** PUT, because the body is the complete set the customer should carry. */
+  @Put('party/:partyId')
+  setForParty(
+    @CurrentUser() user: AuthUser,
+    @Param('partyId') partyId: string,
+    @Body() dto: SetLeadTagsDto,
+  ) {
+    return this.tags.setForParty(user, partyId, dto.tagIds);
+  }
 }

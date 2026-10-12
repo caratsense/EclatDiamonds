@@ -118,9 +118,16 @@ export class CheckinsService {
    * exports only their own visits — and the survey answers come out of
    * `metadata` as columns, so the sheet matches the paper form they replaced.
    */
-  async exportXlsx(user: AuthUser, headerStore?: string): Promise<{ buffer: Buffer; rows: number }> {
+  async exportXlsx(
+    user: AuthUser,
+    headerStore?: string,
+    // Scheduled walk-ins reports bound the workbook to a completed period;
+    // the page's own export button stays unbounded, exactly as before.
+    range?: { from: Date; to: Date },
+  ): Promise<{ buffer: Buffer; rows: number }> {
     const where: Prisma.CheckInWhereInput = {
       ...this.scope.storeFilter(user, headerStore),
+      ...(range ? { timeIn: { gte: range.from, lte: range.to } } : {}),
     };
     if (user.role === 'salesperson') {
       where.OR = [{ repId: user.id }, { attendedById: user.id }];

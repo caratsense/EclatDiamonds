@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Gem, Hourglass, ImageOff } from "lucide-react";
+import { Gem, Hourglass, ImageOff } from "lucide-react";
 
 import { assetUrl } from "@/lib/api";
 import { formatINR } from "@/lib/format";
@@ -26,7 +26,10 @@ function range(r?: PriceRange | null): string | null {
 /**
  * One design in the catalogue grid: its customer-facing name, its code, the
  * hero picture (CAD first), both price ranges, what is on hand, and what is
- * missing (no photo, no CAD, open conflicts, not yet searchable).
+ * missing (no photo, no CAD, not yet searchable). Open source-data conflicts
+ * are deliberately NOT badged here — the grid is staff/customer-facing; they
+ * are reviewed once on Catalogue → Integration and on the manager-facing
+ * product detail (client, 9 Oct).
  */
 export function ProductCard({ product, onOpen }: ProductCardProps) {
   const src = assetUrl(product.heroThumbUrl || product.heroImageUrl || product.imageUrl);
@@ -70,11 +73,6 @@ export function ProductCard({ product, onOpen }: ProductCardProps) {
               </Flag>
             ) : null}
             {flags.noCad && !flags.noImage ? <Flag label="No CAD">CAD</Flag> : null}
-            {flags.conflicts ? (
-              <Flag label={`${flags.conflicts} conflict${flags.conflicts === 1 ? "" : "s"} to check`} warn>
-                <AlertTriangle className="h-3 w-3" />
-              </Flag>
-            ) : null}
             {flags.indexing && flags.indexing !== "full" && !flags.noImage ? (
               <Flag label={flags.indexing === "none" ? "Not searchable by photo yet" : "Some photos still indexing"}>
                 <Hourglass className="h-3 w-3" />

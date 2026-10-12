@@ -157,6 +157,48 @@ export function useSetWeekOffs() {
   });
 }
 
+export interface DayOffRoster {
+  month: string;
+  weeks: { start: string; end: string; dates: string[] }[];
+  staff: (WeekOffRoster["staff"][number] & { offDates: string[] })[];
+}
+
+const DAY_OFF_KEY = ["day-offs"] as const;
+
+/** The dated roster: each person's exact off dates, by the month's weeks. */
+export function useDayOffRoster(month: string, storeId?: string) {
+  return useQuery({
+    queryKey: [...DAY_OFF_KEY, month, storeId ?? "all"],
+    queryFn: async () => {
+      const { data } = await api.get<DayOffRoster>("/hrms/payroll/day-offs", {
+        params: { month, ...(storeId ? { storeId } : {}) },
+      });
+      return data;
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useSetDayOffs() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      storeId?: string | null;
+      month: string;
+      entries: { userId: string; dates: string[] }[];
+    }) => {
+      const { data } = await api.put<DayOffRoster>("/hrms/payroll/day-offs", input);
+      return data;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: DAY_OFF_KEY });
+      // Dated offs decide what day-close writes and what a payslip counts.
+      void qc.invalidateQueries({ queryKey: ["attendance"] });
+      void qc.invalidateQueries({ queryKey: SLIP_KEY });
+    },
+  });
+}
+
 export function useCompensation(userId: string | null) {
   return useQuery({
     queryKey: ["compensation", userId],

@@ -203,15 +203,18 @@ export function useReferrals(codeId: string | null) {
 }
 
 export interface ApplyReferralInput {
-  code: string;
+  /** The referrer account to credit (9 Oct rework — identified by name/phone). */
+  referrerId?: string;
+  /** Legacy: resolve the referrer account by its coupon code. */
+  code?: string;
   refereeName: string;
   refereePhone?: string;
   /** Referee's total bill (₹). */
   billAmount: number;
   storeId?: string;
-  /** Round-2 — the sale's invoice number. */
+  /** The sale's invoice number. */
   invoiceNo?: string;
-  /** Round-2 — bill date, yyyy-mm-dd. */
+  /** Bill date, yyyy-mm-dd. */
   billDate?: string;
 }
 
@@ -265,10 +268,11 @@ export function useReferralWallet(codeId: string | null) {
 }
 
 /**
- * POST /loyalty/referrals — apply a code at a sale. Computes the referee's 5%
- * diamond discount and credits the referrer 5% of the total bill. The API
- * returns 400 when the code's usage limit is reached — callers surface the
- * message inline. Invalidates both the codes list and that code's ledger.
+ * POST /loyalty/referrals — record a referred purchase against a referrer
+ * account (or, legacy, a coupon code). Credits the referrer 5% of the total
+ * bill by default. The API returns 400 when a capped legacy code's usage limit
+ * is reached — callers surface the message inline. Invalidates the accounts
+ * list and that account's wallet.
  */
 export function useApplyReferral() {
   const qc = useQueryClient();

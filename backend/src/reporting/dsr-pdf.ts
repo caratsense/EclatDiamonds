@@ -1,4 +1,5 @@
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from 'pdf-lib';
+import { PRODUCT_NAME } from '../common/brand';
 import { DSR_ROWS, type DsrSheetData } from './dsr-sheet';
 
 const A4: [number, number] = [595.28, 841.89];
@@ -32,7 +33,7 @@ export async function renderDsrSheetPdf(data: DsrSheetData): Promise<Buffer> {
   const pdf = await PDFDocument.create();
   pdf.setTitle(`DSR ${data.store} ${data.periodLabel}`);
   pdf.setAuthor(data.organisation);
-  pdf.setCreator('CaratOS');
+  pdf.setCreator(PRODUCT_NAME);
 
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);

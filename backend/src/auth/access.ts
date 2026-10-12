@@ -59,6 +59,9 @@ const at = (level: AccessLevel, slugs: ModuleSlug[]): AccessMap =>
 const SALESPERSON: ModuleSlug[] = [
   'hrms', 'reporting', 'catalogue', 'conversations', 'crm', 'calling', 'reminders', 'customers',
   'tasks', 'instore', 'checkins', 'quotation', 'discounts', 'returns', 'loyalty', 'requests', 'ticketing',
+  // Raising a stock transfer (client, 9 Oct: staff initiate; managers fulfil).
+  // The API keeps dispatch/receive at store_manager and approve at head_office.
+  'stock-transfers',
 ];
 
 /**
@@ -306,6 +309,8 @@ const ROUTE_MODULES: [prefix: string, module: ModuleSlug | null][] = [
   ['stock-transfers', 'stock-transfers'],
   ['stock', 'inventory'],
   ['hrms', 'hrms'],
+  // Store commission plan + monthly summary live on the Sales Performance screen.
+  ['commissions', 'sales-performance'],
   ['targets', 'settings/targets'],
   ['requests', 'requests'],
   ['tickets', 'ticketing'],

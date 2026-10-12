@@ -35,6 +35,7 @@ import {
 } from "@/lib/queries/crm-ai";
 import { useConnectorRuntime } from "@/lib/queries/tenant-config";
 import { useSession } from "@/store/use-session";
+import { PRODUCT_NAME } from "@/lib/brand";
 import { apiErrorMessage } from "@/lib/utils";
 
 /**
@@ -66,7 +67,7 @@ export function ConnectAgents() {
         <div>
           <h3 className="text-sm font-semibold">On-site agents</h3>
           <p className="text-xs text-muted-foreground">
-            Software installed on a machine in your shop that sends its data out to CaratOS.
+            Software installed on a machine in your shop that sends its data out to {PRODUCT_NAME}.
           </p>
         </div>
         <Button size="sm" variant="outline" onClick={() => setEnrolOpen(true)}>

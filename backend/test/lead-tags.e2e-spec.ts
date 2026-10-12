@@ -54,6 +54,7 @@ async function teardown(prisma: import('../src/prisma/prisma.service').PrismaSer
   await prisma.activityEvent.deleteMany({ where: { organisationId: { in: orgs } } });
   await prisma.leadFollowUp.deleteMany({ where: { lead: { organisationId: { in: orgs } } } });
   await prisma.lead.deleteMany({ where: { organisationId: { in: orgs } } });
+  await prisma.party.deleteMany({ where: { organisationId: { in: orgs } } });
   await prisma.userStore.deleteMany({ where: { user: { organisationId: { in: orgs } } } });
   await prisma.user.deleteMany({ where: { organisationId: { in: orgs } } });
   await prisma.store.deleteMany({ where: { organisationId: { in: orgs } } });
@@ -256,6 +257,36 @@ describe('Lead tags (e2e)', () => {
       .send({ tagIds: [potentialId] })
       .expect(404);
     expect(await prisma.leadTagAssignment.count({ where: { leadId: leadOther } })).toBe(0);
+  });
+
+  it('a salesperson tags only the customers in their own book', async () => {
+    const mine = await prisma.party.create({
+      data: { organisationId: A.org, storeId: A.storeMain, name: 'Rep Customer', types: ['customer'] },
+    });
+    await prisma.lead.create({
+      data: {
+        id: 'lead_tag_mine', organisationId: A.org, storeId: A.storeMain, ref: 'LD-TAG-4', ownerId: 'u_tag_a_rep',
+        partyId: mine.id, customerName: 'Rep Customer', source: 'walk_in', stage: 'inquiry',
+      },
+    });
+    // Same branch, not in their book: a manager's directory has them, theirs does not.
+    const colleagues = await prisma.party.create({
+      data: { organisationId: A.org, storeId: A.storeMain, name: 'Colleague Customer', types: ['customer'] },
+    });
+
+    await request(server()).get(`/lead-tags/party/${colleagues.id}`).set(auth(repA)).expect(404);
+    await request(server())
+      .put(`/lead-tags/party/${colleagues.id}`)
+      .set(auth(repA))
+      .send({ tagIds: [potentialId] })
+      .expect(404);
+    expect(await prisma.partyTagAssignment.count({ where: { partyId: colleagues.id } })).toBe(0);
+
+    await request(server())
+      .put(`/lead-tags/party/${mine.id}`)
+      .set(auth(repA))
+      .send({ tagIds: [potentialId] })
+      .expect(200);
   });
 
   it("a tenant cannot label another tenant's lead", async () => {

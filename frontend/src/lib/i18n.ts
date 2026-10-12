@@ -25,13 +25,11 @@ import { useConfigBootstrap } from "@/lib/queries/tenant-config";
  */
 export const DICT: Record<string, string> = {
   // Sidebar / mobile section headers
-  "group.Today": "Today",
-  "group.People": "People",
+  "group.Command Centre": "Command Centre",
+  "group.Customer Interactions": "Customer Interactions",
   "group.Showroom": "Showroom",
-  "group.Selling": "Selling",
-  "group.After the sale": "After the sale",
-  "group.Stock": "Stock",
-  "group.Team": "Team",
+  "group.Stock Management": "Stock Management",
+  "group.HR & Teams": "HR & Teams",
   "group.Reports": "Reports",
   "group.Setup": "Setup",
 
@@ -51,12 +49,12 @@ export const DICT: Record<string, string> = {
   "nav.quotation": "Quotation & Orders",
   "nav.catalogue": "Catalogue",
   "nav.returns": "Returns & Exchange",
-  "nav.discounts": "Discounts",
-  "nav.loyalty": "Loyalty & Referral",
+  "nav.discounts": "Discount Requests",
+  "nav.loyalty": "Loyalty & Referrals",
   "nav.sales-performance": "Sales Performance",
   "nav.inventory": "Inventory & Stock",
   "nav.hrms": "HRMS & Attendance",
-  "nav.finance": "Finance & Fund Planning",
+  "nav.finance": "Finance & Funding",
   "nav.new-store": "New-Store Setup",
   "nav.marketing": "Marketing",
   "nav.approvals": "Approvals",

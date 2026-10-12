@@ -59,9 +59,10 @@ export class StockTransfersService {
   // Guards
   // ==========================================================================
 
-  /** Store-floor operations (create/submit/dispatch/receive/ack/cancel) are a
-   * store_manager's job at a physical branch. head_office has no branch and only
-   * approves/rejects; a salesperson has no transfer rights at all. */
+  /** Fulfilment stages (dispatch/receive/ack/cancel) are a store_manager's job
+   * at a physical branch. head_office has no branch and only approves/rejects;
+   * a salesperson may RAISE a transfer (see assertBranchRequester) but never
+   * move goods. */
   private assertStoreOperator(user: AuthUser): void {
     if (user.role === 'head_office') {
       throw new ForbiddenException(
@@ -70,6 +71,18 @@ export class StockTransfersService {
     }
     if (user.role === 'salesperson') {
       throw new ForbiddenException('Salespeople cannot operate stock transfers');
+    }
+  }
+
+  /** Raising a request (create/submit) is open to branch STAFF — the client's
+   * ask (9 Oct): a salesperson at the counter must be able to request a piece
+   * without waiting for an administrator. head_office still has no branch to
+   * raise from. Approval, dispatch and receipt keep their stricter gates. */
+  private assertBranchRequester(user: AuthUser): void {
+    if (user.role === 'head_office') {
+      throw new ForbiddenException(
+        'Head office approves/rejects transfers; branch staff raise them',
+      );
     }
   }
 
@@ -91,8 +104,12 @@ export class StockTransfersService {
   // ==========================================================================
 
   async create(user: AuthUser, dto: CreateStockTransferDto) {
-    this.assertStoreOperator(user);
-    // Authoritative: the source must be in the caller's scope, never trust the body alone.
+    this.assertBranchRequester(user);
+    // Authoritative: the source must be in the caller's scope, never trust the
+    // body alone. Deliberately source-initiated: a single-store salesperson can
+    // therefore only raise OUTBOUND transfers. Letting destination staff draft
+    // a pull from another branch would also need cross-store stock visibility
+    // for the piece picker — a separate, explicit decision, not a gate tweak.
     this.scope.assertStoreAllowed(user, dto.fromStoreId);
     // Emptying a branch is exactly what you do when it closes, and draining the
     // holding bucket is the only way its pieces ever reach a real shop, so the
@@ -180,9 +197,9 @@ export class StockTransfersService {
   // Transitions
   // ==========================================================================
 
-  /** draft → submitted (source store_manager). */
+  /** draft → submitted (source-store staff — submitting is part of raising). */
   async submit(user: AuthUser, id: string) {
-    this.assertStoreOperator(user);
+    this.assertBranchRequester(user);
     const t = await this.load(user, id);
     this.scope.assertStoreAllowed(user, t.fromStoreId);
     assertTransition(t.status, 'submitted');

@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { usePwaInstall } from "@/components/pwa/use-pwa-install";
+import { PRODUCT_NAME } from "@/lib/brand";
 
 /**
  * Step-by-step iOS install instructions. iOS Safari has no install prompt API,
@@ -29,9 +30,9 @@ export function IosInstallDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>Install CaratOS</DialogTitle>
+          <DialogTitle>Install {PRODUCT_NAME}</DialogTitle>
           <DialogDescription>
-            Add CaratOS to your Home Screen to open it like an app.
+            Add {PRODUCT_NAME} to your Home Screen to open it like an app.
           </DialogDescription>
         </DialogHeader>
         <ol className="space-y-3 text-sm">
@@ -58,7 +59,7 @@ export function IosInstallDialog({
               3
             </span>
             <span className="pt-0.5">
-              Tap <span className="font-medium">Add</span>. CaratOS will
+              Tap <span className="font-medium">Add</span>. {PRODUCT_NAME} will
               appear on your Home Screen.
             </span>
           </li>

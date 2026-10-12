@@ -113,6 +113,44 @@ export function useUpdateQuoteDetails() {
   });
 }
 
+/** Body for PATCH /quotes/:id — the price itself, unlike the details PATCH above. */
+export interface UpdateQuoteInput {
+  id: string;
+  /** Replaces ALL lines — the server re-prices from these. */
+  lines?: Omit<QuoteLine, "id">[];
+  makingDiscountPercent?: number;
+  stoneDiscountPercent?: number;
+  additionalDiscount?: number;
+  /** yyyy-mm-dd, or empty to clear. */
+  validUntil?: string;
+  remarks?: string;
+}
+
+/**
+ * PATCH /quotes/:id — re-price a saved quote. Every accepted edit bumps the
+ * revision and, if the quote was approved or awaiting approval, withdraws that
+ * (the returned quote comes back as draft). Refused once the quote is accepted.
+ */
+export function useUpdateQuote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, ...body }: UpdateQuoteInput) =>
+      (await api.patch<Quote>(`/quotes/${id}`, body)).data,
+    // The prefix also catches ["quotes","approval",id] — the gate must re-ask
+    // about the new revision.
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["quotes"] }),
+  });
+}
+
+/** DELETE /quotes/:id — managers and above; an accepted quote is refused. */
+export function useDeleteQuote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await api.delete<{ deleted: boolean }>(`/quotes/${id}`)).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["quotes"] }),
+  });
+}
+
 /** Custom-order fields captured when converting a quote into a timeline order. */
 export interface ConvertQuoteInput {
   id: string;

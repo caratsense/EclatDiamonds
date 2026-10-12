@@ -16,6 +16,7 @@ import {
   type QualificationBand,
   type QualificationSignal,
 } from "@/lib/queries/crm-ai";
+import { PRODUCT_NAME } from "@/lib/brand";
 import { apiErrorMessage } from "@/lib/utils";
 
 /**
@@ -158,7 +159,7 @@ export function QualificationConfig() {
         <CardHeader>
           <CardTitle className="text-base">What the score means</CardTitle>
           <p className="text-xs text-muted-foreground">
-            Your bands, your words, your thresholds. Nothing in CaratOS decides what
+            Your bands, your words, your thresholds. Nothing in {PRODUCT_NAME} decides what
             counts as a good lead for your business.
           </p>
         </CardHeader>

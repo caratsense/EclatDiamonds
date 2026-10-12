@@ -9,6 +9,7 @@ import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
 import { LeaderboardTab } from "@/components/hrms/leaderboard-tab";
 import { EditableCommissionTab } from "@/components/hrms/editable-commission-tab";
+import { StoreCommissionTab } from "@/components/sales/store-commission-tab";
 import { useCommission, useLeaderboard } from "@/lib/queries/hrms";
 
 /**
@@ -24,6 +25,11 @@ export default function SalesPerformancePage() {
   // write access — exclude it explicitly (mirrors the backend guard).
   const canEditRates =
     role !== "head_office" && ROLE_RANK[role] >= ROLE_RANK.store_manager;
+  // Store commission (9 Oct item 13): the whole-store threshold plan. Managers+
+  // read it; the threshold + rate configuration itself is head office only,
+  // like other HO-set numbers (the backend enforces both).
+  const canSeeStoreCommission = ROLE_RANK[role] >= ROLE_RANK.store_manager;
+  const canConfigureStoreCommission = role === "head_office";
 
   const leaderboardQuery = useLeaderboard();
   const commissionQuery = useCommission();
@@ -41,6 +47,9 @@ export default function SalesPerformancePage() {
         <TabsList className="flex h-auto flex-wrap">
           <TabsTrigger value="leaderboard">Leaderboard</TabsTrigger>
           <TabsTrigger value="incentives">Incentives &amp; Commission</TabsTrigger>
+          {canSeeStoreCommission ? (
+            <TabsTrigger value="store-commission">Store Commission</TabsTrigger>
+          ) : null}
         </TabsList>
 
         <TabsContent value="leaderboard">
@@ -68,6 +77,12 @@ export default function SalesPerformancePage() {
             <EditableCommissionTab rows={commissions} canEdit={canEditRates} />
           )}
         </TabsContent>
+
+        {canSeeStoreCommission ? (
+          <TabsContent value="store-commission">
+            <StoreCommissionTab canConfigure={canConfigureStoreCommission} />
+          </TabsContent>
+        ) : null}
       </Tabs>
     </>
   );

@@ -449,6 +449,32 @@ describe('Calling workspace (e2e)', () => {
       expect(res.body.calls).toEqual([]);
     });
 
+    it('shows the note typed on the customer, with the text in `body`', async () => {
+      // Stored with partyId set and NO leadId — which is how the CRM writes a
+      // note typed on the customer card. The workspace used to read only
+      // task.leadId, so the panel said "No notes yet" while the activity feed
+      // beside it said a note had been added.
+      await prisma.leadNote.create({
+        data: {
+          organisationId: A.org,
+          partyId: 'p_call1',
+          kind: 'note',
+          text: 'Prefers evening calls. Do not ring before 6pm.',
+          authorName: 'HO',
+        },
+      });
+      const res = await request(server())
+        .get(`/calling/tasks/${taskId}`).set(auth()).expect(200);
+      const note = res.body.notes.find(
+        (n: { body?: string }) => n.body === 'Prefers evening calls. Do not ring before 6pm.',
+      );
+      // `body`, not the column name `text`: raw rows used to leak through and
+      // the client rendered every note as an empty card.
+      expect(note).toBeTruthy();
+      expect(note.kind).toBe('note');
+      expect(note.author).toBe('HO');
+    });
+
     it('logs a call and reschedules in one act', async () => {
       const callBack = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
       const res = await request(server())
@@ -599,7 +625,9 @@ async function teardown(prisma: PrismaService) {
     await prisma.activityEvent.deleteMany({ where: { organisationId: org } }).catch(() => undefined);
     await prisma.task.deleteMany({ where: { organisationId: org } }).catch(() => undefined);
     await prisma.checkIn.deleteMany({ where: { organisationId: org } }).catch(() => undefined);
-    await prisma.leadNote.deleteMany({ where: { lead: { organisationId: org } } }).catch(() => undefined);
+    // By the note's OWN org column: a party-attached note has no lead, so the
+    // relation-walking filter missed it and left rows behind.
+    await prisma.leadNote.deleteMany({ where: { organisationId: org } }).catch(() => undefined);
     await prisma.leadFollowUp.deleteMany({ where: { lead: { organisationId: org } } }).catch(() => undefined);
     await prisma.lead.deleteMany({ where: { organisationId: org } });
     await prisma.contactPoint.deleteMany({ where: { organisationId: org } });

@@ -43,6 +43,7 @@ import { useStartReindex } from "@/lib/queries/jewelry-similarity";
 import { connectionView, type ConnectionState, type ConnectionView } from "@/lib/catalogue-connection";
 import type { CatalogueConflictView } from "@/lib/queries/products";
 import { imageSourceLabel } from "@/lib/mock/catalogue";
+import { PRODUCT_NAME, TENANT_NAME } from "@/lib/brand";
 import { apiErrorMessage, cn } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
@@ -192,7 +193,7 @@ function IntegrationView() {
         </Panel>
 
         <Panel title="What each number counts">
-          <KV label="Product records in CaratOS">{n(cat?.products)}</KV>
+          <KV label={`Product records in ${PRODUCT_NAME}`}>{n(cat?.products)}</KV>
           <KV label="· carrying a website design">{n(cat?.websiteLinked)}</KV>
           <KV label="· website-only (no Gati match)">{n(cat?.websiteOnly)}</KV>
           <KV label="Designs on the website">{n(w?.sourceTotal)}</KV>
@@ -440,7 +441,7 @@ function CredentialForm({
         </form>
         <p className="text-[11px] text-muted-foreground">
           Enter the API base (…/v1/api) or the exact products endpoint (…/v1/api/products) — both are saved as the same
-          products endpoint. Saving reads one product to prove the address works; it imports nothing. The Eclat product
+          products endpoint. Saving reads one product to prove the address works; it imports nothing. The {TENANT_NAME} product
           feed is public, so no token is needed; a token, if given, is stored encrypted and never shown again.
         </p>
       </CardContent>

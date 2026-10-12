@@ -1,4 +1,5 @@
 import { Workbook, type Worksheet, type Row } from 'exceljs';
+import { PRODUCT_NAME } from '../common/brand';
 import { DSR_ROWS, type DsrSheetData, type DsrSheetRow } from './dsr-sheet';
 
 /**
@@ -24,7 +25,7 @@ const BOX = { top: THIN, left: THIN, bottom: THIN, right: THIN };
  */
 export async function renderDsrSheetXlsx(data: DsrSheetData): Promise<Buffer> {
   const wb = new Workbook();
-  wb.creator = 'CaratSense';
+  wb.creator = PRODUCT_NAME;
   wb.created = new Date();
   const cols = data.columns.length;
   const last = cols + 1;
