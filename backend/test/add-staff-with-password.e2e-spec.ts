@@ -62,6 +62,8 @@ describe('Add staff with a password (e2e)', () => {
     email: expect.stringContaining('.counter@'),
     phone,
     role: 'salesperson',
+    customRoleName: null,
+    geoExempt: false,
     stores: [{ id: STORE, name: 'Counter' }],
     isActive: true,
   });
