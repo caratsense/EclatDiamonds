@@ -33,6 +33,8 @@ const A = {
   ho: 'ho.cbot@cbot.local',
 };
 const PHONE = '919000770001';
+/** A second number with NO ad referral — the organic walk-in. */
+const ORGANIC_PHONE = '919000770077';
 
 const AD_RING = '120210000777001'; // "Solitaire ring" campaign
 const AD_CHAIN = '120210000777002'; // "Gold chains" campaign
@@ -260,7 +262,7 @@ describe('Campaign-scripted bot conversations (e2e)', () => {
       'Hi! The solitaire ring from our ad starts at ₹85,000 for 0.5 carat (IGI certified).\n\nWhich carat size are you considering?',
     );
     // Nothing menu-shaped about it.
-    expect(turn.text).not.toMatch(/\b1\)\s|\b2\)\s|choose one/i);
+    expect(turn.text).not.toMatch(/\n\s*(?:[0-9]+[.)]|[-*•])\s/);
   });
 
   it('an arrival from campaign B gets B\'s opener, un-doubled because it already asks', async () => {
@@ -307,9 +309,11 @@ describe('Campaign-scripted bot conversations (e2e)', () => {
     expect(fake.lastContext?.campaign?.name).toBe('Solitaire ring — Know the price');
     expect(fake.lastContext?.campaign?.brief).toContain('1ct ₹2,40,000');
     expect(fake.lastContext?.campaign?.guardrails).toContain('No discounts');
+    // Strings in, objects out: the server rewrites legacy question strings
+    // into the structured shape (12 Oct).
     expect(fake.lastContext?.campaign?.questions).toEqual([
-      'Which carat size are you considering?',
-      'When would you like to visit?',
+      { text: 'Which carat size are you considering?' },
+      { text: 'When would you like to visit?' },
     ]);
     expect(fake.lastContext?.historyText).toContain('Customer: Saw your ad');
   });
@@ -389,6 +393,109 @@ describe('Campaign-scripted bot conversations (e2e)', () => {
       .send({ rules: res.body })
       .expect(201);
   });
+
+  /* -------------------------- structured questions + options (12 Oct) */
+
+  it('question options ride into the opener as a sentence, never a menu', async () => {
+    await request(app.getHttpServer())
+      .post('/crm/qualification/adset-rules')
+      .set(auth())
+      .send({
+        rules: [
+          {
+            id: 'camp-opt',
+            name: 'Earrings festive',
+            enabled: true,
+            priority: 100,
+            matchField: 'ad_id',
+            matchValue: '120210000777009',
+            storeId: A.store,
+            assignedUserId: null,
+            handling: 'ai',
+            firstReply: 'Hi! Our festive earrings start at Rs 25,000.',
+            questions: [
+              { text: 'What style are you looking for', options: ['studs', 'jhumkas', 'drops'] },
+            ],
+            aiContext: 'Earrings campaign.',
+          },
+        ],
+      })
+      .expect(201);
+
+    const conversationId = await arrive('120210000777009');
+    const rule = await campaignBot.scriptFor(A.org, conversationId);
+    const turn = await campaignBot.handle(A.org, conversationId, rule!, 'hi');
+    // The choices appear inside one plain sentence...
+    expect(turn.text).toBe(
+      'Hi! Our festive earrings start at Rs 25,000.\n\nWhat style are you looking for — studs, jhumkas, drops?',
+    );
+    // ...and never as a numbered or bulleted menu.
+    expect(turn.text).not.toMatch(/\n\s*(?:[0-9]+[.)]|[-*•])\s/);
+  });
+
+  /* ------------------------------- the walk-in conversation (12 Oct) */
+
+  it('the walk-in conversation saves, round-trips, and refuses enabled-without-opener', async () => {
+    await request(app.getHttpServer())
+      .put('/crm/qualification/bot-default')
+      .set(auth())
+      .send({ enabled: true })
+      .expect(400);
+
+    const saved = await request(app.getHttpServer())
+      .put('/crm/qualification/bot-default')
+      .set(auth())
+      .send({
+        enabled: true,
+        // Deliberately NOT a question: an opener that already asks suppresses
+        // the first guiding question (same un-doubling as campaign B above).
+        firstReply: 'Welcome to Nibhana! We would love to help.',
+        questions: [{ text: 'What are you shopping for', options: ['rings', 'chains'] }],
+        aiContext: 'General walk-in. Gold from Rs 40,000.',
+      })
+      .expect(200);
+    expect(saved.body.enabled).toBe(true);
+    expect(saved.body.questions[0].options).toEqual(['rings', 'chains']);
+  });
+
+  it('an organic customer gets the walk-in conversation, not the questionnaire', async () => {
+    const ORGANIC = ORGANIC_PHONE;
+    const result = await conversations.ingestInbound({
+      organisationId: A.org,
+      channel: 'whatsapp',
+      externalThreadId: ORGANIC,
+      externalId: `wamid.cbot-organic-${wamidSeq++}`,
+      senderKind: 'whatsapp',
+      senderValue: ORGANIC,
+      body: 'hello',
+      payload: { from: ORGANIC, type: 'text', text: { body: 'hello' } } as never,
+    });
+
+    // No ad referral: no campaign script...
+    expect(await campaignBot.scriptFor(A.org, result.conversationId)).toBeNull();
+    // ...but the tenant's walk-in conversation stands in, same shape.
+    const walkIn = await campaignBot.defaultScriptFor(A.org, result.conversationId);
+    expect(walkIn?.name).toBe('Walk-in');
+
+    const turn = await campaignBot.handle(A.org, result.conversationId, walkIn!, 'hello');
+    expect(turn.text).toBe(
+      'Welcome to Nibhana! We would love to help.\n\nWhat are you shopping for — rings, chains?',
+    );
+
+    // Switched off, the legacy questionnaire path returns (null here).
+    await request(app.getHttpServer())
+      .put('/crm/qualification/bot-default')
+      .set(auth())
+      .send({ enabled: false })
+      .expect(200);
+    expect(await campaignBot.defaultScriptFor(A.org, result.conversationId)).toBeNull();
+
+    await prisma.conversation.deleteMany({
+      where: { organisationId: A.org, externalThreadId: ORGANIC },
+    });
+    await prisma.whatsAppSession.deleteMany({ where: { phoneE164: ORGANIC } });
+  });
+
 });
 
 async function teardown(prisma: PrismaService) {
@@ -399,8 +506,12 @@ async function teardown(prisma: PrismaService) {
   });
   await prisma.lead.deleteMany({ where: { organisationId: A.org } });
   await prisma.conversation.deleteMany({ where: { organisationId: A.org } });
-  await prisma.whatsAppSession.deleteMany({ where: { phoneE164: PHONE } });
+  await prisma.whatsAppSession.deleteMany({
+    where: { phoneE164: { in: [PHONE, ORGANIC_PHONE] } },
+  });
   await prisma.auditLog.deleteMany({ where: { organisationId: A.org } });
+  // Saving the walk-in conversation records an activity event.
+  await prisma.activityEvent.deleteMany({ where: { organisationId: A.org } });
   await prisma.party.deleteMany({ where: { organisationId: A.org } });
   await prisma.userStore.deleteMany({ where: { user: { organisationId: A.org } } });
   await prisma.user.deleteMany({ where: { organisationId: A.org } });

@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import { AdSetRulesService, type AdSetAutomationRule } from '../crm/adset-rules.service';
+import { normaliseDefaultConversation } from '../crm/bot-script.service';
 import { AI_RESPONDER, type AiResponder } from '../crm/ai-responder';
 import { CAMPAIGN_SEND_MIN_CONFIDENCE, screenInbound } from '../crm/ai/policy';
 import { PrismaService } from '../prisma/prisma.service';
@@ -76,6 +77,47 @@ export class CampaignBotService {
   }
 
   /**
+   * The WALK-IN script, for a customer who arrived from no advertisement
+   * (client, 12 Oct): the tenant-configured default conversation, in the same
+   * shape as a campaign's, so handle() treats both identically. Null when the
+   * tenant has not enabled it — the legacy questionnaire then runs, so a
+   * tenant who configured nothing notices nothing.
+   */
+  async defaultScriptFor(
+    organisationId: string,
+    conversationId: string,
+  ): Promise<AdSetAutomationRule | null> {
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { id: conversationId, organisationId },
+      select: { handling: true },
+    });
+    // 'human' is a person's thread; everything else (unassigned, ai) may speak.
+    if (!conversation || conversation.handling === 'human') return null;
+    const org = await this.prisma.organisation.findUnique({
+      where: { id: organisationId },
+      select: { settings: true },
+    });
+    const settings = (org?.settings ?? {}) as Record<string, unknown>;
+    const d = normaliseDefaultConversation(settings.customerBotDefault);
+    if (!d.enabled || !d.firstReply) return null;
+    return {
+      id: '__walk_in__',
+      name: 'Walk-in',
+      enabled: true,
+      priority: 0,
+      matchField: 'tag',
+      matchValue: '__walk_in__',
+      storeId: null,
+      assignedUserId: null,
+      handling: 'ai',
+      firstReply: d.firstReply,
+      questions: d.questions,
+      aiContext: d.aiContext,
+      aiGuardrails: d.aiGuardrails,
+    };
+  }
+
+  /**
    * One turn of the campaign conversation.
    *
    * Returns the text to send (already final — the caller only delivers and
@@ -118,8 +160,15 @@ export class CampaignBotService {
     // opener does not already end by asking something.
     if (outbound === 0 && rule.firstReply) {
       const opener = rule.firstReply;
-      const firstQuestion = rule.questions?.[0];
+      const first = rule.questions?.[0];
       const alreadyAsks = opener.trimEnd().endsWith('?');
+      // The opener's question is plain text. Options, when given, ride inside
+      // the sentence — never as buttons or a numbered list.
+      const firstQuestion = first
+        ? first.options?.length
+          ? `${first.text.replace(/\?\s*$/, '')} — ${first.options.join(', ')}?`
+          : first.text
+        : null;
       return {
         authorType: 'bot',
         text: firstQuestion && !alreadyAsks ? `${opener}\n\n${firstQuestion}` : opener,

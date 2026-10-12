@@ -216,6 +216,18 @@ export class CrmQualificationController {
     return this.botScript.save(user, body);
   }
 
+  /** The walk-in (no-campaign) conversation: same shape as a campaign script. */
+  @Get('bot-default')
+  botDefault(@CurrentUser() user: AuthUser) {
+    return this.botScript.defaultConversation(user);
+  }
+
+  @Put('bot-default')
+  @Roles('head_office')
+  saveBotDefault(@CurrentUser() user: AuthUser, @Body() body: unknown) {
+    return this.botScript.saveDefaultConversation(user, body);
+  }
+
   @Post('leads/:id')
   assessLead(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.qualification.assessLead(user, id);

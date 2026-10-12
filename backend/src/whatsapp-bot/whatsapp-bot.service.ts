@@ -645,10 +645,12 @@ export class WhatsAppBotService {
              * traffic, plain routing rules, no match) keeps the scripted bot
              * exactly as before.
              */
-            const campaignRule = await this.campaignBot.scriptFor(
-              organisationId,
-              result.conversationId,
-            );
+            // Campaign script first; else the tenant's walk-in conversation
+            // (client, 12 Oct: free text everywhere once configured). Only a
+            // tenant with neither still gets the legacy questionnaire.
+            const campaignRule =
+              (await this.campaignBot.scriptFor(organisationId, result.conversationId)) ??
+              (await this.campaignBot.defaultScriptFor(organisationId, result.conversationId));
             if (campaignRule) {
               const turn = await this.campaignBot.handle(
                 organisationId,
