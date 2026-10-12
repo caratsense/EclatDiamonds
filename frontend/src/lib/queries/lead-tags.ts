@@ -51,6 +51,33 @@ export function useLeadTagsFor(leadId: string | null) {
   });
 }
 
+/** The tags on a customer — same vocabulary, same shape (client, 9 Oct). */
+export function usePartyTagsFor(partyId: string | null) {
+  return useQuery({
+    queryKey: [...KEY, "party", partyId],
+    enabled: Boolean(partyId),
+    queryFn: async () => {
+      const { data } = await api.get<LeadTag[]>(`/lead-tags/party/${partyId}`);
+      return data;
+    },
+  });
+}
+
+export function useSetPartyTags(partyId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (tagIds: string[]) => {
+      const { data } = await api.put<LeadTag[]>(`/lead-tags/party/${partyId}`, { tagIds });
+      return data;
+    },
+    onSuccess: (data) => {
+      qc.setQueryData([...KEY, "party", partyId], data);
+      void qc.invalidateQueries({ queryKey: ["customers"] });
+      void qc.invalidateQueries({ queryKey: KEY });
+    },
+  });
+}
+
 /**
  * Replace the tags on a lead with exactly this set.
  *

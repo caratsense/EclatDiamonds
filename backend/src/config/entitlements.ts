@@ -118,6 +118,15 @@ export const ROUTE_FAMILIES: readonly RouteFamily[] = Object.freeze([
   },
   { prefix: '/checkins', capability: null, why: 'Customer visits are universal; every pack seeds visit purposes.' },
   { prefix: '/hrms', capability: null, why: 'Attendance is sold to every industry.' },
+  {
+    prefix: '/commissions',
+    capability: null,
+    why:
+      'Store commission plans and the monthly summary on the Sales Performance ' +
+      'screen, beside the leaderboard and per-staff commission it already reads ' +
+      'from /hrms. Classified the same way as those; visibility follows the ' +
+      'sales-performance navigation slug.',
+  },
   { prefix: '/imports', capability: null, why: 'Bringing your own data in is universal.' },
   {
     prefix: '/import-mappings',

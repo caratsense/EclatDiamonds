@@ -217,7 +217,10 @@ function DetailBody({
         </p>
       ) : null}
 
-      {conflicts.length ? (
+      {/* Source-data conflicts are a data-stewardship concern: shown once here
+          for managers and on Catalogue → Integration, never on the sales-facing
+          grid or to salespeople (client, 9 Oct). */}
+      {canEdit && conflicts.length ? (
         <div
           role="alert"
           className="space-y-1 rounded-lg border border-[color-mix(in_srgb,var(--warning)_45%,transparent)] bg-[color-mix(in_srgb,var(--warning)_8%,transparent)] p-3"

@@ -8,7 +8,11 @@ import { Prisma, Role } from '@prisma/client';
 
 import { AuditService } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
+import { PRODUCT_NAME } from '../common/brand';
 import { PrismaService } from '../prisma/prisma.service';
+import { CheckinsService } from '../checkins/checkins.service';
+import { WhatsAppCredentialsService } from '../integrations/whatsapp-credentials.service';
+import { WhatsAppService } from '../integrations/whatsapp.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { EmailService } from '../integrations/email.service';
 import {
@@ -51,7 +55,20 @@ const CADENCES = ['monthly', 'weekly'] as const;
 type Cadence = (typeof CADENCES)[number];
 
 /** Only one report shape exists today. Named so the next one is additive. */
-const KINDS = ['leads'] as const;
+const KINDS = ['leads', 'walkins'] as const;
+
+/**
+ * A staff WhatsApp number: 10 digits get the country code, 12-15 pass, the
+ * rest are refused by name. Same rule as the DSR digest's recipients.
+ */
+function normalisePhone(raw: string): string {
+  const digits = raw.replace(/\D/g, '');
+  const full = digits.length === 10 ? `91${digits}` : digits;
+  if (full.length < 12 || full.length > 15) {
+    throw new BadRequestException(`${raw} is not a valid WhatsApp number.`);
+  }
+  return full;
+}
 
 const MAX_RECIPIENTS = 20;
 
@@ -78,6 +95,9 @@ export class ScheduledReportsService {
     private readonly exports: LeadExportService,
     private readonly email: EmailService,
     private readonly audit: AuditService,
+    private readonly whatsapp: WhatsAppService,
+    private readonly credentials: WhatsAppCredentialsService,
+    private readonly checkins: CheckinsService,
   ) {}
 
   // ==========================================================================
@@ -88,11 +108,13 @@ export class ScheduledReportsService {
     const rows = await this.prisma.scheduledReport.findMany({
       where: {
         ...this.scope.orgFilter(user),
-        // A report for a branch is visible to whoever can see that branch; a
-        // chain-wide report (storeId null) is visible to everybody in the tenant
-        // because its CONTENTS are still scoped at build time by the recipient's
-        // own store list.
-        OR: [{ storeId: null }, { storeId: { in: user.storeIds } }],
+        // A report for a branch is visible to whoever can see that branch. A
+        // chain-wide report (storeId null) is built as head office over EVERY
+        // branch (actorFor), so it is head office's alone.
+        OR: [
+          ...(user.role === Role.head_office ? [{ storeId: null }] : []),
+          { storeId: { in: user.storeIds } },
+        ],
       },
       orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
       include: {
@@ -110,6 +132,7 @@ export class ScheduledReportsService {
       sendHour: r.sendHour,
       columns: r.columns,
       recipients: r.recipients,
+      phoneRecipients: r.phoneRecipients,
       isActive: r.isActive,
       lastRunAt: r.lastRunAt,
       lastRun: r.runs[0]
@@ -119,6 +142,8 @@ export class ScheduledReportsService {
             status: r.runs[0].status,
             emailStatus: r.runs[0].emailStatus,
             emailDetail: r.runs[0].emailDetail,
+            whatsappStatus: r.runs[0].whatsappStatus,
+            whatsappDetail: r.runs[0].whatsappDetail,
             createdAt: r.runs[0].createdAt,
           }
         : null,
@@ -144,10 +169,11 @@ export class ScheduledReportsService {
       sendHour?: number;
       columns?: string[];
       recipients?: string[];
+      phoneRecipients?: string[];
       isActive?: boolean;
     },
   ) {
-    const data = this.validate(user, input);
+    const data = await this.validate(user, { ...input, storeId: input.storeId ?? null });
     try {
       const row = await this.prisma.scheduledReport.create({
         data: {
@@ -184,11 +210,12 @@ export class ScheduledReportsService {
       sendHour?: number;
       columns?: string[];
       recipients?: string[];
+      phoneRecipients?: string[];
       isActive?: boolean;
     },
   ) {
     await this.mustReach(user, reportId);
-    const data = this.validate(user, input);
+    const data = await this.validate(user, input);
     const row = await this.prisma.scheduledReport.update({
       where: { id: reportId },
       data: { ...(input.name ? { name: input.name.trim() } : {}), ...data },
@@ -223,9 +250,11 @@ export class ScheduledReportsService {
    * `storeId` goes through `assertStoreAllowed`, so a manager cannot schedule a
    * chain-wide report by naming a branch that is not theirs — the scheduled
    * build runs with no human present, and this is the only place that check can
-   * be made.
+   * be made. Below head office a report must name a branch: a store-less one
+   * is built as head office over every branch. WhatsApp numbers must be staff
+   * of this tenant, so the file cannot be pointed at an outside phone.
    */
-  private validate(
+  private async validate(
     user: AuthUser,
     input: {
       kind?: string;
@@ -234,6 +263,7 @@ export class ScheduledReportsService {
       sendHour?: number;
       columns?: string[];
       recipients?: string[];
+      phoneRecipients?: string[];
       isActive?: boolean;
     },
   ) {
@@ -247,6 +277,11 @@ export class ScheduledReportsService {
       throw new BadRequestException('sendHour must be an hour of the day, 0 to 23.');
     }
     if (input.storeId) this.scope.assertStoreAllowed(user, input.storeId);
+    else if (input.storeId !== undefined && user.role !== Role.head_office) {
+      throw new BadRequestException(
+        'Choose a branch for this report. A report for every branch is set up by head office.',
+      );
+    }
 
     if (input.columns !== undefined) {
       const bad = input.columns.filter(
@@ -269,6 +304,28 @@ export class ScheduledReportsService {
       }
       input.recipients = cleaned;
     }
+    if (input.phoneRecipients !== undefined) {
+      const cleaned = input.phoneRecipients.map((r) => r.trim()).filter(Boolean);
+      if (cleaned.length > MAX_RECIPIENTS) {
+        throw new BadRequestException(
+          `A report can go to at most ${MAX_RECIPIENTS} WhatsApp numbers.`,
+        );
+      }
+      input.phoneRecipients = cleaned.map(normalisePhone);
+      if (cleaned.length) {
+        const staff = await this.prisma.user.findMany({
+          where: { organisationId: user.organisationId, isActive: true, approvalStatus: 'approved', phone: { not: null } },
+          select: { phone: true },
+        });
+        const known = new Set(staff.map((s) => (s.phone ?? '').replace(/\D/g, '').slice(-10)));
+        const stranger = cleaned.find((raw) => !known.has(normalisePhone(raw).slice(-10)));
+        if (stranger) {
+          throw new BadRequestException(
+            `${stranger} is not the phone of anyone on your staff. Reports go to staff numbers only.`,
+          );
+        }
+      }
+    }
 
     return {
       ...(input.kind !== undefined ? { kind: input.kind } : {}),
@@ -277,6 +334,7 @@ export class ScheduledReportsService {
       ...(input.sendHour !== undefined ? { sendHour: input.sendHour } : {}),
       ...(input.columns !== undefined ? { columns: input.columns } : {}),
       ...(input.recipients !== undefined ? { recipients: input.recipients } : {}),
+      ...(input.phoneRecipients !== undefined ? { phoneRecipients: input.phoneRecipients } : {}),
       ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
     };
   }
@@ -285,7 +343,10 @@ export class ScheduledReportsService {
     const row = await this.prisma.scheduledReport.findFirst({
       where: { id: reportId, ...this.scope.orgFilter(user) },
     });
-    if (!row) throw new NotFoundException('No such report here.');
+    // A chain-wide report runs as head office over every branch: theirs alone.
+    if (!row || (!row.storeId && user.role !== Role.head_office)) {
+      throw new NotFoundException('No such report here.');
+    }
     if (row.storeId) this.scope.assertStoreAllowed(user, row.storeId);
     return row;
   }
@@ -376,7 +437,7 @@ export class ScheduledReportsService {
     reportId: string,
     period: ReportPeriod,
     trigger: 'scheduled' | 'manual' = 'scheduled',
-  ): Promise<{ rows: number; emailStatus: string; periodKey: string } | null> {
+  ): Promise<{ rows: number; emailStatus: string; whatsappStatus: string; periodKey: string } | null> {
     const report = await this.prisma.scheduledReport.findUnique({
       where: { id: reportId },
       include: { store: { select: { id: true, name: true, timezone: true } } },
@@ -409,15 +470,23 @@ export class ScheduledReportsService {
 
     try {
       const actor = await this.actorFor(report.organisationId, report.storeId);
-      const { buffer, rows } = await this.exports.build(actor, {
-        fromInstant: period.from,
-        toInstant: period.to,
-        storeId: report.storeId ?? undefined,
-        columns: (report.columns.length
-          ? report.columns
-          : EXPORT_COLUMNS) as unknown as ExportColumn[],
-        filenameStem: `${slug(report.name)}-${period.key}`,
-      });
+      // Two shapes today: the lead spreadsheet (column-configurable) and the
+      // walk-ins workbook (the Check-ins page's own export, period-bounded).
+      const { buffer, rows } =
+        report.kind === 'walkins'
+          ? await this.checkins.exportXlsx(actor, report.storeId ?? undefined, {
+              from: period.from,
+              to: period.to,
+            })
+          : await this.exports.build(actor, {
+              fromInstant: period.from,
+              toInstant: period.to,
+              storeId: report.storeId ?? undefined,
+              columns: (report.columns.length
+                ? report.columns
+                : EXPORT_COLUMNS) as unknown as ExportColumn[],
+              filenameStem: `${slug(report.name)}-${period.key}`,
+            });
 
       const filename = `${slug(report.name)}-${period.key}.xlsx`;
       const delivery = await this.deliver(report, period, buffer, filename, rows);
@@ -429,8 +498,10 @@ export class ScheduledReportsService {
           // `empty` rather than `ok`: a branch with no leads last month gets a
           // row that says so, instead of a blank file that reads like a fault.
           status: rows === 0 ? 'empty' : 'ok',
-          emailStatus: delivery.status,
-          emailDetail: delivery.detail,
+          emailStatus: delivery.email.status,
+          emailDetail: delivery.email.detail,
+          whatsappStatus: delivery.whatsapp.status,
+          whatsappDetail: delivery.whatsapp.detail,
           detail: `${trigger} · ${period.label}`,
         },
       });
@@ -438,7 +509,12 @@ export class ScheduledReportsService {
         where: { id: report.id },
         data: { lastRunAt: new Date() },
       });
-      return { rows, emailStatus: delivery.status, periodKey: period.key };
+      return {
+        rows,
+        emailStatus: delivery.email.status,
+        whatsappStatus: delivery.whatsapp.status,
+        periodKey: period.key,
+      };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       // The claim STAYS. A failed period is recorded as failed rather than
@@ -448,11 +524,93 @@ export class ScheduledReportsService {
         data: { status: 'failed', detail: message.slice(0, 500) },
       });
       this.log.error(`Scheduled report ${report.name} failed for ${period.key}: ${message}`);
-      return { rows: 0, emailStatus: 'failed', periodKey: period.key };
+      return { rows: 0, emailStatus: 'failed', whatsappStatus: 'failed', periodKey: period.key };
     }
   }
 
   private async deliver(
+    report: {
+      organisationId: string;
+      name: string;
+      recipients: string[];
+      phoneRecipients: string[];
+    },
+    period: ReportPeriod,
+    buffer: Buffer,
+    filename: string,
+    rows: number,
+  ): Promise<{
+    email: { status: string; detail: string | null };
+    whatsapp: { status: string; detail: string | null };
+  }> {
+    const email = await this.deliverEmail(report, period, buffer, filename, rows);
+    const whatsapp = await this.deliverWhatsApp(report, period, buffer, filename, rows);
+    return { email, whatsapp };
+  }
+
+  /**
+   * The WhatsApp leg: the workbook as a document on the INTERNAL staff line,
+   * the DSR digest's pattern. Each number is its own attempt — one dead number
+   * must not cost the others their report — and the worst outcome wins the
+   * status so a partial failure is never filed as 'sent'.
+   */
+  private async deliverWhatsApp(
+    report: { organisationId: string; name: string; phoneRecipients: string[] },
+    period: ReportPeriod,
+    buffer: Buffer,
+    filename: string,
+    rows: number,
+  ): Promise<{ status: string; detail: string | null }> {
+    if (report.phoneRecipients.length === 0) {
+      return { status: 'no_recipients', detail: null };
+    }
+    const route = await this.credentials.internalRoute(report.organisationId);
+    const caption =
+      `${report.name} — ${period.label}\n` +
+      `${rows.toLocaleString('en-IN')} row${rows === 1 ? '' : 's'}.`;
+    let sent = 0;
+    let dry = 0;
+    let lastError: string | null = null;
+    for (const to of report.phoneRecipients) {
+      try {
+        const result = await this.whatsapp.sendDocument(
+          report.organisationId,
+          to,
+          {
+            buffer,
+            filename,
+            mimeType:
+              'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            caption,
+          },
+          route,
+        );
+        if (result.dryRun) dry++;
+        else sent++;
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+        this.log.warn(`scheduled report WhatsApp to ${to} failed: ${lastError}`);
+      }
+    }
+    if (sent === report.phoneRecipients.length) {
+      return { status: 'sent', detail: `Sent to ${sent} number(s) on the staff line.` };
+    }
+    if (dry > 0 && sent === 0 && !lastError) {
+      return {
+        status: 'dry_run',
+        detail: 'WhatsApp is not connected on this server, so nothing was delivered.',
+      };
+    }
+    if (sent > 0) {
+      return {
+        status: 'failed',
+        detail: `Only ${sent} of ${report.phoneRecipients.length} numbers got it${lastError ? `: ${lastError}` : '.'}`,
+      };
+    }
+    return { status: 'failed', detail: lastError ?? 'WhatsApp refused the document.' };
+  }
+
+  private async deliverEmail(
     report: { name: string; recipients: string[] },
     period: ReportPeriod,
     buffer: Buffer,
@@ -468,7 +626,7 @@ export class ScheduledReportsService {
     const body =
       `${report.name} for ${period.label}.\n\n` +
       `${rows.toLocaleString('en-IN')} lead${rows === 1 ? '' : 's'} in this period.\n\n` +
-      `Generated by CaratSense.`;
+      `Generated by ${PRODUCT_NAME}.`;
     const result = await this.email.send(
       report.recipients.join(', '),
       `${report.name} — ${period.label}`,
@@ -515,7 +673,9 @@ export class ScheduledReportsService {
         ).map((s) => s.id);
     return {
       id: 'system-scheduler',
-      name: 'CaratSense (automatic)',
+      // The email is an identifier (left as-is on purpose); only the display
+      // name follows the product rename.
+      name: `${PRODUCT_NAME} (automatic)`,
       email: 'system@caratsense.local',
       role: Role.head_office,
       organisationId,

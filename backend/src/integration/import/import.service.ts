@@ -12,6 +12,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { StoreScopeService } from '../../common/store-scope.service';
 import { AuditService } from '../../common/audit.service';
 import { AuthUser } from '../../common/auth-user';
+import { PRODUCT_NAME } from '../../common/brand';
 import { MAX_IMPORT_COLUMNS, parseCsv, ParsedTable } from './csv.util';
 import { parseXlsx } from './xlsx.util';
 import { FIELD_DICTIONARY, ImportEntity, suggestMappings } from './field-dictionary';
@@ -1334,7 +1335,7 @@ export class ImportService {
       }
       if (fieldToIndex.has(canonicalField)) {
         throw new BadRequestException(
-          `CaratOS field "${canonicalField}" is mapped from more than one column.`,
+          `${PRODUCT_NAME} field "${canonicalField}" is mapped from more than one column.`,
         );
       }
       seenSources.add(sourceColumn);

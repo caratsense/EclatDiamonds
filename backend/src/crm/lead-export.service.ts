@@ -4,6 +4,7 @@ import { Workbook } from 'exceljs';
 
 import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
+import { PRODUCT_NAME } from '../common/brand';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { businessDate, resolveTz } from '../common/tz.util';
@@ -198,7 +199,7 @@ export class LeadExportService {
     });
 
     const wb = new Workbook();
-    wb.creator = 'CaratSense';
+    wb.creator = PRODUCT_NAME;
     wb.created = new Date();
     const ws = wb.addWorksheet('Leads', {
       views: [{ state: 'frozen', ySplit: 1 }],

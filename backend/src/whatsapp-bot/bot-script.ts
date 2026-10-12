@@ -67,7 +67,9 @@ export interface BotScript {
 }
 
 /** The built-in opening lines, so the editor can show what it is overriding. */
-export const DEFAULT_INTRO = 'Thanks for reaching out to *Éclat Diamonds*.';
+// Tenant renamed Éclat Diamonds → Nibhana (10 Oct 2026). A tenant's own
+// script.intro still overrides this default.
+export const DEFAULT_INTRO = 'Thanks for reaching out to *Nibhana*.';
 export const DEFAULT_INTRO_HINT =
   'Just a couple of quick questions so I can show you the right pieces. Takes under a minute.';
 

@@ -12,6 +12,7 @@ import { ConfigService } from '@nestjs/config';
 import { IS_PUBLIC_KEY } from './public.decorator';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuthUser } from '../common/auth-user';
+import { PRODUCT_NAME } from '../common/brand';
 import { PrismaService } from '../prisma/prisma.service';
 import { adoptTenant } from '../common/tenant-context';
 import {
@@ -73,7 +74,7 @@ export class JwtAuthGuard implements CanActivate {
       ]);
       if (!machineAccess) {
         throw new UnauthorizedException(
-          'This credential belongs to a CaratOS Connect agent and cannot be used here.',
+          `This credential belongs to a ${PRODUCT_NAME} Connect agent and cannot be used here.`,
         );
       }
       const organisationWideOnly = this.reflector.getAllAndOverride<boolean>(

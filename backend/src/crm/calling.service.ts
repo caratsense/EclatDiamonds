@@ -317,11 +317,26 @@ export class CallingService {
         orderBy: { startedAt: 'desc' },
         take: 20,
       }),
-      task.leadId
+      task.leadId || task.partyId
         ? this.prisma.leadNote.findMany({
-            where: { leadId: task.leadId, lead: { organisationId: user.organisationId } },
+            /*
+             * By lead AND by customer. A note typed on the customer card is
+             * stored with `partyId` set and no `leadId` — which is how the CRM
+             * writes most of them — and this used to read only `task.leadId`,
+             * so the panel said "No notes yet" while the one thing a caller
+             * needed ("husband decides, do not ring before 6pm") sat on the
+             * party, visible in the activity feed beside it.
+             */
+            where: {
+              organisationId: user.organisationId,
+              OR: [
+                ...(task.leadId ? [{ leadId: task.leadId }] : []),
+                ...(task.partyId ? [{ partyId: task.partyId }] : []),
+              ],
+            },
             orderBy: { createdAt: 'desc' },
             take: 20,
+            select: { id: true, text: true, kind: true, authorName: true, createdAt: true },
           })
         : Promise.resolve([]),
       task.partyId
@@ -376,7 +391,16 @@ export class CallingService {
       },
       customer: party,
       lead,
-      notes,
+      // Shaped to the API's contract. The column is `text`; the client field is
+      // `body` — returning raw rows here is why the dialog rendered every note
+      // as an empty card with only a timestamp under it.
+      notes: notes.map((n) => ({
+        id: n.id,
+        body: n.text,
+        kind: n.kind,
+        author: n.authorName,
+        createdAt: n.createdAt,
+      })),
       activity,
       calls: calls.map((c) => this.presentCall(c, showFull)),
     };

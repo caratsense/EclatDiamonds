@@ -16,6 +16,7 @@ import {
   useSaveAdSetRules,
 } from "@/lib/queries/crm-ai";
 import { useStoresAdmin } from "@/lib/queries/stores";
+import { PRODUCT_NAME } from "@/lib/brand";
 import { apiErrorMessage } from "@/lib/utils";
 import { ConfigureAiModal } from "./configure-ai-modal";
 
@@ -87,7 +88,7 @@ function AdSetRulesEditor({ initialRules }: { initialRules: AdSetAutomationRule[
           <p>
             The highest-priority matching rule wins. It can send an ad response to a regional
             store queue and decide whether AI or a person handles it. If no rule matches, the
-            conversation remains unassigned; CaratOS never guesses a location.
+            conversation remains unassigned; {PRODUCT_NAME} never guesses a location.
           </p>
           <p className="mt-3">
             <strong className="text-foreground">Which match fields work today.</strong>{" "}

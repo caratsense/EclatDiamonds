@@ -56,6 +56,80 @@ export interface StaffUser {
   role: StaffRole;
   stores: StaffUserStore[];
   isActive: boolean;
+  /** Punches NOT held to the store geofence (traveller / remote / floater). */
+  geoExempt?: boolean;
+  /** The custom role last applied, for display; access is role + overrides. */
+  customRoleName?: string | null;
+}
+
+/** A tenant-named role: a base role plus saved screen overrides. */
+export interface CustomRole {
+  id: string;
+  name: string;
+  baseRole: StaffRole;
+  overrides: Record<string, string> | null;
+  updatedAt: string;
+}
+
+export function useCustomRoles() {
+  return useQuery({
+    queryKey: ["users", "roles"],
+    queryFn: async () => (await api.get<CustomRole[]>("/users/roles")).data,
+    staleTime: 60_000,
+  });
+}
+
+export function useCreateCustomRole() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      name: string;
+      baseRole: StaffRole;
+      overrides?: Record<string, string>;
+    }) => (await api.post<CustomRole>("/users/roles", input)).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["users"] }),
+  });
+}
+
+export function useUpdateCustomRole() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { roleId: string; overrides: Record<string, string> }) =>
+      (await api.put<CustomRole>(`/users/roles/${input.roleId}`, { overrides: input.overrides })).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["users"] }),
+  });
+}
+
+export function useDeleteCustomRole() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (roleId: string) =>
+      (await api.delete<{ deleted: boolean }>(`/users/roles/${roleId}`)).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["users"] }),
+  });
+}
+
+/** Stamp a template onto a person: base role + screens in one move. */
+export function useApplyCustomRole() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { userId: string; roleId: string }) =>
+      (await api.post<StaffUser>(`/users/${input.userId}/apply-role`, { roleId: input.roleId })).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["users"] }),
+  });
+}
+
+/**
+ * PATCH /users/:id/location-check — hold this person to the store geofence
+ * (true, everyone's default) or exempt them. Head office only.
+ */
+export function useSetLocationCheck() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ userId, required }: { userId: string; required: boolean }) =>
+      (await api.patch<{ id: string; geoExempt: boolean }>(`/users/${userId}/location-check`, { required })).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["users"] }),
+  });
 }
 
 export interface CreateStaffInput {
@@ -289,6 +363,37 @@ export function useUpdateStaffStore() {
 
 /** PATCH /users/:id/deactivate — offboard a staff member. When reassignToId is
  *  given, the leaver's open leads / walk-ins are handed off to that person. */
+/** PATCH /users/:id — fix name, Login ID, contact email or phone in place. */
+export function useUpdateStaffDetails() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      ...body
+    }: {
+      id: string;
+      name?: string;
+      email?: string;
+      contactEmail?: string;
+      phone?: string;
+    }) => (await api.patch<StaffUser>(`/users/${id}`, body)).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["users"] }),
+  });
+}
+
+/**
+ * DELETE /users/:id — only an account with no operational history; the server
+ * refuses anyone with records and points at Deactivate.
+ */
+export function useDeleteStaff() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) =>
+      (await api.delete<{ deleted: boolean }>(`/users/${id}`)).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["users"] }),
+  });
+}
+
 export function useDeactivateStaff() {
   const qc = useQueryClient();
   return useMutation({

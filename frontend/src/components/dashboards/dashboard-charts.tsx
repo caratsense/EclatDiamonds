@@ -106,8 +106,16 @@ export function LeadFunnelChart({
   href?: string;
 }) {
   const t = useChartTokens();
-  const open = Math.max(0, totals.came - totals.converted);
-  const rate = totals.came > 0 ? Math.round((totals.converted / totals.came) * 100) : null;
+  /*
+   * The pie reads the SAME days the bars show, not the period totals: on
+   * "Today" with nothing filed yet the period is honestly zero, and a pie
+   * that says "No data" beside bars full of this week's leads looked broken
+   * (client, 10 Oct). The header line still carries the period's own totals.
+   */
+  const stripCame = days.reduce((sum, d) => sum + d.came, 0);
+  const stripConverted = days.reduce((sum, d) => sum + d.converted, 0);
+  const open = Math.max(0, stripCame - stripConverted);
+  const rate = stripCame > 0 ? Math.round((stripConverted / stripCame) * 100) : null;
 
   return (
     <ChartCard
@@ -118,7 +126,7 @@ export function LeadFunnelChart({
       <div className="grid gap-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
         <DonutChart
           data={[
-            { name: "Converted", value: totals.converted, color: t.palette[4] },
+            { name: "Converted", value: stripConverted, color: t.palette[4] },
             { name: "In progress", value: open, color: t.palette[0] },
           ]}
           valueFormatter={formatNumber}

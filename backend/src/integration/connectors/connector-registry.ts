@@ -5,6 +5,7 @@ import type {
 } from '../contracts/connector';
 import { UNCONFIGURED_CAPABILITIES } from '../contracts/connector';
 import type { SourceSystem } from '../contracts/provenance';
+import { PRODUCT_NAME } from '../../common/brand';
 
 /**
  * CaratOS connector registry (Phase 4 boundary).
@@ -51,7 +52,7 @@ export class ConnectorRegistry {
       sourceSystem: 'csv',
       name: 'Excel / CSV upload',
       description:
-        'Upload a spreadsheet exported from any system (or a CaratOS template). Map columns, preview, then import. CSV and XLSX both supported.',
+        `Upload a spreadsheet exported from any system (or a ${PRODUCT_NAME} template). Map columns, preview, then import. CSV and XLSX both supported.`,
       status: 'connected',
       capabilities: CAP({ supportsCustomers: true, supportsProducts: true }),
       // Import entities (customers/stores/products) — the file-upload modality; more

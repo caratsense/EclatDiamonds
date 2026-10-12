@@ -72,11 +72,24 @@ export class CreateReferralCodeDto {
   storeId?: string;
 }
 
-/** POST /loyalty/referrals — apply a code on a referee's purchase. */
+/**
+ * POST /loyalty/referrals — record a referred purchase against a referrer
+ * account. Identified by `referrerId` (the account, looked up by name/phone in
+ * the UI — client 9 Oct item 12) or, for the legacy flow, by the minted coupon
+ * `code`. Exactly one of the two is required.
+ */
 export class CreateReferralDto {
+  /** The referrer account to credit (preferred since the 9 Oct rework). */
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  code!: string;
+  referrerId?: string;
+
+  /** Legacy: resolve the referrer account by its coupon code. */
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  code?: string;
 
   @IsString()
   @IsNotEmpty()

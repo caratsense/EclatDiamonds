@@ -94,8 +94,12 @@ describe("the Add staff dialog", () => {
    * leaves out, and how tall it comes out needs a browser to say.
    */
   it("scrolls inside the screen instead of running off it", () => {
+    // The dialog moved to the shared staff-action module (10 Oct, one staff
+    // screen); the scrolling contract travels with it.
     const page = readFileSync(
-      fileURLToPath(new URL("./page.tsx", import.meta.url)),
+      fileURLToPath(
+        new URL("../../../../components/team/staff-action-dialogs.tsx", import.meta.url),
+      ),
       "utf8",
     );
     const classes =

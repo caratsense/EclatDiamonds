@@ -40,6 +40,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  useApplyCustomRole,
+  useCustomRoles,
   useSetStaffStores,
   useUpdateStaffRole,
   useUpdateStaffStore,
@@ -77,19 +79,44 @@ export function ChangeRoleDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const updateRole = useUpdateStaffRole();
+  const applyRole = useApplyCustomRole();
+  const customRoles = useCustomRoles();
   const options = assignableRoles(viewerRole);
-  const [role, setRole] = useState<StaffRole>(user.role);
+  const [role, setRole] = useState<string>(user.role);
+
+  // The one picker holds both: built-in roles by their value, the tenant's own
+  // roles as custom:<id>. Only roles the viewer could assign by rank appear.
+  const assignableCustom = (customRoles.data ?? []).filter((r) =>
+    (options as string[]).includes(r.baseRole),
+  );
 
   function save() {
+    if (role.startsWith("custom:")) {
+      const picked = assignableCustom.find((r) => `custom:${r.id}` === role);
+      if (!picked) return;
+      applyRole.mutate(
+        { userId: user.id, roleId: picked.id },
+        {
+          onSuccess: () => {
+            toast.success(`${user.name} is now ${picked.name}`, {
+              description: `${ROLE_LABELS[picked.baseRole]} plus the role's screen set.`,
+            });
+            onOpenChange(false);
+          },
+          onError: (err) => toast.error(apiErrorMessage(err, "Could not apply the role.")),
+        },
+      );
+      return;
+    }
     if (role === user.role) {
       onOpenChange(false);
       return;
     }
     updateRole.mutate(
-      { id: user.id, role },
+      { id: user.id, role: role as StaffRole },
       {
         onSuccess: () => {
-          toast.success(`${user.name} is now ${ROLE_LABELS[role]}`);
+          toast.success(`${user.name} is now ${ROLE_LABELS[role as StaffRole]}`);
           onOpenChange(false);
         },
         onError: (err) =>
@@ -126,6 +153,11 @@ export function ChangeRoleDialog({
                   {ROLE_LABELS[r]}
                 </SelectItem>
               ))}
+              {assignableCustom.map((r) => (
+                <SelectItem key={r.id} value={`custom:${r.id}`}>
+                  {r.name} · {ROLE_LABELS[r.baseRole]}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
@@ -133,8 +165,8 @@ export function ChangeRoleDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={save} disabled={updateRole.isPending}>
-            {updateRole.isPending ? "Saving…" : "Save role"}
+          <Button onClick={save} disabled={updateRole.isPending || applyRole.isPending}>
+            {updateRole.isPending || applyRole.isPending ? "Saving…" : "Save role"}
           </Button>
         </DialogFooter>
       </DialogContent>

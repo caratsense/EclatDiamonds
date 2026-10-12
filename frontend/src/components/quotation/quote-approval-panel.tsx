@@ -69,6 +69,48 @@ export function QuoteApprovalPanel({ quote }: { quote: Quote }) {
       },
     );
 
+  // Approve/Reject, shared by the pending-request branch and the held-draft
+  // branch below: the request step summons a decision, it does not gate one.
+  const decisionControls = rejecting ? (
+    <div className="flex flex-wrap items-center gap-2">
+      <Input
+        id={`reject-reason-${quote.id}`}
+        autoFocus
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        placeholder="Reason for rejecting (required)"
+        className="h-8 min-w-0 flex-1"
+      />
+      <Button
+        size="sm"
+        variant="destructive"
+        className="h-8"
+        disabled={busy || !reason.trim()}
+        onClick={() => onDecide(false)}
+      >
+        Reject
+      </Button>
+      <Button size="sm" variant="ghost" className="h-8" onClick={() => setRejecting(false)}>
+        Cancel
+      </Button>
+    </div>
+  ) : (
+    <div className="flex flex-wrap gap-2">
+      <Button
+        size="sm"
+        className="h-8"
+        disabled={busy || tooJunior}
+        title={tooJunior && needs ? `Needs ${ROLE_LABELS[needs]} approval` : undefined}
+        onClick={() => onDecide(true)}
+      >
+        {tooJunior && needs ? `Needs ${ROLE_LABELS[needs]}` : "Approve"}
+      </Button>
+      <Button size="sm" variant="outline" className="h-8" disabled={busy} onClick={() => setRejecting(true)}>
+        Reject
+      </Button>
+    </div>
+  );
+
   if (gate.data.cleared) {
     return (
       <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-xs text-emerald-700 dark:text-emerald-300">
@@ -86,47 +128,7 @@ export function QuoteApprovalPanel({ quote }: { quote: Quote }) {
           Waiting for a manager to approve this quote.
         </p>
         <Reasons reasons={gate.data.reasons} />
-        {isManager ? (
-          rejecting ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <Input
-                id={`reject-reason-${quote.id}`}
-                autoFocus
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder="Reason for rejecting (required)"
-                className="h-8 min-w-0 flex-1"
-              />
-              <Button
-                size="sm"
-                variant="destructive"
-                className="h-8"
-                disabled={busy || !reason.trim()}
-                onClick={() => onDecide(false)}
-              >
-                Reject
-              </Button>
-              <Button size="sm" variant="ghost" className="h-8" onClick={() => setRejecting(false)}>
-                Cancel
-              </Button>
-            </div>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                className="h-8"
-                disabled={busy || tooJunior}
-                title={tooJunior && needs ? `Needs ${ROLE_LABELS[needs]} approval` : undefined}
-                onClick={() => onDecide(true)}
-              >
-                {tooJunior && needs ? `Needs ${ROLE_LABELS[needs]}` : "Approve"}
-              </Button>
-              <Button size="sm" variant="outline" className="h-8" disabled={busy} onClick={() => setRejecting(true)}>
-                Reject
-              </Button>
-            </div>
-          )
-        ) : null}
+        {isManager ? decisionControls : null}
       </div>
     );
   }
@@ -144,9 +146,13 @@ export function QuoteApprovalPanel({ quote }: { quote: Quote }) {
         {gate.data.reason ?? "This quote needs a manager’s approval before it can be sent."}
       </p>
       <Reasons reasons={gate.data.reasons} />
-      <Button size="sm" variant="outline" className="h-8" disabled={busy} onClick={onRequest}>
-        {quote.status === "rejected" ? "Ask for approval again" : "Request manager approval"}
-      </Button>
+      {isManager && quote.status === "draft" ? (
+        decisionControls
+      ) : (
+        <Button size="sm" variant="outline" className="h-8" disabled={busy} onClick={onRequest}>
+          {quote.status === "rejected" ? "Ask for approval again" : "Request manager approval"}
+        </Button>
+      )}
     </div>
   );
 }

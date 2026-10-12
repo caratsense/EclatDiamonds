@@ -119,6 +119,21 @@ export function useTermLabel(bootstrap: ConfigBootstrap | undefined) {
 }
 
 /**
+ * Whether this tenant shows the live "in store now" experience on Check-ins
+ * (client, 9 Oct: hidden for shops where one person logs the visit after
+ * serving — live entry is fiction there). `settings.checkins.liveOccupancy:
+ * false` hides it; anything else keeps today's behaviour. Capability kept in
+ * the generic platform; this is configuration, not removal.
+ */
+export function useLiveOccupancyEnabled(): boolean {
+  const { data } = useConfigBootstrap();
+  const settings = (data?.organisation?.settings ?? {}) as {
+    checkins?: { liveOccupancy?: boolean };
+  };
+  return settings.checkins?.liveOccupancy !== false;
+}
+
+/**
  * The routes that belong to this tenant's product, or `undefined` for "no
  * opinion".
  *

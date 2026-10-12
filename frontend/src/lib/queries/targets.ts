@@ -18,7 +18,8 @@ import { useSession } from "@/store/use-session";
  */
 
 export interface TargetRow {
-  id: string;
+  /** Null for a carried-forward row — no row exists for THIS month to patch/delete. */
+  id: string | null;
   storeId: string;
   storeName: string;
   /** Present for a per-staff target; omitted for a whole-store target. */
@@ -26,6 +27,8 @@ export interface TargetRow {
   staffName?: string | null;
   period: string;
   amount: number;
+  /** Source month ("YYYY-MM") when the target carries forward from an earlier month. */
+  carriedFrom?: string | null;
 }
 
 export interface TargetAchievementRow {
@@ -35,6 +38,8 @@ export interface TargetAchievementRow {
   achieved: number;
   /** Achieved ÷ target (%). */
   pct: number;
+  /** Source month ("YYYY-MM") when the target carries forward from an earlier month. */
+  carriedFrom?: string | null;
 }
 
 export interface SetTargetInput {
