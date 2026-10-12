@@ -98,17 +98,20 @@ function fromQuestionDrafts(rows: QuestionDraft[]): CampaignQuestion[] {
 }
 
 /**
- * How a campaign is matched, as the person thinks of it. The stored fields are
- * unchanged (adLink / matchField / matchValue) — this only decides which input
- * is shown. "raw" is the fallback for an existing rule pinned by ad_id,
- * ad_set_id or tag without a link: those stay editable, just not promoted.
+ * How a campaign is matched, as a marketing person thinks of it. Two choices
+ * only (client, 12 Oct — "go by what is easier for the marketing team"):
+ * the campaign's name, which they coined themselves, or one ad's pasted link
+ * when a single ad should answer differently. The stored fields are unchanged
+ * (adLink / matchField / matchValue) — this only decides which input is shown.
+ * "legacy" is an existing rule pinned by ad_set_name, raw id or tag: it keeps
+ * matching as stored and is shown as one plain sentence, not an editor —
+ * picking either choice above converts it.
  */
-type AppliesTo = "ad" | "campaign" | "adset" | "raw";
+type AppliesTo = "campaign" | "ad" | "legacy";
 
-const APPLIES_TO_CHOICES: { mode: Exclude<AppliesTo, "raw">; label: string }[] = [
+const APPLIES_TO_CHOICES: { mode: Exclude<AppliesTo, "legacy">; label: string }[] = [
+  { mode: "campaign", label: "A whole campaign — type its name" },
   { mode: "ad", label: "One specific ad — paste its link" },
-  { mode: "campaign", label: "A whole campaign — its name exactly as in Ads Manager" },
-  { mode: "adset", label: "An ad set — its name" },
 ];
 
 const EMPTY: Omit<AdSetAutomationRule, "id"> = {
@@ -157,7 +160,7 @@ export function CampaignScriptsConfig() {
     setEditingId(null);
     setDraft({ ...EMPTY, storeId: stores[0]?.id ?? null });
     setQuestionRows([]);
-    setAppliesTo("ad");
+    setAppliesTo("campaign");
     setOpen(true);
   }
 
@@ -166,23 +169,24 @@ export function CampaignScriptsConfig() {
     setDraft({ ...rule });
     setQuestionRows(toQuestionDrafts(rule.questions));
     setAppliesTo(
-      rule.adLink
-        ? "ad"
-        : rule.matchField === "campaign_name"
-          ? "campaign"
-          : rule.matchField === "ad_set_name"
-            ? "adset"
-            : "raw",
+      rule.adLink ? "ad" : rule.matchField === "campaign_name" ? "campaign" : "legacy",
     );
     setOpen(true);
   }
 
-  function chooseAppliesTo(mode: Exclude<AppliesTo, "raw">) {
+  function chooseAppliesTo(mode: Exclude<AppliesTo, "legacy">) {
     setAppliesTo(mode);
-    // The name modes ARE a matchField. The ad mode leaves it alone: the server
-    // rewrites a bare link as an exact ad_id match when it saves.
-    if (mode === "campaign") setDraft((d) => ({ ...d, matchField: "campaign_name" }));
-    if (mode === "adset") setDraft((d) => ({ ...d, matchField: "ad_set_name" }));
+    // Campaign mode IS a matchField; a legacy value (an id, an ad set name) is
+    // not a campaign name, so it is cleared rather than left to mis-match. The
+    // ad mode leaves matchField alone: the server rewrites a bare link as an
+    // exact ad_id match when it saves.
+    if (mode === "campaign") {
+      setDraft((d) => ({
+        ...d,
+        matchField: "campaign_name",
+        matchValue: d.matchField === "campaign_name" ? d.matchValue : "",
+      }));
+    }
   }
 
   function persist(next: AdSetAutomationRule[], done: string) {
@@ -205,13 +209,7 @@ export function CampaignScriptsConfig() {
       return;
     }
     if (appliesTo !== "ad" && !draft.matchValue.trim()) {
-      toast.error(
-        appliesTo === "campaign"
-          ? "Type the campaign's name exactly as it is in Ads Manager."
-          : appliesTo === "adset"
-            ? "Type the ad set's name."
-            : "Say what the campaign is matched by.",
-      );
+      toast.error("Type the campaign's name exactly as it is in Ads Manager.");
       return;
     }
     const entry: AdSetAutomationRule = {
@@ -225,7 +223,7 @@ export function CampaignScriptsConfig() {
       // silently re-pin a name rule to one ad.
       ...(appliesTo === "ad"
         ? { matchValue: "" }
-        : appliesTo === "raw"
+        : appliesTo === "legacy"
           ? {}
           : { adLink: "" }),
     };
@@ -408,40 +406,15 @@ export function CampaignScriptsConfig() {
                   placeholder="e.g. Diwali Solitaire"
                   onChange={(e) => setDraft((d) => ({ ...d, matchValue: e.target.value }))}
                 />
-              ) : appliesTo === "adset" ? (
-                <Input
-                  aria-label="Ad set name"
-                  value={draft.matchValue}
-                  placeholder="The ad set's name in Ads Manager"
-                  onChange={(e) => setDraft((d) => ({ ...d, matchValue: e.target.value }))}
-                />
               ) : (
-                /* An existing rule pinned by raw id or tag: show the match as
-                   stored rather than forcing it into one of the three shapes. */
-                <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] gap-2">
-                  <Select
-                    value={draft.matchField}
-                    onValueChange={(v) =>
-                      setDraft((d) => ({ ...d, matchField: v as AdSetAutomationRule["matchField"] }))
-                    }
-                  >
-                    <SelectTrigger aria-label="Match field">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="campaign_name">Campaign name</SelectItem>
-                      <SelectItem value="ad_set_name">Ad set name</SelectItem>
-                      <SelectItem value="ad_id">Ad id</SelectItem>
-                      <SelectItem value="ad_set_id">Ad set id</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Input
-                    aria-label="Match value"
-                    value={draft.matchValue}
-                    placeholder="e.g. Diwali Solitaire"
-                    onChange={(e) => setDraft((d) => ({ ...d, matchValue: e.target.value }))}
-                  />
-                </div>
+                /* A rule saved before the two-choice form (ad set name, raw
+                   id, tag): it keeps matching exactly as stored. One sentence,
+                   no editor — picking a choice above converts it. */
+                <p className="text-xs text-muted-foreground">
+                  Currently matches {MATCH_LABELS[draft.matchField]}{" "}
+                  <span className="font-mono">{draft.matchValue}</span> — pick an option above to
+                  change how it connects.
+                </p>
               )}
             </div>
 
