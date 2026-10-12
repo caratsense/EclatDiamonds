@@ -16,6 +16,7 @@ import { StoreScopeService } from '../common/store-scope.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
   assertCanCorrect,
+  assertCanCorrectUser,
   assertMonthOpen,
   ROSTER_ROLES,
 } from './attendance-ops.service';
@@ -350,22 +351,37 @@ export class PayrollService {
       if (!visible.has(entry.userId)) {
         throw new BadRequestException('One of these people is not on your roster.');
       }
+      // The roster lists managers too: the weekly pattern's rank rule applies,
+      // so nobody plans paid days off for themself or a peer.
+      await assertCanCorrectUser(this.prisma, user, entry.userId);
       if (entry.dates.length > 10) {
         throw new BadRequestException('Ten off days in a month is not a roster, it is a mistake.');
       }
-      for (const d of entry.dates) {
+      const perWeek = new Map<string, number>();
+      for (const d of new Set(entry.dates)) {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !d.startsWith(dto.month)) {
           throw new BadRequestException(`${d} is not a date inside ${dto.month}.`);
+        }
+        // The weekly pattern's ceiling, per planned week.
+        const week = weekKeyOf(d);
+        const offs = (perWeek.get(week) ?? 0) + 1;
+        perWeek.set(week, offs);
+        if (offs > 3) {
+          throw new BadRequestException('An employee cannot have more than three offs in one week.');
         }
       }
     }
 
+    // Only the rows this branch's register reads (datedOffsFor): its own and
+    // branch-less ones. A person on two branches keeps the other branch's plan.
+    const storeIds = this.scope.effectiveStoreIds(user, dto.storeId ?? undefined);
     await this.prisma.$transaction(async (tx) => {
       await tx.staffDayOff.deleteMany({
         where: {
           organisationId: user.organisationId,
           userId: { in: dto.entries.map((e) => e.userId) },
           date: { gte: monthStart, lte: monthEnd },
+          OR: [{ storeId: { in: storeIds } }, { storeId: null }],
         },
       });
       for (const entry of dto.entries) {
@@ -378,6 +394,9 @@ export class PayrollService {
             date: new Date(`${d}T00:00:00.000Z`),
             createdById: user.id,
           })),
+          // One off per person per date: a date the other branch already
+          // planned stays theirs.
+          skipDuplicates: true,
         });
       }
     });
