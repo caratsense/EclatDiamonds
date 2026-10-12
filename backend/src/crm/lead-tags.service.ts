@@ -7,7 +7,7 @@ import {
 import { Prisma } from '@prisma/client';
 
 import { AuthUser } from '../common/auth-user';
-import { isSalesScoped } from '../common/sales-scope';
+import { isSalesScoped, readableParty } from '../common/sales-scope';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { ActivityService } from './activity.service';
@@ -317,9 +317,10 @@ export class LeadTagsService {
     return this.forParty(user, partyId);
   }
 
+  /** The customer profile's own rule: a salesperson reaches the customers they work with. */
   private async mustReachParty(user: AuthUser, partyId: string): Promise<void> {
     const party = await this.prisma.party.findFirst({
-      where: { id: partyId, ...this.scope.orgFilter(user) },
+      where: { id: partyId, ...readableParty(user) },
       select: { id: true },
     });
     if (!party) throw new NotFoundException('Customer not found');
