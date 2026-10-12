@@ -523,9 +523,10 @@ export class UsersService {
    * DELETE /users/:id (client, 9 Oct) — for the account that should never have
    * existed: a typo, a duplicate, a demo row. A person with HISTORY is never
    * deleted: their attendance backs payslips, their leads and quotes carry the
-   * shop's numbers, and the foreign keys refuse it anyway. The refusal names
-   * the counts and points at Deactivate, which keeps the record and hands off
-   * the work. Head office only (controller).
+   * shop's numbers, and the foreign keys would either refuse the delete (audit
+   * trail, commissions, leave) or quietly take pay records with the row. The
+   * refusal names the counts and points at Deactivate, which keeps the record
+   * and hands off the work. Head office only (controller).
    */
   async remove(actor: AuthUser, id: string) {
     const target = await this.getOrThrow(actor, id);
@@ -535,31 +536,54 @@ export class UsersService {
     const storeId = await this.primaryStoreId(id);
     this.assertCanManage(actor, target.role, storeId);
 
-    const [attendance, leads, quotes, checkIns, conversations] = await Promise.all([
-      this.prisma.attendanceRecord.count({ where: { staffId: id } }),
-      this.prisma.lead.count({ where: { ownerId: id } }),
-      this.prisma.quote.count({ where: { assignedRepId: id } }),
-      this.prisma.checkIn.count({ where: { attendedById: id } }),
-      this.prisma.conversation.count({ where: { assignedUserId: id } }),
-    ]);
-    const history: [string, number][] = [
-      ['attendance days', attendance],
-      ['leads', leads],
-      ['quotes', quotes],
-      ['walk-ins attended', checkIns],
-      ['conversations', conversations],
-    ];
-    const held = history.filter(([, count]) => count > 0);
-    if (held.length) {
-      throw new BadRequestException(
-        `${target.name} has ${held
-          .map(([what, count]) => `${count} ${what}`)
-          .join(', ')} on record. Deactivate them instead — the record stays and their open work is handed over.`,
-      );
-    }
-
-    await this.prisma.userStore.deleteMany({ where: { userId: id } });
-    await this.prisma.user.delete({ where: { id: target.id } });
+    // One transaction, so a refusal changes nothing. Store links, offs and
+    // notifications go with the row by cascade.
+    await this.prisma.$transaction(async (tx) => {
+      const [attendance, leads, quotes, checkIns, conversations, audit, payslips, pay, leave,
+        commissions, requests, discounts, targets, calls] = await Promise.all([
+        tx.attendanceRecord.count({ where: { staffId: id } }),
+        tx.lead.count({ where: { ownerId: id } }),
+        tx.quote.count({
+          where: { OR: [{ assignedRepId: id }, { requestedById: id }, { decidedById: id }, { pricedById: id }] },
+        }),
+        tx.checkIn.count({ where: { attendedById: id } }),
+        tx.conversation.count({ where: { assignedUserId: id } }),
+        tx.auditLog.count({ where: { actorId: id } }),
+        tx.payslip.count({ where: { userId: id } }),
+        tx.staffCompensation.count({ where: { userId: id } }),
+        tx.leaveBalance.count({ where: { userId: id } }),
+        tx.commission.count({ where: { userId: id } }),
+        tx.specialRequest.count({ where: { requestedById: id } }),
+        tx.discountRequest.count({ where: { OR: [{ requestedById: id }, { approvedById: id }] } }),
+        tx.salesTarget.count({ where: { staffId: id } }),
+        tx.callLog.count({ where: { agentUserId: id } }),
+      ]);
+      const history: [string, number][] = [
+        ['attendance days', attendance],
+        ['leads', leads],
+        ['quotes', quotes],
+        ['walk-ins attended', checkIns],
+        ['conversations', conversations],
+        ['audit entries', audit],
+        ['payslips', payslips],
+        ['pay records', pay],
+        ['leave balances', leave],
+        ['commissions', commissions],
+        ['special requests', requests],
+        ['discount requests', discounts],
+        ['sales targets', targets],
+        ['calls', calls],
+      ];
+      const held = history.filter(([, count]) => count > 0);
+      if (held.length) {
+        throw new BadRequestException(
+          `${target.name} has ${held
+            .map(([what, count]) => `${count} ${what}`)
+            .join(', ')} on record. Deactivate them instead — the record stays and their open work is handed over.`,
+        );
+      }
+      await tx.user.delete({ where: { id: target.id } });
+    });
     await this.audit.record(actor, {
       action: 'users.deleted',
       entityType: 'User',

@@ -134,6 +134,39 @@ describe('Staff administration and customer records (e2e)', () => {
     expect(await prisma.user.findUnique({ where: { id: 'u_sadmin_typo' } })).toBeNull();
   });
 
+  it('delete also refuses audit and pay history, and a refusal leaves the person whole', async () => {
+    for (const id of ['u_sadmin_audited', 'u_sadmin_paid']) {
+      await prisma.user.create({
+        data: {
+          id, email: `${id}@sadmin.local`, name: id, role: 'salesperson' as never,
+          passwordHash: 'x', isActive: true, approvalStatus: 'approved', organisationId: A.org,
+          userStores: { create: { storeId: A.store, isPrimary: true } },
+        },
+      });
+    }
+    // Something they did, on the audit trail.
+    await prisma.auditLog.create({
+      data: {
+        organisationId: A.org, actorId: 'u_sadmin_audited', actorName: 'Audited', actorRole: 'salesperson',
+        action: 'crm.lead_created', entityType: 'Lead', entityId: 'lead_x', summary: 'Created a lead',
+      },
+    });
+    // What they are paid, which would quietly go with them.
+    await prisma.staffCompensation.create({
+      data: { organisationId: A.org, userId: 'u_sadmin_paid', basis: 'monthly', amount: 20_000 },
+    });
+
+    const audited = await request(server()).delete('/users/u_sadmin_audited').set(auth(hoT));
+    expect(audited.status).toBe(400);
+    expect(JSON.stringify(audited.body)).toMatch(/audit.*Deactivate/is);
+    // Refused whole: still linked to their branch.
+    expect(await prisma.userStore.count({ where: { userId: 'u_sadmin_audited' } })).toBe(1);
+
+    const paid = await request(server()).delete('/users/u_sadmin_paid').set(auth(hoT));
+    expect(paid.status).toBe(400);
+    expect(await prisma.staffCompensation.count({ where: { userId: 'u_sadmin_paid' } })).toBe(1);
+  });
+
   /* ------------------------------------------------------------ custom roles */
 
   it('head office creates a role; a manager cannot', async () => {
