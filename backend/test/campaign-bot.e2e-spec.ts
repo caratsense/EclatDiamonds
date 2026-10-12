@@ -433,6 +433,45 @@ describe('Campaign-scripted bot conversations (e2e)', () => {
     expect(turn.text).not.toMatch(/\n\s*(?:[0-9]+[.)]|[-*•])\s/);
   });
 
+  it('AI replies off: the opener still sends, the next message goes to a person', async () => {
+    await request(app.getHttpServer())
+      .post('/crm/qualification/adset-rules')
+      .set(auth())
+      .send({
+        rules: [
+          {
+            id: 'camp-noai',
+            name: 'Mangalsutra launch',
+            enabled: true,
+            priority: 100,
+            matchField: 'ad_id',
+            matchValue: '120210000777010',
+            storeId: A.store,
+            assignedUserId: null,
+            handling: 'ai',
+            firstReply: 'Namaste! Our new mangalsutra collection starts at Rs 35,000.',
+            aiReplies: false,
+          },
+        ],
+      })
+      .expect(201);
+
+    const conversationId = await arrive('120210000777010');
+    const rule = await campaignBot.scriptFor(A.org, conversationId);
+    expect(rule?.aiReplies).toBe(false);
+
+    const opener = await campaignBot.handle(A.org, conversationId, rule!, 'hi');
+    expect(opener.text).toBe('Namaste! Our new mangalsutra collection starts at Rs 35,000.');
+    expect(opener.handoff).toBeUndefined();
+
+    await prisma.message.create({
+      data: { organisationId: A.org, conversationId, direction: 'outbound', authorType: 'bot', body: 'opener' },
+    });
+    const followUp = await campaignBot.handle(A.org, conversationId, rule!, 'what designs do you have?');
+    expect(followUp.handoff?.reason).toContain('Mangalsutra launch');
+    expect(followUp.text).toContain('colleague');
+  });
+
   /* ------------------------------- the walk-in conversation (12 Oct) */
 
   it('the walk-in conversation saves, round-trips, and refuses enabled-without-opener', async () => {

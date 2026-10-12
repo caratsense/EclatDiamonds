@@ -221,6 +221,11 @@ export interface AdSetAutomationRule {
   firstReply?: string | null;
   /** Rows written before 12 Oct were plain strings; the server rewrites them as objects. */
   questions?: CampaignQuestion[];
+  /**
+   * Off: the first reply still sends, then a person takes over. Absent means
+   * on (every campaign saved before the toggle keeps conversing).
+   */
+  aiReplies?: boolean;
 }
 
 /**
@@ -235,6 +240,8 @@ export interface DefaultConversation {
   questions: CampaignQuestion[];
   aiContext: string | null;
   aiGuardrails: string | null;
+  /** Off: the first reply still sends; the next message goes to a person. */
+  aiReplies: boolean;
 }
 
 export function useBotDefault() {

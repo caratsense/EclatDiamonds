@@ -113,6 +113,13 @@ export interface AdSetAutomationRule {
   adLink?: string | null;
   firstReply?: string | null;
   questions?: CampaignQuestion[];
+  /**
+   * Whether the assistant converses after the opener (client, 12 Oct: "ask do
+   * we want AI replies"). Off, the first reply still sends exactly as written
+   * and the very next customer message goes to a person. Absent means on, so
+   * every campaign saved before the toggle existed keeps its behaviour.
+   */
+  aiReplies?: boolean;
 }
 
 export interface AdSetRoutingContext {
@@ -431,6 +438,7 @@ function normaliseRules(value: unknown): AdSetAutomationRule[] {
           ? rule.firstReply.trim().slice(0, FIRST_REPLY_MAX)
           : null,
       ...(questions.length ? { questions } : {}),
+      aiReplies: rule.aiReplies !== false,
     }];
   });
 }

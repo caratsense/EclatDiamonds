@@ -128,6 +128,7 @@ const EMPTY: Omit<AdSetAutomationRule, "id"> = {
   adLink: "",
   firstReply: "",
   questions: [],
+  aiReplies: true,
 };
 
 /**
@@ -454,37 +455,74 @@ export function CampaignScriptsConfig() {
 
             <QuestionsEditor rows={questionRows} onChange={setQuestionRows} />
 
-            <div className="grid gap-1.5">
-              <Label htmlFor="camp-brief">
-                What the assistant knows — products, prices, links
-              </Label>
-              <Textarea
-                id="camp-brief"
-                rows={5}
-                maxLength={5000}
-                value={draft.aiContext ?? ""}
-                placeholder={
-                  "e.g. Pricing: 0.5ct ₹85,000; 0.7ct ₹1,30,000; 1ct ₹2,40,000. IGI certified, 14-day exchange. Catalogue: https://…"
-                }
-                onChange={(e) => setDraft((d) => ({ ...d, aiContext: e.target.value }))}
-              />
-              <p className="text-xs text-muted-foreground">
-                The assistant answers follow-ups only from this. Anything not
-                covered here goes to a person instead of being guessed.
-              </p>
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div>
+                <p className="text-sm font-medium">AI replies</p>
+                <p className="text-xs text-muted-foreground">
+                  On, the assistant answers follow-ups from the brief below.
+                  Off, the first reply still sends — then a colleague takes over.
+                </p>
+              </div>
+              <div role="radiogroup" aria-label="AI replies" className="flex rounded-md border p-0.5">
+                {([
+                  { on: false, label: "Off" },
+                  { on: true, label: "On" },
+                ] as const).map((o) => (
+                  <button
+                    key={o.label}
+                    type="button"
+                    role="radio"
+                    aria-checked={(draft.aiReplies !== false) === o.on}
+                    onClick={() => setDraft((d) => ({ ...d, aiReplies: o.on }))}
+                    className={
+                      (draft.aiReplies !== false) === o.on
+                        ? o.on
+                          ? "rounded bg-primary px-4 py-1 text-xs font-medium text-primary-foreground"
+                          : "rounded bg-muted px-4 py-1 text-xs font-medium text-foreground"
+                        : "rounded px-4 py-1 text-xs font-medium text-muted-foreground hover:bg-muted/60"
+                    }
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            <div className="grid gap-1.5">
-              <Label htmlFor="camp-rails">House rules (optional)</Label>
-              <Textarea
-                id="camp-rails"
-                rows={2}
-                maxLength={2000}
-                value={draft.aiGuardrails ?? ""}
-                placeholder="e.g. No discounts beyond the listed prices."
-                onChange={(e) => setDraft((d) => ({ ...d, aiGuardrails: e.target.value }))}
-              />
-            </div>
+            {draft.aiReplies !== false ? (
+              <>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="camp-brief">
+                    What the assistant knows — products, prices, links
+                  </Label>
+                  <Textarea
+                    id="camp-brief"
+                    rows={5}
+                    maxLength={5000}
+                    value={draft.aiContext ?? ""}
+                    placeholder={
+                      "e.g. Pricing: 0.5ct ₹85,000; 0.7ct ₹1,30,000; 1ct ₹2,40,000. IGI certified, 14-day exchange. Catalogue: https://…"
+                    }
+                    onChange={(e) => setDraft((d) => ({ ...d, aiContext: e.target.value }))}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    The assistant answers follow-ups only from this. Anything not
+                    covered here goes to a person instead of being guessed.
+                  </p>
+                </div>
+
+                <div className="grid gap-1.5">
+                  <Label htmlFor="camp-rails">House rules (optional)</Label>
+                  <Textarea
+                    id="camp-rails"
+                    rows={2}
+                    maxLength={2000}
+                    value={draft.aiGuardrails ?? ""}
+                    placeholder="e.g. No discounts beyond the listed prices."
+                    onChange={(e) => setDraft((d) => ({ ...d, aiGuardrails: e.target.value }))}
+                  />
+                </div>
+              </>
+            ) : null}
 
             <div className="flex items-center justify-between rounded-lg border p-3">
               <div>
@@ -609,6 +647,7 @@ interface WalkInDraft {
   questions: QuestionDraft[];
   aiContext: string;
   aiGuardrails: string;
+  aiReplies: boolean;
 }
 
 /**
@@ -637,6 +676,7 @@ export function WalkInConversationConfig() {
           questions: toQuestionDrafts(data.questions),
           aiContext: data.aiContext ?? "",
           aiGuardrails: data.aiGuardrails ?? "",
+          aiReplies: data.aiReplies !== false,
         }
       : null);
 
@@ -658,6 +698,7 @@ export function WalkInConversationConfig() {
         questions: fromQuestionDrafts(form.questions),
         aiContext: form.aiContext.trim() || null,
         aiGuardrails: form.aiGuardrails.trim() || null,
+        aiReplies: form.aiReplies,
       },
       {
         onSuccess: () => {
@@ -734,7 +775,7 @@ export function WalkInConversationConfig() {
             maxLength={1200}
             disabled={!canEdit}
             value={form.firstReply}
-            placeholder="e.g. Hi! Welcome to Eclat Diamonds. What are you looking for today?"
+            placeholder="e.g. Hi! Welcome to Nibhana. What are you looking for today?"
             onChange={(e) => edit({ firstReply: e.target.value })}
           />
         </div>
@@ -745,39 +786,77 @@ export function WalkInConversationConfig() {
           disabled={!canEdit}
         />
 
-        <div className="grid gap-1.5">
-          <Label htmlFor="walkin-brief">
-            What the assistant knows — products, prices, links
-          </Label>
-          <Textarea
-            id="walkin-brief"
-            rows={5}
-            maxLength={5000}
-            disabled={!canEdit}
-            value={form.aiContext}
-            placeholder={
-              "e.g. Pricing: 0.5ct ₹85,000; 0.7ct ₹1,30,000; 1ct ₹2,40,000. IGI certified, 14-day exchange. Catalogue: https://…"
-            }
-            onChange={(e) => edit({ aiContext: e.target.value })}
-          />
-          <p className="text-xs text-muted-foreground">
-            The assistant answers follow-ups only from this. Anything not
-            covered here goes to a person instead of being guessed.
-          </p>
+        <div className="flex items-center justify-between rounded-lg border p-3">
+          <div>
+            <p className="text-sm font-medium">AI replies</p>
+            <p className="text-xs text-muted-foreground">
+              On, the assistant answers follow-ups from the brief below.
+              Off, the first reply still sends — then a colleague takes over.
+            </p>
+          </div>
+          <div role="radiogroup" aria-label="AI replies" className="flex rounded-md border p-0.5">
+            {([
+              { on: false, label: "Off" },
+              { on: true, label: "On" },
+            ] as const).map((o) => (
+              <button
+                key={o.label}
+                type="button"
+                role="radio"
+                aria-checked={form.aiReplies === o.on}
+                disabled={!canEdit}
+                onClick={() => edit({ aiReplies: o.on })}
+                className={
+                  form.aiReplies === o.on
+                    ? o.on
+                      ? "rounded bg-primary px-4 py-1 text-xs font-medium text-primary-foreground"
+                      : "rounded bg-muted px-4 py-1 text-xs font-medium text-foreground"
+                    : "rounded px-4 py-1 text-xs font-medium text-muted-foreground hover:bg-muted/60"
+                }
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="grid gap-1.5">
-          <Label htmlFor="walkin-rails">House rules (optional)</Label>
-          <Textarea
-            id="walkin-rails"
-            rows={2}
-            maxLength={2000}
-            disabled={!canEdit}
-            value={form.aiGuardrails}
-            placeholder="e.g. No discounts beyond the listed prices."
-            onChange={(e) => edit({ aiGuardrails: e.target.value })}
-          />
-        </div>
+        {form.aiReplies ? (
+          <>
+            <div className="grid gap-1.5">
+              <Label htmlFor="walkin-brief">
+                What the assistant knows — products, prices, links
+              </Label>
+              <Textarea
+                id="walkin-brief"
+                rows={5}
+                maxLength={5000}
+                disabled={!canEdit}
+                value={form.aiContext}
+                placeholder={
+                  "e.g. Pricing: 0.5ct ₹85,000; 0.7ct ₹1,30,000; 1ct ₹2,40,000. IGI certified, 14-day exchange. Catalogue: https://…"
+                }
+                onChange={(e) => edit({ aiContext: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">
+                The assistant answers follow-ups only from this. Anything not
+                covered here goes to a person instead of being guessed.
+              </p>
+            </div>
+
+            <div className="grid gap-1.5">
+              <Label htmlFor="walkin-rails">House rules (optional)</Label>
+              <Textarea
+                id="walkin-rails"
+                rows={2}
+                maxLength={2000}
+                disabled={!canEdit}
+                value={form.aiGuardrails}
+                placeholder="e.g. No discounts beyond the listed prices."
+                onChange={(e) => edit({ aiGuardrails: e.target.value })}
+              />
+            </div>
+          </>
+        ) : null}
 
         <div className="flex justify-end">
           <Button

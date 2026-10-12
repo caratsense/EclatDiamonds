@@ -114,6 +114,7 @@ export class CampaignBotService {
       questions: d.questions,
       aiContext: d.aiContext,
       aiGuardrails: d.aiGuardrails,
+      aiReplies: d.aiReplies,
     };
   }
 
@@ -176,6 +177,19 @@ export class CampaignBotService {
     }
 
     // ── The conversation ────────────────────────────────────────────────────
+    // AI replies are an explicit choice per campaign (client, 12 Oct). Off,
+    // the opener was the campaign's whole script: the very next message goes
+    // to a person, with the campaign named so they know what was promised.
+    if (rule.aiReplies === false) {
+      return {
+        authorType: 'bot',
+        text: 'Thank you! A colleague will reply to you right here shortly.',
+        handoff: {
+          reason: `AI replies are off for campaign "${rule.name}" — a person continues after the first reply.`,
+        },
+      };
+    }
+
     // Complaints, legal threats and opt-outs never reach a model; same screen
     // as the draft path, same reason.
     const screened = screenInbound(text);

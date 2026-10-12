@@ -143,6 +143,8 @@ export interface DefaultConversation {
   questions: CampaignQuestion[];
   aiContext: string | null;
   aiGuardrails: string | null;
+  /** Off: the first reply still sends; the next message goes to a person. */
+  aiReplies: boolean;
 }
 
 export function normaliseDefaultConversation(value: unknown): DefaultConversation {
@@ -158,5 +160,6 @@ export function normaliseDefaultConversation(value: unknown): DefaultConversatio
     questions: normaliseCampaignQuestions(raw.questions),
     aiContext: text(raw.aiContext, AI_CONTEXT_MAX),
     aiGuardrails: text(raw.aiGuardrails, AI_GUARDRAILS_MAX),
+    aiReplies: raw.aiReplies !== false,
   };
 }
