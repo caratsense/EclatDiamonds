@@ -42,6 +42,7 @@ async function teardown(prisma: import('../src/prisma/prisma.service').PrismaSer
     await prisma.contactPoint.deleteMany({ where: { organisationId: org } });
     await prisma.party.deleteMany({ where: { organisationId: org } });
     await prisma.attendanceRecord.deleteMany({ where: { organisationId: org } });
+    await prisma.stockTransfer.deleteMany({ where: { organisationId: org } });
     await prisma.userStore.deleteMany({ where: { user: { organisationId: org } } });
     await prisma.user.deleteMany({ where: { organisationId: org } });
     await prisma.store.deleteMany({ where: { organisationId: org } });
@@ -287,7 +288,7 @@ describe('Salesperson scope (e2e)', () => {
       '/reporting/dsr', '/hrms/attendance/report', '/hrms/attendance/team', '/hrms/payroll/runs',
       '/feedback/responses', '/feedback/summary', '/crm/omnichannel/summary', '/crm/segments',
       '/crm/round-robin/policy', '/crm/conversations/routing-conflicts', '/loyalty/members', '/loyalty/referral-codes',
-      '/omnichannel/outbox', '/stock-transfers', '/users', '/users/pending', '/crm/exports/leads.xlsx',
+      '/omnichannel/outbox', '/users', '/users/pending', '/crm/exports/leads.xlsx',
       '/discounts/limits', '/marketing/campaigns', '/assistant/suggestions',
     ]) {
       const res = await get(R1, path);
@@ -301,6 +302,22 @@ describe('Salesperson scope (e2e)', () => {
     const ageing = await get(R1, '/crm/leads/ageing').expect(200);
     expect(JSON.stringify(ageing.body)).not.toContain(id.lead2);
     await get(R1, '/crm/sla/clocks').expect(200);
+  });
+
+  it('stock transfers open to a salesperson only where their branch is a side', async () => {
+    // Staff may raise transfers now (client, 9 Oct); what they see stays their branch's.
+    await prisma.store.create({
+      data: { id: 'store_ssc_3', name: 'Three', city: 'Surat', organisationId: A.org, timezone: 'Asia/Kolkata' },
+    });
+    const elsewhere = await prisma.stockTransfer.create({
+      data: { organisationId: A.org, ref: 'SSC-ST-1', fromStoreId: A.s2, toStoreId: 'store_ssc_3', requestedById: 'u_ssc_mgr' },
+    });
+    const inbound = await prisma.stockTransfer.create({
+      data: { organisationId: A.org, ref: 'SSC-ST-2', fromStoreId: A.s2, toStoreId: A.s1, requestedById: 'u_ssc_mgr' },
+    });
+    const list = await get(R1, '/stock-transfers').expect(200);
+    expect(listOf(list.body).map((t) => t.id)).toEqual([inbound.id]);
+    await get(R1, `/stock-transfers/${elsewhere.id}`).expect(403);
   });
 
   it('late flags show a salesperson only themselves', async () => {
