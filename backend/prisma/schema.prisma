@@ -654,7 +654,7 @@ model ImportBatch {
   leaseToken         String?
   leaseExpiresAt     DateTime?
   createdAt          DateTime     @default(now())
-  updatedAt          DateTime     @updatedAt
+  updatedAt          DateTime     @default(now()) @updatedAt
   parties            Party[]
   products           Product[]
   stores             Store[]      @relation("ImportBatchCreatedStores")
@@ -978,6 +978,7 @@ model User {
   @@unique([organisationId, legacyId])
   @@index([role])
   @@index([organisationId])
+  @@index([approvalStatus])
 }
 
 /// User <-> Store assignment. A salesperson maps to one store; area/HO map to many
@@ -3173,6 +3174,7 @@ model CheckIn {
   @@index([storeId, followUpDate])
   @@index([followUpOwnerId, followUpDate])
   @@index([leadId])
+  @@index([attendedById])
 }
 
 // ============================================================================
@@ -3976,6 +3978,7 @@ model Handoff {
   @@index([storeId])
   @@index([status])
   @@index([organisationId])
+  @@index([assignedToId])
 }
 
 // ============================================================================
@@ -4117,7 +4120,7 @@ model AuditLog {
   storeId        String?
   summary        String
   metadata       Json?
-  actor          User?        @relation("UserAuditLogs", fields: [actorId], references: [id])
+  actor          User?        @relation("UserAuditLogs", fields: [actorId], references: [id], onDelete: Restrict)
 
   @@index([createdAt])
   @@index([entityType, entityId])
