@@ -1,7 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { Link2, Megaphone, MessageCircleMore, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  Link2,
+  Megaphone,
+  MessageCircleMore,
+  MessageSquareText,
+  Pencil,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -35,8 +43,11 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   adIdFromLink,
   useAdSetRules,
+  useBotDefault,
   useSaveAdSetRules,
+  useSaveBotDefault,
   type AdSetAutomationRule,
+  type CampaignQuestion,
 } from "@/lib/queries/crm-ai";
 import { apiErrorMessage } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
@@ -48,6 +59,57 @@ const MATCH_LABELS: Record<AdSetAutomationRule["matchField"], string> = {
   campaign_name: "campaigns named like",
   tag: "the tag",
 };
+
+/**
+ * A question as edited: choices stay the comma string the user typed, because
+ * parsing into an array on every keystroke would eat the comma (and its space)
+ * the moment it was entered.
+ */
+interface QuestionDraft {
+  text: string;
+  options: string;
+}
+
+/** Rules saved before 12 Oct carry plain strings; read both, write objects. */
+function toQuestionDrafts(questions: (CampaignQuestion | string)[] | undefined): QuestionDraft[] {
+  return (questions ?? []).map((q) =>
+    typeof q === "string"
+      ? { text: q, options: "" }
+      : { text: q.text, options: (q.options ?? []).join(", ") },
+  );
+}
+
+function fromQuestionDrafts(rows: QuestionDraft[]): CampaignQuestion[] {
+  return rows
+    .map((row): CampaignQuestion | null => {
+      const text = row.text.trim();
+      if (!text) return null;
+      // The server's limits (6 choices of 60 chars) applied here too, so what
+      // comes back after saving is what was shown before saving.
+      const options = row.options
+        .split(",")
+        .map((o) => o.trim().slice(0, 60))
+        .filter(Boolean)
+        .slice(0, 6);
+      return options.length ? { text, options } : { text };
+    })
+    .filter((q): q is CampaignQuestion => q !== null)
+    .slice(0, 5);
+}
+
+/**
+ * How a campaign is matched, as the person thinks of it. The stored fields are
+ * unchanged (adLink / matchField / matchValue) — this only decides which input
+ * is shown. "raw" is the fallback for an existing rule pinned by ad_id,
+ * ad_set_id or tag without a link: those stay editable, just not promoted.
+ */
+type AppliesTo = "ad" | "campaign" | "adset" | "raw";
+
+const APPLIES_TO_CHOICES: { mode: Exclude<AppliesTo, "raw">; label: string }[] = [
+  { mode: "ad", label: "One specific ad — paste its link" },
+  { mode: "campaign", label: "A whole campaign — its name exactly as in Ads Manager" },
+  { mode: "adset", label: "An ad set — its name" },
+];
 
 const EMPTY: Omit<AdSetAutomationRule, "id"> = {
   name: "",
@@ -85,6 +147,8 @@ export function CampaignScriptsConfig() {
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Omit<AdSetAutomationRule, "id">>(EMPTY);
+  const [questionRows, setQuestionRows] = useState<QuestionDraft[]>([]);
+  const [appliesTo, setAppliesTo] = useState<AppliesTo>("ad");
 
   const rules = data ?? [];
   const linkAdId = adIdFromLink(draft.adLink ?? "");
@@ -92,13 +156,33 @@ export function CampaignScriptsConfig() {
   function openNew() {
     setEditingId(null);
     setDraft({ ...EMPTY, storeId: stores[0]?.id ?? null });
+    setQuestionRows([]);
+    setAppliesTo("ad");
     setOpen(true);
   }
 
   function openEdit(rule: AdSetAutomationRule) {
     setEditingId(rule.id);
     setDraft({ ...rule });
+    setQuestionRows(toQuestionDrafts(rule.questions));
+    setAppliesTo(
+      rule.adLink
+        ? "ad"
+        : rule.matchField === "campaign_name"
+          ? "campaign"
+          : rule.matchField === "ad_set_name"
+            ? "adset"
+            : "raw",
+    );
     setOpen(true);
+  }
+
+  function chooseAppliesTo(mode: Exclude<AppliesTo, "raw">) {
+    setAppliesTo(mode);
+    // The name modes ARE a matchField. The ad mode leaves it alone: the server
+    // rewrites a bare link as an exact ad_id match when it saves.
+    if (mode === "campaign") setDraft((d) => ({ ...d, matchField: "campaign_name" }));
+    if (mode === "adset") setDraft((d) => ({ ...d, matchField: "ad_set_name" }));
   }
 
   function persist(next: AdSetAutomationRule[], done: string) {
@@ -116,8 +200,18 @@ export function CampaignScriptsConfig() {
       toast.error("Give the campaign a name.");
       return;
     }
-    if (!draft.matchValue.trim() && !linkAdId) {
-      toast.error("Paste the ad link, or say what the campaign is matched by.");
+    if (appliesTo === "ad" && !linkAdId) {
+      toast.error("Paste the ad's link — the id inside it connects enquiries to this conversation.");
+      return;
+    }
+    if (appliesTo !== "ad" && !draft.matchValue.trim()) {
+      toast.error(
+        appliesTo === "campaign"
+          ? "Type the campaign's name exactly as it is in Ads Manager."
+          : appliesTo === "adset"
+            ? "Type the ad set's name."
+            : "Say what the campaign is matched by.",
+      );
       return;
     }
     const entry: AdSetAutomationRule = {
@@ -125,6 +219,15 @@ export function CampaignScriptsConfig() {
       id: editingId ?? `camp-${Date.now().toString(36)}`,
       handling: "ai",
       name: draft.name.trim(),
+      questions: fromQuestionDrafts(questionRows),
+      // The unchosen mode's field is cleared rather than left behind: a typed
+      // match value shadows the link server-side, and a lingering link would
+      // silently re-pin a name rule to one ad.
+      ...(appliesTo === "ad"
+        ? { matchValue: "" }
+        : appliesTo === "raw"
+          ? {}
+          : { adLink: "" }),
     };
     const next = editingId
       ? rules.map((r) => (r.id === editingId ? entry : r))
@@ -137,14 +240,6 @@ export function CampaignScriptsConfig() {
       rules.filter((r) => r.id !== id),
       "Campaign removed.",
     );
-  }
-
-  function setQuestion(index: number, value: string) {
-    setDraft((d) => {
-      const questions = [...(d.questions ?? [])];
-      questions[index] = value;
-      return { ...d, questions };
-    });
   }
 
   if (isLoading) {
@@ -214,6 +309,9 @@ export function CampaignScriptsConfig() {
                   {rule.storeId
                     ? ` · ${stores.find((s) => s.id === rule.storeId)?.name ?? rule.storeId}`
                     : ""}
+                  {rule.questions?.length
+                    ? ` · ${rule.questions.length} question${rule.questions.length === 1 ? "" : "s"}`
+                    : ""}
                 </p>
                 {rule.firstReply ? (
                   <p className="line-clamp-2 max-w-xl text-xs text-muted-foreground">
@@ -263,51 +361,88 @@ export function CampaignScriptsConfig() {
             </div>
 
             <div className="grid gap-1.5">
-              <Label htmlFor="camp-link">Ad link</Label>
-              <Input
-                id="camp-link"
-                value={draft.adLink ?? ""}
-                placeholder="Paste the ad's link from Meta"
-                onChange={(e) => setDraft((d) => ({ ...d, adLink: e.target.value }))}
-              />
-              {linkAdId ? (
-                <p className="flex items-center gap-1 text-xs text-[var(--success)]">
-                  <Link2 className="h-3 w-3" /> Connected: enquiries from ad{" "}
-                  <span className="font-mono">{linkAdId}</span> get this conversation.
-                </p>
-              ) : (draft.adLink ?? "").trim() ? (
-                <p className="text-xs text-warning">
-                  No ad id found in this link — use the match below instead.
-                </p>
-              ) : null}
-            </div>
+              <Label>Applies to</Label>
+              <div role="radiogroup" aria-label="Applies to" className="grid gap-1.5">
+                {APPLIES_TO_CHOICES.map((o) => (
+                  <button
+                    key={o.mode}
+                    type="button"
+                    role="radio"
+                    aria-checked={appliesTo === o.mode}
+                    onClick={() => chooseAppliesTo(o.mode)}
+                    className={
+                      appliesTo === o.mode
+                        ? "rounded-md border border-primary bg-primary/5 px-3 py-1.5 text-left text-xs font-medium text-foreground"
+                        : "rounded-md border px-3 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted/60"
+                    }
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
 
-            <div className="grid gap-1.5">
-              <Label>Or match by</Label>
-              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] gap-2">
-                <Select
-                  value={draft.matchField}
-                  onValueChange={(v) =>
-                    setDraft((d) => ({ ...d, matchField: v as AdSetAutomationRule["matchField"] }))
-                  }
-                >
-                  <SelectTrigger aria-label="Match field">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="campaign_name">Campaign name</SelectItem>
-                    <SelectItem value="ad_set_name">Ad set name</SelectItem>
-                    <SelectItem value="ad_id">Ad id</SelectItem>
-                    <SelectItem value="ad_set_id">Ad set id</SelectItem>
-                  </SelectContent>
-                </Select>
+              {appliesTo === "ad" ? (
+                <>
+                  <Input
+                    id="camp-link"
+                    aria-label="Ad link"
+                    value={draft.adLink ?? ""}
+                    placeholder="Paste the ad's link from Meta"
+                    onChange={(e) => setDraft((d) => ({ ...d, adLink: e.target.value }))}
+                  />
+                  {linkAdId ? (
+                    <p className="flex items-center gap-1 text-xs text-[var(--success)]">
+                      <Link2 className="h-3 w-3" /> Connected: enquiries from ad{" "}
+                      <span className="font-mono">{linkAdId}</span> get this conversation.
+                    </p>
+                  ) : (draft.adLink ?? "").trim() ? (
+                    <p className="text-xs text-warning">
+                      No ad id found in this link — check it was copied from Ads Manager.
+                    </p>
+                  ) : null}
+                </>
+              ) : appliesTo === "campaign" ? (
                 <Input
-                  aria-label="Match value"
+                  aria-label="Campaign name in Ads Manager"
                   value={draft.matchValue}
-                  placeholder={linkAdId ? "Not needed — the link covers it" : "e.g. Diwali Solitaire"}
+                  placeholder="e.g. Diwali Solitaire"
                   onChange={(e) => setDraft((d) => ({ ...d, matchValue: e.target.value }))}
                 />
-              </div>
+              ) : appliesTo === "adset" ? (
+                <Input
+                  aria-label="Ad set name"
+                  value={draft.matchValue}
+                  placeholder="The ad set's name in Ads Manager"
+                  onChange={(e) => setDraft((d) => ({ ...d, matchValue: e.target.value }))}
+                />
+              ) : (
+                /* An existing rule pinned by raw id or tag: show the match as
+                   stored rather than forcing it into one of the three shapes. */
+                <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] gap-2">
+                  <Select
+                    value={draft.matchField}
+                    onValueChange={(v) =>
+                      setDraft((d) => ({ ...d, matchField: v as AdSetAutomationRule["matchField"] }))
+                    }
+                  >
+                    <SelectTrigger aria-label="Match field">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="campaign_name">Campaign name</SelectItem>
+                      <SelectItem value="ad_set_name">Ad set name</SelectItem>
+                      <SelectItem value="ad_id">Ad id</SelectItem>
+                      <SelectItem value="ad_set_id">Ad set id</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    aria-label="Match value"
+                    value={draft.matchValue}
+                    placeholder="e.g. Diwali Solitaire"
+                    onChange={(e) => setDraft((d) => ({ ...d, matchValue: e.target.value }))}
+                  />
+                </div>
+              )}
             </div>
 
             <div className="grid gap-1.5">
@@ -344,25 +479,7 @@ export function CampaignScriptsConfig() {
               />
             </div>
 
-            <div className="grid gap-1.5">
-              <Label>Questions to work toward (optional)</Label>
-              {[0, 1, 2].map((i) => (
-                <Input
-                  key={i}
-                  aria-label={`Question ${i + 1}`}
-                  maxLength={300}
-                  value={draft.questions?.[i] ?? ""}
-                  placeholder={
-                    i === 0 ? "e.g. Which carat size are you considering?" : "Another question (optional)"
-                  }
-                  onChange={(e) => setQuestion(i, e.target.value)}
-                />
-              ))}
-              <p className="text-xs text-muted-foreground">
-                Asked one at a time, at natural moments — never as a menu, and
-                never re-asked once the customer has answered.
-              </p>
-            </div>
+            <QuestionsEditor rows={questionRows} onChange={setQuestionRows} />
 
             <div className="grid gap-1.5">
               <Label htmlFor="camp-brief">
@@ -439,6 +556,266 @@ export function CampaignScriptsConfig() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </Card>
+  );
+}
+
+/**
+ * The questions block, shared between the campaign editor and the walk-in
+ * card so the two forms cannot drift apart. Up to 5 questions; each may carry
+ * choices the assistant phrases INSIDE a sentence — never shown as buttons.
+ */
+function QuestionsEditor({
+  rows,
+  onChange,
+  disabled,
+}: {
+  rows: QuestionDraft[];
+  onChange: (rows: QuestionDraft[]) => void;
+  disabled?: boolean;
+}) {
+  // One empty row is always on screen, so the first question needs no click.
+  const visible = rows.length ? rows : [{ text: "", options: "" }];
+
+  function setRow(index: number, patch: Partial<QuestionDraft>) {
+    onChange(visible.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  }
+
+  return (
+    <div className="grid gap-1.5">
+      <Label>Questions to work toward (optional)</Label>
+      {visible.map((row, i) => (
+        <div key={i} className="grid gap-1">
+          <Input
+            aria-label={`Question ${i + 1}`}
+            maxLength={300}
+            disabled={disabled}
+            value={row.text}
+            placeholder={
+              i === 0 ? "e.g. Which carat size are you considering?" : "Another question (optional)"
+            }
+            onChange={(e) => setRow(i, { text: e.target.value })}
+          />
+          <Input
+            aria-label={`Question ${i + 1} choices`}
+            className="h-8 text-xs"
+            /* 6 choices × 60 chars plus separators — the server's ceiling. */
+            maxLength={370}
+            disabled={disabled}
+            value={row.options}
+            placeholder="Choices the bot may mention (comma separated, optional)"
+            onChange={(e) => setRow(i, { options: e.target.value })}
+          />
+        </div>
+      ))}
+      {visible.length < 5 ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="w-fit text-muted-foreground"
+          disabled={disabled}
+          onClick={() => onChange([...visible, { text: "", options: "" }])}
+        >
+          <Plus className="h-3.5 w-3.5" /> Add question
+        </Button>
+      ) : null}
+      <p className="text-xs text-muted-foreground">
+        Asked one at a time, at natural moments — never as a menu, and never
+        re-asked once the customer has answered. Choices are woven into the
+        question as a sentence, never shown as buttons.
+      </p>
+    </div>
+  );
+}
+
+/** The walk-in form as edited. Strings throughout; nulls appear only on save. */
+interface WalkInDraft {
+  enabled: boolean;
+  firstReply: string;
+  questions: QuestionDraft[];
+  aiContext: string;
+  aiGuardrails: string;
+}
+
+/**
+ * The walk-in conversation (client, 12 Oct): the same anatomy as a campaign
+ * script with no matching, for the customer who messages from NO ad. On, it
+ * replaces the legacy button questionnaire for those customers; a campaign
+ * still wins whenever an ad referral matches. Off, the old questionnaire
+ * keeps running untouched.
+ */
+export function WalkInConversationConfig() {
+  const { data, isLoading } = useBotDefault();
+  const save = useSaveBotDefault();
+  const role = useSession((s) => s.role);
+  const canEdit = role === "head_office";
+
+  // Overlay draft: null means "showing what the server has". Every edit copies
+  // the whole form first, so no effect is needed to sync state to the query.
+  const [draft, setDraft] = useState<WalkInDraft | null>(null);
+
+  const form: WalkInDraft | null =
+    draft ??
+    (data
+      ? {
+          enabled: data.enabled,
+          firstReply: data.firstReply ?? "",
+          questions: toQuestionDrafts(data.questions),
+          aiContext: data.aiContext ?? "",
+          aiGuardrails: data.aiGuardrails ?? "",
+        }
+      : null);
+
+  function edit(patch: Partial<WalkInDraft>) {
+    if (form) setDraft({ ...form, ...patch });
+  }
+
+  function onSave() {
+    if (!form) return;
+    if (form.enabled && !form.firstReply.trim()) {
+      // The server refuses this too; saying it here keeps the half-typed form.
+      toast.error("Switched on, the walk-in conversation needs its first reply.");
+      return;
+    }
+    save.mutate(
+      {
+        enabled: form.enabled,
+        firstReply: form.firstReply.trim() || null,
+        questions: fromQuestionDrafts(form.questions),
+        aiContext: form.aiContext.trim() || null,
+        aiGuardrails: form.aiGuardrails.trim() || null,
+      },
+      {
+        onSuccess: () => {
+          setDraft(null);
+          toast.success("Walk-in conversation saved.");
+        },
+        onError: (e) =>
+          toast.error(apiErrorMessage(e, "Could not save the walk-in conversation.")),
+      },
+    );
+  }
+
+  if (isLoading || !form) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Walk-in conversation (no ad)</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <Skeleton className="h-9 w-full" />
+          <Skeleton className="h-24 w-full" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <MessageSquareText className="h-4 w-4" /> Walk-in conversation (no ad)
+            </CardTitle>
+            <CardDescription>
+              On: a customer who messages without tapping an ad gets this
+              free-text conversation. Off: the old fixed questionnaire keeps
+              running for them. Enquiries from an ad always get their
+              campaign&rsquo;s conversation instead.
+            </CardDescription>
+          </div>
+          <div role="radiogroup" aria-label="Walk-in conversation" className="flex rounded-md border p-0.5">
+            {([
+              { on: false, label: "Off" },
+              { on: true, label: "On" },
+            ] as const).map((o) => (
+              <button
+                key={o.label}
+                type="button"
+                role="radio"
+                aria-checked={form.enabled === o.on}
+                disabled={!canEdit}
+                onClick={() => edit({ enabled: o.on })}
+                className={
+                  form.enabled === o.on
+                    ? o.on
+                      ? "rounded bg-primary px-4 py-1 text-xs font-medium text-primary-foreground"
+                      : "rounded bg-muted px-4 py-1 text-xs font-medium text-foreground"
+                    : "rounded px-4 py-1 text-xs font-medium text-muted-foreground hover:bg-muted/60"
+                }
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-1.5">
+          <Label htmlFor="walkin-first">First reply — sent exactly as written</Label>
+          <Textarea
+            id="walkin-first"
+            rows={3}
+            maxLength={1200}
+            disabled={!canEdit}
+            value={form.firstReply}
+            placeholder="e.g. Hi! Welcome to Eclat Diamonds. What are you looking for today?"
+            onChange={(e) => edit({ firstReply: e.target.value })}
+          />
+        </div>
+
+        <QuestionsEditor
+          rows={form.questions}
+          onChange={(questions) => edit({ questions })}
+          disabled={!canEdit}
+        />
+
+        <div className="grid gap-1.5">
+          <Label htmlFor="walkin-brief">
+            What the assistant knows — products, prices, links
+          </Label>
+          <Textarea
+            id="walkin-brief"
+            rows={5}
+            maxLength={5000}
+            disabled={!canEdit}
+            value={form.aiContext}
+            placeholder={
+              "e.g. Pricing: 0.5ct ₹85,000; 0.7ct ₹1,30,000; 1ct ₹2,40,000. IGI certified, 14-day exchange. Catalogue: https://…"
+            }
+            onChange={(e) => edit({ aiContext: e.target.value })}
+          />
+          <p className="text-xs text-muted-foreground">
+            The assistant answers follow-ups only from this. Anything not
+            covered here goes to a person instead of being guessed.
+          </p>
+        </div>
+
+        <div className="grid gap-1.5">
+          <Label htmlFor="walkin-rails">House rules (optional)</Label>
+          <Textarea
+            id="walkin-rails"
+            rows={2}
+            maxLength={2000}
+            disabled={!canEdit}
+            value={form.aiGuardrails}
+            placeholder="e.g. No discounts beyond the listed prices."
+            onChange={(e) => edit({ aiGuardrails: e.target.value })}
+          />
+        </div>
+
+        <div className="flex justify-end">
+          <Button
+            onClick={onSave}
+            disabled={save.isPending || !canEdit}
+            title={canEdit ? undefined : "Head office configures the walk-in conversation"}
+          >
+            {save.isPending ? "Saving…" : "Save walk-in conversation"}
+          </Button>
+        </div>
+      </CardContent>
     </Card>
   );
 }

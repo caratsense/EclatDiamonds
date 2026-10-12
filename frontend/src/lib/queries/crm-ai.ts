@@ -177,6 +177,17 @@ export function useSaveBotScript() {
 
 /* ------------------------------------------------------- ad-set automation */
 
+/**
+ * One question the assistant works toward. `options` are hints only — the AI
+ * weaves them into a sentence ("rings, pendants or earrings?"); they are NEVER
+ * rendered to the customer as buttons or menus (client, 12 Oct). Limits are the
+ * server's: 5 questions of 300 chars; 6 options of 60 chars each.
+ */
+export interface CampaignQuestion {
+  text: string;
+  options?: string[];
+}
+
 export interface AdSetAutomationRule {
   id: string;
   name: string;
@@ -208,7 +219,38 @@ export interface AdSetAutomationRule {
    */
   adLink?: string | null;
   firstReply?: string | null;
-  questions?: string[];
+  /** Rows written before 12 Oct were plain strings; the server rewrites them as objects. */
+  questions?: CampaignQuestion[];
+}
+
+/**
+ * The walk-in conversation (client, 12 Oct): the same anatomy as a campaign
+ * script with no matching, for the customer who messages from NO ad. When
+ * enabled it REPLACES the legacy button questionnaire for those customers;
+ * a matching campaign still wins when an ad referral arrives.
+ */
+export interface DefaultConversation {
+  enabled: boolean;
+  firstReply: string | null;
+  questions: CampaignQuestion[];
+  aiContext: string | null;
+  aiGuardrails: string | null;
+}
+
+export function useBotDefault() {
+  return useQuery({
+    queryKey: ["crm", "bot-default"],
+    queryFn: async () => (await api.get<DefaultConversation>("/crm/qualification/bot-default")).data,
+  });
+}
+
+export function useSaveBotDefault() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: DefaultConversation) =>
+      (await api.put<DefaultConversation>("/crm/qualification/bot-default", input)).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["crm", "bot-default"] }),
+  });
 }
 
 /**
