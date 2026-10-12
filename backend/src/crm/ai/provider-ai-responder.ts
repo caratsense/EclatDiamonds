@@ -91,14 +91,11 @@ export class ProviderAiResponder implements AiResponder {
 
     // Every untrusted input is fenced and labelled as data, reference material
     // BEFORE the customer message so the last thing the model reads is the
-    // question. In campaign mode the brief (and the owner's guardrails) stand
-    // in for retrieved documents, and the conversation so far rides along so
-    // the assistant does not re-ask what was already answered.
-    const reference = context.campaign
-      ? [context.campaign.brief, context.campaign.guardrails ? `House rules from the owner:\n${context.campaign.guardrails}` : null]
-          .filter(Boolean)
-          .join('\n\n')
-      : context.knowledgeText;
+    // question. In campaign mode the brief stands in for retrieved documents
+    // (the owner's house rules go in the system prompt, never in what the
+    // assistant may quote), and the conversation so far rides along so the
+    // assistant does not re-ask what was already answered.
+    const reference = context.campaign ? context.campaign.brief : context.knowledgeText;
     const referenceLabel = context.campaign ? 'CAMPAIGN_BRIEF' : 'REFERENCE_MATERIAL';
     const user = [
       reference

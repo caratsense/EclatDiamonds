@@ -48,6 +48,38 @@ export const CAMPAIGN_OPTION_MAX = 60;
 export const CAMPAIGN_OPTIONS_MAX = 6;
 export const AD_LINK_MAX = 500;
 
+/** Refuse, rather than trim, a campaign conversation that is over its limits. */
+export function assertCampaignLengths(
+  name: string,
+  value: { firstReply?: unknown; questions?: unknown; adLink?: unknown } | null | undefined,
+): void {
+  const where = name ? ` for "${name}"` : '';
+  if (typeof value?.firstReply === 'string' && value.firstReply.trim().length > FIRST_REPLY_MAX) {
+    throw new BadRequestException(`The first reply${where} is over ${FIRST_REPLY_MAX} characters.`);
+  }
+  if (typeof value?.adLink === 'string' && value.adLink.trim().length > AD_LINK_MAX) {
+    throw new BadRequestException(`The ad link${where} is over ${AD_LINK_MAX} characters.`);
+  }
+  if (!Array.isArray(value?.questions)) return;
+  if (value.questions.length > CAMPAIGN_QUESTIONS_MAX) {
+    throw new BadRequestException(`A conversation${where} takes at most ${CAMPAIGN_QUESTIONS_MAX} questions.`);
+  }
+  for (const q of value.questions as unknown[]) {
+    const text = typeof q === 'string' ? q : (q as { text?: unknown })?.text;
+    if (typeof text === 'string' && text.trim().length > CAMPAIGN_QUESTION_MAX) {
+      throw new BadRequestException(`A question${where} is over ${CAMPAIGN_QUESTION_MAX} characters.`);
+    }
+    const options = (q as { options?: unknown })?.options;
+    if (!Array.isArray(options)) continue;
+    if (options.length > CAMPAIGN_OPTIONS_MAX) {
+      throw new BadRequestException(`A question${where} takes at most ${CAMPAIGN_OPTIONS_MAX} choices.`);
+    }
+    if (options.some((o) => typeof o === 'string' && o.trim().length > CAMPAIGN_OPTION_MAX)) {
+      throw new BadRequestException(`A choice${where} is over ${CAMPAIGN_OPTION_MAX} characters.`);
+    }
+  }
+}
+
 /**
  * One question the campaign's owner wants asked. `options` are HINTS the
  * assistant may weave into a sentence ("rings, chains, or something else?") —
@@ -205,6 +237,9 @@ export class AdSetRulesService {
           `The guardrails for "${name}" are ${rule.aiGuardrails.length} characters; the limit is ${AI_GUARDRAILS_MAX}.`,
         );
       }
+      // The first reply is sent to customers word for word, so a cut one would
+      // go out ending mid-sentence. The same for questions, choices and links.
+      assertCampaignLengths(name, rule);
     }
 
     const rules = normaliseRules(input);
@@ -438,7 +473,9 @@ function normaliseRules(value: unknown): AdSetAutomationRule[] {
           ? rule.firstReply.trim().slice(0, FIRST_REPLY_MAX)
           : null,
       ...(questions.length ? { questions } : {}),
-      aiReplies: rule.aiReplies !== false,
+      // Off unless switched on: absence is never consent to let a model answer
+      // customers unread.
+      aiReplies: rule.aiReplies === true,
     }];
   });
 }

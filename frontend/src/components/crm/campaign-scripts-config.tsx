@@ -128,7 +128,8 @@ const EMPTY: Omit<AdSetAutomationRule, "id"> = {
   adLink: "",
   firstReply: "",
   questions: [],
-  aiReplies: true,
+  // Off until somebody chooses it, as on the server.
+  aiReplies: false,
 };
 
 /**
@@ -216,7 +217,9 @@ export function CampaignScriptsConfig() {
     const entry: AdSetAutomationRule = {
       ...draft,
       id: editingId ?? `camp-${Date.now().toString(36)}`,
-      handling: "ai",
+      // A rule somebody set to "Human only" stays so; saving a conversation
+      // must not quietly hand its threads to the bot.
+      handling: draft.handling === "human" ? "human" : "ai",
       name: draft.name.trim(),
       questions: fromQuestionDrafts(questionRows),
       // The unchosen mode's field is cleared rather than left behind: a typed
@@ -472,10 +475,10 @@ export function CampaignScriptsConfig() {
                     key={o.label}
                     type="button"
                     role="radio"
-                    aria-checked={(draft.aiReplies !== false) === o.on}
+                    aria-checked={(draft.aiReplies === true) === o.on}
                     onClick={() => setDraft((d) => ({ ...d, aiReplies: o.on }))}
                     className={
-                      (draft.aiReplies !== false) === o.on
+                      (draft.aiReplies === true) === o.on
                         ? o.on
                           ? "rounded bg-primary px-4 py-1 text-xs font-medium text-primary-foreground"
                           : "rounded bg-muted px-4 py-1 text-xs font-medium text-foreground"
@@ -488,7 +491,7 @@ export function CampaignScriptsConfig() {
               </div>
             </div>
 
-            {draft.aiReplies !== false ? (
+            {draft.aiReplies === true ? (
               <>
                 <div className="grid gap-1.5">
                   <Label htmlFor="camp-brief">
@@ -676,7 +679,7 @@ export function WalkInConversationConfig() {
           questions: toQuestionDrafts(data.questions),
           aiContext: data.aiContext ?? "",
           aiGuardrails: data.aiGuardrails ?? "",
-          aiReplies: data.aiReplies !== false,
+          aiReplies: data.aiReplies === true,
         }
       : null);
 

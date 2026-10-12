@@ -67,6 +67,8 @@ export interface AiReplyContext {
     name: string;
     brief?: string | null;
     guardrails?: string | null;
+    /** The walk-in conversation: the customer wrote in from no advert. */
+    walkIn?: boolean;
     /** `options` are phrasing hints, never buttons — see CampaignQuestion. */
     questions?: { text: string; options?: string[] }[];
   };

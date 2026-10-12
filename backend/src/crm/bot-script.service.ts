@@ -15,6 +15,7 @@ import {
   AI_CONTEXT_MAX,
   AI_GUARDRAILS_MAX,
   FIRST_REPLY_MAX,
+  assertCampaignLengths,
   normaliseCampaignQuestions,
   type CampaignQuestion,
 } from './adset-rules.service';
@@ -61,6 +62,15 @@ export class BotScriptService {
   }
 
   async saveDefaultConversation(user: AuthUser, input: unknown): Promise<DefaultConversation> {
+    // Refused, not trimmed: the first reply goes to every new customer as typed.
+    const raw = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+    assertCampaignLengths('', raw);
+    if (typeof raw.aiContext === 'string' && raw.aiContext.trim().length > AI_CONTEXT_MAX) {
+      throw new BadRequestException(`What the assistant knows is over ${AI_CONTEXT_MAX} characters.`);
+    }
+    if (typeof raw.aiGuardrails === 'string' && raw.aiGuardrails.trim().length > AI_GUARDRAILS_MAX) {
+      throw new BadRequestException(`The house rules are over ${AI_GUARDRAILS_MAX} characters.`);
+    }
     const next = normaliseDefaultConversation(input);
     if (next.enabled && !next.firstReply) {
       throw new BadRequestException(
@@ -160,6 +170,6 @@ export function normaliseDefaultConversation(value: unknown): DefaultConversatio
     questions: normaliseCampaignQuestions(raw.questions),
     aiContext: text(raw.aiContext, AI_CONTEXT_MAX),
     aiGuardrails: text(raw.aiGuardrails, AI_GUARDRAILS_MAX),
-    aiReplies: raw.aiReplies !== false,
+    aiReplies: raw.aiReplies === true,
   };
 }
