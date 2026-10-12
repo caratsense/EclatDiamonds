@@ -323,14 +323,21 @@ export function systemPrompt(businessName: string): string {
  */
 export function campaignSystemPrompt(
   businessName: string,
-  campaign: { name: string; questions?: string[] },
+  campaign: { name: string; questions?: { text: string; options?: string[] }[] },
 ): string {
   const questions = campaign.questions?.length
     ? [
         '',
         'QUESTIONS TO WORK TOWARD (one at a time, at natural moments; skip any',
         'already answered; never as a list to the customer):',
-        ...campaign.questions.map((q, i) => `${i + 1}. ${q}`),
+        ...campaign.questions.map((q, i) => {
+          // Options are phrasing material for a natural sentence ("rings,
+          // chains, or something else?"), never an interactive menu.
+          const hint = q.options?.length
+            ? ` (you may mention these choices inside your sentence: ${q.options.join(', ')} — plain prose, never a numbered or bulleted list)`
+            : '';
+          return `${i + 1}. ${q.text}${hint}`;
+        }),
       ]
     : [];
   return [

@@ -67,7 +67,8 @@ export interface AiReplyContext {
     name: string;
     brief?: string | null;
     guardrails?: string | null;
-    questions?: string[];
+    /** `options` are phrasing hints, never buttons — see CampaignQuestion. */
+    questions?: { text: string; options?: string[] }[];
   };
   /** Recent turns, oldest first, already rendered one per line ("Customer: …"). */
   historyText?: string;

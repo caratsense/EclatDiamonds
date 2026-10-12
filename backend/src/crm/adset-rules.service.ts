@@ -44,7 +44,50 @@ export const AI_GUARDRAILS_MAX = 2000;
 export const FIRST_REPLY_MAX = 1200;
 export const CAMPAIGN_QUESTION_MAX = 300;
 export const CAMPAIGN_QUESTIONS_MAX = 5;
+export const CAMPAIGN_OPTION_MAX = 60;
+export const CAMPAIGN_OPTIONS_MAX = 6;
 export const AD_LINK_MAX = 500;
+
+/**
+ * One question the campaign's owner wants asked. `options` are HINTS the
+ * assistant may weave into a sentence ("rings, chains, or something else?") —
+ * they are NEVER sent as interactive buttons or numbered menus; the customer
+ * answers in their own words either way (client, 12 Oct).
+ */
+export interface CampaignQuestion {
+  text: string;
+  options?: string[];
+}
+
+/**
+ * Questions as stored: new entries are objects, rows written before 12 Oct
+ * are plain strings. Both read; everything is re-written as objects.
+ */
+export function normaliseCampaignQuestions(value: unknown): CampaignQuestion[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((q): CampaignQuestion | null => {
+      if (typeof q === 'string') {
+        const text = q.trim().slice(0, CAMPAIGN_QUESTION_MAX);
+        return text ? { text } : null;
+      }
+      if (q && typeof q === 'object' && typeof (q as { text?: unknown }).text === 'string') {
+        const raw = q as { text: string; options?: unknown };
+        const text = raw.text.trim().slice(0, CAMPAIGN_QUESTION_MAX);
+        if (!text) return null;
+        const options = Array.isArray(raw.options)
+          ? raw.options
+              .filter((o): o is string => typeof o === 'string' && Boolean(o.trim()))
+              .map((o) => o.trim().slice(0, CAMPAIGN_OPTION_MAX))
+              .slice(0, CAMPAIGN_OPTIONS_MAX)
+          : [];
+        return options.length ? { text, options } : { text };
+      }
+      return null;
+    })
+    .filter((q): q is CampaignQuestion => q !== null)
+    .slice(0, CAMPAIGN_QUESTIONS_MAX);
+}
 
 export type AdSetHandling = 'ai' | 'human';
 
@@ -69,7 +112,7 @@ export interface AdSetAutomationRule {
    */
   adLink?: string | null;
   firstReply?: string | null;
-  questions?: string[];
+  questions?: CampaignQuestion[];
 }
 
 export interface AdSetRoutingContext {
@@ -92,7 +135,7 @@ export interface AdSetRoutingDecision {
   aiContext?: string | null;
   aiGuardrails?: string | null;
   firstReply?: string | null;
-  questions?: string[];
+  questions?: CampaignQuestion[];
 }
 
 /**
@@ -369,12 +412,7 @@ function normaliseRules(value: unknown): AdSetAutomationRule[] {
     }
     if (!['ai', 'human'].includes(rule.handling ?? '')) return [];
     seen.add(id);
-    const questions = Array.isArray(rule.questions)
-      ? rule.questions
-          .filter((q): q is string => typeof q === 'string' && Boolean(q.trim()))
-          .map((q) => q.trim().slice(0, CAMPAIGN_QUESTION_MAX))
-          .slice(0, CAMPAIGN_QUESTIONS_MAX)
-      : [];
+    const questions = normaliseCampaignQuestions(rule.questions);
     return [{
       id,
       name,
