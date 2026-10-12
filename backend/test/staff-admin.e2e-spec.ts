@@ -30,6 +30,8 @@ async function teardown(prisma: PrismaService) {
   await prisma.leadTag.deleteMany({ where: { organisationId: A.org } });
   await prisma.customRole.deleteMany({ where: { organisationId: A.org } });
   await prisma.attendanceRecord.deleteMany({ where: { organisationId: A.org } });
+  await prisma.task.deleteMany({ where: { organisationId: A.org } });
+  await prisma.loyaltyAccount.deleteMany({ where: { organisationId: A.org } });
   await prisma.party.deleteMany({ where: { organisationId: A.org } });
   await prisma.auditLog.deleteMany({ where: { organisationId: A.org } });
   await prisma.userStore.deleteMany({ where: { user: { organisationId: A.org } } });
@@ -268,5 +270,27 @@ describe('Staff administration and customer records (e2e)', () => {
     expect(await prisma.party.findUnique({ where: { id: bare.id } })).toBeNull();
 
     await prisma.sale.deleteMany({ where: { organisationId: A.org } });
+  });
+
+  it('customer delete also refuses a loyalty account and an open task', async () => {
+    const enrolled = await prisma.party.create({
+      data: { organisationId: A.org, storeId: A.store, name: 'Enrolled', types: ['customer'] },
+    });
+    await prisma.loyaltyAccount.create({
+      data: { organisationId: A.org, partyId: enrolled.id, phone: '919800000077' },
+    });
+    const chased = await prisma.party.create({
+      data: { organisationId: A.org, storeId: A.store, name: 'Chased', types: ['customer'] },
+    });
+    await prisma.task.create({
+      data: { organisationId: A.org, storeId: A.store, partyId: chased.id, title: 'Call back about the ring' },
+    });
+
+    for (const [party, what] of [[enrolled, /loyalty/i], [chased, /task/i]] as const) {
+      const res = await request(server()).delete(`/parties/${party.id}`).set(auth(hoT));
+      expect(res.status).toBe(400);
+      expect(JSON.stringify(res.body)).toMatch(what);
+      expect(await prisma.party.count({ where: { id: party.id } })).toBe(1);
+    }
   });
 });

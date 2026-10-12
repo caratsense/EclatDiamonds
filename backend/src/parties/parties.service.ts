@@ -137,8 +137,9 @@ export class PartiesService {
    * DELETE /parties/:id (client, 9 Oct): only for the row that should never
    * have existed. A customer with ANY history is refused by name and count —
    * their sales and ledger are the shop's own numbers, and the foreign keys
-   * refuse the delete anyway. Archive is the door for everyone else:
-   * reversible, audited, and the totals stay true.
+   * would not stop it: most only unlink the row, leaving those numbers
+   * attached to nobody, and their notes would go with it. Archive is the door
+   * for everyone else: reversible, audited, and the totals stay true.
    */
   async remove(user: AuthUser, id: string) {
     const party = await this.prisma.party.findFirst({
@@ -152,7 +153,8 @@ export class PartiesService {
       );
     }
 
-    const [sales, ledger, payments, quotes, leads, conversations, checkIns, schemes, returns] =
+    const [sales, ledger, payments, quotes, leads, conversations, checkIns, schemes, returns,
+      loyalty, customOrders, makingOrders, feedback, calls, tasks, notes] =
       await Promise.all([
         this.prisma.sale.count({ where: { partyId: id } }),
         this.prisma.ledgerEntry.count({ where: { partyId: id } }),
@@ -163,11 +165,21 @@ export class PartiesService {
         this.prisma.checkIn.count({ where: { partyId: id } }),
         this.prisma.schemeMember.count({ where: { partyId: id } }),
         this.prisma.returnRecord.count({ where: { partyId: id } }),
+        this.prisma.loyaltyAccount.count({ where: { partyId: id } }),
+        this.prisma.customOrder.count({ where: { partyId: id } }),
+        this.prisma.manufacturingOrder.count({ where: { partyId: id } }),
+        this.prisma.feedbackRequest.count({ where: { partyId: id } }),
+        this.prisma.callLog.count({ where: { partyId: id } }),
+        this.prisma.task.count({ where: { partyId: id } }),
+        this.prisma.leadNote.count({ where: { partyId: id } }),
       ]);
     const held: [string, number][] = [
       ['sales', sales], ['ledger entries', ledger], ['payments', payments],
       ['quotes', quotes], ['leads', leads], ['conversations', conversations],
       ['visits', checkIns], ['scheme memberships', schemes], ['returns', returns],
+      ['loyalty accounts', loyalty], ['custom orders', customOrders],
+      ['manufacturing orders', makingOrders], ['feedback requests', feedback],
+      ['calls', calls], ['tasks', tasks], ['notes', notes],
     ].filter(([, c]) => (c as number) > 0) as [string, number][];
     if (held.length) {
       throw new BadRequestException(
