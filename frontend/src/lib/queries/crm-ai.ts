@@ -177,6 +177,17 @@ export function useSaveBotScript() {
 
 /* ------------------------------------------------------- ad-set automation */
 
+/**
+ * One question the assistant works toward. `options` are hints only — the AI
+ * weaves them into a sentence ("rings, pendants or earrings?"); they are NEVER
+ * rendered to the customer as buttons or menus (client, 12 Oct). Limits are the
+ * server's: 5 questions of 300 chars; 6 options of 60 chars each.
+ */
+export interface CampaignQuestion {
+  text: string;
+  options?: string[];
+}
+
 export interface AdSetAutomationRule {
   id: string;
   name: string;
@@ -200,6 +211,67 @@ export interface AdSetAutomationRule {
   handling: "ai" | "human";
   aiContext?: string | null;
   aiGuardrails?: string | null;
+  /**
+   * The campaign's configured conversation (client, 8 Oct). A pasted ad link
+   * is parsed server-side too: with no typed match value, the ad id inside it
+   * becomes the exact match. firstReply goes out verbatim on arrival;
+   * questions guide the free-text conversation — never as menus.
+   */
+  adLink?: string | null;
+  firstReply?: string | null;
+  /** Rows written before 12 Oct were plain strings; the server rewrites them as objects. */
+  questions?: CampaignQuestion[];
+  /**
+   * Off: the first reply still sends, then a person takes over. Absent means
+   * on (every campaign saved before the toggle keeps conversing).
+   */
+  aiReplies?: boolean;
+}
+
+/**
+ * The walk-in conversation (client, 12 Oct): the same anatomy as a campaign
+ * script with no matching, for the customer who messages from NO ad. When
+ * enabled it REPLACES the legacy button questionnaire for those customers;
+ * a matching campaign still wins when an ad referral arrives.
+ */
+export interface DefaultConversation {
+  enabled: boolean;
+  firstReply: string | null;
+  questions: CampaignQuestion[];
+  aiContext: string | null;
+  aiGuardrails: string | null;
+  /** Off: the first reply still sends; the next message goes to a person. */
+  aiReplies: boolean;
+}
+
+export function useBotDefault() {
+  return useQuery({
+    queryKey: ["crm", "bot-default"],
+    queryFn: async () => (await api.get<DefaultConversation>("/crm/qualification/bot-default")).data,
+  });
+}
+
+export function useSaveBotDefault() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: DefaultConversation) =>
+      (await api.put<DefaultConversation>("/crm/qualification/bot-default", input)).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["crm", "bot-default"] }),
+  });
+}
+
+/**
+ * The ad id buried in a pasted Meta link, or null — the same parse the server
+ * runs, duplicated here so the editor can show what a link will match before
+ * saving. Real ad ids are long; anything under 10 digits is not one.
+ */
+export function adIdFromLink(link: string): string | null {
+  if (!link) return null;
+  const named = /(?:selected_ad_ids|ad_id|adid|id)=(\d{10,})/i.exec(link);
+  if (named) return named[1];
+  const runs = link.match(/\d{10,}/g);
+  if (!runs?.length) return null;
+  return runs.reduce((a, b) => (b.length > a.length ? b : a));
 }
 
 export function useAdSetRules() {

@@ -1,25 +1,30 @@
 "use client";
 
 import { SectionHeader } from "@/components/section/section-header";
-import { BotScriptConfig } from "@/components/crm/bot-script-config";
+import {
+  CampaignScriptsConfig,
+  WalkInConversationConfig,
+} from "@/components/crm/campaign-scripts-config";
 import { getNavItem } from "@/lib/navigation";
 
 const nav = getNavItem("bot-script")!;
 
 /**
- * The customer bot's script, on its own page beside Conversations.
+ * What the bot says — ONE screen, free text everywhere (client, 12 Oct).
  *
- * Deliberately a light page: it mounts one component and fetches one endpoint.
- * Its previous home — a tab inside Business Configuration — loads the whole
- * industry-pack grid and six other tabs' worth of components before anything
- * here can be reached, which is why it was slow to arrive. Whoever is rewording
- * the bot should not pay for the rest of that screen.
+ * Campaigns first: an enquiry arriving from a specific advertisement gets that
+ * campaign's exact first reply, questions and brief. Below it, the walk-in
+ * conversation covers the customer who arrived from no ad at all — the same
+ * form minus the matching. The old per-step wording editor (buttons and fixed
+ * answers) is gone from this screen: switching the walk-in conversation OFF is
+ * what keeps that legacy questionnaire running.
  */
 export default function BotScriptPage() {
   return (
     <div className="space-y-6">
       <SectionHeader title={nav.title} purpose={nav.purpose} />
-      <BotScriptConfig />
+      <CampaignScriptsConfig />
+      <WalkInConversationConfig />
     </div>
   );
 }

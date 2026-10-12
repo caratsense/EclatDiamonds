@@ -40,6 +40,86 @@ export type AdSetMatchField =
  */
 export const AI_CONTEXT_MAX = 5000;
 export const AI_GUARDRAILS_MAX = 2000;
+/** The campaign's configured conversation (client, 8 Oct): same shared limits. */
+export const FIRST_REPLY_MAX = 1200;
+export const CAMPAIGN_QUESTION_MAX = 300;
+export const CAMPAIGN_QUESTIONS_MAX = 5;
+export const CAMPAIGN_OPTION_MAX = 60;
+export const CAMPAIGN_OPTIONS_MAX = 6;
+export const AD_LINK_MAX = 500;
+
+/** Refuse, rather than trim, a campaign conversation that is over its limits. */
+export function assertCampaignLengths(
+  name: string,
+  value: { firstReply?: unknown; questions?: unknown; adLink?: unknown } | null | undefined,
+): void {
+  const where = name ? ` for "${name}"` : '';
+  if (typeof value?.firstReply === 'string' && value.firstReply.trim().length > FIRST_REPLY_MAX) {
+    throw new BadRequestException(`The first reply${where} is over ${FIRST_REPLY_MAX} characters.`);
+  }
+  if (typeof value?.adLink === 'string' && value.adLink.trim().length > AD_LINK_MAX) {
+    throw new BadRequestException(`The ad link${where} is over ${AD_LINK_MAX} characters.`);
+  }
+  if (!Array.isArray(value?.questions)) return;
+  if (value.questions.length > CAMPAIGN_QUESTIONS_MAX) {
+    throw new BadRequestException(`A conversation${where} takes at most ${CAMPAIGN_QUESTIONS_MAX} questions.`);
+  }
+  for (const q of value.questions as unknown[]) {
+    const text = typeof q === 'string' ? q : (q as { text?: unknown })?.text;
+    if (typeof text === 'string' && text.trim().length > CAMPAIGN_QUESTION_MAX) {
+      throw new BadRequestException(`A question${where} is over ${CAMPAIGN_QUESTION_MAX} characters.`);
+    }
+    const options = (q as { options?: unknown })?.options;
+    if (!Array.isArray(options)) continue;
+    if (options.length > CAMPAIGN_OPTIONS_MAX) {
+      throw new BadRequestException(`A question${where} takes at most ${CAMPAIGN_OPTIONS_MAX} choices.`);
+    }
+    if (options.some((o) => typeof o === 'string' && o.trim().length > CAMPAIGN_OPTION_MAX)) {
+      throw new BadRequestException(`A choice${where} is over ${CAMPAIGN_OPTION_MAX} characters.`);
+    }
+  }
+}
+
+/**
+ * One question the campaign's owner wants asked. `options` are HINTS the
+ * assistant may weave into a sentence ("rings, chains, or something else?") —
+ * they are NEVER sent as interactive buttons or numbered menus; the customer
+ * answers in their own words either way (client, 12 Oct).
+ */
+export interface CampaignQuestion {
+  text: string;
+  options?: string[];
+}
+
+/**
+ * Questions as stored: new entries are objects, rows written before 12 Oct
+ * are plain strings. Both read; everything is re-written as objects.
+ */
+export function normaliseCampaignQuestions(value: unknown): CampaignQuestion[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((q): CampaignQuestion | null => {
+      if (typeof q === 'string') {
+        const text = q.trim().slice(0, CAMPAIGN_QUESTION_MAX);
+        return text ? { text } : null;
+      }
+      if (q && typeof q === 'object' && typeof (q as { text?: unknown }).text === 'string') {
+        const raw = q as { text: string; options?: unknown };
+        const text = raw.text.trim().slice(0, CAMPAIGN_QUESTION_MAX);
+        if (!text) return null;
+        const options = Array.isArray(raw.options)
+          ? raw.options
+              .filter((o): o is string => typeof o === 'string' && Boolean(o.trim()))
+              .map((o) => o.trim().slice(0, CAMPAIGN_OPTION_MAX))
+              .slice(0, CAMPAIGN_OPTIONS_MAX)
+          : [];
+        return options.length ? { text, options } : { text };
+      }
+      return null;
+    })
+    .filter((q): q is CampaignQuestion => q !== null)
+    .slice(0, CAMPAIGN_QUESTIONS_MAX);
+}
 
 export type AdSetHandling = 'ai' | 'human';
 
@@ -55,6 +135,23 @@ export interface AdSetAutomationRule {
   handling: AdSetHandling;
   aiContext?: string | null;
   aiGuardrails?: string | null;
+  /**
+   * The campaign's conversation, as the client configures it (8 Oct): the ad
+   * link pasted from Meta (kept, and PARSED — see `adIdFromLink`), the exact
+   * first message a customer arriving from this campaign receives, and the
+   * questions the assistant should work toward. All optional: a rule without
+   * them keeps today's behaviour.
+   */
+  adLink?: string | null;
+  firstReply?: string | null;
+  questions?: CampaignQuestion[];
+  /**
+   * Whether the assistant converses after the opener (client, 12 Oct: "ask do
+   * we want AI replies"). Off, the first reply still sends exactly as written
+   * and the very next customer message goes to a person. Absent means on, so
+   * every campaign saved before the toggle existed keeps its behaviour.
+   */
+  aiReplies?: boolean;
 }
 
 export interface AdSetRoutingContext {
@@ -76,6 +173,26 @@ export interface AdSetRoutingDecision {
   handling: AdSetHandling;
   aiContext?: string | null;
   aiGuardrails?: string | null;
+  firstReply?: string | null;
+  questions?: CampaignQuestion[];
+}
+
+/**
+ * The ad id buried in a pasted Meta link, or null.
+ *
+ * "Pasting a campaign link must connect to routing" (client, 8 Oct) — so a
+ * link is parsed, not filed. Meta puts the ad id in several shapes of URL
+ * (ads manager `selected_ad_ids=`, ads library `?id=`, permalinks); all of
+ * them carry it as the longest pure-digit run, and real ad ids are long.
+ * Anything under 10 digits is a year or a pixel size, never an ad id.
+ */
+export function adIdFromLink(link: string | null | undefined): string | null {
+  if (!link) return null;
+  const named = /(?:selected_ad_ids|ad_id|adid|id)=(\d{10,})/i.exec(link);
+  if (named) return named[1];
+  const runs = link.match(/\d{10,}/g);
+  if (!runs?.length) return null;
+  return runs.reduce((a, b) => (b.length > a.length ? b : a));
 }
 
 /** Tenant-owned rules for routing an ad response before it reaches the inbox. */
@@ -120,6 +237,9 @@ export class AdSetRulesService {
           `The guardrails for "${name}" are ${rule.aiGuardrails.length} characters; the limit is ${AI_GUARDRAILS_MAX}.`,
         );
       }
+      // The first reply is sent to customers word for word, so a cut one would
+      // go out ending mid-sentence. The same for questions, choices and links.
+      assertCampaignLengths(name, rule);
     }
 
     const rules = normaliseRules(input);
@@ -229,6 +349,8 @@ export class AdSetRulesService {
           handling: rule.handling,
           aiContext: rule.aiContext ?? null,
           aiGuardrails: rule.aiGuardrails ?? null,
+          firstReply: rule.firstReply ?? null,
+          ...(rule.questions?.length ? { questions: rule.questions } : {}),
         }
       : null;
   }
@@ -308,27 +430,52 @@ function normaliseRules(value: unknown): AdSetAutomationRule[] {
     const rule = candidate as Partial<AdSetAutomationRule>;
     const id = typeof rule.id === 'string' ? rule.id.trim() : '';
     const name = typeof rule.name === 'string' ? rule.name.trim() : '';
-    const matchValue = typeof rule.matchValue === 'string' ? rule.matchValue.trim() : '';
+    const adLink =
+      typeof rule.adLink === 'string' && rule.adLink.trim()
+        ? rule.adLink.trim().slice(0, AD_LINK_MAX)
+        : null;
+    // A pasted ad link IS a match: when no match value was typed, the ad id
+    // parsed out of the link becomes an exact ad_id rule. The link never sits
+    // as a dead text field (client, 8 Oct).
+    let matchField = rule.matchField;
+    let matchValue = typeof rule.matchValue === 'string' ? rule.matchValue.trim() : '';
+    if (!matchValue && adLink) {
+      const parsed = adIdFromLink(adLink);
+      if (parsed) {
+        matchField = 'ad_id';
+        matchValue = parsed;
+      }
+    }
     if (!id || !name || !matchValue || seen.has(id)) return [];
     if (
-      !['ad_id', 'ad_set_id', 'ad_set_name', 'campaign_name', 'tag'].includes(rule.matchField ?? '')
+      !['ad_id', 'ad_set_id', 'ad_set_name', 'campaign_name', 'tag'].includes(matchField ?? '')
     ) {
       return [];
     }
     if (!['ai', 'human'].includes(rule.handling ?? '')) return [];
     seen.add(id);
+    const questions = normaliseCampaignQuestions(rule.questions);
     return [{
       id,
       name,
       enabled: rule.enabled !== false,
       priority: Number.isInteger(rule.priority) ? Math.max(0, Math.min(1000, rule.priority!)) : 100,
-      matchField: rule.matchField!,
+      matchField: matchField!,
       matchValue,
       storeId: typeof rule.storeId === 'string' && rule.storeId ? rule.storeId : null,
       assignedUserId: typeof rule.assignedUserId === 'string' && rule.assignedUserId ? rule.assignedUserId : null,
       handling: rule.handling!,
       aiContext: typeof rule.aiContext === 'string' && rule.aiContext.trim() ? rule.aiContext.trim().slice(0, AI_CONTEXT_MAX) : null,
       aiGuardrails: typeof rule.aiGuardrails === 'string' && rule.aiGuardrails.trim() ? rule.aiGuardrails.trim().slice(0, AI_GUARDRAILS_MAX) : null,
+      adLink,
+      firstReply:
+        typeof rule.firstReply === 'string' && rule.firstReply.trim()
+          ? rule.firstReply.trim().slice(0, FIRST_REPLY_MAX)
+          : null,
+      ...(questions.length ? { questions } : {}),
+      // Off unless switched on: absence is never consent to let a model answer
+      // customers unread.
+      aiReplies: rule.aiReplies === true,
     }];
   });
 }

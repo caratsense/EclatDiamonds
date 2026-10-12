@@ -6,6 +6,7 @@ import { AiReply, AiReplyContext, AiResponder } from '../ai-responder';
 import {
   POLICY_VERSION,
   PROVIDER_TIMEOUT_MS,
+  campaignSystemPrompt,
   systemPrompt,
   untrustedBlock,
 } from './policy';
@@ -83,19 +84,32 @@ export class ProviderAiResponder implements AiResponder {
     if (!this.isConfigured()) return null;
 
     const started = Date.now();
-    const system = systemPrompt(context.businessName ?? 'this business');
+    const business = context.businessName ?? 'this business';
+    const system = context.campaign
+      ? campaignSystemPrompt(business, context.campaign)
+      : systemPrompt(business);
 
-    // Both untrusted inputs are fenced and labelled as data. The reference
-    // material is presented BEFORE the customer message so the last thing the
-    // model reads is the question, not somebody's document.
+    // Every untrusted input is fenced and labelled as data, reference material
+    // BEFORE the customer message so the last thing the model reads is the
+    // question. In campaign mode the brief stands in for retrieved documents
+    // (the owner's house rules go in the system prompt, never in what the
+    // assistant may quote), and the conversation so far rides along so the
+    // assistant does not re-ask what was already answered.
+    const reference = context.campaign ? context.campaign.brief : context.knowledgeText;
+    const referenceLabel = context.campaign ? 'CAMPAIGN_BRIEF' : 'REFERENCE_MATERIAL';
     const user = [
-      context.knowledgeText
-        ? untrustedBlock('REFERENCE_MATERIAL', context.knowledgeText)
-        : '<<<REFERENCE_MATERIAL>>>\n(none supplied)\n<<<END_REFERENCE_MATERIAL>>>',
+      reference
+        ? untrustedBlock(referenceLabel, reference)
+        : `<<<${referenceLabel}>>>\n(none supplied)\n<<<END_${referenceLabel}>>>`,
       '',
+      ...(context.historyText
+        ? [untrustedBlock('CONVERSATION_SO_FAR', context.historyText), '']
+        : []),
       untrustedBlock('CUSTOMER_MESSAGE', context.inboundText ?? ''),
       '',
-      'Draft a reply following your rules. Reply with the JSON object only.',
+      context.campaign
+        ? 'Reply to the customer following your rules. Reply with the JSON object only.'
+        : 'Draft a reply following your rules. Reply with the JSON object only.',
     ].join('\n');
 
     let raw: string;

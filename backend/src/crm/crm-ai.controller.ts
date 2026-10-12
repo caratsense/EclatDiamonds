@@ -216,6 +216,23 @@ export class CrmQualificationController {
     return this.botScript.save(user, body);
   }
 
+  /**
+   * The walk-in (no-campaign) conversation: same shape as a campaign script.
+   * Manager and above, like the campaign rules: it carries the owner's house
+   * rules, which are not for the sales floor.
+   */
+  @Get('bot-default')
+  @Roles('store_manager')
+  botDefault(@CurrentUser() user: AuthUser) {
+    return this.botScript.defaultConversation(user);
+  }
+
+  @Put('bot-default')
+  @Roles('head_office')
+  saveBotDefault(@CurrentUser() user: AuthUser, @Body() body: unknown) {
+    return this.botScript.saveDefaultConversation(user, body);
+  }
+
   @Post('leads/:id')
   assessLead(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.qualification.assessLead(user, id);

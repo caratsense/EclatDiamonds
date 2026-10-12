@@ -14,6 +14,7 @@ import { IdentityService } from '../crm/identity.service';
 import { QualificationService } from '../crm/qualification.service';
 import { StorageService } from '../storage/storage.service';
 import { WhatsAppIdentityService } from './whatsapp-identity.service';
+import { CampaignBotService } from './campaign-bot.service';
 import { CustomerBotService } from './customer-bot.service';
 import { MetaAdMetadataService } from '../integrations/meta-ad-metadata.service';
 import { extractMetaReferral } from '../integrations/meta-referral';
@@ -67,6 +68,7 @@ export class WhatsAppBotService {
     private readonly storage: StorageService,
     private readonly notifications: NotificationsService,
     private readonly adMetadata: MetaAdMetadataService,
+    private readonly campaignBot: CampaignBotService,
   ) {}
 
   /**
@@ -634,6 +636,62 @@ export class WhatsAppBotService {
               return { status: 'processed', organisationId };
             }
 
+            /*
+             * THE CAMPAIGN FORK (client, 8 Oct).
+             *
+             * A thread whose matched ad rule carries a configured conversation
+             * is answered from THAT configuration — the owner's exact first
+             * reply, then free-text answers from the campaign brief — and
+             * never sees the button questionnaire. Everything else (organic
+             * traffic, plain routing rules, no match) keeps the scripted bot
+             * exactly as before.
+             */
+            // Campaign script first; else the tenant's walk-in conversation
+            // (client, 12 Oct: free text everywhere once configured). Only a
+            // tenant with neither still gets the legacy questionnaire.
+            // The advert THIS message came from (when it carried one) picks
+            // the campaign, not the thread's first touch.
+            const campaignRule =
+              (await this.campaignBot.scriptFor(
+                organisationId,
+                result.conversationId,
+                result.routing?.ruleId ?? null,
+              )) ?? (await this.campaignBot.defaultScriptFor(organisationId, result.conversationId));
+            if (campaignRule) {
+              const turn = await this.campaignBot.oneTurnAtATime(result.conversationId, async () => {
+                const t = await this.campaignBot.handle(
+                  organisationId,
+                  result.conversationId,
+                  campaignRule,
+                  text ?? '',
+                );
+                if (t.text) {
+                  const sent = await this.wa.sendText(organisationId, from, t.text, replyRoute);
+                  await this.recordBotReply(
+                    organisationId,
+                    result.conversationId,
+                    t.text,
+                    sent,
+                    t.authorType,
+                    t.openerFor ? { campaignOpener: t.openerFor } : undefined,
+                  );
+                }
+                return t;
+              });
+              if (turn.handoff) {
+                await this.handToAPerson(
+                  organisationId,
+                  result.conversationId,
+                  turn.handoff.reason,
+                  turn.handoff.note,
+                );
+              }
+              this.logger.log(
+                `  campaign bot (${campaignRule.name}) replied${turn.handoff ? ' and handed off' : ''}`,
+              );
+              return { status: 'processed', organisationId };
+            }
+
             const reply = await this.customerBot.handle(
               from,
               organisationId,
@@ -1003,6 +1061,13 @@ export class WhatsAppBotService {
     conversationId: string,
     body: string,
     sent: WhatsAppSendResult,
+    // 'bot' for scripted/owner-approved copy; 'ai' when a model composed it.
+    // The campaign conversation passes 'ai' for generated turns, so a manager
+    // reading the thread sees honestly which lines a person approved verbatim.
+    authorType: 'bot' | 'ai' = 'bot',
+    // What the reply was, for the code that reads the thread back: a campaign's
+    // first reply carries { campaignOpener: <rule id> }.
+    payload?: Prisma.InputJsonValue,
   ): Promise<void> {
     try {
       await this.prisma.message.create({
@@ -1010,11 +1075,12 @@ export class WhatsAppBotService {
           organisationId,
           conversationId,
           direction: 'outbound',
-          // Not 'ai': this flow is scripted copy the client approved, and
-          // labelling it AI in front of every manager would be a small untruth
-          // repeated on every thread. Not 'agent' either — no person wrote it.
-          authorType: 'bot',
+          // Default 'bot', not 'ai': the scripted flow is copy the client
+          // approved, and labelling it AI in front of every manager would be a
+          // small untruth on every thread. Not 'agent' either — nobody typed it.
+          authorType,
           body,
+          ...(payload ? { payload } : {}),
           // The provider's id, so a later status webhook can mark it delivered
           // or read against the row it belongs to.
           externalId: sent.messageId ?? null,
