@@ -222,6 +222,17 @@ describe('Staff administration and customer records (e2e)', () => {
     expect((u.accessOverrides as Record<string, string>).quotation).toBe('store');
   });
 
+  it('a refused role change leaves the role name alone', async () => {
+    await prisma.user.update({ where: { id: 'u_sadmin_ho' }, data: { customRoleName: 'Owner' } });
+    await request(server())
+      .patch('/users/u_sadmin_ho/role')
+      .set(auth(mgrT))
+      .send({ role: 'salesperson' })
+      .expect(403);
+    const ho = await prisma.user.findUniqueOrThrow({ where: { id: 'u_sadmin_ho' } });
+    expect(ho.customRoleName).toBe('Owner');
+  });
+
   /* ------------------------------------------------- customer tags + delete */
 
   it('a customer wears the same tag vocabulary as leads', async () => {

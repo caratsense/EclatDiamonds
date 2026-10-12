@@ -297,11 +297,6 @@ export class UsersService {
   /** PATCH /users/:id/role — change a user's role (delegated, strictly below actor). */
   async updateRole(actor: AuthUser, id: string, dto: UpdateUserRoleDto) {
     const existing = await this.getOrThrow(actor, id);
-    // A hand-picked role replaces whatever template was stamped before.
-    await this.prisma.user.updateMany({
-      where: { id, organisationId: actor.organisationId, NOT: { customRoleName: null } },
-      data: { customRoleName: null },
-    });
     const storeId = await this.primaryStoreId(id);
     // Cannot touch a peer/superior or someone out of scope; new role must be below actor.
     this.assertCanManage(actor, existing.role, storeId);
@@ -319,6 +314,8 @@ export class UsersService {
       where: { id },
       data: {
         role: dto.role,
+        // A hand-picked role replaces whatever template was stamped before.
+        customRoleName: null,
         ...(dropped.length ? { accessOverrides: Object.keys(kept).length ? kept : Prisma.DbNull } : {}),
       },
       include: USER_INCLUDE,
