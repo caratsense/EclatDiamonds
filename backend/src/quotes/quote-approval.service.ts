@@ -61,7 +61,7 @@ const QUOTE_SELECT = {
   id: true, ref: true, status: true, storeId: true, requestedById: true,
   grandTotal: true, approvedTotal: true, revision: true, approvedRevision: true,
   approvalSnapshot: true, discountPercent: true, discountAmount: true,
-  pricedById: true, pricedByRole: true,
+  pricedById: true, pricedByRole: true, assignedRepId: true,
 } satisfies Prisma.QuoteSelect;
 
 type GateQuote = Prisma.QuoteGetPayload<{ select: typeof QUOTE_SELECT }>;
@@ -365,6 +365,9 @@ export class QuoteApprovalService {
       // document the gate never asked about.
       throw new BadRequestException('This quote needs no approval.');
     }
+    // A held draft decided on the spot was never requested: whoever works it
+    // is the one asking, so the self-approval rules still have someone to test.
+    const askedBy = quote.requestedById ?? quote.assignedRepId ?? quote.pricedById;
     const overCap = reasons.find((r) => r.code === 'discount_over_cap');
     if (overCap) {
       /*
@@ -373,7 +376,7 @@ export class QuoteApprovalService {
        * set the discount may clear it. `allowSelfApproval` is a quote-total
        * setting and deliberately does not reach this far.
        */
-      assertNotSelfApproval(user, quote.requestedById, 'quote discount');
+      assertNotSelfApproval(user, askedBy, 'quote discount');
       assertNotSelfApproval(user, quote.pricedById, 'quote discount');
       if (approve && overCap.requiredRole && ROLE_RANK[user.role] < ROLE_RANK[overCap.requiredRole]) {
         throw new ForbiddenException(
@@ -382,7 +385,7 @@ export class QuoteApprovalService {
       }
     } else {
       const settings = await this.settingsFor(user.organisationId);
-      if (!settings.allowSelfApproval && quote.requestedById === user.id) {
+      if (!settings.allowSelfApproval && askedBy === user.id) {
         // Separation is the entire point. A tenant may switch it off deliberately;
         // it is not off by accident.
         throw new ForbiddenException('You cannot approve a quote you asked for yourself.');

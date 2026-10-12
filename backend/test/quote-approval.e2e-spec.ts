@@ -213,6 +213,25 @@ describe('Quote approval (e2e)', () => {
     await prisma.quote.deleteMany({ where: { id: { in: ['q_qa_direct', 'q_qa_small2'] } } });
   });
 
+  it('nobody decides their own held draft on the spot, head office included', async () => {
+    // Never requested, so the asker is whoever works it: assigned, else priced.
+    const draft = (id: string, ref: string, own: { assignedRepId?: string; pricedById?: string }) =>
+      prisma.quote.create({
+        data: {
+          id, organisationId: A.org, storeId: A.store, ref, customerName: 'Own Customer',
+          phone: '919812370002', status: 'draft', grandTotal: 200_000, taxableAmount: 200_000, ...own,
+        },
+      });
+    await draft('q_qa_own_mgr', 'QT-QA-OWN1', { assignedRepId: 'u_qa_mgr' });
+    await draft('q_qa_own_ho', 'QT-QA-OWN2', { pricedById: 'u_qa_ho' });
+
+    await request(server()).post('/quotes/q_qa_own_mgr/decide').set(auth(mgrA)).send({ approve: true }).expect(403);
+    await request(server()).post('/quotes/q_qa_own_ho/decide').set(auth(hoA)).send({ approve: true }).expect(403);
+    // Somebody else may.
+    await request(server()).post('/quotes/q_qa_own_mgr/decide').set(auth(hoA)).send({ approve: true }).expect(201);
+    await prisma.quote.deleteMany({ where: { id: { in: ['q_qa_own_mgr', 'q_qa_own_ho'] } } });
+  });
+
   it('a manager deletes a quote; a salesperson and an accepted quote are refused', async () => {
     await makeQuote('q_qa_del', 'QT-QA-DEL', 10_000);
 
