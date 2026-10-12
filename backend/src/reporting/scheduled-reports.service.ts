@@ -108,11 +108,13 @@ export class ScheduledReportsService {
     const rows = await this.prisma.scheduledReport.findMany({
       where: {
         ...this.scope.orgFilter(user),
-        // A report for a branch is visible to whoever can see that branch; a
-        // chain-wide report (storeId null) is visible to everybody in the tenant
-        // because its CONTENTS are still scoped at build time by the recipient's
-        // own store list.
-        OR: [{ storeId: null }, { storeId: { in: user.storeIds } }],
+        // A report for a branch is visible to whoever can see that branch. A
+        // chain-wide report (storeId null) is built as head office over EVERY
+        // branch (actorFor), so it is head office's alone.
+        OR: [
+          ...(user.role === Role.head_office ? [{ storeId: null }] : []),
+          { storeId: { in: user.storeIds } },
+        ],
       },
       orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
       include: {
@@ -171,7 +173,7 @@ export class ScheduledReportsService {
       isActive?: boolean;
     },
   ) {
-    const data = this.validate(user, input);
+    const data = await this.validate(user, { ...input, storeId: input.storeId ?? null });
     try {
       const row = await this.prisma.scheduledReport.create({
         data: {
@@ -213,7 +215,7 @@ export class ScheduledReportsService {
     },
   ) {
     await this.mustReach(user, reportId);
-    const data = this.validate(user, input);
+    const data = await this.validate(user, input);
     const row = await this.prisma.scheduledReport.update({
       where: { id: reportId },
       data: { ...(input.name ? { name: input.name.trim() } : {}), ...data },
@@ -248,9 +250,11 @@ export class ScheduledReportsService {
    * `storeId` goes through `assertStoreAllowed`, so a manager cannot schedule a
    * chain-wide report by naming a branch that is not theirs — the scheduled
    * build runs with no human present, and this is the only place that check can
-   * be made.
+   * be made. Below head office a report must name a branch: a store-less one
+   * is built as head office over every branch. WhatsApp numbers must be staff
+   * of this tenant, so the file cannot be pointed at an outside phone.
    */
-  private validate(
+  private async validate(
     user: AuthUser,
     input: {
       kind?: string;
@@ -273,6 +277,11 @@ export class ScheduledReportsService {
       throw new BadRequestException('sendHour must be an hour of the day, 0 to 23.');
     }
     if (input.storeId) this.scope.assertStoreAllowed(user, input.storeId);
+    else if (input.storeId !== undefined && user.role !== Role.head_office) {
+      throw new BadRequestException(
+        'Choose a branch for this report. A report for every branch is set up by head office.',
+      );
+    }
 
     if (input.columns !== undefined) {
       const bad = input.columns.filter(
@@ -303,6 +312,19 @@ export class ScheduledReportsService {
         );
       }
       input.phoneRecipients = cleaned.map(normalisePhone);
+      if (cleaned.length) {
+        const staff = await this.prisma.user.findMany({
+          where: { organisationId: user.organisationId, isActive: true, approvalStatus: 'approved', phone: { not: null } },
+          select: { phone: true },
+        });
+        const known = new Set(staff.map((s) => (s.phone ?? '').replace(/\D/g, '').slice(-10)));
+        const stranger = cleaned.find((raw) => !known.has(normalisePhone(raw).slice(-10)));
+        if (stranger) {
+          throw new BadRequestException(
+            `${stranger} is not the phone of anyone on your staff. Reports go to staff numbers only.`,
+          );
+        }
+      }
     }
 
     return {
@@ -321,7 +343,10 @@ export class ScheduledReportsService {
     const row = await this.prisma.scheduledReport.findFirst({
       where: { id: reportId, ...this.scope.orgFilter(user) },
     });
-    if (!row) throw new NotFoundException('No such report here.');
+    // A chain-wide report runs as head office over every branch: theirs alone.
+    if (!row || (!row.storeId && user.role !== Role.head_office)) {
+      throw new NotFoundException('No such report here.');
+    }
     if (row.storeId) this.scope.assertStoreAllowed(user, row.storeId);
     return row;
   }

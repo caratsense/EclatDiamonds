@@ -43,7 +43,7 @@ export class UpsertScheduledReportDto {
   @IsIn(['leads', 'walkins'])
   kind?: string;
 
-  /** Null or absent = every branch the report's reader can see. */
+  /** Null or absent = every branch, built as head office; head office only. */
   @IsOptional()
   @ValidateIf((_, v) => v !== null)
   @IsString()
