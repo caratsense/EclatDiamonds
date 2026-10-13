@@ -92,6 +92,15 @@ export class UpdateUserStoreDto {
   @IsString()
   @IsNotEmpty()
   storeId!: string;
+
+  /**
+   * Explicit because changing a Login ID invalidates the old password-login
+   * name immediately. The Team UI asks for confirmation and sends true; older
+   * API clients that only meant "change the primary link" remain non-breaking.
+   */
+  @IsOptional()
+  @IsBoolean()
+  regenerateLoginId?: boolean;
 }
 
 /**

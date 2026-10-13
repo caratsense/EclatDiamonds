@@ -173,6 +173,13 @@ export interface PendingSignup {
 /** How the approval email to the applicant's contact address actually went. */
 export type ApprovalEmailDelivery = "sent" | "dry_run" | "failed" | "no_contact_email";
 
+export type StoreReassignmentResult = StaffUser & {
+  loginId: string;
+  previousLoginId: string | null;
+  loginIdChanged: boolean;
+  contactEmailDelivery: ApprovalEmailDelivery | "not_needed";
+};
+
 /** Head office's signup policy (GET/PUT /users/signup-policy). */
 export interface SignupPolicy {
   loginIdTemplate: string | null;
@@ -332,8 +339,6 @@ export function useUpdateStaffRole() {
   });
 }
 
-/** PATCH /users/:id/store — assign / reassign a staff member's store
- *  (area_manager+). Also used to place a pending (unassigned) user. */
 /** PATCH /users/:id/stores — the exact branch set an area manager covers. */
 export function useSetStaffStores() {
   const qc = useQueryClient();
@@ -348,12 +353,23 @@ export function useSetStaffStores() {
   });
 }
 
+/** PATCH /users/:id/store — assign / reassign a staff member's primary store.
+ *  A confirmed store-based Login ID change is returned so the manager can share it. */
 export function useUpdateStaffStore() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, storeId }: { id: string; storeId: string }) => {
-      const { data } = await api.patch<StaffUser>(`/users/${id}/store`, {
+    mutationFn: async ({
+      id,
+      storeId,
+      regenerateLoginId = false,
+    }: {
+      id: string;
+      storeId: string;
+      regenerateLoginId?: boolean;
+    }) => {
+      const { data } = await api.patch<StoreReassignmentResult>(`/users/${id}/store`, {
         storeId,
+        regenerateLoginId,
       });
       return data;
     },

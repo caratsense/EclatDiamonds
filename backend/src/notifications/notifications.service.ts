@@ -455,7 +455,15 @@ export class NotificationsService {
 
     // --- Follow-ups due (everyone, incl. salesperson) ---
     const reminder = await this.prisma.leadFollowUp.count({
-      where: { ...storeWhere, done: false, dueDate: { lte: endOfTodayUtc() } },
+      where: {
+        ...storeWhere,
+        done: false,
+        dueDate: { lte: endOfTodayUtc() },
+        // Keep the bell's count identical to GET /leads/reminders. Otherwise a
+        // salesperson sees colleagues' due count, opens it, and lands on an
+        // honestly empty own-book list.
+        ...(user.role === 'salesperson' ? { lead: { ownerId: user.id } } : {}),
+      },
     });
     if (reminder > 0) {
       items.push({ type: 'reminder', label: 'Follow-ups due', count: reminder, href: '/reminders' });

@@ -23,8 +23,8 @@ import { PLATFORM_HANDLE_DOMAIN, loginIdTemplateError, renderLoginId } from '../
  *    manager requests are head office's, and only when the tenant allows them.
  *  - Approval is one conditional transaction: replay, a revoked approver and a
  *    closed store all change nothing.
- *  - Login IDs are assigned by the unique index, previewed from the template
- *    alone, and never rewritten for people who already have one.
+ *  - Login IDs are assigned by the unique index and previewed from the template
+ *    alone. A confirmed primary-store correction may re-issue a store-based ID.
  */
 const PASSWORD = 'password123';
 const T = {
@@ -452,6 +452,148 @@ describe('Store-scoped self-signup (e2e)', () => {
       expect(approved.body.email).toBe(`arjun.bandra2@${domain}`);
       const row = await prisma.user.findUniqueOrThrow({ where: { id }, include: { userStores: true } });
       expect(row.userStores.map((l) => l.storeId)).toEqual([T.b]);
+    });
+  });
+
+  describe('active staff store correction', () => {
+    afterEach(async () => {
+      await request(server())
+        .put('/users/signup-policy')
+        .set(as(tokens.ho))
+        .send({ loginIdTemplate: null })
+        .expect(200);
+    });
+
+    it('removes the wrong store, re-issues a collision-safe Login ID and preserves identity details', async () => {
+      const passwordHash = await bcrypt.hash(PASSWORD, 10);
+      const target = await prisma.user.create({
+        data: {
+          email: `riya.andheri@${domain}`,
+          contactEmail: 'riya.personal@example.com',
+          phone: '9820012345',
+          googleSub: 'google-sub-store-correction',
+          name: 'Riya Shah',
+          role: 'salesperson',
+          passwordHash,
+          organisationId: T.org,
+          userStores: { create: { storeId: T.a, isPrimary: true } },
+        },
+      });
+      await prisma.user.create({
+        data: {
+          email: `riya.bandra@${domain}`,
+          name: 'Riya Collision',
+          organisationId: T.org,
+          isActive: false,
+        },
+      });
+
+      const moved = await request(server())
+        .patch(`/users/${target.id}/store`)
+        .set(as(tokens.ho))
+        .send({ storeId: T.b, regenerateLoginId: true })
+        .expect(200);
+
+      expect(moved.body).toMatchObject({
+        email: `riya.bandra2@${domain}`,
+        loginId: `riya.bandra2@${domain}`,
+        previousLoginId: `riya.andheri@${domain}`,
+        loginIdChanged: true,
+        contactEmailDelivery: 'dry_run',
+        stores: [{ id: T.b, name: 'Bandra' }],
+      });
+
+      const row = await prisma.user.findUniqueOrThrow({
+        where: { id: target.id },
+        include: { userStores: true },
+      });
+      expect(row.userStores.map((link) => ({ storeId: link.storeId, primary: link.isPrimary }))).toEqual([
+        { storeId: T.b, primary: true },
+      ]);
+      expect(row).toMatchObject({
+        contactEmail: 'riya.personal@example.com',
+        phone: '9820012345',
+        googleSub: 'google-sub-store-correction',
+      });
+      expect(await bcrypt.compare(PASSWORD, row.passwordHash!)).toBe(true);
+
+      clearThrottle();
+      await login(`riya.andheri@${domain}`).expect(401);
+      clearThrottle();
+      await login(`riya.bandra2@${domain}`).expect(201);
+
+      const audit = await prisma.auditLog.findFirstOrThrow({
+        where: { action: 'user.store_change', entityId: target.id },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(audit.metadata).toMatchObject({
+        from: T.a,
+        to: T.b,
+        previousLoginId: `riya.andheri@${domain}`,
+        loginId: `riya.bandra2@${domain}`,
+        loginIdChanged: true,
+      });
+      const notice = await prisma.notification.findFirstOrThrow({
+        where: { userId: target.id, title: 'Your Login ID changed' },
+      });
+      expect(notice.body).toContain(`riya.bandra2@${domain}`);
+    });
+
+    it('corrects store access without rewriting a custom Login ID unless explicitly confirmed', async () => {
+      const target = await prisma.user.create({
+        data: {
+          email: 'legacy.person@example.com',
+          contactEmail: 'legacy.person@example.com',
+          name: 'Legacy Person',
+          role: 'salesperson',
+          organisationId: T.org,
+          userStores: { create: { storeId: T.a, isPrimary: true } },
+        },
+      });
+
+      const moved = await request(server())
+        .patch(`/users/${target.id}/store`)
+        .set(as(tokens.ho))
+        .send({ storeId: T.b, regenerateLoginId: false })
+        .expect(200);
+
+      expect(moved.body).toMatchObject({
+        email: 'legacy.person@example.com',
+        loginIdChanged: false,
+        previousLoginId: null,
+        contactEmailDelivery: 'not_needed',
+        stores: [{ id: T.b, name: 'Bandra' }],
+      });
+      expect(await prisma.notification.count({ where: { userId: target.id } })).toBe(0);
+    });
+
+    it('keeps the Login ID when the tenant format does not depend on the store', async () => {
+      const template = `{firstname}@${T.slug}.staff.in`;
+      await request(server())
+        .put('/users/signup-policy')
+        .set(as(tokens.ho))
+        .send({ loginIdTemplate: template })
+        .expect(200);
+      const target = await prisma.user.create({
+        data: {
+          email: `maya@${T.slug}.staff.in`,
+          name: 'Maya Rao',
+          role: 'salesperson',
+          organisationId: T.org,
+          userStores: { create: { storeId: T.a, isPrimary: true } },
+        },
+      });
+
+      const moved = await request(server())
+        .patch(`/users/${target.id}/store`)
+        .set(as(tokens.ho))
+        .send({ storeId: T.b, regenerateLoginId: true })
+        .expect(200);
+      expect(moved.body).toMatchObject({
+        email: `maya@${T.slug}.staff.in`,
+        loginIdChanged: false,
+        contactEmailDelivery: 'not_needed',
+      });
     });
   });
 

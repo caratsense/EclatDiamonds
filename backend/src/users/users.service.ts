@@ -335,8 +335,15 @@ export class UsersService {
   }
 
   /**
-   * PATCH /users/:id/store — reassign the user's PRIMARY store. Demotes any other
-   * primary link and upserts the target as the new primary (keeping existing links).
+   * PATCH /users/:id/store — correct/reassign the user's PRIMARY store. The old
+   * primary link is removed (otherwise "reassign" quietly leaves access to the
+   * wrong branch) while unrelated intentional secondary links are preserved.
+   *
+   * When the caller explicitly confirms `regenerateLoginId` and the tenant's
+   * Login-ID format contains `{storeslug}`, the Login ID is re-issued from the
+   * destination store in the SAME transaction. Contact email, phone, password,
+   * Google identity and historical records are never changed.
+   *
    * The DESTINATION store must be in the actor's scope, and — for a scoped (non-HO)
    * actor — a currently-assigned target must already have a store inside that scope
    * (you cannot poach a user assigned to a store you don't own).
@@ -397,7 +404,10 @@ export class UsersService {
     // Rank gate: never reassign a peer/superior.
     this.assertCanManage(actor, existing.role);
 
-    const store = await this.prisma.store.findUnique({ where: { id: dto.storeId } });
+    const store = await this.prisma.store.findFirst({
+      where: { id: dto.storeId, organisationId: actor.organisationId },
+      include: { organisation: { select: { slug: true, settings: true } } },
+    });
     if (!store) throw new NotFoundException('Store not found');
     if (store.isAggregate) {
       throw new BadRequestException('Cannot assign a user to the aggregate "All Stores" view');
@@ -421,42 +431,146 @@ export class UsersService {
       }
     }
 
-    // Capture the previous primary store for the audit trail.
-    const prevPrimary = await this.prisma.userStore.findFirst({
-      where: { userId: id, isPrimary: true },
-      select: { storeId: true },
+    const policy = readSignupPolicy(store.organisation.settings);
+    const decided = await this.prisma.$transaction(async (tx) => {
+      // Serialize two managers correcting the same account. Without this lock,
+      // both could leave a different primary link and a Login ID describing the
+      // losing request.
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${id} FOR UPDATE`;
+
+      const links = await tx.userStore.findMany({
+        where: { userId: id },
+        select: { storeId: true, isPrimary: true },
+      });
+      const primary = links.find((link) => link.isPrimary);
+      // Old imports occasionally have one link without the primary flag. Treat
+      // that sole assignment as the one being corrected; several unmarked links
+      // are ambiguous and therefore preserved.
+      const previousStoreId = primary?.storeId ?? (links.length === 1 ? links[0].storeId : null);
+      const storeChanged = previousStoreId !== dto.storeId;
+      const previousLoginId = existing.email;
+      let loginId = previousLoginId;
+
+      if (storeChanged) {
+        await tx.userStore.updateMany({
+          where: { userId: id, isPrimary: true },
+          data: { isPrimary: false },
+        });
+        await tx.userStore.upsert({
+          where: { userId_storeId: { userId: id, storeId: dto.storeId } },
+          update: { isPrimary: true },
+          create: { userId: id, storeId: dto.storeId, isPrimary: true },
+        });
+        // Reassignment is a move, not "also grant the new branch". Delete only
+        // the old primary so deliberately-added secondary stores remain intact.
+        if (previousStoreId) {
+          await tx.userStore.deleteMany({
+            where: { userId: id, storeId: previousStoreId },
+          });
+        }
+
+        if (dto.regenerateLoginId === true && loginIdUsesStore(policy.loginIdTemplate)) {
+          const subject = {
+            name: existing.name,
+            storeName: store.name,
+            organisationSlug: store.organisation.slug,
+          };
+          loginId = await allocateLoginId(
+            (n) => renderLoginId(policy.loginIdTemplate, subject, n),
+            async (candidate) => {
+              await withSavepoint(tx, () =>
+                tx.user.update({ where: { id }, data: { email: candidate } }),
+              );
+              return candidate;
+            },
+          );
+        }
+
+        const loginIdChanged = loginId !== previousLoginId;
+        await this.audit.record(
+          actor,
+          {
+            action: 'user.store_change',
+            entityType: 'User',
+            entityId: id,
+            storeId: dto.storeId,
+            summary: `Reassigned ${existing.name} primary store: ${previousStoreId ?? 'none'} → ${dto.storeId}`,
+            metadata: {
+              from: previousStoreId,
+              to: dto.storeId,
+              previousLoginId,
+              loginId,
+              loginIdChanged,
+            },
+          },
+          tx,
+        );
+
+        if (loginIdChanged) {
+          await tx.notification.create({
+            data: {
+              userId: id,
+              storeId: dto.storeId,
+              kind: 'system',
+              title: 'Your Login ID changed',
+              body: `You were moved to ${store.name}. Your new Login ID is ${loginId}. Your password has not changed.`,
+              entityType: 'User',
+              entityId: id,
+              actorId: actor.id,
+              actorName: actor.name,
+              dedupeKey: `store-login-id:${loginId}`,
+            },
+          });
+        }
+      }
+
+      return {
+        previousLoginId,
+        loginId,
+        loginIdChanged: loginId !== previousLoginId,
+        contactEmail: existing.contactEmail,
+        name: existing.name,
+        storeName: store.name,
+      };
     });
 
-    await this.prisma.$transaction([
-      this.prisma.userStore.updateMany({
-        where: { userId: id, isPrimary: true },
-        data: { isPrimary: false },
-      }),
-      this.prisma.userStore.upsert({
-        where: { userId_storeId: { userId: id, storeId: dto.storeId } },
-        update: { isPrimary: true },
-        create: { userId: id, storeId: dto.storeId, isPrimary: true },
-      }),
-    ]);
-
+    const contactEmailDelivery = decided.loginIdChanged
+      ? await this.sendLoginIdChangedEmail(decided)
+      : 'not_needed';
     const user = await this.prisma.user.findUniqueOrThrow({
       where: { id },
       include: USER_INCLUDE,
     });
+    return {
+      ...this.toView(user),
+      loginId: decided.loginId,
+      previousLoginId: decided.loginIdChanged ? decided.previousLoginId : null,
+      loginIdChanged: decided.loginIdChanged,
+      contactEmailDelivery,
+    };
+  }
 
-    if (prevPrimary?.storeId !== dto.storeId) {
-      await this.audit.record(actor, {
-        action: 'user.store_change',
-        entityType: 'User',
-        entityId: id,
-        storeId: dto.storeId,
-        summary: `Reassigned ${user.name} primary store: ${
-          prevPrimary?.storeId ?? 'none'
-        } → ${dto.storeId}`,
-        metadata: { from: prevPrimary?.storeId ?? null, to: dto.storeId },
-      });
-    }
-    return this.toView(user);
+  /** Notify the real inbox after commit; an SMTP failure never rolls back access. */
+  private async sendLoginIdChangedEmail(d: {
+    loginId: string;
+    contactEmail: string | null;
+    name: string;
+    storeName: string;
+  }): Promise<'sent' | 'dry_run' | 'failed' | 'no_contact_email'> {
+    if (!d.contactEmail) return 'no_contact_email';
+    const result = await this.email.send(
+      d.contactEmail,
+      'Your Login ID has changed',
+      [
+        `Hello ${d.name},`,
+        '',
+        `Your store assignment has changed to ${d.storeName}.`,
+        `Your new Login ID is: ${d.loginId}`,
+        '',
+        'Your password has not changed. Your previous Login ID no longer works.',
+      ].join('\n'),
+    );
+    return result.sent ? 'sent' : result.dryRun ? 'dry_run' : 'failed';
   }
 
   /**

@@ -191,6 +191,21 @@ describe('Salesperson scope (e2e)', () => {
   it('follow-ups and reminders: only on their own leads', async () => {
     const rem = await get(R1, '/leads/reminders?scope=all').expect(200);
     expect(rem.body.map((r: { id: string }) => r.id)).toEqual([id.fu1]);
+
+    // The bell must count the same own-book rows as the page it opens. Before
+    // this regression fix it counted both reps' follow-ups, so R1 saw "2" and
+    // opened a page containing only their one (or nothing in production).
+    const ownSummary = await get(R1, '/notifications/summary').expect(200);
+    expect(ownSummary.body.items.find((item: { type: string }) => item.type === 'reminder')).toMatchObject({
+      count: 1,
+      href: '/reminders',
+    });
+    const managerSummary = await get('u_ssc_mgr', '/notifications/summary').expect(200);
+    expect(managerSummary.body.items.find((item: { type: string }) => item.type === 'reminder')).toMatchObject({
+      count: 2,
+      href: '/reminders',
+    });
+
     await request(server()).patch(`/leads/reminders/${id.fu2}`).set(as(R1)).send({ done: true }).expect(403);
   });
 

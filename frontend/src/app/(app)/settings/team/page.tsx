@@ -904,7 +904,9 @@ function SignupPolicyCard() {
             after &quot;@&quot; must include your organisation code (
             <span className="font-mono">{policy.organisationCode}</span>) or{" "}
             <span className="font-mono">{"{orgslug}"}</span>. A number is added when
-            an ID is taken. Existing Login IDs never change. Currently:{" "}
+            an ID is taken. Changing this format does not rewrite existing IDs;
+            an explicitly confirmed store reassignment can update a store-based ID.
+            Currently:{" "}
             <span className="font-mono">{policy.example}</span>
           </p>
         </div>

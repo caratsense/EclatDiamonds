@@ -204,6 +204,7 @@ export function ReassignStoreDialog({
   const primaryStoreId = user.stores[0]?.id ?? "";
   const [storeId, setStoreId] = useState(primaryStoreId);
   const [storeIds, setStoreIds] = useState<string[]>(user.stores.map((s) => s.id));
+  const [regenerateLoginId, setRegenerateLoginId] = useState(true);
 
   function toggle(id: string) {
     setStoreIds((prev) =>
@@ -239,10 +240,25 @@ export function ReassignStoreDialog({
       return;
     }
     updateStore.mutate(
-      { id: user.id, storeId },
+      { id: user.id, storeId, regenerateLoginId },
       {
-        onSuccess: () => {
-          toast.success("Store reassigned");
+        onSuccess: (result) => {
+          if (result.loginIdChanged) {
+            const delivery =
+              result.contactEmailDelivery === "sent"
+                ? "The employee was emailed."
+                : result.contactEmailDelivery === "dry_run"
+                  ? "Email is not configured; share this Login ID manually."
+                  : result.contactEmailDelivery === "failed"
+                    ? "Email delivery failed; share this Login ID manually."
+                    : "No contact inbox is saved; share this Login ID manually.";
+            toast.success(`Store reassigned — new Login ID: ${result.loginId}`, {
+              description: delivery,
+              duration: 12_000,
+            });
+          } else {
+            toast.success("Store reassigned");
+          }
           onOpenChange(false);
         },
         onError: (err) =>
@@ -260,6 +276,7 @@ export function ReassignStoreDialog({
         if (o) {
           setStoreId(primaryStoreId);
           setStoreIds(user.stores.map((s) => s.id));
+          setRegenerateLoginId(true);
         }
         onOpenChange(o);
       }}
@@ -270,7 +287,7 @@ export function ReassignStoreDialog({
           <DialogDescription>
             {multi
               ? `Tick every branch ${user.name} covers. The first becomes their primary.`
-              : `Move ${user.name} to another store within your scope.`}
+              : `Move ${user.name} to another store within your scope. Their old primary-store access will be removed.`}
           </DialogDescription>
         </DialogHeader>
         {multi ? (
@@ -306,6 +323,24 @@ export function ReassignStoreDialog({
               </SelectContent>
             </Select>
           </div>
+        )}
+        {multi ? null : (
+          <label className="flex items-start gap-2.5 rounded-lg border p-3 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4"
+              checked={regenerateLoginId}
+              onChange={(event) => setRegenerateLoginId(event.target.checked)}
+            />
+            <span>
+              Update the Login ID for the new store
+              <span className="mt-0.5 block text-xs text-muted-foreground">
+                Current: <span className="font-mono">{user.email}</span>. If the
+                organisation format uses the store name, the old Login ID will stop
+                working immediately. The password, phone and contact email stay unchanged.
+              </span>
+            </span>
+          </label>
         )}
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>

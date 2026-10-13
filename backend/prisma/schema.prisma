@@ -854,7 +854,8 @@ model User {
   name           String
   /// The LOGIN ID — an identifier, not a mailbox. Generated for new staff from
   /// the tenant's template or the default `firstname.storeslug@<tenant domain>`
-  /// (see users.util.renderLoginId); stored values are never rewritten.
+  /// (see users.util.renderLoginId). A confirmed primary-store correction may
+  /// re-issue a store-based ID; changing the template alone never rewrites it.
   email          String       @unique
   /// The personal/contact email the person actually gave. NOT unique � two people
   /// may legitimately share one (a family inbox, a store address) � and never used

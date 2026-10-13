@@ -83,6 +83,7 @@ export function useCompleteFollowUp() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [REMINDERS_KEY] });
       qc.invalidateQueries({ queryKey: ["leads"] });
+      qc.invalidateQueries({ queryKey: ["notifications"] });
     },
   });
 }
@@ -101,6 +102,7 @@ export function useEditFollowUpDate() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [REMINDERS_KEY] });
       qc.invalidateQueries({ queryKey: ["leads"] });
+      qc.invalidateQueries({ queryKey: ["notifications"] });
     },
   });
 }
