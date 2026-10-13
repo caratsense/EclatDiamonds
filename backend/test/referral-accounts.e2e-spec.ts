@@ -204,6 +204,7 @@ describe('Referral accounts — record by referrer, wallet, redeem (e2e)', () =>
         code: accountCode,
         refereeName: 'Referred Customer Three',
         billAmount: 2000,
+        invoiceNo: 'INV-REF-005',
         storeId: F.store,
       });
     expect(r.status).toBe(201);
@@ -223,7 +224,7 @@ describe('Referral accounts — record by referrer, wallet, redeem (e2e)', () =>
     const r = await request(app.getHttpServer())
       .post('/loyalty/referrals')
       .set(auth(hoBToken))
-      .send({ referrerId: accountId, refereeName: 'Cross Org Referee', billAmount: 99999 });
+      .send({ referrerId: accountId, refereeName: 'Cross Org Referee', billAmount: 99999, invoiceNo: 'INV-X-1' });
     expect(r.status).toBe(404);
     const row = await prisma.referralCode.findUnique({ where: { id: accountId } });
     expect(Number(row!.commissionBalance)).toBe(1100);

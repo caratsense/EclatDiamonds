@@ -423,6 +423,26 @@ export class LoyaltyService {
     const bill = new Prisma.Decimal(dto.billAmount);
     const diamondDiscountAmount = pctOf(bill, diamondDiscountPct);
     const commissionAmount = pctOf(bill, commissionPct);
+    const invoiceNo = dto.invoiceNo.trim();
+
+    // A credit is money paid on a bill, so it names a real one. Where the bill
+    // has reached CaratSpace from the shop's system, the credit cannot be on
+    // more than it came to. Bills arrive every 15 minutes, so a manager may
+    // record ahead of the sync; a salesperson waits for the bill to arrive.
+    const sale = await this.prisma.sale.findFirst({
+      where: { organisationId: user.organisationId, docNo: invoiceNo, docType: 'sale' },
+      select: { totalAmount: true },
+    });
+    if (sale && bill.gt(sale.totalAmount)) {
+      throw new BadRequestException(
+        `Bill ${invoiceNo} came to ₹${sale.totalAmount.toFixed(2)}; the referral cannot be on more than that.`,
+      );
+    }
+    if (!sale && !canOverridePct) {
+      throw new BadRequestException(
+        `Bill ${invoiceNo} has not reached CaratSpace yet. Record the referral once it has, or ask your manager.`,
+      );
+    }
 
     return this.prisma.$transaction(async (tx) => {
       // Resolve the referrer account within the caller's org — by id (the
@@ -446,6 +466,15 @@ export class LoyaltyService {
         throw new BadRequestException('code usage limit reached');
       }
 
+      // One bill earns one referral credit, whichever referrer it names.
+      const earlier = await tx.referral.findFirst({
+        where: { invoiceNo, code: { organisationId: user.organisationId } },
+        select: { id: true },
+      });
+      if (earlier) {
+        throw new ConflictException(`Bill ${invoiceNo} has already earned a referral credit.`);
+      }
+
       const referral = await tx.referral.create({
         data: {
           codeId: code.id,
@@ -457,7 +486,7 @@ export class LoyaltyService {
           diamondDiscountAmount,
           commissionPct: new Prisma.Decimal(commissionPct),
           commissionAmount,
-          invoiceNo: dto.invoiceNo,
+          invoiceNo,
           billDate: dto.billDate ? parseYmd(dto.billDate) : undefined,
         },
       });

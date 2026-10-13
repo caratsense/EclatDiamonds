@@ -107,6 +107,15 @@ export class CreateReferralDto {
   @Min(0)
   billAmount!: number;
 
+  /**
+   * The bill this credit is for. Required: a credit is money, and one bill
+   * earns one credit. Checked against the bills synced from the shop's system.
+   */
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(60)
+  invoiceNo!: string;
+
   @IsOptional()
   @IsString()
   storeId?: string;
@@ -124,11 +133,6 @@ export class CreateReferralDto {
   @Min(0)
   @Max(100)
   commissionPct?: number;
-
-  /** Round 2: invoice number of the referee's purchase. */
-  @IsOptional()
-  @IsString()
-  invoiceNo?: string;
 
   /** Round 2: sale / bill date (date-only, yyyy-mm-dd). */
   @IsOptional()
