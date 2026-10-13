@@ -46,6 +46,9 @@ async function teardown(prisma: import('../src/prisma/prisma.service').PrismaSer
     await prisma.userStore.deleteMany({ where: { user: { organisationId: org } } });
     await prisma.user.deleteMany({ where: { organisationId: org } });
     await prisma.store.deleteMany({ where: { organisationId: org } });
+    // The scheduled gold-rate refresh writes a rate for every organisation,
+    // this one included when it fires during a long run.
+    await prisma.metalRate.deleteMany({ where: { organisationId: org } });
     await prisma.organisation.deleteMany({ where: { id: org } });
   }
 }
