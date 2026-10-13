@@ -362,7 +362,22 @@ export class UsersService {
     const ids = [...new Set(storeIds.map((s) => s.trim()).filter(Boolean))];
     if (!ids.length) throw new BadRequestException('Pick at least one store');
 
-    const stores = await this.prisma.store.findMany({ where: { id: { in: ids } } });
+    // The same target-scope gate as a single reassignment: a manager may only
+    // change the branches of somebody already in their scope (or of somebody
+    // with no branch yet), never pull a person over from another branch.
+    const links = await this.prisma.userStore.findMany({
+      where: { userId: id },
+      select: { storeId: true },
+    });
+    if (!actor.allStores && links.length > 0 && !links.some((l) => actor.storeIds.includes(l.storeId))) {
+      throw new ForbiddenException('User is not in your scope');
+    }
+
+    // Stores of this organisation only: head office's scope is every store it
+    // has, not every store in the database.
+    const stores = await this.prisma.store.findMany({
+      where: { id: { in: ids }, organisationId: actor.organisationId },
+    });
     if (stores.length !== ids.length) throw new NotFoundException('Store not found');
     for (const store of stores) {
       if (store.isAggregate) {
@@ -375,7 +390,14 @@ export class UsersService {
     }
 
     await this.prisma.$transaction([
-      this.prisma.userStore.deleteMany({ where: { userId: id, storeId: { notIn: ids } } }),
+      // Only links the actor can see are theirs to remove: a person who also
+      // works at a branch outside this manager's scope keeps that branch.
+      this.prisma.userStore.deleteMany({
+        where: {
+          userId: id,
+          storeId: actor.allStores ? { notIn: ids } : { notIn: ids, in: actor.storeIds },
+        },
+      }),
       ...ids.map((storeId, index) =>
         this.prisma.userStore.upsert({
           where: { userId_storeId: { userId: id, storeId } },
