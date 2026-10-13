@@ -909,6 +909,13 @@ export class AuthService {
     });
     if (!target) throw new NotFoundException('User not found');
 
+    // Head office may create another head office account, but never take one
+    // over: a head office password is changed by its owner, from their own
+    // account (POST /auth/change-password).
+    if (target.role === 'head_office' && target.id !== actor.id) {
+      throw new ForbiddenException('A head office password can only be changed by its owner.');
+    }
+
     if (actor.role !== 'head_office') {
       if (ROLE_RANK[target.role] >= ROLE_RANK[actor.role]) {
         throw new ForbiddenException('You can only reset passwords for roles below your own');
