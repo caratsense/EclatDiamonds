@@ -36,7 +36,7 @@ import {
   useStoreScope,
 } from "@/components/common/store-scope-field";
 import { getNavItem } from "@/lib/navigation";
-import { useLiveOccupancyEnabled } from "@/lib/queries/tenant-config";
+import { useLiveOccupancyEnabled, useSaveLiveOccupancy } from "@/lib/queries/tenant-config";
 import { formatPercent } from "@/lib/format";
 import { StatTiles } from "@/components/hrms/stat-tiles";
 import {
@@ -123,8 +123,35 @@ function isToday(iso: string | null | undefined): boolean {
   );
 }
 
+/**
+ * Head office's switch for the live "in store now" count (client, 9 Oct): a
+ * shop that logs the visit after serving the customer has nothing live to show.
+ */
+function LiveOccupancySwitch({ on }: { on: boolean }) {
+  const save = useSaveLiveOccupancy();
+  return (
+    <label htmlFor="live-occupancy" className="flex items-center gap-2 text-sm text-muted-foreground">
+      <input
+        id="live-occupancy"
+        type="checkbox"
+        className="h-4 w-4"
+        checked={on}
+        disabled={save.isPending}
+        onChange={(e) =>
+          save.mutate(e.target.checked, {
+            onSuccess: (r) =>
+              toast.success(r.liveOccupancy ? "Showing who is in the store now" : "Live count hidden"),
+            onError: () => toast.error("Could not save the setting."),
+          })
+        }
+      />
+      Show who is in the store now (head office setting, for every branch)
+    </label>
+  );
+}
+
 export default function CheckinsPage() {
-  const { currentStore, stores } = useSession();
+  const { currentStore, stores, role } = useSession();
   const nav = getNavItem("checkins");
   const isAggregate = currentStore.isAggregate;
 
@@ -266,6 +293,7 @@ export default function CheckinsPage() {
             </div>
 
             {liveOccupancy ? <LiveInStore checkins={checkins} /> : null}
+            {role === "head_office" ? <LiveOccupancySwitch on={liveOccupancy} /> : null}
           </>
         )}
       </div>

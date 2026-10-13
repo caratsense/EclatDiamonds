@@ -35,7 +35,9 @@ const CONFIGURABLE_ENTITIES: ConfigurableEntity[] = ['product', 'party', 'lead']
  * private until someone deliberately publishes it here, which is the safe
  * direction for a payload every authenticated user can read.
  */
-const PUBLIC_SETTINGS_KEYS = ['branding', 'featureProfile'] as const;
+// `checkins` holds display choices only (liveOccupancy); the Check-ins screen
+// reads it from here, so without it the switch had no effect.
+const PUBLIC_SETTINGS_KEYS = ['branding', 'featureProfile', 'checkins'] as const;
 
 function publicSettings(settings: Prisma.JsonValue | null): Record<string, unknown> {
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return {};

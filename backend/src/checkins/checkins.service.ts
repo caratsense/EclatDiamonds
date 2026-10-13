@@ -10,6 +10,8 @@ import { DEFAULT_TZ, formatHHMMInTz } from '../common/tz.util';
 import { SequenceService } from '../common/sequence.service';
 import { FollowUpRemindersService, reminderView } from '../crm/follow-up-reminders.service';
 import { VisitFeedbackService } from '../crm/visit-feedback.service';
+import { AuditService } from '../common/audit.service';
+import { updateOrgSettings } from '../config/org-settings';
 
 const PURPOSE_LABEL: Record<string, string> = {
   bridal: 'Bridal',
@@ -109,7 +111,29 @@ export class CheckinsService {
     private readonly sequence: SequenceService,
     private readonly reminders: FollowUpRemindersService,
     private readonly visitFeedback: VisitFeedbackService,
+    private readonly audit: AuditService,
   ) {}
+
+  /** PUT /checkins/settings — head office only (controller). Audited. */
+  async saveSettings(user: AuthUser, dto: { liveOccupancy: boolean }) {
+    await updateOrgSettings(this.prisma, user.organisationId, (settings) => ({
+      ...settings,
+      checkins: {
+        ...((settings.checkins as Record<string, unknown> | undefined) ?? {}),
+        liveOccupancy: dto.liveOccupancy,
+      },
+    }));
+    await this.audit.record(user, {
+      action: 'checkins.settings_updated',
+      entityType: 'Organisation',
+      entityId: user.organisationId,
+      summary: dto.liveOccupancy
+        ? 'Check-ins shows who is in the store now'
+        : 'Check-ins no longer shows who is in the store now',
+      metadata: { liveOccupancy: dto.liveOccupancy },
+    });
+    return { liveOccupancy: dto.liveOccupancy };
+  }
 
   /** GET /checkins — footfall log, store-scoped (most recent first). */
   /**

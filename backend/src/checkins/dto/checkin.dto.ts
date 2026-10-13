@@ -1,5 +1,6 @@
 import { LOCAL_DATETIME } from '../../crm/follow-up-reminders.service';
 import {
+  IsBoolean,
   IsEnum,
   IsIn,
   IsInt,
@@ -103,6 +104,13 @@ export class CreateCheckInDto {
   @IsString()
   @MaxLength(500)
   savingSchemeReason?: string;
+}
+
+/** PUT /checkins/settings — what the Check-ins screen shows. */
+export class CheckinSettingsDto {
+  /** Show who is in the store right now. Off for a shop that logs a visit after serving. */
+  @IsBoolean()
+  liveOccupancy!: boolean;
 }
 
 export class CheckoutDto {

@@ -125,6 +125,16 @@ export function useTermLabel(bootstrap: ConfigBootstrap | undefined) {
  * false` hides it; anything else keeps today's behaviour. Capability kept in
  * the generic platform; this is configuration, not removal.
  */
+/** PUT /checkins/settings — head office shows or hides the live in-store count. */
+export function useSaveLiveOccupancy() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (liveOccupancy: boolean) =>
+      (await api.put<{ liveOccupancy: boolean }>("/checkins/settings", { liveOccupancy })).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["config"] }),
+  });
+}
+
 export function useLiveOccupancyEnabled(): boolean {
   const { data } = useConfigBootstrap();
   const settings = (data?.organisation?.settings ?? {}) as {

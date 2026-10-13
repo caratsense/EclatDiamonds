@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Header, Param, Patch, Post, Res, StreamableFile } from '@nestjs/common';
+import { Body, Controller, Get, Header, Param, Patch, Post, Put, Res, StreamableFile } from '@nestjs/common';
 import type { Response } from 'express';
 import { CheckinsService } from './checkins.service';
-import { CheckoutDto, CreateCheckInDto } from './dto/checkin.dto';
+import { CheckinSettingsDto, CheckoutDto, CreateCheckInDto } from './dto/checkin.dto';
+import { Roles } from '../auth/roles.decorator';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
 
@@ -26,6 +27,17 @@ export class CheckinsController {
     res.setHeader('Content-Disposition', 'attachment; filename="walk-ins.xlsx"');
     res.setHeader('X-Export-Rows', String(rows));
     return new StreamableFile(buffer);
+  }
+
+  /**
+   * Whether the screen shows who is in the store now. A shop that logs the
+   * visit after serving the customer has no live count to show (client,
+   * 9 Oct), so head office can switch it off for the organisation.
+   */
+  @Roles('head_office')
+  @Put('settings')
+  saveSettings(@CurrentUser() user: AuthUser, @Body() dto: CheckinSettingsDto) {
+    return this.checkins.saveSettings(user, dto);
   }
 
   @Post()
