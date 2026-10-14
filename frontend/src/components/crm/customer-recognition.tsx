@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Loader2, UserCheck, UserPlus } from "lucide-react";
 
 import { useCustomerLookup, type LookupResult } from "@/lib/queries/crm";
-import { normalizeIndianMobile } from "@/lib/utils";
+import { normalizeCustomerPhone } from "@/lib/utils";
 
 /**
  * "Who just walked in?" — the front of the showroom flow.
@@ -19,9 +19,10 @@ import { normalizeIndianMobile } from "@/lib/utils";
  * is worse than nothing.
  *
  * NO DEBOUNCE IS NEEDED, which is worth stating because adding one is the
- * obvious instinct: `normalizeIndianMobile` returns null until the number is
- * actually complete, so the query is disabled for every partial entry and fires
- * exactly once, on the last digit.
+ * obvious instinct: `normalizeCustomerPhone` returns null until the number is
+ * actually complete, so an Indian number fires exactly once, on the last digit.
+ * An international (`+`) number can fire from its 8th digit — a handful of
+ * extra read-only lookups while a foreign number is typed, which is acceptable.
  */
 export function CustomerRecognition({
   phone,
@@ -31,7 +32,7 @@ export function CustomerRecognition({
   /** Called with the matched customer, so a form can prefill their name. */
   onRecognised?: (customer: NonNullable<LookupResult["customer"]>) => void;
 }) {
-  const normalized = normalizeIndianMobile(phone);
+  const normalized = normalizeCustomerPhone(phone);
 
   // One lookup implementation, in the queries module — this component renders
   // the answer, it does not own a second way of asking the question.

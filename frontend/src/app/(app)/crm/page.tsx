@@ -83,7 +83,7 @@ import {
   StoreScopeField,
   useStoreScope,
 } from "@/components/common/store-scope-field";
-import { apiErrorMessage, normalizeIndianMobile, phoneInputValue } from "@/lib/utils";
+import { apiErrorMessage, customerPhoneInputValue, normalizeCustomerPhone } from "@/lib/utils";
 import { useDownloadLeadExport } from "@/lib/queries/lead-export";
 import { ROLE_RANK } from "@/lib/types";
 
@@ -901,11 +901,13 @@ function AddLeadDialog({
     if (!customer.trim()) next.customer = "Customer name is required.";
     // A name must actually be a name — reject a phone number / id typed here.
     else if (!/\p{L}/u.test(customer)) next.customer = "Enter a real name (letters, not just a number).";
-    // Phone is mandatory (Round-2) and must be a valid Indian mobile — the
-    // backend now enforces @IsIndianMobile, so block/normalise client-side.
-    const normalizedPhone = normalizeIndianMobile(phone);
+    // Phone is mandatory (Round-2). Customers may be foreign (client, 13 Oct):
+    // an Indian 10-digit mobile or a +country international number — the
+    // backend enforces @IsCustomerPhone, so normalise the same way client-side.
+    const normalizedPhone = normalizeCustomerPhone(phone);
     if (!phone.trim()) next.phone = "Phone number is required to save a lead.";
-    else if (!normalizedPhone) next.phone = "Enter a valid 10-digit mobile number.";
+    else if (!normalizedPhone)
+      next.phone = "Enter a 10-digit mobile, or an international number starting with +.";
     if (!source) next.source = "Lead source is required.";
     if (!interest.trim()) next.interest = "Add what the lead is interested in.";
     if (Object.keys(next).length > 0) {
@@ -917,7 +919,7 @@ function AddLeadDialog({
       {
         storeId: targetStoreId,
         customerName: customer.trim(),
-        // Validated non-null just above; send the canonical 10-digit value.
+        // Validated non-null just above; send the canonical normalised value.
         phone: normalizedPhone as string,
         // Validated non-empty just above; narrow away the "" union member.
         source: source as LeadSource,
@@ -973,13 +975,13 @@ function AddLeadDialog({
             </Label>
             <Input
               id="phone"
-              placeholder="10-digit mobile"
-              inputMode="numeric"
-              maxLength={10}
+              placeholder="10-digit mobile or +country number"
+              inputMode="tel"
+              maxLength={16}
               value={phone}
               aria-invalid={!!errors.phone}
               onChange={(e) => {
-                setPhone(phoneInputValue(e.target.value));
+                setPhone(customerPhoneInputValue(e.target.value));
                 clearError("phone");
               }}
             />

@@ -194,6 +194,27 @@ describe('duplicate customers across stores, and hand-picked audiences (e2e)', (
       .expect(201);
   });
 
+  /* --------------------------------- a foreign customer (client, 13 Oct) */
+
+  it('accepts a foreign customer on an international number', async () => {
+    const res = await request(server())
+      .post('/parties')
+      .set(auth(tokens.bandra))
+      .send({ name: 'Fatima Al Marri', phone: '+971 55 123 4567', storeId: BANDRA, city: 'Dubai' })
+      .expect(201);
+    // Stored in the canonical spelling, so the next lookup can find it.
+    expect(res.body.phone).toBe('+971551234567');
+  });
+
+  it('still catches the duplicate when the + is left off the retype', async () => {
+    const res = await request(server())
+      .post('/parties')
+      .set(auth(tokens.andheri))
+      .send({ name: 'F. Al Marri', phone: '971 55 123 4567', storeId: ANDHERI })
+      .expect(409);
+    expect(res.body.message).toContain('Mumbai - Bandra');
+  });
+
   /* ------------------------------------------- bulk send, for a manager */
 
   it('gives a store manager the bulk-send screen, at STORE level', async () => {

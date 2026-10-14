@@ -63,8 +63,8 @@ import { useConfigBootstrap } from "@/lib/queries/tenant-config";
 import {
   apiErrorMessage,
   isRealName,
-  normalizeIndianMobile,
-  phoneInputValue,
+  customerPhoneInputValue,
+  normalizeCustomerPhone,
 } from "@/lib/utils";
 import { useResetOn } from "@/lib/use-reset-on";
 
@@ -484,9 +484,9 @@ function UnifiedWalkinDialog({
         next.customer = "Enter a real name — letters, not just a number.";
     }
     const normalizedPhone =
-      !anonymous && phone.trim() ? normalizeIndianMobile(phone) : null;
+      !anonymous && phone.trim() ? normalizeCustomerPhone(phone) : null;
     if (!anonymous && phone.trim() && !normalizedPhone)
-      next.phone = "Enter a valid 10-digit mobile number.";
+      next.phone = "Enter a 10-digit mobile, or an international number starting with +.";
     if (outcome === "follow_up" && !followUpDate && !reminderAt) {
       next.followUpDate = "Pick the follow-up date or a reminder.";
     }
@@ -634,14 +634,14 @@ function UnifiedWalkinDialog({
               <Label htmlFor="ci-phone">Phone</Label>
               <Input
                 id="ci-phone"
-                placeholder={anonymous ? "Not provided" : "10-digit mobile"}
-                inputMode="numeric"
-                maxLength={10}
+                placeholder={anonymous ? "Not provided" : "10-digit mobile or +country number"}
+                inputMode="tel"
+                maxLength={16}
                 disabled={anonymous}
                 value={anonymous ? "" : phone}
                 aria-invalid={!!errors.phone}
                 onChange={(e) => {
-                  setPhone(phoneInputValue(e.target.value));
+                  setPhone(customerPhoneInputValue(e.target.value));
                   clearError("phone");
                 }}
               />

@@ -1,10 +1,11 @@
 import { IsEmail, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
-import { IsIndianMobile, IsRealName } from '../../common/contact.util';
+import { IsCustomerPhone, IsRealName } from '../../common/contact.util';
 
 /**
  * POST /parties — add a customer from the shop floor (reps create customers;
- * store scope still enforced server-side). Phone reuses the app's Indian-mobile
- * validator; email is checked with `isValidEmail` in the service.
+ * store scope still enforced server-side). Phone takes an Indian mobile or an
+ * international number — customers may be foreign (client, 13 Oct); email is
+ * checked with `isValidEmail` in the service.
  */
 export class CreatePartyDto {
   @IsString()
@@ -18,7 +19,7 @@ export class CreatePartyDto {
   name!: string;
 
   @IsString()
-  @IsIndianMobile()
+  @IsCustomerPhone()
   phone!: string;
 
   @IsOptional()

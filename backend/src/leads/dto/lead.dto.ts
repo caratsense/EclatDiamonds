@@ -16,7 +16,7 @@ import {
   MinLength,
 } from 'class-validator';
 import { LeadSource, LeadStage } from '@prisma/client';
-import { IsIndianMobile, IsRealName } from '../../common/contact.util';
+import { IsCustomerPhone, IsRealName } from '../../common/contact.util';
 import { csv } from '../../common/query-csv';
 import { LOCAL_DATETIME } from '../../crm/follow-up-reminders.service';
 
@@ -55,10 +55,11 @@ export class CreateLeadDto {
   @IsRealName()
   customerName!: string;
 
-  /** Phone is mandatory on create (Round 2) and must be a valid Indian mobile. */
+  /** Phone is mandatory on create (Round 2). Customers may be foreign (client,
+   * 13 Oct), so this takes an Indian mobile or an international number. */
   @IsString()
   @IsNotEmpty()
-  @IsIndianMobile()
+  @IsCustomerPhone()
   phone!: string;
 
   @IsOptional()

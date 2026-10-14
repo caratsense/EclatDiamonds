@@ -164,6 +164,49 @@ describe('Commercial pipelines → Customer 360 (e2e)', () => {
     expect(kinds).toEqual(expect.arrayContaining(['quoted', 'purchased']));
   });
 
+  it('a foreign customer: a +country lead is accepted, and the same number finds them again', async () => {
+    // Customers may be foreign (client, 13 Oct) — the number is NOT forced
+    // into the 10-digit Indian shape anywhere on this path.
+    const first = await post('/leads', {
+      storeId: E.store,
+      customerName: 'PIPE-E Dubai Customer',
+      phone: '+971 55 123 4567',
+      source: 'walk_in',
+      interest: 'Solitaire, visiting from Dubai',
+    });
+    expect(first.status).toBe(201);
+
+    // Identity linked the lead to a real customer — not best-effort-unresolved.
+    const lead = await prisma.lead.findFirst({
+      where: { organisationId: E.org, customerName: 'PIPE-E Dubai Customer' },
+      select: { partyId: true },
+    });
+    expect(lead?.partyId).toBeTruthy();
+
+    // The showroom lookup finds them again, whatever the formatting.
+    const found = await post('/crm/customers/lookup', {
+      kind: 'phone',
+      value: '+971551234567',
+    });
+    expect(found.status).toBe(201);
+    expect(found.body.found).toBe(true);
+    expect(found.body.customer.id).toBe(lead!.partyId);
+
+    // A second record on the same number reaches the SAME customer, so create
+    // and lookup normalise the same way.
+    const second = await post('/leads', {
+      storeId: E.store,
+      customerName: 'PIPE-E Dubai Customer',
+      phone: '+971551234567',
+      source: 'walk_in',
+      interest: 'Follow-up enquiry',
+    });
+    expect(second.status).toBe(201);
+    expect(
+      await prisma.lead.count({ where: { organisationId: E.org, partyId: lead!.partyId } }),
+    ).toBe(2);
+  });
+
   it('a malformed phone never costs the business its record', async () => {
     // "not-a-phone" cannot be normalised. The sale must still exist.
     const sale = await post('/sales', {
