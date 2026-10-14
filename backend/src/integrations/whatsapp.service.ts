@@ -2,7 +2,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
 import { fetchJson, safeEqual } from './integrations.util';
-import { SenderRoute, WhatsAppCredentialsService } from './whatsapp-credentials.service';
+import {
+  SenderProblem,
+  SenderRoute,
+  WhatsAppCredentialsService,
+} from './whatsapp-credentials.service';
 
 /**
  * The largest inbound attachment we will store. WhatsApp caps most media
@@ -77,6 +81,41 @@ export class WhatsAppService {
    */
   async enabledFor(organisationId: string): Promise<boolean> {
     return (await this.credentials.senderFor(organisationId)).usable;
+  }
+
+  /**
+   * Whether ONE PARTICULAR message could leave, and the sentence to show when
+   * it could not — without handing the caller the credential it would use.
+   *
+   * `enabledFor` asks with no route at all, which for a tenant with several
+   * numbers always answers "no": nothing told it which one. A caller that knows
+   * the branch and the audience (a quote, to a customer) needs the answer for
+   * THAT send, before it queues something a person will be told about.
+   *
+   * `scope` is part of the answer on purpose. "This tenant has no WhatsApp"
+   * (`none`) and "this tenant has WhatsApp but not for this message" (`tenant`)
+   * deserve different handling: the first is a deployment nobody connected, the
+   * second is a mapping somebody has to fix.
+   */
+  async senderStatus(
+    organisationId: string,
+    route?: SenderRoute,
+  ): Promise<{
+    usable: boolean;
+    scope: 'tenant' | 'platform_env' | 'none';
+    /** Which KIND of problem it is, for a caller that treats them differently. */
+    code: SenderProblem | null;
+    reason: string | null;
+    resolvedBy: string | null;
+  }> {
+    const sender = await this.credentials.senderFor(organisationId, route ?? {});
+    return {
+      usable: sender.usable,
+      scope: sender.scope,
+      code: sender.code,
+      reason: sender.reason,
+      resolvedBy: sender.resolvedBy,
+    };
   }
 
   /**

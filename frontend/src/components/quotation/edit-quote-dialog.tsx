@@ -19,6 +19,7 @@ import { Separator } from "@/components/ui/separator";
 import { formatINR, formatPercent } from "@/lib/format";
 import { GST_RATE, type Quote, type QuoteLine } from "@/lib/mock/quotation";
 import { num, pct, round2 } from "@/components/quotation/quote-item-editor";
+import { QuoteCustomerPanel } from "@/components/quotation/quote-customer-panel";
 import { useUpdateQuote } from "@/lib/queries/quotes";
 import { apiErrorMessage } from "@/lib/utils";
 
@@ -26,11 +27,19 @@ import { apiErrorMessage } from "@/lib/utils";
  * The client's 10 Oct ask: a saved quote had no way to change its items — only
  * the bill-to/payments edit existed. This edits the PRICE: weights, rates,
  * making, each stone and every discount, over the lines exactly as they were
- * stored. It PATCHes /quotes/:id, which re-prices on the server, bumps the
- * revision and withdraws any manager approval (the gate must judge the new
- * price). The full builder is not reused here: its state is keyed to the
- * materials master (item-type and metal codes), which a stored line no longer
- * carries losslessly — adding a brand-new item still means raising a new quote.
+ * stored. It PATCHes /quotes/:id, which re-prices on the server and bumps the
+ * revision. Nothing else changes: a quotation once created is created, so an
+ * edit never sends it back for anybody's say-so (client, 13 Oct).
+ *
+ * The customer block rides along at the top ({@link QuoteCustomerPanel}) with
+ * its own Save, because this is the dialog people open to change a quote — but
+ * it goes through the details route, re-prices nothing and does not touch the
+ * revision. Two separate saves, on purpose: correcting a name must never be
+ * the thing that re-costs a quote.
+ *
+ * The full builder is not reused here: its state is keyed to the materials
+ * master (item-type and metal codes), which a stored line no longer carries
+ * losslessly — adding a brand-new item still means raising a new quote.
  */
 
 interface EditStone {
@@ -292,7 +301,6 @@ export function EditQuoteDialog({ quote, open, onOpenChange }: EditQuoteDialogPr
       toast.error("The additional discount is more than the making and diamonds that are left.");
       return;
     }
-    const prevStatus = quote.status;
     updateQuote.mutate(
       {
         id: quote.id,
@@ -302,18 +310,9 @@ export function EditQuoteDialog({ quote, open, onOpenChange }: EditQuoteDialogPr
       },
       {
         onSuccess: (updated) => {
-          // The server resets an approved / awaiting quote to draft — the
-          // returned status is how it says the approval was withdrawn.
-          const withdrawn =
-            (prevStatus === "approved" || prevStatus === "pending_approval") &&
-            updated.status === "draft";
+          // The new price is the whole outcome: there is no standing to report.
           toast.success(`Quote ${updated.ref} updated — now revision ${updated.revision}`, {
-            description: withdrawn
-              ? prevStatus === "approved"
-                ? "The manager approval was withdrawn: the new price must be approved again before it can be sent."
-                : "The pending approval request was withdrawn: request approval again for the new price."
-              : `New total ${formatINR(updated.totals?.grandTotal ?? preview.grand)}.`,
-            duration: withdrawn ? 8000 : undefined,
+            description: `New total ${formatINR(updated.totals?.grandTotal ?? preview.grand)}.`,
           });
           onOpenChange(false);
         },
@@ -333,13 +332,18 @@ export function EditQuoteDialog({ quote, open, onOpenChange }: EditQuoteDialogPr
           </DialogDescription>
         </DialogHeader>
 
-        {quote.status === "approved" || quote.status === "pending_approval" ? (
-          <p className="rounded-lg border bg-muted/30 p-2.5 text-xs text-muted-foreground">
-            {quote.status === "approved"
-              ? "This quote is approved. Saving a new price withdraws that approval — a manager must approve it again."
-              : "This quote is awaiting approval. Saving a new price withdraws the request — ask again afterwards."}
-          </p>
-        ) : null}
+        {/* Who the quote is for — the same block, and the same Save of its own,
+            as the quote view. It is HERE as well because this is the dialog
+            somebody opens to change a quote, and a mis-keyed name would
+            otherwise send them hunting. Deliberately outside the item list and
+            outside this dialog's footer: it costs nothing, re-prices nothing
+            and leaves the revision alone, so it must not look like part of the
+            price edit below. */}
+        <QuoteCustomerPanel quote={quote} />
+
+        <p className="text-xs font-medium text-muted-foreground">
+          Items &amp; pricing — saving these re-prices the quote
+        </p>
 
         <div className="space-y-3">
           {lines.map((l, i) => (

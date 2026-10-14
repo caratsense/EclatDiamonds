@@ -37,7 +37,15 @@ async function teardown(prisma: import('../src/prisma/prisma.service').PrismaSer
   await prisma.quoteApprovalSettings.deleteMany({ where: { organisationId: A.org } });
   await prisma.auditLog.deleteMany({ where: { organisationId: A.org } });
   await prisma.quoteLine.deleteMany({ where: { quote: { organisationId: A.org } } });
+  await prisma.quoteRedeemableStore.deleteMany({ where: { quote: { organisationId: A.org } } });
   await prisma.quote.deleteMany({ where: { organisationId: A.org } });
+  // A quote raised through the API resolves a customer behind it, so the party
+  // and its traces have to go before the store and org they point at.
+  await prisma.activityEvent.deleteMany({ where: { organisationId: A.org } });
+  await prisma.productInteraction.deleteMany({ where: { organisationId: A.org } });
+  await prisma.mergeCandidate.deleteMany({ where: { organisationId: A.org } });
+  await prisma.contactPoint.deleteMany({ where: { organisationId: A.org } });
+  await prisma.party.deleteMany({ where: { organisationId: A.org } });
   await prisma.userStore.deleteMany({ where: { user: { organisationId: A.org } } });
   await prisma.user.deleteMany({ where: { organisationId: A.org } });
   await prisma.store.deleteMany({ where: { organisationId: A.org } });
@@ -119,6 +127,44 @@ describe('Quote approval removed (e2e)', () => {
   afterAll(async () => {
     if (prisma) await teardown(prisma);
     if (app) await app.close();
+  });
+
+  it('a salesperson raises a quote worth more than the old threshold and it is simply created', async () => {
+    // The create door itself: no permission to ask for, no status to wait in.
+    // 10 g at 20,000/g is well over the tenant's stale 100,000 threshold.
+    const created = await request(server())
+      .post('/quotes')
+      .set(auth(repA))
+      .send({
+        storeId: A.store,
+        customerName: 'Walk-in Customer',
+        phone: '919812370009',
+        lines: [
+          {
+            description: 'Diamond necklace', karat: 22, weightGrams: 10,
+            goldRatePerGram: 20000, makingCharges: 25000, stoneCharges: 0,
+          },
+        ],
+      });
+    expect(created.status).toBe(201);
+    expect(created.body.status).toBe('draft');
+    expect(created.body.totals.grandTotal).toBeGreaterThan(100_000);
+    const row = await prisma.quote.findUniqueOrThrow({ where: { id: created.body.id } });
+    expect(row.requestedById).toBeNull();
+    expect(row.decidedById).toBeNull();
+
+    // And it is downloadable by its own author the moment it exists.
+    const file = await request(server())
+      .get(`/quotes/${created.body.id}/pdf`)
+      .set(auth(repA))
+      .buffer(true)
+      .parse((res, cb) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => cb(null, Buffer.concat(chunks)));
+      });
+    expect(file.status).toBe(200);
+    expect((file.body as Buffer).subarray(0, 5).toString()).toBe('%PDF-');
   });
 
   it('a quote over the old threshold is never held: the gate is cleared for everyone', async () => {
