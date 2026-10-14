@@ -3,7 +3,7 @@ import { Reflector } from '@nestjs/core';
 import { AuthUser } from '../common/auth-user';
 import { ROLE_RANK } from '../common/role.util';
 import { IS_PUBLIC_KEY } from './public.decorator';
-import { routeForPath } from './access';
+import { HEAD_OFFICE_DELEGABLE, routeForPath } from './access';
 
 /**
  * Per-screen access (auth/access.ts), enforced on the API.
@@ -39,6 +39,18 @@ export class ModuleAccessGuard implements CanActivate {
       // A shared API: not holding the screen that leads it is no reason to refuse.
       if (route.soft) return true;
       throw new ForbiddenException('This screen is not switched on for you.');
+    }
+
+    /*
+     * A head-office screen head office chose to delegate: the APIs behind it
+     * are @Roles('head_office'), so holding the screen has to carry the rank
+     * for this request or the page would 403 the moment it opened. Scoped to
+     * this route only -- the elevation does not leak to any other screen --
+     * and `actingAs` keeps the real role visible to anything that cares.
+     */
+    if ((HEAD_OFFICE_DELEGABLE as readonly string[]).includes(route.module)) {
+      req.user = { ...user, role: 'head_office', actingAs: user.role };
+      return true;
     }
 
     const rank = ROLE_RANK[user.role];

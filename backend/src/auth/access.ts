@@ -136,6 +136,28 @@ export const HEAD_OFFICE_ONLY: ModuleSlug[] = [
   'settings/messaging-routes', 'settings/access',
 ];
 
+/**
+ * Of those, the ones head office may hand to somebody else on purpose (client,
+ * 14 Oct: "if she wants to give two or three head office screens to someone,
+ * she should be able to"). They stay out of every role's defaults — nobody
+ * gets them by being promoted — but head office can switch one on for one
+ * person, and `ModuleAccessGuard` then lets that person's requests to THAT
+ * screen's routes through as head office.
+ *
+ * `settings/access` is deliberately NOT here. It is the screen that edits
+ * access, so granting it would let the holder grant themselves anything,
+ * including head office itself. That one stays with head office until the
+ * owner asks for it in writing.
+ */
+export const HEAD_OFFICE_DELEGABLE: ModuleSlug[] = [
+  'settings/onboarding',
+  'new-store',
+  'settings/configuration',
+  'settings/integrations',
+  'settings/integrations/templates',
+  'settings/messaging-routes',
+];
+
 /** The roles in use. Area manager and storeperson are retired: nobody can be given them. */
 export const ACTIVE_ROLES: Role[] = ['salesperson', 'store_manager', 'marketing', 'head_office'];
 
@@ -330,6 +352,18 @@ const SOFT_ROUTE_MODULES: [prefix: string, module: ModuleSlug][] = [
   ['crm/lead-forms', 'lead-forms'],
   ['lead-tags', 'settings/lead-tags'],
   ['integrations-registry', 'conversations'],
+  /*
+   * The APIs behind the head-office screens head office may delegate. SOFT, so
+   * somebody who does NOT hold the screen is unaffected and still meets the
+   * route's own @Roles -- /config/bootstrap stays open to everyone. Somebody
+   * who DOES hold it is raised to head office for these routes only, which is
+   * what makes a delegated screen actually usable instead of a page that 403s
+   * the moment it opens.
+   */
+  ['config', 'settings/configuration'],
+  ['integrations', 'settings/integrations'],
+  ['omnichannel/templates', 'settings/integrations/templates'],
+  ['omnichannel/integrations', 'settings/integrations/templates'],
 ];
 
 type Route = { module: ModuleSlug | null; soft: boolean };

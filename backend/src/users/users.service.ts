@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import {
   AccessOverride,
+  HEAD_OFFICE_DELEGABLE,
   HEAD_OFFICE_ONLY,
   MODULES,
   canOpen,
@@ -1280,6 +1281,19 @@ export class UsersService {
       startsAttendanceOnly: startsAttendanceOnly(u.role, actor.organisationId),
       overrides: (u.accessOverrides ?? {}) as Record<string, AccessOverride>,
       effective: effectiveAccess(u.role, u.accessOverrides, actor.organisationId),
+      /*
+       * The screens this person can actually be given, straight from the
+       * server's own list. The editor used to keep a hand-copied list, which
+       * drifted: it still offered "Orders in Production" (a route governed by
+       * Quotation & Orders, never grantable on its own) and the WhatsApp
+       * templates screen (head office only), so saving ANY change for that
+       * person failed on a screen they had not touched. One list, one source.
+       */
+      grantable: (MODULES as readonly string[]).filter(
+        (slug) =>
+          !(HEAD_OFFICE_ONLY as readonly string[]).includes(slug) ||
+          (HEAD_OFFICE_DELEGABLE as readonly string[]).includes(slug),
+      ),
     };
   }
 
@@ -1303,8 +1317,17 @@ export class UsersService {
       if (level !== 'none' && level !== 'own' && level !== 'store') {
         throw new BadRequestException(`${slug}: choose none, own or store`);
       }
-      if (level !== 'none' && (HEAD_OFFICE_ONLY as string[]).includes(slug)) {
-        throw new BadRequestException(`${slug} is for head office only`);
+      // Head office may now delegate most of its own screens on purpose; only
+      // the access editor itself is still refused, because handing that over
+      // hands over the ability to grant anything, head office included.
+      if (
+        level !== 'none' &&
+        (HEAD_OFFICE_ONLY as string[]).includes(slug) &&
+        !(HEAD_OFFICE_DELEGABLE as string[]).includes(slug)
+      ) {
+        throw new BadRequestException(
+          `${slug} stays with head office — it is the screen that grants access.`,
+        );
       }
       // Equal to what this person starts with: not a change, so not stored.
       if ((defaults[slug] ?? 'none') === level) continue;

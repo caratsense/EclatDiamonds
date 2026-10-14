@@ -120,7 +120,35 @@ describe('Screen access by role and by person (e2e)', () => {
     await get('rep', '/hrms/shifts').expect(200);
   });
 
+  it('head office may hand over its own screens, except the one that grants access', async () => {
+    // Client, 14 Oct: head office wanted to give two or three of its own
+    // screens to somebody. Granting one now works AND carries the rank on that
+    // screen's routes, or the page would 403 the moment it opened.
+    await request(server())
+      .put('/users/u_acc_rep/access')
+      .set(as('ho'))
+      .send({ overrides: { 'settings/configuration': 'store' } })
+      .expect(200)
+      .expect((r) => expect(r.body.effective['settings/configuration']).toBe('store'));
+    // The industry-pack list sits behind @Roles('head_office').
+    await get('rep', '/config/packs').expect(200);
+
+    // Taken away again, the same route refuses.
+    await request(server()).put('/users/u_acc_rep/access').set(as('ho')).send({ overrides: {} }).expect(200);
+
+    // The elevation never leaks to another screen's routes.
+    await request(server())
+      .put('/users/u_acc_rep/access')
+      .set(as('ho'))
+      .send({ overrides: { 'settings/configuration': 'store' } })
+      .expect(200);
+    await get('rep', '/users/u_acc_rep/access').expect(403);
+    await request(server()).put('/users/u_acc_rep/access').set(as('ho')).send({ overrides: {} }).expect(200);
+  });
+
   it('head-office screens are never given away, head office is never limited, only head office edits', async () => {
+    // The access editor itself stays with head office: handing it over hands
+    // over the ability to grant anything, head office included.
     await request(server()).put('/users/u_acc_rep/access').set(as('ho')).send({ overrides: { 'settings/access': 'store' } }).expect(400);
     await request(server()).put('/users/u_acc_ho/access').set(as('ho')).send({ overrides: { crm: 'none' } }).expect(400);
     await request(server()).put('/users/u_acc_rep/access').set(as('mgr')).send({ overrides: { inventory: 'store' } }).expect(403);
