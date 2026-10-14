@@ -31,6 +31,19 @@ import { apiErrorMessage, cn } from "@/lib/utils";
 
 import { bulkAttendanceOnlyPrompt, startingPointLine } from "./wording";
 
+/** Only for an older API that does not send `grantable` yet -- see below. */
+const LEGACY_HEAD_OFFICE_ONLY = new Set([
+  "settings/onboarding",
+  "new-store",
+  "settings/configuration",
+  "settings/integrations",
+  "settings/integrations/templates",
+  "settings/messaging-routes",
+  "settings/access",
+  // Governed by Quotation & Orders; never grantable on its own.
+  "timelines",
+]);
+
 /*
  * Which screens may be granted is the SERVER's list, read from the access
  * payload (`grantable`). The hand-copied set that used to live here drifted
@@ -262,7 +275,16 @@ function PersonAccess({
    * — so a head office person could not be edited at all. Only the matrix goes.
    */
   const isHeadOffice = data.role === "head_office";
-  const grantable = new Set(data.grantable ?? []);
+  /*
+   * The server's list is the authority. It can legitimately be absent for a
+   * moment: the frontend and the API deploy separately, so a browser can hold
+   * the new page against an older backend. Falling back to an empty set there
+   * would render NO screens at all, which looks far more broken than the bug
+   * this replaced -- so an older payload keeps the previous behaviour instead.
+   */
+  const grantable = data.grantable?.length ? new Set(data.grantable) : null;
+  const offered = (slug: string) =>
+    grantable ? grantable.has(slug) : !LEGACY_HEAD_OFFICE_ONLY.has(slug);
 
   const current = (slug: string): AccessOverride => draft[slug] ?? data.effective[slug] ?? "none";
   const byDefault = (slug: string): AccessOverride => data.defaults[slug] ?? "none";
@@ -465,7 +487,7 @@ function PersonAccess({
           </p>
         ) : null}
         {isHeadOffice ? null : NAV_GROUPS.map((group) => {
-          const items = group.items.filter((i) => grantable.has(i.slug));
+          const items = group.items.filter((i) => offered(i.slug));
           if (!items.length) return null;
           return (
             <section key={group.label} className="space-y-1.5">
