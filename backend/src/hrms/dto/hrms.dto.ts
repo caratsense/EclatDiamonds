@@ -13,8 +13,19 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { AttendanceStatus, LeaveStatus, LeaveType } from '@prisma/client';
 import { IsRealName } from '../../common/contact.util';
+
+/**
+ * Query-string booleans arrive as the strings "true"/"false" (or "1"/"0"), which
+ * `@IsBoolean()` would reject outright. Coerce before validating.
+ */
+const BoolQuery = () =>
+  Transform(({ value }) => {
+    if (value === undefined || value === '') return undefined;
+    return value === true || value === 'true' || value === '1';
+  });
 
 export class DecideLeaveDto {
   @IsEnum(LeaveStatus)
@@ -317,8 +328,8 @@ export class CheckOutDto {
 
 /**
  * POST /hrms/leave — apply for leave (self, or a manager on behalf of team staff).
- * If `days` is omitted it is computed from the date range excluding the store's
- * weekly-off day and configured holidays.
+ * If `days` is omitted it is computed from the date range excluding the days the
+ * employee is off (their roster, dated or weekly) and configured holidays.
  */
 export class ApplyLeaveDto {
   @IsEnum(LeaveType)
@@ -332,10 +343,16 @@ export class ApplyLeaveDto {
   @IsDateString()
   toDate!: string;
 
-  /** Explicit leave-day count (supports half-days, e.g. 1.5). Auto-computed if omitted. */
+  /**
+   * Leave-day count (supports half-days, e.g. 1.5). Auto-computed if omitted,
+   * and REFUSED if it disagrees with the server's count — see
+   * GET /hrms/leave/preview, whose `days` is the figure to echo back here.
+   * The cap is a sanity bound: no single request spans more than a year.
+   */
   @IsOptional()
   @IsNumber()
   @Min(0)
+  @Max(366)
   days?: number;
 
   /** true when this request covers only half a day (counts as 0.5). */
@@ -353,21 +370,84 @@ export class ApplyLeaveDto {
   staffId?: string;
 }
 
+/**
+ * GET /hrms/leave/preview — what a range would cost, before anything is applied.
+ *
+ * The apply form has to show the figure it is about to submit: the chargeable
+ * count depends on the employee's roster, which the browser does not hold and
+ * must not guess at.
+ */
+export class LeavePreviewQueryDto {
+  /** Inclusive range start (YYYY-MM-DD). */
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'from must be YYYY-MM-DD' })
+  from!: string;
+
+  /** Inclusive range end (YYYY-MM-DD). */
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'to must be YYYY-MM-DD' })
+  to!: string;
+
+  /** Half a single day (counts as 0.5), exactly as POST /hrms/leave treats it. */
+  @IsOptional()
+  @BoolQuery()
+  @IsBoolean()
+  halfDay?: boolean;
+
+  /** Which allocation the days would come out of. Omit for the day count alone. */
+  @IsOptional()
+  @IsEnum(LeaveType)
+  type?: LeaveType;
+
+  /** Manager+ only: preview for another staff member (within store scope). */
+  @IsOptional()
+  @IsString()
+  staffId?: string;
+}
+
 /** POST /hrms/regularize — request a fix for a missed/wrong punch (Module 6). */
 export class CreateRegularizationDto {
   /** Calendar date being corrected (YYYY-MM-DD). */
   @IsDateString()
   date!: string;
 
-  /** Corrected check-in instant (ISO 8601). */
+  /**
+   * Legacy ISO 8601 instant. A browser builds it in the BROWSER's timezone,
+   * which can land the correction on the wrong business day; new clients send
+   * the store-local `checkInLocalDate` + `checkInLocalTime` instead and let the
+   * server — which owns the store timezone — do the conversion. The service
+   * accepts one form or the other, never both.
+   */
   @IsOptional()
   @IsDateString()
   requestedCheckIn?: string;
 
-  /** Corrected check-out instant (ISO 8601). */
+  /** Corrected check-out instant (ISO 8601). See `requestedCheckIn`. */
   @IsOptional()
   @IsDateString()
   requestedCheckOut?: string;
+
+  /** Store-local calendar date of the corrected check-in, used with `checkInLocalTime`. */
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'checkInLocalDate must be YYYY-MM-DD' })
+  checkInLocalDate?: string;
+
+  /** Store-local wall-clock time of the corrected check-in, used with `checkInLocalDate`. */
+  @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'checkInLocalTime must be HH:mm' })
+  checkInLocalTime?: string;
+
+  /**
+   * Store-local calendar date of the corrected check-out. Carried separately
+   * from the check-in's so a night shift can still be corrected: its out-punch
+   * belongs to the day its in-punch opened, on the NEXT calendar date.
+   */
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'checkOutLocalDate must be YYYY-MM-DD' })
+  checkOutLocalDate?: string;
+
+  /** Store-local wall-clock time of the corrected check-out, used with `checkOutLocalDate`. */
+  @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'checkOutLocalTime must be HH:mm' })
+  checkOutLocalTime?: string;
 
   /** Why the punch is being corrected — mandatory; the approver decides on it. */
   @IsString()

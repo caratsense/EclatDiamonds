@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
+import Link from "next/link";
 import { CalendarPlus, Pencil, Plus } from "lucide-react";
 import { toast } from "sonner";
 
@@ -9,7 +10,6 @@ import {
   CardContent,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -33,14 +33,9 @@ import {
   LEAVE_TYPE_LABELS,
   LEAVE_TYPE_ORDER,
   type LeaveBalance,
-  type LeaveRequest,
   type LeaveType,
 } from "@/lib/mock/hrms";
-import {
-  useCancelLeave,
-  useLeaveBalances,
-  useLeaveRequests,
-} from "@/lib/queries/hrms";
+import { useLeaveBalances } from "@/lib/queries/hrms";
 import {
   useCreateLeaveBalance,
   useEditLeaveBalance,
@@ -48,26 +43,26 @@ import {
 import { useStaff } from "@/lib/queries/users";
 import { apiErrorMessage, positiveNumberInput } from "@/lib/utils";
 import { ApplyLeaveDialog } from "@/components/hrms/apply-leave-dialog";
-import { ReasonDialog } from "@/components/hrms/attendance-edit-dialog";
-import { useSession } from "@/store/use-session";
+import { MyLeaveRequestsPanel } from "@/components/hrms/leave-my-requests";
+import {
+  LeaveSummaryCards,
+  useLeaveFinancialYear,
+} from "@/components/hrms/leave-summary";
 
 /**
- * Leave balances row + "Apply for leave" action (Module 6). Balances are the
- * current user's own (self-service); managers approve requests below in the list.
+ * Leave balances row + "Apply for leave" action (Module 6), as the HRMS tab
+ * shows it. Balances are the current user's own (self-service); approving the
+ * team's requests lives on the Leave Tracker, linked below the heading.
+ *
+ * The balance tiles and the request history now come from the Leave Tracker's
+ * own components (`LeaveSummaryCards`, `MyLeaveRequestsPanel`) rather than from
+ * a second copy here. Two copies of the same arithmetic is how the HRMS tab came
+ * to show `allocated − used` while the tracker showed `allocated − used −
+ * pending`, which are different numbers wearing the same label.
  */
 export function LeaveBalances({ canEditTeam = false }: { canEditTeam?: boolean }) {
-  const { data: balances = [], isLoading } = useLeaveBalances();
   const [applyOpen, setApplyOpen] = useState(false);
-
-  // Index by type so we render in a fixed display order.
-  const byType = useMemo(() => {
-    const map = new Map<string, LeaveBalance>();
-    for (const b of balances) map.set(b.type, b);
-    return map;
-  }, [balances]);
-
-  // Financial-year label from the balance rows (e.g. "2026–27"), if present.
-  const fyLabel = balances.find((b) => b.financialYearLabel)?.financialYearLabel;
+  const fyLabel = useLeaveFinancialYear();
 
   return (
     <div className="space-y-3">
@@ -77,7 +72,11 @@ export function LeaveBalances({ canEditTeam = false }: { canEditTeam?: boolean }
             My leave balances{fyLabel ? ` · FY ${fyLabel}` : ""}
           </h3>
           <p className="text-xs text-muted-foreground">
-            Remaining paid leave for {fyLabel ?? new Date().getFullYear()}.
+            Remaining paid leave for {fyLabel ?? new Date().getFullYear()}.{" "}
+            <Link href="/hrms/leave" className="underline">
+              Open the Leave Tracker
+            </Link>
+            .
           </p>
         </div>
         <Button size="sm" onClick={() => setApplyOpen(true)}>
@@ -86,165 +85,24 @@ export function LeaveBalances({ canEditTeam = false }: { canEditTeam?: boolean }
         </Button>
       </div>
 
-      {isLoading ? (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-24 rounded-xl" />
-          ))}
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-          {LEAVE_TYPE_ORDER.map((type) => {
-            const b = byType.get(type);
-            const isFestival = type === "festival";
-            return (
-              <Card key={type}>
-                <CardContent className="space-y-1 p-4">
-                  <p className="text-xs text-muted-foreground">
-                    {LEAVE_TYPE_LABELS[type]}
-                    {isFestival ? " · unpaid" : ""}
-                  </p>
-                  {isFestival ? (
-                    <p className="text-2xl font-semibold text-muted-foreground">
-                      Unpaid
-                    </p>
-                  ) : (
-                    <>
-                      <p className="num text-2xl font-semibold">
-                        {b ? b.balance : "—"}
-                        <span className="text-sm font-normal text-muted-foreground">
-                          {" "}
-                          left
-                        </span>
-                      </p>
-                      <p className="num text-xs text-muted-foreground">
-                        {b ? `${b.used} / ${b.allocated} used` : "no allocation"}
-                      </p>
-                    </>
-                  )}
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
-      )}
+      <LeaveSummaryCards />
 
       <ApplyLeaveDialog open={applyOpen} onOpenChange={setApplyOpen} />
 
-      <MyLeaveRequests />
+      <Card>
+        <CardContent className="space-y-3 p-4">
+          <div>
+            <h3 className="text-sm font-medium">My leave requests</h3>
+            <p className="text-xs text-muted-foreground">
+              Track approvals and withdraw a request while it is pending.
+            </p>
+          </div>
+          <MyLeaveRequestsPanel />
+        </CardContent>
+      </Card>
 
       {canEditTeam ? <TeamBalanceEditor /> : null}
     </div>
-  );
-}
-
-const LEAVE_STATUS_VARIANT = {
-  pending: "warning",
-  approved: "success",
-  rejected: "destructive",
-  cancelled: "secondary",
-} as const;
-
-/** The signed-in person's request history, including pending-request withdrawal. */
-function MyLeaveRequests() {
-  const userId = useSession((state) => state.user.id);
-  const requests = useLeaveRequests();
-  const cancel = useCancelLeave();
-  const [cancelling, setCancelling] = useState<LeaveRequest | null>(null);
-  const own = useMemo(
-    () => (requests.data ?? []).filter((request) => request.staffId === userId),
-    [requests.data, userId],
-  );
-
-  return (
-    <Card>
-      <CardContent className="space-y-3 p-4">
-        <div>
-          <h3 className="text-sm font-medium">My leave requests</h3>
-          <p className="text-xs text-muted-foreground">
-            Track approvals and withdraw a request while it is pending.
-          </p>
-        </div>
-        {requests.isLoading ? (
-          <Skeleton className="h-20 rounded-lg" />
-        ) : requests.isError ? (
-          <div className="rounded-lg border border-destructive/30 p-3 text-sm">
-            Couldn&apos;t load your leave requests.{" "}
-            <button type="button" className="underline" onClick={() => requests.refetch()}>
-              Retry
-            </button>
-          </div>
-        ) : own.length === 0 ? (
-          <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-            No leave requests yet.
-          </p>
-        ) : (
-          <ul className="divide-y rounded-lg border">
-            {own.map((request) => (
-              <li
-                key={request.id}
-                className="flex flex-col gap-2 px-3 py-3 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-medium">{request.type}</span>
-                    <Badge variant={LEAVE_STATUS_VARIANT[request.status]}>
-                      {request.status}
-                    </Badge>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {request.from} – {request.to} · {request.days} {request.days === 1 ? "day" : "days"}
-                  </p>
-                  {request.decisionNote ? (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Decision note: {request.decisionNote}
-                    </p>
-                  ) : null}
-                </div>
-                {request.status === "pending" ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="self-start sm:self-auto"
-                    disabled={cancel.isPending}
-                    onClick={() => setCancelling(request)}
-                  >
-                    Withdraw
-                  </Button>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardContent>
-
-      {cancelling ? (
-        <ReasonDialog
-          key={cancelling.id}
-          open
-          onOpenChange={(open) => (open ? null : setCancelling(null))}
-          title="Withdraw this leave request?"
-          description="The request stays in your history as cancelled and will no longer await approval."
-          confirmLabel="Withdraw request"
-          destructive
-          pending={cancel.isPending}
-          onConfirm={(reason) =>
-            cancel.mutate(
-              { id: cancelling.id, reason },
-              {
-                onSuccess: () => {
-                  toast.success("Leave request withdrawn");
-                  setCancelling(null);
-                },
-                onError: (error) =>
-                  toast.error(apiErrorMessage(error, "Could not withdraw the request.")),
-              },
-            )
-          }
-        />
-      ) : null}
-    </Card>
   );
 }
 
@@ -254,7 +112,14 @@ function MyLeaveRequests() {
 
 type BalanceEdit = { type: LeaveType; row?: LeaveBalance };
 
-function TeamBalanceEditor() {
+/**
+ * Exported so the HR setup screen can render the correction panel WITHOUT the
+ * self-service balances above it. A balance correction is head office policy
+ * work, and it is deliberately kept off the screens where people apply for
+ * leave; mounting the whole of `LeaveBalances` there would have put somebody's
+ * own tiles and their own request history onto the policy page as well.
+ */
+export function TeamBalanceEditor() {
   const { data: staff = [] } = useStaff();
   const [staffId, setStaffId] = useState("");
   return (

@@ -5,13 +5,14 @@ import { visibleNavGroups } from "@/lib/navigation";
 import type { AccessMap, Role } from "@/lib/types";
 
 /**
- * The phone's bottom tabs: the first four screens of a preferred order that the
- * person can open, then "More".
+ * The phone's bottom tabs: three screens from a preferred order, HR in the last
+ * slot, then "More".
  *
- * Sales staff on attendance only can open none of the sales screens in that
- * order, so their bar used to be a lone "More" button with their one screen
- * behind it. Attendance is now the last in the order, so it fills a bar that
- * has room and changes nothing for a bar that is already full.
+ * HR used to be seventh in that order and cut by the four-tab limit, so the one
+ * screen every role holds — punch in, punch out, apply for leave, read the
+ * roster — was the only one a phone could not reach without opening "More". It
+ * now takes the last slot whenever the person holds it, which is also what keeps
+ * somebody on attendance only from facing a bar that is just "More".
  */
 const tabs = (role: Role, access?: AccessMap) =>
   primaryTabSlugs(
@@ -23,12 +24,23 @@ describe("the phone's bottom tabs", () => {
     expect(tabs("salesperson", { hrms: "own" })).toEqual(["hrms"]);
   });
 
-  it("leaves a bar that was already full as it was", () => {
-    expect(tabs("salesperson")).toEqual(["crm", "quotation", "catalogue", "checkins"]);
-    expect(tabs("store_manager")).toEqual(["dashboards", "crm", "quotation", "catalogue"]);
+  it("keeps the HR entry on the bar for the staff whose work it is", () => {
+    // Four tabs either way; the fourth sales screen (Check-ins, Catalogue) is
+    // one tap away under "More" and is not an action on a clock.
+    expect(tabs("salesperson")).toEqual(["crm", "quotation", "catalogue", "hrms"]);
+    expect(tabs("store_manager")).toEqual(["dashboards", "crm", "quotation", "hrms"]);
+    for (const role of ["salesperson", "store_manager", "area_manager", "head_office"] as Role[]) {
+      expect([role, tabs(role).includes("hrms")]).toEqual([role, true]);
+    }
   });
 
-  it("adds attendance where there is room, after the screens that were there", () => {
+  it("never draws more tabs than fit", () => {
+    for (const role of ["salesperson", "store_manager", "area_manager", "head_office", "marketing"] as Role[]) {
+      expect(tabs(role).length).toBeLessThanOrEqual(4);
+    }
+  });
+
+  it("leaves a bar with room to spare as it was", () => {
     // Marketing, or a salesperson given one screen back.
     expect(tabs("marketing", { crm: "store", reminders: "store", hrms: "own" })).toEqual([
       "crm",
@@ -36,5 +48,9 @@ describe("the phone's bottom tabs", () => {
       "hrms",
     ]);
     expect(tabs("salesperson", { crm: "own", hrms: "own" })).toEqual(["crm", "hrms"]);
+  });
+
+  it("drops the HR tab for somebody who does not hold the screen", () => {
+    expect(tabs("marketing", { crm: "store", reminders: "store" })).toEqual(["crm", "reminders"]);
   });
 });

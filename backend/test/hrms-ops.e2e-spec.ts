@@ -857,6 +857,335 @@ describe('Attendance operations (e2e)', () => {
     expect(row.geoVerified).toBe(false);
   });
 
+  it("a store manager's own LEAVE goes one rank up too: a peer cannot decide it, head office can", async () => {
+    /*
+     * Leave had the self-approval rule but no ladder, so a peer store manager
+     * could sign off another store manager's leave — and the request was
+     * announced to the store managers, i.e. to the requester's own peers.
+     * Same rule as a regularization, same place in the file.
+     */
+    const own = (
+      await request(server())
+        .post('/hrms/leave')
+        .set(as(U.mgr))
+        .send({ type: 'casual', fromDate: dateOnly(dayOff(50)), toDate: dateOnly(dayOff(51)), reason: 'wedding' })
+        .expect(201)
+    ).body;
+    expect(own.days).toBe(2);
+
+    const raised = await prisma.notification.findMany({
+      where: { entityType: 'LeaveRequest', entityId: own.id },
+      select: { userId: true },
+    });
+    expect(raised.some((n) => n.userId === U.ho)).toBe(true);
+    expect(raised.some((n) => n.userId === U.mgr)).toBe(false);
+    expect(raised.some((n) => n.userId === U.mgr2)).toBe(false);
+
+    // Self and a same-rank peer are refused, and told WHO can decide it.
+    const self = await request(server())
+      .patch(`/hrms/leave/${own.id}`)
+      .set(as(U.mgr))
+      .send({ status: 'approved' })
+      .expect(403);
+    expect(self.body.message).toMatch(/head office/i);
+    const peer = await request(server())
+      .patch(`/hrms/leave/${own.id}`)
+      .set(as(U.mgr2))
+      .send({ status: 'approved' })
+      .expect(403);
+    expect(peer.body.message).toMatch(/head office/i);
+    expect((await prisma.leaveRequest.findUniqueOrThrow({ where: { id: own.id } })).status).toBe('pending');
+
+    // Head office decides it, and the days are charged once.
+    await request(server()).patch(`/hrms/leave/${own.id}`).set(as(U.ho)).send({ status: 'approved' }).expect(200);
+    const bal = await prisma.leaveBalance.findFirstOrThrow({ where: { userId: U.mgr, type: 'casual' } });
+    expect(Number(bal.used)).toBe(2);
+
+    // A salesperson's leave is still the store manager's to decide — the ladder
+    // moved the manager's own request up, it did not push everything to HO.
+    const theirs = (
+      await request(server())
+        .post('/hrms/leave')
+        .set(as(U.repE))
+        .send({ type: 'casual', fromDate: dateOnly(dayOff(55)), toDate: dateOnly(dayOff(55)), reason: 'errand' })
+        .expect(201)
+    ).body;
+    const told = await prisma.notification.findMany({
+      where: { entityType: 'LeaveRequest', entityId: theirs.id },
+      select: { userId: true },
+    });
+    expect(told.some((n) => n.userId === U.mgr)).toBe(true);
+    await request(server()).patch(`/hrms/leave/${theirs.id}`).set(as(U.mgr)).send({ status: 'approved' }).expect(200);
+  });
+
+  it('the leave preview is the number apply charges, and a client count that disagrees is refused', async () => {
+    const from = dateOnly(dayOff(70));
+    const to = dateOnly(dayOff(74));
+    const preview = (
+      await request(server())
+        .get(`/hrms/leave/preview?from=${from}&to=${to}&type=sick`)
+        .set(as(U.repA))
+        .expect(200)
+    ).body;
+    expect(preview.staffId).toBe(U.repA);
+    expect(preview.days).toBe(5); // Bandra declares no weekly off and no holiday here
+    expect(preview.offDates).toEqual([]);
+    expect(preview.balance).toMatchObject({ type: 'sick', allocated: 6, available: 6, availableAfter: 1 });
+
+    // A salesperson may not preview somebody else's roster.
+    await request(server())
+      .get(`/hrms/leave/preview?from=${from}&to=${to}&staffId=${U.repB}`)
+      .set(as(U.repA))
+      .expect(403);
+
+    const mismatch = await request(server())
+      .post('/hrms/leave')
+      .set(as(U.repA))
+      .send({ type: 'sick', fromDate: from, toDate: to, days: 1 })
+      .expect(400);
+    expect(mismatch.body.message).toMatch(/5 chargeable day\(s\), not 1/);
+
+    const applied = (
+      await request(server())
+        .post('/hrms/leave')
+        .set(as(U.repA))
+        .send({ type: 'sick', fromDate: from, toDate: to, days: preview.days, reason: 'surgery' })
+        .expect(201)
+    ).body;
+    expect(applied.days).toBe(preview.days);
+    // The preview's "after" figure is what the next preview now reports.
+    const again = (
+      await request(server())
+        .get(`/hrms/leave/preview?from=${dateOnly(dayOff(80))}&to=${dateOnly(dayOff(80))}&type=sick`)
+        .set(as(U.repA))
+        .expect(200)
+    ).body;
+    expect(again.balance.pending).toBe(5);
+    expect(again.balance.available).toBe(1);
+  });
+
+  // --- Corrections: freshness, store-local times, the approver's payload ------
+
+  it('a punch that lands AFTER filing stops the approval instead of being discarded', async () => {
+    const d = dayOff(-12);
+    // The day as the staffer sees it when they file: an in-punch, no out.
+    await prisma.attendanceRecord.create({
+      data: {
+        organisationId: A.org, storeId: A.s1, staffId: U.repE, staffName: U.repE, date: d,
+        status: 'present', checkInAt: at(d, '09:28'), shiftId: shiftG, source: 'self', isLate: false,
+      },
+    });
+    const reg = (
+      await request(server())
+        .post('/hrms/regularize')
+        .set(as(U.repE))
+        .send({
+          date: dateOnly(d),
+          checkOutLocalDate: dateOnly(d),
+          checkOutLocalTime: '18:40',
+          reason: 'forgot to punch out',
+        })
+        .expect(201)
+    ).body;
+    expect(reg.original).toMatchObject({
+      checkInLocal: '09:28',
+      checkOutLocal: null,
+      status: 'present',
+      captured: true,
+    });
+
+    // The device's own out-punch arrives after the request was filed. THE BUG:
+    // approval voided every live out-punch of the day, so this one vanished
+    // without the approver ever being shown it.
+    await request(server())
+      .post('/hrms/punches')
+      .set(as(U.mgr))
+      .send({
+        userId: U.repE, storeId: A.s1, kind: 'out',
+        localDate: dateOnly(d), localTime: '21:05', note: 'device caught up',
+      })
+      .expect(201);
+    const live = await prisma.attendanceRecord.findUniqueOrThrow({
+      where: { storeId_staffId_date: { storeId: A.s1, staffId: U.repE, date: d } },
+    });
+    expect(live.checkOutAt?.getTime()).toBe(at(d, '21:05').getTime());
+
+    const refused = await request(server())
+      .patch(`/hrms/regularize/${reg.id}`)
+      .set(as(U.mgr))
+      .send({ status: 'approved' })
+      .expect(409);
+    expect(refused.body.message).toMatch(/changed after this request was filed/);
+
+    // Nothing was applied, and nothing was half-applied either: the live punch
+    // stands, no regularization punch was written, and the request is still
+    // decidable rather than decided-but-ignored.
+    const after = await prisma.attendanceRecord.findUniqueOrThrow({ where: { id: live.id } });
+    expect(after.checkOutAt?.getTime()).toBe(at(d, '21:05').getTime());
+    expect(after.source).toBe(live.source);
+    expect(after.workedMins).toBe(live.workedMins);
+    expect(await prisma.rawPunchEvent.count({ where: { userId: U.repE, source: 'regularization' } })).toBe(0);
+    const stillPending = await prisma.attendanceRegularization.findUniqueOrThrow({ where: { id: reg.id } });
+    expect(stillPending).toMatchObject({ status: 'pending', decidedById: null });
+
+    // And the list says so BEFORE the approver clicks.
+    const listed = (await request(server()).get('/hrms/regularize').set(as(U.mgr)).expect(200)).body.find(
+      (x: { id: string }) => x.id === reg.id,
+    );
+    expect(listed.stale).toBe(true);
+  });
+
+  it('a correction whose instants do not fall on the stated store-local date is refused', async () => {
+    const d = dayOff(-13);
+    // 01:30 the next morning in Mumbai: a browser two zones away built it as
+    // "23:30 on d", and nothing server-side used to disagree.
+    const nextDayInStore = new Date(at(d, '23:30').getTime() + 2 * 3_600_000);
+    const res = await request(server())
+      .post('/hrms/regularize')
+      .set(as(U.repB))
+      .send({ date: dateOnly(d), requestedCheckIn: nextDayInStore.toISOString(), reason: 'wrong zone' })
+      .expect(400);
+    expect(res.body.message).toMatch(/must belong to .* in the store timezone/);
+    expect(await prisma.attendanceRegularization.count({ where: { staffId: U.repB, date: d } })).toBe(0);
+
+    // One time form only, as the manager punch contract already requires.
+    await request(server())
+      .post('/hrms/regularize')
+      .set(as(U.repB))
+      .send({
+        date: dateOnly(d),
+        requestedCheckIn: at(d, '09:30').toISOString(),
+        checkInLocalDate: dateOnly(d),
+        checkInLocalTime: '09:30',
+        reason: 'two forms',
+      })
+      .expect(400);
+    await request(server())
+      .post('/hrms/regularize')
+      .set(as(U.repB))
+      .send({ date: dateOnly(d), checkInLocalDate: dateOnly(d), reason: 'half a form' })
+      .expect(400);
+
+    // The store-local form is resolved in the STORE's zone, by the server.
+    const ok = (
+      await request(server())
+        .post('/hrms/regularize')
+        .set(as(U.repB))
+        .send({
+          date: dateOnly(d),
+          checkInLocalDate: dateOnly(d),
+          checkInLocalTime: '09:30',
+          reason: 'forgot to punch',
+        })
+        .expect(201)
+    ).body;
+    expect(new Date(ok.requestedCheckIn).getTime()).toBe(at(d, '09:30').getTime());
+  });
+
+  it('the approver sees the ORIGINAL punches, the PROPOSED day and the shift it is judged against', async () => {
+    const d = dayOff(-16);
+    await prisma.attendanceRecord.create({
+      data: {
+        organisationId: A.org, storeId: A.s1, staffId: U.repB, staffName: U.repB, date: d,
+        status: 'late', checkInAt: at(d, '10:20'), shiftId: shiftG, source: 'self',
+        isLate: true, lateMinutes: 50,
+      },
+    });
+    const reg = (
+      await request(server())
+        .post('/hrms/regularize')
+        .set(as(U.repB))
+        .send({
+          date: dateOnly(d),
+          checkInLocalDate: dateOnly(d),
+          checkInLocalTime: '09:28',
+          checkOutLocalDate: dateOnly(d),
+          checkOutLocalTime: '18:35',
+          reason: 'punched on the back-door terminal',
+        })
+        .expect(201)
+    ).body;
+
+    const row = (await request(server()).get('/hrms/regularize').set(as(U.mgr)).expect(200)).body.find(
+      (x: { id: string }) => x.id === reg.id,
+    );
+    // Deciding "is this right?" needs all three: what the day holds, what the
+    // request would make of it, and the shift both are measured against.
+    expect(row.original).toMatchObject({ checkInLocal: '10:20', checkOutLocal: null, status: 'late', captured: true });
+    expect(row.proposed).toMatchObject({
+      checkInLocal: '09:28',
+      checkOutLocal: '18:35',
+      status: 'present',
+      isLate: false,
+      workedMins: 547,
+      dayFraction: 1,
+    });
+    expect(row.shift).toMatchObject({ id: shiftG, name: 'General', startTime: '09:30', endTime: '18:30' });
+    expect(row.stale).toBe(false);
+    expect(row.timezone).toBe(TZ);
+
+    // The promise is kept: approving produces exactly the day that was shown.
+    await request(server()).patch(`/hrms/regularize/${reg.id}`).set(as(U.mgr)).send({ status: 'approved' }).expect(200);
+    const applied = await prisma.attendanceRecord.findUniqueOrThrow({
+      where: { storeId_staffId_date: { storeId: A.s1, staffId: U.repB, date: d } },
+    });
+    expect(applied).toMatchObject({ status: row.proposed.status, isLate: false, workedMins: 547 });
+    expect(applied.checkInAt?.getTime()).toBe(at(d, '09:28').getTime());
+  });
+
+  it('a self check-in may only name the shift the person is rostered on', async () => {
+    const night = (
+      await request(server())
+        .post('/hrms/shifts')
+        .set(as(U.mgr))
+        .send({ storeId: A.s1, name: 'Night', code: 'N', startTime: '21:00', endTime: '06:00' })
+        .expect(201)
+    ).body;
+    await request(server())
+      .post('/hrms/shift-assignments')
+      .set(as(U.mgr))
+      .send({ userId: U.repE, shiftId: shiftG, effectiveFrom: dateOnly(today) })
+      .expect(201);
+
+    // Naming the store's night batch would make any afternoon punch "on time".
+    const refused = await request(server())
+      .post('/hrms/attendance/check-in')
+      .set(as(U.repE))
+      .send({ lat: MUMBAI.lat, lng: MUMBAI.lng, accuracyM: 10, shiftId: night.id })
+      .expect(400);
+    expect(refused.body.message).toMatch(/not your shift/);
+    expect(await prisma.attendanceRecord.count({ where: { staffId: U.repE, date: today } })).toBe(0);
+
+    // The rostered shift works, and the month view names it with its hours.
+    const punched = (
+      await request(server())
+        .post('/hrms/attendance/check-in')
+        .set(as(U.repE))
+        .send({ lat: MUMBAI.lat, lng: MUMBAI.lng, accuracyM: 10, shiftId: shiftG })
+        .expect(201)
+    ).body;
+    expect(punched.shiftId).toBe(shiftG);
+    const me = (await request(server()).get('/hrms/attendance/me').set(as(U.repE)).expect(200)).body;
+    expect(me.today).toMatchObject({
+      shiftId: shiftG,
+      shiftName: 'General',
+      shiftStart: '09:30',
+      shiftEnd: '18:30',
+      shiftIsFlexible: false,
+    });
+
+    // A manager correcting SOMEBODY ELSE keeps the free choice — that is what a
+    // correction is for.
+    await request(server())
+      .post('/hrms/attendance')
+      .set(as(U.mgr))
+      .send({
+        staffId: U.repE, storeId: A.s1, status: 'present',
+        date: dateOnly(dayOff(-14)), checkInLocal: '21:30', shiftId: night.id,
+      })
+      .expect(201);
+  });
+
   it('an assignment whose shift is gone is not reachable, and deleting a shift leaves none dangling', async () => {
     const dangling = await prisma.shiftAssignment.create({
       data: { organisationId: A.org, userId: U.repA, shiftId: 'shift_that_does_not_exist', effectiveFrom: dayOff(-3) },
@@ -872,6 +1201,81 @@ describe('Attendance operations (e2e)', () => {
     await request(server()).delete(`/hrms/shifts/${s.id}`).set(as(U.mgr)).expect(409);
     await request(server()).delete(`/hrms/shifts/${s.id}?force=1`).set(as(U.mgr)).expect(200);
     expect(await prisma.shiftAssignment.count({ where: { shiftId: s.id } })).toBe(0);
+  });
+
+  it('the work queue counts a pending correction, and never the counter own one', async () => {
+    // Deltas, not absolutes: this suite leaves earlier requests pending, and
+    // the point here is who a NEW one shows up for.
+    const queued = async (who: string) => {
+      const { body } = await request(server()).get('/notifications/summary').set(as(who)).expect(200);
+      return body.items.find((i: { type: string }) => i.type === 'regularization') ?? null;
+    };
+    const before = { mgr: (await queued(U.mgr))?.count ?? 0, mgr2: (await queued(U.mgr2))?.count ?? 0 };
+
+    const d = dayOff(-17);
+    const file = (who: string, reason: string) =>
+      request(server())
+        .post('/hrms/regularize')
+        .set(as(who))
+        .send({ date: dateOnly(d), checkInLocalDate: dateOnly(d), checkInLocalTime: '09:30', reason })
+        .expect(201);
+
+    await file(U.repA, 'the terminal was down');
+    expect(await queued(U.mgr)).toMatchObject({
+      count: before.mgr + 1,
+      label: 'Attendance corrections',
+      href: '/hrms/attendance',
+    });
+
+    // A manager's own fix is decided one rank above them, so it is not work
+    // their own queue may offer them — but it IS their peer's.
+    await file(U.mgr, 'forgot to punch out');
+    expect((await queued(U.mgr))?.count).toBe(before.mgr + 1);
+    expect((await queued(U.mgr2))?.count).toBe(before.mgr2 + 2);
+
+    // A salesperson approves nothing, so the item is absent rather than zero.
+    expect(await queued(U.repA)).toBeNull();
+  });
+
+  it('a correction on a declared holiday keeps the day non-working', async () => {
+    // Payroll reads `status` to decide the day was not a working one. A punch
+    // fixed onto a holiday must not turn it into an ordinary present day and
+    // have the branch pay for it twice.
+    const d = dayOff(-18);
+    await prisma.attendanceRecord.create({
+      data: {
+        organisationId: A.org, storeId: A.s1, staffId: U.repA, staffName: U.repA, date: d,
+        status: 'holiday', shiftId: shiftG, source: 'auto',
+      },
+    });
+    const reg = (
+      await request(server())
+        .post('/hrms/regularize')
+        .set(as(U.repA))
+        .send({
+          date: dateOnly(d),
+          checkInLocalDate: dateOnly(d),
+          checkInLocalTime: '10:00',
+          checkOutLocalDate: dateOnly(d),
+          checkOutLocalTime: '16:00',
+          reason: 'came in for the stock count',
+        })
+        .expect(201)
+    ).body;
+
+    const row = (await request(server()).get('/hrms/regularize').set(as(U.mgr)).expect(200)).body.find(
+      (x: { id: string }) => x.id === reg.id,
+    );
+    expect(row.original).toMatchObject({ status: 'holiday', checkInLocal: null });
+    // The approver is shown the classification they are actually granting.
+    expect(row.proposed).toMatchObject({ status: 'holiday', checkInLocal: '10:00', workedMins: 360 });
+
+    await request(server()).patch(`/hrms/regularize/${reg.id}`).set(as(U.mgr)).send({ status: 'approved' }).expect(200);
+    const applied = await prisma.attendanceRecord.findUniqueOrThrow({
+      where: { storeId_staffId_date: { storeId: A.s1, staffId: U.repA, date: d } },
+    });
+    expect(applied.status).toBe('holiday');
+    expect(applied.checkInAt?.getTime()).toBe(at(d, '10:00').getTime());
   });
 
   // --- 3. Locks ----------------------------------------------------------------

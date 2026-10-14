@@ -52,6 +52,68 @@ describe("navSlugForPath", () => {
   });
 });
 
+/**
+ * The HR tree: one entitlement, four modules and three back-office screens
+ * behind it.
+ *
+ * Attendance, Leave Tracker, Roster & Shifts and HR Reports are separate routes
+ * under `/hrms`, and deliberately NOT separate navigation entries — the server's
+ * access map (auth/access.ts MODULES) and the tenant's enabledNavigation both
+ * key on `hrms`, and this gate resolves a path to the LONGEST matching nav slug.
+ * Adding a `hrms/leave` entry is therefore what WOULD break `/hrms/leave`: the
+ * slug is in neither list, so the gate would refuse the page and
+ * `canSeeNavItem` would hide the entry from every role.
+ *
+ * These cases pin that: every HR sub-route must resolve to `hrms` and open for
+ * anybody who holds `hrms`, including somebody set to attendance only.
+ */
+describe("the HR module routes", () => {
+  const HR_ROUTES = [
+    "/hrms",
+    "/hrms/attendance",
+    "/hrms/leave",
+    "/hrms/roster",
+    "/hrms/reports",
+    "/hrms/schedule",
+    "/hrms/employees",
+    "/hrms/setup",
+  ];
+
+  it("is governed by the one `hrms` entitlement", () => {
+    for (const path of HR_ROUTES) {
+      expect([path, navSlugForPath(path)]).toEqual([path, "hrms"]);
+    }
+  });
+
+  it("opens for anybody who holds the hrms screen", () => {
+    for (const path of HR_ROUTES) {
+      expect([path, gateDecision(path, [...CORE_NAVIGATION])]).toEqual([path, "render"]);
+      expect([path, roleDecision(path, "salesperson", { hrms: "own" })]).toEqual([
+        path,
+        "render",
+      ]);
+      expect([path, roleDecision(path, "salesperson")]).toEqual([path, "render"]);
+    }
+  });
+
+  it("closes with it, as one screen", () => {
+    for (const path of HR_ROUTES) {
+      expect([path, roleDecision(path, "salesperson", { crm: "own" })]).toEqual([
+        path,
+        "refuse",
+      ]);
+    }
+  });
+
+  it("keeps pay on its own entitlement, as it already was", () => {
+    // `hrms/payroll` IS a nav item and a MODULES slug, so it is the one HR route
+    // that resolves to itself — removing it from somebody leaves the rest open.
+    expect(navSlugForPath("/hrms/payroll")).toBe("hrms/payroll");
+    expect(roleDecision("/hrms/payroll", "salesperson", { hrms: "own" })).toBe("refuse");
+    expect(roleDecision("/hrms/attendance", "salesperson", { hrms: "own" })).toBe("render");
+  });
+});
+
 describe("gateDecision — a tenant switched a core module off", () => {
   /*
    * A tenant can now disable individual modules on top of what their industry

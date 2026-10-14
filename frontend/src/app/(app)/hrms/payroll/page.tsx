@@ -152,13 +152,18 @@ export default function PayrollPage() {
           href="/hrms"
           className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
         >
-          <ArrowLeft className="size-3.5" /> Attendance
+          <ArrowLeft className="size-3.5" /> HR &amp; Attendance
         </Link>
         <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-          <Receipt className="size-5" /> Roster and pay
+          <Receipt className="size-5" /> Payroll and payslips
         </h1>
         <p className="text-sm text-muted-foreground">
-          Each person&rsquo;s own weekly off, and a payslip counted from the attendance register.
+          A payslip counted from the attendance register, and the offs it is counted
+          against. Planning a particular week is{" "}
+          <Link href="/hrms/roster" className="underline">
+            Roster &amp; Shifts
+          </Link>
+          .
         </p>
       </div>
 
@@ -261,12 +266,17 @@ export default function PayrollPage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
-              <CalendarOff className="size-4" /> Dated offs — week by week
+              <CalendarOff className="size-4" /> Dated offs — the whole month
             </CardTitle>
             <CardDescription>
-              Plan the exact off date for each week of {period}. A week planned here
-              overrides the weekly pattern above for that week only; a week left as
-              &ldquo;Pattern&rdquo; follows it. Swap two people by changing their two cells.
+              The pay-side view of the offs in {period}: every week of the month at
+              once, which is how a payroll month is planned. A week set here overrides
+              the weekly pattern above for that week only; a week left as
+              &ldquo;Pattern&rdquo; follows it. These are the SAME rows{" "}
+              <Link href="/hrms/roster" className="underline">
+                Roster &amp; Shifts
+              </Link>{" "}
+              plans by date — edit either, and both show it.
             </CardDescription>
           </CardHeader>
           <CardContent>

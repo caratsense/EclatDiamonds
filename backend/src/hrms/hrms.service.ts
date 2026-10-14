@@ -6,7 +6,15 @@ import {
   NotFoundException,
   Logger,
 } from '@nestjs/common';
-import { AttendanceStatus, LeaveStatus, LeaveType, Prisma, Role } from '@prisma/client';
+import {
+  AttendanceRecord,
+  AttendanceStatus,
+  LeaveStatus,
+  LeaveType,
+  Prisma,
+  Role,
+  Shift,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
@@ -24,9 +32,12 @@ import {
   assertCanCorrect,
   assertCanCorrectUser,
   assertMonthOpen,
+  attendanceDriftedSinceFiling,
   classifyDay,
   eligibleStaff,
   instantFromUnambiguousLocal,
+  NON_WORKING_STATUSES,
+  projectRegularization,
   recordPunch,
   resolveShiftFor,
   seedLedgerFromRow,
@@ -35,6 +46,7 @@ import {
   shiftDayMaths,
   shiftEarlyOut,
   shiftLateness,
+  ShiftLike,
   supersedePunches,
   toHolidayView,
   toShiftView,
@@ -45,6 +57,7 @@ import {
   assertUndecided,
   decisionStamp,
 } from '../common/approval.util';
+import { buildOffCalendar, isOffOn } from './day-off.util';
 import {
   businessDate,
   dateOnly,
@@ -54,6 +67,7 @@ import {
   resolveTz,
   shiftDurationMins,
   shiftEndMinutesOfDay,
+  weekdayInTz,
 } from '../common/tz.util';
 import {
   ApplyLeaveDto,
@@ -67,6 +81,7 @@ import {
   CreateLeaveBalanceDto,
   DayCloseDto,
   EditLeaveDto,
+  LeavePreviewQueryDto,
   MarkAttendanceDto,
   RegisterQueryDto,
   SetWeekOffDto,
@@ -95,12 +110,12 @@ const PAID_LEAVE_TYPES: LeaveType[] = ['casual', 'sick', 'earned', 'week_off_lea
 /** Leave states that can no longer be approved/rejected. */
 const LEAVE_TERMINAL: readonly string[] = ['approved', 'rejected', 'cancelled'];
 
-/** Attendance states that mean "not a working day" — never counted as absence. */
-const NON_WORKING_STATUSES: AttendanceStatus[] = ['week_off', 'holiday', 'on_leave'];
-
 function num(v: Prisma.Decimal | number | null | undefined): number {
   return v == null ? 0 : Number(v);
 }
+
+/** Day counts are halves at worst; two places keeps 11.5 − 0.5 from reading 11.000000001. */
+const round2 = (n: number) => Math.round(n * 100) / 100;
 
 function initialsOf(name?: string | null): string {
   if (!name) return '—';
@@ -173,6 +188,21 @@ function financialYear(d: Date): number {
 /** Human FY label from its starting calendar year, e.g. 2026 -> "2026–27". */
 function financialYearLabel(fyStart: number): string {
   return `${fyStart}–${String((fyStart + 1) % 100).padStart(2, '0')}`;
+}
+
+/**
+ * What a leave range actually costs, and what it skipped on the way.
+ *
+ * The breakdown is returned rather than just the number because the apply form
+ * has to justify the figure before anyone submits it — "4 days, because
+ * Wednesday is your off" is answerable; a bare 4 is not.
+ */
+interface ChargeableDays {
+  days: number;
+  /** Non-working days inside the range: this person's offs, store-local YYYY-MM-DD. */
+  offDates: string[];
+  /** Declared holidays inside the range. The label is optional on the row itself. */
+  holidays: { date: string; label: string | null }[];
 }
 
 /** The store facts every attendance calculation needs, resolved once per call. */
@@ -696,7 +726,13 @@ export class HrmsService {
 
     // Lateness vs the shift given, else the one assigned for today, else the
     // store's first shift. Never for a flexible shift.
-    const shift = await resolveShiftFor(this.prisma, storeId, user.id, date, dto.shiftId);
+    //
+    // `restrictToAssigned`: this is the employee punching for THEMSELVES, so
+    // the shift they name must be the one they are rostered on — otherwise a
+    // 09:30 person names the store's night batch and 13:00 reads as on time.
+    const shift = await resolveShiftFor(this.prisma, storeId, user.id, date, dto.shiftId, {
+      restrictToAssigned: true,
+    });
     let shiftId: string | null = null;
     let isLate = false;
     let lateMinutes: number | null = null;
@@ -843,7 +879,9 @@ export class HrmsService {
                   : `no location fix at ${store.name}`
               }${payload.isMockLocation ? ' · device reported a mock location' : ''}` +
               `${payload.checkInNote ? ` — "${payload.checkInNote}"` : ''}`,
-            href: '/hrms',
+            // The store's register, not the HR landing: a punch to review is
+            // reviewed on Attendance > Team.
+            href: '/hrms/attendance',
             storeId,
             entityType: 'AttendanceRecord',
             entityId: row.id,
@@ -900,8 +938,10 @@ export class HrmsService {
                     ? `${distanceM} m from ${store.name}`
                     : `no location fix at ${store.name}`
                 }${payload.checkInNote ? ` — "${payload.checkInNote}"` : ''}. ` +
-                `Review the month on Fix attendance.`,
-              href: '/hrms',
+                // "Fix attendance" was a tab on the old HRMS page; the month is
+                // read on the Attendance module's register now.
+                `Review the month on the attendance register.`,
+              href: '/hrms/attendance',
               storeId,
               priority: 'high',
               entityType: 'AttendanceRecord',
@@ -1056,16 +1096,37 @@ export class HrmsService {
       }),
     ]);
 
+    // The shift each day was worked against, by name and by hours. The view
+    // carried `shiftId` alone, which no screen can render: "was I late?" is
+    // only answerable beside the start time the lateness was measured from.
+    const shifts = await this.prisma.shift.findMany({
+      where: {
+        id: {
+          in: [
+            ...new Set(
+              [...records, ...(todayRow ? [todayRow] : [])]
+                .map((r) => r.shiftId)
+                .filter((id): id is string => id != null),
+            ),
+          ],
+        },
+      },
+    });
+    const shiftById = new Map(shifts.map((s) => [s.id, s]));
+
     const tzOf = (storeId: string) => tzMap.get(storeId) ?? primaryTz;
     return {
-      today: todayRow ? this.toSelfAttendanceView(todayRow, tzOf(todayRow.storeId)) : null,
-      records: records.map((r) => this.toSelfAttendanceView(r, tzOf(r.storeId))),
+      today: todayRow
+        ? this.toSelfAttendanceView(todayRow, tzOf(todayRow.storeId), shiftById)
+        : null,
+      records: records.map((r) => this.toSelfAttendanceView(r, tzOf(r.storeId), shiftById)),
       summary: this.summarizeReport(records),
     };
   }
 
   /** The self-service attendance view (my punches). */
-  private toSelfAttendanceView(r: any, tz: string) {
+  private toSelfAttendanceView(r: any, tz: string, shiftById?: Map<string, Shift>) {
+    const shift = r.shiftId ? shiftById?.get(r.shiftId) : null;
     return {
       id: r.id,
       storeId: r.storeId,
@@ -1091,6 +1152,11 @@ export class HrmsService {
       isLate: r.isLate ?? false,
       lateMinutes: r.lateMinutes ?? null,
       shiftId: r.shiftId ?? null,
+      shiftName: shift?.name ?? null,
+      /// Store-local "HH:MM", the same units `checkInLocal` is in.
+      shiftStart: shift?.startTime ?? null,
+      shiftEnd: shift?.endTime ?? null,
+      shiftIsFlexible: shift?.isFlexible ?? false,
       checkInNote: r.checkInNote ?? null,
       checkOutNote: r.checkOutNote ?? null,
       isMockLocation: r.isMockLocation ?? false,
@@ -1766,8 +1832,9 @@ export class HrmsService {
   /**
    * PATCH /hrms/leave/:id — approve/reject a leave request.
    *
-   * Hardened in three ways over the previous implementation:
-   *   - **Separation of duties.** A manager can no longer approve their own leave.
+   * Hardened in four ways over the previous implementation:
+   *   - **Separation of duties.** A manager can no longer approve their own leave,
+   *     nor a peer's — a decision is taken one rank above the requester.
    *   - **Atomicity.** The balance movement and the status change now run in one
    *     transaction; previously a crash between them left the balance decremented
    *     against a request still showing as pending.
@@ -1785,6 +1852,16 @@ export class HrmsService {
     if (!existing) throw new NotFoundException('Leave request not found');
 
     assertUndecided(existing.status, LEAVE_TERMINAL, 'leave request');
+    // One rank above the requester (client, 13 Oct) — the same ladder a
+    // regularization is held to. Without it the self-approval rule was the only
+    // guard, and a store manager could sign off a PEER store manager's leave.
+    // Checked BEFORE the self rule so a manager deciding their own request is
+    // told WHO can; the self rule still catches a head-office requester.
+    const requester = await this.prisma.user.findUnique({
+      where: { id: existing.staffId },
+      select: { role: true },
+    });
+    assertRankAboveRequester(user, requester?.role, 'leave request');
     assertNotSelfApproval(user, existing.staffId, 'leave request');
     await assertMonthOpen(this.prisma, user.organisationId, existing.fromDate, existing.toDate);
 
@@ -1833,7 +1910,10 @@ export class HrmsService {
       body: `${dateOnly(row.fromDate)} → ${dateOnly(row.toDate)} (${days} day(s)) — ${status} by ${
         user.name
       }${note?.trim() ? `: ${note.trim()}` : ''}`,
-      href: '/hrms',
+      // The Leave Tracker, where the decision note and the new balance are. It
+      // used to be '/hrms', which is now a landing page of module cards — a
+      // notification that opens a menu has not opened the thing it is about.
+      href: '/hrms/leave',
       storeId: row.storeId,
       entityType: 'LeaveRequest',
       entityId: row.id,
@@ -2010,12 +2090,108 @@ export class HrmsService {
   }
 
   /**
+   * GET /hrms/leave/preview — what this range would cost, before applying.
+   *
+   * Read-only, and deliberately the SAME code path as POST /hrms/leave: the
+   * number on the form and the number charged come from one calculation, so the
+   * form cannot promise 4 days and the register book 5. It also returns WHY —
+   * the offs and holidays it skipped — because a count the employee cannot
+   * reconcile against their own roster is a count they will dispute at the
+   * counter.
+   *
+   * Nothing is written except the financial year's allocation rows, which
+   * GET /hrms/leave/balances already seeds on first read.
+   */
+  async previewLeave(user: AuthUser, query: LeavePreviewQueryDto, headerStore?: string) {
+    const actor = await this.resolveActor(user, headerStore, query.staffId);
+    const fromDate = parseDateOnly(query.from);
+    const toDate = parseDateOnly(query.to);
+    if (toDate < fromDate) throw new BadRequestException('to is before from');
+    const halfDay = query.halfDay ?? false;
+    if (halfDay && toDate.getTime() !== fromDate.getTime()) {
+      throw new BadRequestException('A half-day request must start and end on the same date');
+    }
+
+    const chargeable = await this.computeWorkingDays(
+      actor.staffId,
+      actor.storeId,
+      fromDate,
+      toDate,
+      halfDay,
+    );
+
+    let balance: {
+      type: LeaveType;
+      label: string;
+      year: number;
+      financialYearLabel: string;
+      paid: boolean;
+      allocated: number;
+      used: number;
+      pending: number;
+      available: number;
+      availableAfter: number;
+      sufficient: boolean;
+    } | null = null;
+
+    if (query.type) {
+      // The request's financial year (Apr–Mar), as applyLeave charges it.
+      const year = financialYear(fromDate);
+      const paid = PAID_LEAVE_TYPES.includes(query.type);
+      await this.ensureLeaveBalances(actor.staffId, year, actor.storeId);
+      const [bal, pending] = await Promise.all([
+        this.prisma.leaveBalance.findUnique({
+          where: { userId_type_year: { userId: actor.staffId, type: query.type, year } },
+        }),
+        this.prisma.leaveRequest.aggregate({
+          where: { staffId: actor.staffId, type: query.type, status: 'pending' },
+          _sum: { days: true },
+        }),
+      ]);
+      const allocated = num(bal?.allocated);
+      const used = num(bal?.used);
+      const reserved = num(pending._sum.days);
+      // Same arithmetic as the balances view: pending days are already spent as
+      // far as a new request is concerned.
+      const available = Math.max(0, round2(allocated - used - reserved));
+      balance = {
+        type: query.type,
+        label: LEAVE_TYPE_LABEL[query.type] ?? query.type,
+        year,
+        financialYearLabel: financialYearLabel(year),
+        paid,
+        allocated,
+        used,
+        pending: reserved,
+        available,
+        /// Negative when the request would overdraw — shown, not hidden.
+        availableAfter: round2(available - chargeable.days),
+        sufficient: !paid || available >= chargeable.days,
+      };
+    }
+
+    return {
+      staffId: actor.staffId,
+      staffName: actor.staffName,
+      storeId: actor.storeId,
+      fromDate: dateOnly(fromDate),
+      toDate: dateOnly(toDate),
+      halfDay,
+      days: chargeable.days,
+      offDates: chargeable.offDates,
+      holidays: chargeable.holidays,
+      balance,
+    };
+  }
+
+  /**
    * POST /hrms/leave — apply for leave (self, or manager+ on behalf of team staff).
    *
-   * Days default to inclusive working days (excluding the weekly off and any
-   * configured holiday). Two guards were missing before: overlapping requests for
-   * the same dates were accepted silently, and the balance check ignored days
-   * already committed to other pending requests.
+   * Days are the inclusive working days of the range — excluding the days this
+   * employee is off (their dated roster or weekly pattern) and any declared
+   * holiday. Two guards were missing before: overlapping requests for the same
+   * dates were accepted silently, and the balance check ignored days already
+   * committed to other pending requests.
    */
   async applyLeave(user: AuthUser, dto: ApplyLeaveDto, headerStore?: string) {
     const actor = await this.resolveActor(user, headerStore, dto.staffId);
@@ -2047,10 +2223,31 @@ export class HrmsService {
     }
 
     const halfDay = dto.halfDay ?? false;
-    const days =
-      dto.days != null
-        ? dto.days
-        : await this.computeWorkingDays(actor.storeId, fromDate, toDate, halfDay);
+    const chargeable = await this.computeWorkingDays(
+      actor.staffId,
+      actor.storeId,
+      fromDate,
+      toDate,
+      halfDay,
+    );
+    /*
+     * The server's count is the count. `days` used to be taken verbatim from the
+     * request body, so a caller could book ten days off and charge their balance
+     * 0.1 — the form is not the only thing that can POST here. It is still
+     * accepted, because the UI round-trips the previewed figure, but only when
+     * it AGREES; a mismatch is the client being out of date (or lying) about a
+     * roster it does not own. GET /hrms/leave/preview returns the number to send.
+     */
+    if (dto.days != null && Math.abs(dto.days - chargeable.days) > 0.001) {
+      throw new BadRequestException(
+        `That range is ${chargeable.days} chargeable day(s), not ${dto.days}${
+          chargeable.offDates.length
+            ? ` (off: ${chargeable.offDates.join(', ')})`
+            : ''
+        } — leave days out to let the server count it.`,
+      );
+    }
+    const days = chargeable.days;
     if (days <= 0) {
       throw new BadRequestException(
         'That range contains no working days (weekly off / holidays only)',
@@ -2098,17 +2295,30 @@ export class HrmsService {
     });
 
     // Leave that nobody is told about is leave that sits until the staffer
-    // chases it in person.
+    // chases it in person — and it must be told to whoever may DECIDE it. One
+    // rank above the person the leave is FOR (client, 13 Oct; same ladder as a
+    // regularization): a store manager's own leave goes up, never back into
+    // their peers' inbox, where the rank check would only refuse it.
+    // `recipientsFor` rolls the rank up, so head office is always included.
+    const approverRole: Role =
+      ROLE_RANK[actor.staffRole] >= ROLE_RANK.area_manager
+        ? 'head_office'
+        : ROLE_RANK[actor.staffRole] >= ROLE_RANK.store_manager
+          ? 'area_manager'
+          : 'store_manager';
     await this.notifications.emitToApprovers(
       actor.storeId,
-      'store_manager',
+      approverRole,
       {
         kind: 'leave_request',
         title: `Leave request from ${actor.staffName ?? 'a team member'}`,
         body: `${LEAVE_TYPE_LABEL[dto.type] ?? dto.type} · ${days} day(s), ${dateOnly(
           fromDate,
         )} → ${dateOnly(toDate)}${dto.reason ? ` — ${dto.reason}` : ''}`,
-        href: '/approvals',
+        // The Leave Tracker's Team half, which is where the decision is made
+        // now: the Approvals inbox counts leave and links here rather than
+        // carrying its own Approve/Reject (client, 13 Oct).
+        href: '/hrms/leave',
         storeId: actor.storeId,
         entityType: 'LeaveRequest',
         entityId: row.id,
@@ -2124,37 +2334,156 @@ export class HrmsService {
   }
 
   /**
-   * Inclusive working days in [from, to], excluding the store's weekly-off day and any
-   * configured holidays. A half-day request counts as 0.5.
+   * Inclusive working days in [from, to], excluding the days THIS PERSON is off
+   * and any declared holiday. A half-day request counts as 0.5.
+   *
+   * It used to read `store.weekOffDay` and a raw `getUTCDay()`, which charged
+   * leave against a calendar nobody else in the platform uses: it could not see
+   * a staffer's own `StaffWeekOff` rows, could not see the dated roster at all,
+   * and in IST read the weekday of the UTC instant. A person whose Wednesday was
+   * rostered off was charged for it, while payroll — reading the same week
+   * through `buildOffCalendar` — did not count the day as worked. Both now go
+   * through `day-off.util`, which is the whole point of that file.
    */
   private async computeWorkingDays(
+    staffId: string,
     storeId: string,
     from: Date,
     to: Date,
     halfDay: boolean,
-  ): Promise<number> {
-    if (halfDay) return 0.5;
-    const [store, holidays] = await Promise.all([
-      this.prisma.store.findUnique({ where: { id: storeId } }),
+  ): Promise<ChargeableDays> {
+    const [weekdays, datedKeys, holidayRows, store] = await Promise.all([
+      this.payroll.offDaysFor(staffId, storeId),
+      // Week-buffered like payroll's: a dated row just outside the range still
+      // governs the week its days fall in (day-off.util's one rule).
+      this.prisma.staffDayOff.findMany({
+        where: {
+          userId: staffId,
+          OR: [{ storeId }, { storeId: null }],
+          date: { gte: addDays(from, -6), lte: addDays(to, 6) },
+        },
+        select: { date: true },
+      }),
       this.prisma.storeHoliday.findMany({
         where: { storeId, date: { gte: from, lte: to } },
+        select: { date: true, label: true },
       }),
+      this.prisma.store.findUnique({ where: { id: storeId }, select: { timezone: true } }),
     ]);
-    const weekOff = store?.weekOffDay ?? null;
-    const holidaySet = new Set(holidays.map((h) => h.date.getTime()));
 
+    const tz = resolveTz(store?.timezone);
+    const offCalendar = buildOffCalendar(weekdays, datedKeys.map((r) => dateOnly(r.date)));
+    const holidays = holidayRows.map((h) => ({ date: dateOnly(h.date), label: h.label }));
+    const holidayDates = new Set(holidays.map((h) => h.date));
+
+    const offDates: string[] = [];
     let count = 0;
     for (const d = new Date(from); d <= to; d.setUTCDate(d.getUTCDate() + 1)) {
-      if (weekOff != null && d.getUTCDay() === weekOff) continue;
-      if (holidaySet.has(d.getTime())) continue;
+      const key = dateOnly(d);
+      // Read at local NOON so the weekday is the branch's, clear of the offset.
+      const weekday = weekdayInTz(instantFromLocalTime(d, 12 * 60, tz), tz);
+      if (isOffOn(offCalendar, key, weekday)) {
+        offDates.push(key);
+        continue;
+      }
+      if (holidayDates.has(key)) continue;
       count++;
     }
-    return count;
+    return { days: halfDay ? 0.5 : count, offDates, holidays };
   }
 
   // ==========================================================================
   // Attendance regularization
   // ==========================================================================
+
+  /**
+   * The corrected instants, resolved and checked in the STORE's timezone.
+   *
+   * The dialog built them from a date and a time in the BROWSER's zone, and
+   * nothing here checked the result. A phone left on another timezone therefore
+   * filed 09:30 as a different wall clock — and could land it on a different
+   * business day entirely, which the next processing run silently undoes: it
+   * recomputes the stated day from punches that are no longer on it. So the
+   * store-local form is converted HERE, by the only party that knows the
+   * store's zone, and the legacy ISO form is kept but must now prove it belongs
+   * to the day it claims.
+   */
+  private resolveRegularizationTimes(
+    dto: CreateRegularizationDto,
+    date: Date,
+    tz: string,
+    currentCheckIn: Date | null,
+  ): { requestedCheckIn: Date | null; requestedCheckOut: Date | null } {
+    const hasInstant = dto.requestedCheckIn != null || dto.requestedCheckOut != null;
+    const hasAnyLocalPart =
+      dto.checkInLocalDate != null ||
+      dto.checkInLocalTime != null ||
+      dto.checkOutLocalDate != null ||
+      dto.checkOutLocalTime != null;
+    if (hasInstant && hasAnyLocalPart) {
+      throw new BadRequestException(
+        'Send one time form: either `requestedCheckIn`/`requestedCheckOut`, or the store-local `checkInLocalDate`+`checkInLocalTime` / `checkOutLocalDate`+`checkOutLocalTime`.',
+      );
+    }
+    if (!!dto.checkInLocalDate !== !!dto.checkInLocalTime) {
+      throw new BadRequestException(
+        'Both `checkInLocalDate` and `checkInLocalTime` are required together.',
+      );
+    }
+    if (!!dto.checkOutLocalDate !== !!dto.checkOutLocalTime) {
+      throw new BadRequestException(
+        'Both `checkOutLocalDate` and `checkOutLocalTime` are required together.',
+      );
+    }
+
+    const requestedCheckIn = dto.checkInLocalDate
+      ? instantFromUnambiguousLocal(dto.checkInLocalDate, dto.checkInLocalTime!, tz)
+      : dto.requestedCheckIn
+        ? new Date(dto.requestedCheckIn)
+        : null;
+    const requestedCheckOut = dto.checkOutLocalDate
+      ? instantFromUnambiguousLocal(dto.checkOutLocalDate, dto.checkOutLocalTime!, tz)
+      : dto.requestedCheckOut
+        ? new Date(dto.requestedCheckOut)
+        : null;
+    if (!requestedCheckIn && !requestedCheckOut) {
+      throw new BadRequestException('Provide a check-in time, a check-out time, or both');
+    }
+    if (requestedCheckIn && Number.isNaN(requestedCheckIn.getTime())) {
+      throw new BadRequestException('Invalid check-in time');
+    }
+    if (requestedCheckOut && Number.isNaN(requestedCheckOut.getTime())) {
+      throw new BadRequestException('Invalid check-out time');
+    }
+
+    const day = dateOnly(date);
+    if (requestedCheckIn && dateOnly(businessDate(requestedCheckIn, tz)) !== day) {
+      throw new BadRequestException(
+        `The corrected check-in must belong to ${day} in the store timezone (${tz}).`,
+      );
+    }
+    if (requestedCheckIn && requestedCheckOut && requestedCheckOut <= requestedCheckIn) {
+      throw new BadRequestException('Requested check-out must be after the check-in');
+    }
+    if (requestedCheckOut && dateOnly(businessDate(requestedCheckOut, tz)) !== day) {
+      // A night batch's out-punch belongs to the day its in-punch opened, on
+      // the NEXT calendar date (`attributePunches`). Allowed on exactly that
+      // condition: there is an in-punch on this day and the out closes it
+      // within 24 hours. Anything else is a timezone slip, not a night shift.
+      const opens = requestedCheckIn ?? currentCheckIn;
+      const closesThisDay =
+        opens != null &&
+        dateOnly(businessDate(opens, tz)) === day &&
+        requestedCheckOut > opens &&
+        requestedCheckOut.getTime() - opens.getTime() < 86_400_000;
+      if (!closesThisDay) {
+        throw new BadRequestException(
+          `The corrected check-out must belong to ${day} in the store timezone (${tz}), or close that day's check-in within 24 hours.`,
+        );
+      }
+    }
+    return { requestedCheckIn, requestedCheckOut };
+  }
 
   /**
    * POST /hrms/regularize — request a fix for a missed/wrong punch (current user).
@@ -2168,9 +2497,6 @@ export class HrmsService {
     const date = parseDateOnly(dto.date);
     if (date > businessDate(new Date(), store.tz)) {
       throw new BadRequestException('Cannot regularize a future date');
-    }
-    if (!dto.requestedCheckIn && !dto.requestedCheckOut) {
-      throw new BadRequestException('Provide a check-in time, a check-out time, or both');
     }
     // The approver decides on the stated reason, so a request without one is
     // undecidable — refused here, not left for the approver to bounce back.
@@ -2189,11 +2515,18 @@ export class HrmsService {
       );
     }
 
-    const requestedCheckIn = dto.requestedCheckIn ? new Date(dto.requestedCheckIn) : null;
-    const requestedCheckOut = dto.requestedCheckOut ? new Date(dto.requestedCheckOut) : null;
-    if (requestedCheckIn && requestedCheckOut && requestedCheckOut <= requestedCheckIn) {
-      throw new BadRequestException('Requested check-out must be after the check-in');
-    }
+    // The day as it stands now: both what the approver screen shows as the
+    // ORIGINAL punches, and the baseline the decision re-checks before it voids
+    // any live punch of the kind being replaced.
+    const current = await this.prisma.attendanceRecord.findUnique({
+      where: { storeId_staffId_date: { storeId, staffId: user.id, date } },
+    });
+    const { requestedCheckIn, requestedCheckOut } = this.resolveRegularizationTimes(
+      dto,
+      date,
+      store.tz,
+      current?.checkInAt ?? null,
+    );
 
     const row = await this.prisma.attendanceRegularization.create({
       data: {
@@ -2206,6 +2539,12 @@ export class HrmsService {
         requestedCheckOut,
         reason,
         status: 'pending',
+        originalCheckIn: current?.checkInAt ?? null,
+        originalCheckOut: current?.checkOutAt ?? null,
+        originalStatus: current?.status ?? null,
+        originalWorkedMins: current?.workedMins ?? null,
+        recordUpdatedAt: current?.updatedAt ?? null,
+        baselineCapturedAt: new Date(),
       },
     });
 
@@ -2226,7 +2565,9 @@ export class HrmsService {
         kind: 'regularization_request',
         title: `Attendance fix requested by ${user.name}`,
         body: `${dateOnly(date)} — ${reason}`,
-        href: '/hrms',
+        // Attendance > Team > Correction Requests, where the punches on the
+        // record sit beside what approving would make the day.
+        href: '/hrms/attendance',
         storeId,
         entityType: 'AttendanceRegularization',
         entityId: row.id,
@@ -2237,7 +2578,62 @@ export class HrmsService {
       user.id,
     );
 
-    return this.toRegularizationView(row);
+    const ctx = await this.regularizationContexts([row]);
+    return this.toRegularizationView(row, ctx.get(row.id));
+  }
+
+  /**
+   * The day, the shift and the store timezone each request is about — what
+   * makes a correction decidable rather than merely visible.
+   *
+   * Batched: one query for the days and one for the stores. The shift is
+   * resolved exactly as the decision resolves it (frozen snapshot first, so a
+   * later edit to the Shift master cannot restate an old day), memoized per
+   * (person, day) because several requests often concern the same one.
+   */
+  private async regularizationContexts(
+    rows: { id: string; storeId: string; staffId: string; date: Date }[],
+  ) {
+    const keyOf = (r: { storeId: string; staffId: string; date: Date }) =>
+      `${r.storeId}|${r.staffId}|${dateOnly(r.date)}`;
+    const [records, tzMap] = await Promise.all([
+      this.prisma.attendanceRecord.findMany({
+        where: {
+          OR: rows.map((r) => ({ storeId: r.storeId, staffId: r.staffId, date: r.date })),
+        },
+      }),
+      this.tzByStore([...new Set(rows.map((r) => r.storeId))]),
+    ]);
+    const recordByKey = new Map(records.map((x) => [keyOf(x), x]));
+
+    const shiftByKey = new Map<string, (ShiftLike & { id?: string | null; name?: string | null }) | null>();
+    for (const r of rows) {
+      const key = keyOf(r);
+      if (shiftByKey.has(key)) continue;
+      const current = recordByKey.get(key) ?? null;
+      const frozen = shiftFromSnapshot(current?.shiftSnapshot);
+      const live = await resolveShiftFor(
+        this.prisma,
+        r.storeId,
+        r.staffId,
+        r.date,
+        current?.shiftId ?? null,
+      ).catch(() => null);
+      // The snapshot keeps calculation inputs, never a name — so the frozen
+      // times are shown under the live row's name when it is still there.
+      shiftByKey.set(key, frozen ? { ...frozen, id: live?.id ?? null, name: live?.name ?? null } : live);
+    }
+
+    return new Map(
+      rows.map((r) => [
+        r.id,
+        {
+          current: recordByKey.get(keyOf(r)) ?? null,
+          shift: shiftByKey.get(keyOf(r)) ?? null,
+          tz: tzMap.get(r.storeId) ?? resolveTz(undefined),
+        },
+      ]),
+    );
   }
 
   /** GET /hrms/regularize — store-scoped; staff see only their own requests. */
@@ -2249,8 +2645,11 @@ export class HrmsService {
     const rows = await this.prisma.attendanceRegularization.findMany({
       where,
       orderBy: { date: 'desc' },
+      take: 500,
     });
-    return rows.map((r) => this.toRegularizationView(r));
+    if (!rows.length) return [];
+    const ctx = await this.regularizationContexts(rows);
+    return rows.map((r) => this.toRegularizationView(r, ctx.get(r.id)));
   }
 
   /**
@@ -2290,54 +2689,51 @@ export class HrmsService {
       const { storeId, staffId, staffName, date } = existing;
       await assertMonthOpen(this.prisma, user.organisationId, date);
       const store = await this.storeCtx(storeId);
-      const current = await this.prisma.attendanceRecord.findUnique({
-        where: { storeId_staffId_date: { storeId, staffId, date } },
-      });
-      const checkInAt = existing.requestedCheckIn ?? current?.checkInAt ?? null;
-      const checkOutAt = existing.requestedCheckOut ?? current?.checkOutAt ?? null;
-
-      const workedMins =
-        checkInAt && checkOutAt
-          ? Math.round((checkOutAt.getTime() - checkInAt.getTime()) / 60000)
-          : (current?.workedMins ?? null);
-
-      // Reuse the historical inputs when present. Regularizing a punch does not
-      // authorize silently adopting a later edit to the Shift master.
-      const frozenShift = shiftFromSnapshot(current?.shiftSnapshot);
-      const liveShift = frozenShift
-        ? null
-        : await resolveShiftFor(
-            this.prisma,
-            storeId,
-            staffId,
-            date,
-            current?.shiftId ?? null,
-          ).catch(() => null);
-      const shift = frozenShift ?? liveShift;
-
-      let isLate = current?.isLate ?? false;
-      let lateMinutes = current?.lateMinutes ?? null;
-      if (checkInAt && shift) {
-        const late = shiftLateness(checkInAt, shift, store.tz);
-        isLate = late.isLate;
-        lateMinutes = late.lateMinutes;
-      }
-      const { dayFraction, overtimeMins } = shiftDayMaths(workedMins, shift);
-
-      // Preserve a non-working classification. A regularized punch on a declared
-      // holiday or an approved leave day should not quietly reclassify the day.
-      const keepStatus =
-        current && NON_WORKING_STATUSES.includes(current.status) ? current.status : null;
-      const nextStatus: AttendanceStatus =
-        keepStatus ??
-        (dayFraction != null && dayFraction < 1 ? 'half_day' : isLate ? 'late' : 'present');
 
       await this.prisma.$transaction(async (tx) => {
+        /*
+         * The day is re-read INSIDE the transaction and checked against the
+         * baseline captured when the request was filed.
+         *
+         * Approving voids every live punch of the kinds it replaces, so a
+         * device punch that arrived AFTER filing was silently discarded and the
+         * approver never saw it. Reading the row outside the transaction — as
+         * this did — cannot catch that even in principle. Refusing here rolls
+         * the whole decision back, including the CAS claim below: the request
+         * stays pending and actionable, never decided-but-not-applied.
+         */
+        const current = await tx.attendanceRecord.findUnique({
+          where: { storeId_staffId_date: { storeId, staffId, date } },
+        });
+        if (attendanceDriftedSinceFiling(existing, current)) {
+          throw new ConflictException(
+            `${staffName ?? 'This employee'}'s attendance for ${dateOnly(
+              date,
+            )} changed after this request was filed — reload it to review the refreshed punches, then decide.`,
+          );
+        }
+
+        // Reuse the historical inputs when present. Regularizing a punch does not
+        // authorize silently adopting a later edit to the Shift master.
+        const frozenShift = shiftFromSnapshot(current?.shiftSnapshot);
+        const liveShift = frozenShift
+          ? null
+          : await resolveShiftFor(tx, storeId, staffId, date, current?.shiftId ?? null).catch(
+              () => null,
+            );
+        const shift = frozenShift ?? liveShift;
+        const next = projectRegularization(
+          current,
+          { checkIn: existing.requestedCheckIn, checkOut: existing.requestedCheckOut },
+          shift,
+          store.tz,
+        );
+
         await tx.attendanceRecord.upsert({
           where: { storeId_staffId_date: { storeId, staffId, date } },
           update: {
-            checkInAt,
-            checkOutAt,
+            checkInAt: next.checkInAt,
+            checkOutAt: next.checkOutAt,
             // A requested time replaces that side's live punch, so its geo
             // evidence no longer describes the stored instant — an edited
             // punch must not keep reading as a verified on-site fix.
@@ -2347,14 +2743,14 @@ export class HrmsService {
             ...(existing.requestedCheckOut
               ? { checkOutLat: null, checkOutLng: null, checkOutDistanceM: null, checkOutVerified: false }
               : {}),
-            workedMins,
-            isLate,
-            lateMinutes,
+            workedMins: next.workedMins,
+            isLate: next.isLate,
+            lateMinutes: next.lateMinutes,
             shiftId: current?.shiftId ?? liveShift?.id ?? null,
-            earlyOutMinutes: checkOutAt ? shiftEarlyOut(checkOutAt, shift, store.tz) : null,
-            overtimeMins,
-            dayFraction,
-            status: nextStatus,
+            earlyOutMinutes: next.earlyOutMinutes,
+            overtimeMins: next.overtimeMins,
+            dayFraction: next.dayFraction,
+            status: next.status,
             source: 'regularization',
             // The punch is now human-attested, so it is no longer an auto-close.
             autoClosed: false,
@@ -2368,16 +2764,16 @@ export class HrmsService {
             staffId,
             staffName,
             date,
-            status: nextStatus,
-            checkInAt,
-            checkOutAt,
-            workedMins,
-            isLate,
-            lateMinutes,
+            status: next.status,
+            checkInAt: next.checkInAt,
+            checkOutAt: next.checkOutAt,
+            workedMins: next.workedMins,
+            isLate: next.isLate,
+            lateMinutes: next.lateMinutes,
             shiftId: liveShift?.id ?? null,
-            earlyOutMinutes: checkOutAt ? shiftEarlyOut(checkOutAt, shift, store.tz) : null,
-            overtimeMins,
-            dayFraction,
+            earlyOutMinutes: next.earlyOutMinutes,
+            overtimeMins: next.overtimeMins,
+            dayFraction: next.dayFraction,
             source: 'regularization',
             calculationVersion: ATTENDANCE_CALCULATION_VERSION,
             shiftSnapshot: snapshotShift(liveShift),
@@ -2452,7 +2848,9 @@ export class HrmsService {
       kind: 'regularization_request',
       title: `Attendance fix for ${dateOnly(row.date)} was ${status}`,
       body: `${status} by ${user.name}${note?.trim() ? `: ${note.trim()}` : ''}`,
-      href: '/hrms',
+      // Attendance > My Data > My Correction Requests, which carries the
+      // decision, who made it, and the rejection reason.
+      href: '/hrms/attendance',
       storeId: row.storeId,
       entityType: 'AttendanceRegularization',
       entityId: row.id,
@@ -2462,10 +2860,37 @@ export class HrmsService {
       dedupeKey: `regularization:${row.id}:decided`,
     });
 
-    return this.toRegularizationView(row);
+    const ctx = await this.regularizationContexts([row]);
+    return this.toRegularizationView(row, ctx.get(row.id));
   }
 
-  private toRegularizationView(r: any) {
+  /**
+   * One correction request as the screens read it.
+   *
+   * `ctx` is what turns a row into a decidable one: the approver was shown the
+   * PROPOSED times alone, with no sight of what the day holds today, which
+   * shift it is judged against, or what the hours and the status would become.
+   * Without it the only honest answer to "is this right?" was to go and look
+   * the day up by hand. Omitted (`undefined`) on the self-service list, where
+   * the applicant is reading their own filing.
+   */
+  private toRegularizationView(
+    r: any,
+    ctx?: {
+      current: AttendanceRecord | null;
+      shift: (ShiftLike & { id?: string | null; name?: string | null }) | null;
+      tz: string;
+    },
+  ) {
+    const tz = ctx?.tz ?? resolveTz(undefined);
+    const projected = ctx
+      ? projectRegularization(
+          ctx.current,
+          { checkIn: r.requestedCheckIn ?? null, checkOut: r.requestedCheckOut ?? null },
+          ctx.shift,
+          tz,
+        )
+      : null;
     return {
       id: r.id,
       storeId: r.storeId,
@@ -2480,6 +2905,52 @@ export class HrmsService {
       decidedBy: r.decidedByName ?? null,
       decidedAt: r.decidedAt ? r.decidedAt.toISOString() : null,
       decisionNote: r.decisionNote ?? null,
+      timezone: tz,
+      /// The punches as they stood when the request was filed — the left-hand
+      /// side of "09:14 → 09:31". Nulls are real: the day may have had none.
+      original: {
+        checkIn: r.originalCheckIn ?? null,
+        checkOut: r.originalCheckOut ?? null,
+        checkInLocal: formatHHMMInTz(r.originalCheckIn, tz),
+        checkOutLocal: formatHHMMInTz(r.originalCheckOut, tz),
+        status: r.originalStatus ?? null,
+        workedMins: r.originalWorkedMins ?? null,
+        asOf: r.recordUpdatedAt ? r.recordUpdatedAt.toISOString() : null,
+        /// False on rows filed before the snapshot existed: there is nothing to
+        /// show, and the decision skips its freshness check for them.
+        captured: r.baselineCapturedAt != null,
+      },
+      /// What approving would make the day. Computed by the same function the
+      /// decision applies, so the screen cannot promise a different outcome.
+      proposed: projected
+        ? {
+            checkIn: projected.checkInAt,
+            checkOut: projected.checkOutAt,
+            checkInLocal: formatHHMMInTz(projected.checkInAt, tz),
+            checkOutLocal: formatHHMMInTz(projected.checkOutAt, tz),
+            status: projected.status,
+            workedMins: projected.workedMins,
+            isLate: projected.isLate,
+            lateMinutes: projected.lateMinutes,
+            earlyOutMinutes: projected.earlyOutMinutes,
+            overtimeMins: projected.overtimeMins,
+            dayFraction: projected.dayFraction,
+          }
+        : null,
+      /// The shift the day is judged against — the frozen snapshot when the day
+      /// has one, so an approver sees the inputs the day was born with.
+      shift: ctx?.shift
+        ? {
+            id: ctx.shift.id ?? null,
+            name: ctx.shift.name ?? null,
+            startTime: ctx.shift.startTime,
+            endTime: ctx.shift.endTime,
+            isFlexible: ctx.shift.isFlexible ?? false,
+          }
+        : null,
+      /// The day moved after this was filed. Deciding it now is refused (409);
+      /// the screen should say so before the approver clicks.
+      stale: ctx ? attendanceDriftedSinceFiling(r, ctx.current) : false,
     };
   }
 
@@ -2924,7 +3395,13 @@ export class HrmsService {
         `Overlaps an existing ${clash.status} ${clash.type} request (${dateOnly(clash.fromDate)} → ${dateOnly(clash.toDate)})`,
       );
     }
-    const days = await this.computeWorkingDays(before.storeId, fromDate, toDate, halfDay);
+    const { days } = await this.computeWorkingDays(
+      before.staffId,
+      before.storeId,
+      fromDate,
+      toDate,
+      halfDay,
+    );
     if (days <= 0) {
       throw new BadRequestException('That range contains no working days (weekly off / holidays only)');
     }
@@ -3107,7 +3584,13 @@ export class HrmsService {
     user: AuthUser,
     headerStore: string | undefined,
     staffId?: string,
-  ): Promise<{ staffId: string; staffName: string | null; storeId: string }> {
+  ): Promise<{
+    staffId: string;
+    staffName: string | null;
+    storeId: string;
+    /** The SUBJECT's role — what the approval ladder is measured against, not the caller's. */
+    staffRole: Role;
+  }> {
     if (staffId && staffId !== user.id) {
       if (ROLE_RANK[user.role] < ROLE_RANK.store_manager) {
         throw new ForbiddenException('Only managers may act on behalf of other staff');
@@ -3136,10 +3619,10 @@ export class HrmsService {
       } else {
         storeId = inScope[0];
       }
-      return { staffId: target.id, staffName: target.name, storeId };
+      return { staffId: target.id, staffName: target.name, storeId, staffRole: target.role };
     }
     const storeId = this.resolveStoreId(user, headerStore, user.storeIds);
     this.scope.assertStoreAllowed(user, storeId);
-    return { staffId: user.id, staffName: user.name, storeId };
+    return { staffId: user.id, staffName: user.name, storeId, staffRole: user.role };
   }
 }

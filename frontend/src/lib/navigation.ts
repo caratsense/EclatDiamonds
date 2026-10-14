@@ -459,10 +459,30 @@ export const NAV_ITEMS: NavItem[] = [
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
+    /*
+     * ONE entry for the whole HR tree, and the four modules behind it.
+     *
+     * Attendance, Leave Tracker, Roster & Shifts and HR Reports are separate
+     * screens on separate routes (`/hrms/attendance`, `/hrms/leave`,
+     * `/hrms/roster`, `/hrms/reports`); the landing at `/hrms` is their hub.
+     * They are deliberately NOT four sidebar entries, because the entitlement
+     * model has exactly one slug for this tree: `canSeeNavItem` answers from
+     * the server's AccessMap (`item.slug in access`), whose keys are
+     * auth/access.ts MODULES, and module-gate's `gateDecision` answers from the
+     * tenant's enabledNavigation. A `hrms/leave` entry would therefore be
+     * invisible to every role AND make its own page unreachable — the gate
+     * resolves a path to the LONGEST matching nav slug, so adding the entry is
+     * what would break the route.
+     *
+     * The purpose line names all four, which is what makes them findable: the
+     * sidebar's "find a screen" box (`filterNavGroups`) searches it, so typing
+     * "leave" or "roster" surfaces this entry.
+     */
     module: 6,
     slug: "hrms",
-    title: "HRMS & Attendance",
-    purpose: "Geo-attendance, rosters, leave and regularization.",
+    title: "HR & Attendance",
+    purpose:
+      "Attendance, leave, roster and shifts, and HR reports — your own, and your team's if you manage one.",
     primaryAction: "Mark Attendance",
     icon: Fingerprint,
     group: "HR & Teams",
@@ -496,7 +516,9 @@ export const NAV_ITEMS: NavItem[] = [
     module: 3,
     slug: "approvals",
     title: "Approvals",
-    purpose: "Discount, return and leave requests awaiting your approval.",
+    // Leave and attendance corrections are decided inside their own HR modules
+    // (client, 13 Oct), so this screen no longer claims them.
+    purpose: "Discount and return requests awaiting your approval.",
     primaryAction: "",
     icon: ClipboardCheck,
     group: "Command Centre",
@@ -781,11 +803,20 @@ export const NAV_ITEMS: NavItem[] = [
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
+    /*
+     * PAY, and the offs the pay is counted against.
+     *
+     * Planning a week is Roster & Shifts' job now (`/hrms/roster`) — one
+     * primary home, so two screens cannot quietly disagree about who is off.
+     * The off editors that remain here are the pay-side view of the SAME
+     * `StaffDayOff` rows, through the same endpoints, kept because a payroll
+     * month is planned in one pass rather than week by week.
+     */
     module: 6,
     slug: "hrms/payroll",
-    title: "Roster & Pay",
+    title: "Payroll & Payslips",
     purpose:
-      "Each person's own weekly off, and a payslip counted from the attendance register.",
+      "Payslips counted from the attendance register, the month's payroll runs, and the offs they are counted against.",
     primaryAction: "",
     icon: ReceiptIcon,
     group: "HR & Teams",

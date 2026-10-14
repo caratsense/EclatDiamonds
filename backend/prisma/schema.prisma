@@ -3069,6 +3069,27 @@ model AttendanceRegularization {
   reason            String?
   status            LeaveStatus  @default(pending)
 
+  // --- The day as it stood when the request was FILED ------------------------
+  // Two jobs, one snapshot. It is what the approver screen shows beside the
+  // proposal ("09:14 → 09:31"), and it is the baseline the decision re-checks
+  // inside its own transaction: approving voids the day's live punches of the
+  // kinds being replaced, so a device punch that landed after filing would
+  // otherwise be discarded without the approver ever seeing it.
+  //
+  // `baselineCapturedAt` is the discriminator. Null means the row predates the
+  // snapshot and the freshness check is skipped (refusing every pre-existing
+  // request would strand an honest backlog); non-null with a null
+  // `originalStatus` means there was no AttendanceRecord at all at filing time.
+  originalCheckIn    DateTime?
+  originalCheckOut   DateTime?
+  originalStatus     AttendanceStatus?
+  originalWorkedMins Int?
+  /// AttendanceRecord.updatedAt at filing time — the "as of" stamp shown with
+  /// the originals. Not the equality test: a non-material touch (a punch photo,
+  /// a geofence note) bumps it without changing what the approver is deciding.
+  recordUpdatedAt    DateTime?
+  baselineCapturedAt DateTime?
+
   // --- Decision attribution (mirrors LeaveRequest) ---------------------------
   decidedById   String?
   decidedByName String?

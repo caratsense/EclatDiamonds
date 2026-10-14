@@ -10,6 +10,7 @@ import {
   Query,
   Res,
 } from '@nestjs/common';
+import { IsOptional, IsString, Matches } from 'class-validator';
 import { Permit } from '../auth/permissions';
 import type { Response } from 'express';
 import { HrmsService } from './hrms.service';
@@ -22,6 +23,7 @@ import {
   CreatePunchDto,
   CreateShiftAssignmentDto,
   EditLeaveDto,
+  LeavePreviewQueryDto,
   OptionalReasonDto,
   PayrollLockDto,
   PunchesQueryDto,
@@ -54,6 +56,30 @@ import {
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
 import { Roles } from '../auth/roles.decorator';
+
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+/** GET /hrms/roster — the manager's grid for one span, one branch or all of them. */
+export class RosterQueryDto {
+  @Matches(YMD, { message: 'from must be YYYY-MM-DD' })
+  from!: string;
+
+  @Matches(YMD, { message: 'to must be YYYY-MM-DD' })
+  to!: string;
+
+  @IsOptional()
+  @IsString()
+  storeId?: string;
+}
+
+/** GET /hrms/schedule/me — the same span, the caller's own rows. */
+export class MyScheduleQueryDto {
+  @Matches(YMD, { message: 'from must be YYYY-MM-DD' })
+  from!: string;
+
+  @Matches(YMD, { message: 'to must be YYYY-MM-DD' })
+  to!: string;
+}
 
 @Controller('hrms')
 export class HrmsController {
@@ -314,6 +340,22 @@ export class HrmsController {
     return this.hrms.leaveBalances(user, staffId, store);
   }
 
+  /**
+   * What a range would cost before anybody applies for it: the chargeable days,
+   * the offs and holidays skipped, and the balance before and after. Read-only,
+   * and declared with the other static `leave/...` routes so the `leave/:id`
+   * routes below cannot shadow it.
+   */
+  @Permit('self.leave')
+  @Get('leave/preview')
+  previewLeave(
+    @CurrentUser() user: AuthUser,
+    @Query() query: LeavePreviewQueryDto,
+    @StoreHeader() store?: string,
+  ) {
+    return this.hrms.previewLeave(user, query, store);
+  }
+
   /** Head office grants a balance row (e.g. week-off leave for a store employee). */
   @Roles('head_office')
   @Post('leave/balances')
@@ -496,6 +538,35 @@ export class HrmsController {
   @Patch('week-off')
   setWeekOff(@CurrentUser() user: AuthUser, @Body() dto: SetWeekOffDto) {
     return this.hrms.setWeekOff(user, dto);
+  }
+
+  // --- Roster / schedule (read) --------------------------------------------
+
+  /**
+   * The whole planning grid for a span in ONE call: per employee per date, the
+   * shift effective that day, whether the day is an off, the branch's holidays
+   * and any leave with its status. Managing the roster is a manager+ action, so
+   * reading the branch's is too.
+   */
+  @Roles('store_manager')
+  @Get('roster')
+  roster(@CurrentUser() user: AuthUser, @Query() q: RosterQueryDto, @StoreHeader() store?: string) {
+    return this.ops.roster(user, { ...q, storeId: q.storeId ?? store });
+  }
+
+  /**
+   * The same grid for the caller alone — their shifts, their offs, their
+   * branch's holidays. Any authenticated employee: the roster endpoints are
+   * manager-only, which left nobody able to see their own week.
+   */
+  @Permit('self.attendance')
+  @Get('schedule/me')
+  mySchedule(
+    @CurrentUser() user: AuthUser,
+    @Query() q: MyScheduleQueryDto,
+    @StoreHeader() store?: string,
+  ) {
+    return this.ops.mySchedule(user, q, store);
   }
 
   // --- Analytics / commission ----------------------------------------------
