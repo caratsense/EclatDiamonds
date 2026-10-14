@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -12,10 +11,10 @@ import { AuthUser } from '../common/auth-user';
 import { isSalesScoped } from '../common/sales-scope';
 import { AuditService } from '../common/audit.service';
 import { OmnichannelService } from '../omnichannel/omnichannel.service';
-import { ApprovalGate, approvalResetFor, QuoteApprovalService } from './quote-approval.service';
+import { normalizeCustomerPhone } from '../common/contact.util';
 import { renderQuotePdf } from './quote-pdf';
 import { StoreScopeService } from '../common/store-scope.service';
-import { ROLE_RANK, isAllStoreRole } from '../common/role.util';
+import { isAllStoreRole } from '../common/role.util';
 import { SequenceService } from '../common/sequence.service';
 import { StorageService } from '../storage/storage.service';
 import { WhatsAppService } from '../integrations/whatsapp.service';
@@ -46,6 +45,7 @@ function toView(q: any) {
     ref: q.ref,
     customer: q.customerName,
     phone: q.phone ?? '',
+    customerAddress: q.customerAddress ?? '',
     originStoreId: q.storeId,
     redeemableStoreIds: (q.redeemableStores ?? []).map((r: any) => r.storeId),
     status: q.status,
@@ -251,9 +251,9 @@ function discountsFrom(
  * amount at the end. The flat amount never eats into the gold, so it may not be
  * more than what is left of making + stones.
  *
- * `discountPercent` is everything given away as one % of making + stones — the
- * figure the approval caps judge. A discount on gold counts in it, against the
- * same base: gold given away uses up the same allowance as making given away.
+ * `discountPercent` is everything given away as one % of making + stones. A
+ * discount on gold counts in it, against the same base: gold given away uses up
+ * the same allowance as making given away.
  */
 function computeTotals(
   lines: QuoteLineDto[],
@@ -453,7 +453,6 @@ export class QuotesService {
     private readonly whatsapp: WhatsAppService,
     private readonly identity: IdentityService,
     private readonly activity: ActivityService,
-    private readonly approval: QuoteApprovalService,
     private readonly omnichannel: OmnichannelService,
     private readonly audit: AuditService,
   ) {}
@@ -489,17 +488,7 @@ export class QuotesService {
       throw new BadRequestException('Enter a valid 10-digit mobile number');
     }
 
-    /*
-     * The approval gate, checked BEFORE anything is composed or sent.
-     *
-     * Every door out to a customer — this text, the PDF download and the PDF on
-     * WhatsApp — calls the same `assertCleared`, so no door can be more lenient
-     * than another. A tenant with no threshold and no discount caps passes
-     * straight through, which is why this is safe to ship ahead of anybody
-     * choosing their numbers.
-     */
-    await this.approval.assertCleared(user.organisationId, id);
-
+    // No approval gate: a quotation once created is created (client, 13 Oct).
     const store = await this.prisma.store.findUnique({
       where: { id: quote.originStoreId },
       select: { name: true },
@@ -540,25 +529,12 @@ export class QuotesService {
    *
    * Resolved through `get()`, the same lookup as the quote screen, so whoever
    * cannot open the quote cannot download it — including any narrower
-   * salesperson scope added there later. Refused until approval exists, like
-   * every other door out.
+   * salesperson scope added there later. No approval hold: a quotation once
+   * created is created (client, 13 Oct).
    */
   async pdf(user: AuthUser, id: string) {
     await this.get(user, id);
-    /*
-     * Whoever DECIDES the approval must be able to read the document they are
-     * deciding (client, 9 Oct: "head office should be able to download it").
-     * So a manager or head office always gets the PDF - stamped DRAFT on every
-     * page until the gate clears, so a forwarded copy cannot pass as final.
-     * A salesperson still waits: for them the gate is the whole point. The
-     * customer-facing exits (share, send-pdf) stay refused for EVERYONE until
-     * the gate clears - this loosens reading, never sending.
-     */
-    const gate = await this.approval.gate(user.organisationId, id);
-    if (!gate.cleared && ROLE_RANK[user.role] < ROLE_RANK.store_manager) {
-      throw new ForbiddenException(gate.reason ?? 'This quote cannot be sent yet.');
-    }
-    return this.issuePdf(user, id, gate, { draft: !gate.cleared });
+    return this.issuePdf(user, id);
   }
 
   /**
@@ -583,8 +559,7 @@ export class QuotesService {
     if (to && (recipient.length < 12 || recipient.length > 15)) {
       throw new BadRequestException('Enter a valid 10-digit mobile number');
     }
-    const gate = await this.approval.assertCleared(user.organisationId, id);
-    const doc = await this.issuePdf(user, id, gate);
+    const doc = await this.issuePdf(user, id);
 
     const store = await this.prisma.store.findFirst({
       where: { id: quote.originStoreId, organisationId: user.organisationId },
@@ -704,26 +679,14 @@ export class QuotesService {
     };
   }
 
-  /**
-   * Render the PDF for the revision the gate just cleared, and keep a private
-   * copy. The quote is re-read here; if it moved on since the gate looked, the
-   * PDF is refused rather than printed for a revision nobody cleared.
-   */
-  private async issuePdf(
-    user: AuthUser,
-    id: string,
-    gate: ApprovalGate,
-    opts: { draft?: boolean } = {},
-  ) {
+  /** Render the PDF for the quote's current revision, and keep a private copy. */
+  private async issuePdf(user: AuthUser, id: string) {
     const organisationId = user.organisationId;
     const q = await this.prisma.quote.findFirst({
       where: { id, organisationId },
       include: { lines: true },
     });
     if (!q) throw new NotFoundException('Quote not found');
-    if (q.revision !== gate.revision) {
-      throw new ConflictException('This quote changed a moment ago. Open it again.');
-    }
     const [store, org] = await Promise.all([
       this.prisma.store.findFirst({
         where: { id: q.storeId, organisationId },
@@ -776,7 +739,9 @@ export class QuotesService {
               pan: party.pan ?? null,
             }
           : {}),
-        // What was typed on the quote wins, field by field.
+        // The address typed on the quote itself beats the customer record…
+        ...(q.customerAddress ? { address: q.customerAddress } : {}),
+        // …and what was typed on the bill wins over both, field by field.
         ...(view.billTo ?? {}),
       },
       payments: view.payments.map((p) => ({
@@ -790,33 +755,22 @@ export class QuotesService {
       makingDiscountPercent: view.makingDiscountPercent,
       stoneDiscountPercent: view.stoneDiscountPercent,
       totals: view.totals,
-      // Printed only when a decision was actually needed and given for this
-      // revision; a quote that never needed one is not "approved".
-      approval:
-        gate.required && gate.cleared && q.approvedTotal != null
-          ? {
-              approvedTotal: Number(q.approvedTotal),
-              decidedAt: q.decidedAt ? q.decidedAt.toISOString().slice(0, 10) : null,
-            }
-          : null,
-      draft: opts.draft === true,
+      // Approval was removed on 13 Oct; decisions given before that stay in
+      // the audit log and on the quote's columns, not on the document.
+      approval: null,
       generatedAt: new Date(),
     });
 
-    // A draft copy gets its own key and filename: it must never overwrite the
-    // cleared revision's stored copy (the one the outbox attaches), and the
-    // file a manager saves should say what it is.
-    const suffix = opts.draft ? '-draft' : '';
     const storageKey = await this.storage.savePrivate(
       organisationId,
       'quote-pdfs',
-      `${q.id}-r${q.revision}${suffix}.pdf`,
+      `${q.id}-r${q.revision}.pdf`,
       buffer,
     );
     return {
       buffer,
       storageKey,
-      filename: `${q.ref}-r${q.revision}${suffix}.pdf`,
+      filename: `${q.ref}-r${q.revision}.pdf`,
       revision: q.revision,
       grandTotal: Number(q.grandTotal),
     };
@@ -825,10 +779,9 @@ export class QuotesService {
   /**
    * PATCH /quotes/:id — re-price a quote.
    *
-   * Any accepted edit bumps the revision and, for a quote that was in the
-   * approval flow, sends it back to draft. The gate would refuse the new
-   * revision anyway; resetting the status keeps the screen from calling a
-   * quote "Approved" that nobody approved in this form.
+   * Any accepted edit bumps the revision. Nothing is withdrawn or sent back to
+   * draft: approval was removed on 13 Oct, and an edit changes the price, not
+   * the quote's standing.
    */
   async update(user: AuthUser, id: string, dto: UpdateQuoteDto) {
     const view = await this.get(user, id); // same visibility as the quote screen
@@ -856,14 +809,13 @@ export class QuotesService {
       t.grandTotal = Math.round(t.taxable);
       t.roundOff = round2(t.grandTotal - t.taxable);
     }
-    // Touching the price makes it this person's price, judged against their caps.
+    // Touching the price makes it this person's price.
     const repriced =
       dto.lines !== undefined ||
       dto.discountPercent !== undefined ||
       dto.makingDiscountPercent !== undefined ||
       dto.stoneDiscountPercent !== undefined ||
       dto.additionalDiscount !== undefined;
-    const reset = approvalResetFor(current.status);
 
     let updated;
     try {
@@ -872,7 +824,6 @@ export class QuotesService {
         // claim to be the next revision.
         where: { id, revision: current.revision },
         data: {
-          ...reset,
           ...totalsData(t),
           revision: { increment: 1 },
           ...(repriced ? { pricedById: user.id, pricedByRole: user.role } : {}),
@@ -891,15 +842,12 @@ export class QuotesService {
       throw e;
     }
 
-    const invalidated = Object.keys(reset).length > 0;
     await this.audit.record(user, {
-      action: invalidated ? 'quotes.approval_invalidated' : 'quotes.edited',
+      action: 'quotes.edited',
       entityType: 'Quote',
       entityId: id,
       storeId: current.storeId,
-      summary: invalidated
-        ? `Quote ${current.ref} edited after ${current.status.replace('_', ' ')}; approval withdrawn`
-        : `Quote ${current.ref} edited`,
+      summary: `Quote ${current.ref} edited`,
       metadata: {
         fromRevision: current.revision,
         toRevision: updated.revision,
@@ -907,7 +855,6 @@ export class QuotesService {
         previousTotal: current.grandTotal.toString(),
         total: updated.grandTotal.toString(),
         discountPercent: t.discountPercent,
-        previousApproval: invalidated ? current.approvalSnapshot : null,
       },
     });
 
@@ -915,9 +862,9 @@ export class QuotesService {
   }
 
   /**
-   * PATCH /quotes/:id/details — the address and payments, after the quote is
-   * saved. Not the price: no revision bump, no approval withdrawn, and allowed
-   * after the quote became an order, since money often comes in after that.
+   * PATCH /quotes/:id/details — the customer's address and payments, after the
+   * quote is saved. Not the price: no revision bump, and allowed after the
+   * quote became an order, since money often comes in after that.
    */
   async updateDetails(user: AuthUser, id: string, dto: UpdateQuoteDetailsDto) {
     const view = await this.get(user, id); // same visibility as the quote screen
@@ -937,6 +884,10 @@ export class QuotesService {
     const updated = await this.prisma.quote.update({
       where: { id },
       data: {
+        // A field left out is left as it is; sent empty, it clears.
+        ...(dto.customerAddress !== undefined
+          ? { customerAddress: dto.customerAddress.trim() || null }
+          : {}),
         ...(dto.billTo ? { billTo: trimmed(dto.billTo) } : {}),
         ...(dto.payments ? { payments: dto.payments.map(trimmed) as Prisma.InputJsonValue } : {}),
       },
@@ -949,8 +900,10 @@ export class QuotesService {
       storeId: view.originStoreId,
       summary: `Quote ${view.ref}: address / payments edited`,
       metadata: {
+        previousCustomerAddress: view.customerAddress,
         previousBillTo: view.billTo,
         previousPayments: view.payments,
+        customerAddress: updated.customerAddress,
         billTo: updated.billTo,
         payments: updated.payments,
       },
@@ -1063,8 +1016,8 @@ export class QuotesService {
    * cascade, and nothing outside the quote family references the row. The
    * audit entry carries ref, status and total, so what was offered and
    * withdrawn stays on the record after the row is gone. Managers and above
-   * only (controller): a priced offer disappearing on a salesperson's say-so
-   * is exactly what the approval gate exists to prevent.
+   * only (controller): a priced offer must not disappear on a salesperson's
+   * say-so.
    */
   async remove(user: AuthUser, id: string) {
     const current = await this.prisma.quote.findFirst({
@@ -1106,6 +1059,9 @@ export class QuotesService {
     // Sequence-backed, same reason as the order refs this service also mints.
     const seq = await this.sequence.next('QT:global');
     const redeemable = [...new Set([dto.storeId, ...(dto.redeemableStoreIds ?? [])])];
+    // The validator already passed this; normalising strips the formatting so
+    // the stored number is dialable digits (keeping a foreign number's +).
+    const phone = normalizeCustomerPhone(dto.phone) ?? dto.phone;
 
     const quote = await this.prisma.quote.create({
       data: {
@@ -1115,7 +1071,8 @@ export class QuotesService {
         leadId: dto.leadId,
         assignedRepId: user.id,
         customerName: dto.customerName,
-        phone: dto.phone,
+        phone,
+        customerAddress: dto.customerAddress?.trim() || null,
         status: dto.status ?? 'draft',
         kind,
         isKaccha,
@@ -1156,7 +1113,7 @@ export class QuotesService {
     }
     if (!partyId) {
       const identity = await this.identity.resolveForRecord(user, {
-        phone: dto.phone,
+        phone,
         name: dto.customerName,
         storeId: dto.storeId,
         source: 'quote',

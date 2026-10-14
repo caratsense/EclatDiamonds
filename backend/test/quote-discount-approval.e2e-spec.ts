@@ -14,27 +14,28 @@ import { WhatsAppService } from '../src/integrations/whatsapp.service';
 const pdfParse: (data: Buffer) => Promise<{ text: string; numpages: number }> = require('pdf-parse/lib/pdf-parse.js');
 
 /**
- * A discount above the pricer's cap, and a detailed quote PDF.
+ * Quote pricing and the detailed quote PDF, after approval was REMOVED
+ * (client, 13 Oct: "a quotation once created is created — no approval from
+ * anybody").
  *
  * The properties pinned here:
  *
- *  1. DISCOUNT OVER CAP IS HELD. Every door — WhatsApp text, PDF download, PDF
- *     on WhatsApp — refuses until a manager with enough authority approves.
+ *  1. NO DISCOUNT HOLDS A QUOTE. DiscountLimit rows still exist (Module 15 uses
+ *     them elsewhere); a quote discount over any cap leaves through every door —
+ *     WhatsApp text, PDF download, PDF on WhatsApp.
  *
- *  2. THE CAP IS DiscountLimit's, PER TENANT. Within it nothing is asked; a
- *     tenant that never configured caps is not affected by another's 5% rule.
+ *  2. THE OLD APPROVAL ENDPOINTS answer 410 rather than crashing an old screen,
+ *     and the pending list is empty.
  *
- *  3. APPROVAL IS FOR ONE REVISION. Edit the price, the discount or the lines
- *     afterwards and every door refuses again.
+ *  3. EDITING bumps the revision and nothing else: no status flip, no door
+ *     closes, no "approval withdrawn" audit entry.
  *
- *  4. NOBODY CLEARS THEIR OWN DISCOUNT, whatever the tenant's total-approval
- *     setting says.
+ *  4. THE PDF IS REAL, PRIVATE AND SCOPED: genuine PDF bytes naming the quote,
+ *     reachable only through the quote's own visibility.
  *
- *  5. THE PDF IS REAL, PRIVATE AND SCOPED: genuine PDF bytes naming the quote and
- *     its approved total, reachable only through the quote's own visibility.
- *
- *  6. THE PDF ON WHATSAPP IS AN OUTBOX ROW, held to the same window and opt-out
- *     rules as text, and never reported sent when nothing was sent.
+ *  5. THE PDF ON WHATSAPP IS AN OUTBOX ROW, held to the same window and opt-out
+ *     rules as text, and never reported sent when nothing was sent. Consent and
+ *     template rules are the ONLY things that stop a send now.
  */
 
 const PASSWORD = 'password123';
@@ -78,7 +79,7 @@ async function teardown(prisma: import('../src/prisma/prisma.service').PrismaSer
   }
 }
 
-describe('Quote discount approval + quote PDF (e2e)', () => {
+describe('Quote discounts with approval removed + quote PDF (e2e)', () => {
   let app: INestApplication;
   let prisma: import('../src/prisma/prisma.service').PrismaService;
   let privateDir: string;
@@ -108,10 +109,6 @@ describe('Quote discount approval + quote PDF (e2e)', () => {
     (await request(server()).get(`/quotes/${id}/approval`).set(as(who)).expect(200)).body;
   const pdf = (who: string, id: string) =>
     request(server()).get(`/quotes/${id}/pdf`).set(as(who)).buffer(true).parse(binary);
-  const approve = async (requester: string, decider: string, id: string) => {
-    await request(server()).post(`/quotes/${id}/request-approval`).set(as(requester)).expect(201);
-    await request(server()).post(`/quotes/${id}/decide`).set(as(decider)).send({ approve: true }).expect(201);
-  };
   const outboundCount = () => prisma.message.count({ where: { organisationId: A.org, direction: 'outbound' } });
 
   beforeAll(async () => {
@@ -164,9 +161,9 @@ describe('Quote discount approval + quote PDF (e2e)', () => {
       });
     }
 
-    // Tenant A's policy, as head office would set it through POST /discounts/limits:
-    // a salesperson's quote discount above 5% needs a manager; a manager's above 10%
-    // needs head office. Tenant B sets nothing.
+    // Tenant A still has Module 15 caps on file, as head office would set them
+    // through POST /discounts/limits. Since 13 Oct they hold NO quote: the
+    // tests below pin that an over-cap discount leaves anyway.
     await prisma.discountLimit.createMany({
       data: [
         { organisationId: A.org, role: 'salesperson', storeId: null, maxPercent: 5, maxDiamondPercent: 2, maxMakingPercent: 5 },
@@ -228,55 +225,32 @@ describe('Quote discount approval + quote PDF (e2e)', () => {
 
   let held: { id: string; ref: string };
 
-  it('a discount above the cap cannot leave: not as text, not as a PDF, not on WhatsApp', async () => {
+  it('a discount above the old cap leaves through every door — nothing holds a quote', async () => {
     held = await createQuote('rep', 8);
     const g = await gate('rep', held.id);
-    expect(g.required).toBe(true);
-    expect(g.cleared).toBe(false);
-    expect(g.reasons).toHaveLength(1);
-    expect(g.reasons[0]).toMatchObject({
-      code: 'discount_over_cap', discountPercent: 8, cap: 5, requiredRole: 'store_manager',
-    });
+    expect(g).toMatchObject({ required: false, cleared: true, reason: null, reasons: [] });
 
-    const before = await outboundCount();
-    expect((await request(server()).post(`/quotes/${held.id}/share`).set(as('rep'))).status).toBe(403);
-    expect((await pdf('rep', held.id)).status).toBe(403);
-    expect((await request(server()).post(`/quotes/${held.id}/send-pdf`).set(as('rep')).send({})).status).toBe(403);
-    // Refused before anything was queued.
-    expect(await outboundCount()).toBe(before);
+    await request(server()).post(`/quotes/${held.id}/share`).set(as('rep')).expect(201);
+    expect((await pdf('rep', held.id)).status).toBe(200);
   });
 
-  it('a salesperson may ask but not decide; the reason is recorded for the manager', async () => {
-    await request(server()).post(`/quotes/${held.id}/request-approval`).set(as('rep')).expect(201);
-    await request(server())
-      .post(`/quotes/${held.id}/decide`).set(as('rep')).send({ approve: true }).expect(403);
+  it('asking and deciding are gone (410), and the pending list is empty', async () => {
+    expect((await request(server()).post(`/quotes/${held.id}/request-approval`).set(as('rep'))).status).toBe(410);
+    expect(
+      (await request(server()).post(`/quotes/${held.id}/decide`).set(as('mgr')).send({ approve: true })).status,
+    ).toBe(410);
 
     const pending = await request(server()).get('/quotes/approval/pending').set(as('mgr')).expect(200);
-    const row = pending.body.find((r: { id: string }) => r.id === held.id);
-    expect(row).toMatchObject({ discountPercent: 8, discountAmount: 2400, revision: 1 });
-    expect(row.reasons[0]).toMatchObject({ code: 'discount_over_cap', cap: 5, discountPercent: 8 });
-  });
+    expect(pending.body).toEqual([]);
 
-  it('a decision on a revision the manager did not see is refused', async () => {
-    await request(server())
-      .post(`/quotes/${held.id}/decide`).set(as('mgr')).send({ approve: true, revision: 99 }).expect(409);
-  });
-
-  it('a manager approves, and the approval snapshots total, discount and revision', async () => {
-    await request(server())
-      .post(`/quotes/${held.id}/decide`).set(as('mgr')).send({ approve: true, revision: 1 }).expect(201);
+    // The attempts flipped nothing.
     const q = await prisma.quote.findUniqueOrThrow({ where: { id: held.id } });
-    expect(q.status).toBe('approved');
-    expect(q.approvedRevision).toBe(1);
-    expect(Number(q.approvedTotal)).toBe(90228);
-    expect(q.approvalSnapshot).toMatchObject({
-      total: 90228, discountPercent: 8, discountAmount: 2400, revision: 1,
-      reasons: [expect.objectContaining({ code: 'discount_over_cap' })],
-    });
-    expect((await gate('rep', held.id)).cleared).toBe(true);
+    expect(q.status).toBe('draft');
+    expect(q.requestedById).toBeNull();
+    expect(q.decidedById).toBeNull();
   });
 
-  it('the PDF is a genuine PDF naming the quote and its approved total', async () => {
+  it('the PDF is a genuine PDF naming the quote — with no approval line and no DRAFT stamp', async () => {
     const file = await pdf('rep', held.id);
     expect(file.status).toBe(200);
     expect(file.headers['content-type']).toMatch(/application\/pdf/);
@@ -286,9 +260,9 @@ describe('Quote discount approval + quote PDF (e2e)', () => {
 
     const parsed = await pdfParse(bytes);
     expect(parsed.text).toContain(held.ref);
-    // The bill carries the approval as a line of its own under the signatures.
-    expect(parsed.text).toMatch(/Approved by a manager/);
-    expect(parsed.text).toContain('Rs. 90,228.00');
+    expect(parsed.text).not.toMatch(/Approved by a manager/);
+    expect(parsed.text).not.toMatch(/DRAFT/);
+    expect(parsed.text).toContain('90,228.00');
     expect(parsed.text).toContain('Maison qd-a');
     expect(parsed.text).toContain('24ABCDE1234F1Z5');
     expect(parsed.text).toContain('Solitaire ring');
@@ -363,15 +337,14 @@ describe('Quote discount approval + quote PDF (e2e)', () => {
     });
   });
 
-  /* ------------------------ approval is for one revision, not for a quote */
+  /* ------------------- editing bumps the revision, and nothing else closes */
 
   it.each([
     ['the discount', { discountPercent: 7 }],
     ['the price', { lines: [{ ...LINE, makingCharges: 12000 }] }],
     ['the material lines', { lines: [LINE, { ...LINE, description: 'Matching band', stoneCharges: 0 }] }],
-  ])('editing %s after approval withdraws it and every door refuses again', async (_what, edit) => {
+  ])('editing %s bumps the revision and every door stays open', async (_what, edit) => {
     const q = await createQuote('rep', 8);
-    await approve('rep', 'mgr', q.id);
     expect((await gate('rep', q.id)).cleared).toBe(true);
 
     const edited = await request(server()).patch(`/quotes/${q.id}`).set(as('rep')).send(edit);
@@ -379,79 +352,67 @@ describe('Quote discount approval + quote PDF (e2e)', () => {
     expect(edited.body.revision).toBe(2);
     expect(edited.body.status).toBe('draft');
 
-    const g = await gate('rep', q.id);
-    expect(g.required).toBe(true);
-    expect(g.cleared).toBe(false);
-    expect((await request(server()).post(`/quotes/${q.id}/share`).set(as('rep'))).status).toBe(403);
-    expect((await pdf('rep', q.id)).status).toBe(403);
-    expect((await request(server()).post(`/quotes/${q.id}/send-pdf`).set(as('rep')).send({})).status).toBe(403);
+    expect((await gate('rep', q.id)).cleared).toBe(true);
+    await request(server()).post(`/quotes/${q.id}/share`).set(as('rep')).expect(201);
+    const file = await pdf('rep', q.id);
+    expect(file.status).toBe(200);
+    expect(file.headers['content-disposition']).toContain('-r2.pdf');
 
-    const audit = await prisma.auditLog.findFirst({
+    // The edit is on the record as an edit — not as an approval withdrawn.
+    const edits = await prisma.auditLog.findFirst({
+      where: { organisationId: A.org, action: 'quotes.edited', entityId: q.id },
+    });
+    expect(edits).toBeTruthy();
+    const invalidated = await prisma.auditLog.findFirst({
       where: { organisationId: A.org, action: 'quotes.approval_invalidated', entityId: q.id },
     });
-    expect(audit).toBeTruthy();
+    expect(invalidated).toBeNull();
   });
 
-  it('a discount changed behind the API’s back is still caught by the snapshot', async () => {
+  it('a discount changed behind the API’s back holds nothing either', async () => {
     const q = await createQuote('rep', 8);
-    await approve('rep', 'mgr', q.id);
-    await prisma.quote.update({ where: { id: q.id }, data: { discountPercent: 9 } });
-    const g = await gate('rep', q.id);
-    expect(g.cleared).toBe(false);
-    expect(g.reason).toMatch(/changed after approval/i);
+    await prisma.quote.update({ where: { id: q.id }, data: { discountPercent: 19 } });
+    expect((await gate('rep', q.id)).cleared).toBe(true);
   });
 
-  /* ------------------------------------------------ separation of duties */
+  /* ---------------------------------------- the old policy knobs are gone */
 
-  it('a manager cannot clear a discount they set or asked for — even when the tenant allows self-approval of totals', async () => {
-    await request(server())
-      .put('/quotes/approval/settings').set(as('ho')).send({ allowSelfApproval: true }).expect(200);
+  it('the settings cannot be written (410) and read as switched off', async () => {
+    const gone = await request(server())
+      .put('/quotes/approval/settings').set(as('ho')).send({ valueThreshold: 50_000 });
+    expect(gone.status).toBe(410);
+    expect(JSON.stringify(gone.body)).toMatch(/no approval from anybody/i);
 
-    // 12% is over the manager's own 10% cap, so it needs head office.
+    const read = await request(server()).get('/quotes/approval/settings').set(as('mgr')).expect(200);
+    expect(read.body).toMatchObject({ valueThreshold: null, allowSelfApproval: false });
+  });
+
+  it('a manager’s own quote over their own cap leaves on nobody’s say-so but theirs', async () => {
+    // 12% is over the manager's old 10% cap — the case that used to need head
+    // office. It leaves freely now.
     const q = await createQuote('mgr', 12);
-    expect((await gate('mgr', q.id)).reasons[0]).toMatchObject({ cap: 10, requiredRole: 'head_office' });
-    await request(server()).post(`/quotes/${q.id}/request-approval`).set(as('mgr')).expect(201);
-
-    const self = await request(server()).post(`/quotes/${q.id}/decide`).set(as('mgr')).send({ approve: true });
-    expect(self.status).toBe(403);
-    expect(JSON.stringify(self.body)).toMatch(/your own/i);
-
-    // Another manager is not senior enough for this one.
-    const junior = await request(server()).post(`/quotes/${q.id}/decide`).set(as('mgr2')).send({ approve: true });
-    expect(junior.status).toBe(403);
-    expect(JSON.stringify(junior.body)).toMatch(/Head Office/);
-
-    await request(server()).post(`/quotes/${q.id}/decide`).set(as('ho')).send({ approve: true }).expect(201);
-    expect((await gate('mgr', q.id)).cleared).toBe(true);
-
-    await request(server())
-      .put('/quotes/approval/settings').set(as('ho')).send({ allowSelfApproval: false }).expect(200);
+    expect(await gate('mgr', q.id)).toMatchObject({ required: false, cleared: true, reasons: [] });
+    await request(server()).post(`/quotes/${q.id}/share`).set(as('mgr')).expect(201);
   });
 
-  it('a manager discount within their own cap needs nothing, even when a salesperson sends it', async () => {
+  it('a manager-priced quote leaves when a salesperson sends it', async () => {
     const q = await createQuote('mgr', 8);
     // Priced by the manager, handed to the rep to send: a salesperson acts only
-    // on quotes assigned to them, and the cap is still the pricer's.
+    // on quotes assigned to them.
     const rep = await prisma.user.findUniqueOrThrow({ where: { email: A.rep }, select: { id: true } });
     await prisma.quote.update({ where: { id: q.id }, data: { assignedRepId: rep.id } });
     expect((await gate('rep', q.id)).required).toBe(false);
     await request(server()).post(`/quotes/${q.id}/share`).set(as('rep')).expect(201);
   });
 
-  it('both rules can apply at once, and both reasons are recorded', async () => {
-    await request(server())
-      .put('/quotes/approval/settings').set(as('ho')).send({ valueThreshold: 50_000 }).expect(200);
-    const q = await createQuote('rep', 8);
-    const g = await gate('rep', q.id);
-    expect(g.reasons.map((r: { code: string }) => r.code).sort()).toEqual(['discount_over_cap', 'total_over_threshold']);
-
-    const asked = await request(server()).post(`/quotes/${q.id}/request-approval`).set(as('rep')).expect(201);
-    expect(asked.body.reasons).toHaveLength(2);
-    const stored = await prisma.quote.findUniqueOrThrow({ where: { id: q.id } });
-    expect(stored.approvalReasons).toHaveLength(2);
-
-    await request(server())
-      .put('/quotes/approval/settings').set(as('ho')).send({ valueThreshold: null }).expect(200);
+  it('a stale settings row with a threshold holds nothing', async () => {
+    await prisma.quoteApprovalSettings.create({
+      data: { organisationId: A.org, valueThreshold: 50_000, allowSelfApproval: false },
+    });
+    const q = await createQuote('rep', 8); // 90,228 total, over the stale 50k
+    expect(await gate('rep', q.id)).toMatchObject({ required: false, cleared: true, reasons: [] });
+    await request(server()).post(`/quotes/${q.id}/share`).set(as('rep')).expect(201);
+    await prisma.quoteApprovalSettings.deleteMany({ where: { organisationId: A.org } });
   });
 
   /* ------------------------------------------------- one tenant's rule only */

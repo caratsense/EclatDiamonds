@@ -92,7 +92,7 @@ export class QuotesController {
 
   /**
    * The detailed quote PDF, as bytes from an authorised route. The stored copy
-   * has no URL of its own. Refused (403) until any required approval exists.
+   * has no URL of its own. Anyone who can open the quote can download it.
    */
   @Get(':id/pdf')
   @Header('Content-Type', 'application/pdf')
@@ -156,56 +156,52 @@ export class QuotesController {
     return this.quotes.share(user, id, dto?.to);
   }
 
-  /* ------------------------------------------------------------ approval */
+  /* ----------------------------------------------- approval (removed 13 Oct)
+   * "A quotation once created is created — no approval from anybody." The
+   * routes stay answerable so an old screen does not crash: reads report the
+   * feature as off, writes answer 410 with the reason. Past decisions stay
+   * readable in the audit log and on the quote's own columns.
+   */
 
-  /** The tenant's rule: above what amount does a quote need signing off. */
+  /** Reads as switched off, for any screen still asking. */
   @Roles('store_manager', 'head_office')
   @Get('approval/settings')
   approvalSettings(@CurrentUser() user: AuthUser) {
     return this.approval.settingsFor(user.organisationId);
   }
 
+  /** 410 — the policy no longer exists to be set. */
   @Roles('head_office')
   @Put('approval/settings')
   saveApprovalSettings(@CurrentUser() user: AuthUser, @Body() dto: QuoteApprovalSettingsDto) {
     return this.approval.saveSettings(user, dto);
   }
 
-  /** Quotes waiting on a decision, scoped to what this manager can see. */
+  /** Always empty — nothing waits on anybody. */
   @Roles('store_manager', 'head_office')
   @Get('approval/pending')
-  pendingApprovals(@CurrentUser() user: AuthUser) {
-    return this.approval.pending(user);
+  pendingApprovals() {
+    return this.approval.pending();
   }
 
-  /**
-   * Whether this quote may be sent, without trying to send it — so the screen
-   * can show the state rather than discovering it through an error.
-   */
+  /** Always cleared; still 404s outside the caller's reach, like the quote. */
   @Get(':id/approval')
   async approvalState(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    // Reached through the same lookup as the quote itself: store, kaccha and
-    // (for a salesperson) assignment. This read any quote in the organisation
-    // by id, total and discount reasons included.
     await this.quotes.get(user, id);
     return this.approval.gate(user.organisationId, id);
   }
 
-  /** A salesperson asks for a decision. */
+  /** 410 after the same scope check as the quote screen. */
   @Post(':id/request-approval')
   requestApproval(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.approval.request(user, id);
   }
 
-  /** A manager decides. Rejecting requires a reason. */
+  /** 410 — there is nothing to decide. */
   @Roles('store_manager', 'head_office')
   @Post(':id/decide')
-  decide(
-    @CurrentUser() user: AuthUser,
-    @Param('id') id: string,
-    @Body() dto: DecideQuoteDto,
-  ) {
-    return this.approval.decide(user, id, dto.approve, dto.reason, dto.revision);
+  decide(@Body() _dto: DecideQuoteDto) {
+    return this.approval.decide();
   }
 
   /** Fork a custom order (timeline) from this quote and mark it accepted. */

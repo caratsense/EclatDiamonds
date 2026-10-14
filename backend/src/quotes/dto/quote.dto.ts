@@ -18,7 +18,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { QuoteKind, QuoteStatus } from '@prisma/client';
-import { IsIndianMobile, IsRealName } from '../../common/contact.util';
+import { IsCustomerPhone, IsRealName } from '../../common/contact.util';
 
 /** The karats the business quotes in; 0 is a line with no metal (repair, stones). */
 export const QUOTE_KARATS = [0, 9, 12, 14, 18, 22, 24];
@@ -188,11 +188,17 @@ export class CreateQuoteDto {
   @IsRealName()
   customerName!: string;
 
-  // Phone is mandatory on quote creation (confirmed rule) and must be a valid
-  // Indian mobile.
+  // Phone is mandatory on quote creation (confirmed rule). Indian or foreign
+  // (the business quotes overseas clients, 13 Oct); stored normalised.
   @IsString()
-  @IsIndianMobile()
+  @IsCustomerPhone()
   phone!: string;
+
+  /** The customer's own address, printed under their name on the quote. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  customerAddress?: string;
 
   @IsOptional()
   @IsEnum(QuoteStatus)
@@ -240,8 +246,7 @@ export class CreateQuoteDto {
   /**
    * One discount percentage off making + diamond/stone charges, for a caller
    * that does not send the separate making / stone discounts below (it then
-   * counts as both). Gold is never discounted. Above the pricer's
-   * DiscountLimit cap, the quote cannot leave without approval.
+   * counts as both). Gold is never discounted.
    */
   @IsOptional()
   @Type(() => Number)
@@ -282,9 +287,8 @@ export class CreateQuoteDto {
 
 /**
  * Body for PATCH /quotes/:id — re-price a quote. Every accepted edit bumps the
- * revision and throws away any approval, so the fields are limited to what a
- * price is made of plus its validity. Who it is for and where it was raised
- * are not editable here.
+ * revision, so the fields are limited to what a price is made of plus its
+ * validity. Who it is for and where it was raised are not editable here.
  */
 export class UpdateQuoteDto {
   @IsOptional()
@@ -386,6 +390,12 @@ export class QuotePaymentDto {
  * bumps the revision. A field left out is left as it is.
  */
 export class UpdateQuoteDetailsDto {
+  /** The customer's own address; empty clears it. Not the GST bill-to below. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  customerAddress?: string;
+
   @IsOptional()
   @ValidateNested()
   @Type(() => QuoteBillToDto)

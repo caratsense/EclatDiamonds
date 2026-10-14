@@ -1,489 +1,101 @@
-import {
-  BadRequestException,
-  ConflictException,
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
-import { Prisma, Role } from '@prisma/client';
+import { GoneException, Injectable, NotFoundException } from '@nestjs/common';
 
 import { AuthUser } from '../common/auth-user';
 import { isSalesScoped } from '../common/sales-scope';
-import { AuditService } from '../common/audit.service';
-import { assertNotSelfApproval } from '../common/approval.util';
-import { ROLE_LABELS, ROLE_RANK } from '../common/role.util';
-import { DiscountsService } from '../discounts/discounts.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
 
-/** Roles that may decide. A salesperson may ask; they may not answer. */
-const DECIDERS = new Set(['store_manager', 'area_manager', 'head_office']);
-
 export type ApprovalReasonCode = 'total_over_threshold' | 'discount_over_cap';
 
-/** One reason a quote needs a decision, with the numbers behind it. */
+/** One reason a quote needed a decision, with the numbers behind it. */
 export interface ApprovalReason {
   code: ApprovalReasonCode;
-  /** In words a salesperson can act on. */
   message: string;
   total?: number;
   threshold?: number;
-  /** The requested discount, and the cap it went over. */
   discountPercent?: number;
   cap?: number;
-  /** The lowest role whose own cap covers the discount. */
-  requiredRole?: Role;
+  requiredRole?: string;
 }
 
 export interface ApprovalGate {
-  /** Does this quote need a decision before it can be shared? */
+  /** Does this quote need a decision before it can be shared? Always false. */
   required: boolean;
-  /** Is it cleared to go right now? */
+  /** Is it cleared to go right now? Always true. */
   cleared: boolean;
-  /** Why not, in words a salesperson can act on. */
   reason: string | null;
-  /** Every rule that asks for a decision, whether or not it is already met. */
   reasons: ApprovalReason[];
   /** The content revision this answer is about. */
   revision: number;
 }
 
-/** What an approval froze. Compared field by field before anything is sent. */
-interface ApprovalSnapshot {
-  total: number;
-  discountPercent: number;
-  discountAmount: number;
-  revision: number;
-  reasons: ApprovalReason[];
-}
-
-const QUOTE_SELECT = {
-  id: true, ref: true, status: true, storeId: true, requestedById: true,
-  grandTotal: true, approvedTotal: true, revision: true, approvedRevision: true,
-  approvalSnapshot: true, discountPercent: true, discountAmount: true,
-  pricedById: true, pricedByRole: true, assignedRepId: true,
-} satisfies Prisma.QuoteSelect;
-
-type GateQuote = Prisma.QuoteGetPayload<{ select: typeof QUOTE_SELECT }>;
+const APPROVAL_REMOVED =
+  'Quote approval has been removed — a quotation once created is created, with no approval from anybody.';
 
 /**
- * The columns an edit writes to throw an approval away.
+ * Quote approval — REMOVED (client, 13 Oct: "a quotation once created is
+ * created — no approval from anybody").
  *
- * Only a quote that was IN the approval flow goes back to draft. A shared or
- * expired quote keeps its status; its new revision is simply not cleared until
- * the gate says so.
- */
-export function approvalResetFor(status: string): Prisma.QuoteUpdateInput {
-  if (!['pending_approval', 'approved', 'rejected'].includes(status)) return {};
-  return {
-    status: 'draft',
-    requestedAt: null,
-    decidedAt: null,
-    decisionReason: null,
-    approvedTotal: null,
-    approvedRevision: null,
-    approvalReasons: Prisma.DbNull,
-    approvalSnapshot: Prisma.DbNull,
-    requestedBy: { disconnect: true },
-    decidedBy: { disconnect: true },
-  };
-}
-
-/**
- * Approval for a quote.
+ * The gate answers "cleared" for every quote, so nothing is ever held: not the
+ * WhatsApp text, not the PDF download, not the PDF on WhatsApp. The endpoints
+ * stay answerable so an old screen does not crash — reads report the feature as
+ * off, writes say plainly that it is gone (410).
  *
- * Two independent rules can ask for a decision, and either is enough:
- *
- *  - `total_over_threshold` — the tenant's QuoteApprovalSettings.valueThreshold.
- *  - `discount_over_cap` — the quote's discount is above the DiscountLimit cap
- *    (`maxPercent`) for the role of whoever priced it. DiscountLimit is the
- *    single source of truth for discount caps (Module 15); this reads it, it
- *    does not copy it.
- *
- * The mechanism worth reading is the snapshot. Approving freezes the total, the
- * discount and the content revision; sharing compares the CURRENT quote against
- * all three and refuses when any differ. Without that, a quote approved at one
- * price could be edited and sent, and the approval would be decoration.
+ * The HISTORY is deliberately untouched: past decisions keep their columns on
+ * Quote (decidedById, approvedTotal, approvalSnapshot, …) and their audit-log
+ * entries (quotes.approved / quotes.rejected), so what was signed off before
+ * 13 Oct stays readable.
  */
 @Injectable()
 export class QuoteApprovalService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
-    private readonly audit: AuditService,
-    private readonly discounts: DiscountsService,
   ) {}
 
+  /** Reads as switched off, whatever an old settings row says. */
   async settingsFor(organisationId: string) {
-    const row = await this.prisma.quoteApprovalSettings.findUnique({
-      where: { organisationId },
-    });
     return {
       organisationId,
-      valueThreshold: row?.valueThreshold != null ? Number(row.valueThreshold) : null,
-      allowSelfApproval: row?.allowSelfApproval ?? false,
-      updatedById: row?.updatedById ?? null,
+      valueThreshold: null as number | null,
+      allowSelfApproval: false,
+      updatedById: null as string | null,
     };
   }
 
-  async saveSettings(
-    user: AuthUser,
-    input: { valueThreshold?: number | null; allowSelfApproval?: boolean },
-  ) {
-    const data = {
-      ...(input.valueThreshold !== undefined
-        ? {
-            valueThreshold:
-              input.valueThreshold === null ? null : new Prisma.Decimal(input.valueThreshold),
-          }
-        : {}),
-      ...(input.allowSelfApproval !== undefined
-        ? { allowSelfApproval: input.allowSelfApproval }
-        : {}),
-      updatedById: user.id,
-    };
-
-    const row = await this.prisma.quoteApprovalSettings.upsert({
-      where: { organisationId: user.organisationId },
-      create: { organisationId: user.organisationId, ...data },
-      update: data,
-    });
-
-    await this.audit.record(user, {
-      action: 'quotes.approval_policy_changed',
-      entityType: 'QuoteApprovalSettings',
-      entityId: user.organisationId,
-      summary:
-        row.valueThreshold == null
-          ? 'Quote approval turned off'
-          : `Quotes at or above ${row.valueThreshold.toString()} now need approval`,
-      metadata: {
-        valueThreshold: row.valueThreshold?.toString() ?? null,
-        allowSelfApproval: row.allowSelfApproval,
-      },
-    });
-
-    return this.settingsFor(user.organisationId);
+  saveSettings(..._ignored: unknown[]): never {
+    throw new GoneException(APPROVAL_REMOVED);
   }
 
-  /**
-   * Which rules ask for a decision on this quote as it stands now.
-   *
-   * Evaluated live rather than stored, so a cap lowered by head office applies
-   * to quotes that have not been sent yet.
-   */
-  private async reasonsFor(organisationId: string, quote: GateQuote): Promise<ApprovalReason[]> {
-    const reasons: ApprovalReason[] = [];
-    const total = Number(quote.grandTotal);
-
-    const settings = await this.settingsFor(organisationId);
-    if (settings.valueThreshold != null && total >= settings.valueThreshold) {
-      reasons.push({
-        code: 'total_over_threshold',
-        message: `The total is at or above ${inr(settings.valueThreshold)}, which needs a manager.`,
-        total,
-        threshold: settings.valueThreshold,
-      });
-    }
-
-    const percent = Number(quote.discountPercent);
-    if (percent > 0) {
-      /*
-       * Whose cap: the role that PRICED the quote, frozen when it was priced. A
-       * manager's 8% does not become over-cap because a salesperson presses
-       * send, and a salesperson's 8% does not become fine because a manager
-       * does. An unattributed discount is judged at the lowest rank.
-       */
-      const role = quote.pricedByRole ?? 'salesperson';
-      const verdict = await this.discounts.evaluateOverall(
-        organisationId, quote.storeId, role, percent,
-      );
-      /*
-       * A tenant with no DiscountLimit rows has no discount rule to enforce, and
-       * this gate stays out of its way — the same "off until configured" stance
-       * as the total threshold above. Caps are per tenant and per store, so one
-       * tenant's rule never reaches another.
-       */
-      if (verdict.configured && !verdict.withinOwn) {
-        reasons.push({
-          code: 'discount_over_cap',
-          message: `A ${percent}% discount is over the ${ROLE_LABELS[role]} cap of ${verdict.cap}%. ${ROLE_LABELS[verdict.requiredRole]} approval is needed.`,
-          discountPercent: percent,
-          cap: verdict.cap,
-          requiredRole: verdict.requiredRole,
-        });
-      }
-    }
-    return reasons;
-  }
-
-  /**
-   * May this quote be shared right now?
-   *
-   * Called by every door out to a customer before anything is composed. Returns
-   * rather than throws so the quote screen can show the state without provoking
-   * an error.
-   */
+  /** Every quote is cleared; only its existence (in this org) is checked. */
   async gate(organisationId: string, quoteId: string): Promise<ApprovalGate> {
     const quote = await this.prisma.quote.findFirst({
       where: { id: quoteId, organisationId },
-      select: QUOTE_SELECT,
+      select: { revision: true },
     });
     if (!quote) throw new NotFoundException('Quote not found');
-
-    const reasons = await this.reasonsFor(organisationId, quote);
-    const base = { reasons, revision: quote.revision };
-    if (!reasons.length) {
-      return { required: false, cleared: true, reason: null, ...base };
-    }
-
-    if (quote.status === 'rejected') {
-      return { required: true, cleared: false, reason: 'This quote was rejected.', ...base };
-    }
-    if (quote.status !== 'approved') {
-      return {
-        required: true,
-        cleared: false,
-        reason: 'This quote needs a manager’s approval before it can be sent.',
-        ...base,
-      };
-    }
-
-    /*
-     * Approved — but approved for WHAT?
-     *
-     * The total, the discount and the revision must all still be what was
-     * approved. The total alone is not enough: a bigger discount on a quote
-     * whose lines were nudged up can land on the same total while promising
-     * the customer something nobody signed off. `approvedRevision` is null only
-     * on approvals decided before revisions existed, which are held to their
-     * amount as they always were.
-     */
-    const snapshot = jsonSnapshot(quote.approvalSnapshot);
-    const approved = quote.approvedTotal == null ? null : Number(quote.approvedTotal);
-    const changed =
-      approved == null ||
-      Math.abs(approved - Number(quote.grandTotal)) > 0.005 ||
-      (quote.approvedRevision != null && quote.approvedRevision !== quote.revision) ||
-      (snapshot != null && snapshot.discountPercent !== Number(quote.discountPercent));
-    if (changed) {
-      return {
-        required: true,
-        cleared: false,
-        reason: 'The quote changed after approval. Ask for approval again.',
-        ...base,
-      };
-    }
-
-    return { required: true, cleared: true, reason: null, ...base };
+    return { required: false, cleared: true, reason: null, reasons: [], revision: quote.revision };
   }
 
-  /** Throws the gate's own sentence when the quote may not leave. */
+  /** Never throws for approval reasons any more; kept for its callers' shape. */
   async assertCleared(organisationId: string, quoteId: string): Promise<ApprovalGate> {
-    const gate = await this.gate(organisationId, quoteId);
-    if (!gate.cleared) {
-      throw new ForbiddenException(gate.reason ?? 'This quote cannot be sent yet.');
-    }
-    return gate;
+    return this.gate(organisationId, quoteId);
   }
 
-  /** A salesperson asks for a decision. */
-  async request(user: AuthUser, quoteId: string) {
-    const quote = await this.mustReach(user, quoteId);
-    if (quote.status === 'shared' || quote.status === 'accepted') {
-      throw new BadRequestException('That quote has already gone to the customer.');
-    }
-    // Recorded, so the manager sees why it is on their list and the audit trail
-    // says which rule asked.
-    const reasons = await this.reasonsFor(user.organisationId, quote);
-
-    const row = await this.prisma.quote.update({
-      where: { id: quoteId },
-      data: {
-        status: 'pending_approval',
-        requestedById: user.id,
-        requestedAt: new Date(),
-        // A fresh request clears any previous decision, so a rejected quote that
-        // has been corrected does not still read as rejected.
-        decidedById: null,
-        decidedAt: null,
-        decisionReason: null,
-        approvedTotal: null,
-        approvedRevision: null,
-        approvalSnapshot: Prisma.DbNull,
-        approvalReasons: reasons as unknown as Prisma.InputJsonValue,
-      },
-      select: { id: true, ref: true, status: true, grandTotal: true, revision: true },
-    });
-
-    await this.audit.record(user, {
-      action: 'quotes.approval_requested',
-      entityType: 'Quote',
-      entityId: quoteId,
-      storeId: quote.storeId,
-      summary: `Approval requested for quote ${row.ref}`,
-      metadata: {
-        amount: row.grandTotal.toString(),
-        revision: row.revision,
-        reasons: reasons.map((r) => r.code),
-      },
-    });
-
-    return { ...row, reasons };
+  /** Asking for a decision is gone. Scope is still checked first, so a quote
+   *  outside the caller's reach stays a 404 rather than becoming a 410 oracle. */
+  async request(user: AuthUser, quoteId: string): Promise<never> {
+    await this.mustReach(user, quoteId);
+    throw new GoneException(APPROVAL_REMOVED);
   }
 
-  async decide(
-    user: AuthUser,
-    quoteId: string,
-    approve: boolean,
-    reason?: string,
-    revision?: number,
-  ) {
-    if (!DECIDERS.has(user.role)) {
-      throw new ForbiddenException('Only a manager can decide on a quote.');
-    }
-    const quote = await this.mustReach(user, quoteId);
-    /*
-     * The REQUEST step is how a salesperson summons a decision - it was never
-     * meant to be a precondition for giving one. Head office or a manager
-     * opening a held draft may decide it on the spot (client, 9 Oct: head
-     * office acts as the admin), so 'draft' is decidable too, provided the
-     * gate actually holds it. Shared and accepted quotes already left the
-     * building; approved/rejected already carry a decision.
-     */
-    if (quote.status !== 'pending_approval' && quote.status !== 'draft') {
-      throw new BadRequestException('That quote is not waiting for a decision.');
-    }
-    // The manager decides on what they looked at, not on whatever it has become.
-    if (revision != null && revision !== quote.revision) {
-      throw new ConflictException('This quote changed since you opened it. Review it again before deciding.');
-    }
-
-    const reasons = await this.reasonsFor(user.organisationId, quote);
-    if (quote.status === 'draft' && reasons.length === 0) {
-      // Nothing holds this quote - a decision would stamp approval on a
-      // document the gate never asked about.
-      throw new BadRequestException('This quote needs no approval.');
-    }
-    // A held draft decided on the spot was never requested: whoever works it
-    // is the one asking, so the self-approval rules still have someone to test.
-    const askedBy = quote.requestedById ?? quote.assignedRepId ?? quote.pricedById;
-    const overCap = reasons.find((r) => r.code === 'discount_over_cap');
-    if (overCap) {
-      /*
-       * A discount decision follows Module 15, which has no tenant switch for
-       * separation of duties: neither the person who asked nor the person who
-       * set the discount may clear it. `allowSelfApproval` is a quote-total
-       * setting and deliberately does not reach this far.
-       */
-      assertNotSelfApproval(user, askedBy, 'quote discount');
-      assertNotSelfApproval(user, quote.pricedById, 'quote discount');
-      if (approve && overCap.requiredRole && ROLE_RANK[user.role] < ROLE_RANK[overCap.requiredRole]) {
-        throw new ForbiddenException(
-          `This discount needs ${ROLE_LABELS[overCap.requiredRole]} approval.`,
-        );
-      }
-    } else {
-      const settings = await this.settingsFor(user.organisationId);
-      if (!settings.allowSelfApproval && askedBy === user.id) {
-        // Separation is the entire point. A tenant may switch it off deliberately;
-        // it is not off by accident.
-        throw new ForbiddenException('You cannot approve a quote you asked for yourself.');
-      }
-    }
-    if (!approve && !reason?.trim()) {
-      throw new BadRequestException('Give a reason when rejecting a quote.');
-    }
-
-    const snapshot: ApprovalSnapshot | null = approve
-      ? {
-          total: Number(quote.grandTotal),
-          discountPercent: Number(quote.discountPercent),
-          discountAmount: Number(quote.discountAmount),
-          revision: quote.revision,
-          reasons,
-        }
-      : null;
-
-    // Conditional on the revision read above: an edit that lands between the
-    // read and this write must not be approved under the old revision's name.
-    const written = await this.prisma.quote.updateMany({
-      // Conditional on the status read too: deciding a draft must not clobber
-      // a request (or another decision) that landed in between.
-      where: { id: quoteId, status: quote.status, revision: quote.revision },
-      data: {
-        status: approve ? 'approved' : 'rejected',
-        decidedById: user.id,
-        decidedAt: new Date(),
-        decisionReason: reason?.trim() || null,
-        // Frozen at the moment of the decision. Sharing checks all of it.
-        approvedTotal: approve ? quote.grandTotal : null,
-        approvedRevision: approve ? quote.revision : null,
-        approvalSnapshot: snapshot
-          ? (snapshot as unknown as Prisma.InputJsonValue)
-          : Prisma.DbNull,
-      },
-    });
-    if (written.count === 0) {
-      throw new ConflictException('This quote changed while you were deciding. Review it again.');
-    }
-    const row = await this.prisma.quote.findUniqueOrThrow({
-      where: { id: quoteId },
-      select: { id: true, ref: true, status: true, approvedTotal: true, approvedRevision: true },
-    });
-
-    await this.audit.record(user, {
-      action: approve ? 'quotes.approved' : 'quotes.rejected',
-      entityType: 'Quote',
-      entityId: quoteId,
-      storeId: quote.storeId,
-      summary: `Quote ${row.ref} ${approve ? 'approved' : 'rejected'}`,
-      metadata: {
-        amount: quote.grandTotal.toString(),
-        revision: quote.revision,
-        discountPercent: Number(quote.discountPercent),
-        reasons: reasons.map((r) => r.code),
-        requestedBy: quote.requestedById,
-        reason: reason?.trim() ?? null,
-      },
-    });
-
-    return row;
+  decide(..._ignored: unknown[]): never {
+    throw new GoneException(APPROVAL_REMOVED);
   }
 
-  /** Quotes waiting on this manager. */
-  async pending(user: AuthUser) {
-    const rows = await this.prisma.quote.findMany({
-      where: {
-        status: 'pending_approval',
-        ...this.scope.orgFilter(user),
-        ...this.scope.storeFilter(user),
-      },
-      orderBy: { requestedAt: 'asc' },
-      take: 100,
-      select: {
-        id: true, ref: true, customerName: true, grandTotal: true,
-        requestedAt: true, requestedBy: { select: { id: true, name: true } },
-        store: { select: { name: true } },
-        revision: true, discountPercent: true, discountAmount: true, approvalReasons: true,
-      },
-    });
-    return rows.map((r) => ({
-      id: r.id,
-      ref: r.ref,
-      customerName: r.customerName,
-      amount: Number(r.grandTotal),
-      requestedAt: r.requestedAt,
-      requestedByName: r.requestedBy?.name ?? null,
-      requestedById: r.requestedBy?.id ?? null,
-      storeName: r.store?.name ?? null,
-      revision: r.revision,
-      discountPercent: Number(r.discountPercent),
-      discountAmount: Number(r.discountAmount),
-      reasons: Array.isArray(r.approvalReasons)
-        ? (r.approvalReasons as unknown as ApprovalReason[])
-        : [],
-    }));
+  /** Nothing waits on anybody. */
+  async pending(): Promise<never[]> {
+    return [];
   }
 
   private async mustReach(user: AuthUser, quoteId: string) {
@@ -494,21 +106,9 @@ export class QuoteApprovalService {
         ...this.scope.storeFilter(user),
         ...(isSalesScoped(user) ? { assignedRepId: user.id } : {}),
       },
-      select: QUOTE_SELECT,
+      select: { id: true },
     });
     if (!quote) throw new NotFoundException('Quote not found');
     return quote;
   }
-}
-
-function jsonSnapshot(value: Prisma.JsonValue | null): ApprovalSnapshot | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const raw = value as Record<string, unknown>;
-  return typeof raw.discountPercent === 'number' ? (raw as unknown as ApprovalSnapshot) : null;
-}
-
-function inr(amount: number): string {
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency', currency: 'INR', maximumFractionDigits: 0,
-  }).format(amount);
 }
