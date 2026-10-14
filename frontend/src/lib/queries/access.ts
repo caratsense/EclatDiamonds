@@ -19,6 +19,8 @@ export interface UserAccess {
   overrides: Record<string, AccessOverride>;
   /** The result: what they can open now. */
   effective: AccessMap;
+  /** The screens this person can be given, from the server's own list. */
+  grantable: string[];
 }
 
 /** GET /users/:id/access — head office only. */

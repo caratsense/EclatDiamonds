@@ -1280,6 +1280,17 @@ export class UsersService {
       startsAttendanceOnly: startsAttendanceOnly(u.role, actor.organisationId),
       overrides: (u.accessOverrides ?? {}) as Record<string, AccessOverride>,
       effective: effectiveAccess(u.role, u.accessOverrides, actor.organisationId),
+      /*
+       * The screens this person can actually be given, straight from the
+       * server's own list. The editor used to keep a hand-copied list, which
+       * drifted: it still offered "Orders in Production" (a route governed by
+       * Quotation & Orders, never grantable on its own) and the WhatsApp
+       * templates screen (head office only), so saving ANY change for that
+       * person failed on a screen they had not touched. One list, one source.
+       */
+      grantable: (MODULES as readonly string[]).filter(
+        (slug) => !(HEAD_OFFICE_ONLY as readonly string[]).includes(slug),
+      ),
     };
   }
 
