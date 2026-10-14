@@ -44,6 +44,7 @@ import {
   adIdFromLink,
   useAdSetRules,
   useBotDefault,
+  useMetaAdsListing,
   useSaveAdSetRules,
   useSaveBotDefault,
   type AdSetAutomationRule,
@@ -114,6 +115,9 @@ const APPLIES_TO_CHOICES: { mode: Exclude<AppliesTo, "legacy">; label: string }[
   { mode: "ad", label: "One specific ad — paste its link" },
 ];
 
+/** The ads Select's "no specific ad" row — Radix forbids an empty item value. */
+const WHOLE_CAMPAIGN = "__whole_campaign__";
+
 const EMPTY: Omit<AdSetAutomationRule, "id"> = {
   name: "",
   enabled: true,
@@ -155,8 +159,52 @@ export function CampaignScriptsConfig() {
   const [questionRows, setQuestionRows] = useState<QuestionDraft[]>([]);
   const [appliesTo, setAppliesTo] = useState<AppliesTo>("ad");
 
+  // Fetched only while the dialog is open for someone who can edit — a closed
+  // list, or a viewer who cannot save anyway, never costs a Graph call.
+  const metaAds = useMetaAdsListing(open && canEdit);
+
   const rules = data ?? [];
   const linkAdId = adIdFromLink(draft.adLink ?? "");
+
+  /**
+   * The picker's selection is DERIVED from the draft rather than stored: an
+   * existing rule whose exact campaign name (or pinned ad id) still matches a
+   * running campaign preselects itself, and there is no second copy of the
+   * choice to fall out of sync.
+   */
+  const pickerCampaigns = metaAds.data?.available ? metaAds.data.campaigns : [];
+  const pickedCampaign =
+    pickerCampaigns.find((c) =>
+      draft.matchField === "campaign_name"
+        ? c.name === draft.matchValue
+        : draft.matchField === "ad_id" && c.ads.some((a) => a.id === draft.matchValue),
+    ) ?? null;
+  const pickedAdId =
+    draft.matchField === "ad_id" && pickedCampaign ? draft.matchValue : null;
+
+  function pickCampaign(id: string) {
+    const campaign = pickerCampaigns.find((c) => c.id === id);
+    if (!campaign) return;
+    // The exact name from Meta IS the campaign-mode match, so the pick lands
+    // in the same fields a typed name would — nothing new is stored.
+    setAppliesTo("campaign");
+    setDraft((d) => ({ ...d, matchField: "campaign_name", matchValue: campaign.name, adLink: "" }));
+  }
+
+  function pickAd(value: string) {
+    if (!pickedCampaign) return;
+    if (value === WHOLE_CAMPAIGN) {
+      pickCampaign(pickedCampaign.id);
+      return;
+    }
+    const ad = pickedCampaign.ads.find((a) => a.id === value);
+    if (!ad) return;
+    // An exact ad_id match, like a pasted link resolves to — shown through the
+    // "legacy" sentence (matches exactly as stored, no editor) rather than a
+    // fourth mode, and the link field is cleared so it cannot shadow the pick.
+    setAppliesTo("legacy");
+    setDraft((d) => ({ ...d, matchField: "ad_id", matchValue: ad.id, adLink: "" }));
+  }
 
   function openNew() {
     setEditingId(null);
@@ -364,6 +412,44 @@ export function CampaignScriptsConfig() {
 
             <div className="grid gap-1.5">
               <Label>Applies to</Label>
+
+              {pickerCampaigns.length ? (
+                <div className="grid gap-1.5 rounded-md border bg-muted/30 p-2.5">
+                  <p className="text-xs font-medium">Pick from your running ads</p>
+                  <Select value={pickedCampaign?.id ?? ""} onValueChange={pickCampaign}>
+                    <SelectTrigger aria-label="Running campaign">
+                      <SelectValue placeholder="Choose a running campaign" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {pickerCampaigns.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {pickedCampaign && pickedCampaign.ads.length ? (
+                    <Select value={pickedAdId ?? WHOLE_CAMPAIGN} onValueChange={pickAd}>
+                      <SelectTrigger aria-label="Ad within the campaign">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={WHOLE_CAMPAIGN}>Whole campaign</SelectItem>
+                        {pickedCampaign.ads.map((a) => (
+                          <SelectItem key={a.id} value={a.id}>
+                            {a.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : null}
+                </div>
+              ) : metaAds.data && !metaAds.data.available ? (
+                <p className="text-xs text-muted-foreground">
+                  Meta didn&rsquo;t answer — type the name or paste the link instead.
+                </p>
+              ) : null}
+
               <div role="radiogroup" aria-label="Applies to" className="grid gap-1.5">
                 {APPLIES_TO_CHOICES.map((o) => (
                   <button
@@ -412,8 +498,9 @@ export function CampaignScriptsConfig() {
                 />
               ) : (
                 /* A rule saved before the two-choice form (ad set name, raw
-                   id, tag): it keeps matching exactly as stored. One sentence,
-                   no editor — picking a choice above converts it. */
+                   id, tag) — and where a picker-chosen ad lands, as an exact
+                   ad_id match: it keeps matching exactly as stored. One
+                   sentence, no editor — picking a choice above converts it. */
                 <p className="text-xs text-muted-foreground">
                   Currently matches {MATCH_LABELS[draft.matchField]}{" "}
                   <span className="font-mono">{draft.matchValue}</span> — pick an option above to

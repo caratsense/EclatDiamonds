@@ -274,6 +274,45 @@ export function adIdFromLink(link: string): string | null {
   return runs.reduce((a, b) => (b.length > a.length ? b : a));
 }
 
+/** One running ad as Meta reports it, for the campaign editor's picker. */
+export interface MetaAdChoice {
+  id: string;
+  name: string;
+  status: string;
+}
+
+export interface MetaCampaignChoice {
+  id: string;
+  name: string;
+  status: string;
+  ads: MetaAdChoice[];
+}
+
+/**
+ * The account's RUNNING campaigns and ads, live from Meta (client, 13 Oct),
+ * so head office picks one instead of retyping its name. `available: false`
+ * (no connection, Graph refused) is an answer, not an error — the editor
+ * falls back to the typed name / pasted link.
+ */
+export interface MetaAdsListing {
+  available: boolean;
+  /** Why the picker cannot be offered. Null whenever `available` is true. */
+  reason: string | null;
+  campaigns: MetaCampaignChoice[];
+}
+
+export function useMetaAdsListing(enabled = true) {
+  return useQuery({
+    queryKey: ["crm", "qualification", "meta-ads"],
+    enabled,
+    // The server caches ~5 minutes per organisation; matching it here keeps
+    // reopening the dialog from refetching what would answer the same anyway.
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () =>
+      (await api.get<MetaAdsListing>("/crm/qualification/meta-ads")).data,
+  });
+}
+
 export function useAdSetRules() {
   return useQuery({
     queryKey: ["crm", "qualification", "adset-rules"],

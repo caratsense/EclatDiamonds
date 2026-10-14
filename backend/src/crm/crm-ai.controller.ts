@@ -21,6 +21,7 @@ import { BotScriptService } from './bot-script.service';
 import type { QualificationPolicy } from './qualification-policy';
 import { AdSetRulesService, type AdSetAutomationRule } from './adset-rules.service';
 import { ConversationAiGate } from './ai-responder';
+import { MetaAdsListService } from './meta-ads-list.service';
 import { AuditService } from '../common/audit.service';
 
 export class SaveAiSettingsDto {
@@ -128,6 +129,7 @@ export class CrmQualificationController {
     private readonly botScript: BotScriptService,
     private readonly adSetRules: AdSetRulesService,
     private readonly aiGate: ConversationAiGate,
+    private readonly metaAdsList: MetaAdsListService,
     private readonly audit: AuditService,
   ) {}
 
@@ -175,6 +177,20 @@ export class CrmQualificationController {
   @Post('adset-rules')
   saveAdSetRules(@CurrentUser() user: AuthUser, @Body() body: SaveAdSetRulesDto) {
     return this.adSetRules.replace(user, body.rules);
+  }
+
+  /**
+   * The account's RUNNING campaigns and ads, live from Meta, so the campaign
+   * editor offers a pick-list instead of a retyped name (client, 13 Oct).
+   * Degrades honestly: no connection or a Graph failure answers
+   * `available: false` with a reason, never a 500 — the manual entry
+   * underneath the picker still works either way.
+   */
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
+  @Get('meta-ads')
+  metaAds(@CurrentUser() user: AuthUser) {
+    return this.metaAdsList.list(user.organisationId);
   }
 
   /** Current policy + whether an AI provider is actually configured. */
