@@ -369,9 +369,11 @@ export class CreateRegularizationDto {
   @IsDateString()
   requestedCheckOut?: string;
 
-  @IsOptional()
+  /** Why the punch is being corrected — mandatory; the approver decides on it. */
   @IsString()
-  reason?: string;
+  @IsNotEmpty()
+  @MaxLength(500)
+  reason!: string;
 }
 
 /** PATCH /hrms/regularize/:id — approve/reject a regularization (manager+). */

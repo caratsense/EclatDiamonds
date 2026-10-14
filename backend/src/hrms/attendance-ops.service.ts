@@ -21,6 +21,7 @@ import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuditService } from '../common/audit.service';
 import { ROLE_RANK } from '../common/role.util';
+import { rankAboveRequester } from '../common/approval.util';
 import {
   businessDate,
   computeDayFraction,
@@ -1446,10 +1447,28 @@ export class AttendanceOpsService {
       ...this.scope.storeFilter(user, headerStore),
       ...(status ? { status: status as never } : {}),
     };
-    const [leaves, regs] = await Promise.all([
+    const [leaves, allRegs] = await Promise.all([
       this.prisma.leaveRequest.findMany({ where, orderBy: { createdAt: 'asc' }, take: 500 }),
       this.prisma.attendanceRegularization.findMany({ where, orderBy: { createdAt: 'asc' }, take: 500 }),
     ]);
+    // A regularization is shown to people who may DECIDE it — one rank above
+    // the requester (approval.util). Without this, a store manager's own
+    // request lands in their own inbox: counted in the badge, undecidable, and
+    // nagging the one person who must not touch it instead of head office.
+    const regRoles = new Map(
+      (
+        await this.prisma.user.findMany({
+          where: { id: { in: [...new Set(allRegs.map((r) => r.staffId))] } },
+          select: { id: true, role: true },
+        })
+      ).map((u) => [u.id, u.role]),
+    );
+    const regs = allRegs.filter((r) => {
+      if (r.staffId === user.id) return false;
+      const role = regRoles.get(r.staffId);
+      // A requester whose account is gone stays visible; the guards still apply.
+      return !role || rankAboveRequester(user.role, role);
+    });
     const storeNames = new Map(
       (
         await this.prisma.store.findMany({

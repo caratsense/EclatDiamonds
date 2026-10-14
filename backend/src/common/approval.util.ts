@@ -1,5 +1,7 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { Role } from '@prisma/client';
 import { AuthUser } from './auth-user';
+import { ROLE_LABELS, ROLE_RANK } from './role.util';
 
 /**
  * Guardrails shared by every approval flow in the platform (leave, attendance
@@ -53,6 +55,40 @@ export function assertUndecided(
       `This ${what} is already ${currentStatus} and cannot be decided again.`,
     );
   }
+}
+
+/**
+ * One-rank-above escalation (client, 13 Oct): a request is decided by someone
+ * ABOVE the requester's own rank — a staffer's edit by the store manager, a
+ * store manager's own edit by head office. Head office may decide anything
+ * (there is no rank above it); its own requests fall to a head-office peer via
+ * the self-approval rule above, so call `assertNotSelfApproval` as well.
+ */
+export function rankAboveRequester(approverRole: Role, requesterRole: Role): boolean {
+  return approverRole === 'head_office' || ROLE_RANK[approverRole] > ROLE_RANK[requesterRole];
+}
+
+/**
+ * Refuse a decision by anyone at or below the requester's rank, naming who CAN
+ * decide it. A null `requesterRole` (the requester's account is gone) is let
+ * through — the store-scope and role guards on the route still apply, and
+ * blocking would strand the request forever.
+ */
+export function assertRankAboveRequester(
+  approver: AuthUser,
+  requesterRole: Role | null | undefined,
+  what = 'request',
+): void {
+  if (!requesterRole) return;
+  if (rankAboveRequester(approver.role, requesterRole)) return;
+  const who = (Object.keys(ROLE_RANK) as Role[])
+    .filter((r) => ROLE_RANK[r] > ROLE_RANK[requesterRole])
+    .map((r) => ROLE_LABELS[r]);
+  throw new ForbiddenException(
+    `A ${ROLE_LABELS[requesterRole].toLowerCase()}'s ${what} is decided one rank above — by ${
+      who.length ? who.join(' or ') : ROLE_LABELS.head_office
+    }.`,
+  );
 }
 
 /** The decision-attribution columns every approvable row now carries. */

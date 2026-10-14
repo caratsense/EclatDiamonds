@@ -33,18 +33,21 @@ function toISO(date: string, time: string): string | undefined {
 export function RegularizeDialog({
   open,
   onOpenChange,
+  defaultDate,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Preselects the day being corrected (YYYY-MM-DD) — key the dialog by it. */
+  defaultDate?: string;
 }) {
   const createReg = useCreateRegularization();
-  const [date, setDate] = useState("");
+  const [date, setDate] = useState(defaultDate ?? "");
   const [checkIn, setCheckIn] = useState("");
   const [checkOut, setCheckOut] = useState("");
   const [reason, setReason] = useState("");
 
   function reset() {
-    setDate("");
+    setDate(defaultDate ?? "");
     setCheckIn("");
     setCheckOut("");
     setReason("");
@@ -59,17 +62,21 @@ export function RegularizeDialog({
       toast.error("Enter a corrected check-in and/or check-out time.");
       return;
     }
+    if (!reason.trim()) {
+      toast.error("Add a reason — your approver decides on it.");
+      return;
+    }
     createReg.mutate(
       {
         date,
         requestedCheckIn: toISO(date, checkIn),
         requestedCheckOut: toISO(date, checkOut),
-        reason: reason.trim() || undefined,
+        reason: reason.trim(),
       },
       {
         onSuccess: () => {
           toast.success("Attendance fix requested", {
-            description: "Sent to your manager for approval.",
+            description: "Sent one level up for approval.",
           });
           reset();
           onOpenChange(false);
@@ -85,8 +92,8 @@ export function RegularizeDialog({
         <DialogHeader>
           <DialogTitle>Fix an attendance record</DialogTitle>
           <DialogDescription>
-            Fix a missed or wrong punch. Your manager approves it to correct the
-            record for that day.
+            Fix a missed or wrong punch. The record only changes once someone
+            one rank above you approves it.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
@@ -121,7 +128,9 @@ export function RegularizeDialog({
             </div>
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="reg-reason">Reason</Label>
+            <Label htmlFor="reg-reason">
+              Reason <span className="text-destructive">*</span>
+            </Label>
             <Textarea
               id="reg-reason"
               placeholder="e.g. phone battery died, forgot to punch out."

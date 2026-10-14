@@ -424,7 +424,8 @@ export interface CreateRegularizationInput {
   /** ISO datetime the staffer actually checked in / out. */
   requestedCheckIn?: string;
   requestedCheckOut?: string;
-  reason?: string;
+  /** Mandatory — the approver decides on it. */
+  reason: string;
 }
 
 /** GET /hrms/regularize — regularization requests (staff see only their own). */

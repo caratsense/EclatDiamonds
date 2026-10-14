@@ -9,6 +9,7 @@ import {
   LogIn,
   LogOut,
   MapPin,
+  Pencil,
   ShieldAlert,
   Timer,
 } from "lucide-react";
@@ -44,6 +45,7 @@ import {
 import { apiErrorMessage, cn } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 import { FaceScannerDialog } from "@/components/biometrics/face-scanner-dialog";
+import { RegularizeDialog } from "@/components/hrms/regularize-dialog";
 import type { SelfAttendance } from "@/lib/mock/hrms";
 import {
   useCheckIn,
@@ -181,6 +183,12 @@ export function GeoPunchCard() {
    * no reason. Optional on both, and neither punch is gated behind it.
    */
   const [cameraFor, setCameraFor] = useState<"in" | "out" | null>(null);
+  /**
+   * "Edit / request correction" on one of MY days (client, 13 Oct). The edit
+   * never writes the record directly — it raises a regularization that only
+   * takes effect once someone one rank above approves it.
+   */
+  const [fixDate, setFixDate] = useState<string | null>(null);
 
   // Delete the old local-only pseudo-enrolment for this account. Those values
   // were photos, not biometric templates, and must not survive as auth state.
@@ -643,6 +651,9 @@ export function GeoPunchCard() {
                       <th className="px-3 py-2 text-left font-medium">Out</th>
                       <th className="px-3 py-2 text-right font-medium">Worked</th>
                       <th className="px-3 py-2 text-right font-medium">Geo</th>
+                      <th className="px-3 py-2 text-right font-medium">
+                        <span className="sr-only">Request correction</span>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -682,6 +693,18 @@ export function GeoPunchCard() {
                             <span className="text-muted-foreground">—</span>
                           )}
                         </td>
+                        <td className="px-3 py-2 text-right">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
+                            aria-label={`Request a correction for ${formatDayLabel(r.date)}`}
+                            title="Edit / request correction"
+                            onClick={() => setFixDate(r.date)}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -711,6 +734,16 @@ export function GeoPunchCard() {
           staffName,
           storeName,
           action: cameraFor === "out" ? "Check out" : "Check in",
+        }}
+      />
+
+      {/* Keyed by the day so each row opens a fresh, prefilled request. */}
+      <RegularizeDialog
+        key={fixDate ?? "none"}
+        open={fixDate !== null}
+        defaultDate={fixDate ?? undefined}
+        onOpenChange={(o) => {
+          if (!o) setFixDate(null);
         }}
       />
 

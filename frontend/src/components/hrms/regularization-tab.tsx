@@ -58,7 +58,7 @@ function formatTime(iso: string | null): string {
 }
 
 export function RegularizationTab() {
-  const { role } = useSession();
+  const { role, user } = useSession();
   const canDecide = ROLE_RANK[role] >= ROLE_RANK.store_manager;
   const { data: rows = [], isLoading, isError, refetch } = useRegularizations();
   const decide = useDecideRegularization();
@@ -158,7 +158,9 @@ export function RegularizationTab() {
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-2 sm:pl-3">
-                    {canDecide && row.status === "pending" ? (
+                    {/* Nobody decides their OWN request — a manager's goes one
+                        rank up (server-enforced; don't offer the buttons). */}
+                    {canDecide && row.status === "pending" && row.staffId !== user.id ? (
                       <>
                         <Button
                           size="sm"
