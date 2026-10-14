@@ -36,12 +36,10 @@ import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
 import { ChannelStatusNotice } from "@/components/integrations/channel-status-notice";
 import { EditQuoteDialog } from "@/components/quotation/edit-quote-dialog";
-import { QuoteApprovalPanel } from "@/components/quotation/quote-approval-panel";
 import { QuoteDetailsPanel } from "@/components/quotation/quote-details-panel";
 import {
   useDeleteQuote,
   useDownloadQuotePdf,
-  useQuoteApproval,
   useSendQuotePdf,
 } from "@/lib/queries/quotes";
 import { apiErrorMessage } from "@/lib/utils";
@@ -69,7 +67,6 @@ export function QuoteDetailDialog({
   // Mounted only while open, so the edit form seeds from the quote as it is NOW
   // (the list row refreshes under this dialog after every save).
   const [editOpen, setEditOpen] = useState(false);
-  const gate = useQuoteApproval(quote?.id ?? null);
   const downloadPdf = useDownloadQuotePdf();
   const sendPdf = useSendQuotePdf();
   const deleteQuote = useDeleteQuote();
@@ -93,14 +90,6 @@ export function QuoteDetailDialog({
     });
   };
   if (!quote) return null;
-  // Held until the server says the quote may leave. The server refuses anyway;
-  // this only stops a salesperson pressing a button that will be refused.
-  const awaitingApproval = !!gate.data && gate.data.required && !gate.data.cleared;
-  const heldTitle = awaitingApproval ? "A manager must approve this quote first" : undefined;
-  // The people deciding the approval may always READ the document - the server
-  // sends them a DRAFT-stamped copy until it clears. Sending stays held.
-  const canDownloadDraft = ROLE_RANK[role] >= ROLE_RANK.store_manager;
-  const downloadHeld = awaitingApproval && !canDownloadDraft;
   const canDelete = ROLE_RANK[role] >= ROLE_RANK.store_manager && quote.status !== "accepted";
   // Anyone who can open the quote may re-price it (the server scopes a
   // salesperson to their own quotes already); an accepted quote became an
@@ -189,7 +178,7 @@ export function QuoteDetailDialog({
         toast.error("WhatsApp refused the message — the quote was not sent.");
       }
     } catch (e) {
-      // A refusal (needs approval, amount changed) arrives here with its reason.
+      // A refusal arrives here with the server's own reason.
       toast.error(apiErrorMessage(e, "Could not send the quote. Please try again."));
     } finally {
       setSharing(false);
@@ -220,10 +209,19 @@ export function QuoteDetailDialog({
             </Badge>
           </div>
           <DialogDescription>
-            {quote.customer} · raised at {originName} · valid till{" "}
-            {quote.validUntil}
+            Raised at {originName} · valid till {quote.validUntil}
           </DialogDescription>
         </DialogHeader>
+
+        {/* Customer block — who the quote is for, with the address the PDF prints */}
+        <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+          <p className="mb-1 text-xs font-medium text-muted-foreground">Customer</p>
+          <p className="font-medium">{quote.customer}</p>
+          <p className="text-muted-foreground">
+            {[quote.phone, quote.customerAddress].filter(Boolean).join(" · ") ||
+              "No phone or address on record"}
+          </p>
+        </div>
 
         {portableHere ? (
           <div className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 p-2.5 text-xs">
@@ -484,8 +482,6 @@ export function QuoteDetailDialog({
           </div>
         </div>
 
-        <QuoteApprovalPanel quote={quote} />
-
         <ChannelStatusNotice channel="whatsapp" className="mt-2" />
 
         <DialogFooter className="flex-wrap gap-2">
@@ -513,27 +509,16 @@ export function QuoteDetailDialog({
           ) : null}
           <Button
             variant="outline"
-            disabled={downloadPdf.isPending || downloadHeld}
-            title={
-              downloadHeld
-                ? heldTitle
-                : awaitingApproval
-                  ? "Downloads stamped DRAFT until a manager approves"
-                  : undefined
-            }
+            disabled={downloadPdf.isPending}
             onClick={onDownloadPdf}
           >
             <Download className="h-4 w-4" />
-            {downloadPdf.isPending
-              ? "Preparing…"
-              : awaitingApproval && canDownloadDraft
-                ? "Download draft PDF"
-                : "Download PDF"}
+            {downloadPdf.isPending ? "Preparing…" : "Download PDF"}
           </Button>
           <Button
             variant="outline"
-            disabled={sendPdf.isPending || awaitingApproval || !quote.phone}
-            title={heldTitle}
+            disabled={sendPdf.isPending || !quote.phone}
+            title={!quote.phone ? "This quote has no phone number to send to" : undefined}
             onClick={onSendPdf}
           >
             <FileText className="h-4 w-4" />
@@ -541,8 +526,7 @@ export function QuoteDetailDialog({
           </Button>
           <Button
             variant="outline"
-            disabled={sharing || awaitingApproval}
-            title={heldTitle}
+            disabled={sharing}
             onClick={shareOnWhatsApp}
           >
             <MessageCircle className="h-4 w-4" />

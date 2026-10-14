@@ -11,7 +11,13 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { blankStone, itemProblem, realStones } from "./quote-validation";
+import {
+  blankStone,
+  hasUnsavedEntries,
+  itemProblem,
+  realStones,
+  type DraftFields,
+} from "./quote-validation";
 import type { ItemRow, StoneRow } from "./quote-item-editor";
 
 const stone = (patch: Partial<StoneRow> = {}): StoneRow => ({
@@ -136,5 +142,50 @@ describe("the other things that stop a save", () => {
 
   it("catches a size that is too long", () => {
     expect(check([item({ size: "x".repeat(40), stones: [GOOD] })])).toContain("size is too long");
+  });
+});
+
+/**
+ * The New-quote dialog asks before closing over typed entries, and ONLY then —
+ * a confirm on an untouched form would train everyone to click through it.
+ */
+describe("the dialog's close guard", () => {
+  const blank: DraftFields = {
+    customer: "", phone: "", address: "", grossWeight: "", repairDetails: "",
+    remarks: "", repairMaking: "", makingDiscount: "", additionalDiscount: "",
+    refCount: 0,
+  };
+  // The builder opens with one empty item already in the list.
+  const untouched = (): ItemRow => ({
+    id: 1, itemType: "", styleNumber: "", metalCode: "", weight: "",
+    manualRate: "", size: "", sizeUnit: "", makingRate: "", makingDiscount: "",
+    metalDiscount: "", remark: "", stones: [],
+  });
+
+  it("lets an untouched form close without a word", () => {
+    expect(hasUnsavedEntries(blank, [untouched()])).toBe(false);
+  });
+
+  it("guards every typed field, shared, sale and repair alike", () => {
+    for (const patch of [
+      { customer: "Meera" }, { phone: "+9715512345" }, { address: "14 Ring Road" },
+      { grossWeight: "12.5" }, { repairDetails: "re-tip prongs" }, { remarks: "scratched" },
+      { repairMaking: "500" }, { makingDiscount: "5" }, { additionalDiscount: "100" },
+    ] as Partial<DraftFields>[]) {
+      expect(hasUnsavedEntries({ ...blank, ...patch }, [untouched()])).toBe(true);
+    }
+  });
+
+  it("guards a picked reference photo", () => {
+    expect(hasUnsavedEntries({ ...blank, refCount: 1 }, [untouched()])).toBe(true);
+  });
+
+  it("guards an item somebody started filling in — or added a stone row to", () => {
+    expect(hasUnsavedEntries(blank, [{ ...untouched(), weight: "3.2" }])).toBe(true);
+    expect(hasUnsavedEntries(blank, [{ ...untouched(), stones: [stone()] }])).toBe(true);
+  });
+
+  it("ignores whitespace, which is not an entry anyone would miss", () => {
+    expect(hasUnsavedEntries({ ...blank, customer: "   " }, [untouched()])).toBe(false);
   });
 });

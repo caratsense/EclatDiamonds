@@ -110,6 +110,8 @@ export interface Quote {
   ref: string;
   customer: string;
   phone: string;
+  /** The customer's own address, printed under their name on the quote. */
+  customerAddress?: string;
   /** Store where the quote was raised (matches MOCK_STORES ids). */
   originStoreId: string;
   /**
