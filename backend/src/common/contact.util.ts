@@ -59,6 +59,50 @@ export function IsIndianMobile(options?: ValidationOptions) {
 }
 
 /**
+ * Validate + normalise a CUSTOMER phone number — Indian or foreign (the business
+ * quotes overseas clients, 13 Oct). Same character discipline as
+ * {@link normalizeIndianMobile}: digits with common formatting only, letters and
+ * stray symbols reject rather than being salvaged. A `+` is allowed only at the
+ * front. Returns the digits with the leading `+` kept when it was given, or
+ * null. A plain 10-digit Indian mobile passes through unchanged, so nothing
+ * stored before this existed reads any differently.
+ */
+export function normalizeCustomerPhone(raw: string): string | null {
+  const v = (raw ?? '').trim();
+  if (!v) return null;
+  if (!/^\+?[\d()\-\s]+$/.test(v)) return null;
+
+  const digits = v.replace(/\D/g, '');
+  // 15 is the E.164 ceiling; under 8 is not a dialable subscriber number.
+  if (digits.length < 8 || digits.length > 15) return null;
+  return v.startsWith('+') ? `+${digits}` : digits;
+}
+
+/**
+ * class-validator decorator: a customer phone number, Indian or international
+ * (same rule as {@link normalizeCustomerPhone}). Staff numbers and other sites
+ * stay on the stricter {@link IsIndianMobile}.
+ */
+export function IsCustomerPhone(options?: ValidationOptions) {
+  return function (object: object, propertyName: string) {
+    registerDecorator({
+      name: 'isCustomerPhone',
+      target: object.constructor,
+      propertyName,
+      options: {
+        message: 'must be a phone number of 8 to 15 digits, with an optional leading +',
+        ...options,
+      },
+      validator: {
+        validate(value: unknown) {
+          return typeof value === 'string' && normalizeCustomerPhone(value) != null;
+        },
+      },
+    });
+  };
+}
+
+/**
  * A real, human-meaningful name/title — must contain at least one letter (any
  * script, incl. Devanagari/Gujarati) so a phone number, amount or reference id
  * can never masquerade as a name (e.g. the "46466" lead). Pure digits, symbols
