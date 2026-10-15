@@ -57,6 +57,43 @@ export function phoneInputValue(raw: string): string {
 }
 
 /**
+ * Validate + normalise a CUSTOMER phone number — customers may be foreign
+ * (client, 13 Oct), so this is the gentler rule the customer-facing forms use.
+ * An Indian mobile keeps its canonical 10-digit form; anything else must be
+ * typed in international form with a leading `+` (8-15 digits), which
+ * normalises to `+<digits>`.
+ *
+ * Deliberately STRICTER than the backend `normalizeCustomerPhone` (which also
+ * takes bare 8-15 digit numbers): without the `+` an 8-digit entry is
+ * indistinguishable from a half-typed Indian mobile, and this inline check is
+ * the only thing standing between that typo and a saved record.
+ */
+export function normalizeCustomerPhone(raw: string): string | null {
+  const indian = normalizeIndianMobile(raw);
+  if (indian) return indian;
+  const v = (raw ?? "").trim();
+  if (!v.startsWith("+")) return null;
+  if (!/^[+\d()\-\s]+$/.test(v)) return null;
+  const digits = v.replace(/\D/g, "");
+  // E.164: country code + subscriber number is 8-15 digits.
+  if (digits.length < 8 || digits.length > 15) return null;
+  return `+${digits}`;
+}
+
+/**
+ * What a CUSTOMER phone box may hold while it is being typed. A `+` first
+ * character switches the box to international mode (up to the 15-digit E.164
+ * ceiling); otherwise it behaves exactly like `phoneInputValue`, so the
+ * dominant Indian flow is unchanged. Validation still belongs to
+ * `normalizeCustomerPhone` on submit.
+ */
+export function customerPhoneInputValue(raw: string): string {
+  const v = (raw ?? "").trimStart();
+  if (v.startsWith("+")) return `+${v.replace(/\D/g, "").slice(0, 15)}`;
+  return phoneInputValue(v);
+}
+
+/**
  * What a quantity box may hold while it is being typed: digits and one decimal
  * point. A weight, a rate, a discount or a carat cannot be negative, so the
  * minus sign never reaches the field.

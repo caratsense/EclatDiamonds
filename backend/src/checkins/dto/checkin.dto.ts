@@ -12,7 +12,7 @@ import {
   Min,
 } from 'class-validator';
 import { CheckinOutcome, CheckinPurpose } from '@prisma/client';
-import { IsIndianMobile, IsRealName } from '../../common/contact.util';
+import { IsCustomerPhone, IsRealName } from '../../common/contact.util';
 
 export class CreateCheckInDto {
   @IsString()
@@ -25,9 +25,10 @@ export class CreateCheckInDto {
   @IsRealName()
   customerName!: string;
 
+  /** Walk-ins may be foreign customers (client, 13 Oct): Indian or international. */
   @IsOptional()
   @IsString()
-  @IsIndianMobile()
+  @IsCustomerPhone()
   phone?: string;
 
   @IsOptional()

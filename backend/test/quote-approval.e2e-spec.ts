@@ -4,27 +4,26 @@ import request = require('supertest');
 import * as bcrypt from 'bcryptjs';
 
 /**
- * Approval before a quote leaves the building.
+ * Quote approval is GONE (client, 13 Oct: "a quotation once created is
+ * created — no approval from anybody").
  *
- * Until now `share()` guarded one thing — that a phone number exists — so any
- * amount could be WhatsApped to a customer by anybody who could open the screen.
  * The properties pinned here:
  *
- *  1. OFF BY DEFAULT. A tenant with no threshold behaves exactly as before. This
- *     is what makes the change safe to deploy before anybody picks a number.
+ *  1. QUOTES ARE NEVER HELD. Whatever the amount, whatever a stale settings row
+ *     or DiscountLimit says, the gate answers cleared and every door is open —
+ *     including for the salesperson who raised it.
  *
- *  2. OVER THE THRESHOLD, SHARING IS REFUSED. Not warned about — refused, at the
- *     one door out to a customer.
+ *  2. THE OLD ENDPOINTS DO NOT CRASH AN OLD SCREEN. Reads report the feature as
+ *     off (settings disabled, pending empty, gate cleared); writes answer 410
+ *     with the reason. Role guards still apply before the 410.
  *
- *  3. YOU CANNOT APPROVE YOUR OWN. Unless the tenant deliberately allows it.
+ *  3. EDITING NEVER FLIPS STATUS FOR APPROVAL REASONS, and a quote left in a
+ *     legacy approval status is not held by it.
  *
- *  4. APPROVAL IS FOR AN AMOUNT, NOT A QUOTE. This is the one that matters most:
- *     approve at one price, edit it upward, and sharing is refused again. Without
- *     the snapshot the whole step would be decoration.
+ *  4. THE HISTORY STAYS READABLE: past decision columns are untouched.
  *
- *  5. REJECTION NEEDS A REASON, and a corrected quote can be re-submitted.
- *
- *  6. A SALESPERSON CANNOT DECIDE, and cannot change the policy.
+ *  5. Deleting a quote is still managers-and-above, and an accepted quote still
+ *     cannot be deleted (unchanged rules, re-pinned after the rework).
  */
 
 const PASSWORD = 'password123';
@@ -45,7 +44,7 @@ async function teardown(prisma: import('../src/prisma/prisma.service').PrismaSer
   await prisma.organisation.deleteMany({ where: { id: A.org } });
 }
 
-describe('Quote approval (e2e)', () => {
+describe('Quote approval removed (e2e)', () => {
   let app: INestApplication;
   let prisma: import('../src/prisma/prisma.service').PrismaService;
   let hoA: string;
@@ -55,7 +54,7 @@ describe('Quote approval (e2e)', () => {
   const server = () => app.getHttpServer();
   const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
 
-  /** A quote big enough to trip a threshold, owned by the rep. */
+  /** A quote big enough to have tripped the old threshold, owned by the rep. */
   const makeQuote = async (id: string, ref: string, total: number) => {
     await prisma.quote.create({
       data: {
@@ -104,6 +103,11 @@ describe('Quote approval (e2e)', () => {
       });
     }
 
+    // A tenant that HAD chosen a threshold before 13 Oct. It must hold nothing.
+    await prisma.quoteApprovalSettings.create({
+      data: { organisationId: A.org, valueThreshold: 100_000, allowSelfApproval: false },
+    });
+
     const login = async (email: string) =>
       (await request(server()).post('/auth/login').send({ email, password: PASSWORD }).expect(201))
         .body.token;
@@ -117,59 +121,17 @@ describe('Quote approval (e2e)', () => {
     if (app) await app.close();
   });
 
-  it('is off until a threshold is set — nothing changes for an existing tenant', async () => {
-    const q = await makeQuote('q_qa_small', 'QT-QA-1', 50_000);
+  it('a quote over the old threshold is never held: the gate is cleared for everyone', async () => {
+    const q = await makeQuote('q_qa_big', 'QT-QA-2', 145_000);
     const gate = await request(server()).get(`/quotes/${q}/approval`).set(auth(repA)).expect(200);
-    expect(gate.body.required).toBe(false);
-    expect(gate.body.cleared).toBe(true);
+    expect(gate.body).toMatchObject({ required: false, cleared: true, reason: null, reasons: [] });
   });
 
-  it('only head office sets the policy', async () => {
-    await request(server())
-      .put('/quotes/approval/settings')
-      .set(auth(repA))
-      .send({ valueThreshold: 100_000 })
-      .expect(403);
-    await request(server())
-      .put('/quotes/approval/settings')
-      .set(auth(hoA))
-      .send({ valueThreshold: 100_000 })
-      .expect(200);
-  });
+  it('every door is open to the salesperson who raised it: text, and the PDF with no DRAFT stamp', async () => {
+    const share = await request(server()).post('/quotes/q_qa_big/share').set(auth(repA));
+    expect(share.status).toBe(201);
 
-  it('under the threshold still needs nothing', async () => {
-    const gate = await request(server())
-      .get('/quotes/q_qa_small/approval')
-      .set(auth(repA))
-      .expect(200);
-    expect(gate.body.required).toBe(false);
-    expect(gate.body.cleared).toBe(true);
-  });
-
-  it('over the threshold, sharing is refused — not merely warned about', async () => {
-    await makeQuote('q_qa_big', 'QT-QA-2', 145_000);
-    const gate = await request(server())
-      .get('/quotes/q_qa_big/approval')
-      .set(auth(repA))
-      .expect(200);
-    expect(gate.body.required).toBe(true);
-    expect(gate.body.cleared).toBe(false);
-
-    const share = await request(server())
-      .post('/quotes/q_qa_big/share')
-      .set(auth(repA));
-    expect(share.status).toBe(403);
-    expect(JSON.stringify(share.body)).toMatch(/approval/i);
-  });
-
-  it('an undecided quote still reads for the people deciding it - as a stamped draft', async () => {
-    // The rep is refused: for them the gate is the whole point.
-    const repPdf = await request(server()).get('/quotes/q_qa_big/pdf').set(auth(repA));
-    expect(repPdf.status).toBe(403);
-
-    // Manager and head office get the document - filed as a DRAFT, so the copy
-    // cannot pass as a final quotation (client, 9 Oct).
-    for (const t of [mgrA, hoA]) {
+    for (const t of [repA, mgrA, hoA]) {
       const pdf = await request(server())
         .get('/quotes/q_qa_big/pdf')
         .set(auth(t))
@@ -181,55 +143,87 @@ describe('Quote approval (e2e)', () => {
         });
       expect(pdf.status).toBe(200);
       expect(pdf.headers['content-type']).toContain('application/pdf');
-      expect(pdf.headers['content-disposition']).toContain('-draft.pdf');
+      // No draft copy exists any more: there is nothing to await.
+      expect(pdf.headers['content-disposition']).toContain('-r1.pdf');
+      expect(pdf.headers['content-disposition']).not.toContain('-draft');
       expect((pdf.body as Buffer).subarray(0, 5).toString()).toBe('%PDF-');
     }
   });
 
-  it('head office decides a held draft directly - the request step is optional', async () => {
-    await makeQuote('q_qa_direct', 'QT-QA-DIR', 200_000); // over the 100k threshold
-    const gate = await request(server()).get('/quotes/q_qa_direct/approval').set(auth(hoA)).expect(200);
-    expect(gate.body.required).toBe(true);
-    expect(gate.body.cleared).toBe(false);
-
-    // No request-approval call: head office approves it on the spot.
-    await request(server())
-      .post('/quotes/q_qa_direct/decide')
-      .set(auth(hoA))
-      .send({ approve: true, revision: gate.body.revision })
-      .expect(201);
-    const q = await prisma.quote.findUnique({ where: { id: 'q_qa_direct' } });
-    expect(q?.status).toBe('approved');
-    expect(q?.decidedById).toBe('u_qa_ho');
-
-    // But a quote the gate never held cannot be stamped with a decision.
-    await makeQuote('q_qa_small2', 'QT-QA-S2', 10_000);
-    const refused = await request(server())
-      .post('/quotes/q_qa_small2/decide')
-      .set(auth(hoA))
-      .send({ approve: true });
-    expect(refused.status).toBe(400);
-    expect(JSON.stringify(refused.body)).toMatch(/needs no approval/i);
-    await prisma.quote.deleteMany({ where: { id: { in: ['q_qa_direct', 'q_qa_small2'] } } });
+  it('the settings read as switched off, whatever the stored row says', async () => {
+    const res = await request(server()).get('/quotes/approval/settings').set(auth(mgrA)).expect(200);
+    expect(res.body).toMatchObject({ valueThreshold: null, allowSelfApproval: false });
   });
 
-  it('nobody decides their own held draft on the spot, head office included', async () => {
-    // Never requested, so the asker is whoever works it: assigned, else priced.
-    const draft = (id: string, ref: string, own: { assignedRepId?: string; pricedById?: string }) =>
-      prisma.quote.create({
-        data: {
-          id, organisationId: A.org, storeId: A.store, ref, customerName: 'Own Customer',
-          phone: '919812370002', status: 'draft', grandTotal: 200_000, taxableAmount: 200_000, ...own,
-        },
-      });
-    await draft('q_qa_own_mgr', 'QT-QA-OWN1', { assignedRepId: 'u_qa_mgr' });
-    await draft('q_qa_own_ho', 'QT-QA-OWN2', { pricedById: 'u_qa_ho' });
+  it('writing the policy is gone (410) — and still role-guarded before that', async () => {
+    await request(server())
+      .put('/quotes/approval/settings')
+      .set(auth(repA))
+      .send({ valueThreshold: 100_000 })
+      .expect(403);
+    const gone = await request(server())
+      .put('/quotes/approval/settings')
+      .set(auth(hoA))
+      .send({ valueThreshold: 100_000 });
+    expect(gone.status).toBe(410);
+    expect(JSON.stringify(gone.body)).toMatch(/no approval from anybody/i);
+  });
 
-    await request(server()).post('/quotes/q_qa_own_mgr/decide').set(auth(mgrA)).send({ approve: true }).expect(403);
-    await request(server()).post('/quotes/q_qa_own_ho/decide').set(auth(hoA)).send({ approve: true }).expect(403);
-    // Somebody else may.
-    await request(server()).post('/quotes/q_qa_own_mgr/decide').set(auth(hoA)).send({ approve: true }).expect(201);
-    await prisma.quote.deleteMany({ where: { id: { in: ['q_qa_own_mgr', 'q_qa_own_ho'] } } });
+  it('nobody asks and nobody decides: quotes are never held', async () => {
+    // The manager's own large quote - the case the old gate existed for.
+    await makeQuote('q_qa_self', 'QT-QA-3', 150_000);
+    await prisma.quote.update({ where: { id: 'q_qa_self' }, data: { assignedRepId: 'u_qa_mgr' } });
+    const gate = await request(server()).get('/quotes/q_qa_self/approval').set(auth(mgrA)).expect(200);
+    expect(gate.body.cleared).toBe(true);
+
+    expect((await request(server()).post('/quotes/q_qa_big/request-approval').set(auth(repA))).status).toBe(410);
+    expect(
+      (await request(server()).post('/quotes/q_qa_self/decide').set(auth(mgrA)).send({ approve: true })).status,
+    ).toBe(410);
+    // A salesperson still cannot reach the decide route at all.
+    expect(
+      (await request(server()).post('/quotes/q_qa_big/decide').set(auth(repA)).send({ approve: true })).status,
+    ).toBe(403);
+
+    // Nothing was flipped by the attempts.
+    const q = await prisma.quote.findUniqueOrThrow({ where: { id: 'q_qa_big' } });
+    expect(q.status).toBe('draft');
+    expect(q.requestedById).toBeNull();
+    expect(q.decidedById).toBeNull();
+  });
+
+  it('the pending list is empty, even with a quote stuck in a legacy approval status', async () => {
+    await makeQuote('q_qa_legacy', 'QT-QA-LEG', 200_000);
+    await prisma.quote.update({
+      where: { id: 'q_qa_legacy' },
+      data: { status: 'pending_approval', requestedById: 'u_qa_rep', requestedAt: new Date() },
+    });
+    const res = await request(server()).get('/quotes/approval/pending').set(auth(mgrA)).expect(200);
+    expect(res.body).toEqual([]);
+
+    // And the legacy status holds nothing.
+    const gate = await request(server()).get('/quotes/q_qa_legacy/approval').set(auth(repA)).expect(200);
+    expect(gate.body.cleared).toBe(true);
+    await request(server()).post('/quotes/q_qa_legacy/share').set(auth(repA)).expect(201);
+  });
+
+  it('a past decision stays readable on the quote after the rework', async () => {
+    const decidedAt = new Date('2026-10-01T10:00:00Z');
+    await makeQuote('q_qa_hist', 'QT-QA-HIST', 180_000);
+    await prisma.quote.update({
+      where: { id: 'q_qa_hist' },
+      data: {
+        status: 'approved', decidedById: 'u_qa_mgr', decidedAt, approvedTotal: 180_000,
+        approvedRevision: 1, approvalSnapshot: { total: 180000, discountPercent: 0, discountAmount: 0, revision: 1, reasons: [] },
+      },
+    });
+    const q = await prisma.quote.findUniqueOrThrow({ where: { id: 'q_qa_hist' } });
+    expect(q.decidedById).toBe('u_qa_mgr');
+    expect(Number(q.approvedTotal)).toBe(180000);
+    expect(q.approvalSnapshot).toMatchObject({ total: 180000 });
+    // And it is simply a quote now: cleared like any other.
+    const gate = await request(server()).get('/quotes/q_qa_hist/approval').set(auth(repA)).expect(200);
+    expect(gate.body).toMatchObject({ required: false, cleared: true });
   });
 
   it('a manager deletes a quote; a salesperson and an accepted quote are refused', async () => {
@@ -249,144 +243,5 @@ describe('Quote approval (e2e)', () => {
     expect(refused.status).toBe(400);
     expect(JSON.stringify(refused.body)).toMatch(/order/i);
     await prisma.quote.delete({ where: { id: 'q_qa_del2' } });
-  });
-
-  it('a salesperson may ask but not decide', async () => {
-    await request(server())
-      .post('/quotes/q_qa_big/request-approval')
-      .set(auth(repA))
-      .expect(201);
-    const q = await prisma.quote.findUnique({ where: { id: 'q_qa_big' } });
-    expect(q?.status).toBe('pending_approval');
-    expect(q?.requestedById).toBe('u_qa_rep');
-
-    await request(server())
-      .post('/quotes/q_qa_big/decide')
-      .set(auth(repA))
-      .send({ approve: true })
-      .expect(403);
-  });
-
-  it('it appears on the manager’s pending list', async () => {
-    const res = await request(server())
-      .get('/quotes/approval/pending')
-      .set(auth(mgrA))
-      .expect(200);
-    const row = res.body.find((r: { id: string }) => r.id === 'q_qa_big');
-    expect(row).toBeTruthy();
-    expect(row.amount).toBe(145000);
-    expect(row.requestedByName).toBeTruthy();
-  });
-
-  it('rejecting needs a reason, and the reason is kept', async () => {
-    await request(server())
-      .post('/quotes/q_qa_big/decide')
-      .set(auth(mgrA))
-      .send({ approve: false })
-      .expect(400);
-
-    await request(server())
-      .post('/quotes/q_qa_big/decide')
-      .set(auth(mgrA))
-      .send({ approve: false, reason: 'Making charge is below floor' })
-      .expect(201);
-
-    const q = await prisma.quote.findUnique({ where: { id: 'q_qa_big' } });
-    expect(q?.status).toBe('rejected');
-    expect(q?.decisionReason).toContain('below floor');
-    expect(q?.approvedTotal).toBeNull();
-
-    const share = await request(server()).post('/quotes/q_qa_big/share').set(auth(repA));
-    expect(share.status).toBe(403);
-  });
-
-  it('a corrected quote can be resubmitted, and the old decision is cleared', async () => {
-    await request(server())
-      .post('/quotes/q_qa_big/request-approval')
-      .set(auth(repA))
-      .expect(201);
-    const q = await prisma.quote.findUnique({ where: { id: 'q_qa_big' } });
-    expect(q?.status).toBe('pending_approval');
-    expect(q?.decisionReason).toBeNull();
-    expect(q?.decidedById).toBeNull();
-  });
-
-  it('approving records who, when and for how much', async () => {
-    await request(server())
-      .post('/quotes/q_qa_big/decide')
-      .set(auth(mgrA))
-      .send({ approve: true })
-      .expect(201);
-
-    const q = await prisma.quote.findUnique({ where: { id: 'q_qa_big' } });
-    expect(q?.status).toBe('approved');
-    expect(q?.decidedById).toBe('u_qa_mgr');
-    expect(q?.decidedAt).toBeTruthy();
-    expect(Number(q?.approvedTotal)).toBe(145000);
-
-    const audit = await prisma.auditLog.findFirst({
-      where: { organisationId: A.org, action: 'quotes.approved', entityId: 'q_qa_big' },
-    });
-    expect(audit).toBeTruthy();
-  });
-
-  /* --------------- the assertion that makes approval mean something -------- */
-
-  it('editing the amount after approval sends it back for a new decision', async () => {
-    // Approved at 145,000. Somebody edits it upward.
-    await prisma.quote.update({
-      where: { id: 'q_qa_big' },
-      data: { grandTotal: 190_000 },
-    });
-
-    const gate = await request(server())
-      .get('/quotes/q_qa_big/approval')
-      .set(auth(repA))
-      .expect(200);
-    expect(gate.body.cleared).toBe(false);
-    expect(gate.body.reason).toMatch(/changed after approval/i);
-
-    const share = await request(server()).post('/quotes/q_qa_big/share').set(auth(repA));
-    expect(share.status).toBe(403);
-  });
-
-  it('a manager cannot approve a quote they asked for themselves', async () => {
-    await makeQuote('q_qa_self', 'QT-QA-3', 150_000);
-    await request(server())
-      .post('/quotes/q_qa_self/request-approval')
-      .set(auth(mgrA))
-      .expect(201);
-    await request(server())
-      .post('/quotes/q_qa_self/decide')
-      .set(auth(mgrA))
-      .send({ approve: true })
-      .expect(403);
-
-    // Unless the tenant deliberately allows it.
-    await request(server())
-      .put('/quotes/approval/settings')
-      .set(auth(hoA))
-      .send({ allowSelfApproval: true })
-      .expect(200);
-    await request(server())
-      .post('/quotes/q_qa_self/decide')
-      .set(auth(mgrA))
-      .send({ approve: true })
-      .expect(201);
-  });
-
-  it('turning the policy off restores the old behaviour exactly', async () => {
-    await request(server())
-      .put('/quotes/approval/settings')
-      .set(auth(hoA))
-      .send({ valueThreshold: null })
-      .expect(200);
-
-    const gate = await request(server())
-      .get('/quotes/q_qa_big/approval')
-      .set(auth(repA))
-      .expect(200);
-    expect(gate.body.required).toBe(false);
-    expect(gate.body.cleared).toBe(true);
   });
 });

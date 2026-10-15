@@ -41,6 +41,7 @@ import {
 } from './attendance-ops.service';
 import {
   assertNotSelfApproval,
+  assertRankAboveRequester,
   assertUndecided,
   decisionStamp,
 } from '../common/approval.util';
@@ -2171,6 +2172,12 @@ export class HrmsService {
     if (!dto.requestedCheckIn && !dto.requestedCheckOut) {
       throw new BadRequestException('Provide a check-in time, a check-out time, or both');
     }
+    // The approver decides on the stated reason, so a request without one is
+    // undecidable — refused here, not left for the approver to bounce back.
+    const reason = dto.reason?.trim();
+    if (!reason) {
+      throw new BadRequestException('Give a reason for the correction — the approver sees it');
+    }
     await assertMonthOpen(this.prisma, user.organisationId, date);
 
     const pending = await this.prisma.attendanceRegularization.findFirst({
@@ -2197,18 +2204,28 @@ export class HrmsService {
         date,
         requestedCheckIn,
         requestedCheckOut,
-        reason: dto.reason ?? null,
+        reason,
         status: 'pending',
       },
     });
 
+    // One rank above the requester (client, 13 Oct): a staffer's request lands
+    // with the store managers; a store manager's own request must not land back
+    // in their peers' inbox — it goes up (recipientsFor rolls the rank up, so
+    // head office is always included).
+    const approverRole: Role =
+      ROLE_RANK[user.role] >= ROLE_RANK.area_manager
+        ? 'head_office'
+        : ROLE_RANK[user.role] >= ROLE_RANK.store_manager
+          ? 'area_manager'
+          : 'store_manager';
     await this.notifications.emitToApprovers(
       storeId,
-      'store_manager',
+      approverRole,
       {
         kind: 'regularization_request',
         title: `Attendance fix requested by ${user.name}`,
-        body: `${dateOnly(date)}${dto.reason ? ` — ${dto.reason}` : ''}`,
+        body: `${dateOnly(date)} — ${reason}`,
         href: '/hrms',
         storeId,
         entityType: 'AttendanceRegularization',
@@ -2258,6 +2275,14 @@ export class HrmsService {
     if (!existing) throw new NotFoundException('Regularization not found');
 
     assertUndecided(existing.status, LEAVE_TERMINAL, 'regularization');
+    // One rank above the requester (client, 13 Oct). Checked BEFORE the self
+    // rule so a manager deciding their own request is told WHO can, not merely
+    // that they cannot; the self rule still catches a head-office requester.
+    const requester = await this.prisma.user.findUnique({
+      where: { id: existing.staffId },
+      select: { role: true },
+    });
+    assertRankAboveRequester(user, requester?.role, 'regularization request');
     assertNotSelfApproval(user, existing.staffId, 'regularization request');
 
     let row;
@@ -2313,6 +2338,15 @@ export class HrmsService {
           update: {
             checkInAt,
             checkOutAt,
+            // A requested time replaces that side's live punch, so its geo
+            // evidence no longer describes the stored instant — an edited
+            // punch must not keep reading as a verified on-site fix.
+            ...(existing.requestedCheckIn
+              ? { checkInLat: null, checkInLng: null, checkInDistanceM: null, geoVerified: false }
+              : {}),
+            ...(existing.requestedCheckOut
+              ? { checkOutLat: null, checkOutLng: null, checkOutDistanceM: null, checkOutVerified: false }
+              : {}),
             workedMins,
             isLate,
             lateMinutes,

@@ -6,7 +6,7 @@ import { StoreScopeService } from '../common/store-scope.service';
 import { AuthUser } from '../common/auth-user';
 import { isSalesScoped, partyWorkedBy } from '../common/sales-scope';
 import { PageRequest, Paginated } from '../common/pagination';
-import { isValidEmail, normalizeIndianMobile } from '../common/contact.util';
+import { isValidEmail, normalizeCustomerPhone, normalizeIndianMobile } from '../common/contact.util';
 import { CreatePartyDto } from './dto/party.dto';
 
 /** Decimal | null -> number | null (Decimals never cross the wire raw). */
@@ -342,11 +342,15 @@ export class PartiesService {
     const name = dto.name?.trim();
     if (!name) throw new BadRequestException('Name is required');
 
-    // @IsIndianMobile already validated shape; normalize to the canonical
-    // 10-digit form so stored/searchable numbers stay consistent.
-    const phone = normalizeIndianMobile(dto.phone);
+    // @IsCustomerPhone already validated shape. Indian numbers keep the
+    // canonical 10-digit form every record written so far uses; a foreign
+    // number (client, 13 Oct) falls through to the gentler customer
+    // normalisation, which keeps the digits and a leading `+`.
+    const phone = normalizeIndianMobile(dto.phone) ?? normalizeCustomerPhone(dto.phone);
     if (!phone) {
-      throw new BadRequestException('A valid 10-digit Indian mobile number is required');
+      throw new BadRequestException(
+        'A valid phone number is required — a 10-digit Indian mobile, or an international number like +971551234567',
+      );
     }
 
     const email = dto.email?.trim() || undefined;
@@ -385,10 +389,16 @@ export class PartiesService {
     phone: string,
     storeId: string,
   ): Promise<void> {
+    // An international number has two possible stored spellings — with and
+    // without the leading `+` (normalizeCustomerPhone keeps whichever the
+    // creator typed). The guard must see both, or "+971…" and "971…" become
+    // exactly the silent duplicate this method exists to refuse.
+    const digits = phone.replace(/\D/g, '');
+    const spellings = Array.from(new Set([phone, digits, `+${digits}`]));
     const existing = await this.prisma.party.findFirst({
       where: {
         organisationId: user.organisationId,
-        OR: [{ phone }, { whatsapp: phone }],
+        OR: [{ phone: { in: spellings } }, { whatsapp: { in: spellings } }],
         types: { has: 'customer' },
       },
       select: {

@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { FileText, MessageCircle } from "lucide-react";
 import { toast } from "sonner";
 
+import { QuoteBuilder } from "@/components/quotation/quote-builder";
 import { QuoteDetailDialog } from "@/components/quotation/quote-detail-dialog";
 import { ExcelExportButton } from "@/components/common/excel-export-button";
 import { SectionHeader } from "@/components/section/section-header";
@@ -34,7 +35,6 @@ import { useQuotes } from "@/lib/queries/quotes";
 import { useSession } from "@/store/use-session";
 import { api } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/utils";
-import { QuoteApprovalsCard } from "@/components/quotation/quote-approvals-card";
 
 const nav = getNavItem("quotation")!;
 
@@ -68,6 +68,14 @@ export default function QuotationPage() {
   const [active, setActive] = useState<Quote | null>(null);
   const [open, setOpen] = useState(false);
   const router = useRouter();
+  const pathname = usePathname();
+  // The builder is a centred dialog over this list (client mockup, 13 Oct).
+  // The /quotation/new deep link still works: it renders this same page, and
+  // the path is what says the dialog starts open — not a prop, which Next's
+  // generated PageProps check would refuse on a page component.
+  const [builderOpen, setBuilderOpen] = useState(
+    () => pathname?.endsWith("/quotation/new") ?? false,
+  );
 
   function storeName(id: string) {
     return stores.find((s) => s.id === id)?.name ?? id;
@@ -78,16 +86,20 @@ export default function QuotationPage() {
     setOpen(true);
   }
 
-  // A screen of its own: with two or three items the form is long.
-  const openBuilder = () => router.push("/quotation/new");
+  const openBuilder = () => setBuilderOpen(true);
+  const closeBuilder = () => {
+    setBuilderOpen(false);
+    // A deep link's URL says a dialog is open; closing it must say so too, or
+    // a refresh re-opens a form that was just dismissed.
+    if (pathname?.endsWith("/quotation/new")) router.replace("/quotation");
+  };
 
   /*
    * The row's WhatsApp action sends the DETAILED PDF, queued through the
    * branch's own business line — not a text summary, and never a wa.me link.
    * The old fallback opened web WhatsApp on whatever account the terminal had
    * logged in, with the price as prefilled text: it could not attach the
-   * document, and it read as the feature being broken. A refusal here is
-   * final — the approval gate's no must never be worked around by hand.
+   * document, and it read as the feature being broken.
    */
   async function handleSendQuoteWhatsApp(e: React.MouseEvent, q: Quote) {
     e.stopPropagation();
@@ -129,8 +141,6 @@ export default function QuotationPage() {
         </div>
 
         <TabsContent value="quotes" className="space-y-4">
-          <QuoteApprovalsCard />
-
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-muted-foreground">
               {currentStore.isAggregate
@@ -286,8 +296,18 @@ export default function QuotationPage() {
         </TabsContent>
       </Tabs>
 
+      {/* Mounted only while open, so each New Quote starts from a blank form. */}
+      {builderOpen ? (
+        <QuoteBuilder
+          open
+          onOpenChange={(o) => {
+            if (!o) closeBuilder();
+          }}
+        />
+      ) : null}
+
       {/* The live row, not the snapshot taken when the dialog opened — otherwise
-          requesting or deciding approval leaves the dialog showing the old status. */}
+          an edit under this dialog leaves it showing the old status. */}
       <QuoteDetailDialog
         quote={scoped.find((q) => q.id === active?.id) ?? active}
         open={open}

@@ -49,8 +49,8 @@ import {
   apiErrorMessage,
   isRealName,
   isValidEmail,
-  normalizeIndianMobile,
-  phoneInputValue,
+  customerPhoneInputValue,
+  normalizeCustomerPhone,
 } from "@/lib/utils";
 
 const nav = getNavItem("customers")!;
@@ -308,11 +308,12 @@ function AddCustomerDialog({
     if (!name.trim()) next.name = "Customer name is required.";
     else if (!isRealName(name))
       next.name = "Enter a real name — letters, not just a number.";
-    // Phone is required and must be a valid Indian mobile (backend @IsIndianMobile).
-    const normalizedPhone = normalizeIndianMobile(phone);
+    // Phone is required. Customers may be foreign (client, 13 Oct): an Indian
+    // 10-digit mobile or a +country number (backend @IsCustomerPhone).
+    const normalizedPhone = normalizeCustomerPhone(phone);
     if (!phone.trim()) next.phone = "Phone number is required.";
     else if (!normalizedPhone)
-      next.phone = "Enter a valid 10-digit mobile number.";
+      next.phone = "Enter a 10-digit mobile, or an international number starting with +.";
     if (email.trim() && !isValidEmail(email))
       next.email = "Enter a valid email address.";
     if (Object.keys(next).length > 0) {
@@ -380,13 +381,13 @@ function AddCustomerDialog({
             </Label>
             <Input
               id="cust-phone"
-              placeholder="10-digit mobile"
-              inputMode="numeric"
-              maxLength={10}
+              placeholder="10-digit mobile or +country number"
+              inputMode="tel"
+              maxLength={16}
               value={phone}
               aria-invalid={!!errors.phone}
               onChange={(e) => {
-                setPhone(phoneInputValue(e.target.value));
+                setPhone(customerPhoneInputValue(e.target.value));
                 clearError("phone");
               }}
             />

@@ -114,3 +114,42 @@ export function itemProblem(
   }
   return null;
 }
+
+/** The builder's free-text fields, as the dialog's close guard reads them. */
+export interface DraftFields {
+  customer: string;
+  phone: string;
+  address: string;
+  grossWeight: string;
+  repairDetails: string;
+  remarks: string;
+  repairMaking: string;
+  makingDiscount: string;
+  additionalDiscount: string;
+  /** Reference photos already picked. */
+  refCount: number;
+}
+
+/** An item somebody started filling in — anything typed, or a stone row added. */
+function touchedItem(it: ItemRow): boolean {
+  return (
+    [
+      it.itemType, it.styleNumber, it.size, it.metalCode, it.weight,
+      it.manualRate, it.makingRate, it.metalDiscount, it.makingDiscount, it.remark,
+    ].some((v) => v.trim() !== "") || it.stones.length > 0
+  );
+}
+
+/**
+ * Whether closing the New-quote dialog would lose work. The dialog opens with
+ * one empty item, so an untouched form (mode flipped, store picked, kaccha
+ * toggled) closes without a word — only typed entries earn the confirm.
+ */
+export function hasUnsavedEntries(fields: DraftFields, items: ItemRow[]): boolean {
+  const typed = [
+    fields.customer, fields.phone, fields.address, fields.grossWeight,
+    fields.repairDetails, fields.remarks, fields.repairMaking,
+    fields.makingDiscount, fields.additionalDiscount,
+  ].some((v) => v.trim() !== "");
+  return typed || fields.refCount > 0 || items.some(touchedItem);
+}

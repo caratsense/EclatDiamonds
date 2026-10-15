@@ -10,12 +10,14 @@ import { AxiosError } from "axios";
 import { api } from "@/lib/api";
 import { useStoreKey } from "@/lib/queries/keys";
 import type { Quote, QuoteBillTo, QuoteKind, QuoteLine, QuotePayment } from "@/lib/mock/quotation";
-import type { Role } from "@/lib/types";
 
 export interface CreateQuoteInput {
   storeId: string;
   customerName: string;
+  /** Indian mobile or international (+, 8-15 digits). */
   phone?: string;
+  /** The customer's own address, printed under their name on the quote. */
+  customerAddress?: string;
   validUntil?: string;
   redeemableStoreIds?: string[];
   /** Sale (default) vs repair (making-only). */
@@ -101,13 +103,22 @@ export function useUploadQuotePhoto() {
 }
 
 /**
- * PATCH /quotes/:id/details — address and payments after the quote is saved.
- * Not the price: the revision and any approval stay as they are.
+ * PATCH /quotes/:id/details — the customer's address, the bill-to box and the
+ * payments after the quote is saved. Not the price: the revision stays as it is.
  */
 export function useUpdateQuoteDetails() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, ...body }: { id: string; billTo?: QuoteBillTo; payments?: QuotePayment[] }) =>
+    mutationFn: async ({
+      id,
+      ...body
+    }: {
+      id: string;
+      /** Empty string clears it; left out, it stays. */
+      customerAddress?: string;
+      billTo?: QuoteBillTo;
+      payments?: QuotePayment[];
+    }) =>
       (await api.patch<Quote>(`/quotes/${id}/details`, body)).data,
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["quotes"] }),
   });
@@ -128,16 +139,13 @@ export interface UpdateQuoteInput {
 
 /**
  * PATCH /quotes/:id — re-price a saved quote. Every accepted edit bumps the
- * revision and, if the quote was approved or awaiting approval, withdraws that
- * (the returned quote comes back as draft). Refused once the quote is accepted.
+ * revision. Refused once the quote is accepted.
  */
 export function useUpdateQuote() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, ...body }: UpdateQuoteInput) =>
       (await api.patch<Quote>(`/quotes/${id}`, body)).data,
-    // The prefix also catches ["quotes","approval",id] — the gate must re-ask
-    // about the new revision.
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["quotes"] }),
   });
 }
@@ -192,138 +200,14 @@ export function useConvertQuoteToOrder() {
   });
 }
 
-/* ------------------------------------------------------- manager approval */
-
-/** One rule that asks for a manager's decision, with the numbers behind it. */
-export interface QuoteApprovalReason {
-  code: "total_over_threshold" | "discount_over_cap";
-  /** The server's own sentence. */
-  message: string;
-  total?: number;
-  threshold?: number;
-  discountPercent?: number;
-  cap?: number;
-  requiredRole?: Role;
-}
-
-/** Whether a quote may go to the customer yet — the same gate every send enforces. */
-export interface QuoteApprovalGate {
-  required: boolean;
-  cleared: boolean;
-  reason: string | null;
-  reasons: QuoteApprovalReason[];
-  /** The quote revision this answer is about. */
-  revision: number;
-}
-
-export interface PendingQuoteApproval {
-  id: string;
-  ref: string;
-  customerName: string;
-  amount: number;
-  requestedAt: string | null;
-  requestedByName: string | null;
-  requestedById: string | null;
-  storeName: string | null;
-  revision: number;
-  discountPercent: number;
-  discountAmount: number;
-  reasons: QuoteApprovalReason[];
-}
-
-/** Short label for a reason chip: "Total over ₹2,00,000" / "Discount 8% over 5% cap". */
-export function approvalReasonLabel(r: QuoteApprovalReason): string {
-  if (r.code === "discount_over_cap") {
-    return `Discount ${r.discountPercent}% over ${r.cap}% cap`;
-  }
-  return r.threshold != null
-    ? `Total over ${new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(r.threshold)}`
-    : "Total over threshold";
-}
-
-export interface QuoteApprovalSettings {
-  /** Quotes at or above this grand total need a manager. `null` = approval off. */
-  valueThreshold: number | null;
-  allowSelfApproval: boolean;
-}
-
-/** GET /quotes/:id/approval */
-export function useQuoteApproval(id: string | null) {
-  return useQuery({
-    queryKey: ["quotes", "approval", id],
-    enabled: !!id,
-    queryFn: async () => (await api.get<QuoteApprovalGate>(`/quotes/${id}/approval`)).data,
-  });
-}
-
-/** GET /quotes/approval/pending — store manager and head office. */
-export function usePendingQuoteApprovals(enabled: boolean) {
-  const storeId = useStoreKey();
-  return useQuery({
-    queryKey: ["quotes", "approval", "pending", storeId],
-    enabled,
-    queryFn: async () =>
-      (await api.get<PendingQuoteApproval[]>("/quotes/approval/pending")).data,
-  });
-}
-
-/** POST /quotes/:id/request-approval */
-export function useRequestQuoteApproval() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (id: string) =>
-      (await api.post(`/quotes/${id}/request-approval`)).data,
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["quotes"] }),
-  });
-}
-
-/**
- * POST /quotes/:id/decide — a reason is required to reject. `revision` is the
- * one the manager was looking at; the server refuses if the quote moved on.
- */
-export function useDecideQuote() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: { id: string; approve: boolean; reason?: string; revision?: number }) =>
-      (
-        await api.post(`/quotes/${input.id}/decide`, {
-          approve: input.approve,
-          reason: input.reason,
-          revision: input.revision,
-        })
-      ).data,
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["quotes"] }),
-  });
-}
-
-/** GET /quotes/approval/settings */
-export function useQuoteApprovalSettings(enabled: boolean) {
-  return useQuery({
-    queryKey: ["quotes", "approval", "settings"],
-    enabled,
-    queryFn: async () =>
-      (await api.get<QuoteApprovalSettings>("/quotes/approval/settings")).data,
-  });
-}
-
-/** PUT /quotes/approval/settings — head office. */
-export function useSaveQuoteApprovalSettings() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: Partial<QuoteApprovalSettings>) =>
-      (await api.put<QuoteApprovalSettings>("/quotes/approval/settings", input)).data,
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["quotes"] }),
-  });
-}
-
 /* ------------------------------------------------------------ quote PDF */
 
 /**
  * GET /quotes/:id/pdf — download the detailed quote.
  *
  * `responseType: "blob"` means a refusal also arrives as a Blob, which would hide
- * the server's reason ("needs a manager's approval") behind a generic toast; it
- * is read back into JSON so `apiErrorMessage` can show it.
+ * the server's reason behind a generic toast; it is read back into JSON so
+ * `apiErrorMessage` can show it.
  */
 export function useDownloadQuotePdf() {
   return useMutation({

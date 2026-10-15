@@ -1755,6 +1755,9 @@ model Quote {
 
   customerName String
   phone        String?
+  /// The customer's own address as typed on the quote, printed under their
+  /// name. Not `billTo` below, which is the GST bill-to block.
+  customerAddress String?
   status       QuoteStatus @default(draft)
   kind         QuoteKind   @default(sale)
   validUntil   DateTime?

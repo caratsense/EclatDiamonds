@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ChevronDown, ImagePlus, Plus, Sparkles, Wrench, X } from "lucide-react";
+import { ChevronDown, ImagePlus, Plus, Sparkles, Wrench, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -45,7 +45,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { apiErrorMessage, cn, normalizeIndianMobile, phoneInputValue } from "@/lib/utils";
+import {
+  apiErrorMessage,
+  cn,
+  customerPhoneInputValue,
+  normalizeCustomerPhone,
+} from "@/lib/utils";
 import {
   StoreScopeField,
   useStoreScope,
@@ -66,6 +71,7 @@ import {
   type ItemRow,
 } from "@/components/quotation/quote-item-editor";
 import {
+  hasUnsavedEntries,
   itemProblem as validateItems,
   realStones,
 } from "@/components/quotation/quote-validation";
@@ -89,8 +95,12 @@ function escapeHtml(s: string): string {
 type QuoteLineInput = Omit<QuoteLine, "id">;
 
 interface QuoteBuilderProps {
-  /** Called once the quote (or custom order) is saved, or the screen is left. */
-  onDone: () => void;
+  open: boolean;
+  /**
+   * Close the dialog. Mount the component only while open — the form state
+   * resets by unmounting, the way {@link EditQuoteDialog} does it.
+   */
+  onOpenChange: (open: boolean) => void;
 }
 
 /**
@@ -103,14 +113,16 @@ interface QuoteBuilderProps {
  * the shop's bill prints them, then a flat amount at the end. Repair mode is
  * making-only. The live preview mirrors the server formula.
  *
- * A whole screen rather than a popup: with two or three items it is a long
- * form, and the shop asked for room.
+ * A centred dialog over the quote list (client mockup, 13 Oct): fixed header
+ * and footer, the form scrolling between them, so the grand total and Save
+ * stay in reach however long the form gets. Closing with typed entries asks
+ * first.
  *
  * Keyboard: Alt+N new item, Alt+D diamond, Alt+C colour stone (on the item
  * being edited), Ctrl+Enter creates the quote.
  */
-export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
-  const { targetStoreId, storeLabel, pickedStoreId, setPickedStoreId } =
+export function QuoteBuilder({ open, onOpenChange }: QuoteBuilderProps) {
+  const { isAggregate, targetStoreId, storeLabel, pickedStoreId, setPickedStoreId } =
     useStoreScope();
   const createQuote = useCreateQuote();
   const metalRates = useMetalRates();
@@ -126,6 +138,7 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
   // Shared
   const [customer, setCustomer] = useState("");
   const [phone, setPhone] = useState("");
+  const [address, setAddress] = useState("");
   // Kaccha ("@") estimate — rough, no-GST, kept head-office-only.
   const [isKaccha, setIsKaccha] = useState(false);
 
@@ -154,8 +167,8 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
    * The send step after Save (client, 7 Oct meeting 2): a saved quote offers
    * "Send to WhatsApp" with the customer's number prefilled and EDITABLE -
    * that answers the meeting's open question (which number? selectable?) with
-   * the sensible default while keeping the choice. reset()/onDone() are
-   * deferred until this closes, so the dialog outlives the form it came from.
+   * the sensible default while keeping the choice. The builder dialog hides
+   * while this is open and the whole thing closes when it does.
    */
   const [sendStep, setSendStep] = useState<{ id: string; ref: string; phone: string } | null>(null);
   const [sendTo, setSendTo] = useState("");
@@ -282,26 +295,19 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
     setRefFiles((prev) => prev.filter((_, idx) => idx !== i));
   }
 
-  function reset() {
-    setMode("sale");
-    setErrors({});
-    setCustomer("");
-    setPhone("");
-    setIsKaccha(false);
-    setItems([emptyItem()]);
-    setActiveItem(0);
-    setGrossWeight("");
-    setRepairDetails("");
-    setRemarks("");
-    setRepairMaking("");
-    setMakingDiscount("");
-    setAdditionalDiscount("");
-    setRefFiles([]);
-    setCustomOpen(false);
-    setDeliveryDate("");
-    setAdvance("");
-    setAdvanceMode("");
-    if (refInput.current) refInput.current.value = "";
+  /** Close, but never silently over typed entries — losing them costs a retype. */
+  function requestClose() {
+    const dirty = hasUnsavedEntries(
+      {
+        customer, phone, address, grossWeight, repairDetails, remarks,
+        repairMaking, makingDiscount, additionalDiscount, refCount: refFiles.length,
+      },
+      items,
+    );
+    if (dirty && !window.confirm("Discard this quote? The entries you have typed will be lost.")) {
+      return;
+    }
+    onOpenChange(false);
   }
 
   /** Build the payload lines for the active mode. */
@@ -457,12 +463,12 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
     // Name must contain a letter, not just digits/spaces (backend @Matches).
     else if (!/[^\d\s]/.test(name))
       next.customer = "Enter a valid name (letters, not just numbers).";
-    // Phone is mandatory on quote creation and must be a valid Indian mobile —
-    // the backend enforces @IsIndianMobile, so block/normalise client-side.
-    const normalizedPhone = normalizeIndianMobile(phone);
+    // Phone is mandatory on quote creation. Indian or foreign (the business
+    // quotes overseas clients, 13 Oct) — same rule the backend enforces.
+    const normalizedPhone = normalizeCustomerPhone(phone);
     if (!phone.trim()) next.phone = "Phone number is required.";
     else if (!normalizedPhone)
-      next.phone = "Enter a valid 10-digit mobile number.";
+      next.phone = "Enter a 10-digit mobile, or an international number starting with +.";
     if (Object.keys(next).length > 0) {
       setErrors(next);
       toast.error("Please fill in the required fields.");
@@ -488,6 +494,7 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
         storeId: targetStoreId,
         customerName: name,
         phone: normalizedPhone ?? undefined,
+        customerAddress: address.trim() || undefined,
         kind: mode,
         isKaccha: isKaccha || undefined,
         remarks: mode === "repair" ? remarks.trim() || undefined : undefined,
@@ -520,13 +527,12 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
           description: `${formatINR(quote.totals?.grandTotal ?? preview.grand)} · ready for ${name}.`,
           action: { label: "Print", onClick: () => printSummary(html) },
         });
-        // The send step takes over; reset/onDone run when it closes.
+        // The send step takes over; the dialog closes when it does.
         setSendStep({ id: quote.id, ref: quote.ref, phone: phone.trim() });
         setSendTo(phone.trim());
         return;
       }
-      reset();
-      onDone();
+      onOpenChange(false);
     } catch (e) {
       toast.error(apiErrorMessage(e, "Could not create the quote. Please try again."));
     }
@@ -557,364 +563,402 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
   }
 
   return (
-    <div className="mx-auto w-full max-w-5xl md:pb-24" onKeyDown={onShortcut}>
-        <div className="mb-4 flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h1 className="text-xl font-semibold tracking-tight">New quote</h1>
-            <p className="text-sm text-muted-foreground">
-              Raised at {storeLabel}. Gold is priced at today&apos;s rate unless you
-              type another.
-            </p>
-          </div>
-          <Button variant="outline" size="sm" className="shrink-0" onClick={onDone} disabled={busy}>
-            <ArrowLeft className="h-4 w-4" /> Back to quotes
-          </Button>
-        </div>
+    <>
+      <Dialog
+        open={open && sendStep === null}
+        onOpenChange={(o: boolean) => {
+          if (!o) requestClose();
+        }}
+      >
+        {/* Fixed header and footer with the form scrolling between them: the
+            default grid/padding is replaced by a flex column so only the middle
+            band gets the scrollbar and the footer never overlaps an input. */}
+        <DialogContent
+          className="flex max-h-[85vh] flex-col gap-0 p-0 sm:max-w-[740px]"
+          onKeyDown={onShortcut}
+        >
+          <DialogHeader className="border-b px-6 py-4">
+            <DialogTitle>New quote</DialogTitle>
+            <DialogDescription>
+              Raised at {storeLabel}. Gold is priced at today&apos;s rate unless
+              you type another.
+            </DialogDescription>
+          </DialogHeader>
 
-        <MaterialDatalists lists={lists} />
+          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-4">
+            <MaterialDatalists lists={lists} />
 
-        <div className="grid gap-4">
-          <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
-
-          <div className="grid gap-3 sm:grid-cols-[auto_1fr_1fr]">
-            <div className="grid gap-1.5">
-              <Label>Quote type</Label>
-              <Tabs value={mode} onValueChange={(v) => setMode(v as QuoteKind)}>
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="sale">
-                    <Sparkles className="mr-1.5 h-4 w-4" />
-                    Sale
-                  </TabsTrigger>
-                  <TabsTrigger value="repair">
-                    <Wrench className="mr-1.5 h-4 w-4" />
-                    Repair
-                  </TabsTrigger>
-                </TabsList>
-              </Tabs>
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="qb-cust">
-                Customer name <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="qb-cust"
-                value={customer}
-                aria-invalid={!!errors.customer}
-                onChange={(e) => {
-                  setCustomer(e.target.value);
-                  setErrors((p) => ({ ...p, customer: "" }));
-                }}
-                placeholder="e.g. Meera Iyer"
-              />
-              {errors.customer ? (
-                <p className="mt-1 text-xs text-destructive">{errors.customer}</p>
-              ) : null}
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="qb-phone">
-                Phone <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="qb-phone"
-                value={phone}
-                inputMode="numeric"
-                maxLength={10}
-                aria-invalid={!!errors.phone}
-                onChange={(e) => {
-                  setPhone(phoneInputValue(e.target.value));
-                  setErrors((p) => ({ ...p, phone: "" }));
-                }}
-                placeholder="10-digit mobile"
-              />
-              {errors.phone ? (
-                <p className="mt-1 text-xs text-destructive">{errors.phone}</p>
-              ) : null}
-            </div>
-          </div>
-
-          {/* Kaccha ("@") estimate — no-GST, head-office-only */}
-          <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/30 px-3 py-2">
-            <Label htmlFor="qb-kaccha" className="text-sm font-normal">
-              Kaccha estimate — no GST, kept private to head office
-            </Label>
-            <button
-              id="qb-kaccha"
-              type="button"
-              role="switch"
-              aria-checked={isKaccha}
-              aria-label="Kaccha estimate — no GST"
-              onClick={() => setIsKaccha((v) => !v)}
-              className={cn(
-                "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                isKaccha ? "bg-primary" : "bg-input",
-              )}
-            >
-              <span
-                className={cn(
-                  "inline-block h-5 w-5 transform rounded-full bg-background shadow-sm transition-transform",
-                  isKaccha ? "translate-x-5" : "translate-x-0.5",
+            <section className="space-y-3">
+              <h3 className="text-sm font-semibold">Customer details</h3>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {isAggregate ? (
+                  <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
+                ) : (
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="qb-store">Store</Label>
+                    <Input id="qb-store" className="h-11 bg-muted/30" value={storeLabel} readOnly />
+                  </div>
                 )}
-              />
-            </button>
-          </div>
-
-          {mode === "sale" ? (
-            <div className="grid gap-3">
-              {items.map((it, i) => (
-                <QuoteItemEditor
-                  key={it.id}
-                  index={i}
-                  item={it}
-                  lists={lists}
-                  master={materials.data}
-                  autoRate={autoRate}
-                  onChange={(nextItem) => updateItem(i, nextItem)}
-                  onRemove={items.length > 1 ? () => setItems((list) => list.filter((x) => x.id !== it.id)) : undefined}
-                  onFocus={() => setActiveItem(i)}
-                />
-              ))}
-              <Button type="button" variant="outline" size="sm" className="justify-self-start" title="Alt+N" onClick={addItem}>
-                <Plus className="h-4 w-4" />
-                Add item
-              </Button>
-            </div>
-          ) : (
-            /* Repair mode */
-            <div className="rounded-lg border p-3">
-              <p className="mb-3 flex items-center gap-1.5 text-sm font-medium">
-                <Wrench className="h-4 w-4 text-muted-foreground" />
-                Repair / service
-              </p>
-              <div className="grid gap-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="qb-gross">Gross weight (g)</Label>
-                    <Input
-                      id="qb-gross"
-                      inputMode="decimal"
-                      placeholder="0"
-                      value={grossWeight}
-                      onChange={(e) => setGrossWeight(e.target.value.replace(/[^0-9.]/g, ""))}
-                    />
-                  </div>
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="qb-rmaking">Making / labour charge (₹)</Label>
-                    <Input
-                      id="qb-rmaking"
-                      inputMode="decimal"
-                      placeholder="0"
-                      value={repairMaking}
-                      onChange={(e) => setRepairMaking(e.target.value.replace(/[^0-9.]/g, ""))}
-                    />
-                  </div>
-                </div>
                 <div className="grid gap-1.5">
-                  <Label htmlFor="qb-rdetails">Details</Label>
-                  <Input
-                    id="qb-rdetails"
-                    value={repairDetails}
-                    onChange={(e) => setRepairDetails(e.target.value)}
-                    placeholder="e.g. Re-tip 4 prongs, rhodium polish"
-                  />
-                </div>
-                <div className="grid gap-1.5">
-                  <Label htmlFor="qb-remarks">Remarks</Label>
-                  <Textarea
-                    id="qb-remarks"
-                    value={remarks}
-                    onChange={(e) => setRemarks(e.target.value)}
-                    placeholder="Condition on intake, customer notes…"
-                  />
+                  <Label>Quote type</Label>
+                  <Tabs value={mode} onValueChange={(v) => setMode(v as QuoteKind)}>
+                    <TabsList className="grid h-11 w-full grid-cols-2">
+                      <TabsTrigger value="sale">
+                        <Sparkles className="mr-1.5 h-4 w-4" />
+                        Sale
+                      </TabsTrigger>
+                      <TabsTrigger value="repair">
+                        <Wrench className="mr-1.5 h-4 w-4" />
+                        Repair
+                      </TabsTrigger>
+                    </TabsList>
+                  </Tabs>
                 </div>
               </div>
-            </div>
-          )}
-
-          {/* Reference images */}
-          <div className="grid gap-1.5">
-            <Label>Reference images</Label>
-            <div className="flex flex-wrap gap-2">
-              {refUrls.map((u, i) => (
-                <div
-                  key={u}
-                  className="relative h-16 w-16 overflow-hidden rounded-md border bg-muted/30"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={u} alt={`Reference ${i + 1}`} className="h-full w-full object-cover" />
-                  <button
-                    type="button"
-                    onClick={() => removeRef(i)}
-                    className="absolute right-0.5 top-0.5 rounded-full bg-background/80 p-0.5 text-foreground shadow"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                    <span className="sr-only">Remove image</span>
-                  </button>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-1.5">
+                  <Label htmlFor="qb-cust">
+                    Customer name <span className="text-destructive">*</span>
+                  </Label>
+                  <Input
+                    id="qb-cust"
+                    className="h-11"
+                    value={customer}
+                    aria-invalid={!!errors.customer}
+                    onChange={(e) => {
+                      setCustomer(e.target.value);
+                      setErrors((p) => ({ ...p, customer: "" }));
+                    }}
+                    placeholder="e.g. Meera Iyer"
+                  />
+                  {errors.customer ? (
+                    <p className="mt-1 text-xs text-destructive">{errors.customer}</p>
+                  ) : null}
                 </div>
-              ))}
+                <div className="grid gap-1.5">
+                  <Label htmlFor="qb-phone">
+                    Phone <span className="text-destructive">*</span>
+                  </Label>
+                  <Input
+                    id="qb-phone"
+                    className="h-11"
+                    value={phone}
+                    type="tel"
+                    inputMode="tel"
+                    maxLength={16}
+                    aria-invalid={!!errors.phone}
+                    onChange={(e) => {
+                      setPhone(customerPhoneInputValue(e.target.value));
+                      setErrors((p) => ({ ...p, phone: "" }));
+                    }}
+                    placeholder="10-digit mobile or +country number"
+                  />
+                  {errors.phone ? (
+                    <p className="mt-1 text-xs text-destructive">{errors.phone}</p>
+                  ) : null}
+                </div>
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="qb-address">Customer address</Label>
+                <Input
+                  id="qb-address"
+                  className="h-11"
+                  value={address}
+                  maxLength={300}
+                  onChange={(e) => setAddress(e.target.value)}
+                  placeholder="House / street, area, city — printed under the name on the quote"
+                />
+              </div>
+            </section>
+
+            {/* Kaccha ("@") estimate — no-GST, head-office-only */}
+            <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/30 px-3 py-2">
+              <Label htmlFor="qb-kaccha" className="text-sm font-normal">
+                Kaccha estimate — no GST, kept private to head office
+              </Label>
               <button
+                id="qb-kaccha"
                 type="button"
-                onClick={() => refInput.current?.click()}
-                className="flex h-16 min-w-16 flex-col items-center justify-center gap-1 rounded-md border-2 border-dashed border-muted-foreground/25 px-3 text-muted-foreground transition-colors hover:border-primary/50"
+                role="switch"
+                aria-checked={isKaccha}
+                aria-label="Kaccha estimate — no GST"
+                onClick={() => setIsKaccha((v) => !v)}
+                className={cn(
+                  "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  isKaccha ? "bg-primary" : "bg-input",
+                )}
               >
-                <ImagePlus className="h-5 w-5" />
-                <span className="text-[10px]">{refUrls.length ? "Add" : "Add photos (8 MB each)"}</span>
+                <span
+                  className={cn(
+                    "inline-block h-5 w-5 transform rounded-full bg-background shadow-sm transition-transform",
+                    isKaccha ? "translate-x-5" : "translate-x-0.5",
+                  )}
+                />
               </button>
             </div>
-            <input
-              ref={refInput}
-              type="file"
-              accept="image/*"
-              multiple
-              className="hidden"
-              onChange={onPickRefs}
-            />
-          </div>
 
-          {/* Discounts — judged on the server against the role's cap. Above it,
-              the quote waits for a manager before it can be sent. */}
-          <div className="grid gap-1.5">
-            <div className="grid max-w-md grid-cols-2 gap-3">
-              {mode === "repair" ? (
+            <section className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold">Quotation items</h3>
+                {mode === "sale" ? (
+                  <Button type="button" variant="outline" size="sm" title="Alt+N" onClick={addItem}>
+                    <Plus className="h-4 w-4" />
+                    Add item
+                  </Button>
+                ) : null}
+              </div>
+
+              {mode === "sale" ? (
+                <div className="grid gap-3">
+                  {items.map((it, i) => (
+                    <QuoteItemEditor
+                      key={it.id}
+                      index={i}
+                      item={it}
+                      lists={lists}
+                      master={materials.data}
+                      autoRate={autoRate}
+                      onChange={(nextItem) => updateItem(i, nextItem)}
+                      onRemove={items.length > 1 ? () => setItems((list) => list.filter((x) => x.id !== it.id)) : undefined}
+                      onFocus={() => setActiveItem(i)}
+                    />
+                  ))}
+                </div>
+              ) : (
+                /* Repair mode */
+                <div className="rounded-lg border p-3">
+                  <p className="mb-3 flex items-center gap-1.5 text-sm font-medium">
+                    <Wrench className="h-4 w-4 text-muted-foreground" />
+                    Repair / service
+                  </p>
+                  <div className="grid gap-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="grid gap-1.5">
+                        <Label htmlFor="qb-gross">Gross weight (g)</Label>
+                        <Input
+                          id="qb-gross"
+                          inputMode="decimal"
+                          placeholder="0"
+                          value={grossWeight}
+                          onChange={(e) => setGrossWeight(e.target.value.replace(/[^0-9.]/g, ""))}
+                        />
+                      </div>
+                      <div className="grid gap-1.5">
+                        <Label htmlFor="qb-rmaking">Making / labour charge (₹)</Label>
+                        <Input
+                          id="qb-rmaking"
+                          inputMode="decimal"
+                          placeholder="0"
+                          value={repairMaking}
+                          onChange={(e) => setRepairMaking(e.target.value.replace(/[^0-9.]/g, ""))}
+                        />
+                      </div>
+                    </div>
+                    <div className="grid gap-1.5">
+                      <Label htmlFor="qb-rdetails">Details</Label>
+                      <Input
+                        id="qb-rdetails"
+                        value={repairDetails}
+                        onChange={(e) => setRepairDetails(e.target.value)}
+                        placeholder="e.g. Re-tip 4 prongs, rhodium polish"
+                      />
+                    </div>
+                    <div className="grid gap-1.5">
+                      <Label htmlFor="qb-remarks">Remarks</Label>
+                      <Textarea
+                        id="qb-remarks"
+                        value={remarks}
+                        onChange={(e) => setRemarks(e.target.value)}
+                        placeholder="Condition on intake, customer notes…"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            {/* Reference images */}
+            <div className="grid gap-1.5">
+              <Label>Reference images</Label>
+              <div className="flex flex-wrap gap-2">
+                {refUrls.map((u, i) => (
+                  <div
+                    key={u}
+                    className="relative h-16 w-16 overflow-hidden rounded-md border bg-muted/30"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={u} alt={`Reference ${i + 1}`} className="h-full w-full object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => removeRef(i)}
+                      className="absolute right-0.5 top-0.5 rounded-full bg-background/80 p-0.5 text-foreground shadow"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      <span className="sr-only">Remove image</span>
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => refInput.current?.click()}
+                  className="flex h-16 min-w-16 flex-col items-center justify-center gap-1 rounded-md border-2 border-dashed border-muted-foreground/25 px-3 text-muted-foreground transition-colors hover:border-primary/50"
+                >
+                  <ImagePlus className="h-5 w-5" />
+                  <span className="text-[10px]">{refUrls.length ? "Add" : "Add photos (8 MB each)"}</span>
+                </button>
+              </div>
+              <input
+                ref={refInput}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={onPickRefs}
+              />
+            </div>
+
+            {/* Discounts: a sale's live in each item; a flat amount comes off at the end. */}
+            <div className="grid gap-1.5">
+              <div className="grid max-w-md grid-cols-2 gap-3">
+                {mode === "repair" ? (
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="qb-disc-making">Making discount %</Label>
+                    <Input
+                      id="qb-disc-making"
+                      inputMode="decimal"
+                      value={makingDiscount}
+                      onChange={(e) => setMakingDiscount(e.target.value.replace(/[^0-9.]/g, ""))}
+                      placeholder="0"
+                    />
+                  </div>
+                ) : null}
                 <div className="grid gap-1.5">
-                  <Label htmlFor="qb-disc-making">Making discount %</Label>
+                  <Label htmlFor="qb-disc-extra">Additional discount (₹)</Label>
                   <Input
-                    id="qb-disc-making"
+                    id="qb-disc-extra"
                     inputMode="decimal"
-                    value={makingDiscount}
-                    onChange={(e) => setMakingDiscount(e.target.value.replace(/[^0-9.]/g, ""))}
+                    value={additionalDiscount}
+                    onChange={(e) => setAdditionalDiscount(e.target.value.replace(/[^0-9.]/g, ""))}
                     placeholder="0"
+                    aria-invalid={preview.overDiscount}
                   />
                 </div>
-              ) : null}
-              <div className="grid gap-1.5">
-                <Label htmlFor="qb-disc-extra">Additional discount (₹)</Label>
-                <Input
-                  id="qb-disc-extra"
-                  inputMode="decimal"
-                  value={additionalDiscount}
-                  onChange={(e) => setAdditionalDiscount(e.target.value.replace(/[^0-9.]/g, ""))}
-                  placeholder="0"
-                  aria-invalid={preview.overDiscount}
-                />
               </div>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {mode === "sale" ? "Each line's own discount is in its item above. " : ""}
-              Above your limit, a manager must approve before the quote can be sent.
-            </p>
-          </div>
-
-          {/* Live totals preview */}
-          <div className="rounded-lg bg-muted/50 p-3">
-            <p className="mb-1.5 text-xs font-medium text-muted-foreground">
-              Live preview {mode === "repair" ? "(making-only)" : null}
-            </p>
-            <dl className="space-y-1 text-sm">
               {mode === "sale" ? (
-                <>
-                  <PreviewRow label="Metal value" value={preview.metal} />
-                  <PreviewRow label="Making charges" value={preview.making} />
-                  <PreviewRow label="Diamonds & stones" value={preview.stones} />
-                </>
-              ) : (
-                <PreviewRow label="Making / labour" value={preview.making} />
-              )}
-              {preview.metalOff > 0 ? <PreviewRow label="Gold discount" value={-preview.metalOff} /> : null}
-              {preview.makingOff > 0 ? <PreviewRow label="Making discount" value={-preview.makingOff} /> : null}
-              {preview.stoneOff > 0 ? <PreviewRow label="Diamond discount" value={-preview.stoneOff} /> : null}
-              {preview.additional > 0 ? (
-                <PreviewRow label="Additional discount" value={-preview.additional} />
-              ) : null}
-              <Separator className="my-1" />
-              <PreviewRow label="Taxable value" value={preview.taxable} />
-              <PreviewRow
-                label={
-                  isKaccha
-                    ? "GST (kaccha — none)"
-                    : `GST @ ${formatPercent(GST_RATE * 100, 0)}`
-                }
-                value={preview.gst}
-              />
-              <Separator className="my-1" />
-              <PreviewRow label="Grand total" value={preview.grand} bold />
-            </dl>
-          </div>
-
-          {/* Custom-order details. The item type and size come from item 1. */}
-          <div className="rounded-lg border">
-            <button
-              type="button"
-              onClick={() => setCustomOpen((v) => !v)}
-              className="flex w-full items-center justify-between px-3 py-2.5 text-left text-sm font-medium"
-            >
-              <span>Custom-order details</span>
-              <ChevronDown
-                className={cn(
-                  "h-4 w-4 transition-transform",
-                  customOpen && "rotate-180",
-                )}
-              />
-            </button>
-            {customOpen ? (
-              <div className="grid gap-3 border-t p-3">
                 <p className="text-xs text-muted-foreground">
-                  Booked into production when you tap{" "}
-                  <span className="font-medium">Create Custom Order</span>, as{" "}
-                  <span className="font-medium">
-                    {mode === "sale"
-                      ? [itemTypeName(items[0]?.itemType ?? "") || "item 1", sizeText(items[0] ?? emptyItem()) && `size ${sizeText(items[0])}`]
-                          .filter(Boolean)
-                          .join(", ")
-                      : repairDetails.trim() || "Repair / service"}
-                  </span>
-                  . All optional.
+                  Each line&apos;s own discount is in its item above.
                 </p>
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="qb-delivery">Delivery date</Label>
-                    <Input
-                      id="qb-delivery"
-                      type="date"
-                      value={deliveryDate}
-                      onChange={(e) => setDeliveryDate(e.target.value)}
-                    />
-                  </div>
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="qb-advance">Advance (₹)</Label>
-                    <Input
-                      id="qb-advance"
-                      inputMode="decimal"
-                      placeholder="0"
-                      value={advance}
-                      onChange={(e) => setAdvance(e.target.value.replace(/[^0-9.]/g, ""))}
-                    />
-                  </div>
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="qb-advmode">Advance mode</Label>
-                    <Select value={advanceMode} onValueChange={setAdvanceMode}>
-                      <SelectTrigger id="qb-advmode">
-                        <SelectValue placeholder="Cash / Card / UPI / Bank" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {ADVANCE_MODE_OPTIONS.map((o) => (
-                          <SelectItem key={o.value} value={o.value}>
-                            {o.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+              ) : null}
+            </div>
+
+            {/* Custom-order details. The item type and size come from item 1. */}
+            <div className="rounded-lg border">
+              <button
+                type="button"
+                onClick={() => setCustomOpen((v) => !v)}
+                className="flex w-full items-center justify-between px-3 py-2.5 text-left text-sm font-medium"
+              >
+                <span>Custom-order details</span>
+                <ChevronDown
+                  className={cn(
+                    "h-4 w-4 transition-transform",
+                    customOpen && "rotate-180",
+                  )}
+                />
+              </button>
+              {customOpen ? (
+                <div className="grid gap-3 border-t p-3">
+                  <p className="text-xs text-muted-foreground">
+                    Booked into production when you tap{" "}
+                    <span className="font-medium">Create Custom Order</span>, as{" "}
+                    <span className="font-medium">
+                      {mode === "sale"
+                        ? [itemTypeName(items[0]?.itemType ?? "") || "item 1", sizeText(items[0] ?? emptyItem()) && `size ${sizeText(items[0])}`]
+                            .filter(Boolean)
+                            .join(", ")
+                        : repairDetails.trim() || "Repair / service"}
+                    </span>
+                    . All optional.
+                  </p>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="grid gap-1.5">
+                      <Label htmlFor="qb-delivery">Delivery date</Label>
+                      <Input
+                        id="qb-delivery"
+                        type="date"
+                        value={deliveryDate}
+                        onChange={(e) => setDeliveryDate(e.target.value)}
+                      />
+                    </div>
+                    <div className="grid gap-1.5">
+                      <Label htmlFor="qb-advance">Advance (₹)</Label>
+                      <Input
+                        id="qb-advance"
+                        inputMode="decimal"
+                        placeholder="0"
+                        value={advance}
+                        onChange={(e) => setAdvance(e.target.value.replace(/[^0-9.]/g, ""))}
+                      />
+                    </div>
+                    <div className="grid gap-1.5">
+                      <Label htmlFor="qb-advmode">Advance mode</Label>
+                      <Select value={advanceMode} onValueChange={setAdvanceMode}>
+                        <SelectTrigger id="qb-advmode">
+                          <SelectValue placeholder="Cash / Card / UPI / Bank" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ADVANCE_MODE_OPTIONS.map((o) => (
+                            <SelectItem key={o.value} value={o.value}>
+                              {o.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ) : null}
-          </div>
-        </div>
+              ) : null}
+            </div>
 
-        {/* The total and the two ways out stay in reach however long the form gets.
-            Pinned on a desktop; on a phone the bottom is the menu's, so there
-            it simply closes the form. */}
-        <div className="mt-4 border-t bg-background/95 md:fixed md:inset-x-0 md:bottom-0 md:left-68 md:z-30 md:mt-0 md:backdrop-blur">
-          <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-2 py-2.5 md:px-4">
+            {/* Live price summary — the same formula the server settles the bill with */}
+            <section className="rounded-lg bg-muted/50 p-3">
+              <p className="mb-1.5 text-xs font-medium text-muted-foreground">
+                Price summary {mode === "repair" ? "(making-only)" : null}
+              </p>
+              <dl className="space-y-1 text-sm">
+                {mode === "sale" ? (
+                  <>
+                    <PreviewRow label="Metal value" value={preview.metal} />
+                    <PreviewRow label="Making charges" value={preview.making} />
+                    <PreviewRow label="Diamonds & stones" value={preview.stones} />
+                  </>
+                ) : (
+                  <PreviewRow label="Making / labour" value={preview.making} />
+                )}
+                {preview.metalOff > 0 ? <PreviewRow label="Gold discount" value={-preview.metalOff} /> : null}
+                {preview.makingOff > 0 ? <PreviewRow label="Making discount" value={-preview.makingOff} /> : null}
+                {preview.stoneOff > 0 ? <PreviewRow label="Diamond discount" value={-preview.stoneOff} /> : null}
+                {preview.additional > 0 ? (
+                  <PreviewRow label="Additional discount" value={-preview.additional} />
+                ) : null}
+                <Separator className="my-1" />
+                <PreviewRow label="Taxable value" value={preview.taxable} />
+                <PreviewRow
+                  label={
+                    isKaccha
+                      ? "GST (kaccha — none)"
+                      : `GST @ ${formatPercent(GST_RATE * 100, 0)}`
+                  }
+                  value={preview.gst}
+                />
+                <Separator className="my-1" />
+                <PreviewRow label="Grand total" value={preview.grand} bold />
+              </dl>
+            </section>
+          </div>
+
+          {/* The total and the two ways out stay in reach however long the form gets. */}
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t px-6 py-3">
             <div>
               <p className="text-xs text-muted-foreground">Grand total</p>
               <p className="num text-lg font-semibold">{formatINR(preview.grand)}</p>
@@ -923,8 +967,8 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
               Alt+N item · Alt+D diamond · Alt+C colour stone · Ctrl+Enter save
             </p>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => void submit(false)} disabled={busy}>
-                {busy ? "Working…" : "Save Quote"}
+              <Button variant="outline" onClick={requestClose} disabled={busy}>
+                Cancel
               </Button>
               {customOpen ? (
                 <Button variant="gold" onClick={onCustomOrderClick} disabled={busy}>
@@ -932,17 +976,20 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
                   Create Custom Order
                 </Button>
               ) : null}
+              <Button onClick={() => void submit(false)} disabled={busy}>
+                {busy ? "Working…" : "Save Quote"}
+              </Button>
             </div>
           </div>
-        </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={sendStep !== null}
         onOpenChange={(o: boolean) => {
           if (!o) {
             setSendStep(null);
-            reset();
-            onDone();
+            onOpenChange(false);
           }
         }}
       >
@@ -959,10 +1006,10 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
             <Input
               id="qb-send-to"
               type="tel"
-              inputMode="numeric"
-              maxLength={10}
+              inputMode="tel"
+              maxLength={16}
               value={sendTo}
-              onChange={(e) => setSendTo(e.target.value.replace(/\D/g, ""))}
+              onChange={(e) => setSendTo(customerPhoneInputValue(e.target.value))}
             />
           </div>
           <DialogFooter>
@@ -970,14 +1017,13 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
               variant="outline"
               onClick={() => {
                 setSendStep(null);
-                reset();
-                onDone();
+                onOpenChange(false);
               }}
             >
               Not now
             </Button>
             <Button
-              disabled={sendBusy || sendTo.replace(/\D/g, "").length !== 10}
+              disabled={sendBusy || !normalizeCustomerPhone(sendTo)}
               onClick={async () => {
                 if (!sendStep) return;
                 setSendBusy(true);
@@ -994,11 +1040,10 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
                     toast.success(`Quote ${sendStep.ref} PDF queued for WhatsApp`);
                   }
                   setSendStep(null);
-                  reset();
-                  onDone();
+                  onOpenChange(false);
                 } catch (e) {
-                  // The approval gate answers here: a quote awaiting a manager
-                  // says so, and the dialog stays open for Not now.
+                  // A refusal arrives here with its reason, and the dialog
+                  // stays open for Not now.
                   toast.error(apiErrorMessage(e, "Could not send the quote."));
                 } finally {
                   setSendBusy(false);
@@ -1010,7 +1055,7 @@ export function QuoteBuilder({ onDone }: QuoteBuilderProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }
 

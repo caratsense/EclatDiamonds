@@ -10,7 +10,7 @@ import {
   submitPublicLeadForm,
   type PublicLeadFormView,
 } from "@/lib/queries/lead-forms";
-import { phoneInputValue } from "@/lib/utils";
+import { customerPhoneInputValue } from "@/lib/utils";
 
 /**
  * The enquiry form a tenant embeds on its own website.
@@ -207,11 +207,11 @@ export default function PublicEnquiryPage() {
             <input
               id="phone"
               type="tel"
-              inputMode="numeric"
+              inputMode="tel"
               value={phone}
-              onChange={(e) => setPhone(phoneInputValue(e.target.value))}
+              onChange={(e) => setPhone(customerPhoneInputValue(e.target.value))}
               autoComplete="tel"
-              maxLength={10}
+              maxLength={16}
               className={inputCls}
             />
           </div>

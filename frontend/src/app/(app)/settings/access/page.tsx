@@ -31,15 +31,27 @@ import { apiErrorMessage, cn } from "@/lib/utils";
 
 import { bulkAttendanceOnlyPrompt, startingPointLine } from "./wording";
 
-/** Screens only head office can use; never given to anyone else. */
-const HEAD_OFFICE_ONLY = new Set([
+/** Only for an older API that does not send `grantable` yet -- see below. */
+const LEGACY_HEAD_OFFICE_ONLY = new Set([
   "settings/onboarding",
   "new-store",
   "settings/configuration",
   "settings/integrations",
+  "settings/integrations/templates",
   "settings/messaging-routes",
   "settings/access",
+  // Governed by Quotation & Orders; never grantable on its own.
+  "timelines",
 ]);
+
+/*
+ * Which screens may be granted is the SERVER's list, read from the access
+ * payload (`grantable`). The hand-copied set that used to live here drifted
+ * from it — it had never learnt about the WhatsApp templates screen or that
+ * "Orders in Production" is governed by Quotation & Orders — so the editor
+ * offered rows the server then refused, and the whole save failed on a screen
+ * nobody had touched.
+ */
 
 /*
  * ON/OFF ONLY (client, 7 Oct meeting 2): Own/Store disappeared from the
@@ -256,15 +268,23 @@ function PersonAccess({
 
   const data = access.data;
   if (access.isLoading || !data) return <Skeleton className="h-96 w-full" />;
-  if (data.role === "head_office") {
-    return (
-      <Card>
-        <CardContent className="py-16 text-center text-sm text-muted-foreground">
-          {data.name} is head office and always has every screen.
-        </CardContent>
-      </Card>
-    );
-  }
+  /*
+   * Head office always holds every screen, so the per-screen matrix is
+   * meaningless for them. It used to replace the WHOLE panel, which also took
+   * away Edit details, Set leave quota, Reassign store, Deactivate and Delete
+   * — so a head office person could not be edited at all. Only the matrix goes.
+   */
+  const isHeadOffice = data.role === "head_office";
+  /*
+   * The server's list is the authority. It can legitimately be absent for a
+   * moment: the frontend and the API deploy separately, so a browser can hold
+   * the new page against an older backend. Falling back to an empty set there
+   * would render NO screens at all, which looks far more broken than the bug
+   * this replaced -- so an older payload keeps the previous behaviour instead.
+   */
+  const grantable = data.grantable?.length ? new Set(data.grantable) : null;
+  const offered = (slug: string) =>
+    grantable ? grantable.has(slug) : !LEGACY_HEAD_OFFICE_ONLY.has(slug);
 
   const current = (slug: string): AccessOverride => draft[slug] ?? data.effective[slug] ?? "none";
   const byDefault = (slug: string): AccessOverride => data.defaults[slug] ?? "none";
@@ -460,8 +480,14 @@ function PersonAccess({
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
-        {NAV_GROUPS.map((group) => {
-          const items = group.items.filter((i) => !HEAD_OFFICE_ONLY.has(i.slug));
+        {isHeadOffice ? (
+          <p className="py-10 text-center text-sm text-muted-foreground">
+            {data.name} is head office and always has every screen. To limit
+            someone, give them a different role.
+          </p>
+        ) : null}
+        {isHeadOffice ? null : NAV_GROUPS.map((group) => {
+          const items = group.items.filter((i) => offered(i.slug));
           if (!items.length) return null;
           return (
             <section key={group.label} className="space-y-1.5">

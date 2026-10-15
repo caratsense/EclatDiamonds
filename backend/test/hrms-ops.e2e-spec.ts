@@ -273,8 +273,10 @@ describe('Attendance operations (e2e)', () => {
      * is where you look once you already suspect something; the notification
      * is what makes anyone suspect it.
      */
+    // Scoped to this suite's users: the dev DB is shared, and a live check-in
+    // against the seeded org leaves attendance_review rows that are not ours.
     const told = await prisma.notification.findMany({
-      where: { entityType: 'AttendanceRecord', kind: 'attendance_review' },
+      where: { entityType: 'AttendanceRecord', kind: 'attendance_review', userId: { in: Object.values(U) } },
       select: { userId: true, title: true, body: true },
     });
     expect(told.length).toBeGreaterThan(0);
@@ -293,7 +295,7 @@ describe('Attendance operations (e2e)', () => {
     // silent here — it has its own test below.
     expect(told.some((n) => n.title.startsWith('Flagged:'))).toBe(false);
 
-    await prisma.notification.deleteMany({ where: { entityType: 'AttendanceRecord' } });
+    await prisma.notification.deleteMany({ where: { entityType: 'AttendanceRecord', userId: { in: Object.values(U) } } });
     await prisma.attendanceRecord.deleteMany({ where: { staffId: U.repB } });
     await prisma.rawPunchEvent.deleteMany({ where: { userId: U.repB } });
   });
@@ -336,7 +338,7 @@ describe('Attendance operations (e2e)', () => {
       .expect(201);
 
     const flagged = await prisma.notification.findMany({
-      where: { kind: 'attendance_review', title: { startsWith: 'Flagged:' } },
+      where: { kind: 'attendance_review', title: { startsWith: 'Flagged:' }, userId: { in: Object.values(U) } },
       select: { userId: true, title: true, priority: true },
     });
     expect(flagged.length).toBeGreaterThan(0);
@@ -687,6 +689,16 @@ describe('Attendance operations (e2e)', () => {
     const regPunches = await prisma.rawPunchEvent.findMany({ where: { userId: U.repB, source: 'regularization' } });
     expect(regPunches.map((p) => p.idempotencyKey).sort()).toEqual([`regularization:${reg.id}:in`, `regularization:${reg.id}:out`]);
 
+    // THE POINT OF APPROVING: the requested punches are now the day's record,
+    // honestly attributed — a regularized punch never reads as a live geo punch.
+    const fixed = await prisma.attendanceRecord.findUniqueOrThrow({
+      where: { storeId_staffId_date: { storeId: A.s1, staffId: U.repB, date: regDay } },
+    });
+    expect(fixed.checkInAt?.getTime()).toBe(at(regDay, '09:31').getTime());
+    expect(fixed.checkOutAt?.getTime()).toBe(at(regDay, '18:35').getTime());
+    expect(fixed.source).toBe('regularization');
+    expect(fixed.geoVerified).toBe(false);
+
     // Edit the pending leave, then delete it.
     const edited = (
       await request(server())
@@ -698,6 +710,24 @@ describe('Attendance operations (e2e)', () => {
     expect(edited).toMatchObject({ typeCode: 'sick', days: 0.5, halfDay: true });
     await request(server()).delete(`/hrms/leave/${leave.id}`).set(as(U.mgr)).send({ reason: 'withdrawn by phone' }).expect(200);
     expect(await prisma.leaveRequest.count({ where: { id: leave.id } })).toBe(0);
+  });
+
+  it('a regularization without a reason is refused — the approver decides on it', async () => {
+    const d = dayOff(-6);
+    // Omitted entirely: refused by the DTO.
+    await request(server())
+      .post('/hrms/regularize')
+      .set(as(U.repB))
+      .send({ date: dateOnly(d), requestedCheckIn: at(d, '09:30').toISOString() })
+      .expect(400);
+    // Whitespace-only: refused by the service (the DTO cannot see a trim).
+    const res = await request(server())
+      .post('/hrms/regularize')
+      .set(as(U.repB))
+      .send({ date: dateOnly(d), requestedCheckIn: at(d, '09:30').toISOString(), reason: '   ' })
+      .expect(400);
+    expect(res.body.message).toMatch(/reason/i);
+    expect(await prisma.attendanceRegularization.count({ where: { staffId: U.repB, date: d } })).toBe(0);
   });
 
   it('balances carry an id; only head office adjusts them, with a note', async () => {
@@ -768,6 +798,63 @@ describe('Attendance operations (e2e)', () => {
     await request(server()).delete(`/hrms/leave/${lv.id}`).set(as(U.mgr2)).send({ reason: 'x' }).expect(403);
     await request(server()).delete(`/hrms/leave/${lv.id}`).set(as(U.mgr)).send({ reason: 'x' }).expect(403);
     await request(server()).delete(`/hrms/leave/${lv.id}`).set(as(U.ho)).send({ reason: 'x' }).expect(200);
+  });
+
+  it("a store manager's own fix goes one rank up: never self or a peer, head office decides", async () => {
+    const d = dayOff(-9);
+    const reg = (
+      await request(server())
+        .post('/hrms/regularize')
+        .set(as(U.mgr))
+        .send({
+          date: dateOnly(d),
+          requestedCheckIn: at(d, '09:35').toISOString(),
+          requestedCheckOut: at(d, '18:40').toISOString(),
+          reason: 'forgot to punch',
+        })
+        .expect(201)
+    ).body;
+
+    // The request is raised UP, not sideways: head office is told, the peer
+    // manager is not (and the requester never is).
+    const raised = await prisma.notification.findMany({
+      where: { entityType: 'AttendanceRegularization', entityId: reg.id },
+      select: { userId: true },
+    });
+    expect(raised.some((n) => n.userId === U.ho)).toBe(true);
+    expect(raised.some((n) => n.userId === U.mgr)).toBe(false);
+    expect(raised.some((n) => n.userId === U.mgr2)).toBe(false);
+
+    // The approvals inbox routes the same way: only who can DECIDE it sees it.
+    const inboxOf = async (who: string) =>
+      (await request(server()).get('/hrms/approvals?status=pending').set(as(who)).expect(200)).body;
+    expect((await inboxOf(U.mgr)).some((i: { id: string }) => i.id === reg.id)).toBe(false);
+    expect((await inboxOf(U.mgr2)).some((i: { id: string }) => i.id === reg.id)).toBe(false);
+    expect((await inboxOf(U.ho)).some((i: { id: string }) => i.id === reg.id)).toBe(true);
+
+    // Deciding it: self and a same-rank peer are refused, told WHO can.
+    const self = await request(server())
+      .patch(`/hrms/regularize/${reg.id}`)
+      .set(as(U.mgr))
+      .send({ status: 'approved' })
+      .expect(403);
+    expect(self.body.message).toMatch(/head office/i);
+    await request(server()).patch(`/hrms/regularize/${reg.id}`).set(as(U.mgr2)).send({ status: 'approved' }).expect(403);
+
+    // Head office approves, and only then does the record change.
+    expect(
+      await prisma.attendanceRecord.count({
+        where: { storeId: A.s1, staffId: U.mgr, date: d },
+      }),
+    ).toBe(0);
+    await request(server()).patch(`/hrms/regularize/${reg.id}`).set(as(U.ho)).send({ status: 'approved' }).expect(200);
+    const row = await prisma.attendanceRecord.findUniqueOrThrow({
+      where: { storeId_staffId_date: { storeId: A.s1, staffId: U.mgr, date: d } },
+    });
+    expect(row.source).toBe('regularization');
+    expect(row.checkInAt?.getTime()).toBe(at(d, '09:35').getTime());
+    expect(row.checkOutAt?.getTime()).toBe(at(d, '18:40').getTime());
+    expect(row.geoVerified).toBe(false);
   });
 
   it('an assignment whose shift is gone is not reachable, and deleting a shift leaves none dangling', async () => {

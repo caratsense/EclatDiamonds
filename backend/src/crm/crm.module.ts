@@ -17,6 +17,7 @@ import { BotScriptService } from './bot-script.service';
 import { AttributionService } from './attribution.service';
 import { CrmAiProvider } from './crm-ai.provider';
 import { AdSetRulesService } from './adset-rules.service';
+import { MetaAdsListService } from './meta-ads-list.service';
 import { AI_RESPONDER, ConversationAiGate } from './ai-responder';
 import { RequalificationService } from './requalification.service';
 import { AdvancedCrmService } from './advanced-crm.service';
@@ -135,6 +136,9 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
     AttributionService,
     CrmAiProvider,
     AdSetRulesService,
+    // Lists the Meta account's running campaigns/ads for the campaign editor's
+    // picker. Only CrmQualificationController reads it, so it is not exported.
+    MetaAdsListService,
     ConversationAiGate,
     KnowledgeRetrievalService,
     AiDraftsService,
