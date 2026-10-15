@@ -191,7 +191,13 @@ describe('INT-07 Meta connection health (e2e)', () => {
       { kind: 'ad_account', externalId: '700000000011' },
     ]);
     graph.reply('700000000010', () => ({ id: '700000000010', name: 'Main page' }));
-    graph.reply('700000000011', () => ({ id: '700000000011', name: 'Ads', currency: 'INR' }));
+    // Graph demands the act_ prefix on an ad account and answers with it, so
+    // the probe asks for act_<id> and compares the two without it.
+    graph.reply('act_700000000011', () => ({
+      id: 'act_700000000011',
+      name: 'Ads',
+      currency: 'INR',
+    }));
 
     const state = await health.check(principal(A.org), id);
 
@@ -203,7 +209,8 @@ describe('INT-07 Meta connection health (e2e)', () => {
       expect(asset.lastVerifiedAt).toBeInstanceOf(Date);
       expect(asset.error).toBeNull();
     }
-    expect(graph.pathsFor(id).sort()).toEqual(['700000000010', '700000000011']);
+    // The ad account is asked for as act_<id>; a page is asked for by its id.
+    expect(graph.pathsFor(id).sort()).toEqual(['700000000010', 'act_700000000011']);
   });
 
   it('treats a redirected id as unverified - reading something is not owning it', async () => {
