@@ -25,12 +25,9 @@ import { useSession } from "@/store/use-session";
 import { useT } from "@/lib/i18n";
 
 /**
- * Preferred order for the thumb-reachable bottom tabs; we render the first four
- * the current role can actually see (a salesperson has no Dashboards, so they
- * get Quotation instead). Everything else lives in "More".
- *
- * Attendance comes last: sales staff on attendance only can open none of the
- * others, and their bar would otherwise be a lone "More" button.
+ * Preferred order for the thumb-reachable bottom tabs; we render the ones the
+ * current role can actually see (a salesperson has no Dashboards, so they get
+ * Quotation instead). Everything else lives in "More".
  */
 const PREFERRED_PRIMARY = [
   "dashboards",
@@ -39,12 +36,37 @@ const PREFERRED_PRIMARY = [
   "catalogue",
   "checkins",
   "reminders",
-  "hrms",
 ] as const;
+
+/** Tabs that fit beside "More" on a 375px bar without the labels colliding. */
+const PRIMARY_TABS = 4;
+
+/**
+ * HR takes the last tab whenever the person holds that screen, instead of
+ * queueing behind the sales screens.
+ *
+ * It used to sit seventh in the order above and be cut by `slice(0, 4)`, so the
+ * one screen EVERY role holds — punch in, punch out, apply for leave, read this
+ * week's roster — was the only one a phone could not reach without opening
+ * "More", for precisely the staff whose whole working day is a phone. Those are
+ * also the actions on a clock, which is the strongest claim on a bottom bar
+ * there is.
+ *
+ * Reserving the slot costs the fourth sales screen (Check-ins for a
+ * salesperson, Catalogue for a manager) — one tap away under "More", and not on
+ * a clock. A bar with room to spare is unchanged, and somebody on attendance
+ * only still gets their one screen rather than a lone "More" button.
+ */
+const HR_TAB = "hrms";
 
 /** The bottom tabs for somebody who can see the screens in `visible`. */
 export function primaryTabSlugs(visible: ReadonlySet<string>): string[] {
-  return PREFERRED_PRIMARY.filter((s) => visible.has(s)).slice(0, 4);
+  const hr = visible.has(HR_TAB) ? [HR_TAB] : [];
+  const rest = PREFERRED_PRIMARY.filter((s) => visible.has(s)).slice(
+    0,
+    PRIMARY_TABS - hr.length,
+  );
+  return [...rest, ...hr];
 }
 
 function Tab({

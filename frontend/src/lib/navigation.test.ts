@@ -100,6 +100,22 @@ describe("navigation", () => {
     expect(new Set(slugs).size).toBe(slugs.length);
   });
 
+  it("keeps the HR tree on its one entitlement", () => {
+    /*
+     * The four HR modules (Attendance, Leave Tracker, Roster & Shifts, HR
+     * Reports) are reached from the `/hrms` landing, not from four sidebar
+     * entries. A nav item for one of them would be keyed on a slug the server's
+     * access map and the tenant's enabledNavigation do not have — so the entry
+     * would be invisible to every role, AND module-gate, which resolves a path
+     * to the longest matching nav slug, would refuse the page it names.
+     *
+     * `hrms/payroll` is the exception, and a real one: it has been a MODULES
+     * slug in auth/access.ts and a CORE_NAVIGATION route all along.
+     */
+    const underHrms = NAV_ITEMS.map((i) => i.slug).filter((s) => s.startsWith("hrms/"));
+    expect(underHrms).toEqual(["hrms/payroll"]);
+  });
+
   it("keeps every core-navigation route in the sidebar", () => {
     // CORE_NAVIGATION is the fallback surface for a tenant with no resolvable
     // industry pack. A route listed there but missing from the nav is a screen

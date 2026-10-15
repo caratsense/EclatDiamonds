@@ -14,6 +14,7 @@ interface NotificationItem {
     | 'discount'
     | 'return'
     | 'leave'
+    | 'regularization'
     | 'reminder'
     | 'store_pending'
     | 'special_request'
@@ -449,7 +450,33 @@ export class NotificationsService {
         where: { ...storeWhere, status: 'pending', staffId: { not: user.id } },
       });
       if (leave > 0) {
-        items.push({ type: 'leave', label: 'Leave requests', count: leave, href: '/approvals' });
+        // The Leave Tracker, which is where the decision is made (client,
+        // 13 Oct). Approvals counts leave and links across to the same screen.
+        items.push({ type: 'leave', label: 'Leave requests', count: leave, href: '/hrms/leave' });
+      }
+    }
+
+    /*
+     * --- Attendance corrections (store_manager+) ---
+     *
+     * The sibling of the block above, and it was simply missing: a pending
+     * regularization is open work of exactly the same kind — somebody cannot be
+     * paid for a day until it is decided — and the work queue said nothing about
+     * it. Own requests are excluded on the same rule as leave: a manager's own
+     * correction waits on the rank above them (`assertRankAboveRequester`), so
+     * counting it here would ask them to decide the one they cannot.
+     */
+    if (rank >= ROLE_RANK.store_manager) {
+      const regularizations = await this.prisma.attendanceRegularization.count({
+        where: { ...storeWhere, status: 'pending', staffId: { not: user.id } },
+      });
+      if (regularizations > 0) {
+        items.push({
+          type: 'regularization',
+          label: 'Attendance corrections',
+          count: regularizations,
+          href: '/hrms/attendance',
+        });
       }
     }
 

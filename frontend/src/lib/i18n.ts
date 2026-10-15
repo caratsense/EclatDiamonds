@@ -53,7 +53,9 @@ export const DICT: Record<string, string> = {
   "nav.loyalty": "Loyalty & Referrals",
   "nav.sales-performance": "Sales Performance",
   "nav.inventory": "Inventory & Stock",
-  "nav.hrms": "HRMS & Attendance",
+  // The dictionary wins over the NavItem title, so the rename has to happen
+  // here too or the sidebar keeps saying HRMS.
+  "nav.hrms": "HR & Attendance",
   "nav.finance": "Finance & Funding",
   "nav.new-store": "New-Store Setup",
   "nav.marketing": "Marketing",

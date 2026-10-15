@@ -8,6 +8,7 @@ import {
 import {
   AttendanceProcessingRun,
   AttendanceRecord,
+  AttendanceRegularization,
   AttendanceStatus,
   PayrollPeriodLock,
   Prisma,
@@ -65,6 +66,9 @@ export const ROSTER_ROLES: Role[] = [Role.salesperson, Role.storeperson, Role.st
 
 /** Statuses that mean the person was at work. */
 export const ATTENDED_STATUSES: AttendanceStatus[] = ['present', 'late', 'half_day'];
+
+/** Statuses a punch must never reclassify: the day was not a working one. */
+export const NON_WORKING_STATUSES: AttendanceStatus[] = ['week_off', 'holiday', 'on_leave'];
 
 /** "YYYY-MM-DD" → the UTC-midnight Date a `@db.Date` column round-trips. */
 export function parseYmd(s: string): Date {
@@ -244,6 +248,36 @@ export interface EligibleEmployee {
 }
 
 /**
+ * WHO is on a roster over [`from`, `to`] — the population rule, in one place.
+ *
+ * `eligibleStaff` asks about a single day; the roster grid asks about a span and
+ * must not re-run this query once per date. Both therefore read the same
+ * predicate: a roster role, and either a login with no employee master or an
+ * active profile whose employment OVERLAPS the span (joined by `to`, not yet
+ * gone on `from`). Overlap only decides who is FETCHED — a caller spanning
+ * dates still clips each person's own joining and exit dates per date.
+ */
+export function rosterUserWhere(from: Date, to: Date): Prisma.UserWhereInput {
+  return {
+    role: { in: ROSTER_ROLES },
+    OR: [
+      { isActive: true, employeeProfile: { is: null } },
+      {
+        employeeProfile: {
+          is: {
+            status: 'active',
+            AND: [
+              { OR: [{ dateOfJoining: null }, { dateOfJoining: { lte: to } }] },
+              { OR: [{ exitDate: null }, { exitDate: { gt: from } }] },
+            ],
+          },
+        },
+      },
+    ],
+  };
+}
+
+/**
  * Staff eligible at `storeIds` on business date `date`: one entry per
  * (employee, store) they belong to.
  *
@@ -268,24 +302,7 @@ export async function eligibleStaff(
     where: {
       storeId: { in: storeIds },
       store: { organisationId: orgId },
-      user: {
-        organisationId: orgId,
-        role: { in: ROSTER_ROLES },
-        OR: [
-          { isActive: true, employeeProfile: { is: null } },
-          {
-            employeeProfile: {
-              is: {
-                status: 'active',
-                AND: [
-                  { OR: [{ dateOfJoining: null }, { dateOfJoining: { lte: date } }] },
-                  { OR: [{ exitDate: null }, { exitDate: { gt: date } }] },
-                ],
-              },
-            },
-          },
-        ],
-      },
+      user: { organisationId: orgId, ...rosterUserWhere(date, date) },
     },
     select: {
       storeId: true,
@@ -424,9 +441,43 @@ export async function absenceRuleGaps(prisma: Db, storeId: string, date: Date): 
 // ===========================================================================
 
 /**
+ * This store's shifts assigned to `userId` on `date`, most recently effective
+ * first — the order `resolveShiftFor` picks its winner in.
+ */
+async function assignedShiftsOn(
+  prisma: Db,
+  storeId: string,
+  userId: string,
+  date: Date,
+): Promise<Shift[]> {
+  const assigned = await prisma.shiftAssignment.findMany({
+    where: {
+      userId,
+      effectiveFrom: { lte: date },
+      OR: [{ effectiveTo: null }, { effectiveTo: { gte: date } }],
+    },
+    orderBy: { effectiveFrom: 'desc' },
+    select: { shiftId: true },
+  });
+  if (!assigned.length) return [];
+  const shifts = await prisma.shift.findMany({
+    where: { id: { in: assigned.map((a) => a.shiftId) }, storeId },
+  });
+  return assigned
+    .map((a) => shifts.find((s) => s.id === a.shiftId))
+    .filter((s): s is Shift => s !== undefined);
+}
+
+/**
  * The shift that applies: an explicit id (must be this store's), else the
  * ShiftAssignment effective on `date` whose shift belongs to this store, else
  * the store's earliest shift (the behaviour before assignments existed).
+ *
+ * `restrictToAssigned` is for a punch the employee makes FOR THEMSELVES: the
+ * store's shift list is not a menu they may order lateness from. Belonging to
+ * the store was the only check, so a 09:30 person could punch in at 13:00
+ * against the store's night batch and read as on time. A manager correcting
+ * someone else keeps the free choice — that is the whole point of a correction.
  */
 export async function resolveShiftFor(
   prisma: Db,
@@ -434,29 +485,30 @@ export async function resolveShiftFor(
   userId: string | null,
   date: Date | null,
   shiftId?: string | null,
+  opts?: { restrictToAssigned?: boolean },
 ): Promise<Shift | null> {
   if (shiftId) {
     const shift = await prisma.shift.findFirst({ where: { id: shiftId, storeId } });
     if (!shift) throw new NotFoundException('Shift not found for this store');
+    if (opts?.restrictToAssigned) {
+      const assigned = userId && date ? await assignedShiftsOn(prisma, storeId, userId, date) : [];
+      if (!assigned.some((s) => s.id === shift.id)) {
+        throw new BadRequestException(
+          assigned.length
+            ? `${shift.name} is not your shift on ${date ? dateOnly(date) : 'that date'} — you are rostered on ${assigned
+                .map((s) => s.name)
+                .join(' or ')}. Leave the shift blank to use it.`
+            : `You have no shift assigned on ${
+                date ? dateOnly(date) : 'that date'
+              } — leave the shift blank and your store's shift applies, or ask your manager to roster you.`,
+        );
+      }
+    }
     return shift;
   }
   if (userId && date) {
-    const assigned = await prisma.shiftAssignment.findMany({
-      where: {
-        userId,
-        effectiveFrom: { lte: date },
-        OR: [{ effectiveTo: null }, { effectiveTo: { gte: date } }],
-      },
-      orderBy: { effectiveFrom: 'desc' },
-      select: { shiftId: true },
-    });
-    if (assigned.length) {
-      const shifts = await prisma.shift.findMany({
-        where: { id: { in: assigned.map((a) => a.shiftId) }, storeId },
-      });
-      const hit = assigned.map((a) => shifts.find((s) => s.id === a.shiftId)).find(Boolean);
-      if (hit) return hit;
-    }
+    const hit = (await assignedShiftsOn(prisma, storeId, userId, date))[0];
+    if (hit) return hit;
   }
   return prisma.shift.findFirst({ where: { storeId }, orderBy: { startTime: 'asc' } });
 }
@@ -644,6 +696,103 @@ export function deriveFromPunches(day: DayPunches | undefined, shift: ShiftLike 
     earlyOutMinutes: checkOutAt ? shiftEarlyOut(checkOutAt, shift, tz) : null,
     overtimeMins,
     dayFraction,
+  };
+}
+
+/** The day as a regularization leaves it. One requested side replaces that side. */
+export interface RegularizedDay {
+  checkInAt: Date | null;
+  checkOutAt: Date | null;
+  workedMins: number | null;
+  isLate: boolean;
+  lateMinutes: number | null;
+  earlyOutMinutes: number | null;
+  overtimeMins: number | null;
+  dayFraction: number | null;
+  status: AttendanceStatus;
+}
+
+/** The register row a regularization reads from — nullable: the day may have none. */
+export type RegularizableRecord = Pick<
+  AttendanceRecord,
+  'checkInAt' | 'checkOutAt' | 'workedMins' | 'isLate' | 'lateMinutes' | 'status'
+>;
+
+/** The filing-time snapshot a decision measures the live day against. */
+export type RegularizationBaseline = Pick<
+  AttendanceRegularization,
+  'originalCheckIn' | 'originalCheckOut' | 'originalStatus' | 'baselineCapturedAt'
+>;
+
+/**
+ * Has the day moved under the request since it was filed?
+ *
+ * Only what the approver is actually deciding counts: the two punches and the
+ * day's classification. `recordUpdatedAt` is stored beside them and shown as
+ * the "as of" stamp, but deliberately NOT compared — a non-material touch (a
+ * punch photo arriving, a geofence note being edited) would otherwise strand an
+ * honest request, which has no way to refresh its own baseline.
+ *
+ * A row without `baselineCapturedAt` predates the snapshot and is reported
+ * unchanged, rather than becoming permanently un-approvable.
+ */
+export function attendanceDriftedSinceFiling(
+  baseline: RegularizationBaseline,
+  current: RegularizableRecord | null,
+): boolean {
+  if (!baseline.baselineCapturedAt) return false;
+  const ms = (d: Date | null | undefined) => d?.getTime() ?? null;
+  return (
+    ms(current?.checkInAt) !== ms(baseline.originalCheckIn) ||
+    ms(current?.checkOutAt) !== ms(baseline.originalCheckOut) ||
+    (current?.status ?? null) !== baseline.originalStatus
+  );
+}
+
+/**
+ * What approving a correction WOULD do to the day. Pure, so the approver's
+ * screen can show the outcome before deciding and the decision itself applies
+ * exactly what was shown — the two used to be one function with no caller but
+ * the write, so the approver was asked to agree to numbers nobody computed.
+ */
+export function projectRegularization(
+  current: RegularizableRecord | null,
+  requested: { checkIn: Date | null; checkOut: Date | null },
+  shift: ShiftLike | null,
+  tz: string,
+): RegularizedDay {
+  const checkInAt = requested.checkIn ?? current?.checkInAt ?? null;
+  const checkOutAt = requested.checkOut ?? current?.checkOutAt ?? null;
+  const workedMins =
+    checkInAt && checkOutAt
+      ? Math.round((checkOutAt.getTime() - checkInAt.getTime()) / 60000)
+      : (current?.workedMins ?? null);
+
+  let isLate = current?.isLate ?? false;
+  let lateMinutes = current?.lateMinutes ?? null;
+  if (checkInAt && shift) {
+    const late = shiftLateness(checkInAt, shift, tz);
+    isLate = late.isLate;
+    lateMinutes = late.lateMinutes;
+  }
+  const { dayFraction, overtimeMins } = shiftDayMaths(workedMins, shift);
+
+  // Preserve a non-working classification. A regularized punch on a declared
+  // holiday or an approved leave day should not quietly reclassify the day.
+  const keepStatus =
+    current && NON_WORKING_STATUSES.includes(current.status) ? current.status : null;
+  return {
+    checkInAt,
+    checkOutAt,
+    workedMins,
+    isLate,
+    lateMinutes,
+    earlyOutMinutes: checkOutAt ? shiftEarlyOut(checkOutAt, shift, tz) : null,
+    overtimeMins,
+    dayFraction,
+    status:
+      keepStatus ??
+      (dayFraction != null && dayFraction < 1 ? 'half_day' : isLate ? 'late' : 'present'),
   };
 }
 
@@ -1914,5 +2063,304 @@ export class AttendanceOpsService {
       metadata: { before: this.toAssignmentView(row, shift), after: null },
     });
     return { id, deleted: true };
+  }
+
+  // -------------------------------------------------------------------------
+  // The roster grid (read) — GET /hrms/roster, GET /hrms/schedule/me
+  // -------------------------------------------------------------------------
+
+  /**
+   * GET /hrms/roster?from&to&storeId — the manager's planning grid.
+   *
+   * One row per (employee, branch) and one cell per date, in ONE call: a week
+   * of a branch is 7 × headcount cells, and a screen that asked per cell would
+   * issue hundreds of queries to render a page nobody has edited yet.
+   */
+  async roster(user: AuthUser, q: { from: string; to: string; storeId?: string }) {
+    const storeIds = this.scope.effectiveStoreIds(user, q.storeId);
+    return this.buildRoster(user.organisationId, storeIds, this.rosterSpan(q.from, q.to));
+  }
+
+  /**
+   * GET /hrms/schedule/me?from&to — the same grid, the caller's rows only.
+   *
+   * The roster is planned by managers, so the week-off and day-off endpoints are
+   * manager-and-above; that left an employee unable to see their OWN shifts and
+   * offs anywhere. This is the self variant: read-only, and it can return no
+   * row but theirs because it never looks anybody else up.
+   */
+  async mySchedule(user: AuthUser, q: { from: string; to: string }, headerStore?: string) {
+    const storeIds = this.scope.effectiveStoreIds(user, headerStore);
+    return this.buildRoster(user.organisationId, storeIds, this.rosterSpan(q.from, q.to), [user.id]);
+  }
+
+  /** The requested span as UTC-midnight bounds plus every date key in it. */
+  private rosterSpan(from: string, to: string) {
+    const start = parseYmd(from);
+    const end = parseYmd(to);
+    if (end < start) throw new BadRequestException('The roster range ends before it starts.');
+    // A planning grid is read a week or a month at a time. The cap is what stops
+    // a client bug (or a curious URL) pulling a year of every branch's roster
+    // through one request.
+    const maxDays = 31;
+    if ((end.getTime() - start.getTime()) / DAY_MS + 1 > maxDays) {
+      throw new BadRequestException(`Ask for at most ${maxDays} days of roster at a time.`);
+    }
+    const dates: string[] = [];
+    for (let t = start.getTime(); t <= end.getTime(); t += DAY_MS) dates.push(dateOnly(new Date(t)));
+    return { start, end, dates };
+  }
+
+  /**
+   * The assignment effective on `date`, resolved to a shift AT THIS STORE.
+   *
+   * Pure: the grid resolves every cell from one preloaded fetch instead of a
+   * query per cell. It applies the same rule `resolveShiftFor` does — effective
+   * on the date, most recently effective first, this store's shifts only — so a
+   * cell cannot disagree with the shift the register computes lateness against.
+   * `assignments` must arrive effectiveFrom-descending, as the query orders them.
+   */
+  private pickAssignedShift(
+    assignments: { shiftId: string; effectiveFrom: Date; effectiveTo: Date | null }[],
+    shiftsAtStore: Shift[],
+    date: Date,
+  ): Shift | null {
+    for (const a of assignments) {
+      if (a.effectiveFrom > date) continue;
+      if (a.effectiveTo && a.effectiveTo < date) continue;
+      const shift = shiftsAtStore.find((s) => s.id === a.shiftId);
+      if (shift) return shift;
+    }
+    return null;
+  }
+
+  /**
+   * Both grids, built from a fixed number of queries whatever the span.
+   *
+   * Every per-date fact is decided by the SAME rule the register uses — the
+   * dated roster beating the weekly pattern (`day-off.util`), the store's
+   * weekly off as the fallback, the effective-dated shift assignment — applied
+   * in memory to preloaded rows rather than re-implemented. Leave is returned
+   * WITH its status: a pending application is not time off yet, and a grid that
+   * showed the two alike would have managers rostering around a request nobody
+   * has approved.
+   */
+  private async buildRoster(
+    orgId: string,
+    storeIds: string[],
+    span: { start: Date; end: Date; dates: string[] },
+    userIds?: string[],
+  ) {
+    const { start, end, dates } = span;
+    const envelope = { from: dates[0], to: dates[dates.length - 1], dates };
+    if (!storeIds.length) return { ...envelope, stores: [], holidays: [], employees: [] };
+
+    const stores = await this.prisma.store.findMany({
+      where: { id: { in: storeIds }, organisationId: orgId, isHolding: false },
+      select: { id: true, name: true, timezone: true, weekOffDay: true },
+      orderBy: { name: 'asc' },
+    });
+    const storeById = new Map(stores.map((s) => [s.id, s]));
+    const links = await this.prisma.userStore.findMany({
+      where: {
+        storeId: { in: [...storeById.keys()] },
+        user: {
+          organisationId: orgId,
+          ...(userIds ? { id: { in: userIds } } : {}),
+          ...rosterUserWhere(start, end),
+        },
+      },
+      select: {
+        storeId: true,
+        isPrimary: true,
+        user: {
+          select: {
+            id: true,
+            name: true,
+            role: true,
+            employeeProfile: { select: { employeeCode: true, dateOfJoining: true, exitDate: true } },
+          },
+        },
+      },
+    });
+    const staffIds = [...new Set(links.map((l) => l.user.id))];
+
+    // The dated roster governs the whole WEEK its rows fall in, so the offs are
+    // read over the weeks the span touches, not only the span itself.
+    const offsFrom = parseYmd(weekKeyOf(dates[0]));
+    const offsTo = addDays(parseYmd(weekKeyOf(dates[dates.length - 1])), 6);
+
+    const [holidays, leaves, patterns, datedOffs, assignments, shifts] = await Promise.all([
+      this.prisma.storeHoliday.findMany({
+        where: { storeId: { in: [...storeById.keys()] }, date: { gte: start, lte: end } },
+        select: { id: true, storeId: true, date: true, label: true },
+        orderBy: { date: 'asc' },
+      }),
+      this.prisma.leaveRequest.findMany({
+        where: {
+          organisationId: orgId,
+          staffId: { in: staffIds },
+          // Rejected and withdrawn applications are not part of anybody's week.
+          status: { in: ['approved', 'pending'] },
+          fromDate: { lte: end },
+          toDate: { gte: start },
+        },
+        select: {
+          id: true,
+          staffId: true,
+          type: true,
+          status: true,
+          halfDay: true,
+          fromDate: true,
+          toDate: true,
+        },
+      }),
+      this.prisma.staffWeekOff.findMany({
+        where: { userId: { in: staffIds } },
+        select: { userId: true, storeId: true, dayOfWeek: true },
+      }),
+      this.prisma.staffDayOff.findMany({
+        where: { userId: { in: staffIds }, date: { gte: offsFrom, lte: offsTo } },
+        select: { userId: true, storeId: true, date: true },
+      }),
+      this.prisma.shiftAssignment.findMany({
+        where: {
+          organisationId: orgId,
+          userId: { in: staffIds },
+          effectiveFrom: { lte: end },
+          OR: [{ effectiveTo: null }, { effectiveTo: { gte: start } }],
+        },
+        select: { userId: true, shiftId: true, effectiveFrom: true, effectiveTo: true },
+        orderBy: { effectiveFrom: 'desc' },
+      }),
+      // startTime ascending: [0] of a store's list is the shift
+      // `resolveShiftFor` falls back to when nobody has been assigned one.
+      this.prisma.shift.findMany({
+        where: { storeId: { in: [...storeById.keys()] } },
+        orderBy: { startTime: 'asc' },
+      }),
+    ]);
+
+    const holidayAt = new Map(holidays.map((h) => [`${h.storeId}|${dateOnly(h.date)}`, h]));
+    const shiftsByStore = new Map<string, Shift[]>();
+    for (const s of shifts) shiftsByStore.set(s.storeId, [...(shiftsByStore.get(s.storeId) ?? []), s]);
+
+    const employees = links
+      .map((l) => {
+        const store = storeById.get(l.storeId)!;
+        const tz = resolveTz(store.timezone);
+        const profile = l.user.employeeProfile;
+        // The pattern rule, as `eligibleStaff`: their own rows (this branch's or
+        // branch-less) REPLACE the branch's day; none means the branch's day.
+        const own = patterns.filter(
+          (p) => p.userId === l.user.id && (p.storeId === l.storeId || p.storeId === null),
+        );
+        const weekdays = own.length
+          ? new Set(own.map((p) => p.dayOfWeek))
+          : store.weekOffDay != null
+            ? new Set([store.weekOffDay])
+            : new Set<number>();
+        const calendar = buildOffCalendar(
+          weekdays,
+          datedOffs
+            .filter((d) => d.userId === l.user.id && (d.storeId === l.storeId || d.storeId === null))
+            .map((d) => dateOnly(d.date)),
+        );
+        const myAssignments = assignments.filter((a) => a.userId === l.user.id);
+        const myLeaves = leaves.filter((r) => r.staffId === l.user.id);
+        const storeShifts = shiftsByStore.get(l.storeId) ?? [];
+
+        return {
+          userId: l.user.id,
+          name: l.user.name,
+          role: l.user.role,
+          employeeCode: profile?.employeeCode ?? null,
+          storeId: l.storeId,
+          storeName: store.name,
+          timezone: tz,
+          isPrimary: l.isPrimary,
+          /** What a week with no dated offs falls back to. */
+          weekOffDays: [...weekdays].sort(),
+          /** True when that fallback is the branch's day, not their own rows. */
+          followsStore: own.length === 0,
+          days: dates.map((dateKey) => {
+            const date = parseYmd(dateKey);
+            // A @db.Date is a UTC-midnight stand-in: read its weekday at local noon.
+            const weekday = weekdayInTz(instantFromLocalTime(date, 12 * 60, tz), tz);
+            const holiday = holidayAt.get(`${l.storeId}|${dateKey}`) ?? null;
+            // Somebody who joins or leaves mid-span has no roster outside their
+            // employment, and a grid that drew one would invite a manager to
+            // plan a day the person cannot work.
+            const employed =
+              (!profile?.dateOfJoining || profile.dateOfJoining <= date) &&
+              (!profile?.exitDate || profile.exitDate > date);
+            const assigned = employed
+              ? this.pickAssignedShift(myAssignments, storeShifts, date)
+              : null;
+            const shift = employed ? (assigned ?? storeShifts[0] ?? null) : null;
+            const isOff = employed && isOffOn(calendar, dateKey, weekday);
+            // Approved beats pending when both cover a date: approved is what
+            // actually governs the day.
+            const covering = employed
+              ? myLeaves.filter((r) => r.fromDate <= date && r.toDate >= date)
+              : [];
+            const leave = covering.find((r) => r.status === 'approved') ?? covering[0] ?? null;
+            return {
+              date: dateKey,
+              weekday,
+              employed,
+              shift: shift
+                ? {
+                    id: shift.id,
+                    name: shift.name,
+                    startTime: shift.startTime,
+                    endTime: shift.endTime,
+                    isNightBatch: shift.isNightBatch,
+                    isFlexible: shift.isFlexible ?? false,
+                  }
+                : null,
+              /**
+               * 'assignment' = an effective-dated ShiftAssignment, i.e. somebody
+               * planned it. 'store_default' = nobody did, and this is the shift
+               * the register would nonetheless time them against.
+               */
+              shiftSource: shift ? (assigned ? 'assignment' : 'store_default') : null,
+              isOff,
+              /** Which rule made it an off — the dated row, or the weekly pattern. */
+              offSource: isOff ? (calendar.datesByWeek.has(weekKeyOf(dateKey)) ? 'dated' : 'pattern') : null,
+              isHoliday: !!holiday,
+              holidayLabel: holiday?.label ?? null,
+              leave: leave
+                ? { id: leave.id, type: leave.type, status: leave.status, halfDay: leave.halfDay }
+                : null,
+              /**
+               * A cell the manager has to look at: this person is rostered onto
+               * a shift on a day their leave is approved. Read-time only — the
+               * leave is approved after the roster is planned as often as the
+               * other way round, and refusing either write would leave the
+               * branch unable to record what happened. An off or a holiday is
+               * not a collision: nobody was expected on the floor.
+               */
+              conflict:
+                assigned && !isOff && !holiday && leave?.status === 'approved'
+                  ? 'shift_on_approved_leave'
+                  : null,
+            };
+          }),
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name) || a.storeName.localeCompare(b.storeName));
+
+    return {
+      ...envelope,
+      stores: stores.map((s) => ({
+        id: s.id,
+        name: s.name,
+        timezone: resolveTz(s.timezone),
+        weekOffDay: s.weekOffDay,
+      })),
+      holidays: holidays.map(toHolidayView),
+      employees,
+    };
   }
 }

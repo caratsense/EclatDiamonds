@@ -1,6 +1,19 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
+import Link from "next/link";
+import {
+  ArrowRight,
+  BarChart3,
+  CalendarPlus,
+  CalendarRange,
+  Fingerprint,
+  Plane,
+  Receipt,
+  SlidersHorizontal,
+  UsersRound,
+  type LucideIcon,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { SectionHeader } from "@/components/section/section-header";
@@ -23,8 +36,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSession } from "@/store/use-session";
 import {
   StoreScopeField,
@@ -33,27 +44,16 @@ import {
 import { getNavItem } from "@/lib/navigation";
 import { ROLE_RANK } from "@/lib/types";
 import { useStaff } from "@/lib/queries/users";
-import { ShiftsScheduleTab } from "@/components/hrms/shifts-schedule-tab";
 import { AttendanceRulesBanner } from "@/components/hrms/attendance-rules";
-import { LateFlagsTab } from "@/components/hrms/late-flags-tab";
 import { GeoPunchCard } from "@/components/hrms/geo-punch-card";
-import { LeaveBalances } from "@/components/hrms/leave-balances";
-import { RegularizationTab } from "@/components/hrms/regularization-tab";
-import { AttendanceReportsTab } from "@/components/hrms/attendance-reports-tab";
-import { AnalyticsTab } from "@/components/hrms/analytics-tab";
-import { TodayTab } from "@/components/hrms/today-tab";
-import { EmployeesTab } from "@/components/hrms/employees-tab";
-import { RegisterTab } from "@/components/hrms/register-tab";
-import { ApprovalsTab } from "@/components/hrms/approvals-tab";
+import { ApplyLeaveDialog } from "@/components/hrms/apply-leave-dialog";
 import {
-  useHolidays,
-  useLateFlags,
   useMarkAttendance,
   useShifts,
   type AttendanceStatus,
 } from "@/lib/queries/hrms";
 import { useApprovals } from "@/lib/queries/hrms-ops";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, cn } from "@/lib/utils";
 
 const ATTENDANCE_STATUSES: { value: AttendanceStatus; label: string }[] = [
   { value: "present", label: "Present" },
@@ -62,47 +62,137 @@ const ATTENDANCE_STATUSES: { value: AttendanceStatus; label: string }[] = [
   { value: "on_leave", label: "On leave" },
 ];
 
+/** One card on the landing: a module, or a back-office screen under it. */
+interface Destination {
+  href: string;
+  title: string;
+  detail: string;
+  icon: LucideIcon;
+  /** Decisions waiting on this person, drawn as a badge. */
+  waiting?: number;
+}
+
+/**
+ * HR & Attendance — the landing, and nothing else.
+ *
+ * It used to be nine tabs on one route: Today, Employees, Register, Approvals,
+ * Shifts & Schedule, Reports, Leave, Fix attendance and Late flags. Nine tabs
+ * is not a screen, it is a filing cabinet — somebody looking for "apply for
+ * leave" had to know it lived behind a tab called Leave, beside a tab called
+ * Approvals where their manager decided it, and the shift configuration sat two
+ * tabs from the punch card.
+ *
+ * So the four MODULES are four screens now, each on its own route with its own
+ * audience split (My Data | Team): Attendance, Leave Tracker, Roster & Shifts
+ * and HR Reports. This page is the hub that opens them, and it keeps only what
+ * a hub should: what today looks like (the punch card) and the actions that are
+ * on a clock — apply for leave, and, for a manager, mark somebody's attendance.
+ *
+ * Policy and configuration are deliberately NOT here. Shift definitions, the
+ * attendance-rules confirmation and head office's balance corrections live on
+ * their own screen (`/hrms/setup`), reached from the Setup band at the bottom,
+ * so somebody punching in never lands beside a control that changes how the
+ * whole branch is measured.
+ */
 export default function HrmsPage() {
   const { role } = useSession();
+  const userId = useSession((s) => s.user.id);
   const nav = getNavItem("hrms");
   const [markOpen, setMarkOpen] = useState(false);
+  const [applyOpen, setApplyOpen] = useState(false);
   // The sidebar's "Mark attendance" quick action, read as derived state like
   // the walk-in and lead dialogs do on their own pages.
   const quickAttendance = useQuickAction((s) => s.pending) === "attendance";
   const clearQuickAction = useQuickAction((s) => s.clear);
-  // Set when "Mark" is pressed on a Today row: that person, at that store.
-  const [markPreset, setMarkPreset] = useState<{ userId: string; storeId: string } | null>(null);
   // Head office does not punch (no personal punch card) and does not mark
-  // attendance for others from the dialog; it may CORRECT records (Register /
-  // Today edit), which is audited.
+  // attendance for others from the dialog; it may CORRECT records (the
+  // Attendance module's register and Today), which is audited.
   const isHeadOffice = role === "head_office";
   // Role split (rank-monotonic; area_manager collapses to the store_manager
-  // tier). A salesperson gets an attendance-ONLY view — self punch + own
-  // history + a leave request; every manager/observer tab is store_manager+.
+  // tier). Everybody gets the self-service half — their punch card, their own
+  // attendance, leave and schedule; the team halves are store_manager+.
   const isManager = ROLE_RANK[role] >= ROLE_RANK.store_manager;
   // Only the store tier marks attendance FOR others (backend: @Roles
   // store_manager+; HO stays out of the mark dialog).
   const canMarkOthers = isManager && !isHeadOffice;
 
-  const shiftsQuery = useShifts();
-  const holidaysQuery = useHolidays();
-  // Current month key (YYYY-MM) for the late-flag roll-up.
-  const month = useMemo(() => new Date().toISOString().slice(0, 7), []);
-  // The team lateness tab is a manager view; nobody else fetches it.
-  const lateFlagsQuery = useLateFlags(month, { enabled: isManager });
+  /*
+   * What is waiting on a decision, split by module so each card carries its own
+   * count. Somebody's own request is left out: it waits on the rank above them,
+   * not on them — the server refuses a self-decision, and
+   * `assertRankAboveRequester` refuses a peer's.
+   */
   const pendingQuery = useApprovals("pending", { enabled: isManager });
-  const { data: shifts = [] } = shiftsQuery;
-  const { data: holidays = [] } = holidaysQuery;
-  const { data: lateFlags = [], isLoading: flagsLoading } = lateFlagsQuery;
-  const pendingCount = pendingQuery.data?.length ?? 0;
+  const pending = pendingQuery.data ?? [];
+  const waitingLeave = pending.filter(
+    (p) => p.kind === "leave" && p.staffId !== userId,
+  ).length;
+  const waitingFixes = pending.filter(
+    (p) => p.kind === "regularization" && p.staffId !== userId,
+  ).length;
 
-  const scheduleLoading = shiftsQuery.isLoading || holidaysQuery.isLoading;
-  const scheduleError = shiftsQuery.isError || holidaysQuery.isError;
+  const modules: Destination[] = [
+    {
+      href: "/hrms/attendance",
+      title: "Attendance",
+      detail: isManager
+        ? "Your punches and your month, the store's register, and the corrections waiting on you."
+        : "Your punches, your month, and a correction when a punch is wrong.",
+      icon: Fingerprint,
+      waiting: waitingFixes,
+    },
+    {
+      href: "/hrms/leave",
+      title: "Leave Tracker",
+      detail: isManager
+        ? "Your balances and requests, and the team's — decided one rank above the person who asked."
+        : "Your balances, your requests, and the branch's holidays.",
+      icon: Plane,
+      waiting: waitingLeave,
+    },
+    {
+      href: "/hrms/roster",
+      title: "Roster & Shifts",
+      detail: isManager
+        ? "Plan the week by date — who is on which shift, and whose off falls where."
+        : "The shifts, offs and holidays ahead of you.",
+      icon: CalendarRange,
+    },
+  ];
+  if (isManager) {
+    modules.push({
+      href: "/hrms/reports",
+      title: "HR Reports",
+      detail:
+        "The month in figures — presence, lateness, overtime, late flags, and the register as an export.",
+      icon: BarChart3,
+    });
+  }
+
+  /** Employee records and pay: real work, but not the day's work. */
+  const backOffice: Destination[] = isManager
+    ? [
+        {
+          href: "/hrms/employees",
+          title: "Employees",
+          detail:
+            "The employee master — profiles, departments and designations, joining and separation.",
+          icon: UsersRound,
+        },
+        {
+          href: "/hrms/payroll",
+          title: "Payroll & Payslips",
+          detail:
+            "Payslips counted from the attendance register, and the month's payroll runs.",
+          icon: Receipt,
+        },
+      ]
+    : [];
 
   return (
     <>
       <SectionHeader
-        title={nav?.title ?? "HRMS & Attendance"}
+        title={nav?.title ?? "HR & Attendance"}
         purpose={nav?.purpose ?? ""}
         primaryAction={canMarkOthers ? nav?.primaryAction : undefined}
         onPrimaryAction={canMarkOthers ? () => setMarkOpen(true) : undefined}
@@ -116,138 +206,140 @@ export default function HrmsPage() {
 
       {isManager ? <AttendanceRulesBanner /> : null}
 
-      <Tabs defaultValue={isManager ? "today" : "roster"} className="space-y-4">
-        <TabsList className="flex h-auto flex-wrap">
-          {/* Store-wide attendance, people, corrections, setup and roll-ups are
-              manager/observer tools — hidden from a salesperson, whose view is
-              self punch + own history + leave. */}
-          {isManager ? (
-            <>
-              <TabsTrigger value="today">Today</TabsTrigger>
-              <TabsTrigger value="employees">Employees</TabsTrigger>
-              <TabsTrigger value="register">Register</TabsTrigger>
-              <TabsTrigger value="approvals" className="gap-1.5">
-                Approvals
-                {pendingCount > 0 ? (
-                  <span
-                    className="num rounded-full bg-destructive px-1.5 text-[11px] leading-5 text-destructive-foreground"
-                    aria-label={`${pendingCount} pending`}
-                  >
-                    {pendingCount}
-                  </span>
-                ) : null}
-              </TabsTrigger>
-              <TabsTrigger value="schedule">Shifts &amp; Schedule</TabsTrigger>
-              <TabsTrigger value="reports">Reports</TabsTrigger>
-            </>
-          ) : null}
-          <TabsTrigger value="roster">Leave</TabsTrigger>
-          <TabsTrigger value="regularize">Fix attendance</TabsTrigger>
-          {isManager ? <TabsTrigger value="flags">Late flags</TabsTrigger> : null}
-        </TabsList>
+      {/*
+        The routine actions, above the modules.
 
-        {isManager ? (
-          <>
-            <TabsContent value="today">
-              <TodayTab
-                canEdit={isManager}
-                onMark={
-                  canMarkOthers
-                    ? (r) => {
-                        setMarkPreset(r);
-                        setMarkOpen(true);
-                      }
-                    : undefined
-                }
-              />
-            </TabsContent>
-            <TabsContent value="employees">
-              <EmployeesTab canManage={isManager} isHeadOffice={isHeadOffice} />
-            </TabsContent>
-            <TabsContent value="register">
-              <RegisterTab canEdit={isManager} isHeadOffice={isHeadOffice} />
-            </TabsContent>
-            <TabsContent value="approvals">
-              <ApprovalsTab />
-            </TabsContent>
-            <TabsContent value="schedule">
-              {scheduleLoading ? (
-                <TabSkeleton />
-              ) : scheduleError ? (
-                <TabError
-                  what="shifts & schedule"
-                  onRetry={() => {
-                    shiftsQuery.refetch();
-                    holidaysQuery.refetch();
-                  }}
-                />
-              ) : (
-                <ShiftsScheduleTab shifts={shifts} holidays={holidays} />
-              )}
-            </TabsContent>
-            <TabsContent value="reports">
-              <div className="space-y-6">
-                <AnalyticsTab />
-                <AttendanceReportsTab />
-              </div>
-            </TabsContent>
-            <TabsContent value="flags">
-              {flagsLoading ? (
-                <TabSkeleton />
-              ) : lateFlagsQuery.isError ? (
-                <TabError
-                  what="late flags"
-                  onRetry={() => lateFlagsQuery.refetch()}
-                />
-              ) : (
-                <LateFlagsTab rows={lateFlags} month={month} />
-              )}
-            </TabsContent>
-          </>
-        ) : null}
+        "Apply for leave" is here and not only on the Leave Tracker so that it is
+        TWO taps from a phone's bottom bar — HR, then Apply — because somebody
+        asking for Thursday off is not navigating a product, they are asking for
+        Thursday off. It opens the same dialog the tracker opens: one form, one
+        set of rules.
+      */}
+      <div className="mb-6 flex flex-wrap gap-2">
+        <Button onClick={() => setApplyOpen(true)}>
+          <CalendarPlus className="h-4 w-4" />
+          Apply for leave
+        </Button>
+        <Button asChild variant="outline">
+          <Link href="/hrms/schedule">
+            <CalendarRange className="h-4 w-4" />
+            My schedule
+          </Link>
+        </Button>
+      </div>
 
-        <TabsContent value="roster">
-          {/* Self-service balances + "Apply for leave" — every role. Team
-              decisions live in Approvals; head office also corrects balances. */}
-          <LeaveBalances canEditTeam={isHeadOffice} />
-        </TabsContent>
-        <TabsContent value="regularize">
-          <RegularizationTab />
-        </TabsContent>
-      </Tabs>
+      <Band title="The four HR modules">
+        {modules.map((d) => (
+          <DestinationCard key={d.href} destination={d} />
+        ))}
+      </Band>
+
+      {backOffice.length ? (
+        <Band title="People & pay">
+          {backOffice.map((d) => (
+            <DestinationCard key={d.href} destination={d} />
+          ))}
+        </Band>
+      ) : null}
+
+      {isManager ? (
+        <Band title="Setup">
+          {/* Away from the routine actions on purpose: these settings decide how
+              the whole branch is measured, and head office's confirmation is
+              what switches automatic absence on. */}
+          <DestinationCard
+            destination={{
+              href: "/hrms/setup",
+              title: "Shifts & Schedule",
+              detail: isHeadOffice
+                ? "Shifts, weekly offs, holidays, the attendance-rules confirmation, and leave-balance corrections."
+                : "Shifts, weekly offs and holidays for your branch, and what the attendance rules are set to.",
+              icon: SlidersHorizontal,
+            }}
+          />
+        </Band>
+      ) : null}
 
       <MarkAttendanceDialog
-        key={markPreset ? `${markPreset.userId}-${markPreset.storeId}` : "blank"}
         open={markOpen || (quickAttendance && canMarkOthers)}
-        preset={markPreset}
         onOpenChange={(o) => {
           setMarkOpen(o);
-          if (!o) {
-            setMarkPreset(null);
-            clearQuickAction();
-          }
+          if (!o) clearQuickAction();
         }}
       />
+      <ApplyLeaveDialog open={applyOpen} onOpenChange={setApplyOpen} />
     </>
   );
 }
 
+/** A labelled band of destination cards. */
+function Band({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="mb-6">
+      <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+        {title}
+      </h2>
+      <div className="grid gap-3 sm:grid-cols-2">{children}</div>
+    </section>
+  );
+}
+
+/**
+ * The whole card is the link rather than a button inside it: these are opened
+ * from a phone and from an in-store terminal, where the target should be the
+ * size of the thing it describes.
+ */
+function DestinationCard({ destination }: { destination: Destination }) {
+  const { href, title, detail, icon: Icon, waiting } = destination;
+  return (
+    <Link
+      href={href}
+      className={cn(
+        "group flex items-start gap-3 rounded-xl border border-border/80 bg-card p-4 shadow-sm transition-colors",
+        "hover:border-[color-mix(in_srgb,var(--gold)_40%,transparent)] hover:bg-accent",
+      )}
+    >
+      <Icon className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="font-medium">{title}</span>
+          {waiting ? (
+            <span
+              className="num rounded-full bg-destructive px-1.5 text-[11px] leading-5 text-destructive-foreground"
+              aria-label={`${waiting} waiting on a decision`}
+            >
+              {waiting}
+            </span>
+          ) : null}
+        </div>
+        <p className="mt-1 text-sm text-muted-foreground">{detail}</p>
+      </div>
+      <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+    </Link>
+  );
+}
+
+/**
+ * Marking somebody else's attendance — the landing's primary action, and the
+ * sidebar's "Mark attendance" quick action.
+ *
+ * It stays on the hub rather than moving to the Attendance module with the rest
+ * of the team views: two front doors to the same write is two different answers
+ * to "who marked this?", and the register already carries the audited edit for
+ * fixing a row that exists.
+ */
 function MarkAttendanceDialog({
   open,
   onOpenChange,
-  preset,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  preset?: { userId: string; storeId: string } | null;
 }) {
   const scope = useStoreScope();
-  const { pickedStoreId, setPickedStoreId } = scope;
-  const targetStoreId = preset?.storeId ?? scope.targetStoreId;
-  const storeLabel = preset ? "their store" : scope.storeLabel;
+  const { pickedStoreId, setPickedStoreId, targetStoreId, storeLabel } = scope;
   const markAttendance = useMarkAttendance();
   const { data: shifts = [] } = useShifts();
-  const [staffId, setStaffId] = useState(preset?.userId ?? "");
+  const [staffId, setStaffId] = useState("");
   const [status, setStatus] = useState<AttendanceStatus>("present");
   const [checkInTime, setCheckInTime] = useState("");
   const [shiftId, setShiftId] = useState<string>("");
@@ -313,9 +405,7 @@ function MarkAttendanceDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
-          {preset ? null : (
-            <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
-          )}
+          <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
 
           <div className="grid gap-1.5">
             <Label htmlFor="staff-pick">
@@ -424,38 +514,5 @@ function MarkAttendanceDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function TabError({
-  what,
-  onRetry,
-}: {
-  what: string;
-  onRetry: () => void;
-}) {
-  return (
-    <div className="mx-auto max-w-md rounded-lg border bg-muted/30 p-4 text-center">
-      <p className="text-sm font-medium">Couldn&apos;t load {what}.</p>
-      <p className="mt-1 text-xs text-muted-foreground">
-        The connection may have dropped. Check your network and try again.
-      </p>
-      <Button variant="outline" size="sm" className="mt-3" onClick={onRetry}>
-        Retry
-      </Button>
-    </div>
-  );
-}
-
-function TabSkeleton() {
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-24 rounded-xl" />
-        ))}
-      </div>
-      <Skeleton className="h-64 rounded-xl" />
-    </div>
   );
 }

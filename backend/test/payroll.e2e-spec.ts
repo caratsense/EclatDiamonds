@@ -59,6 +59,9 @@ async function teardown(prisma: PrismaService) {
   await prisma.rawPunchEvent.deleteMany({ where: { organisationId: A.org } });
   await prisma.storeHoliday.deleteMany({ where: { organisationId: A.org } });
   await prisma.leaveRequest.deleteMany({ where: { organisationId: A.org } });
+  // Applying leave through the API seeds the year's allocation rows, and
+  // LeaveBalance restricts the user delete below.
+  await prisma.leaveBalance.deleteMany({ where: { user: { organisationId: A.org } } });
   await prisma.shift.deleteMany({ where: { organisationId: A.org } });
   await prisma.userStore.deleteMany({ where: { user: { organisationId: A.org } } });
   await prisma.user.deleteMany({ where: { organisationId: A.org } });
@@ -778,5 +781,88 @@ describe('Individual weekly offs and attendance-based payslips (e2e)', () => {
       ['store_pay_b2', '2026-09-22'],
       [A.store, '2026-09-24'],
     ]);
+  });
+
+  /* ------------------------------------- leave reads the SAME off calendar */
+
+  it('a dated off is not a chargeable leave day, and the payslip counts that same day off', async () => {
+    /*
+     * THE POINT: one off calendar, two consumers. Leave used to count the days
+     * itself — store.weekOffDay against a raw UTC weekday — so a person whose
+     * Wednesday was rostered off was charged five days for Monday to Friday
+     * while the payslip, reading day-off.util, paid that Wednesday as an off.
+     * The register and the balance disagreed about the same date.
+     */
+    await prisma.user.create({
+      data: {
+        id: 'u_pay_rep4', email: 'rep4.pay@pay-a.local', name: 'Rep4', role: 'salesperson',
+        passwordHash: 'x', isActive: true, approvalStatus: 'approved', organisationId: A.org,
+        userStores: { create: { storeId: A.store, isPrimary: true } },
+      },
+    });
+    // Wednesday the 9th, inside the Monday 7 – Sunday 13 week.
+    await request(server())
+      .put('/hrms/payroll/day-offs')
+      .set(auth(mgrT))
+      .send({ storeId: A.store, month: PERIOD, entries: [{ userId: 'u_pay_rep4', dates: ['2026-09-09'] }] })
+      .expect(200);
+
+    // The preview the apply form shows, before anything is submitted.
+    const preview = (
+      await request(server())
+        .get('/hrms/leave/preview?from=2026-09-07&to=2026-09-11&type=casual&staffId=u_pay_rep4')
+        .set(auth(mgrT))
+        .expect(200)
+    ).body;
+    expect(preview.days).toBe(4);
+    expect(preview.offDates).toEqual(['2026-09-09']);
+    expect(preview.holidays).toEqual([]);
+    expect(preview.balance).toMatchObject({ type: 'casual', available: 12, availableAfter: 8, sufficient: true });
+
+    // A client count that disagrees with the roster is refused, and says so.
+    const lied = await request(server())
+      .post('/hrms/leave')
+      .set(auth(mgrT))
+      .send({ staffId: 'u_pay_rep4', type: 'casual', fromDate: '2026-09-07', toDate: '2026-09-11', days: 0.1 })
+      .expect(400);
+    expect(lied.body.message).toMatch(/4 chargeable day\(s\), not 0\.1/);
+    expect(await prisma.leaveRequest.count({ where: { staffId: 'u_pay_rep4' } })).toBe(0);
+
+    // Applying charges exactly what the preview promised.
+    const applied = (
+      await request(server())
+        .post('/hrms/leave')
+        .set(auth(mgrT))
+        .send({ staffId: 'u_pay_rep4', type: 'casual', fromDate: '2026-09-07', toDate: '2026-09-11', days: preview.days })
+        .expect(201)
+    ).body;
+    expect(applied.days).toBe(preview.days);
+
+    // And payroll calls the same Wednesday an off — one calendar, two readers.
+    await request(server())
+      .put('/hrms/payroll/compensation')
+      .set(auth(hoT))
+      .send({ userId: 'u_pay_rep4', basis: 'monthly', amount: 30_000 })
+      .expect(200);
+    const slip = (
+      await request(server())
+        .post('/hrms/payroll/payslips/generate')
+        .set(auth(mgrT))
+        .send({ userId: 'u_pay_rep4', periodKey: PERIOD })
+        .expect(201)
+    ).body;
+    const detail = await request(server())
+      .get(`/hrms/payroll/payslips/${slip.id}`)
+      .set(auth(mgrT))
+      .expect(200);
+    const byDate = new Map(
+      (detail.body.breakdown as { date: string; kind: string }[]).map((d) => [d.date, d.kind]),
+    );
+    expect(byDate.get('2026-09-09')).toBe('week_off');
+    // The dated Wednesday, plus the branch's Sundays in the weeks nobody planned
+    // (6, 20, 27 — the 13th belongs to the planned week, so the pattern is silent).
+    expect(slip.weeklyOffDays).toBe(4);
+    // A PENDING leave changes no attendance: the 7th is still unrecorded, not leave.
+    expect(byDate.get('2026-09-07')).toBe('no_record');
   });
 });

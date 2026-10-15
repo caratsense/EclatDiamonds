@@ -208,14 +208,15 @@ export interface PunchInput {
  * Returns today's state (or null) + this-month's records. Keyed on the active
  * store so switching stores refetches; the X-Store-Id header scopes it server-side.
  */
-export function useMyAttendance(month: string) {
+export function useMyAttendance(month: string, options: { enabled?: boolean } = {}) {
   const storeId = useStoreKey();
   return useQuery({
+    enabled: options.enabled ?? true,
     queryKey: [HRMS_KEY, "attendance", "me", storeId, month],
     queryFn: async () => {
       const { data } = await api.get<{
-        today: SelfAttendance | null;
-        records: SelfAttendance[];
+        today: SelfAttendanceDay | null;
+        records: SelfAttendanceDay[];
         summary: AttendanceReportSummary;
       }>("/hrms/attendance/me", { params: { month } });
       return data;
@@ -393,7 +394,12 @@ export interface ApplyLeaveInput {
   fromDate: string;
   /** YYYY-MM-DD (inclusive). */
   toDate: string;
-  /** Explicit day count; auto-computed (working days) when omitted. */
+  /**
+   * The chargeable day count, as returned by GET /hrms/leave/preview. Omit it
+   * and the server counts; send it and the server REFUSES a figure that
+   * disagrees with its own, so a stale form cannot charge a number it never
+   * showed the employee.
+   */
   days?: number;
   halfDay?: boolean;
   reason?: string;
@@ -421,7 +427,22 @@ export function useApplyLeave() {
 export interface CreateRegularizationInput {
   /** YYYY-MM-DD — the day being corrected. */
   date: string;
-  /** ISO datetime the staffer actually checked in / out. */
+  /**
+   * Store-local wall clock of the corrected punch — the form the server can
+   * place on the right business day. Prefer these over `requestedCheckIn` /
+   * `requestedCheckOut`: an instant built in the BROWSER's zone lands on the
+   * wrong day for anyone whose device is not on store time. The two forms are
+   * mutually exclusive (the API refuses both at once).
+   */
+  checkInLocalDate?: string;
+  checkInLocalTime?: string;
+  /**
+   * Carried separately from the check-in's date so a night shift survives: its
+   * out-punch belongs to the day the in-punch opened, on the NEXT calendar date.
+   */
+  checkOutLocalDate?: string;
+  checkOutLocalTime?: string;
+  /** Legacy ISO instants. Kept for callers that already send them. */
   requestedCheckIn?: string;
   requestedCheckOut?: string;
   /** Mandatory — the approver decides on it. */
@@ -434,7 +455,7 @@ export function useRegularizations() {
   return useQuery({
     queryKey: [HRMS_KEY, "regularize", storeId],
     queryFn: async () => {
-      const { data } = await api.get<Regularization[]>("/hrms/regularize");
+      const { data } = await api.get<RegularizationReview[]>("/hrms/regularize");
       return data;
     },
   });
@@ -445,7 +466,7 @@ export function useCreateRegularization() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: CreateRegularizationInput) => {
-      const { data } = await api.post<Regularization>("/hrms/regularize", input);
+      const { data } = await api.post<RegularizationReview>("/hrms/regularize", input);
       return data;
     },
     onSuccess: () => {
@@ -467,7 +488,7 @@ export function useDecideRegularization() {
       status: LeaveStatus;
       note?: string;
     }) => {
-      const { data } = await api.patch<Regularization>(
+      const { data } = await api.patch<RegularizationReview>(
         `/hrms/regularize/${id}`,
         { status, ...(note ? { note } : {}) },
       );
@@ -758,4 +779,176 @@ export function useLateFlags(month: string, options: { enabled?: boolean } = {})
       return Array.isArray(data) ? data : (data.staff ?? []);
     },
   });
+}
+
+/* ================================================================== */
+/* LEAVE TRACKER — added for the Leave Tracker surface (/hrms/leave).  */
+/* Kept as one block at the end of the file so the attendance work     */
+/* above stays where it was; nothing here reorders an existing export. */
+/* ================================================================== */
+
+/** What a leave range costs, as the server counts it. */
+export interface LeavePreview {
+  staffId: string;
+  staffName: string;
+  storeId: string;
+  /** Echoed back as store-local YYYY-MM-DD. */
+  fromDate: string;
+  toDate: string;
+  halfDay: boolean;
+  /** Chargeable days — the figure POST /hrms/leave will charge. */
+  days: number;
+  /** This person's own off days inside the range (roster or weekly pattern). */
+  offDates: string[];
+  /** Declared store holidays inside the range. */
+  holidays: { date: string; label: string | null }[];
+  /**
+   * Null when no `type` was asked for — the day count alone. `available` already
+   * nets off days held by other pending requests, and `availableAfter` goes
+   * NEGATIVE when the request would overdraw rather than clamping at zero.
+   */
+  balance: {
+    type: LeaveType;
+    label: string;
+    year: number;
+    financialYearLabel: string;
+    /** false for festival leave, which is unpaid and charges no balance. */
+    paid: boolean;
+    allocated: number;
+    used: number;
+    /** Days already committed to undecided requests. */
+    pending: number;
+    available: number;
+    availableAfter: number;
+    sufficient: boolean;
+  } | null;
+}
+
+export interface LeavePreviewParams {
+  /** YYYY-MM-DD (inclusive). */
+  from: string;
+  to: string;
+  /** Half of a single day. The server refuses it across a range. */
+  halfDay?: boolean;
+  /** Omit for the day count alone, with no balance arithmetic. */
+  type?: LeaveType;
+  /** Manager+ only: preview for a team member instead of oneself. */
+  staffId?: string;
+}
+
+/**
+ * GET /hrms/leave/preview — the chargeable days for a range BEFORE applying.
+ *
+ * The same code path as POST /hrms/leave, which is the whole point: the number
+ * on the form is the number charged, and the offs/holidays it skipped come back
+ * with it so the employee can reconcile the count against their own roster.
+ *
+ * `retry: false` — a refusal here ("to is before from", "a half-day request must
+ * start and end on the same date") is a deterministic answer about the dates on
+ * the form, not a flaky network, and the form shows it verbatim.
+ */
+export function useLeavePreview(
+  params: LeavePreviewParams,
+  options: { enabled?: boolean } = {},
+) {
+  const storeId = useStoreKey();
+  const { from, to, halfDay, type, staffId } = params;
+  return useQuery({
+    queryKey: [
+      HRMS_KEY,
+      "leave",
+      "preview",
+      storeId,
+      from,
+      to,
+      halfDay ? "half" : "full",
+      type ?? "any",
+      staffId ?? "me",
+    ],
+    enabled: (options.enabled ?? true) && !!from && !!to,
+    retry: false,
+    queryFn: async () => {
+      const { data } = await api.get<LeavePreview>("/hrms/leave/preview", {
+        params: {
+          from,
+          to,
+          ...(halfDay ? { halfDay: true } : {}),
+          ...(type ? { type } : {}),
+          ...(staffId ? { staffId } : {}),
+        },
+      });
+      return data;
+    },
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* G. Attendance screens — the shapes the Attendance module reads      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A day on the self-service list, with the shift it was judged against.
+ *
+ * `SelfAttendance` carried `shiftId` alone, which no screen can render: "was I
+ * late?" is only answerable beside the start time the lateness was measured
+ * from. The server now sends the resolved shift with every row.
+ */
+export type SelfAttendanceDay = SelfAttendance & {
+  shiftName?: string | null;
+  /** Store-local "HH:MM", the same units `checkInLocal` is in. */
+  shiftStart?: string | null;
+  shiftEnd?: string | null;
+  shiftIsFlexible?: boolean;
+};
+
+/** The punches / hours a correction would replace, or produce. */
+export interface RegularizationSide {
+  /** ISO instant, or null — a day may genuinely have had no punch. */
+  checkIn: string | null;
+  checkOut: string | null;
+  /** HH:mm pre-rendered in the STORE's timezone. Prefer these for display. */
+  checkInLocal: string | null;
+  checkOutLocal: string | null;
+  status: string | null;
+  workedMins: number | null;
+}
+
+/**
+ * A correction request as the decision screen needs it: the punches as they
+ * stood when it was filed, what approving would make the day, and the shift
+ * both are judged against. Without these an approver's only honest way to
+ * answer "is this right?" was to go and look the day up by hand.
+ */
+export interface RegularizationReview extends Regularization {
+  /** IANA zone the `*Local` strings are expressed in. */
+  timezone?: string;
+  original: RegularizationSide & {
+    /** When the snapshot was taken; null on rows filed before it existed. */
+    asOf: string | null;
+    /** False on those older rows — there is nothing to show as "original". */
+    captured: boolean;
+  };
+  /** Null when the server could not resolve the day (no store context). */
+  proposed:
+    | (RegularizationSide & {
+        isLate: boolean;
+        lateMinutes: number | null;
+        earlyOutMinutes: number | null;
+        overtimeMins: number | null;
+        dayFraction: number | null;
+      })
+    | null;
+  shift: {
+    id: string | null;
+    name: string | null;
+    startTime: string;
+    endTime: string;
+    isFlexible: boolean;
+  } | null;
+  /**
+   * The day moved after this was filed. The API refuses the decision (409) so
+   * an approval can never apply against punches the approver never saw — say so
+   * before the button is pressed.
+   */
+  stale: boolean;
 }

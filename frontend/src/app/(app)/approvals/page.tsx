@@ -1,7 +1,9 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import {
+  ArrowRight,
   CalendarClock,
   Check,
   ClipboardCheck,
@@ -53,12 +55,8 @@ import {
   useRejectReturn,
   useReturns,
 } from "@/lib/queries/returns";
-import {
-  useDecideLeave,
-  useDecideRegularization,
-  useLeaveRequests,
-  useRegularizations,
-} from "@/lib/queries/hrms";
+import { useLeaveRequests, useRegularizations } from "@/lib/queries/hrms";
+import { useSession } from "@/store/use-session";
 import { apiErrorMessage } from "@/lib/utils";
 
 /** Prefer the server-computed value; fall back to the legacy creditValue. */
@@ -72,8 +70,26 @@ function optionValue(
   return r.buybackValue ?? (r.settlement !== "exchange" ? r.creditValue : null);
 }
 
+/**
+ * Approvals — discounts and returns, decided here; HR, pointed at its modules.
+ *
+ * The HR half of this screen used to carry its own decision buttons, and they
+ * were the wrong buttons. They sent `{ id, status }` and nothing else, so a
+ * leave request or an attendance correction could not be rejected WITH A REASON
+ * — the one thing the person waiting needs; they reported every server refusal
+ * as "Could not approve this leave request", including the refusals that were
+ * the rules working (your own request, a peer's request); and they listed the
+ * viewer's own rows, which nobody can decide.
+ *
+ * Per the client's decision (13 Oct) an HR decision is made inside its module,
+ * where the request is shown with the balance it would spend or the day it would
+ * rewrite, and where a rejection takes a mandatory reason. So what is left here
+ * is the COUNT and the way in: the inbox still tells a manager HR is waiting,
+ * and the decision happens where the context is.
+ */
 export default function ApprovalsPage() {
   const nav = getNavItem("approvals");
+  const userId = useSession((s) => s.user.id);
 
   // ---- Sources (all store-scoped via their own hooks) ----------------------
   const discountsQ = useDiscounts();
@@ -85,8 +101,6 @@ export default function ApprovalsPage() {
   const rejectDiscount = useRejectDiscount();
   const approveReturn = useApproveReturn();
   const rejectReturn = useRejectReturn();
-  const decideLeave = useDecideLeave();
-  const decideRegular = useDecideRegularization();
 
   // ---- Pending-only projections -------------------------------------------
   const pendingDiscounts = (discountsQ.data ?? []).filter(
@@ -95,9 +109,17 @@ export default function ApprovalsPage() {
   const pendingReturns = (returnsQ.data ?? []).filter(
     (r) => r.status === "pending_approval",
   );
-  const pendingLeave = (leaveQ.data ?? []).filter((l) => l.status === "pending");
+  /*
+   * The HR counts leave out the viewer's OWN requests, which is what the old
+   * list got wrong: a manager's own leave waits on the rank above them
+   * (`assertRankAboveRequester`), so counting it here said "you have one to
+   * decide" about the one request they certainly cannot.
+   */
+  const pendingLeave = (leaveQ.data ?? []).filter(
+    (l) => l.status === "pending" && l.staffId !== userId,
+  );
   const pendingRegular = (regularQ.data ?? []).filter(
-    (r) => r.status === "pending",
+    (r) => r.status === "pending" && r.staffId !== userId,
   );
 
   const total =
@@ -172,42 +194,12 @@ export default function ApprovalsPage() {
     });
   }
 
-  function decideLeaveReq(id: string, action: "approve" | "reject") {
-    decideLeave.mutate(
-      { id, status: action === "approve" ? "approved" : "rejected" },
-      {
-        onSuccess: () =>
-          toast.success(
-            action === "approve" ? "Leave approved" : "Leave rejected",
-          ),
-        onError: () => toast.error(`Could not ${action} this leave request.`),
-      },
-    );
-  }
-
-  function decideRegularReq(id: string, action: "approve" | "reject") {
-    decideRegular.mutate(
-      { id, status: action === "approve" ? "approved" : "rejected" },
-      {
-        onSuccess: () =>
-          toast.success(
-            action === "approve"
-              ? "Attendance fix approved"
-              : "Attendance fix rejected",
-          ),
-        onError: () =>
-          toast.error(`Could not ${action} this attendance fix.`),
-      },
-    );
-  }
-
   return (
     <>
       <SectionHeader
         title={nav?.title ?? "Approvals"}
         purpose={
-          nav?.purpose ??
-          "Discount, return and leave requests awaiting your approval."
+          nav?.purpose ?? "Discount and return requests awaiting your approval."
         }
       />
 
@@ -390,129 +382,39 @@ export default function ApprovalsPage() {
               })}
             </ApprovalSection>
 
-            {/* -------- Leave -------- */}
-            <ApprovalSection
+            {/*
+              HR requests: the count and the way in, not the decision.
+
+              Deep-linked to the module tabs that own them — Leave Tracker >
+              Team > Leave Requests, Attendance > Team > Correction Requests —
+              where the request is shown against the balance it spends or the day
+              it rewrites, where the rank rule says who may decide it instead of
+              offering a button that 403s, and where a rejection takes a reason
+              that reaches the person waiting.
+            */}
+            <ModuleHandoff
               icon={CalendarClock}
               title="Leave"
-              description="Staff leave requests pending your decision."
               count={pendingLeave.length}
+              description="Staff leave requests pending a decision."
+              detail="Decided on the Leave Tracker, where each request is shown with what approving it does to that person's balance, and a rejection carries a reason."
+              href="/hrms/leave"
+              linkLabel="Open Leave Tracker"
               isError={leaveQ.isError}
               onRetry={() => leaveQ.refetch()}
-            >
-              {pendingLeave.map((lr) => {
-                const approving =
-                  decideLeave.isPending &&
-                  decideLeave.variables?.id === lr.id &&
-                  decideLeave.variables?.status === "approved";
-                const rejecting =
-                  decideLeave.isPending &&
-                  decideLeave.variables?.id === lr.id &&
-                  decideLeave.variables?.status === "rejected";
-                return (
-                  <ApprovalRow
-                    key={lr.id}
-                    actions={
-                      <DecisionButtons
-                        approving={approving}
-                        rejecting={rejecting}
-                        onApprove={() => decideLeaveReq(lr.id, "approve")}
-                        onReject={() => decideLeaveReq(lr.id, "reject")}
-                      />
-                    }
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium text-foreground">
-                        {lr.name}
-                      </span>
-                      <Badge variant="outline">{lr.type}</Badge>
-                    </div>
-                    <div className="text-sm text-muted-foreground">
-                      {lr.from} – {lr.to} ·{" "}
-                      <span className="num font-medium text-foreground">
-                        {lr.days}
-                      </span>{" "}
-                      day{lr.days === 1 ? "" : "s"}
-                      {lr.halfDay ? " · half-day" : ""}
-                    </div>
-                    {lr.reason ? (
-                      <p className="text-xs text-muted-foreground">
-                        &ldquo;{lr.reason}&rdquo;
-                      </p>
-                    ) : null}
-                  </ApprovalRow>
-                );
-              })}
-            </ApprovalSection>
+            />
 
-            {/* -------- Attendance fixes (regularizations) -------- */}
-            <ApprovalSection
+            <ModuleHandoff
               icon={Fingerprint}
               title="Attendance fixes"
-              description="Missed / wrong-punch corrections awaiting your decision."
               count={pendingRegular.length}
+              description="Missed / wrong-punch corrections pending a decision."
+              detail="Decided on Attendance, where the punches on the record sit beside what approving would make the day, in the branch's own time."
+              href="/hrms/attendance"
+              linkLabel="Open Attendance"
               isError={regularQ.isError}
               onRetry={() => regularQ.refetch()}
-            >
-              {pendingRegular.map((rg) => {
-                const approving =
-                  decideRegular.isPending &&
-                  decideRegular.variables?.id === rg.id &&
-                  decideRegular.variables?.status === "approved";
-                const rejecting =
-                  decideRegular.isPending &&
-                  decideRegular.variables?.id === rg.id &&
-                  decideRegular.variables?.status === "rejected";
-                return (
-                  <ApprovalRow
-                    key={rg.id}
-                    actions={
-                      <DecisionButtons
-                        approving={approving}
-                        rejecting={rejecting}
-                        onApprove={() => decideRegularReq(rg.id, "approve")}
-                        onReject={() => decideRegularReq(rg.id, "reject")}
-                      />
-                    }
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium text-foreground">
-                        {rg.name}
-                      </span>
-                      <Badge variant="outline">{rg.date}</Badge>
-                    </div>
-                    <div className="text-sm text-muted-foreground">
-                      {rg.requestedCheckIn ? (
-                        <>
-                          In{" "}
-                          <span className="num font-medium text-foreground">
-                            {new Date(rg.requestedCheckIn).toLocaleTimeString(
-                              "en-IN",
-                              { hour: "2-digit", minute: "2-digit" },
-                            )}
-                          </span>
-                        </>
-                      ) : null}
-                      {rg.requestedCheckOut ? (
-                        <>
-                          {rg.requestedCheckIn ? " · " : ""}Out{" "}
-                          <span className="num font-medium text-foreground">
-                            {new Date(rg.requestedCheckOut).toLocaleTimeString(
-                              "en-IN",
-                              { hour: "2-digit", minute: "2-digit" },
-                            )}
-                          </span>
-                        </>
-                      ) : null}
-                    </div>
-                    {rg.reason ? (
-                      <p className="text-xs text-muted-foreground">
-                        &ldquo;{rg.reason}&rdquo;
-                      </p>
-                    ) : null}
-                  </ApprovalRow>
-                );
-              })}
-            </ApprovalSection>
+            />
           </div>
         </>
       )}
@@ -642,6 +544,79 @@ function ApprovalSection({
           <p className="text-sm text-muted-foreground">Nothing pending.</p>
         ) : (
           <div className="space-y-2">{children}</div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * A kind of request this inbox counts but does not decide: the number, what it
+ * is, and one link into the module that owns the decision.
+ *
+ * Shaped like `ApprovalSection` on purpose — same card, same heading, same
+ * count badge — so the inbox still reads as one list of what is waiting, with
+ * the difference being that these rows are opened rather than acted on here.
+ */
+function ModuleHandoff({
+  icon: Icon,
+  title,
+  description,
+  detail,
+  count,
+  href,
+  linkLabel,
+  isError = false,
+  onRetry,
+}: {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  detail: string;
+  count: number;
+  href: string;
+  linkLabel: string;
+  isError?: boolean;
+  onRetry?: () => void;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Icon className="h-4 w-4 text-muted-foreground" />
+          {title}
+          {count > 0 ? (
+            <Badge variant="secondary" className="ml-1">
+              <span className="num">{count}</span>
+            </Badge>
+          ) : null}
+        </CardTitle>
+        <CardDescription>{description}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isError ? (
+          <div className="flex flex-col gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+            <span>Couldn&apos;t count {title.toLowerCase()}.</span>
+            {onRetry ? (
+              <Button variant="outline" size="sm" className="w-fit" onClick={onRetry}>
+                Retry
+              </Button>
+            ) : null}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-muted-foreground">
+              {count === 0
+                ? "Nothing pending."
+                : `${count} waiting on a decision. ${detail}`}
+            </p>
+            <Button asChild variant="outline" size="sm" className="w-fit shrink-0">
+              <Link href={href}>
+                {linkLabel}
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </Button>
+          </div>
         )}
       </CardContent>
     </Card>
