@@ -1814,10 +1814,20 @@ export class OmnichannelService implements OnModuleInit {
      * connected both are ignored and nothing changes; with several and neither
      * set, the resolver refuses and says which branch needs mapping rather than
      * sending as the wrong one.
+     *
+     * WHO it is for narrows that to the numbers allowed to carry it. A customer
+     * thread may NOT leave from a line marked as an internal staff line, even
+     * when that is the number the thread is pinned to or the branch is mapped
+     * to: a quotation arriving from the business's operations number is replied
+     * to on a line where the sales bot is not listening. Staff notices keep the
+     * resolution they have always had — `internalRoute` is how the digests pick
+     * the operations line, and narrowing them here would refuse the
+     * single-number tenants that have nowhere else to send.
      */
     const senderRoute = {
       assetId: message.conversation.senderAssetId,
       storeId: message.conversation.storeId,
+      ...(isStaffNotice ? {} : { audience: 'customer' as const }),
     };
 
     const result = instructions.document && documentBytes

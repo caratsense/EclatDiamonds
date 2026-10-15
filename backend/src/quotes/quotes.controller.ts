@@ -74,13 +74,13 @@ export class QuotesController {
     return this.quotes.create(user, dto);
   }
 
-  /** Re-price a quote. Bumps its revision and withdraws any approval. */
+  /** Re-price a quote. Bumps its revision, and withdraws nothing. */
   @Patch(':id')
   update(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateQuoteDto) {
     return this.quotes.update(user, id, dto);
   }
 
-  /** Address and payments after saving. Not the price: no revision, no approval change. */
+  /** The customer and the payments after saving. Not the price: the revision stays put. */
   @Patch(':id/details')
   updateDetails(
     @CurrentUser() user: AuthUser,

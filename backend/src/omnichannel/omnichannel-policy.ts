@@ -45,6 +45,19 @@ export type DeliveryPolicyDecision =
 const WHATSAPP_CUSTOMER_CARE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * The refusal a closed 24-hour window produces, named so a caller can add to it.
+ *
+ * Exported because this sentence is true but incomplete on its own: it tells a
+ * person a template is required without saying why the one their business has
+ * approved is not being used. A caller that knows the answer (the quote send
+ * knows whether `quotation_pdf_v1` has ever been synced) appends it, and must
+ * be able to recognise THIS refusal rather than appending to an opt-out or a
+ * missing-connection one.
+ */
+export const TEMPLATE_REQUIRED_REASON =
+  'An approved WhatsApp template is required outside the 24-hour customer-care window.';
+
+/**
  * Keywords that mean "stop messaging me" ON THEIR OWN, as the whole message.
  *
  * WhatsApp, and every SMS regulator, treat a bare STOP as a withdrawal of
@@ -201,7 +214,7 @@ export function evaluateDeliveryPolicy(input: DeliveryPolicyInput): DeliveryPoli
     return {
       allowed: false,
       code: 'template_required',
-      reason: 'An approved WhatsApp template is required outside the 24-hour customer-care window.',
+      reason: TEMPLATE_REQUIRED_REASON,
     };
   }
 

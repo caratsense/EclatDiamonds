@@ -36,21 +36,14 @@ import {
 import { useMetalRates } from "@/lib/queries/integrations";
 import { useMaterials } from "@/lib/queries/materials";
 import { staleNote } from "@/components/rates/metal-rates-widget";
-import { api } from "@/lib/api";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  apiErrorMessage,
-  cn,
-  customerPhoneInputValue,
-  normalizeCustomerPhone,
-} from "@/lib/utils";
+import { apiErrorMessage, cn, normalizeCustomerPhone } from "@/lib/utils";
 import {
   StoreScopeField,
   useStoreScope,
@@ -71,10 +64,16 @@ import {
   type ItemRow,
 } from "@/components/quotation/quote-item-editor";
 import {
+  customerProblems,
   hasUnsavedEntries,
   itemProblem as validateItems,
   realStones,
 } from "@/components/quotation/quote-validation";
+import { QuoteCustomerFields } from "@/components/quotation/quote-customer-fields";
+import {
+  SendQuoteDialog,
+  type SendQuoteTarget,
+} from "@/components/quotation/send-quote-dialog";
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 
@@ -168,11 +167,11 @@ export function QuoteBuilder({ open, onOpenChange }: QuoteBuilderProps) {
    * "Send to WhatsApp" with the customer's number prefilled and EDITABLE -
    * that answers the meeting's open question (which number? selectable?) with
    * the sensible default while keeping the choice. The builder dialog hides
-   * while this is open and the whole thing closes when it does.
+   * while this is open and the whole thing closes when it does. The box itself
+   * is {@link SendQuoteDialog}, shared with the quote view so the offer can be
+   * taken up at any time afterwards too.
    */
-  const [sendStep, setSendStep] = useState<{ id: string; ref: string; phone: string } | null>(null);
-  const [sendTo, setSendTo] = useState("");
-  const [sendBusy, setSendBusy] = useState(false);
+  const [sendStep, setSendStep] = useState<SendQuoteTarget | null>(null);
   const [deliveryDate, setDeliveryDate] = useState("");
   const [advance, setAdvance] = useState("");
   const [advanceMode, setAdvanceMode] = useState("");
@@ -458,17 +457,10 @@ export function QuoteBuilder({ open, onOpenChange }: QuoteBuilderProps) {
     }
     const name = customer.trim();
     // Inline-validate the required identity fields first; toast is the summary.
-    const next: Record<string, string> = {};
-    if (!name) next.customer = "Customer name is required.";
-    // Name must contain a letter, not just digits/spaces (backend @Matches).
-    else if (!/[^\d\s]/.test(name))
-      next.customer = "Enter a valid name (letters, not just numbers).";
-    // Phone is mandatory on quote creation. Indian or foreign (the business
-    // quotes overseas clients, 13 Oct) — same rule the backend enforces.
+    // The rules live in quote-validation so the customer edit on a saved quote
+    // judges a name and a number exactly as this does.
+    const next = customerProblems({ name: customer, phone });
     const normalizedPhone = normalizeCustomerPhone(phone);
-    if (!phone.trim()) next.phone = "Phone number is required.";
-    else if (!normalizedPhone)
-      next.phone = "Enter a 10-digit mobile, or an international number starting with +.";
     if (Object.keys(next).length > 0) {
       setErrors(next);
       toast.error("Please fill in the required fields.");
@@ -527,9 +519,10 @@ export function QuoteBuilder({ open, onOpenChange }: QuoteBuilderProps) {
           description: `${formatINR(quote.totals?.grandTotal ?? preview.grand)} · ready for ${name}.`,
           action: { label: "Print", onClick: () => printSummary(html) },
         });
-        // The send step takes over; the dialog closes when it does.
-        setSendStep({ id: quote.id, ref: quote.ref, phone: phone.trim() });
-        setSendTo(phone.trim());
+        // The send step takes over; the dialog closes when it does. The number
+        // comes off the quote the server saved, not the box — normalised, so
+        // the recipient shown is the one that will actually be dialled.
+        setSendStep({ id: quote.id, ref: quote.ref, phone: quote.phone || phone.trim() });
         return;
       }
       onOpenChange(false);
@@ -615,60 +608,24 @@ export function QuoteBuilder({ open, onOpenChange }: QuoteBuilderProps) {
                   </Tabs>
                 </div>
               </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="grid gap-1.5">
-                  <Label htmlFor="qb-cust">
-                    Customer name <span className="text-destructive">*</span>
-                  </Label>
-                  <Input
-                    id="qb-cust"
-                    className="h-11"
-                    value={customer}
-                    aria-invalid={!!errors.customer}
-                    onChange={(e) => {
-                      setCustomer(e.target.value);
-                      setErrors((p) => ({ ...p, customer: "" }));
-                    }}
-                    placeholder="e.g. Meera Iyer"
-                  />
-                  {errors.customer ? (
-                    <p className="mt-1 text-xs text-destructive">{errors.customer}</p>
-                  ) : null}
-                </div>
-                <div className="grid gap-1.5">
-                  <Label htmlFor="qb-phone">
-                    Phone <span className="text-destructive">*</span>
-                  </Label>
-                  <Input
-                    id="qb-phone"
-                    className="h-11"
-                    value={phone}
-                    type="tel"
-                    inputMode="tel"
-                    maxLength={16}
-                    aria-invalid={!!errors.phone}
-                    onChange={(e) => {
-                      setPhone(customerPhoneInputValue(e.target.value));
-                      setErrors((p) => ({ ...p, phone: "" }));
-                    }}
-                    placeholder="10-digit mobile or +country number"
-                  />
-                  {errors.phone ? (
-                    <p className="mt-1 text-xs text-destructive">{errors.phone}</p>
-                  ) : null}
-                </div>
-              </div>
-              <div className="grid gap-1.5">
-                <Label htmlFor="qb-address">Customer address</Label>
-                <Input
-                  id="qb-address"
-                  className="h-11"
-                  value={address}
-                  maxLength={300}
-                  onChange={(e) => setAddress(e.target.value)}
-                  placeholder="House / street, area, city — printed under the name on the quote"
-                />
-              </div>
+              {/* The same three boxes a saved quote is corrected through, so
+                  what is asked here is what can be changed later. */}
+              <QuoteCustomerFields
+                idPrefix="qb"
+                value={{ name: customer, phone, address }}
+                errors={errors}
+                onChange={(patch) => {
+                  if (patch.name !== undefined) {
+                    setCustomer(patch.name);
+                    setErrors((p) => ({ ...p, customer: "" }));
+                  }
+                  if (patch.phone !== undefined) {
+                    setPhone(patch.phone);
+                    setErrors((p) => ({ ...p, phone: "" }));
+                  }
+                  if (patch.address !== undefined) setAddress(patch.address);
+                }}
+              />
             </section>
 
             {/* Kaccha ("@") estimate — no-GST, head-office-only */}
@@ -984,77 +941,16 @@ export function QuoteBuilder({ open, onOpenChange }: QuoteBuilderProps) {
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={sendStep !== null}
-        onOpenChange={(o: boolean) => {
-          if (!o) {
-            setSendStep(null);
-            onOpenChange(false);
-          }
+      {/* The send step after Save: the shared dialog, so the offer made here
+          is the same one the quote view makes later. Dismissing it or queueing
+          the PDF both finish the New-quote flow. */}
+      <SendQuoteDialog
+        target={sendStep}
+        onClose={() => {
+          setSendStep(null);
+          onOpenChange(false);
         }}
-      >
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Send quote {sendStep?.ref} on WhatsApp</DialogTitle>
-            <DialogDescription>
-              The detailed quotation PDF goes out from this branch&rsquo;s own
-              number. Change the recipient if it should reach a different phone.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-1.5">
-            <Label htmlFor="qb-send-to">Recipient mobile</Label>
-            <Input
-              id="qb-send-to"
-              type="tel"
-              inputMode="tel"
-              maxLength={16}
-              value={sendTo}
-              onChange={(e) => setSendTo(customerPhoneInputValue(e.target.value))}
-            />
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setSendStep(null);
-                onOpenChange(false);
-              }}
-            >
-              Not now
-            </Button>
-            <Button
-              disabled={sendBusy || !normalizeCustomerPhone(sendTo)}
-              onClick={async () => {
-                if (!sendStep) return;
-                setSendBusy(true);
-                try {
-                  // The detailed PDF, not a text summary — queued through the
-                  // branch's own line, to the number typed in this box.
-                  const { data } = await api.post<{ queued: boolean; dryRun: boolean }>(
-                    `/quotes/${sendStep.id}/send-pdf`,
-                    { to: sendTo },
-                  );
-                  if (data.dryRun) {
-                    toast.warning("WhatsApp is not connected — the PDF will not be delivered.");
-                  } else {
-                    toast.success(`Quote ${sendStep.ref} PDF queued for WhatsApp`);
-                  }
-                  setSendStep(null);
-                  onOpenChange(false);
-                } catch (e) {
-                  // A refusal arrives here with its reason, and the dialog
-                  // stays open for Not now.
-                  toast.error(apiErrorMessage(e, "Could not send the quote."));
-                } finally {
-                  setSendBusy(false);
-                }
-              }}
-            >
-              {sendBusy ? "Sending…" : "Send PDF on WhatsApp"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      />
     </>
   );
 }

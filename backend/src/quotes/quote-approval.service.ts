@@ -36,10 +36,11 @@ const APPROVAL_REMOVED =
  * Quote approval — REMOVED (client, 13 Oct: "a quotation once created is
  * created — no approval from anybody").
  *
- * The gate answers "cleared" for every quote, so nothing is ever held: not the
- * WhatsApp text, not the PDF download, not the PDF on WhatsApp. The endpoints
- * stay answerable so an old screen does not crash — reads report the feature as
- * off, writes say plainly that it is gone (410).
+ * Nothing in the quote lifecycle calls this service any more: the WhatsApp
+ * text, the PDF download and the PDF on WhatsApp go out without asking it.
+ * What survives is only an answer for an old screen that still asks, so it
+ * does not crash — reads report the feature as off (the gate says "cleared"
+ * for every quote), writes say plainly that it is gone (410).
  *
  * The HISTORY is deliberately untouched: past decisions keep their columns on
  * Quote (decidedById, approvedTotal, approvalSnapshot, …) and their audit-log
@@ -77,10 +78,10 @@ export class QuoteApprovalService {
     return { required: false, cleared: true, reason: null, reasons: [], revision: quote.revision };
   }
 
-  /** Never throws for approval reasons any more; kept for its callers' shape. */
-  async assertCleared(organisationId: string, quoteId: string): Promise<ApprovalGate> {
-    return this.gate(organisationId, quoteId);
-  }
+  /* No assertCleared(): the lifecycle calls nothing here. Creating, editing,
+   * downloading, sharing and sending a quote do not consult this service at
+   * all, and nothing left in it can refuse them. Re-introducing a check would
+   * mean adding a call site, not flipping a flag — which is the point. */
 
   /** Asking for a decision is gone. Scope is still checked first, so a quote
    *  outside the caller's reach stays a 404 rather than becoming a 410 oracle. */

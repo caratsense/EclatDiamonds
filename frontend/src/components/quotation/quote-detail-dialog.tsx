@@ -36,12 +36,13 @@ import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
 import { ChannelStatusNotice } from "@/components/integrations/channel-status-notice";
 import { EditQuoteDialog } from "@/components/quotation/edit-quote-dialog";
+import { QuoteCustomerPanel } from "@/components/quotation/quote-customer-panel";
 import { QuoteDetailsPanel } from "@/components/quotation/quote-details-panel";
 import {
-  useDeleteQuote,
-  useDownloadQuotePdf,
-  useSendQuotePdf,
-} from "@/lib/queries/quotes";
+  SendQuoteDialog,
+  type SendQuoteTarget,
+} from "@/components/quotation/send-quote-dialog";
+import { useDeleteQuote, useDownloadQuotePdf } from "@/lib/queries/quotes";
 import { apiErrorMessage } from "@/lib/utils";
 
 interface QuoteDetailDialogProps {
@@ -67,8 +68,9 @@ export function QuoteDetailDialog({
   // Mounted only while open, so the edit form seeds from the quote as it is NOW
   // (the list row refreshes under this dialog after every save).
   const [editOpen, setEditOpen] = useState(false);
+  // Null until "Send PDF on WhatsApp" is pressed; the dialog addresses it.
+  const [sendTarget, setSendTarget] = useState<SendQuoteTarget | null>(null);
   const downloadPdf = useDownloadQuotePdf();
-  const sendPdf = useSendQuotePdf();
   const deleteQuote = useDeleteQuote();
 
   const onDelete = () => {
@@ -99,28 +101,6 @@ export function QuoteDetailDialog({
   const onDownloadPdf = () =>
     downloadPdf.mutate(quote.id, {
       onError: (e) => toast.error(apiErrorMessage(e, "Could not download the quote PDF.")),
-    });
-
-  /**
-   * Queue the detailed PDF on WhatsApp. "Queued" is all the server can promise —
-   * consent, the 24-hour window and the provider still decide — so the toast
-   * says queued, and says plainly when WhatsApp is not connected at all.
-   */
-  const onSendPdf = () =>
-    sendPdf.mutate(quote.id, {
-      onSuccess: (data) => {
-        if (data.dryRun) {
-          toast.warning("WhatsApp is not connected yet — the PDF will not be delivered.", {
-            description: "It is in the outbox and will show as failed. Download the PDF and share it another way for now.",
-            duration: 8000,
-          });
-        } else {
-          toast.success(`Quote ${quote.ref} PDF queued for WhatsApp`, {
-            description: "Delivery status appears in the outbox.",
-          });
-        }
-      },
-      onError: (e) => toast.error(apiErrorMessage(e, "Could not send the quote PDF.")),
     });
 
   const isRepair = quote.kind === "repair";
@@ -213,15 +193,10 @@ export function QuoteDetailDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {/* Customer block — who the quote is for, with the address the PDF prints */}
-        <div className="rounded-lg border bg-muted/30 p-3 text-sm">
-          <p className="mb-1 text-xs font-medium text-muted-foreground">Customer</p>
-          <p className="font-medium">{quote.customer}</p>
-          <p className="text-muted-foreground">
-            {[quote.phone, quote.customerAddress].filter(Boolean).join(" · ") ||
-              "No phone or address on record"}
-          </p>
-        </div>
+        {/* Customer block — who the quote is for, with the address the PDF
+            prints, and the one place all three of those are corrected. Keyed on
+            the quote so switching rows never shows the last one's draft. */}
+        <QuoteCustomerPanel key={quote.id} quote={quote} />
 
         {portableHere ? (
           <div className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 p-2.5 text-xs">
@@ -501,7 +476,7 @@ export function QuoteDetailDialog({
             <Button
               variant="outline"
               onClick={() => setEditOpen(true)}
-              title="Change the items, weights, rates and discounts. Saving re-prices the quote and withdraws any approval."
+              title="Change the items, weights, rates and discounts. Saving re-prices the quote and bumps its revision."
             >
               <Pencil className="h-4 w-4" />
               Edit quote
@@ -515,14 +490,17 @@ export function QuoteDetailDialog({
             <Download className="h-4 w-4" />
             {downloadPdf.isPending ? "Preparing…" : "Download PDF"}
           </Button>
+          {/* The same offer the New-quote modal makes right after saving, so a
+              quote raised any day can still be sent today, by anybody who can
+              open it. The number is prefilled from the quote and editable. */}
           <Button
             variant="outline"
-            disabled={sendPdf.isPending || !quote.phone}
-            title={!quote.phone ? "This quote has no phone number to send to" : undefined}
-            onClick={onSendPdf}
+            onClick={() =>
+              setSendTarget({ id: quote.id, ref: quote.ref, phone: quote.phone ?? "" })
+            }
           >
             <FileText className="h-4 w-4" />
-            {sendPdf.isPending ? "Queueing…" : "Send PDF on WhatsApp"}
+            Send PDF on WhatsApp
           </Button>
           <Button
             variant="outline"
@@ -540,6 +518,10 @@ export function QuoteDetailDialog({
       {editOpen ? (
         <EditQuoteDialog quote={quote} open onOpenChange={setEditOpen} />
       ) : null}
+
+      {/* Stacks over this one too; this dialog stays open behind it, so a
+          dismissed send leaves the quote where it was. */}
+      <SendQuoteDialog target={sendTarget} onClose={() => setSendTarget(null)} />
     </Dialog>
   );
 }

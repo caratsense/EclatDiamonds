@@ -415,6 +415,49 @@ describe('Quote discounts with approval removed + quote PDF (e2e)', () => {
     await prisma.quoteApprovalSettings.deleteMany({ where: { organisationId: A.org } });
   });
 
+  /* -------------------------------- the whole lifecycle, by the floor role */
+
+  it('a salesperson raises an over-cap quote, edits it, downloads it and sends it — nothing in the path asks anybody', async () => {
+    // 12% is over this rep's 5% cap, and 90k+ is over every threshold a tenant
+    // ever set here. Create, edit, download, send: one person, no decisions.
+    const q = await createQuote('rep', 12);
+
+    const edited = await request(server())
+      .patch(`/quotes/${q.id}`)
+      .set(as('rep'))
+      .send({ discountPercent: 15 })
+      .expect(200);
+    expect(edited.body.revision).toBe(2);
+    // Not sent back to anything: the edit changed the price, not the standing.
+    expect(edited.body.status).toBe('draft');
+
+    const file = await pdf('rep', q.id);
+    expect(file.status).toBe(200);
+    expect(file.headers['content-disposition']).toContain(`${q.ref}-r2.pdf`);
+    const parsed = await pdfParse(file.body as Buffer);
+    expect(parsed.text).not.toMatch(/DRAFT|Approved by a manager/);
+
+    // The send door too — no @Roles on it, and no gate inside sendPdf.
+    const sent = await request(server()).post(`/quotes/${q.id}/send-pdf`).set(as('rep')).send({});
+    expect(sent.status).toBe(201);
+    expect(sent.body).toMatchObject({ queued: true, revision: 2, status: 'queued' });
+
+    // Nothing on the row, and nothing in the audit, records a decision.
+    const row = await prisma.quote.findUniqueOrThrow({ where: { id: q.id } });
+    expect(row.requestedById).toBeNull();
+    expect(row.decidedById).toBeNull();
+    expect(row.approvedTotal).toBeNull();
+    const actions = (
+      await prisma.auditLog.findMany({
+        where: { organisationId: A.org, entityId: q.id },
+        select: { action: true },
+      })
+    ).map((a) => a.action);
+    expect(actions).toContain('quotes.edited');
+    expect(actions).toContain('quotes.pdf_queued');
+    expect(actions.filter((a) => /approv/i.test(a))).toEqual([]);
+  });
+
   /* ------------------------------------------------- one tenant's rule only */
 
   it('a tenant that never configured caps is not given another tenant’s rule', async () => {
@@ -463,6 +506,17 @@ describe('Quote discounts with approval removed + quote PDF (e2e)', () => {
           languageCode: 'en', category: 'utility', approvalStatus: 'approved',
           providerStatus: 'APPROVED', providerSyncedAt: new Date().toISOString(),
         },
+      },
+    });
+    // The connection's own number, customer-facing (purpose null). A connected
+    // WhatsApp account with no number registered against it is now a refusal
+    // with that reason, rather than a queued message nobody can deliver — so
+    // the fixture has to be the shape a real tenant is in.
+    await prisma.integrationAsset.create({
+      data: {
+        organisationId: A.org, integrationId: 'int_qd_wa', kind: 'phone_number',
+        externalId: '770000099001', name: 'Shopfront', isActive: true,
+        ownershipKey: 'whatsapp_cloud:phone_number:770000099001',
       },
     });
 
@@ -562,7 +616,9 @@ describe('quote PDF delivery (worker + provider shape)', () => {
       'org-a',
       CUSTOMER,
       { buffer: PDF, filename: 'QT-1-r1.pdf', mimeType: 'application/pdf', caption: 'Quote QT-1' },
-      { assetId: null, storeId: 's1' },
+      // `audience` is what keeps a customer's quote off the staff line: the
+      // thread's own number and the branch's route are both narrowed by it.
+      { assetId: null, storeId: 's1', audience: 'customer' },
       undefined,
     );
     expect(w.updates.at(-1)!.data).toMatchObject({ status: 'sent', externalId: 'wamid.doc' });

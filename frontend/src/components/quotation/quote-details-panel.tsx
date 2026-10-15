@@ -17,14 +17,20 @@ import { useUpdateQuoteDetails } from "@/lib/queries/quotes";
 import { apiErrorMessage } from "@/lib/utils";
 
 /**
- * Address and payments on a saved quote — the customer's own address under
- * their name, what goes in the Billed To box and the Payment box of the PDF.
- * Editing here never touches the price: the revision stays as it is.
+ * The GST bill-to box and the payments on a saved quote — what prints in the
+ * Billed To and Payment boxes of the PDF. Editing here never touches the
+ * price: the revision stays as it is.
+ *
+ * The customer's OWN address used to be edited here too. That put it a long way
+ * from the name and number it belongs with, and once the customer block became
+ * editable it would have had two homes and two Saves. It now lives only in
+ * `QuoteCustomerPanel`. The bill-to address below is a different thing — the
+ * registered address of whoever the GST invoice is made out to, often a firm
+ * rather than the person standing at the counter.
  */
 export function QuoteDetailsPanel({ quote }: { quote: Quote }) {
   const save = useUpdateQuoteDetails();
   const [editing, setEditing] = useState(false);
-  const [customerAddress, setCustomerAddress] = useState("");
   const [billTo, setBillTo] = useState<QuoteBillTo>({});
   const [payments, setPayments] = useState<QuotePayment[]>([]);
 
@@ -34,7 +40,6 @@ export function QuoteDetailsPanel({ quote }: { quote: Quote }) {
   const received = rows.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
 
   const startEdit = () => {
-    setCustomerAddress(quote.customerAddress ?? "");
     setBillTo({ ...(quote.billTo ?? {}) });
     setPayments(saved.map((p) => ({ ...p })));
     setEditing(true);
@@ -46,8 +51,7 @@ export function QuoteDetailsPanel({ quote }: { quote: Quote }) {
     save.mutate(
       {
         id: quote.id,
-        // Sent trimmed; empty clears it (the PDF falls back to the record).
-        customerAddress: customerAddress.trim(),
+        // The customer block is left out, so it keeps whatever it already has.
         billTo: {
           address: billTo.address ?? "",
           state: billTo.state ?? "",
@@ -63,10 +67,10 @@ export function QuoteDetailsPanel({ quote }: { quote: Quote }) {
       },
       {
         onSuccess: () => {
-          toast.success(`${quote.ref}: address and payments saved`);
+          toast.success(`${quote.ref}: bill-to and payments saved`);
           setEditing(false);
         },
-        onError: (e) => toast.error(apiErrorMessage(e, "Could not save the address and payments.")),
+        onError: (e) => toast.error(apiErrorMessage(e, "Could not save the bill-to and payments.")),
       },
     );
 
@@ -76,7 +80,7 @@ export function QuoteDetailsPanel({ quote }: { quote: Quote }) {
   return (
     <div className="rounded-lg border p-3 text-sm">
       <div className="mb-2 flex items-center justify-between">
-        <p className="font-medium">Address, bill to &amp; payments</p>
+        <p className="font-medium">Bill to &amp; payments</p>
         {!editing ? (
           <Button size="sm" variant="ghost" onClick={startEdit}>
             <Pencil className="h-3.5 w-3.5" />
@@ -88,7 +92,9 @@ export function QuoteDetailsPanel({ quote }: { quote: Quote }) {
       {!editing ? (
         <div className="space-y-2">
           <p className="text-muted-foreground">
-            {billLines.length ? billLines.join(" · ") : "Customer's own address from their record"}
+            {billLines.length
+              ? billLines.join(" · ")
+              : "No separate GST bill-to — the quote prints the customer's own address"}
           </p>
           {saved.map((p, i) => (
             <div key={i} className="flex items-center justify-between gap-2">
@@ -103,13 +109,6 @@ export function QuoteDetailsPanel({ quote }: { quote: Quote }) {
         </div>
       ) : (
         <div className="space-y-3">
-          <Input
-            aria-label="Customer address"
-            placeholder="Customer address (printed under the name)"
-            maxLength={300}
-            value={customerAddress}
-            onChange={(e) => setCustomerAddress(e.target.value)}
-          />
           <div className="grid gap-2 sm:grid-cols-2">
             <Input
               className="sm:col-span-2"

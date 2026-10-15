@@ -103,8 +103,13 @@ export function useUploadQuotePhoto() {
 }
 
 /**
- * PATCH /quotes/:id/details — the customer's address, the bill-to box and the
- * payments after the quote is saved. Not the price: the revision stays as it is.
+ * PATCH /quotes/:id/details — who the quote is for (name, phone, address), the
+ * bill-to box and the payments after the quote is saved. Not the price: the
+ * revision stays as it is, and nothing is re-costed.
+ *
+ * A field left out is left as it is, so a caller may send the customer block
+ * alone (the customer panel) or the bill-to and payments alone (the payments
+ * panel) without one wiping the other.
  */
 export function useUpdateQuoteDetails() {
   const qc = useQueryClient();
@@ -114,6 +119,10 @@ export function useUpdateQuoteDetails() {
       ...body
     }: {
       id: string;
+      /** Correctable after creation; cannot be emptied (the server refuses). */
+      customerName?: string;
+      /** Indian mobile or international (+, 8-15 digits); also not clearable. */
+      phone?: string;
       /** Empty string clears it; left out, it stays. */
       customerAddress?: string;
       billTo?: QuoteBillTo;

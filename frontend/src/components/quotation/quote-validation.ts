@@ -13,6 +13,38 @@
  */
 import type { ItemRow, StoneRow } from "./quote-item-editor";
 import { num, sizeText } from "./quote-item-editor";
+import { isRealName, normalizeCustomerPhone } from "@/lib/utils";
+
+/** The customer block as its boxes hold it, raw. */
+export interface CustomerFields {
+  name: string;
+  phone: string;
+}
+
+/**
+ * What is wrong with the customer block, per field, keyed the way both forms
+ * key their inline errors (`customer`, `phone`). Empty object means it is fine.
+ *
+ * Shared by the New-quote modal and the customer edit on a saved quote, so a
+ * name or number the one accepts is never refused by the other. The rules are
+ * the backend's own: a name must carry a letter (`IsRealName`) and a number
+ * must be 8–15 digits, Indian or with a leading `+` (`IsCustomerPhone`).
+ * Checked here only to say it next to the box instead of waiting for a 400.
+ */
+export function customerProblems(fields: CustomerFields): Record<string, string> {
+  const errors: Record<string, string> = {};
+  const name = fields.name.trim();
+  if (!name) errors.customer = "Customer name is required.";
+  // A name that is only digits or symbols is a mis-key, not a person: the
+  // "46466" lead is why the backend refuses it, and why this does too.
+  else if (!isRealName(name)) errors.customer = "Enter a valid name (letters, not just numbers).";
+
+  const phone = fields.phone.trim();
+  if (!phone) errors.phone = "Phone number is required.";
+  else if (!normalizeCustomerPhone(phone))
+    errors.phone = "Enter a 10-digit mobile, or an international number starting with +.";
+  return errors;
+}
 
 /** The material lists a code is checked against. Empty lists check nothing. */
 export interface ValidationLists {

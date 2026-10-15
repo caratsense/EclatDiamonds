@@ -30,9 +30,15 @@ export const QUOTE_KARATS = [0, 9, 12, 14, 18, 22, 24];
  */
 /** POST /quotes/:id/share — optionally send to a number other than the quote's. */
 export class ShareQuoteDto {
+  /**
+   * Indian or foreign, the same rule as the quote's own phone: the customer the
+   * quote is redirected to is as likely to be overseas as the one it was raised
+   * for, and a stricter rule here would accept the quote and refuse the send.
+   */
   @IsOptional()
   @IsString()
   @MaxLength(16)
+  @IsCustomerPhone()
   to?: string;
 }
 
@@ -385,11 +391,31 @@ export class QuotePaymentDto {
 }
 
 /**
- * Body for PATCH /quotes/:id/details — the address and payments, after the
- * quote is saved. The price is not here: that is PATCH /quotes/:id, which
- * bumps the revision. A field left out is left as it is.
+ * Body for PATCH /quotes/:id/details — who the quote is for, and the address
+ * and payments, after the quote is saved. The price is not here: that is PATCH
+ * /quotes/:id, which bumps the revision. A field left out is left as it is.
  */
 export class UpdateQuoteDetailsDto {
+  /**
+   * Correct the customer's name after saving (client, 14 Oct: the person a
+   * quote is for is one mis-key away from wrong, and raising the quote again
+   * to fix a name loses the price that was agreed). Same rule as on create, so
+   * it can be corrected but never emptied — a quote with nobody's name on it
+   * cannot be printed or handed over.
+   */
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  @IsRealName()
+  customerName?: string;
+
+  /** Correct the number, Indian or foreign. Not clearable, as on create. */
+  @IsOptional()
+  @IsString()
+  @IsCustomerPhone()
+  phone?: string;
+
   /** The customer's own address; empty clears it. Not the GST bill-to below. */
   @IsOptional()
   @IsString()
@@ -420,6 +446,7 @@ export class SendQuotePdfDto {
   @IsOptional()
   @IsString()
   @MaxLength(16)
+  @IsCustomerPhone()
   to?: string;
 
   @IsOptional()

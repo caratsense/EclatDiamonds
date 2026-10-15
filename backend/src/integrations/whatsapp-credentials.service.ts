@@ -47,6 +47,31 @@ import { CredentialCrypto } from '../integration/framework/credential-crypto';
 
 export type CredentialScope = 'tenant' | 'platform_env' | 'none';
 
+/**
+ * WHY no number could be used, for the callers that treat the kinds
+ * differently. The sentence in `reason` is what a person reads; this is what
+ * code may branch on, so nobody has to match on prose.
+ *
+ *   sender_ambiguous — several numbers could carry it and nothing said which.
+ *   sender_audience  — the only numbers available are for the other audience
+ *                      (a customer message with nothing but staff lines).
+ *   no_number        — a connection exists with no number registered on it.
+ *   credential       — a number was chosen, its account's token is missing,
+ *                      expired or unreadable.
+ *   not_connected    — this organisation has no WhatsApp at all.
+ *
+ * The first two are DECISIONS the product refuses to make for a business, and a
+ * caller should say so before it claims to have sent anything. The rest are
+ * states of a half-finished or broken setup, which the outbox reports against
+ * the message and a retry can fix without the sender doing anything again.
+ */
+export type SenderProblem =
+  | 'sender_ambiguous'
+  | 'sender_audience'
+  | 'no_number'
+  | 'credential'
+  | 'not_connected';
+
 export interface WhatsAppSender {
   /** Whether a message can actually be delivered for this organisation. */
   usable: boolean;
@@ -57,6 +82,8 @@ export interface WhatsAppSender {
   integrationId: string | null;
   /** Present when `usable` is false — always a sentence a UI can show. */
   reason: string | null;
+  /** The machine-readable half of `reason`. Null when usable. */
+  code: SenderProblem | null;
   /** True when this organisation is borrowing the platform's number. */
   shared: boolean;
   /**
@@ -86,12 +113,30 @@ export interface WhatsAppSender {
  */
 export type SenderResolution = 'thread' | 'store_route' | 'only_number' | 'platform_env';
 
+/**
+ * WHO a message is for, which decides which KIND of number may carry it.
+ *
+ * `IntegrationAsset.purpose` records what each line is for ('internal' for a
+ * staff operations line, NULL for customer-facing). This is the send-time half
+ * of that: a quotation, a reminder or any other message to a customer must
+ * never leave from the staff line, and not because of a setting somebody
+ * remembered to tick — a customer who receives the business's internal number
+ * replies to it, lands in the DSR bot, and is answered by nobody.
+ *
+ * Omitted means "no constraint", which is what every existing caller gets: the
+ * numbers nobody has classified are customer-facing, so a tenant that never
+ * used the field keeps the behaviour it has today.
+ */
+export type SenderAudience = 'customer' | 'internal';
+
 /** Where a send is going, so the right number can be chosen for it. */
 export interface SenderRoute {
   /** The asset a conversation already belongs to. Highest authority. */
   assetId?: string | null;
   /** The branch the message is on behalf of. */
   storeId?: string | null;
+  /** Who it is for. A customer message is refused rather than sent from a staff line. */
+  audience?: SenderAudience;
 }
 
 /**
@@ -142,7 +187,7 @@ export class WhatsAppCredentialsService {
     // registered first.
     const chosen = await this.chooseAsset(organisationId, route);
     if ('reason' in chosen) {
-      return this.unusable('tenant', chosen.reason, chosen.integrationId ?? null);
+      return this.unusable('tenant', chosen.reason, chosen.integrationId ?? null, chosen.code);
     }
     if (chosen.asset) {
       return this.withToken(organisationId, { ...chosen, asset: chosen.asset });
@@ -161,6 +206,7 @@ export class WhatsAppCredentialsService {
         phoneNumberId: envPhone,
         integrationId: null,
         reason: null,
+        code: null,
         // Surfaced so the UI can state plainly that this number belongs to the
         // platform, not to the tenant.
         shared: true,
@@ -187,6 +233,7 @@ export class WhatsAppCredentialsService {
       'none',
       'No WhatsApp number is connected for this organisation. Connect one under Settings \u2192 Integrations.',
       null,
+      'not_connected',
     );
   }
 
@@ -215,11 +262,27 @@ export class WhatsAppCredentialsService {
    *   4. REFUSE. With several numbers and no route, the honest answer is to not
    *      send and to say which branch needs mapping. The previous behaviour --
    *      picking the oldest -- sent as the wrong branch and said nothing.
+   *
+   * ## The audience cuts across all four
+   *
+   * `route.audience` removes the numbers that may not carry this message AT
+   * EVERY step, including a pinned thread and a configured branch route. It is
+   * not a tie-breaker of last resort: a staff line that a customer's thread
+   * happens to be pinned to is still a staff line, and a branch mapped to one
+   * is a misconfiguration rather than an instruction. With the wrong kind of
+   * number excluded, a two-line tenant (one shopfront, one operations) resolves
+   * a customer send unambiguously with no branch route at all -- which is the
+   * common shape and used to refuse as "2 numbers connected, none mapped".
    */
   private async chooseAsset(
     organisationId: string,
     route: SenderRoute,
-  ): Promise<ChosenSender | { reason: string; integrationId?: string | null }> {
+  ): Promise<
+    ChosenSender | { reason: string; code: SenderProblem; integrationId?: string | null }
+  > {
+    /** Set when a number WAS named for this message but is for the other audience. */
+    let wrongAudience: 'thread' | 'store_route' | null = null;
+
     // -- 1. the thread's own number ----------------------------------------
     if (route.assetId) {
       const pinned = await this.prisma.integrationAsset.findFirst({
@@ -233,15 +296,17 @@ export class WhatsAppCredentialsService {
             status: { notIn: ['disabled'] },
           },
         },
-        select: { id: true, externalId: true, integrationId: true },
+        select: { id: true, externalId: true, integrationId: true, purpose: true },
       });
-      if (pinned) {
+      if (pinned && carries(pinned.purpose, route.audience)) {
         return { asset: pinned, resolvedBy: 'thread', storeId: route.storeId ?? null };
       }
-      // The number this thread arrived on has since been retired, or its account
-      // disabled. Falling through is the lesser harm: the alternative is never
-      // answering the customer at all. `resolvedBy` reports whatever was used
-      // instead, so the substitution is visible rather than silent.
+      if (pinned) wrongAudience = 'thread';
+      // The number this thread arrived on has since been retired, its account
+      // disabled, or it is the wrong kind of line for this message. Falling
+      // through is the lesser harm: the alternative is never answering the
+      // customer at all. `resolvedBy` reports whatever was used instead, so the
+      // substitution is visible rather than silent.
     }
 
     // -- 2. the branch's route ---------------------------------------------
@@ -257,6 +322,7 @@ export class WhatsAppCredentialsService {
               integrationId: true,
               isActive: true,
               organisationId: true,
+              purpose: true,
               integration: { select: { providerCode: true, status: true } },
             },
           },
@@ -276,15 +342,29 @@ export class WhatsAppCredentialsService {
         asset.integration.providerCode === WHATSAPP_PROVIDER_CODE &&
         asset.integration.status !== 'disabled'
       ) {
-        return {
-          asset: {
-            id: asset.id,
-            externalId: asset.externalId,
-            integrationId: asset.integrationId,
-          },
-          resolvedBy: 'store_route',
-          storeId: route.storeId,
-        };
+        if (carries(asset.purpose, route.audience)) {
+          return {
+            asset: {
+              id: asset.id,
+              externalId: asset.externalId,
+              integrationId: asset.integrationId,
+            },
+            resolvedBy: 'store_route',
+            storeId: route.storeId,
+          };
+        }
+        /*
+         * The branch IS mapped -- to a line this message may not use.
+         *
+         * The mapping table is also the inbound half of routing (a staff
+         * message to the operations line has to land in the right branch), so a
+         * route naming the internal number is legitimate and must not be
+         * deleted or refused when it is set. It simply cannot be the answer to
+         * "which number does this customer hear from", and saying that out loud
+         * is the difference between an operator fixing a mapping and an operator
+         * hunting a connection that was never broken.
+         */
+        wrongAudience = 'store_route';
       }
     }
 
@@ -299,12 +379,32 @@ export class WhatsAppCredentialsService {
           status: { notIn: ['disabled'] },
         },
       },
-      select: { id: true, externalId: true, integrationId: true },
+      select: { id: true, externalId: true, integrationId: true, purpose: true },
       orderBy: { createdAt: 'asc' },
     });
+    // Only the numbers that may carry THIS message are candidates. Without the
+    // audience this is every active number, so nothing changes for the callers
+    // that do not name one.
+    const candidates = active.filter((asset) => carries(asset.purpose, route.audience));
 
-    if (active.length === 1) {
-      return { asset: active[0], resolvedBy: 'only_number', storeId: route.storeId ?? null };
+    if (candidates.length === 1) {
+      return { asset: candidates[0], resolvedBy: 'only_number', storeId: route.storeId ?? null };
+    }
+    if (candidates.length === 0 && active.length > 0) {
+      // Numbers exist, and every one of them is for the other audience. This is
+      // a classification problem, not a connection problem, and the two have
+      // completely different fixes.
+      return {
+        code: 'sender_audience',
+        reason:
+          route.audience === 'internal'
+            ? `None of this organisation's ${active.length} WhatsApp numbers is marked as an ` +
+              'internal staff line, so a staff notice has nothing to leave from. Mark the ' +
+              'operations number as internal under Settings → Integrations.'
+            : `All ${active.length} WhatsApp numbers connected to this organisation are marked ` +
+              'as internal staff lines, and a customer must never be messaged from one. Mark ' +
+              'the shopfront number as customer-facing under Settings → Integrations.',
+      };
     }
     if (active.length === 0) {
       // Does the tenant have a connection at all? The distinction matters: one
@@ -319,6 +419,7 @@ export class WhatsAppCredentialsService {
       });
       if (integration) {
         return {
+          code: 'no_number',
           reason:
             'A WhatsApp integration exists but no phone number has been registered against it.',
           integrationId: integration.id,
@@ -331,13 +432,19 @@ export class WhatsAppCredentialsService {
     // Several numbers and nothing said which. The count goes in the sentence
     // because "no sender configured" reads like a missing connection, and the
     // actual state is the opposite -- there are too many to guess between.
+    const kind = route.audience === 'customer' ? 'customer-facing WhatsApp numbers' : 'WhatsApp numbers';
     return {
+      code: 'sender_ambiguous',
       reason:
-        `This organisation has ${active.length} WhatsApp numbers connected and ` +
+        `This organisation has ${candidates.length} ${kind} connected and ` +
         `${
-          route.storeId
-            ? 'this branch has no sender mapped to it'
-            : 'no branch was named for this message'
+          wrongAudience === 'store_route'
+            ? 'this branch is mapped to a number marked as an internal staff line'
+            : wrongAudience === 'thread'
+              ? 'the thread it belongs to is held on a number marked as an internal staff line'
+              : route.storeId
+                ? 'this branch has no sender mapped to it'
+                : 'no branch was named for this message'
         }. ` +
         'Map each branch to the number it sends from under Settings \u2192 Integrations. ' +
         'Nothing is sent until then, because sending from the wrong number reaches the ' +
@@ -366,6 +473,7 @@ export class WhatsAppCredentialsService {
         'tenant',
         'The account that owns this number has no access token saved for it.',
         integrationId,
+        'credential',
       );
     }
     if (credential.expiresAt && credential.expiresAt.getTime() < Date.now()) {
@@ -375,6 +483,7 @@ export class WhatsAppCredentialsService {
           .toISOString()
           .slice(0, 10)}. Replace it to resume sending.`,
         integrationId,
+        'credential',
       );
     }
 
@@ -418,6 +527,7 @@ export class WhatsAppCredentialsService {
         phoneNumberId: chosen.asset.externalId,
         integrationId,
         reason: null,
+        code: null,
         shared: false,
         assetId: chosen.asset.id,
         resolvedBy: chosen.resolvedBy,
@@ -434,6 +544,7 @@ export class WhatsAppCredentialsService {
           e instanceof Error ? e.message : 'unknown error'
         }). It must be re-entered.`,
         integrationId,
+        'credential',
       );
     }
   }
@@ -626,6 +737,7 @@ export class WhatsAppCredentialsService {
     scope: CredentialScope,
     reason: string,
     integrationId: string | null,
+    code: SenderProblem,
   ): WhatsAppSender {
     return {
       usable: false,
@@ -634,10 +746,24 @@ export class WhatsAppCredentialsService {
       phoneNumberId: null,
       integrationId,
       reason,
+      code,
       shared: false,
       assetId: null,
       resolvedBy: null,
       storeId: null,
     };
   }
+}
+
+/**
+ * May a number with this `purpose` carry a message for this audience?
+ *
+ * Decided in TypeScript rather than in the query because the customer-facing
+ * state is NULL (see `IntegrationAsset.purpose`), and a SQL `purpose <>
+ * 'internal'` silently drops every NULL row -- which is every number registered
+ * before the field existed, i.e. all of them in production.
+ */
+function carries(purpose: string | null, audience?: SenderAudience): boolean {
+  if (!audience) return true;
+  return audience === 'internal' ? purpose === 'internal' : purpose !== 'internal';
 }

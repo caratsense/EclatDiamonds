@@ -3,10 +3,13 @@
 import { useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { FileText, MessageCircle } from "lucide-react";
-import { toast } from "sonner";
 
 import { QuoteBuilder } from "@/components/quotation/quote-builder";
 import { QuoteDetailDialog } from "@/components/quotation/quote-detail-dialog";
+import {
+  SendQuoteDialog,
+  type SendQuoteTarget,
+} from "@/components/quotation/send-quote-dialog";
 import { ExcelExportButton } from "@/components/common/excel-export-button";
 import { SectionHeader } from "@/components/section/section-header";
 import { OrdersTimelineView } from "@/components/timelines/orders-timeline-view";
@@ -33,8 +36,6 @@ import {
 } from "@/lib/mock/quotation";
 import { useQuotes } from "@/lib/queries/quotes";
 import { useSession } from "@/store/use-session";
-import { api } from "@/lib/api";
-import { apiErrorMessage } from "@/lib/utils";
 
 const nav = getNavItem("quotation")!;
 
@@ -67,6 +68,8 @@ export default function QuotationPage() {
   } = useQuotes({ includeKaccha });
   const [active, setActive] = useState<Quote | null>(null);
   const [open, setOpen] = useState(false);
+  // The row's send action; null while nothing is being sent.
+  const [sendTarget, setSendTarget] = useState<SendQuoteTarget | null>(null);
   const router = useRouter();
   const pathname = usePathname();
   // The builder is a centred dialog over this list (client mockup, 13 Oct).
@@ -100,26 +103,16 @@ export default function QuotationPage() {
    * The old fallback opened web WhatsApp on whatever account the terminal had
    * logged in, with the price as prefilled text: it could not attach the
    * document, and it read as the feature being broken.
+   *
+   * It now opens the same dialog the New-quote modal and the quote view use, so
+   * the row offers what they offer: the quote's own number, prefilled, with a
+   * chance to change it and a chance to back out. It used to fire the send on
+   * the first tap and carry its own copy of the wording — three copies of one
+   * sentence is three places for it to start claiming more than it should.
    */
-  async function handleSendQuoteWhatsApp(e: React.MouseEvent, q: Quote) {
+  function askToSend(e: React.MouseEvent, q: Quote) {
     e.stopPropagation();
-    try {
-      const { data } = await api.post<{ queued: boolean; dryRun: boolean }>(
-        `/quotes/${q.id}/send-pdf`,
-        {},
-      );
-      if (data.dryRun) {
-        toast.warning("WhatsApp is not connected yet — the PDF will not be delivered.", {
-          description: "Open the quote and use Download PDF to share it another way.",
-        });
-      } else {
-        toast.success(`Quote ${q.ref} PDF queued for WhatsApp`, {
-          description: `${q.customer} · ${q.phone}`,
-        });
-      }
-    } catch (err) {
-      toast.error(apiErrorMessage(err, "The quote could not be sent."));
-    }
+    setSendTarget({ id: q.id, ref: q.ref, phone: q.phone ?? "" });
   }
 
   return (
@@ -276,7 +269,7 @@ export default function QuotationPage() {
                       size="sm"
                       className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/10"
                       title="Send Quotation on WhatsApp"
-                      onClick={(e) => handleSendQuoteWhatsApp(e, q)}
+                      onClick={(e) => askToSend(e, q)}
                     >
                       <MessageCircle className="h-4 w-4 fill-emerald-600/20" />
                       <span className="sr-only">Share on WhatsApp</span>
@@ -313,6 +306,9 @@ export default function QuotationPage() {
         open={open}
         onOpenChange={setOpen}
       />
+
+      {/* The row's send, asked for rather than fired. */}
+      <SendQuoteDialog target={sendTarget} onClose={() => setSendTarget(null)} />
     </>
   );
 }

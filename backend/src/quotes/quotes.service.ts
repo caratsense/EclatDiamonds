@@ -11,6 +11,11 @@ import { AuthUser } from '../common/auth-user';
 import { isSalesScoped } from '../common/sales-scope';
 import { AuditService } from '../common/audit.service';
 import { OmnichannelService } from '../omnichannel/omnichannel.service';
+import {
+  TEMPLATE_REQUIRED_REASON,
+  providerTemplateStatus,
+  templateSendability,
+} from '../omnichannel/omnichannel-policy';
 import { normalizeCustomerPhone } from '../common/contact.util';
 import { renderQuotePdf } from './quote-pdf';
 import { StoreScopeService } from '../common/store-scope.service';
@@ -472,21 +477,7 @@ export class QuotesService {
    */
   async share(user: AuthUser, id: string, toOverride?: string) {
     const quote = await this.get(user, id); // scope + kaccha checks live here
-    /*
-     * The recipient defaults to the quote's own customer, and the person
-     * raising the quote may supply a different number (client, 7 Oct meeting
-     * 2) - a husband's quote sent to the wife's phone is an everyday ask at a
-     * jewellery counter. Validated here as well as in the DTO so a service
-     * caller cannot slip an arbitrary string into a WhatsApp send.
-     */
-    const to = (toOverride ?? '').replace(/\D/g, '');
-    const recipient = to ? (to.length === 10 ? `91${to}` : to) : quote.phone;
-    if (!recipient) {
-      throw new BadRequestException('This quote has no phone number to send to');
-    }
-    if (to && (recipient.length < 12 || recipient.length > 15)) {
-      throw new BadRequestException('Enter a valid 10-digit mobile number');
-    }
+    const recipient = this.recipientFor(quote.phone, toOverride);
 
     // No approval gate: a quotation once created is created (client, 13 Oct).
     const store = await this.prisma.store.findUnique({
@@ -509,17 +500,34 @@ export class QuotesService {
       .filter(Boolean)
       .join('\n');
 
-    // From the branch that RAISED the quote, not one it can be redeemed at.
-    // With several numbers connected an unrouted send is refused rather than
-    // going out as another branch, so the branch has to be named here.
-    const result = await this.whatsapp.sendText(user.organisationId, recipient, body, {
-      storeId: quote.originStoreId,
-    });
+    /*
+     * From the branch that RAISED the quote, not one it can be redeemed at, and
+     * to a CUSTOMER — so the staff operations line is never the number this
+     * leaves from, whatever the branch is mapped to.
+     *
+     * The same two "which number" problems as sendPdf are refused outright,
+     * with the resolver's own sentence: `dryRun` reads to a user as "WhatsApp is
+     * not connected yet", which is the opposite of the truth when the
+     * connection is fine and only the mapping is missing.
+     */
+    const route = { storeId: quote.originStoreId, audience: 'customer' as const };
+    const sender = await this.whatsapp.senderStatus(user.organisationId, route);
+    if (sender.code === 'sender_ambiguous' || sender.code === 'sender_audience') {
+      throw new BadRequestException(
+        sender.reason ?? 'No customer-facing WhatsApp number could be chosen for this branch.',
+      );
+    }
+
+    const result = await this.whatsapp.sendText(user.organisationId, recipient, body, route);
     return {
       delivered: result.delivered,
       dryRun: result.dryRun,
       ref: quote.ref,
       to: result.to,
+      // Why nothing was sent, in the provider's or the resolver's own words.
+      // Dropping it left the screen guessing, and it always guessed "not
+      // connected".
+      ...(result.reason ? { reason: result.reason } : {}),
       ...(result.error ? { error: result.error } : {}),
     };
   }
@@ -543,22 +551,49 @@ export class QuotesService {
    * Queued through the omnichannel outbox rather than sent from here, so it is
    * held to the same consent, STOP, 24-hour window and template rules as any
    * other outbound message, and its delivery state is the provider's answer.
-   * With WhatsApp not connected the message is still queued and its job fails
-   * with the reason; `dryRun` in the response says so up front.
+   * With WhatsApp not connected at all the message is still queued and its job
+   * fails with the reason; `dryRun` in the response says so up front.
+   *
+   * WHICH NUMBER it leaves from is settled BEFORE anything is queued, because
+   * the one answer that must never happen — a customer hearing from the staff
+   * operations line — is a configuration state, not a provider failure, and
+   * queueing a message that cannot legitimately leave only hides it in an
+   * outbox. The refusal carries the resolver's own sentence, which names the
+   * branch or the classification that needs fixing.
    */
   async sendPdf(user: AuthUser, id: string, dto: SendQuotePdfDto) {
     const quote = await this.get(user, id);
-    // Same recipient rule as share(): default to the quote's own customer,
-    // allow the sender to redirect it (husband's quote to the wife's phone),
-    // and re-validate here so a service caller cannot slip in a bad string.
-    const to = (dto.to ?? '').replace(/\D/g, '');
-    const recipient = to ? (to.length === 10 ? `91${to}` : to) : quote.phone;
-    if (!recipient) {
-      throw new BadRequestException('This quote has no phone number to send to');
+    // Same recipient rule as share(): default to the quote's own customer, and
+    // allow the sender to redirect it (husband's quote to the wife's phone).
+    const recipient = this.recipientFor(quote.phone, dto.to);
+
+    /*
+     * The branch that RAISED the quote, sending to a CUSTOMER.
+     *
+     * Asked here rather than left to the delivery job, for the one class of
+     * answer a person has to hear BEFORE they believe the customer got it: a
+     * sender that could not be CHOSEN. Several numbers with nothing saying
+     * which, or nothing but staff lines, is a decision the product refuses to
+     * make on a business's behalf — queueing it would hide that decision in an
+     * outbox nobody is watching, and the sender would read "WhatsApp is not
+     * connected" for a connection that is working perfectly.
+     *
+     * A half-finished or broken setup (no number registered yet, a missing or
+     * expired token) deliberately keeps the queue-and-report behaviour: the
+     * message waits in the outbox with the provider's own reason against it and
+     * a retry sends it once the token is in, which is how a tenant brings a new
+     * number live without re-entering every quote.
+     */
+    const sender = await this.whatsapp.senderStatus(user.organisationId, {
+      storeId: quote.originStoreId,
+      audience: 'customer',
+    });
+    if (sender.code === 'sender_ambiguous' || sender.code === 'sender_audience') {
+      throw new BadRequestException(
+        sender.reason ?? 'No customer-facing WhatsApp number could be chosen for this branch.',
+      );
     }
-    if (to && (recipient.length < 12 || recipient.length > 15)) {
-      throw new BadRequestException('Enter a valid 10-digit mobile number');
-    }
+
     const doc = await this.issuePdf(user, id);
 
     const store = await this.prisma.store.findFirst({
@@ -583,29 +618,52 @@ export class QuotesService {
      * behaves exactly as before: delivered inside the window, held with the
      * reason outside it. An explicit template on the request always wins.
      */
-    const template = dto.templateName
-      ? { name: dto.templateName, languageCode: dto.languageCode, components: undefined }
+    const chosen = dto.templateName
+      ? {
+          template: { name: dto.templateName, languageCode: dto.languageCode, components: undefined },
+          unavailable: null,
+        }
       : await this.quotationTemplate(user.organisationId, {
           customer: quote.customer,
           ref: quote.ref,
           total: inr(doc.grandTotal),
           validUntil: quote.validUntil || 'the quote date',
         });
+    const template = chosen.template;
 
-    const queued = await this.omnichannel.queueToContact(
-      user,
-      {
-        to: recipient,
-        purpose: 'service',
-        body: caption,
-        templateName: template?.name,
-        languageCode: template?.languageCode,
-        templateComponents: template?.components,
-      },
-      { storageKey: doc.storageKey, filename: doc.filename, mimeType: 'application/pdf' },
-      // `get` above already held the caller to this quote.
-      { recordAuthorised: true },
-    );
+    let queued: Awaited<ReturnType<OmnichannelService['queueToContact']>>;
+    try {
+      queued = await this.omnichannel.queueToContact(
+        user,
+        {
+          to: recipient,
+          purpose: 'service',
+          body: caption,
+          templateName: template?.name,
+          languageCode: template?.languageCode,
+          templateComponents: template?.components,
+        },
+        { storageKey: doc.storageKey, filename: doc.filename, mimeType: 'application/pdf' },
+        // `get` above already held the caller to this quote.
+        { recordAuthorised: true },
+      );
+    } catch (error) {
+      /*
+       * "An approved template is required" is true but not actionable on its
+       * own: the business HAS an approved quotation template at Meta, and the
+       * reason it is not being used is almost always that the hourly template
+       * sync has never recorded it here. Say both halves, so the person reads
+       * the step to take rather than going looking for a template that exists.
+       */
+      if (
+        chosen.unavailable &&
+        error instanceof BadRequestException &&
+        error.message === TEMPLATE_REQUIRED_REASON
+      ) {
+        throw new BadRequestException(`${TEMPLATE_REQUIRED_REASON} ${chosen.unavailable}`);
+      }
+      throw error;
+    }
 
     await this.audit.record(user, {
       action: 'quotes.pdf_queued',
@@ -624,22 +682,48 @@ export class QuotesService {
       status: queued.message.status,
       deduplicated: queued.deduplicated,
       policy: queued.policy,
-      // Not connected means the job will fail and say why — never "sent".
-      dryRun: !(await this.whatsapp.enabledFor(user.organisationId)),
+      /**
+       * Whether the approved quotation template is carrying this PDF, and when
+       * it is not, WHY — in the words a person can act on. Reported even on a
+       * success, because inside the 24-hour window the send goes out either way
+       * and "it worked today" is how a missing sync stays unnoticed until the
+       * first customer who has not written in for a day.
+       */
+      template: template ? { name: template.name, languageCode: template.languageCode ?? 'en' } : null,
+      templateUnavailable: chosen.unavailable,
+      // Not connected means the job will fail and say why — never "sent". Asked
+      // for THIS branch and audience, not for the tenant in general: the
+      // general question cannot be answered once several numbers are connected,
+      // and answering it wrongly warned "WhatsApp is not connected" at every
+      // multi-number tenant whose sends were in fact going out.
+      dryRun: !sender.usable,
+      /** Why it will not be delivered, when it will not. The real sentence. */
+      senderReason: sender.usable ? null : sender.reason,
     };
   }
 
   /**
-   * The tenant's approved quotation template, with this quote's body values,
-   * or null when it is not synced/approved yet - the caller then sends the
-   * plain document, exactly the pre-template behaviour. The name is the one
-   * submitted to Meta on 10 Oct; the body is five parameters:
-   * {{1}} customer, {{2}} ref, {{3}} business, {{4}} total, {{5}} valid-until.
+   * The tenant's approved quotation template with this quote's body values, or
+   * the sentence saying why there is none.
+   *
+   * Both halves are returned because the caller has to do two different things
+   * with them: attach the template when it is there, and — if the outbox then
+   * refuses the send for want of one — tell the person why the business's own
+   * approved template was not used. Returning only null made that refusal read
+   * as "no template exists", which is wrong: it exists at Meta and has not been
+   * read into this database.
+   *
+   * The name is the one submitted to Meta on 10 Oct; the body is five
+   * parameters: {{1}} customer, {{2}} ref, {{3}} business, {{4}} total,
+   * {{5}} valid-until, which is the order the approved wording uses.
    */
   private async quotationTemplate(
     organisationId: string,
     values: { customer: string; ref: string; total: string; validUntil: string },
-  ): Promise<{ name: string; languageCode: string; components: unknown[] } | null> {
+  ): Promise<{
+    template: { name: string; languageCode: string; components: unknown[] } | null;
+    unavailable: string | null;
+  }> {
     const name = 'quotation_pdf_v1';
     const asset = await this.prisma.integrationAsset.findFirst({
       where: {
@@ -649,34 +733,87 @@ export class QuotesService {
         isActive: true,
         integration: { providerCode: 'whatsapp_cloud', status: { notIn: ['disabled'] } },
       },
-      select: { metadata: true, lastVerifiedAt: true },
+      select: { metadata: true, lastVerifiedAt: true, isActive: true },
     });
-    if (!asset) return null;
-    // The same bar queue() applies (templateSendability): the PROVIDER said
-    // APPROVED, and said it recently enough that the sync has seen it. A
-    // template this misses is left off, and the send stays a plain document.
-    const metadata = asset.metadata as { providerStatus?: string } | null;
-    if (metadata?.providerStatus !== 'APPROVED' || !asset.lastVerifiedAt) return null;
+    if (!asset) {
+      return {
+        template: null,
+        unavailable:
+          `The approved WhatsApp template "${name}" has not been recorded for this ` +
+          'organisation yet. Head office can read it in now with Settings → Integrations → ' +
+          'Synchronise templates; the hourly sync does it on its own once the WhatsApp ' +
+          'connection names the WhatsApp Business Account id.',
+      };
+    }
+    /*
+     * The SAME bar queue() applies (templateSendability): the provider said
+     * APPROVED, recently enough that the sync has seen it, on an active row.
+     *
+     * Using the weaker test here (approved, ever verified) was a real trap:
+     * attaching a template whose verdict has gone stale makes queue() refuse
+     * the send outright, so a 25-hour-old sync turned a send that would have
+     * worked inside the window into a hard failure.
+     */
+    const metadata = (asset.metadata ?? {}) as { providerStatus?: unknown };
+    const verdict = templateSendability({
+      isActive: asset.isActive,
+      providerStatus: providerTemplateStatus(metadata.providerStatus),
+      providerSyncedAt: asset.lastVerifiedAt ?? null,
+    });
+    if (!verdict.sendable) {
+      return { template: null, unavailable: `The "${name}" template is not usable: ${verdict.reason}` };
+    }
     const org = await this.prisma.organisation.findUnique({
       where: { id: organisationId },
       select: { name: true, legalName: true },
     });
     return {
-      name,
-      languageCode: 'en',
-      components: [
-        {
-          type: 'body',
-          parameters: [
-            values.customer,
-            values.ref,
-            org?.legalName || org?.name || 'our store',
-            values.total,
-            values.validUntil,
-          ].map((text) => ({ type: 'text', text })),
-        },
-      ],
+      template: {
+        name,
+        languageCode: 'en',
+        components: [
+          {
+            type: 'body',
+            parameters: [
+              values.customer,
+              values.ref,
+              org?.legalName || org?.name || 'our store',
+              values.total,
+              values.validUntil,
+            ].map((text) => ({ type: 'text', text })),
+          },
+        ],
+      },
+      unavailable: null,
     };
+  }
+
+  /**
+   * The number this quote is actually messaged on.
+   *
+   * One rule for both send doors. The stored phone is already canonical from
+   * create/update (`+<country><subscriber>` for a foreign customer, a bare
+   * Indian mobile otherwise), and a redirect typed at send time goes through
+   * the SAME normaliser — which is what keeps the leading `+`. Stripping it, as
+   * this used to, left a foreign number as bare digits, and the India-first
+   * normaliser downstream then refused it as "not a usable WhatsApp number":
+   * the quote accepted the customer (client, 13 Oct) and then could not reach
+   * them.
+   */
+  private recipientFor(quotePhone: string, override?: string): string {
+    const typed = (override ?? '').trim();
+    const raw = typed || quotePhone;
+    if (!raw) {
+      throw new BadRequestException('This quote has no phone number to send to');
+    }
+    const normalised = normalizeCustomerPhone(raw);
+    if (!normalised) {
+      throw new BadRequestException(
+        'Enter a 10-digit Indian mobile number, or a number outside India with its country ' +
+          'code and a leading +.',
+      );
+    }
+    return normalised;
   }
 
   /** Render the PDF for the quote's current revision, and keep a private copy. */
@@ -755,9 +892,6 @@ export class QuotesService {
       makingDiscountPercent: view.makingDiscountPercent,
       stoneDiscountPercent: view.stoneDiscountPercent,
       totals: view.totals,
-      // Approval was removed on 13 Oct; decisions given before that stay in
-      // the audit log and on the quote's columns, not on the document.
-      approval: null,
       generatedAt: new Date(),
     });
 
@@ -862,9 +996,14 @@ export class QuotesService {
   }
 
   /**
-   * PATCH /quotes/:id/details — the customer's address and payments, after the
-   * quote is saved. Not the price: no revision bump, and allowed after the
-   * quote became an order, since money often comes in after that.
+   * PATCH /quotes/:id/details — who the quote is for (name, phone, address) and
+   * its payments, after the quote is saved. Not the price: no revision bump,
+   * and allowed after the quote became an order, since money often comes in
+   * after that — and so does the spelling of the name for the certificate.
+   *
+   * Sharing or downloading the quote does not close this off. The customer the
+   * quote was sent to is exactly the one most likely to say the name or the
+   * flat number is wrong, and a correction must not cost the agreed price.
    */
   async updateDetails(user: AuthUser, id: string, dto: UpdateQuoteDetailsDto) {
     const view = await this.get(user, id); // same visibility as the quote screen
@@ -881,10 +1020,16 @@ export class QuotesService {
           .map(([k, v]) => [k, typeof v === 'string' ? v.trim() : v])
           .filter(([, v]) => v !== '' && v != null),
       );
+    // Normalised the same way create does it, so an edited number is stored in
+    // the one dialable shape the sender and the outbox already expect.
+    const phone =
+      dto.phone === undefined ? undefined : normalizeCustomerPhone(dto.phone) ?? dto.phone;
     const updated = await this.prisma.quote.update({
       where: { id },
       data: {
         // A field left out is left as it is; sent empty, it clears.
+        ...(dto.customerName !== undefined ? { customerName: dto.customerName.trim() } : {}),
+        ...(phone !== undefined ? { phone } : {}),
         ...(dto.customerAddress !== undefined
           ? { customerAddress: dto.customerAddress.trim() || null }
           : {}),
@@ -893,16 +1038,25 @@ export class QuotesService {
       },
       include: { assignedRep: true, lines: true, redeemableStores: true, photos: true },
     });
+    // The quote stays on the customer it was joined to at creation, even when
+    // the phone changes. Re-resolving here would let one corrected digit move a
+    // priced quote onto a different person's timeline without a word — the same
+    // hazard create() refuses to take when a quote comes from a lead. A quote
+    // raised against the wrong customer is re-raised, not re-pointed.
     await this.audit.record(user, {
       action: 'quotes.details_edited',
       entityType: 'Quote',
       entityId: id,
       storeId: view.originStoreId,
-      summary: `Quote ${view.ref}: address / payments edited`,
+      summary: `Quote ${view.ref}: customer / payments edited`,
       metadata: {
+        previousCustomerName: view.customer,
+        previousPhone: view.phone,
         previousCustomerAddress: view.customerAddress,
         previousBillTo: view.billTo,
         previousPayments: view.payments,
+        customerName: updated.customerName,
+        phone: updated.phone,
         customerAddress: updated.customerAddress,
         billTo: updated.billTo,
         payments: updated.payments,
@@ -1081,7 +1235,8 @@ export class QuotesService {
           dto.grossWeightG != null ? new Prisma.Decimal(dto.grossWeightG) : null,
         validUntil: dto.validUntil ? new Date(dto.validUntil) : null,
         ...totalsData(t),
-        // The discount is judged against THIS person's cap.
+        // Who priced it, for the record — not for a cap to judge: no discount
+        // holds a quote any more (client, 13 Oct).
         pricedById: user.id,
         pricedByRole: user.role,
         lines: { create: dto.lines.map(lineData) },

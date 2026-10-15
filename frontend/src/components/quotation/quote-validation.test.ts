@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   blankStone,
+  customerProblems,
   hasUnsavedEntries,
   itemProblem,
   realStones,
@@ -142,6 +143,63 @@ describe("the other things that stop a save", () => {
 
   it("catches a size that is too long", () => {
     expect(check([item({ size: "x".repeat(40), stones: [GOOD] })])).toContain("size is too long");
+  });
+});
+
+/**
+ * Who the quote is for, judged ONE way.
+ *
+ * The New-quote modal and the customer edit on a saved quote both ask this, so
+ * a name or number the one accepts can never be refused by the other — which is
+ * how a customer ends up half-corrected on a quote that has already gone out.
+ * The rules are the backend's own (`IsRealName`, `IsCustomerPhone`); they are
+ * checked here only so the complaint lands next to the box instead of arriving
+ * as a 400.
+ */
+describe("what the customer block will accept", () => {
+  it("passes a plain name with a plain Indian mobile", () => {
+    expect(customerProblems({ name: "Meera Iyer", phone: "9812370042" })).toEqual({});
+  });
+
+  it("passes an international number, because the business quotes overseas", () => {
+    expect(customerProblems({ name: "Sophie Laurent", phone: "+442079460958" })).toEqual({});
+  });
+
+  it("names the field that is empty, one message each", () => {
+    expect(customerProblems({ name: "", phone: "" })).toEqual({
+      customer: "Customer name is required.",
+      phone: "Phone number is required.",
+    });
+  });
+
+  it("treats whitespace as empty — it is not a name anyone typed on purpose", () => {
+    expect(customerProblems({ name: "   ", phone: "  " }).customer).toBe(
+      "Customer name is required.",
+    );
+  });
+
+  it("refuses a name that is only digits, the way the server does", () => {
+    // The "46466" lead: a reference number mis-keyed into the name box.
+    expect(customerProblems({ name: "46466", phone: "9812370042" }).customer).toBe(
+      "Enter a valid name (letters, not just numbers).",
+    );
+    expect(customerProblems({ name: "- / .", phone: "9812370042" }).customer).toBeTruthy();
+  });
+
+  it("accepts a name that merely contains digits", () => {
+    expect(customerProblems({ name: "Flat 2 Mehta", phone: "9812370042" }).customer).toBeUndefined();
+  });
+
+  it("refuses a number that is short, long or not a number at all", () => {
+    const bad = "Enter a 10-digit mobile, or an international number starting with +.";
+    for (const phone of ["12345", "call me later", "1234567890123456", "9812370042x"]) {
+      expect(customerProblems({ name: "Meera", phone }).phone).toBe(bad);
+    }
+  });
+
+  it("refuses a bare foreign number with no + to say it is one", () => {
+    // Without the +, 442079460958 reads as an Indian mobile and is not one.
+    expect(customerProblems({ name: "Sophie", phone: "442079460958" }).phone).toBeTruthy();
   });
 });
 
