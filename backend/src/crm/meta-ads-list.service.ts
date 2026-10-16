@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 import { META_ADS_PROVIDER_CODE } from '../integrations/meta-asset-ownership.service';
-import { MetaGraphClient } from '../integrations/meta-graph.client';
+import { MetaGraphClient, MetaGraphError } from '../integrations/meta-graph.client';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface MetaAdChoice {
@@ -109,31 +109,63 @@ export class MetaAdsListService {
   }
 
   private async fetch(organisationId: string): Promise<MetaAdsListing> {
-    const integration = await this.prisma.integration.findFirst({
+    /*
+     * A tenant can hold more than one Meta connection -- an abandoned first
+     * attempt beside the one somebody actually finished. Taking the OLDEST
+     * read the abandoned one and reported "Meta did not answer" while the
+     * live connection sat there working, so the pick is now made on evidence:
+     * newest first, and only a connection that has BOTH a stored credential
+     * and a registered ad account can serve the picker.
+     */
+    const candidates = await this.prisma.integration.findMany({
       where: {
         organisationId,
         providerCode: META_ADS_PROVIDER_CODE,
         status: { not: 'disabled' },
       },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { createdAt: 'desc' },
       select: { id: true },
     });
-    if (!integration) {
+    if (!candidates.length) {
       return unavailable('Meta Ads is not connected for this organisation.');
     }
 
-    const account = await this.prisma.integrationAsset.findFirst({
-      where: {
-        organisationId,
-        integrationId: integration.id,
-        kind: 'ad_account',
-        isActive: true,
-      },
-      orderBy: { createdAt: 'asc' },
-      select: { externalId: true },
-    });
-    if (!account) {
-      return unavailable('No Meta ad account is registered on the connection.');
+    let integration: { id: string } | null = null;
+    let account: { externalId: string } | null = null;
+    let sawAccountWithoutCredential = false;
+    for (const candidate of candidates) {
+      const [asset, credential] = await Promise.all([
+        this.prisma.integrationAsset.findFirst({
+          where: {
+            organisationId,
+            integrationId: candidate.id,
+            kind: 'ad_account',
+            isActive: true,
+          },
+          orderBy: { createdAt: 'desc' },
+          select: { externalId: true },
+        }),
+        // Presence only; the ciphertext is never selected.
+        this.prisma.integrationCredential.findFirst({
+          where: { organisationId, integrationId: candidate.id, kind: 'access_token' },
+          select: { id: true },
+        }),
+      ]);
+      if (!asset) continue;
+      if (!credential) {
+        sawAccountWithoutCredential = true;
+        continue;
+      }
+      integration = candidate;
+      account = asset;
+      break;
+    }
+    if (!integration || !account) {
+      return unavailable(
+        sawAccountWithoutCredential
+          ? 'The Meta connection holding the ad account has no access token saved.'
+          : 'No Meta ad account is registered on the connection.',
+      );
     }
     const accountId = account.externalId.trim().replace(/^act_/i, '');
     if (!/^[1-9]\d{4,31}$/.test(accountId)) {
@@ -190,7 +222,17 @@ export class MetaAdsListService {
       this.logger.warn(
         `Could not list Meta campaigns: ${error instanceof Error ? error.message : String(error)}`,
       );
-      return unavailable('Meta did not answer. Type the campaign name or paste the ad link instead.');
+      /*
+       * The provider's own sentence, not a guess. MetaGraphError messages are
+       * already redacted and length-bounded, and one generic line here is what
+       * made an unsaved token look like a Meta outage.
+       */
+      const detail = error instanceof MetaGraphError ? error.message : null;
+      return unavailable(
+        detail
+          ? `Meta could not be read: ${detail}`
+          : 'Meta did not answer. Type the campaign name or paste the ad link instead.',
+      );
     }
   }
 
