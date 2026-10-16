@@ -50,6 +50,26 @@ const DEFAULT_AI_DAILY_LIMIT = 200;
 const AI_DAILY_LIMIT_KEY = 'crmAiAutoSendDailyLimit';
 /** The id the walk-in conversation carries in place of a campaign rule's. */
 const WALK_IN_ID = '__walk_in__';
+/**
+ * What a campaign says when it runs out of questions and has written no
+ * closing of its own. Neutral on purpose: it promises a colleague and nothing
+ * about price, stock or timing that the owner did not approve.
+ */
+const DEFAULT_CLOSING = 'Thank you! A colleague will reply to you right here shortly.';
+
+/**
+ * One question as the customer reads it.
+ *
+ * Options ride INSIDE the sentence — "Which carat size — under 1, 1 to 1.5,
+ * above 1.5?" — never as buttons or a numbered menu (client, 12 Oct). They are
+ * hints about what the shop can discuss, not a form to fill in, and the
+ * customer answers in their own words either way.
+ */
+function phraseQuestion(question: { text: string; options?: string[] }): string {
+  const text = question.text.trim();
+  if (!question.options?.length) return text;
+  return `${text.replace(/\?\s*$/, '')} — ${question.options.join(', ')}?`;
+}
 
 @Injectable()
 export class CampaignBotService {
@@ -179,6 +199,7 @@ export class CampaignBotService {
       questions: d.questions,
       aiContext: d.aiContext,
       aiGuardrails: d.aiGuardrails,
+      closingMessage: d.closingMessage,
       aiReplies: d.aiReplies,
     };
   }
@@ -201,6 +222,14 @@ export class CampaignBotService {
     handoff?: { reason: string; note?: string };
     /** Set on the campaign's first reply: record it as `payload.campaignOpener`. */
     openerFor?: string;
+    /**
+     * Set when this turn ASKED one of the campaign's questions: record it as
+     * `payload.campaignQuestion`. That stamp is the whole of the walker's
+     * memory — how far a thread has got is read back off its own messages, so
+     * a restart, a redelivered webhook or a second worker cannot lose the
+     * place or ask the same question twice.
+     */
+    askedQuestion?: { rule: string; index: number };
   }> {
     // An explicit ask for a person beats everything, exactly as it does in the
     // scripted flow. The model could handle it; a deterministic check cannot
@@ -234,33 +263,28 @@ export class CampaignBotService {
       const opener = rule.firstReply;
       const first = rule.questions?.[0];
       const alreadyAsks = opener.trimEnd().endsWith('?');
-      // The opener's question is plain text. Options, when given, ride inside
-      // the sentence — never as buttons or a numbered list.
-      const firstQuestion = first
-        ? first.options?.length
-          ? `${first.text.replace(/\?\s*$/, '')} — ${first.options.join(', ')}?`
-          : first.text
-        : null;
+      const firstQuestion = first ? phraseQuestion(first) : null;
+      // An opener that already ends in a question keeps its own; the
+      // configured first question is then asked on the next turn instead of
+      // being lost, which is why the stamp is conditional.
+      const asksNow = Boolean(firstQuestion) && !alreadyAsks;
       return {
         authorType: 'bot',
-        text: firstQuestion && !alreadyAsks ? `${opener}\n\n${firstQuestion}` : opener,
+        text: asksNow ? `${opener}\n\n${firstQuestion}` : opener,
         openerFor: rule.id,
+        ...(asksNow ? { askedQuestion: { rule: rule.id, index: 0 } } : {}),
       };
     }
 
     // ── The conversation ────────────────────────────────────────────────────
     // AI replies are an explicit choice per campaign (client, 12 Oct), and off
-    // unless chosen. Off, the opener was the campaign's whole script: the very
-    // next message goes to a person, with the campaign named so they know what
-    // was promised.
+    // unless chosen. Off, the campaign is NOT finished after the opener: it
+    // asks the questions its owner wrote, one at a time, and only then goes to
+    // a person (client, 16 Oct — "each question should be asked after a user
+    // answers first then second"). No model is involved on this path, so a
+    // deployment with no AI provider still runs its scripts in full.
     if (rule.aiReplies !== true) {
-      return {
-        authorType: 'bot',
-        text: 'Thank you! A colleague will reply to you right here shortly.',
-        handoff: {
-          reason: `AI replies are off for campaign "${rule.name}" — a person continues after the first reply.`,
-        },
-      };
+      return this.scriptedTurn(organisationId, conversationId, rule);
     }
 
     // Complaints, legal threats and opt-outs never reach a model; same screen
@@ -356,6 +380,77 @@ export class CampaignBotService {
     }
 
     return { authorType: 'ai', text: reply.text };
+  }
+
+  /**
+   * One turn of a campaign that does NOT use the assistant.
+   *
+   * The opener has already gone. Each customer message moves the script on by
+   * exactly one question, in the order its owner wrote them, and when they run
+   * out the campaign closes in its own words and the thread goes to a person
+   * with every answer already in it.
+   *
+   * Deliberately deterministic. A client can read their own script and know
+   * precisely what a customer will see, which is worth more on an ad they are
+   * paying for than a fluent answer nobody predicted — and it works with no AI
+   * provider configured at all.
+   */
+  private async scriptedTurn(
+    organisationId: string,
+    conversationId: string,
+    rule: AdSetAutomationRule,
+  ): Promise<{
+    text?: string;
+    authorType: 'bot' | 'ai';
+    handoff?: { reason: string; note?: string };
+    askedQuestion?: { rule: string; index: number };
+  }> {
+    const questions = rule.questions ?? [];
+    const asked = await this.questionsAsked(organisationId, conversationId, rule.id);
+    const next = questions[asked];
+    if (next) {
+      return {
+        authorType: 'bot',
+        text: phraseQuestion(next),
+        askedQuestion: { rule: rule.id, index: asked },
+      };
+    }
+
+    // Out of questions — or there never were any, which is the behaviour every
+    // campaign had before this walker existed.
+    return {
+      authorType: 'bot',
+      text: rule.closingMessage?.trim() || DEFAULT_CLOSING,
+      handoff: {
+        reason: questions.length
+          ? `Campaign "${rule.name}" asked all ${questions.length} of its questions; a person continues.`
+          : `Campaign "${rule.name}" has no questions after its first reply; a person continues.`,
+      },
+    };
+  }
+
+  /**
+   * How many of THIS campaign's questions this thread has already been asked.
+   *
+   * Counted off the thread rather than held in a session row: the questions go
+   * out in order and each is stamped, so the count IS the next index. A failed
+   * send is not counted, so a question the customer never received is asked
+   * again rather than skipped.
+   */
+  private async questionsAsked(
+    organisationId: string,
+    conversationId: string,
+    ruleId: string,
+  ): Promise<number> {
+    return this.prisma.message.count({
+      where: {
+        organisationId,
+        conversationId,
+        direction: 'outbound',
+        status: { not: 'failed' },
+        payload: { path: ['campaignQuestion', 'rule'], equals: ruleId },
+      },
+    });
   }
 
   /** Why no more generated replies may go out now, or null. */

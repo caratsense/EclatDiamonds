@@ -132,6 +132,7 @@ const EMPTY: Omit<AdSetAutomationRule, "id"> = {
   adLink: "",
   firstReply: "",
   questions: [],
+  closingMessage: "",
   // Off until somebody chooses it, as on the server.
   aiReplies: false,
 };
@@ -203,16 +204,30 @@ export function CampaignScriptsConfig() {
     // "legacy" sentence (matches exactly as stored, no editor) rather than a
     // fourth mode, and the link field is cleared so it cannot shadow the pick.
     setAppliesTo("legacy");
-    setDraft((d) => ({
-      ...d,
-      matchField: "ad_id",
-      matchValue: ad.id,
-      adLink: "",
-      // One ad can reach us as its ad id, its page-post id or its Instagram
-      // media id. Keeping all of them is what makes the rule fire whichever
-      // one the referral carries.
-      adAliases: ad.aliasIds ?? [],
-    }));
+    setDraft((d) => {
+      /*
+       * One ad can reach us as its ad id, its page-post id or its Instagram
+       * media id, and the picker reads those off the ad's creative.
+       *
+       * They are MERGED, never replaced, when the pick is the ad already
+       * stored. A referral can also carry an id that is on none of the
+       * creative's fields — one was found in the logs on 16 Oct — and such ids
+       * are added by hand. Overwriting the list meant reopening a campaign and
+       * touching the dropdown silently deleted them, and the ad stopped
+       * matching again with nothing on screen to say why.
+       */
+      const kept = d.matchField === "ad_id" && d.matchValue === ad.id ? (d.adAliases ?? []) : [];
+      const merged = [...kept, ...(ad.aliasIds ?? [])].filter(
+        (id, i, all) => id && all.indexOf(id) === i,
+      );
+      return {
+        ...d,
+        matchField: "ad_id",
+        matchValue: ad.id,
+        adLink: "",
+        adAliases: merged.slice(0, 8),
+      };
+    });
   }
 
   function openNew() {
@@ -574,12 +589,29 @@ export function CampaignScriptsConfig() {
 
             <QuestionsEditor rows={questionRows} onChange={setQuestionRows} />
 
+            <div className="grid gap-1.5">
+              <Label htmlFor="camp-closing">Closing message — after the last question</Label>
+              <Textarea
+                id="camp-closing"
+                rows={2}
+                maxLength={600}
+                value={draft.closingMessage ?? ""}
+                placeholder="e.g. Thank you! Our Bandra team will come back to you right here with options."
+                onChange={(e) => setDraft((d) => ({ ...d, closingMessage: e.target.value }))}
+              />
+              <p className="text-xs text-muted-foreground">
+                Sent once every question has been answered, just before the
+                thread goes to a colleague. Leave empty for a neutral line.
+              </p>
+            </div>
+
             <div className="flex items-center justify-between rounded-lg border p-3">
               <div>
                 <p className="text-sm font-medium">AI replies</p>
                 <p className="text-xs text-muted-foreground">
                   On, the assistant answers follow-ups from the brief below.
-                  Off, the first reply still sends — then a colleague takes over.
+                  Off, the campaign still asks its questions one at a time —
+                  then a colleague takes over.
                 </p>
               </div>
               <div role="radiogroup" aria-label="AI replies" className="flex rounded-md border p-0.5">
@@ -766,6 +798,7 @@ interface WalkInDraft {
   questions: QuestionDraft[];
   aiContext: string;
   aiGuardrails: string;
+  closingMessage: string;
   aiReplies: boolean;
 }
 
@@ -795,6 +828,7 @@ export function WalkInConversationConfig() {
           questions: toQuestionDrafts(data.questions),
           aiContext: data.aiContext ?? "",
           aiGuardrails: data.aiGuardrails ?? "",
+          closingMessage: data.closingMessage ?? "",
           aiReplies: data.aiReplies === true,
         }
       : null);
@@ -817,6 +851,7 @@ export function WalkInConversationConfig() {
         questions: fromQuestionDrafts(form.questions),
         aiContext: form.aiContext.trim() || null,
         aiGuardrails: form.aiGuardrails.trim() || null,
+        closingMessage: form.closingMessage.trim() || null,
         aiReplies: form.aiReplies,
       },
       {
@@ -905,12 +940,26 @@ export function WalkInConversationConfig() {
           disabled={!canEdit}
         />
 
+        <div className="grid gap-1.5">
+          <Label htmlFor="walkin-closing">Closing message — after the last question</Label>
+          <Textarea
+            id="walkin-closing"
+            rows={2}
+            maxLength={600}
+            disabled={!canEdit}
+            value={form.closingMessage}
+            placeholder="e.g. Thank you! One of our team will reply right here shortly."
+            onChange={(e) => edit({ closingMessage: e.target.value })}
+          />
+        </div>
+
         <div className="flex items-center justify-between rounded-lg border p-3">
           <div>
             <p className="text-sm font-medium">AI replies</p>
             <p className="text-xs text-muted-foreground">
               On, the assistant answers follow-ups from the brief below.
-              Off, the first reply still sends — then a colleague takes over.
+              Off, the script still asks its questions one at a time — then a
+              colleague takes over.
             </p>
           </div>
           <div role="radiogroup" aria-label="AI replies" className="flex rounded-md border p-0.5">
