@@ -8,6 +8,13 @@ export interface MetaAdChoice {
   id: string;
   name: string;
   status: string;
+  /**
+   * The other ids this same ad can arrive as on a Click-to-WhatsApp referral:
+   * its page-post id and its Instagram media id. Meta does not always send the
+   * ad id Ads Manager shows, so a rule pinned to one id alone can silently
+   * never match. Saved with the rule and matched alongside it.
+   */
+  aliasIds: string[];
 }
 
 export interface MetaCampaignChoice {
@@ -180,7 +187,8 @@ export class MetaAdsListService {
         {
           fields:
             `id,name,status,ads.limit(${AD_LIMIT})` +
-            '{id,name,status,creative{call_to_action_type}}',
+            '{id,name,status,creative{call_to_action_type,effective_object_story_id,' +
+            'effective_instagram_media_id}}',
           // Running campaigns only — the whole point of the picker. Paused and
           // archived ones would outnumber the live ones within a season.
           effective_status: '["ACTIVE"]',
@@ -203,7 +211,12 @@ export class MetaAdsListService {
           const adStatus = text(ad?.status);
           if (!adId || !adName || adStatus !== 'ACTIVE') continue;
           if (!toWhatsApp(text(ad?.creative?.call_to_action_type))) continue;
-          ads.push({ id: adId, name: adName, status: adStatus });
+          ads.push({
+            id: adId,
+            name: adName,
+            status: adStatus,
+            aliasIds: aliasesFor(ad?.creative),
+          });
         }
         // A campaign with no WhatsApp ad cannot start a conversation, so it is
         // not offered -- picking it would create a rule that never matches.
@@ -246,6 +259,29 @@ function unavailable(reason: string): MetaAdsListing {
   return { available: false, reason, campaigns: [] };
 }
 
+/**
+ * Every other id the referral might carry for this ad. A page-post id arrives
+ * both whole (`<page>_<post>`) and as the post half alone, so both are kept.
+ */
+function aliasesFor(creative: GraphCreative | undefined): string[] {
+  const out: string[] = [];
+  const story = text(creative?.effective_object_story_id);
+  if (story) {
+    out.push(story);
+    const post = story.includes('_') ? story.slice(story.indexOf('_') + 1) : '';
+    if (post) out.push(post);
+  }
+  const insta = text(creative?.effective_instagram_media_id);
+  if (insta) out.push(insta);
+  return out.filter((id, i) => id && out.indexOf(id) === i).slice(0, 8);
+}
+
+interface GraphCreative {
+  call_to_action_type?: string;
+  effective_object_story_id?: string;
+  effective_instagram_media_id?: string;
+}
+
 interface GraphCampaignsResponse {
   data?: Array<{
     id?: string;
@@ -256,7 +292,7 @@ interface GraphCampaignsResponse {
         id?: string;
         name?: string;
         status?: string;
-        creative?: { call_to_action_type?: string };
+        creative?: GraphCreative;
       }>;
     };
   }>;

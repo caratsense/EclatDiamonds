@@ -245,11 +245,13 @@ describe('Meta ads picker (e2e)', () => {
             id: '120210000000000001',
             name: 'Solitaire ring — Know the price',
             status: 'ACTIVE',
+            aliasIds: [],
           },
           {
             id: '120210000000000003',
             name: 'Solitaire pendant — festive',
             status: 'ACTIVE',
+            aliasIds: [],
           },
         ],
       },

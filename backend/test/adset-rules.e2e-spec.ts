@@ -143,4 +143,48 @@ describe('Match field precedence and safety', () => {
     // no ad-set name in the context and the thread must stay unrouted.
     expect(resolveAdSetRule(rules, { adId: '120254521670780226' })).toBeNull();
   });
+
+  /*
+   * One advertisement reaches us under more than one id: the ad id Ads Manager
+   * shows, the page-post id, and the Instagram media id. This tenant once held
+   * four hand-written rules for a single demo ad, one per guess, because a rule
+   * pinned to the wrong one simply never fired.
+   */
+  describe('an ad pinned from the picker matches whichever id the referral carries', () => {
+    const pinned: AdSetAutomationRule[] = [
+      {
+        id: 'festive_ad', name: 'Festive solitaire', enabled: true, priority: 100,
+        matchField: 'ad_id', matchValue: '120256120411760226',
+        storeId: 'bandra', assignedUserId: null, handling: 'ai',
+        adAliases: [
+          '260523660468952_122315315798218003',
+          '122315315798218003',
+          '17879849562629585',
+        ],
+      },
+    ];
+
+    it('matches the ad id itself', () => {
+      expect(resolveAdSetRule(pinned, { adId: '120256120411760226' })?.id).toBe('festive_ad');
+    });
+
+    it('matches the whole page-post id', () => {
+      expect(
+        resolveAdSetRule(pinned, { adId: '260523660468952_122315315798218003' })?.id,
+      ).toBe('festive_ad');
+    });
+
+    it('matches the post id on its own', () => {
+      expect(resolveAdSetRule(pinned, { adId: '122315315798218003' })?.id).toBe('festive_ad');
+    });
+
+    it('matches the Instagram media id', () => {
+      expect(resolveAdSetRule(pinned, { adId: '17879849562629585' })?.id).toBe('festive_ad');
+    });
+
+    it('still refuses an unrelated ad', () => {
+      expect(resolveAdSetRule(pinned, { adId: '999999999999999' })).toBeNull();
+    });
+  });
+
 });
