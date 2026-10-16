@@ -8,6 +8,7 @@ import { ConversationsService } from '../src/crm/conversations.service';
 import { AI_RESPONDER, type AiReply, type AiReplyContext } from '../src/crm/ai-responder';
 import { adIdFromLink } from '../src/crm/adset-rules.service';
 import { CampaignBotService } from '../src/whatsapp-bot/campaign-bot.service';
+import { WhatsAppBotService } from '../src/whatsapp-bot/whatsapp-bot.service';
 import { campaignSystemPrompt, CAMPAIGN_AI_TURNS_MAX, untrustedBlock } from '../src/crm/ai/policy';
 import { extractMetaReferral } from '../src/integrations/meta-referral';
 
@@ -120,6 +121,21 @@ describe('Campaign-scripted bot conversations (e2e)', () => {
         body: 'opener',
         status: 'sent',
         payload: { campaignOpener: ruleId },
+      },
+    });
+  }
+
+  /** Record an asked question as sent, the way the webhook path stamps it. */
+  async function questionAsked(conversationId: string, ruleId: string, index: number) {
+    await prisma.message.create({
+      data: {
+        organisationId: A.org,
+        conversationId,
+        direction: 'outbound',
+        authorType: 'bot',
+        body: `question ${index}`,
+        status: 'sent',
+        payload: { campaignQuestion: { rule: ruleId, index } },
       },
     });
   }
@@ -413,14 +429,30 @@ describe('Campaign-scripted bot conversations (e2e)', () => {
       .expect(200);
     const byId = (id: string) => res.body.find((r: { id: string }) => r.id === id);
     expect(byId('camp-ring').aiReplies).toBe(true);
-    // Saved with no choice at all: off, so the next message goes to a person.
+    // Saved with no choice at all: off, so no model is ever consulted on it.
     expect(byId('camp-chain').aiReplies).toBe(false);
 
     const conversationId = await arrive(AD_CHAIN);
     const rule = await campaignBot.scriptFor(A.org, conversationId);
     await openerSent(conversationId, rule!.id);
     fake.nextReply = { text: 'should not be asked', confidence: 0.99, provider: 'fake', model: 'fake' };
-    const turn = await campaignBot.handle(A.org, conversationId, rule!, 'which designs?');
+
+    /*
+     * Off does NOT mean the campaign is finished after its opener (16 Oct).
+     * It runs its own script: this opener already ends in a question, so the
+     * configured one was held back rather than doubled up, and it is asked now.
+     * The model is still never consulted — which is the whole point of the
+     * switch, and what this test exists to hold.
+     */
+    const asks = await campaignBot.handle(A.org, conversationId, rule!, 'which designs?');
+    expect(asks.text).toBe('What occasion are you shopping for?');
+    expect(asks.askedQuestion).toEqual({ rule: 'camp-chain', index: 0 });
+    expect(asks.handoff).toBeUndefined();
+    expect(fake.lastContext).toBeNull();
+
+    // Answered its last question, so now a person takes it on.
+    await questionAsked(conversationId, 'camp-chain', 0);
+    const turn = await campaignBot.handle(A.org, conversationId, rule!, 'a wedding');
     expect(turn.handoff?.reason).toContain('Gold chains festive');
     expect(fake.lastContext).toBeNull();
   });
@@ -698,6 +730,248 @@ describe('Campaign-scripted bot conversations (e2e)', () => {
       where: { organisationId: A.org, externalThreadId: ORGANIC },
     });
     await prisma.whatsAppSession.deleteMany({ where: { phoneE164: ORGANIC } });
+  });
+
+
+  /* --------------- a campaign with no assistant still runs its script ------ */
+
+  /**
+   * The client runs campaigns on a deployment with NO AI provider, and asked
+   * for the questions to be asked "after a user answers first then second"
+   * (16 Oct). Before this, a campaign with AI replies off said its opener and
+   * then handed every customer to a person, so questions two onward could only
+   * ever be reached through a model nobody had configured.
+   */
+  describe('a campaign with AI replies off', () => {
+    const AD_WALK = '120210000777020';
+    const RULE = 'camp-walker';
+
+    beforeEach(async () => {
+      await request(app.getHttpServer())
+        .post('/crm/qualification/adset-rules')
+        .set(auth())
+        .send({
+          rules: [
+            {
+              id: RULE,
+              name: 'Bridal set — festive',
+              enabled: true,
+              priority: 100,
+              matchField: 'ad_id',
+              matchValue: AD_WALK,
+              storeId: A.store,
+              assignedUserId: null,
+              handling: 'ai',
+              firstReply: 'Namaste! Our bridal sets start at Rs 1,80,000.',
+              questions: [
+                { text: 'Which metal are you considering', options: ['22k gold', 'rose gold'] },
+                { text: 'When is the wedding?' },
+              ],
+              closingMessage: 'Thank you! Our Mumbai team will come back to you right here.',
+              aiReplies: false,
+            },
+          ],
+        })
+        .expect(201);
+    });
+
+    it('asks one question per answer, in order, then closes in its own words', async () => {
+      const conversationId = await arrive(AD_WALK);
+      const rule = (await campaignBot.scriptFor(A.org, conversationId))!;
+      expect(rule.aiReplies).toBe(false);
+
+      // Arrival: the opener, with the first question woven in as prose and its
+      // choices inside the sentence — never a menu.
+      const first = await campaignBot.handle(A.org, conversationId, rule, 'saw your ad');
+      expect(first.text).toBe(
+        'Namaste! Our bridal sets start at Rs 1,80,000.\n\n' +
+          'Which metal are you considering — 22k gold, rose gold?',
+      );
+      expect(first.openerFor).toBe(RULE);
+      // The stamp is what lets the next turn know where the script had got to.
+      expect(first.askedQuestion).toEqual({ rule: RULE, index: 0 });
+      expect(first.handoff).toBeUndefined();
+
+      await openerSent(conversationId, RULE);
+      await questionAsked(conversationId, RULE, 0);
+
+      // The customer answers: the SECOND question follows, not a handoff.
+      const second = await campaignBot.handle(A.org, conversationId, rule, '22k gold please');
+      expect(second.text).toBe('When is the wedding?');
+      expect(second.askedQuestion).toEqual({ rule: RULE, index: 1 });
+      expect(second.handoff).toBeUndefined();
+      // No model was consulted on either turn.
+      expect(fake.lastContext).toBeNull();
+
+      await questionAsked(conversationId, RULE, 1);
+
+      // Answered the last one: the campaign closes in its own words and a
+      // person takes the thread on, with both answers already in it.
+      const third = await campaignBot.handle(A.org, conversationId, rule, 'next March');
+      expect(third.text).toBe('Thank you! Our Mumbai team will come back to you right here.');
+      expect(third.handoff?.reason).toContain('asked all 2 of its questions');
+      expect(fake.lastContext).toBeNull();
+    });
+
+    it('runs the whole script with no AI provider configured at all', async () => {
+      // The deployment this client is on: CRM_AI_API_KEY unset.
+      fake.configured = false;
+
+      const conversationId = await arrive(AD_WALK);
+      const rule = (await campaignBot.scriptFor(A.org, conversationId))!;
+
+      const first = await campaignBot.handle(A.org, conversationId, rule, 'hi');
+      expect(first.text).toContain('Which metal are you considering');
+      await openerSent(conversationId, RULE);
+      await questionAsked(conversationId, RULE, 0);
+
+      const second = await campaignBot.handle(A.org, conversationId, rule, 'rose gold');
+      expect(second.text).toBe('When is the wedding?');
+      expect(second.handoff).toBeUndefined();
+    });
+
+    it('asks a question the customer never received again, rather than skipping it', async () => {
+      const conversationId = await arrive(AD_WALK);
+      const rule = (await campaignBot.scriptFor(A.org, conversationId))!;
+      await openerSent(conversationId, RULE);
+
+      // The opener's question went out but the provider refused it. Counting a
+      // failed send would silently skip a question the customer never saw.
+      await prisma.message.create({
+        data: {
+          organisationId: A.org,
+          conversationId,
+          direction: 'outbound',
+          authorType: 'bot',
+          body: 'question 0',
+          status: 'failed',
+          payload: { campaignQuestion: { rule: RULE, index: 0 } },
+        },
+      });
+
+      const next = await campaignBot.handle(A.org, conversationId, rule, 'hello?');
+      expect(next.text).toBe('Which metal are you considering — 22k gold, rose gold?');
+      expect(next.askedQuestion).toEqual({ rule: RULE, index: 0 });
+    });
+
+    it('still fetches a person the moment the customer asks for one', async () => {
+      const conversationId = await arrive(AD_WALK);
+      const rule = (await campaignBot.scriptFor(A.org, conversationId))!;
+      await openerSent(conversationId, RULE);
+      await questionAsked(conversationId, RULE, 0);
+
+      const turn = await campaignBot.handle(A.org, conversationId, rule, 'can I talk to someone');
+      expect(turn.handoff?.reason).toContain('asked to speak to someone');
+      expect(turn.askedQuestion).toBeUndefined();
+    });
+
+    it('falls back to a neutral closing when the campaign wrote none', async () => {
+      await request(app.getHttpServer())
+        .post('/crm/qualification/adset-rules')
+        .set(auth())
+        .send({
+          rules: [
+            {
+              id: RULE,
+              name: 'Bridal set — festive',
+              enabled: true,
+              priority: 100,
+              matchField: 'ad_id',
+              matchValue: AD_WALK,
+              storeId: A.store,
+              assignedUserId: null,
+              handling: 'ai',
+              firstReply: 'Namaste! Our bridal sets start at Rs 1,80,000.',
+              questions: [{ text: 'When is the wedding?' }],
+              aiReplies: false,
+            },
+          ],
+        })
+        .expect(201);
+
+      const conversationId = await arrive(AD_WALK);
+      const rule = (await campaignBot.scriptFor(A.org, conversationId))!;
+      expect(rule.closingMessage).toBeNull();
+
+      await openerSent(conversationId, RULE);
+      await questionAsked(conversationId, RULE, 0);
+      const closing = await campaignBot.handle(A.org, conversationId, rule, 'next March');
+      expect(closing.text).toBe('Thank you! A colleague will reply to you right here shortly.');
+      expect(closing.handoff).toBeDefined();
+    });
+  });
+
+  /* ------------ one customer, several campaigns, over time ---------------- */
+
+  /**
+   * "One person can come from different ads at different times" (client,
+   * 16 Oct). Handing a thread to a colleague used to silence the bot on that
+   * CONVERSATION for good, so the first human reply disqualified that customer
+   * from every campaign the shop would ever run.
+   */
+  describe('a thread a colleague owns', () => {
+    /** The private gate the webhook consults before letting the bot speak. */
+    async function maySpeak(conversationId: string, freshRuleId: string | null) {
+      const bot = app.get(WhatsAppBotService) as unknown as {
+        claimBotTurn: (
+          org: string,
+          conversationId: string,
+          phone: string,
+          payload: unknown,
+          freshRuleId?: string | null,
+        ) => Promise<boolean>;
+      };
+      return bot.claimBotTurn(A.org, conversationId, PHONE, ctwa(AD_RING, 'wamid.gate'), freshRuleId);
+    }
+
+    /** A colleague has answered, and the thread is theirs. */
+    async function colleagueOwns(conversationId: string) {
+      await prisma.message.create({
+        data: {
+          organisationId: A.org,
+          conversationId,
+          direction: 'outbound',
+          authorType: 'agent',
+          body: 'Sure, I can help with that.',
+          status: 'sent',
+        },
+      });
+      await prisma.conversation.update({
+        where: { id: conversationId },
+        data: { handling: 'human', assignedUserId: null },
+      });
+    }
+
+    it('stays silent when the SAME campaign arrives again', async () => {
+      const conversationId = await arrive(AD_RING);
+      await openerSent(conversationId, 'camp-ring');
+      await colleagueOwns(conversationId);
+
+      expect(await maySpeak(conversationId, 'camp-ring')).toBe(false);
+      // And the colleague keeps the thread.
+      const after = await prisma.conversation.findUnique({ where: { id: conversationId } });
+      expect(after?.handling).toBe('human');
+    });
+
+    it('answers a DIFFERENT campaign the customer has never been greeted by', async () => {
+      const conversationId = await arrive(AD_RING);
+      await openerSent(conversationId, 'camp-ring');
+      await colleagueOwns(conversationId);
+
+      expect(await maySpeak(conversationId, 'camp-chain')).toBe(true);
+      const after = await prisma.conversation.findUnique({ where: { id: conversationId } });
+      // Reopened for the new campaign; the thread is NOT taken off the person.
+      expect(after?.handling).toBe('ai');
+      expect(after?.handoffReason).toBeNull();
+    });
+
+    it('stays silent for a message that carries no campaign at all', async () => {
+      const conversationId = await arrive(AD_RING);
+      await openerSent(conversationId, 'camp-ring');
+      await colleagueOwns(conversationId);
+
+      expect(await maySpeak(conversationId, null)).toBe(false);
+    });
   });
 
 });

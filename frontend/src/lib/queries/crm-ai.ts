@@ -223,9 +223,13 @@ export interface AdSetAutomationRule {
   firstReply?: string | null;
   /** Rows written before 12 Oct were plain strings; the server rewrites them as objects. */
   questions?: CampaignQuestion[];
+  /** Sent once the questions are answered, just before a person takes over. */
+  closingMessage?: string | null;
   /**
-   * Off: the first reply still sends, then a person takes over. Absent means
-   * on (every campaign saved before the toggle keeps conversing).
+   * Off: the campaign still runs itself — first reply, then one question per
+   * answer, then the closing message. Only the free-text assistant is
+   * withheld. Absent means on (campaigns saved before the toggle keep
+   * conversing).
    */
   aiReplies?: boolean;
 }
@@ -242,7 +246,12 @@ export interface DefaultConversation {
   questions: CampaignQuestion[];
   aiContext: string | null;
   aiGuardrails: string | null;
-  /** Off: the first reply still sends; the next message goes to a person. */
+  /** Sent once the questions are answered, just before a person takes over. */
+  closingMessage: string | null;
+  /**
+   * Off: the script still runs — first reply, one question per answer, then
+   * the closing message. Only the free-text assistant is withheld.
+   */
   aiReplies: boolean;
 }
 

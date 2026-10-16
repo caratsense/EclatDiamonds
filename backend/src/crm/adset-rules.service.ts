@@ -47,15 +47,28 @@ export const CAMPAIGN_QUESTIONS_MAX = 5;
 export const CAMPAIGN_OPTION_MAX = 60;
 export const CAMPAIGN_OPTIONS_MAX = 6;
 export const AD_LINK_MAX = 500;
+/** The line that closes a scripted conversation before a person takes it on. */
+export const CAMPAIGN_CLOSING_MAX = 600;
 
 /** Refuse, rather than trim, a campaign conversation that is over its limits. */
 export function assertCampaignLengths(
   name: string,
-  value: { firstReply?: unknown; questions?: unknown; adLink?: unknown } | null | undefined,
+  value:
+    | { firstReply?: unknown; questions?: unknown; adLink?: unknown; closingMessage?: unknown }
+    | null
+    | undefined,
 ): void {
   const where = name ? ` for "${name}"` : '';
   if (typeof value?.firstReply === 'string' && value.firstReply.trim().length > FIRST_REPLY_MAX) {
     throw new BadRequestException(`The first reply${where} is over ${FIRST_REPLY_MAX} characters.`);
+  }
+  if (
+    typeof value?.closingMessage === 'string' &&
+    value.closingMessage.trim().length > CAMPAIGN_CLOSING_MAX
+  ) {
+    throw new BadRequestException(
+      `The closing message${where} is over ${CAMPAIGN_CLOSING_MAX} characters.`,
+    );
   }
   if (typeof value?.adLink === 'string' && value.adLink.trim().length > AD_LINK_MAX) {
     throw new BadRequestException(`The ad link${where} is over ${AD_LINK_MAX} characters.`);
@@ -155,10 +168,19 @@ export interface AdSetAutomationRule {
   firstReply?: string | null;
   questions?: CampaignQuestion[];
   /**
+   * The last thing the campaign says, sent once its questions are answered and
+   * the thread goes to a person (client, 16 Oct). Per campaign, because a
+   * rings enquiry and a bridal enquiry do not end the same way. Absent falls
+   * back to one neutral sentence, so a campaign written before this field
+   * still closes politely rather than in silence.
+   */
+  closingMessage?: string | null;
+  /**
    * Whether the assistant converses after the opener (client, 12 Oct: "ask do
-   * we want AI replies"). Off, the first reply still sends exactly as written
-   * and the very next customer message goes to a person. Absent means on, so
-   * every campaign saved before the toggle existed keeps its behaviour.
+   * we want AI replies"). Off, the campaign still runs on its own: the opener,
+   * then each configured question one at a time as the customer answers, then
+   * the closing message. Absent means on, so every campaign saved before the
+   * toggle existed keeps its behaviour.
    */
   aiReplies?: boolean;
 }
@@ -485,6 +507,10 @@ function normaliseRules(value: unknown): AdSetAutomationRule[] {
       firstReply:
         typeof rule.firstReply === 'string' && rule.firstReply.trim()
           ? rule.firstReply.trim().slice(0, FIRST_REPLY_MAX)
+          : null,
+      closingMessage:
+        typeof rule.closingMessage === 'string' && rule.closingMessage.trim()
+          ? rule.closingMessage.trim().slice(0, CAMPAIGN_CLOSING_MAX)
           : null,
       ...(questions.length ? { questions } : {}),
       ...(Array.isArray(rule.adAliases)

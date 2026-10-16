@@ -14,6 +14,7 @@ import { updateOrgSettings } from '../config/org-settings';
 import {
   AI_CONTEXT_MAX,
   AI_GUARDRAILS_MAX,
+  CAMPAIGN_CLOSING_MAX,
   FIRST_REPLY_MAX,
   assertCampaignLengths,
   normaliseCampaignQuestions,
@@ -153,7 +154,13 @@ export interface DefaultConversation {
   questions: CampaignQuestion[];
   aiContext: string | null;
   aiGuardrails: string | null;
-  /** Off: the first reply still sends; the next message goes to a person. */
+  /** The line that ends the walk-in script before a person takes the thread. */
+  closingMessage: string | null;
+  /**
+   * Off: the script still runs on its own — first reply, then each question in
+   * turn as the customer answers, then the closing message. Only the free-text
+   * assistant is withheld.
+   */
   aiReplies: boolean;
 }
 
@@ -170,6 +177,7 @@ export function normaliseDefaultConversation(value: unknown): DefaultConversatio
     questions: normaliseCampaignQuestions(raw.questions),
     aiContext: text(raw.aiContext, AI_CONTEXT_MAX),
     aiGuardrails: text(raw.aiGuardrails, AI_GUARDRAILS_MAX),
+    closingMessage: text(raw.closingMessage, CAMPAIGN_CLOSING_MAX),
     aiReplies: raw.aiReplies === true,
   };
 }

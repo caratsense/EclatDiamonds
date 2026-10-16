@@ -484,9 +484,17 @@ export class WhatsAppBotService {
           `  ctwa referral: ad=${referral.adId ?? '-'} type=${referral.sourceType ?? '-'} url=${referral.sourceUrl ?? '(none sent)'}`,
         );
       }
-      const adMeta = referral?.adId
-        ? await this.adMetadata.resolve(organisationId, referral.adId)
-        : null;
+      /*
+       * A POST referral's `source_id` is a page post, not an advert, so asking
+       * Graph to resolve it to an ad set can only fail — with "(#12) singular
+       * links API is deprecated", a sentence that reads like a broken
+       * integration and sent us hunting for one on 16 Oct. Ask only for the
+       * ids that can answer.
+       */
+      const adMeta =
+        referral?.adId && referral.sourceType !== 'post'
+          ? await this.adMetadata.resolve(organisationId, referral.adId)
+          : null;
 
       try {
         const result = await this.crmConversations.ingestInbound({
@@ -609,8 +617,30 @@ export class WhatsAppBotService {
          * person owns a conversation, a bot talking over them is worse than a
          * bot that never spoke.
          */
+        /*
+         * An advert arrived and nothing was configured for it.
+         *
+         * Named at WARN with the exact id, because the id a referral carries is
+         * not always one the picker can know in advance — a page-post click
+         * sends the post's id, and on 16 Oct that cost a day of log archaeology
+         * to discover. Whoever reads this line can paste the id straight into
+         * the campaign's "other ids" and the next click is answered.
+         */
+        if (referral?.adId && !result.routing?.ruleId) {
+          this.logger.warn(
+            `  no campaign matched ad ${referral.adId} (type=${referral.sourceType ?? '-'}) — ` +
+              'add it to a campaign to script this advert',
+          );
+        }
+
         if (!result.duplicate) {
-          const eligible = await this.claimBotTurn(organisationId, result.conversationId, from, event.payload);
+          const eligible = await this.claimBotTurn(
+            organisationId,
+            result.conversationId,
+            from,
+            event.payload,
+            result.routing?.ruleId ?? null,
+          );
           if (eligible) {
             /*
              * A PHOTO IS NOT AN UNREADABLE ANSWER.
@@ -667,13 +697,23 @@ export class WhatsAppBotService {
                 );
                 if (t.text) {
                   const sent = await this.wa.sendText(organisationId, from, t.text, replyRoute);
+                  /*
+                   * Both stamps travel on the message, because both are read
+                   * back off the thread rather than held anywhere else: the
+                   * opener marks which campaign has greeted this customer, and
+                   * the question marks how far through its script they are.
+                   */
+                  const stamp = {
+                    ...(t.openerFor ? { campaignOpener: t.openerFor } : {}),
+                    ...(t.askedQuestion ? { campaignQuestion: t.askedQuestion } : {}),
+                  };
                   await this.recordBotReply(
                     organisationId,
                     result.conversationId,
                     t.text,
                     sent,
                     t.authorType,
-                    t.openerFor ? { campaignOpener: t.openerFor } : undefined,
+                    Object.keys(stamp).length ? stamp : undefined,
                   );
                 }
                 return t;
@@ -689,6 +729,23 @@ export class WhatsAppBotService {
               this.logger.log(
                 `  campaign bot (${campaignRule.name}) replied${turn.handoff ? ' and handed off' : ''}`,
               );
+              /*
+               * INTENT SCORE, on this path too.
+               *
+               * It used to live only under the legacy questionnaire below, and
+               * this branch returns before reaching it — so the moment a tenant
+               * configured campaign scripts, every thread those scripts
+               * answered stopped being scored, silently. Scoring does not need
+               * the assistant: it runs on the tenant's own keyword policy.
+               *
+               * Same rules as the questionnaire's: after the reply has gone, so
+               * a slow or failing assessment never delays a customer, and
+               * skipped when this turn already handed off, because a second
+               * reason would only overwrite the first.
+               */
+              if (!turn.handoff) {
+                await this.scoreIntent(organisationId, result.conversationId);
+              }
               return { status: 'processed', organisationId };
             }
 
@@ -733,26 +790,7 @@ export class WhatsAppBotService {
              * nothing.
              */
             if (!reply.outcome) {
-              const scored = await this.qualification.assessFromBot(
-                organisationId,
-                result.conversationId,
-              );
-              if (scored?.handoff) {
-                // Same door as an explicit "call me": a thread escalated by its
-                // score still has to reach a named person, not a queue nobody
-                // owns.
-                await this.handToAPerson(
-                  organisationId,
-                  result.conversationId,
-                  scored.reason ??
-                    `Qualified at ${scored.score}/100${scored.band ? ` (${scored.band})` : ''} — handed to a person.`,
-                );
-                this.logger.log(
-                  `  intent handoff on ${result.conversationId}: score ${scored.score}${scored.band ? ` (${scored.band})` : ''}`,
-                );
-              } else if (scored?.score != null) {
-                this.logger.log(`  intent score ${scored.score}${scored.band ? ` (${scored.band})` : ''}`);
-              }
+              await this.scoreIntent(organisationId, result.conversationId);
             }
 
             return { status: 'processed', organisationId };
@@ -1161,11 +1199,38 @@ export class WhatsAppBotService {
       .catch(() => undefined);
   }
 
+  /**
+   * Score the thread's intent and escalate it if the score says so.
+   *
+   * Shared by every path that answers a customer, which is the point: it lived
+   * inline under one of them and the others silently went unscored.
+   */
+  private async scoreIntent(organisationId: string, conversationId: string): Promise<void> {
+    const scored = await this.qualification.assessFromBot(organisationId, conversationId);
+    if (scored?.handoff) {
+      // Same door as an explicit "call me": a thread escalated by its score
+      // still has to reach a named person, not a queue nobody owns.
+      await this.handToAPerson(
+        organisationId,
+        conversationId,
+        scored.reason ??
+          `Qualified at ${scored.score}/100${scored.band ? ` (${scored.band})` : ''} — handed to a person.`,
+      );
+      this.logger.log(
+        `  intent handoff on ${conversationId}: score ${scored.score}${scored.band ? ` (${scored.band})` : ''}`,
+      );
+    } else if (scored?.score != null) {
+      this.logger.log(`  intent score ${scored.score}${scored.band ? ` (${scored.band})` : ''}`);
+    }
+  }
+
   private async claimBotTurn(
     organisationId: string,
     conversationId: string,
     phoneE164: string,
     payload: unknown,
+    /** The campaign THIS message's advert matched, when it carried one. */
+    freshRuleId?: string | null,
   ): Promise<boolean> {
     const convo = await this.prisma.conversation.findFirst({
       where: { id: conversationId, organisationId },
@@ -1205,7 +1270,44 @@ export class WhatsAppBotService {
       const agentHasReplied = await this.prisma.message.count({
         where: { conversationId, direction: 'outbound', authorType: 'agent' },
       });
-      if (agentHasReplied > 0) return false;
+      if (agentHasReplied > 0) {
+        /*
+         * A colleague is mid-conversation, so the bot stays out of it — UNLESS
+         * this click is for a campaign that has never greeted this thread
+         * (client, 16 Oct).
+         *
+         * One person buys more than once. Somebody who enquired about rings and
+         * was answered by a human must still get the necklace campaign's script
+         * when they tap a necklace advert months later; muting the bot on the
+         * CONVERSATION meant the first human reply disqualified that customer
+         * from every campaign the shop would ever run.
+         *
+         * Scoped to a DIFFERENT campaign on purpose. Tapping the same advert
+         * again is the thread a colleague is already handling, and re-greeting
+         * someone mid-exchange is exactly what this gate exists to prevent.
+         */
+        const greetedAlready = freshRuleId
+          ? await this.prisma.message.count({
+              where: {
+                conversationId,
+                direction: 'outbound',
+                status: { not: 'failed' },
+                payload: { path: ['campaignOpener'], equals: freshRuleId },
+              },
+            })
+          : 1;
+        if (!freshRuleId || greetedAlready > 0) return false;
+        // The colleague KEEPS the thread: only the handling is reopened, so the
+        // new campaign can run its script and hand back to the same person.
+        await this.prisma.conversation.update({
+          where: { id: conversationId },
+          data: { handling: 'ai', handoffReason: null },
+        });
+        this.logger.log(
+          `  bot turn reclaimed on ${conversationId}: campaign ${freshRuleId} has not greeted this thread before`,
+        );
+        return true;
+      }
 
       // The automatic owner goes with the old enquiry. A new ad click is a new
       // enquiry, and it routes to whichever branch THIS ad belongs to.
