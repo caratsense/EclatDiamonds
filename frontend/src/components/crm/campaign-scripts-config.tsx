@@ -203,7 +203,16 @@ export function CampaignScriptsConfig() {
     // "legacy" sentence (matches exactly as stored, no editor) rather than a
     // fourth mode, and the link field is cleared so it cannot shadow the pick.
     setAppliesTo("legacy");
-    setDraft((d) => ({ ...d, matchField: "ad_id", matchValue: ad.id, adLink: "" }));
+    setDraft((d) => ({
+      ...d,
+      matchField: "ad_id",
+      matchValue: ad.id,
+      adLink: "",
+      // One ad can reach us as its ad id, its page-post id or its Instagram
+      // media id. Keeping all of them is what makes the rule fire whichever
+      // one the referral carries.
+      adAliases: ad.aliasIds ?? [],
+    }));
   }
 
   function openNew() {

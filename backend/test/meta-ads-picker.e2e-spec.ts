@@ -130,7 +130,7 @@ describe('Meta ads picker (e2e)', () => {
   let seq = 0;
   async function scenario(
     org: string,
-    opts: { adAccount?: string | null; accountActive?: boolean } = {},
+    opts: { adAccount?: string | null; accountActive?: boolean; credential?: boolean } = {},
   ) {
     seq += 1;
     const id = `int_meta_ads_picker_${seq}`;
@@ -143,6 +143,21 @@ describe('Meta ads picker (e2e)', () => {
         status: 'connected',
       },
     });
+    // The picker only serves a connection that actually holds a token: an
+    // abandoned connection with an ad account but no credential is skipped.
+    if (opts.credential !== false) {
+      await prisma.integrationCredential.create({
+        data: {
+          organisationId: org,
+          integrationId: id,
+          kind: 'access_token',
+          // Presence is all the picker reads; nothing decrypts this.
+          ciphertext: 'test-ciphertext',
+          iv: 'test-iv',
+          authTag: 'test-tag',
+        },
+      });
+    }
     if (opts.adAccount !== null) {
       await prisma.integrationAsset.create({
         data: {
@@ -230,11 +245,13 @@ describe('Meta ads picker (e2e)', () => {
             id: '120210000000000001',
             name: 'Solitaire ring — Know the price',
             status: 'ACTIVE',
+            aliasIds: [],
           },
           {
             id: '120210000000000003',
             name: 'Solitaire pendant — festive',
             status: 'ACTIVE',
+            aliasIds: [],
           },
         ],
       },
@@ -255,7 +272,9 @@ describe('Meta ads picker (e2e)', () => {
     const result = await listing.list(A.org);
 
     expect(result.available).toBe(false);
-    expect(result.reason).toContain('Meta did not answer');
+    // The provider's own sentence reaches the screen: a generic line here is
+    // what made an expired token look like an outage.
+    expect(result.reason).toContain('Session has expired');
     expect(result.campaigns).toEqual([]);
   });
 

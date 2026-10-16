@@ -143,6 +143,15 @@ export interface AdSetAutomationRule {
    * them keeps today's behaviour.
    */
   adLink?: string | null;
+  /**
+   * The OTHER ids this same advertisement can arrive as. One ad has an ad id,
+   * a page-post id and an Instagram media id, and a Click-to-WhatsApp referral
+   * does not always carry the one Ads Manager shows -- which is why this
+   * tenant once held four hand-made rules for a single demo ad, each guessing
+   * a different id. Pinning an ad from the picker records all of them, so the
+   * rule matches whichever form Meta sends.
+   */
+  adAliases?: string[];
   firstReply?: string | null;
   questions?: CampaignQuestion[];
   /**
@@ -397,9 +406,14 @@ export function resolveAdSetRule(rules: AdSetAutomationRule[], context: AdSetRou
     if (!expected) continue;
 
     switch (rule.matchField) {
-      case 'ad_id':
-        if (normalise(context.adId) === expected) matched.push({ rule, specificity: EXACT_MATCH });
+      case 'ad_id': {
+        const incoming = normalise(context.adId);
+        const aliases = (rule.adAliases ?? []).map(normalise).filter(Boolean);
+        if (incoming && (incoming === expected || aliases.includes(incoming))) {
+          matched.push({ rule, specificity: EXACT_MATCH });
+        }
         break;
+      }
       case 'ad_set_id':
         if (normalise(context.adSetId) === expected) matched.push({ rule, specificity: EXACT_MATCH });
         break;
@@ -473,6 +487,16 @@ function normaliseRules(value: unknown): AdSetAutomationRule[] {
           ? rule.firstReply.trim().slice(0, FIRST_REPLY_MAX)
           : null,
       ...(questions.length ? { questions } : {}),
+      ...(Array.isArray(rule.adAliases)
+        ? {
+            adAliases: rule.adAliases
+              .filter((id): id is string => typeof id === 'string')
+              .map((id) => id.trim())
+              // Meta ids are digits; a page-post id is two joined by "_".
+              .filter((id) => /^[0-9]{5,32}(_[0-9]{5,32})?$/.test(id))
+              .slice(0, 8),
+          }
+        : {}),
       // Off unless switched on: absence is never consent to let a model answer
       // customers unread.
       aiReplies: rule.aiReplies === true,

@@ -1,13 +1,20 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 import { META_ADS_PROVIDER_CODE } from '../integrations/meta-asset-ownership.service';
-import { MetaGraphClient } from '../integrations/meta-graph.client';
+import { MetaGraphClient, MetaGraphError } from '../integrations/meta-graph.client';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface MetaAdChoice {
   id: string;
   name: string;
   status: string;
+  /**
+   * The other ids this same ad can arrive as on a Click-to-WhatsApp referral:
+   * its page-post id and its Instagram media id. Meta does not always send the
+   * ad id Ads Manager shows, so a rule pinned to one id alone can silently
+   * never match. Saved with the rule and matched alongside it.
+   */
+  aliasIds: string[];
 }
 
 export interface MetaCampaignChoice {
@@ -109,31 +116,63 @@ export class MetaAdsListService {
   }
 
   private async fetch(organisationId: string): Promise<MetaAdsListing> {
-    const integration = await this.prisma.integration.findFirst({
+    /*
+     * A tenant can hold more than one Meta connection -- an abandoned first
+     * attempt beside the one somebody actually finished. Taking the OLDEST
+     * read the abandoned one and reported "Meta did not answer" while the
+     * live connection sat there working, so the pick is now made on evidence:
+     * newest first, and only a connection that has BOTH a stored credential
+     * and a registered ad account can serve the picker.
+     */
+    const candidates = await this.prisma.integration.findMany({
       where: {
         organisationId,
         providerCode: META_ADS_PROVIDER_CODE,
         status: { not: 'disabled' },
       },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { createdAt: 'desc' },
       select: { id: true },
     });
-    if (!integration) {
+    if (!candidates.length) {
       return unavailable('Meta Ads is not connected for this organisation.');
     }
 
-    const account = await this.prisma.integrationAsset.findFirst({
-      where: {
-        organisationId,
-        integrationId: integration.id,
-        kind: 'ad_account',
-        isActive: true,
-      },
-      orderBy: { createdAt: 'asc' },
-      select: { externalId: true },
-    });
-    if (!account) {
-      return unavailable('No Meta ad account is registered on the connection.');
+    let integration: { id: string } | null = null;
+    let account: { externalId: string } | null = null;
+    let sawAccountWithoutCredential = false;
+    for (const candidate of candidates) {
+      const [asset, credential] = await Promise.all([
+        this.prisma.integrationAsset.findFirst({
+          where: {
+            organisationId,
+            integrationId: candidate.id,
+            kind: 'ad_account',
+            isActive: true,
+          },
+          orderBy: { createdAt: 'desc' },
+          select: { externalId: true },
+        }),
+        // Presence only; the ciphertext is never selected.
+        this.prisma.integrationCredential.findFirst({
+          where: { organisationId, integrationId: candidate.id, kind: 'access_token' },
+          select: { id: true },
+        }),
+      ]);
+      if (!asset) continue;
+      if (!credential) {
+        sawAccountWithoutCredential = true;
+        continue;
+      }
+      integration = candidate;
+      account = asset;
+      break;
+    }
+    if (!integration || !account) {
+      return unavailable(
+        sawAccountWithoutCredential
+          ? 'The Meta connection holding the ad account has no access token saved.'
+          : 'No Meta ad account is registered on the connection.',
+      );
     }
     const accountId = account.externalId.trim().replace(/^act_/i, '');
     if (!/^[1-9]\d{4,31}$/.test(accountId)) {
@@ -148,7 +187,8 @@ export class MetaAdsListService {
         {
           fields:
             `id,name,status,ads.limit(${AD_LIMIT})` +
-            '{id,name,status,creative{call_to_action_type}}',
+            '{id,name,status,creative{call_to_action_type,effective_object_story_id,' +
+            'effective_instagram_media_id}}',
           // Running campaigns only — the whole point of the picker. Paused and
           // archived ones would outnumber the live ones within a season.
           effective_status: '["ACTIVE"]',
@@ -171,7 +211,12 @@ export class MetaAdsListService {
           const adStatus = text(ad?.status);
           if (!adId || !adName || adStatus !== 'ACTIVE') continue;
           if (!toWhatsApp(text(ad?.creative?.call_to_action_type))) continue;
-          ads.push({ id: adId, name: adName, status: adStatus });
+          ads.push({
+            id: adId,
+            name: adName,
+            status: adStatus,
+            aliasIds: aliasesFor(ad?.creative),
+          });
         }
         // A campaign with no WhatsApp ad cannot start a conversation, so it is
         // not offered -- picking it would create a rule that never matches.
@@ -190,7 +235,17 @@ export class MetaAdsListService {
       this.logger.warn(
         `Could not list Meta campaigns: ${error instanceof Error ? error.message : String(error)}`,
       );
-      return unavailable('Meta did not answer. Type the campaign name or paste the ad link instead.');
+      /*
+       * The provider's own sentence, not a guess. MetaGraphError messages are
+       * already redacted and length-bounded, and one generic line here is what
+       * made an unsaved token look like a Meta outage.
+       */
+      const detail = error instanceof MetaGraphError ? error.message : null;
+      return unavailable(
+        detail
+          ? `Meta could not be read: ${detail}`
+          : 'Meta did not answer. Type the campaign name or paste the ad link instead.',
+      );
     }
   }
 
@@ -204,6 +259,29 @@ function unavailable(reason: string): MetaAdsListing {
   return { available: false, reason, campaigns: [] };
 }
 
+/**
+ * Every other id the referral might carry for this ad. A page-post id arrives
+ * both whole (`<page>_<post>`) and as the post half alone, so both are kept.
+ */
+function aliasesFor(creative: GraphCreative | undefined): string[] {
+  const out: string[] = [];
+  const story = text(creative?.effective_object_story_id);
+  if (story) {
+    out.push(story);
+    const post = story.includes('_') ? story.slice(story.indexOf('_') + 1) : '';
+    if (post) out.push(post);
+  }
+  const insta = text(creative?.effective_instagram_media_id);
+  if (insta) out.push(insta);
+  return out.filter((id, i) => id && out.indexOf(id) === i).slice(0, 8);
+}
+
+interface GraphCreative {
+  call_to_action_type?: string;
+  effective_object_story_id?: string;
+  effective_instagram_media_id?: string;
+}
+
 interface GraphCampaignsResponse {
   data?: Array<{
     id?: string;
@@ -214,7 +292,7 @@ interface GraphCampaignsResponse {
         id?: string;
         name?: string;
         status?: string;
-        creative?: { call_to_action_type?: string };
+        creative?: GraphCreative;
       }>;
     };
   }>;

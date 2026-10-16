@@ -218,6 +218,8 @@ export interface AdSetAutomationRule {
    * questions guide the free-text conversation — never as menus.
    */
   adLink?: string | null;
+  /** Other ids the same ad can arrive as, so a referral matches either way. */
+  adAliases?: string[];
   firstReply?: string | null;
   /** Rows written before 12 Oct were plain strings; the server rewrites them as objects. */
   questions?: CampaignQuestion[];
@@ -279,6 +281,8 @@ export interface MetaAdChoice {
   id: string;
   name: string;
   status: string;
+  /** The other ids this ad can arrive as on a referral; saved with the rule. */
+  aliasIds?: string[];
 }
 
 export interface MetaCampaignChoice {
