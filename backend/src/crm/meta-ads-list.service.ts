@@ -53,6 +53,24 @@ const FAILURE_TTL_MS = 60 * 1000;
 const PAGE_LIMIT = '100';
 
 /**
+ * Ads per campaign. Lower than the campaign page because the creative's
+ * call-to-action is fetched with them, and a jeweller runs a handful of
+ * creatives per campaign, not fifty.
+ */
+const AD_LIMIT = '50';
+
+/**
+ * Only ads that actually land the customer in WhatsApp can start a scripted
+ * conversation -- a website or lead-form ad never produces a referral, so a
+ * script attached to it could never fire. On this account 45 of the 50 running
+ * campaigns are of that second kind, and listing them would bury the five that
+ * work. Meta spells the destination in the creative's call to action.
+ */
+function toWhatsApp(callToAction: string | null): boolean {
+  return Boolean(callToAction && callToAction.toUpperCase().includes('WHATSAPP'));
+}
+
+/**
  * The account's running campaigns and ads, fetched live from Meta so the
  * campaign editor offers a pick-list instead of asking head office to retype a
  * name or paste a link (client, 13 Oct).
@@ -128,7 +146,9 @@ export class MetaAdsListService {
         integration.id,
         `act_${accountId}/campaigns`,
         {
-          fields: `id,name,status,ads.limit(${PAGE_LIMIT}){id,name,status}`,
+          fields:
+            `id,name,status,ads.limit(${AD_LIMIT})` +
+            '{id,name,status,creative{call_to_action_type}}',
           // Running campaigns only — the whole point of the picker. Paused and
           // archived ones would outnumber the live ones within a season.
           effective_status: '["ACTIVE"]',
@@ -150,9 +170,18 @@ export class MetaAdsListService {
           const adName = text(ad?.name);
           const adStatus = text(ad?.status);
           if (!adId || !adName || adStatus !== 'ACTIVE') continue;
+          if (!toWhatsApp(text(ad?.creative?.call_to_action_type))) continue;
           ads.push({ id: adId, name: adName, status: adStatus });
         }
+        // A campaign with no WhatsApp ad cannot start a conversation, so it is
+        // not offered -- picking it would create a rule that never matches.
+        if (!ads.length) continue;
         campaigns.push({ id, name, status, ads });
+      }
+      if (!campaigns.length) {
+        return unavailable(
+          'No running campaign sends people to WhatsApp, so there is nothing to attach a conversation to yet.',
+        );
       }
       return { available: true, reason: null, campaigns };
     } catch (error) {
@@ -180,7 +209,14 @@ interface GraphCampaignsResponse {
     id?: string;
     name?: string;
     status?: string;
-    ads?: { data?: Array<{ id?: string; name?: string; status?: string }> };
+    ads?: {
+      data?: Array<{
+        id?: string;
+        name?: string;
+        status?: string;
+        creative?: { call_to_action_type?: string };
+      }>;
+    };
   }>;
 }
 

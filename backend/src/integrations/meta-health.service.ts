@@ -23,6 +23,22 @@ const MAX_ERROR = 300;
 /** Minimum gap between health checks for one integration, in milliseconds. */
 const HEALTH_COOLDOWN_MS = 30_000;
 
+/**
+ * The Graph node that answers for an asset. An ad account is addressed as
+ * `act_<id>`; asked for by its bare number Graph replies "Object with ID …
+ * does not exist", which reads as a broken connection when nothing is broken.
+ */
+function graphNodeFor(kind: string, externalId: string): string {
+  const id = externalId.trim();
+  if (kind !== 'ad_account') return id;
+  return /^act_/i.test(id) ? id : `act_${id}`;
+}
+
+/** An ad account id without the prefix, so both sides compare equal. */
+function bareId(value: string): string {
+  return value.trim().replace(/^act_/i, '');
+}
+
 /** Which Graph node answers for each asset kind, and the cheapest field to ask for. */
 const ASSET_PROBE: Record<string, { field: string }> = {
   page: { field: 'id,name' },
@@ -183,13 +199,15 @@ export class MetaHealthService {
         const node = await this.graph.getForIntegration<{ id?: unknown }>(
           user.organisationId,
           integrationId,
-          asset.externalId,
+          graphNodeFor(asset.kind, asset.externalId),
           { fields: probe.field },
         );
         // Reading *something* is not enough — it has to be the asset we asked
         // for. Graph can redirect an id, and a redirect is not ownership.
         const returned = node?.id == null ? '' : String(node.id);
-        if (returned !== asset.externalId) {
+        // Graph answers an ad account with the act_ prefix it demands on the
+        // way in, so the two sides are compared without it.
+        if (bareId(returned) !== bareId(asset.externalId)) {
           await this.markAsset(asset.id, false, 'Provider returned a different asset id than requested.');
           failures += 1;
           continue;
@@ -276,14 +294,33 @@ export class MetaHealthService {
   }
 
   /** A token or permission problem, as opposed to a missing or renamed asset. */
+  /**
+   * Whether the CREDENTIAL is the problem, as opposed to one asset being
+   * unreadable. The provider's code decides it, not its prose: Meta answers an
+   * id it cannot resolve with "does not exist, cannot be loaded due to missing
+   * permissions, or does not support this operation" — one sentence covering
+   * three unrelated causes. Matching the word "permission" in it reported a
+   * working token as rejected, and sent somebody hunting for a new token when
+   * the id was simply addressed wrongly.
+   */
   private isCredentialProblem(err: unknown): boolean {
     if (!(err instanceof MetaGraphError)) return false;
+    // 190 expired/invalid token, 102 session, 104 no token, 10 and 200-299
+    // permission refusals. 100 is "bad request" and is NOT a credential fault.
+    // Only when the provider actually gave a code -- our own client throws
+    // MetaGraphError with none for local failures, and those still read by text.
+    const raw = err.providerCode;
+    if (raw != null && String(raw).trim() !== '') {
+      const code = Number(raw);
+      if (Number.isFinite(code)) {
+        return code === 190 || code === 102 || code === 104 || code === 10 || (code >= 200 && code <= 299);
+      }
+    }
     const text = `${err.message}`.toLowerCase();
     return (
       text.includes('access token') ||
       text.includes('oauth') ||
       text.includes('expired') ||
-      text.includes('permission') ||
       text.includes('unauthorized') ||
       text.includes('not configured')
     );

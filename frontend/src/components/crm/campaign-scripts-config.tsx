@@ -111,8 +111,8 @@ function fromQuestionDrafts(rows: QuestionDraft[]): CampaignQuestion[] {
 type AppliesTo = "campaign" | "ad" | "legacy";
 
 const APPLIES_TO_CHOICES: { mode: Exclude<AppliesTo, "legacy">; label: string }[] = [
-  { mode: "campaign", label: "A whole campaign — type its name" },
-  { mode: "ad", label: "One specific ad — paste its link" },
+  { mode: "campaign", label: "Whole campaign" },
+  { mode: "ad", label: "One specific ad" },
 ];
 
 /** The ads Select's "no specific ad" row — Radix forbids an empty item value. */
@@ -429,6 +429,12 @@ export function CampaignScriptsConfig() {
                     </SelectContent>
                   </Select>
                   {pickedCampaign && pickedCampaign.ads.length ? (
+                    <>
+                    <p className="text-[11px] text-muted-foreground">
+                      {pickedCampaign.ads.length === 1
+                        ? "One ad runs under it. Pick the ad to give that ad its own conversation."
+                        : `${pickedCampaign.ads.length} ads run under it — pick one to give that ad its own conversation, or keep the whole campaign.`}
+                    </p>
                     <Select value={pickedAdId ?? WHOLE_CAMPAIGN} onValueChange={pickAd}>
                       <SelectTrigger aria-label="Ad within the campaign">
                         <SelectValue />
@@ -442,15 +448,29 @@ export function CampaignScriptsConfig() {
                         ))}
                       </SelectContent>
                     </Select>
+                    </>
                   ) : null}
                 </div>
               ) : metaAds.data && !metaAds.data.available ? (
+                /*
+                 * The server distinguishes "not connected", "no ad account
+                 * registered", "nothing running on WhatsApp" and "Meta refused".
+                 * Printing one guess for all four sent head office hunting for a
+                 * Meta outage when the ad account simply was not connected yet.
+                 */
                 <p className="text-xs text-muted-foreground">
-                  Meta didn&rsquo;t answer — type the name or paste the link instead.
+                  {metaAds.data.reason ?? "Type the name or paste the link instead."}
                 </p>
               ) : null}
 
-              <div role="radiogroup" aria-label="Applies to" className="grid gap-1.5">
+              {/* One segmented control, like the On/Off switches below it: the
+                  two ways of connecting a campaign are alternatives, and
+                  stacked full-width buttons read as two separate actions. */}
+              <div
+                role="radiogroup"
+                aria-label="Applies to"
+                className="flex rounded-md border p-0.5"
+              >
                 {APPLIES_TO_CHOICES.map((o) => (
                   <button
                     key={o.mode}
@@ -460,8 +480,8 @@ export function CampaignScriptsConfig() {
                     onClick={() => chooseAppliesTo(o.mode)}
                     className={
                       appliesTo === o.mode
-                        ? "rounded-md border border-primary bg-primary/5 px-3 py-1.5 text-left text-xs font-medium text-foreground"
-                        : "rounded-md border px-3 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted/60"
+                        ? "flex-1 rounded bg-primary px-3 py-1.5 text-center text-xs font-medium text-primary-foreground transition-colors"
+                        : "flex-1 rounded px-3 py-1.5 text-center text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/60"
                     }
                   >
                     {o.label}

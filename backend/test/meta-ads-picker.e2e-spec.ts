@@ -66,7 +66,13 @@ function principal(organisationId: string, role: Role = Role.store_manager): Aut
   };
 }
 
-/** A plausible Graph page: one running campaign with ads, one paused. */
+const WA = { call_to_action_type: 'WHATSAPP_MESSAGE' };
+
+/**
+ * A plausible Graph page: one running WhatsApp campaign with two live
+ * creatives, one paused campaign, and one running campaign that sends people
+ * to a website. Only the first can ever start a conversation.
+ */
 function graphPage() {
   return {
     data: [
@@ -76,13 +82,40 @@ function graphPage() {
         status: 'ACTIVE',
         ads: {
           data: [
-            { id: '120210000000000001', name: 'Solitaire ring — Know the price', status: 'ACTIVE' },
-            { id: '120210000000000002', name: 'Old creative', status: 'PAUSED' },
+            {
+              id: '120210000000000001',
+              name: 'Solitaire ring — Know the price',
+              status: 'ACTIVE',
+              creative: WA,
+            },
+            {
+              id: '120210000000000003',
+              name: 'Solitaire pendant — festive',
+              status: 'ACTIVE',
+              creative: WA,
+            },
+            { id: '120210000000000002', name: 'Old creative', status: 'PAUSED', creative: WA },
           ],
         },
       },
       // Returned by Meta despite the effective_status filter — must not be offered.
       { id: '23850000000000002', name: 'Monsoon clearance', status: 'PAUSED' },
+      // Running, but its ads open a website: a script on it could never fire.
+      {
+        id: '23850000000000003',
+        name: 'Website sales — retargeting',
+        status: 'ACTIVE',
+        ads: {
+          data: [
+            {
+              id: '120210000000000004',
+              name: 'Shop the collection',
+              status: 'ACTIVE',
+              creative: { call_to_action_type: 'SHOP_NOW' },
+            },
+          ],
+        },
+      },
     ],
   };
 }
@@ -198,6 +231,11 @@ describe('Meta ads picker (e2e)', () => {
             name: 'Solitaire ring — Know the price',
             status: 'ACTIVE',
           },
+          {
+            id: '120210000000000003',
+            name: 'Solitaire pendant — festive',
+            status: 'ACTIVE',
+          },
         ],
       },
     ]);
@@ -265,6 +303,51 @@ describe('Meta ads picker (e2e)', () => {
     // the same rank as its neighbours (ai-settings, adset-rules, policy).
     expect(Reflect.getMetadata(ROLES_KEY, controller.metaAds)).toEqual([Role.store_manager]);
   });
+
+  it('offers only what can actually start a conversation, and every ad under it', async () => {
+    await scenario(A.org);
+    graph.reply(() => graphPage());
+    const res = await listing.list(A.org);
+
+    expect(res.available).toBe(true);
+    // The website campaign is running, and is still not offered.
+    expect(res.campaigns.map((c) => c.name)).toEqual(['Diwali Solitaire']);
+    // Both live creatives are offered, so each can carry its own conversation.
+    expect(res.campaigns[0].ads.map((a) => a.name)).toEqual([
+      'Solitaire ring — Know the price',
+      'Solitaire pendant — festive',
+    ]);
+    expect(graph.calls.at(-1)?.query.fields).toContain('call_to_action_type');
+  });
+
+  it('says so plainly when nothing running sends people to WhatsApp', async () => {
+    await scenario(A.org);
+    graph.reply(() => ({
+      data: [
+        {
+          id: '23850000000000009',
+          name: 'Website sales only',
+          status: 'ACTIVE',
+          ads: {
+            data: [
+              {
+                id: '120210000000000009',
+                name: 'Shop now',
+                status: 'ACTIVE',
+                creative: { call_to_action_type: 'SHOP_NOW' },
+              },
+            ],
+          },
+        },
+      ],
+    }));
+    const res = await listing.list(A.org);
+
+    expect(res.available).toBe(false);
+    expect(res.campaigns).toEqual([]);
+    expect(res.reason).toMatch(/WhatsApp/i);
+  });
+
 });
 
 async function teardown(prisma: PrismaService) {
