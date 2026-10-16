@@ -60,11 +60,17 @@ const FAILURE_TTL_MS = 60 * 1000;
 const PAGE_LIMIT = '100';
 
 /**
+ * How many pages of ads to walk. 100 ads a page covers this account's running
+ * ads several times over; the bound is what stops a runaway account turning
+ * one dialog into a hundred Graph calls.
+ */
+const MAX_PAGES = 5;
+
+/**
  * Ads per campaign. Lower than the campaign page because the creative's
  * call-to-action is fetched with them, and a jeweller runs a handful of
  * creatives per campaign, not fifty.
  */
-const AD_LIMIT = '50';
 
 /**
  * Only ads that actually land the customer in WhatsApp can start a scripted
@@ -180,49 +186,64 @@ export class MetaAdsListService {
     }
 
     try {
-      const response = await this.graph.getForIntegration<GraphCampaignsResponse>(
-        organisationId,
-        integration.id,
-        `act_${accountId}/campaigns`,
-        {
-          fields:
-            `id,name,status,ads.limit(${AD_LIMIT})` +
-            '{id,name,status,creative{call_to_action_type,effective_object_story_id,' +
-            'effective_instagram_media_id}}',
-          // Running campaigns only — the whole point of the picker. Paused and
-          // archived ones would outnumber the live ones within a season.
-          effective_status: '["ACTIVE"]',
-          limit: PAGE_LIMIT,
-        },
-      );
-      const rows = Array.isArray(response?.data) ? response.data : [];
-      const campaigns: MetaCampaignChoice[] = [];
-      for (const row of rows) {
-        const id = text(row?.id);
-        const name = text(row?.name);
-        const status = text(row?.status);
-        // `effective_status` above filters server-side; the re-check here keeps
-        // a campaign Meta returned anyway from being offered as "running".
-        if (!id || !name || status !== 'ACTIVE') continue;
-        const ads: MetaAdChoice[] = [];
-        for (const ad of Array.isArray(row?.ads?.data) ? row.ads.data : []) {
+      /*
+       * Read the ADS edge, not campaigns-with-nested-ads.
+       *
+       * Asking for every campaign with its ads and their creatives in one go
+       * produced 79,916 bytes on this account, and the Graph client parses at
+       * most 64,000 -- so the JSON arrived cut in half and the picker reported
+       * "Meta Graph returned an unreadable response" for a connection that was
+       * working perfectly. The same information off the ads edge is ~40KB at
+       * the same page size, carries its campaign with it, and pages cleanly.
+       */
+      const byCampaign = new Map<string, MetaCampaignChoice>();
+      let after: string | null = null;
+      for (let page = 0; page < MAX_PAGES; page += 1) {
+        const response: GraphAdsResponse = await this.graph.getForIntegration<GraphAdsResponse>(
+          organisationId,
+          integration.id,
+          `act_${accountId}/ads`,
+          {
+            fields:
+              'id,name,status,campaign{id,name,status},' +
+              'creative{call_to_action_type,effective_object_story_id,effective_instagram_media_id}',
+            // Running ads only — the whole point of the picker.
+            effective_status: '["ACTIVE"]',
+            limit: PAGE_LIMIT,
+            ...(after ? { after } : {}),
+          },
+        );
+        const rows = Array.isArray(response?.data) ? response.data : [];
+        for (const ad of rows) {
           const adId = text(ad?.id);
           const adName = text(ad?.name);
           const adStatus = text(ad?.status);
           if (!adId || !adName || adStatus !== 'ACTIVE') continue;
+          // An ad that does not open WhatsApp can never produce a referral, so
+          // a conversation attached to it could never fire.
           if (!toWhatsApp(text(ad?.creative?.call_to_action_type))) continue;
-          ads.push({
+          const campaignId = text(ad?.campaign?.id);
+          const campaignName = text(ad?.campaign?.name);
+          if (!campaignId || !campaignName) continue;
+          const campaignStatus = text(ad?.campaign?.status) ?? 'ACTIVE';
+          const existing = byCampaign.get(campaignId) ?? {
+            id: campaignId,
+            name: campaignName,
+            status: campaignStatus,
+            ads: [],
+          };
+          existing.ads.push({
             id: adId,
             name: adName,
             status: adStatus,
             aliasIds: aliasesFor(ad?.creative),
           });
+          byCampaign.set(campaignId, existing);
         }
-        // A campaign with no WhatsApp ad cannot start a conversation, so it is
-        // not offered -- picking it would create a rule that never matches.
-        if (!ads.length) continue;
-        campaigns.push({ id, name, status, ads });
+        after = text(response?.paging?.cursors?.after);
+        if (!response?.paging?.next || !after) break;
       }
+      const campaigns = [...byCampaign.values()];
       if (!campaigns.length) {
         return unavailable(
           'No running campaign sends people to WhatsApp, so there is nothing to attach a conversation to yet.',
@@ -282,20 +303,15 @@ interface GraphCreative {
   effective_instagram_media_id?: string;
 }
 
-interface GraphCampaignsResponse {
+interface GraphAdsResponse {
   data?: Array<{
     id?: string;
     name?: string;
     status?: string;
-    ads?: {
-      data?: Array<{
-        id?: string;
-        name?: string;
-        status?: string;
-        creative?: GraphCreative;
-      }>;
-    };
+    campaign?: { id?: string; name?: string; status?: string };
+    creative?: GraphCreative;
   }>;
+  paging?: { next?: string; cursors?: { after?: string } };
 }
 
 function text(value: unknown): string | null {

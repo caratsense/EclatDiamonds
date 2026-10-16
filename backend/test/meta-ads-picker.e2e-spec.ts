@@ -66,55 +66,50 @@ function principal(organisationId: string, role: Role = Role.store_manager): Aut
   };
 }
 
-const WA = { call_to_action_type: 'WHATSAPP_MESSAGE' };
+const WA = 'WHATSAPP_MESSAGE';
 
 /**
- * A plausible Graph page: one running WhatsApp campaign with two live
- * creatives, one paused campaign, and one running campaign that sends people
- * to a website. Only the first can ever start a conversation.
+ * A plausible Graph page off the ADS edge -- which is what the service reads,
+ * because campaigns-with-nested-ads overflowed the client's parse limit on a
+ * real account. Two live WhatsApp creatives in one campaign, one paused ad,
+ * and a running ad that opens a website instead.
  */
 function graphPage() {
   return {
     data: [
       {
-        id: '23850000000000001',
-        name: 'Diwali Solitaire',
+        id: '120210000000000001',
+        name: 'Solitaire ring — Know the price',
         status: 'ACTIVE',
-        ads: {
-          data: [
-            {
-              id: '120210000000000001',
-              name: 'Solitaire ring — Know the price',
-              status: 'ACTIVE',
-              creative: WA,
-            },
-            {
-              id: '120210000000000003',
-              name: 'Solitaire pendant — festive',
-              status: 'ACTIVE',
-              creative: WA,
-            },
-            { id: '120210000000000002', name: 'Old creative', status: 'PAUSED', creative: WA },
-          ],
+        campaign: { id: '23850000000000001', name: 'Diwali Solitaire', status: 'ACTIVE' },
+        creative: {
+          call_to_action_type: WA,
+          effective_object_story_id: '260523660468952_122315315798218003',
+          effective_instagram_media_id: '17879849562629585',
         },
       },
-      // Returned by Meta despite the effective_status filter — must not be offered.
-      { id: '23850000000000002', name: 'Monsoon clearance', status: 'PAUSED' },
-      // Running, but its ads open a website: a script on it could never fire.
       {
-        id: '23850000000000003',
-        name: 'Website sales — retargeting',
+        id: '120210000000000003',
+        name: 'Solitaire pendant — festive',
         status: 'ACTIVE',
-        ads: {
-          data: [
-            {
-              id: '120210000000000004',
-              name: 'Shop the collection',
-              status: 'ACTIVE',
-              creative: { call_to_action_type: 'SHOP_NOW' },
-            },
-          ],
-        },
+        campaign: { id: '23850000000000001', name: 'Diwali Solitaire', status: 'ACTIVE' },
+        creative: { call_to_action_type: WA },
+      },
+      // Paused: returned anyway, must not be offered.
+      {
+        id: '120210000000000002',
+        name: 'Old creative',
+        status: 'PAUSED',
+        campaign: { id: '23850000000000001', name: 'Diwali Solitaire', status: 'ACTIVE' },
+        creative: { call_to_action_type: WA },
+      },
+      // Running, but it opens a website: a script on it could never fire.
+      {
+        id: '120210000000000004',
+        name: 'Shop the collection',
+        status: 'ACTIVE',
+        campaign: { id: '23850000000000003', name: 'Website sales — retargeting', status: 'ACTIVE' },
+        creative: { call_to_action_type: 'SHOP_NOW' },
       },
     ],
   };
@@ -245,7 +240,11 @@ describe('Meta ads picker (e2e)', () => {
             id: '120210000000000001',
             name: 'Solitaire ring — Know the price',
             status: 'ACTIVE',
-            aliasIds: [],
+            aliasIds: [
+              '260523660468952_122315315798218003',
+              '122315315798218003',
+              '17879849562629585',
+            ],
           },
           {
             id: '120210000000000003',
@@ -259,7 +258,9 @@ describe('Meta ads picker (e2e)', () => {
     // The account id is read with the act_ prefix normalised, and the request
     // asks Meta itself for running campaigns only.
     expect(graph.calls).toHaveLength(1);
-    expect(graph.calls[0].path).toBe('act_700000000200/campaigns');
+    // The ADS edge, not campaigns-with-nested-ads: the nested form overflowed
+    // the Graph client's parse limit on a real account.
+    expect(graph.calls[0].path).toBe('act_700000000200/ads');
     expect(graph.calls[0].query.effective_status).toBe('["ACTIVE"]');
   });
 
@@ -344,19 +345,11 @@ describe('Meta ads picker (e2e)', () => {
     graph.reply(() => ({
       data: [
         {
-          id: '23850000000000009',
-          name: 'Website sales only',
+          id: '120210000000000009',
+          name: 'Shop now',
           status: 'ACTIVE',
-          ads: {
-            data: [
-              {
-                id: '120210000000000009',
-                name: 'Shop now',
-                status: 'ACTIVE',
-                creative: { call_to_action_type: 'SHOP_NOW' },
-              },
-            ],
-          },
+          campaign: { id: '23850000000000009', name: 'Website sales only', status: 'ACTIVE' },
+          creative: { call_to_action_type: 'SHOP_NOW' },
         },
       ],
     }));
