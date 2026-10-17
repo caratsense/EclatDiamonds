@@ -4,10 +4,8 @@ import { useState } from "react";
 import { Download } from "lucide-react";
 import { toast } from "sonner";
 
-import {
-  DailyReportForm,
-  todayLocal,
-} from "@/components/reporting/daily-report-form";
+import { todayLocal } from "@/components/reporting/daily-report-form";
+import { DailyReportDialog } from "@/components/reporting/daily-report-dialog";
 import { DailyReportsTable } from "@/components/reporting/daily-reports-table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -131,9 +129,11 @@ export function DailyReportSection() {
             Type it once. Head office reads every store’s evening digest.
           </p>
         </div>
-        <DsrSheetDownload />
+        <div className="flex items-center gap-2">
+          <DsrSheetDownload />
+          <DailyReportDialog />
+        </div>
       </div>
-      <DailyReportForm />
       <DailyReportsTable />
     </section>
   );
