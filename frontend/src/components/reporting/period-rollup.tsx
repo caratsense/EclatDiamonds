@@ -83,11 +83,14 @@ function RollupTile({
             {label}
           </p>
         </div>
-        {/* Numeric hero in the mono readout — serif oldstyle figures misalign. */}
-        <p className="num mt-3.5 text-[26px] font-semibold leading-none tracking-tight text-foreground">
+        {/* Numeric hero in the mono readout — serif oldstyle figures misalign.
+            Set smaller than a dashboard tile: three of these sit side by side
+            above a table, and at 26px they were the loudest thing on a page
+            whose subject is the table. */}
+        <p className="num mt-2.5 text-[22px] font-semibold leading-none tracking-tight text-foreground">
           {value}
         </p>
-        <div className="mt-4 space-y-1.5 border-t pt-3">
+        <div className="mt-3 space-y-1 border-t pt-2.5">
           {rows.map((r) => (
             <div
               key={r.label}

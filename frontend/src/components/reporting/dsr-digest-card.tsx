@@ -98,7 +98,7 @@ export function DsrDigestCard() {
       <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3 space-y-0">
         <div className="space-y-1">
           <CardTitle className="text-base">Evening digest to head office</CardTitle>
-          <CardDescription>
+          <CardDescription className="text-xs">
             Once a day, one WhatsApp message with every store&rsquo;s figures — sent to the
             people below, from the staff line. Stores that have not filed are named in it.
           </CardDescription>

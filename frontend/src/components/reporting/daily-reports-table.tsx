@@ -143,8 +143,8 @@ export function DailyReportsTable() {
         <CardHeader>
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
-              <CardTitle>Submitted reports</CardTitle>
-              <CardDescription>
+              <CardTitle className="text-base">Submitted reports</CardTitle>
+              <CardDescription className="text-xs">
                 Recent store-close reports — open any to read the full text,
                 save a row as PDF, or download the whole range consolidated
               </CardDescription>
@@ -202,7 +202,10 @@ export function DailyReportsTable() {
           </div>
         </CardHeader>
         <CardContent>
-          <Table>
+          {/* A store-close log is read by scanning a column, so it is set one
+              step tighter than the app's default table — smaller figures and
+              less air per row, so more days fit on a screen at once. */}
+          <Table className="text-[13px] [&_td]:py-1.5">
             <TableHeader>
               <TableRow>
                 <TableHead>Store</TableHead>
