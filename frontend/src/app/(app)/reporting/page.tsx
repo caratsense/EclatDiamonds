@@ -9,6 +9,7 @@ import { StoreRevenueTable } from "@/components/reporting/store-revenue-table";
 import { MoversTable } from "@/components/reporting/movers-table";
 import { PeriodRollup } from "@/components/reporting/period-rollup";
 import { DailyReportSection } from "@/components/reporting/daily-report-section";
+import { DailyReportDialog } from "@/components/reporting/daily-report-dialog";
 import { DsrDigestCard } from "@/components/reporting/dsr-digest-card";
 import { AllStoresReports } from "@/components/reporting/all-stores-reports";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -48,7 +49,7 @@ function FrontLineReporting() {
   return (
     <>
       <SectionHeader title="Daily Sales Report (DSR)" purpose={item?.purpose ?? ""} />
-      <DailyReportSection />
+      <DailyReportSection showFileButton={false} />
     </>
   );
 }
@@ -56,6 +57,10 @@ function FrontLineReporting() {
 function ManagerReporting() {
   const item = getNavItem("reporting");
   const [period, setPeriod] = useState<ReportPeriod>("daily");
+  // Filing is the page's one action, so its button lives in the page header
+  // (design, 17 Oct) and opens the sheet straight away rather than scrolling
+  // to a second button further down.
+  const [filing, setFiling] = useState(false);
   // Head office, or anyone who sees more than one branch, reads them side by side.
   const { role, stores } = useSession();
   const showAllStores =
@@ -163,12 +168,10 @@ function ManagerReporting() {
         // previewed the digest text, which the digest already delivers. This
         // one takes you to the form.
         primaryAction={item?.primaryAction}
-        onPrimaryAction={() =>
-          document
-            .getElementById("file-dsr")
-            ?.scrollIntoView({ behavior: "smooth", block: "start" })
-        }
+        onPrimaryAction={() => setFiling(true)}
       />
+
+      <DailyReportDialog open={filing} onOpenChange={setFiling} />
 
       {showAllStores ? (
         <Tabs defaultValue="overview" className="space-y-4">

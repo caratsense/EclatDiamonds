@@ -117,7 +117,15 @@ function DsrSheetDownload() {
  * to type on WhatsApp is now filed here: a grouped entry form with a live
  * WhatsApp-style preview, plus the list of recently submitted reports.
  */
-export function DailyReportSection() {
+export function DailyReportSection({
+  showFileButton = true,
+}: {
+  /**
+   * Off when the PAGE already carries a File DSR button in its header — the
+   * manager view does, and two buttons for one action read as two actions.
+   */
+  showFileButton?: boolean;
+} = {}) {
   return (
     <section id="file-dsr" className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -131,7 +139,7 @@ export function DailyReportSection() {
         </div>
         <div className="flex items-center gap-2">
           <DsrSheetDownload />
-          <DailyReportDialog />
+          {showFileButton ? <DailyReportDialog /> : null}
         </div>
       </div>
       <DailyReportsTable />

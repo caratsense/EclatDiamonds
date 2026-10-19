@@ -2,11 +2,19 @@
 
 import { useMemo, useState } from "react";
 import {
+  ArrowRight,
   ChevronDown,
+  Camera,
+  Globe,
+  IndianRupee,
   Megaphone,
   MessageCircle,
+  Phone,
+  Share2,
   Store as StoreIcon,
   TrendingUp,
+  Upload,
+  UserPlus,
   Users,
 } from "lucide-react";
 
@@ -46,6 +54,39 @@ const BAND_TONE: Record<string, string> = {
   negative: "var(--chart-4, #b91c1c)",
 };
 const FALLBACK_TONE = "var(--chart-5, #6366f1)";
+
+/**
+ * A face per channel and per funnel stage.
+ *
+ * A row of figures is read by shape before it is read by word — the eye finds
+ * WhatsApp by its mark, not by scanning three labels. Anything unmapped falls
+ * back to a neutral glyph rather than disappearing, because a channel with no
+ * icon is still a channel that brought someone in.
+ */
+const SOURCE_ICON: Record<string, typeof TrendingUp> = {
+  whatsapp: MessageCircle,
+  meta_ads: Megaphone,
+  // lucide in this version ships no Instagram glyph; a camera is the
+  // nearest honest stand-in and reads as a photo feed.
+  instagram: Camera,
+  website: Globe,
+  walk_in: StoreIcon,
+  phone: Phone,
+  referral: Share2,
+  imported: Upload,
+};
+
+const STAGE_ICON: Record<string, typeof TrendingUp> = {
+  conversations: MessageCircle,
+  leads: UserPlus,
+  enquiries: MessageCircle,
+  visits: StoreIcon,
+  converted: IndianRupee,
+};
+
+/** The icon's tinted plate — the same square on every tile, chart and stage. */
+const PLATE =
+  "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent text-primary";
 
 export function OmnichannelKpis({ storeId }: { storeId?: string }) {
   const t = useT();
@@ -169,11 +210,13 @@ function Totals({
           key={c.key}
           className="rounded-xl border border-border/80 bg-card p-3 shadow-sm"
         >
-          <div className={`${STAT_LABEL} mb-1.5`}>
-            <c.icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          <div className="mb-2 flex items-center gap-2">
+            <span className={PLATE} aria-hidden>
+              <c.icon className="h-4 w-4" />
+            </span>
             {/* The title carries the full wording: at seven across, a long
                 label clips, and a clipped label is a number nobody can read. */}
-            <span className="truncate" title={c.title ?? c.label}>
+            <span className={`${STAT_LABEL} min-w-0 truncate`} title={c.title ?? c.label}>
               {c.label}
             </span>
           </div>
@@ -221,7 +264,7 @@ function Intent({ data, loading }: { data?: OmnichannelSummary; loading: boolean
         </p>
       ) : (
         <div className="flex flex-wrap items-center gap-5">
-          <svg viewBox="0 0 42 42" className="h-28 w-28 shrink-0" role="img"
+          <svg viewBox="0 0 42 42" className="h-36 w-36 shrink-0" role="img"
             aria-label={`Intent breakdown across ${total} assessments`}>
             <circle cx="21" cy="21" r="15.9155" fill="none" stroke="var(--border)" strokeWidth="5" />
             {arcs.map((a) => (
@@ -237,13 +280,24 @@ function Intent({ data, loading }: { data?: OmnichannelSummary; loading: boolean
                 strokeDashoffset={`${25 - a.offset * 100}`}
               />
             ))}
+            {/* The hole carries the total AND what it counts: a bare number
+                in the middle of a ring is read as a percentage by half the
+                people who see it. */}
             <text
               x="21"
-              y="22.5"
+              y="20.5"
               textAnchor="middle"
-              className="fill-foreground text-[6px] tabular-nums"
+              className="fill-foreground text-[7px] font-semibold tabular-nums"
             >
               {total}
+            </text>
+            <text
+              x="21"
+              y="25"
+              textAnchor="middle"
+              className="fill-muted-foreground text-[3px]"
+            >
+              Total leads
             </text>
           </svg>
 
@@ -256,7 +310,12 @@ function Intent({ data, loading }: { data?: OmnichannelSummary; loading: boolean
                   aria-hidden
                 />
                 <span className="min-w-0 flex-1 truncate">{b.label}</span>
-                <span className="tabular-nums text-muted-foreground">{b.count}</span>
+                <span className="w-10 shrink-0 text-right tabular-nums">{b.count}</span>
+                {/* The share, which is what the ring actually draws — the count
+                    alone leaves the reader doing the division. */}
+                <span className="w-10 shrink-0 text-right tabular-nums text-muted-foreground">
+                  {total ? `${Math.round((b.count / total) * 100)}%` : "—"}
+                </span>
               </li>
             ))}
           </ul>
@@ -284,18 +343,24 @@ function Channels({ data, loading }: { data?: OmnichannelSummary; loading: boole
         </p>
       ) : (
         <ul className="space-y-2">
-          {rows.map((r) => (
-            <li key={r.source} className="flex items-center gap-3 text-sm">
-              <span className="w-24 shrink-0 truncate text-muted-foreground">{r.label}</span>
-              <span className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
-                <span
-                  className="block h-full rounded-full bg-foreground/70"
-                  style={{ width: max ? `${Math.max((r.count / max) * 100, 2)}%` : "0%" }}
-                />
-              </span>
-              <span className="w-10 shrink-0 text-right tabular-nums">{r.count}</span>
-            </li>
-          ))}
+          {rows.map((r) => {
+            const Icon = SOURCE_ICON[r.source] ?? Share2;
+            return (
+              <li key={r.source} className="flex items-center gap-3 text-sm">
+                <span className={PLATE} aria-hidden>
+                  <Icon className="h-4 w-4" />
+                </span>
+                <span className="w-24 shrink-0 truncate">{r.label}</span>
+                <span className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+                  <span
+                    className="block h-full rounded-full bg-primary"
+                    style={{ width: max ? `${Math.max((r.count / max) * 100, 2)}%` : "0%" }}
+                  />
+                </span>
+                <span className="w-10 shrink-0 text-right tabular-nums">{r.count}</span>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
@@ -314,29 +379,52 @@ function Funnel({ data, loading }: { data?: OmnichannelSummary; loading: boolean
       {loading ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : (
-        <ol className="grid gap-2 sm:grid-cols-5">
-          {stages.map((s) => (
-            <li key={s.key} className="rounded-md border border-border px-3 py-2">
-              <div className="text-xs text-muted-foreground">{s.label}</div>
-              <div className="font-[family-name:var(--font-display-face)] text-xl tabular-nums">
-                {s.count === null ? (
-                  <span className="text-muted-foreground" title="Not recorded for this account">
-                    —
-                  </span>
-                ) : (
-                  s.count.toLocaleString()
-                )}
-              </div>
-              <div className="mt-1 h-1 overflow-hidden rounded-full bg-muted">
-                <span
-                  className="block h-full rounded-full bg-foreground/60"
-                  style={{
-                    width: widest && s.count ? `${Math.max((s.count / widest) * 100, 2)}%` : "0%",
-                  }}
-                />
-              </div>
-            </li>
-          ))}
+        <ol className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
+          {stages.map((stage, i) => {
+            const Icon = STAGE_ICON[stage.key] ?? TrendingUp;
+            // Share of the widest stage, which is the journey's own starting
+            // point — a funnel measured against anything else is not a funnel.
+            const share =
+              widest && stage.count ? Math.max(Math.round((stage.count / widest) * 100), 1) : 0;
+            return (
+              <li key={stage.key} className="flex flex-1 items-center gap-2">
+                <div className="min-w-0 flex-1 rounded-md border border-border px-3 py-2.5">
+                  <div className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Icon className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
+                    <span className="truncate">{stage.label}</span>
+                  </div>
+                  <div className="font-[family-name:var(--font-display-face)] text-2xl tabular-nums">
+                    {stage.count === null ? (
+                      <span className="text-muted-foreground" title="Not recorded for this account">
+                        —
+                      </span>
+                    ) : (
+                      stage.count.toLocaleString()
+                    )}
+                  </div>
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                      <span
+                        className="block h-full rounded-full bg-primary"
+                        style={{ width: `${share}%` }}
+                      />
+                    </span>
+                    <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                      {stage.count === null ? "—" : `${share}%`}
+                    </span>
+                  </div>
+                </div>
+                {/* Between the stages, never after the last one: the arrow says
+                    "and then", and a trailing one points at nothing. */}
+                {i < stages.length - 1 ? (
+                  <ArrowRight
+                    className="hidden h-4 w-4 shrink-0 text-muted-foreground sm:block"
+                    aria-hidden
+                  />
+                ) : null}
+              </li>
+            );
+          })}
         </ol>
       )}
     </div>
