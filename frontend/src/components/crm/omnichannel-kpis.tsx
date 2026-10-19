@@ -84,9 +84,17 @@ const STAGE_ICON: Record<string, typeof TrendingUp> = {
   converted: IndianRupee,
 };
 
-/** The icon's tinted plate — the same square on every tile, chart and stage. */
+/** The icon's tinted plate — the same square on every chart row and stage. */
 const PLATE =
   "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent text-primary";
+
+/**
+ * The headline tiles carry a smaller plate. Seven of them sit across the row,
+ * and at the full size the mark took the width "New customers" needed, so the
+ * label clipped mid-word — a tile nobody can read the heading of.
+ */
+const PLATE_SM =
+  "flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent text-primary";
 
 export function OmnichannelKpis({ storeId }: { storeId?: string }) {
   const t = useT();
@@ -211,12 +219,17 @@ function Totals({
           className="rounded-xl border border-border/80 bg-card p-3 shadow-sm"
         >
           <div className="mb-2 flex items-center gap-2">
-            <span className={PLATE} aria-hidden>
-              <c.icon className="h-4 w-4" />
+            <span className={PLATE_SM} aria-hidden>
+              <c.icon className="h-3.5 w-3.5" />
             </span>
-            {/* The title carries the full wording: at seven across, a long
-                label clips, and a clipped label is a number nobody can read. */}
-            <span className={`${STAT_LABEL} min-w-0 truncate`} title={c.title ?? c.label}>
+            {/* The label WRAPS rather than truncates. Seven tiles across
+                leaves "New customers" a few pixels short, and a heading cut
+                mid-word is a number nobody can name. The title still carries
+                the longer explanation where one exists. */}
+            <span
+              className={`${STAT_LABEL} min-w-0 leading-tight`}
+              title={c.title ?? c.label}
+            >
               {c.label}
             </span>
           </div>
@@ -382,8 +395,11 @@ function Funnel({ data, loading }: { data?: OmnichannelSummary; loading: boolean
         <ol className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
           {stages.map((stage, i) => {
             const Icon = STAGE_ICON[stage.key] ?? TrendingUp;
-            // Share of the widest stage, which is the journey's own starting
-            // point — a funnel measured against anything else is not a funnel.
+            // Share of the LARGEST stage, not of the first one. Usually those
+            // are the same and this reads as a funnel; where a shop counts
+            // visits more broadly than conversations it is not, and the bar
+            // then says "against the biggest number here" rather than lying
+            // about a descent that did not happen.
             const share =
               widest && stage.count ? Math.max(Math.round((stage.count / widest) * 100), 1) : 0;
             return (

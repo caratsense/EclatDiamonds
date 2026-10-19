@@ -262,7 +262,12 @@ export function DailyReportsTable() {
                     <TableCell className="font-medium">
                       {r.storeName ?? r.storeId}
                     </TableCell>
-                    <TableCell className="num">{dateLabel(r.reportDate)}</TableCell>
+                    {/* A date never wraps. In the two-column overview this
+                        table is two thirds of the page, and "03 Oct 2026"
+                        broke across three lines and took the row with it. */}
+                    <TableCell className="num whitespace-nowrap">
+                      {dateLabel(r.reportDate)}
+                    </TableCell>
                     <TableCell className="num text-right">
                       {formatNumber(r.walkIns)}
                     </TableCell>
