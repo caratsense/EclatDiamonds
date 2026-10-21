@@ -143,8 +143,8 @@ export function DailyReportsTable() {
         <CardHeader>
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
-              <CardTitle className="text-base">Submitted reports</CardTitle>
-              <CardDescription className="text-xs">
+              <CardTitle>Submitted reports</CardTitle>
+              <CardDescription>
                 Recent store-close reports — open any to read the full text,
                 save a row as PDF, or download the whole range consolidated
               </CardDescription>

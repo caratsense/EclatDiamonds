@@ -42,11 +42,11 @@ export function SectionHeader({
     <div className={purpose ? "mb-8" : "mb-4"}>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-2">
-          <h1 className="font-display text-[30px] font-bold leading-tight tracking-tight text-foreground">
+          <h1 className="font-display text-2xl font-bold leading-tight tracking-tight text-foreground">
             {t(title, title)}
           </h1>
           {purpose ? (
-            <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+            <p className="max-w-2xl text-[13px] leading-relaxed text-muted-foreground">
               {t(purpose, purpose)}
             </p>
           ) : null}

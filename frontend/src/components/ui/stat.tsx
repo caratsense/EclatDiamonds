@@ -26,7 +26,7 @@ export const STAT_LABEL =
  * baked in here — two text-colour utilities on one element are decided by
  * stylesheet order, not by the order they were written.
  */
-export const STAT_VALUE = "num text-3xl font-bold tracking-tight";
+export const STAT_VALUE = "num text-2xl font-bold tracking-tight";
 
 /** Same figure, half a step down, for a tile in a row of six or more. */
-export const STAT_VALUE_SM = "num text-2xl font-bold tracking-tight";
+export const STAT_VALUE_SM = "num text-xl font-bold tracking-tight";
