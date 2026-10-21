@@ -361,9 +361,21 @@ body {
     0 8px 32px rgba(0, 0, 0, 0.36);
 }
 
-/* Tabular "assay readout" — weights, carats, prices, every numeric column. */
+/* Tabular "assay readout" — weights, carats, prices, every numeric column.
+ *
+ * The size correction is the point of the `em`. At an identical font-size the
+ * mono face sets about a third wider than the body sans — "1,56,000" measures
+ * 72px against 55px at 14px — so a figure beside a label looked a size larger
+ * than it was, and a table of prices shouted over the item names next to it.
+ * Nothing here was ever set bigger; it only read that way.
+ *
+ * Relative, so it follows whatever it is applied to: a 24px headline figure
+ * and a 13px table cell both come down by the same proportion, and the tabular
+ * alignment a column depends on is untouched.
+ */
 .num {
   font-family: var(--font-mono);
+  font-size: 0.92em;
   font-variant-numeric: tabular-nums lining-nums;
   letter-spacing: -0.01em;
 }
