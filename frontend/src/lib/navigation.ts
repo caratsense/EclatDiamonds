@@ -415,8 +415,20 @@ export const NAV_ITEMS: NavItem[] = [
       "Send one approved message to a group of customers, with consent checked per person.",
     primaryAction: "New Campaign",
     icon: Send,
-    group: "Setup",
-    rank: 80,
+    /*
+     * With the customers it writes to, not in Setup.
+     *
+     * Sending a broadcast is not configuration — it is the same job as the
+     * inbox and the lead list, done to many people at once. It sat in a
+     * sixteen-item settings group while the two things that feed it, Bot
+     * Scripts and Message Templates, sat here; a manager looking for "how do
+     * I message this group" had no reason to open Setup, and mostly did not.
+     *
+     * Ranked straight after Message Templates because that is the order the
+     * work happens in: write the message, get it approved, then send it.
+     */
+    group: "Customer Interactions",
+    rank: 95,
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
