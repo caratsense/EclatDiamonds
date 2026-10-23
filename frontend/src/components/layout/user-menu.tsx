@@ -19,11 +19,14 @@ import { IosInstallDialog } from "@/components/pwa/install-app-button";
 import { usePwaInstall } from "@/components/pwa/use-pwa-install";
 import { setStoredToken, setStoredStoreId } from "@/lib/api";
 import { useT } from "@/lib/i18n";
+import { ROLE_LABELS } from "@/lib/types";
 import { useSession } from "@/store/use-session";
 import { LogoutDialog } from "@/components/layout/logout-dialog";
 
 export function UserMenu() {
   const { user, clear } = useSession();
+  const baseRole = useSession((s) => s.baseRole);
+  const roleLabel = ROLE_LABELS[baseRole];
   const t = useT();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -47,9 +50,18 @@ export function UserMenu() {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuLabel>
+          {/*
+           * Name, role, email — the role lives HERE now rather than in the top
+           * bar. The bar stated it beside the name on all 57 screens, and on an
+           * account named after its own role ("Head Office") it read "Head
+           * Office · Head Office" with the initials beside it: one fact, three
+           * times. A person knows their own role; this is where they look when
+           * they want to check it.
+           */}
           <div className="flex flex-col">
             <span className="text-sm font-medium">{user.name}</span>
             <span className="text-xs font-normal text-muted-foreground">
+              {roleLabel && roleLabel !== user.name ? `${roleLabel} · ` : ""}
               {user.email}
             </span>
           </div>

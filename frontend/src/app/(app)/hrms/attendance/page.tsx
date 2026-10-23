@@ -130,19 +130,27 @@ export default function AttendancePage() {
     <>
       <SectionHeader
         title="Attendance"
-        purpose="Your own punches and month, and — for a manager — the store's register and the corrections waiting on a decision."
         primaryAction={audience === "my" ? "Request Correction" : undefined}
         onPrimaryAction={
           audience === "my" ? () => setFixDate(todayDate) : undefined
         }
       />
 
-      {/* Who this is about. Everything below is scoped to this choice. */}
+      {/*
+       * Who this is about, beside the content rather than above it.
+       *
+       * This was a full-width tab bar of its own, stacked on top of a second
+       * full-width tab bar — two rows of navigation before any attendance was
+       * visible. It is one choice between two words, so it sits on the same
+       * line as the tabs it scopes.
+       */}
       <Tabs value={audience} onValueChange={setAudience} className="space-y-4">
-        <TabsList className="flex h-auto flex-wrap">
-          <TabsTrigger value="my">My Data</TabsTrigger>
-          {isManager ? <TabsTrigger value="team">Team</TabsTrigger> : null}
-        </TabsList>
+        {isManager ? (
+          <TabsList className="ml-auto w-fit">
+            <TabsTrigger value="my">My data</TabsTrigger>
+            <TabsTrigger value="team">Team</TabsTrigger>
+          </TabsList>
+        ) : null}
 
         <TabsContent value="my" className="space-y-4">
           <Tabs value={myTab} onValueChange={setMyTab} className="space-y-4">

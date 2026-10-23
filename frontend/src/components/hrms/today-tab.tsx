@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Pencil, RefreshCw, Users } from "lucide-react";
 import {
   Bar,
@@ -16,13 +16,7 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
   Select,
@@ -210,24 +204,32 @@ function SnapshotMeta({ data }: { data: TodaySnapshot }) {
     minute: "2-digit",
     ...(tz ? { timeZone: tz } : {}),
   });
+  const first = data.stores[0]?.date;
+  const dateLabel = first
+    ? new Date(`${first}T00:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short" })
+    : "";
   const dates = [...new Set(data.stores.map((s) => `${s.date} · ${s.timezone}`))];
+  /*
+   * One line, not two. This stated the time with its timezone, then the
+   * business date with the SAME timezone directly beneath it — and where
+   * branches disagreed it recited every branch, its date and its zone inline.
+   * The split only matters when the dates actually differ, so that is the only
+   * case that says anything; the detail moves to the tooltip.
+   */
+  const split = dates.length > 1;
+  const detail = split
+    ? data.stores.map((s) => `${s.storeName}: ${s.date} (${s.timezone})`).join(", ")
+    : undefined;
   return (
     <div className="text-sm">
-      <p className="font-medium">
-        Snapshot at <span className="num">{at}</span>
-        {tz ? <span className="text-muted-foreground"> ({tz})</span> : null}
-      </p>
-      <p className="text-xs text-muted-foreground">
-        Business date{" "}
-        {dates.length === 1 ? (
-          <span className="num">{dates[0]}</span>
-        ) : (
-          data.stores.map((s) => (
-            <span key={s.storeId} className="mr-2 inline-block">
-              {s.storeName}: <span className="num">{s.date}</span> ({s.timezone})
-            </span>
-          ))
-        )}
+      <p className="font-medium" title={detail}>
+        <span className="num">{at}</span>
+        {dateLabel ? <span className="text-muted-foreground"> · {dateLabel}</span> : null}
+        {split ? (
+          <span className="text-muted-foreground">
+            {" "}· {dates.length} business dates across branches
+          </span>
+        ) : null}
       </p>
     </div>
   );
@@ -243,6 +245,17 @@ function KpiTiles({
   onFilter: (f: Filter) => void;
 }) {
   const sum = DAY_STATES.reduce((n, s) => n + (data.counts[s] ?? 0), 0);
+  // Each employee holds exactly one state, so the tiles must sum to the number
+  // due. Warned rather than rendered: the customer cannot act on a broken
+  // invariant, and the console is where whoever can will see it.
+  useEffect(() => {
+    if (sum !== data.denominator) {
+      console.warn(
+        `[attendance] day states sum to ${sum} but ${data.denominator} are due`,
+        data.counts,
+      );
+    }
+  }, [sum, data.denominator, data.counts]);
   return (
     <div className="space-y-2">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8">
@@ -301,14 +314,14 @@ function KpiTiles({
           );
         })}
       </div>
-      <p className="num text-xs text-muted-foreground">
-        {DAY_STATES.map((s) => data.counts[s] ?? 0).join(" + ")} = {sum}
-        {sum !== data.denominator ? (
-          <span className="ml-2 font-sans text-destructive">
-            (does not match {data.denominator} due — report this)
-          </span>
-        ) : null}
-      </p>
+      {/*
+        The running sum "0 + 0 + 0 + 0 + 0 + 0 + 9 = 9" used to print here, with
+        "(does not match N due — report this)" when it failed. That is an
+        invariant worth holding and not worth showing: it meant nothing to a
+        store manager, and its failure branch asked the customer to file a bug.
+        It is a console warning now, so a wrong total is still noticed by
+        somebody who can act on it.
+      */}
     </div>
   );
 }
@@ -322,8 +335,14 @@ function StateDonut({ data }: { data: TodaySnapshot }) {
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">Today at a glance</CardTitle>
-        <CardDescription>Share of the {data.denominator} people due today.</CardDescription>
+        {/* The count moves into the title; the sentence restating what a
+            donut of attendance states is gone. */}
+        <CardTitle className="text-base">
+          Today at a glance{" "}
+          <span className="font-normal text-muted-foreground">
+            · {data.denominator} due
+          </span>
+        </CardTitle>
       </CardHeader>
       <CardContent>
         <div className="relative h-56">
@@ -380,7 +399,6 @@ function StoreBars({ data }: { data: TodaySnapshot }) {
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-base">By store</CardTitle>
-        <CardDescription>Each bar is one store&apos;s staff due today.</CardDescription>
       </CardHeader>
       <CardContent>
         <div style={{ height: Math.max(160, rows.length * 44 + 40) }}>

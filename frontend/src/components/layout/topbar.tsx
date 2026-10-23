@@ -3,7 +3,6 @@
 import { GlobalSearch } from "@/components/layout/global-search";
 import { SEARCH_ENABLED } from "@/lib/features";
 import { NotificationBell } from "@/components/layout/notification-bell";
-import { RoleBadge } from "@/components/layout/role-badge";
 import { StoreSwitcher } from "@/components/layout/store-switcher";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { UserMenu } from "@/components/layout/user-menu";
@@ -24,11 +23,7 @@ export function Topbar() {
       </div>
 
       <div className="ml-auto flex items-center gap-2">
-        <div className="hidden sm:block">
-        </div>
         <NotificationBell />
-        <RoleBadge />
-        <div className="mx-1 hidden h-5 w-px bg-border sm:block" />
         <ThemeToggle />
         <UserMenu />
       </div>
