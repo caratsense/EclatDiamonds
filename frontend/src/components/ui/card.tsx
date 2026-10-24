@@ -5,6 +5,10 @@ import { cn } from "@/lib/utils";
 function Card({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
+      // The hook the nested-surface rule in globals.css matches on: a card
+      // inside a card loses its shadow and takes a quieter edge, so depth
+      // reads as depth instead of as two identical boxes.
+      data-slot="card"
       className={cn(
         // border-border/80 rather than the flat token: at full strength the
         // outline competes with the content; at 80% it separates the surface

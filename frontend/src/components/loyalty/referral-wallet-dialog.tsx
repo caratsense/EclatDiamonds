@@ -114,7 +114,7 @@ export function ReferralWalletDialog({
                   <Wallet className="h-4 w-4" />
                   Wallet balance
                 </span>
-                <span className="num text-2xl font-semibold text-gold-strong">
+                <span className="num text-[15px] font-semibold text-gold-strong">
                   {formatINR(wallet.totals.balance)}
                 </span>
               </div>
@@ -270,8 +270,8 @@ function StatTile({
       <p
         className={
           emphasis
-            ? "num mt-1 text-lg font-semibold text-gold-strong"
-            : "num mt-1 text-lg font-semibold"
+            ? "num mt-1 text-[13px] font-semibold text-gold-strong"
+            : "num mt-1 text-[13px] font-semibold"
         }
       >
         {value}

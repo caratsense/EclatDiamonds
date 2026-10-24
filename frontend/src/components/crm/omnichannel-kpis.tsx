@@ -409,7 +409,7 @@ function Funnel({ data, loading }: { data?: OmnichannelSummary; loading: boolean
                     <Icon className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
                     <span className="truncate">{stage.label}</span>
                   </div>
-                  <div className="font-[family-name:var(--font-display-face)] text-2xl tabular-nums">
+                  <div className="font-[family-name:var(--font-display-face)] text-xl tabular-nums">
                     {stage.count === null ? (
                       <span className="text-muted-foreground" title="Not recorded for this account">
                         —

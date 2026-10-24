@@ -229,7 +229,7 @@ export const NAV_ITEMS: NavItem[] = [
     slug: "calling",
     title: "Calls Due",
     purpose:
-      "Every follow-up owed to a customer, oldest first, with the history on one screen before you dial.",
+      "Every follow-up owed to a customer, oldest first.",
     primaryAction: "",
     icon: PhoneCall,
     group: "Customer Interactions",
@@ -494,7 +494,7 @@ export const NAV_ITEMS: NavItem[] = [
     slug: "hrms",
     title: "HR & Attendance",
     purpose:
-      "Attendance, leave, roster and shifts, and HR reports — your own, and your team's if you manage one.",
+      "Attendance, leave, roster and shifts, and HR reports.",
     primaryAction: "Mark Attendance",
     icon: Fingerprint,
     group: "HR & Teams",
@@ -545,7 +545,7 @@ export const NAV_ITEMS: NavItem[] = [
     // who needs a diamond rate approved, and their view is filtered to their
     // own requests server-side.
     purpose:
-      "Ask your manager, area office or head office for a decision — diamond rates, price overrides, transfers and more.",
+      "Ask for a decision: diamond rates, price overrides, transfers.",
     primaryAction: "New Request",
     icon: MessageSquarePlus,
     group: "Command Centre",
@@ -652,7 +652,7 @@ export const NAV_ITEMS: NavItem[] = [
     slug: "settings/rates",
     title: "Gold Rate",
     purpose:
-      "The live gold rate every new quote is priced from — auto-updates from the market; override it here if needed.",
+      "What every new quote is priced from. Override it here.",
     primaryAction: "",
     icon: Coins,
     group: "Setup",
@@ -684,7 +684,7 @@ export const NAV_ITEMS: NavItem[] = [
     slug: "settings/integrations/templates",
     title: "Message Templates",
     purpose:
-      "Write a WhatsApp message and put it to Meta for approval. Approved ones are what campaigns send.",
+      "Messages put to Meta for approval, which campaigns then send.",
     primaryAction: "",
     icon: MessageSquarePlus,
     group: "Customer Interactions",
@@ -736,7 +736,7 @@ export const NAV_ITEMS: NavItem[] = [
     slug: "management",
     title: "Management View",
     purpose:
-      "Leads, conversations, follow-ups, the floor, quotes and feedback across every branch, over a period you choose.",
+      "Every branch on one screen, over a period you choose.",
     primaryAction: "",
     icon: BarChart3,
     group: "Reports",
@@ -771,7 +771,7 @@ export const NAV_ITEMS: NavItem[] = [
     slug: "customers/archived",
     title: "Archived Contacts",
     purpose:
-      "People taken out of the working lists. Their consent history is kept, which is what stops them being messaged again.",
+      "People taken out of the working lists.",
     primaryAction: "",
     icon: Archive,
     group: "Customer Interactions",
@@ -794,7 +794,7 @@ export const NAV_ITEMS: NavItem[] = [
     slug: "inventory/dead-stock",
     title: "Dead Stock",
     purpose:
-      "Pieces that have not moved, against thresholds you set per category rather than one number for everything.",
+      "Pieces that have not moved, against your own per-category thresholds.",
     primaryAction: "",
     icon: PackageX,
     group: "Stock Management",
@@ -828,11 +828,35 @@ export const NAV_ITEMS: NavItem[] = [
     slug: "hrms/payroll",
     title: "Payroll & Payslips",
     purpose:
-      "Payslips counted from the attendance register, the month's payroll runs, and the offs they are counted against.",
+      "Payslips counted from the attendance register, and the month's runs.",
     primaryAction: "",
     icon: ReceiptIcon,
     group: "HR & Teams",
     rank: 40,
+    roles: ["store_manager", "area_manager", "head_office"],
+  },
+  {
+    /*
+     * The employee master, in the sidebar in its own right.
+     *
+     * It had no nav entry at all: the only way in was a card nested on the HR
+     * hub, so removing that card left the page answering on its URL and
+     * unreachable. It is NOT People & Access — that hands out logins and
+     * decides which screens a person may open, and is head-office only; this
+     * is the HR record of who works here, which a store manager needs.
+     *
+     * Ranked between HR & Attendance and Payroll & Payslips because that is
+     * the order the work runs in: who works here, what they did, what they are
+     * paid.
+     */
+    module: 6,
+    slug: "hrms/employees",
+    title: "Employees",
+    purpose: "Profiles, departments and designations, joining and separation.",
+    primaryAction: "",
+    icon: UsersRound,
+    group: "HR & Teams",
+    rank: 35,
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
@@ -863,7 +887,7 @@ export const NAV_ITEMS: NavItem[] = [
     slug: "data/images",
     title: "Product Images",
     purpose:
-      "Match a folder of photographs to the products you already have, and reuse the column mapping you worked out last month.",
+      "Match a folder of photographs to the products you already have.",
     primaryAction: "",
     icon: Images,
     group: "Setup",
@@ -875,7 +899,7 @@ export const NAV_ITEMS: NavItem[] = [
     slug: "settings/messaging-routes",
     title: "Messaging Routes",
     purpose:
-      "Which of your numbers each branch answers on, so a customer is replied to by the shop they wrote to.",
+      "Which of your numbers each branch answers on.",
     primaryAction: "",
     icon: Route,
     group: "Setup",
@@ -927,6 +951,7 @@ export const CORE_NAVIGATION: readonly string[] = Object.freeze([
   "checkins",
   "hrms",
   "hrms/payroll",
+  "hrms/employees",
   "settings/onboarding",
   "settings/stores",
   "settings/team",

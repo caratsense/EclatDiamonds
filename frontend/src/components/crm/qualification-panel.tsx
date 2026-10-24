@@ -103,7 +103,7 @@ function QualificationBody({ q }: { q: Qualification }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-baseline gap-1.5">
-          <span className="num text-3xl font-semibold">{q.score}</span>
+          <span className="num text-[17px] font-semibold">{q.score}</span>
           <span className="text-sm text-muted-foreground">/ 100</span>
         </div>
         {q.bandLabel ? <Badge variant="secondary">{q.bandLabel}</Badge> : null}

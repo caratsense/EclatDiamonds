@@ -45,6 +45,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { HelpNote } from "@/components/ui/help-note";
 import { getNavItem } from "@/lib/navigation";
 import { useResetPassword } from "@/lib/queries/auth";
 import {
@@ -409,12 +410,20 @@ function HoldingStoreNotice({ stores }: { stores: AdminStore[] }) {
               {stores.length}
             </Badge>
           </div>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            These are system buckets for imported records whose branch could not
-            be identified. They are not physical stores, so they do not need a
-            geofence, region, manager, or activation. Reconcile the imported rows
-            with their correct branch instead.
-          </p>
+          <HelpNote
+            className="mt-1"
+            label="Why these have no settings"
+            more={
+              <>
+                They are not physical stores, so they do not need a geofence,
+                region, manager, or activation. Reconcile the imported rows with
+                their correct branch instead.
+              </>
+            }
+          >
+            System buckets for imported records whose branch could not be
+            identified.
+          </HelpNote>
           <div className="mt-3 flex flex-wrap gap-2">
             {stores.map((store) => (
               <Badge key={store.id} variant="outline">

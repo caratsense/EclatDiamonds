@@ -254,7 +254,8 @@ export function RegisterTab({
           ) : (
             <>
               <div className="overflow-x-auto">
-                <Table>
+                {/* One row per person per day, for a whole month. Scrolls in its own box so the page does not grow with the data. */}
+        <Table maxHeight="65vh">
                   <TableHeader>
                     <TableRow>
                       <TableHead>Date</TableHead>

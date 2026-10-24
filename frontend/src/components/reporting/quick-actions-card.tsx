@@ -2,7 +2,7 @@
 
 import { ChevronRight, FileText, Files } from "lucide-react";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 /**
  * The two things a manager opens this screen to do (design, 17 Oct).
@@ -40,9 +40,6 @@ export function QuickActionsCard({
     <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Quick actions</CardTitle>
-        <CardDescription className="text-xs">
-          File today&rsquo;s report, or read past submissions.
-        </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-2">
         {actions.map((a) => (

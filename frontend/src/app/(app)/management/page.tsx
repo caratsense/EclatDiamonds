@@ -437,10 +437,10 @@ function Tile({
       <div
         className={
           tone === "bad"
-            ? "num text-xl font-semibold text-rose-600 dark:text-rose-400"
+            ? "num text-[13px] font-semibold text-rose-600 dark:text-rose-400"
             : tone === "wait"
-              ? "num text-xl font-semibold text-amber-600 dark:text-amber-400"
-              : "num text-xl font-semibold"
+              ? "num text-[13px] font-semibold text-amber-600 dark:text-amber-400"
+              : "num text-[13px] font-semibold"
         }
       >
         {value}
@@ -455,7 +455,7 @@ function RatioTile({ label, r }: { label: string; r?: Ratio }) {
   return (
     <div className="rounded-md border p-3">
       <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="num text-xl font-semibold">{percent(r)}</div>
+      <div className="num text-[13px] font-semibold">{percent(r)}</div>
       <div className="mt-1 text-[11px] text-muted-foreground">
         {r && r.denominator > 0
           ? `${formatNumber(r.numerator)} of ${formatNumber(r.denominator)}`

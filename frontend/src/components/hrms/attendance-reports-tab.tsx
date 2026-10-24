@@ -877,10 +877,6 @@ function MyAttendanceReport() {
             <CalendarRange className="h-4 w-4 text-muted-foreground" />
             My attendance
           </CardTitle>
-          <CardDescription>
-            Choose a date range to review your attendance, worked hours and
-            check-in locations.
-          </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap items-end gap-3">

@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { HelpNote } from "@/components/ui/help-note";
 import {
   useBotScript,
   useSaveBotScript,
@@ -146,11 +147,19 @@ export function BotScriptConfig() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-5">
-          <p className="text-sm text-muted-foreground">
-            The questions a customer is asked after they tap an advert or message you.
-            Leave a box empty to use the wording shown in grey. Changes apply to new
-            conversations; one already part-way through keeps the questions it started with.
-          </p>
+          <HelpNote
+            className="text-sm"
+            label="When a change takes effect"
+            more={
+              <>
+                Changes apply to new conversations; one already part-way through
+                keeps the questions it started with.
+              </>
+            }
+          >
+            The questions a customer is asked after they tap an advert or
+            message you. Leave a box empty to use the wording shown in grey.
+          </HelpNote>
 
           <div className="space-y-3 rounded-lg border p-3">
             <div className="flex items-center justify-between gap-3">
@@ -322,12 +331,19 @@ function StepEditor({
             />
           ))}
         </div>
-        <p className="text-xs text-muted-foreground">
-          Up to {limits.optionLabel} characters each &mdash; WhatsApp cuts a longer one off
-          mid-word. You can reword an answer, but not add or remove one: the rest of the
-          system records which answer was given, and an answer that stopped existing would
-          orphan every lead that chose it.
-        </p>
+        <HelpNote
+          label="Why answers can be reworded but not added or removed"
+          more={
+            <>
+              The rest of the system records which answer was given, and an
+              answer that stopped existing would orphan every lead that chose
+              it.
+            </>
+          }
+        >
+          Up to {limits.optionLabel} characters each &mdash; WhatsApp cuts a
+          longer one off mid-word.
+        </HelpNote>
       </div>
     </div>
   );

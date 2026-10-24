@@ -435,7 +435,7 @@ function Figure({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="num text-lg font-semibold">{value}</p>
+      <p className="num text-[13px] font-semibold">{value}</p>
     </div>
   );
 }

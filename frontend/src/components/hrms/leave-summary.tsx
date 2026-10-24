@@ -91,7 +91,7 @@ export function LeaveSummaryCards({ staffId }: { staffId?: string }) {
                   </>
                 ) : (
                   <>
-                    <p className="num text-2xl font-semibold">
+                    <p className="num text-[15px] font-semibold">
                       {available}
                       <span className="text-sm font-normal text-muted-foreground">
                         {" "}

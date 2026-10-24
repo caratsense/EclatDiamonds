@@ -9,9 +9,7 @@ import {
   CalendarRange,
   Fingerprint,
   Plane,
-  Receipt,
   SlidersHorizontal,
-  UsersRound,
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -169,25 +167,20 @@ export default function HrmsPage() {
     });
   }
 
-  /** Employee records and pay: real work, but not the day's work. */
-  const backOffice: Destination[] = isManager
-    ? [
-        {
-          href: "/hrms/employees",
-          title: "Employees",
-          detail:
-            "The employee master — profiles, departments and designations, joining and separation.",
-          icon: UsersRound,
-        },
-        {
-          href: "/hrms/payroll",
-          title: "Payroll & Payslips",
-          detail:
-            "Payslips counted from the attendance register, and the month's payroll runs.",
-          icon: Receipt,
-        },
-      ]
-    : [];
+  /*
+   * No "People & pay" band. Both of its cards restated a destination reachable
+   * from the sidebar's HR & Teams group, so a manager met each twice.
+   *
+   * One caveat for whoever reads this next: `/hrms/employees` currently has NO
+   * sidebar entry. Adding one is a frontend line in `lib/navigation.ts` AND
+   * `'hrms/employees'` in the MODULES list and role maps of
+   * `backend/src/auth/access.ts` — the sidebar asks the server which slugs a
+   * person may open, so a slug the server has never heard of is filtered out
+   * however it is declared here. Until that lands the page answers on its URL
+   * but is not navigable. It is NOT the same screen as People & Access, which
+   * is head-office only and governs logins and screen permissions rather than
+   * the HR record of who works here.
+   */
 
   return (
     <>
@@ -233,14 +226,6 @@ export default function HrmsPage() {
           <DestinationCard key={d.href} destination={d} />
         ))}
       </Band>
-
-      {backOffice.length ? (
-        <Band title="People & pay">
-          {backOffice.map((d) => (
-            <DestinationCard key={d.href} destination={d} />
-          ))}
-        </Band>
-      ) : null}
 
       {isManager ? (
         <Band title="Setup">

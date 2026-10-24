@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -557,13 +557,29 @@ function CrmView() {
           {leadStages.map((stage) => {
             const items = byStage(stage.id);
             return (
+              /*
+                Equal-height columns that scroll their own cards.
+
+                The board used to be as tall as its fullest column: eleven
+                Inquiry cards stretched the row to roughly 1,200px while
+                Quotation and Order Placed held one card each and paid for the
+                rest in empty space. It also meant the only way to see the
+                bottom of Inquiry was to scroll the whole page, taking the
+                other two columns and their headers off screen with it.
+
+                A fixed column with its own scrollbar keeps all three stages
+                and their counts in view at once, which is the point of a
+                board. The height is viewport-relative rather than a fixed
+                pixel count, so a tall monitor shows more cards rather than
+                the same few in a letterbox.
+              */
               <div
                 key={stage.id}
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={() => handleDrop(stage.id)}
-                className="flex flex-col rounded-xl border bg-muted/30 p-3"
+                className="flex h-[min(68vh,760px)] flex-col rounded-xl border bg-muted/30 p-3"
               >
-                <div className="mb-3 flex items-center justify-between">
+                <div className="mb-3 flex shrink-0 items-center justify-between">
                   <div className="flex items-center gap-2">
                     <h2 className="text-sm font-semibold">{stage.label}</h2>
                     <Badge variant="secondary">
@@ -571,7 +587,9 @@ function CrmView() {
                     </Badge>
                   </div>
                 </div>
-                <div className="flex flex-col gap-2">
+                {/* `overscroll-contain` so reaching the end of a column does
+                    not start scrolling the page behind it. */}
+                <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain pr-1">
                   {items.map((lead) => (
                     <LeadCard
                       key={lead.id}
@@ -873,6 +891,8 @@ function AddLeadDialog({
   const [anniversary, setAnniversary] = useState("");
   // Inline validation errors, keyed by field. Cleared per-field on change.
   const [errors, setErrors] = useState<Record<string, string>>({});
+  /** Guards against a double-click submitting twice — see `save()`. */
+  const submitting = useRef(false);
 
   function clearError(field: string) {
     setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
@@ -891,6 +911,22 @@ function AddLeadDialog({
   }
 
   function save() {
+    /*
+     * A ref, not `createLead.isPending`.
+     *
+     * The Save button already carries `disabled={createLead.isPending}`, and a
+     * double-click still created two leads (LD-5015 and LD-5016 in the 24 Oct
+     * audit). `isPending` only turns true once React has re-rendered, so two
+     * clicks dispatched in the same tick both run this handler before the
+     * disabled attribute is ever committed — render state cannot win a race
+     * against the event loop.
+     *
+     * A ref flips synchronously, so the second call returns here. It is
+     * cleared in the mutation's settle handler rather than on success alone,
+     * so a failed save can be retried.
+     */
+    if (submitting.current) return;
+
     if (!targetStoreId) {
       toast.error("Select a store to capture this lead against.");
       return;
@@ -915,6 +951,7 @@ function AddLeadDialog({
       toast.error("Please fill in the required fields.");
       return;
     }
+    submitting.current = true;
     createLead.mutate(
       {
         storeId: targetStoreId,
@@ -936,6 +973,10 @@ function AddLeadDialog({
           onOpenChange(false);
         },
         onError: (err) => toast.error(apiErrorMessage(err, "Could not save lead.")),
+        // Released on settle, not on success, so a failed save is retryable.
+        onSettled: () => {
+          submitting.current = false;
+        },
       },
     );
   }

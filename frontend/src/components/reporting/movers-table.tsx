@@ -2,7 +2,7 @@
 
 import { TrendingDown, TrendingUp } from "lucide-react";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,7 +31,6 @@ export function MoversTable({ data, isLoading, isError, onRetry }: MoversTablePr
     <Card>
       <CardHeader>
         <CardTitle>Fast vs Slow Movers</CardTitle>
-        <CardDescription>Category velocity and aging stock signal</CardDescription>
       </CardHeader>
       <CardContent>
         <Table>

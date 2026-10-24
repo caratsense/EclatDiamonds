@@ -514,7 +514,7 @@ export function GeoPunchCard() {
                     <span className="text-xs text-muted-foreground">
                       Checked in at
                     </span>
-                    <span className="num text-2xl font-semibold">
+                    <span className="num text-[15px] font-semibold">
                       {punchTime(today!.checkInLocal, today!.checkInAt)}
                     </span>
                   </div>
@@ -577,26 +577,26 @@ export function GeoPunchCard() {
               <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
                 <div>
                   <p className="text-xs text-muted-foreground">In</p>
-                  <p className="num text-lg font-semibold">
+                  <p className="num text-[13px] font-semibold">
                     {punchTime(today!.checkInLocal, today!.checkInAt)}
                   </p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Out</p>
-                  <p className="num text-lg font-semibold">
+                  <p className="num text-[13px] font-semibold">
                     {punchTime(today!.checkOutLocal, today!.checkOutAt)}
                   </p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Worked</p>
-                  <p className="num text-lg font-semibold text-success">
+                  <p className="num text-[13px] font-semibold text-success">
                     {formatWorked(today!.workedMins)}
                   </p>
                 </div>
                 {today!.overtimeMins ? (
                   <div>
                     <p className="text-xs text-muted-foreground">Overtime</p>
-                    <p className="num text-lg font-semibold text-warning">
+                    <p className="num text-[13px] font-semibold text-warning">
                       {formatWorked(today!.overtimeMins)}
                     </p>
                   </div>
@@ -604,7 +604,7 @@ export function GeoPunchCard() {
                 {today!.earlyOutMinutes ? (
                   <div>
                     <p className="text-xs text-muted-foreground">Left early</p>
-                    <p className="num text-lg font-semibold text-warning">
+                    <p className="num text-[13px] font-semibold text-warning">
                       {formatWorked(today!.earlyOutMinutes)}
                     </p>
                   </div>

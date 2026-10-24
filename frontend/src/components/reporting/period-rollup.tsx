@@ -87,7 +87,7 @@ function RollupTile({
             Set smaller than a dashboard tile: three of these sit side by side
             above a table, and at 26px they were the loudest thing on a page
             whose subject is the table. */}
-        <p className="num mt-2.5 text-[22px] font-semibold leading-none tracking-tight text-foreground">
+        <p className="num mt-2.5 text-[15px] font-semibold leading-none tracking-tight text-foreground">
           {value}
         </p>
         <div className="mt-3 space-y-1 border-t pt-2.5">

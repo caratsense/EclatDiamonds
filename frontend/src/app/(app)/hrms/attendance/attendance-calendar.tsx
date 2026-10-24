@@ -45,6 +45,13 @@ function firstWeekday(month: string): number {
   return new Date(Date.UTC(y, m - 1, 1)).getUTCDay();
 }
 
+/** YYYY-MM shifted by whole months, for the greyed days either side. */
+function shiftMonthKey(month: string, by: number): string {
+  const [y, m] = month.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + by, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
 /**
  * My attendance as a month grid: one status chip per day, with the punch times
  * underneath where there are any. The pencil raises a correction for that day —
@@ -70,22 +77,43 @@ export function AttendanceCalendar({
   const byDate = new Map(records.map((r) => [r.date, r]));
   const total = daysInMonth(month);
   const lead = firstWeekday(month);
+  // The comp (Figma 1382:2422) fills the leading cells with the tail of the
+  // previous month, greyed, rather than leaving holes — so the grid reads as a
+  // calendar page and the first row has the same weight as the rest.
+  const prevTail = daysInMonth(shiftMonthKey(month, -1));
+  // Whole weeks, so the bottom edge is straight.
+  const trail = (7 - ((lead + total) % 7)) % 7;
 
   return (
-    <div className="space-y-2">
-      <div className="grid grid-cols-7 gap-1 sm:gap-1.5">
+    <div className="overflow-hidden rounded-xl border">
+      <div className="grid grid-cols-7 border-b bg-muted/50">
         {WEEK_DAYS_SHORT.map((d) => (
           <div
             key={d}
-            className="px-1 pb-1 text-center text-[10px] font-medium uppercase tracking-wide text-muted-foreground sm:text-xs"
+            className="px-1 py-2.5 text-center text-[11px] font-medium text-muted-foreground sm:text-xs"
           >
             <span className="sm:hidden">{d.slice(0, 1)}</span>
             <span className="hidden sm:inline">{d}</span>
           </div>
         ))}
-
+      </div>
+      {/*
+        One contiguous ruled grid rather than a row of separate cards: the comp
+        draws hairlines between days, which is what makes a month scan as a
+        month. Negative margins on the wrapper let each cell own its right and
+        bottom border without doubling at the edges.
+      */}
+      <div className="-mb-px -mr-px grid grid-cols-7">
         {Array.from({ length: lead }).map((_, i) => (
-          <div key={`lead-${i}`} aria-hidden />
+          <div
+            key={`lead-${i}`}
+            aria-hidden
+            className="min-h-[64px] border-b border-r p-1.5 sm:min-h-[84px] sm:p-2"
+          >
+            <span className="num text-xs text-muted-foreground/50 sm:text-sm">
+              {prevTail - lead + i + 1}
+            </span>
+          </div>
         ))}
 
         {Array.from({ length: total }).map((_, i) => {
@@ -104,14 +132,35 @@ export function AttendanceCalendar({
             <div
               key={date}
               className={cn(
-                "flex min-h-[64px] flex-col gap-1 rounded-lg border p-1.5 sm:min-h-[84px] sm:p-2",
+                "flex min-h-[64px] flex-col gap-1 border-b border-r p-1.5 sm:min-h-[84px] sm:p-2",
                 state && NON_WORKING.includes(state) && "bg-muted/40",
-                date === today && "ring-1 ring-ring",
+                // Today is ringed in the success colour and rounded off the
+                // grid, per the comp — the one cell that steps out of the rule.
+                // `ring-inset`, not a negative offset: a negative offset is
+                // subtracted from the ring's own spread and cancels it to
+                // nothing, so the cell renders with no outline at all.
+                date === today && "rounded-xl ring-2 ring-inset ring-success",
                 future && "opacity-50",
               )}
             >
               <div className="flex items-start justify-between gap-1">
-                <span className="num text-xs font-medium sm:text-sm">{i + 1}</span>
+                <span className="flex items-center gap-1.5">
+                  {date === today && state ? (
+                    <span
+                      aria-hidden
+                      className="h-2 w-2 shrink-0 rounded-full"
+                      style={{ backgroundColor: STATE_COLORS[state] }}
+                    />
+                  ) : null}
+                  <span
+                    className={cn(
+                      "num text-xs sm:text-sm",
+                      date === today ? "font-semibold" : "font-medium",
+                    )}
+                  >
+                    {i + 1}
+                  </span>
+                </span>
                 {/* A correction only makes sense for a day that has happened. */}
                 {future ? null : (
                   <button
@@ -158,23 +207,40 @@ export function AttendanceCalendar({
             </div>
           );
         })}
-      </div>
 
-      {/* The legend doubles as the only place the chip colours are explained. */}
-      <div className="flex flex-wrap gap-x-3 gap-y-1 pt-1">
-        {(Object.keys(BADGE_VARIANT) as DayState[]).map((s) => (
-          <span
-            key={s}
-            className="flex items-center gap-1.5 text-[10px] text-muted-foreground"
+        {Array.from({ length: trail }).map((_, i) => (
+          <div
+            key={`trail-${i}`}
+            aria-hidden
+            className="min-h-[64px] border-b border-r p-1.5 sm:min-h-[84px] sm:p-2"
           >
+            <span className="num text-xs text-muted-foreground/50 sm:text-sm">{i + 1}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * What the colours mean. Lives beside the month controls in the card header
+ * rather than under the grid, which is where the comp (Figma 1382:2422) puts
+ * it — a key is only useful before you read the thing it decodes.
+ */
+export function AttendanceLegend() {
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+      {(Object.keys(BADGE_VARIANT) as DayState[])
+        .filter((s) => s !== "not_marked")
+        .map((s) => (
+          <span key={s} className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <span
-              className="h-1.5 w-1.5 rounded-full"
+              className="h-2.5 w-2.5 rounded-full"
               style={{ backgroundColor: STATE_COLORS[s] }}
             />
             {DAY_STATE_LABELS[s]}
           </span>
         ))}
-      </div>
     </div>
   );
 }

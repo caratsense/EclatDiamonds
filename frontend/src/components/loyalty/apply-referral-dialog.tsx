@@ -187,7 +187,7 @@ export function ApplyReferralDialog({
                 <Wallet className="h-3.5 w-3.5 text-gold-strong" />
                 Credit earned by {result.referrerName ?? referrer?.referrerName ?? "the referrer"}
               </div>
-              <div className="num mt-1 text-xl font-semibold text-gold-strong">
+              <div className="num mt-1 text-[13px] font-semibold text-gold-strong">
                 {formatINR(result.commissionAmount)}
               </div>
               <div className="text-[11px] text-muted-foreground">

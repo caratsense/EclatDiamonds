@@ -1,9 +1,14 @@
 /**
  * The product's display name is configuration, not copy scattered through
- * components — renamed CaratOS → CaratSpace on 10 Oct 2026 per the client,
- * and the next rename should be a one-line change here.
+ * components — CaratOS → CaratSpace (10 Oct 2026) → Nibhana (24 Oct 2026).
+ *
+ * CaratSpace is a separate product in its own repository now; this one is
+ * dedicated to Éclat Diamonds, who trade as Nibhana. Product and tenant name
+ * are therefore the same string here, and deliberately kept as two constants:
+ * the platform name and the shop's name are different ideas even when they
+ * currently read alike.
  */
-export const PRODUCT_NAME = "CaratSpace";
+export const PRODUCT_NAME = "Nibhana";
 
 /**
  * The flagship tenant's business name (Éclat Diamonds → Nibhana, same

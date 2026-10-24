@@ -4,31 +4,25 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
-  Eclat / CaratSense — "Obsidian" design system.
+  Nibhana — "Luxury Emerald & Champagne Gold" design system.
   Full spec + rationale: docs/DESIGN_SYSTEM.md.
 
-  Direction: a high-precision instrument, not a bookshop.
+  Direction: luxury jewellery ERP, not a generic admin console.
 
-  What changed, and why. The product ran on a warm-linen canvas with a deep
-  forest-green rail and a Fraunces display serif — a jewellery-house identity,
-  chosen when this was one jeweller's system. It is now a universal operations
-  platform, and that palette read as heavy and dated on every screen a clinic,
-  a mill or a pharmacy opened. Green also collided with the one job green has
-  to keep doing here: `--success`. When the rail, the sign-in panel and "this
-  worked" are all the same hue, none of them mean anything.
+  This replaced "Obsidian" (indigo on slate) on 24 Oct 2026. Obsidian existed
+  because the product was a multi-industry platform and green collided with
+  `--success`; CaratSpace has since moved to its own repository, so this one
+  belongs to Éclat Diamonds — trading as Nibhana — alone, and can wear their
+  colours. The collision is resolved by giving success a DIFFERENT green:
+  jade teal `#167969`, distinct from the emerald `#033b33` of the brand.
 
-  - Canvas: obsidian in dark (#090b10), a cool porcelain in light. Never flat
-    black and never flat white — both carry one very faint indigo wash.
-  - Surfaces: elevated slate that separates by LUMINANCE, with hairlines at
-    8% white rather than a drawn box.
-  - Ink: slate-50 on dark, slate-950 on light. Cool, not warm graphite.
-  - THE accent: electric indigo. It marks primary actions, the active nav row,
-    focus and selection. Champagne gold survives as a MICRO-accent only —
-    a hairline, a chip, a wordmark — never as a surface.
-  - Status keeps real signal colours: rose (danger), emerald (success), amber
-    (warn). Emerald now belongs to success alone.
-  - Type: Plus Jakarta Sans (display) · Hanken Grotesk (UI) · IBM Plex Mono
-    (tabular "assay readout"). No serif anywhere.
+  - Canvas: warm ivory (#f8f8f5) in light, green-tinted charcoal (#071b18) in
+    dark. Never flat white, never pure black.
+  - Rail: deep emerald in BOTH themes — the one surface that does not invert.
+  - THE accent: champagne gold. It marks the primary action, the active nav
+    row, focus and selection, and nothing else.
+  - Live data: jade teal. Money: gold. Status keeps garnet for danger.
+  - Ink: emerald-tinted graphite on ivory, warm bone on charcoal.
 
   Single source of truth — restyles every page.
 */
@@ -36,65 +30,85 @@
 :root {
   --radius: 0.625rem; /* restrained: 10px */
 
-  /* cool neutrals — porcelain, not linen */
-  --background: #f7f8fa;
-  --foreground: #0b1120; /* slate ink */
+  /*
+   * Nibhana — Luxury Emerald & Champagne Gold (24 Oct 2026).
+   *
+   * Hexes are the client's own, sampled from the ECLAT OS reference and handed
+   * over verbatim. Deep emerald carries the brand surfaces, champagne gold
+   * marks the one thing to press, jade teal carries live data. Warm ivory
+   * rather than white: the ground is meant to read as paper, not screen.
+   */
+
+  --background: #f8f8f5; /* warm ivory */
+  --foreground: #11211d; /* emerald-tinted ink, never blue-black */
 
   --card: #ffffff;
-  --card-foreground: #0b1120;
+  --card-foreground: #11211d;
 
   --popover: #ffffff;
-  --popover-foreground: #0b1120;
+  --popover-foreground: #11211d;
 
-  /* primary action = the accent, at a weight that holds white text */
-  --primary: #4f46e5;
-  --primary-foreground: #ffffff;
+  /* Primary action = champagne gold with DEEP EMERALD ink, and the SAME pair
+     in both themes.
+     
+     Three inks were tried on this button and all three were wrong. White fails
+     outright (3.04:1 light, 2.08:1 dark). A brown-black read muddy against the
+     metal. The page ink #11211d passed but left light and dark disagreeing,
+     and the sidebar's gold button was already using emerald while this one
+     used near-black — two gold buttons, two text colours, on one screen.
+     
+     So: one gold (#d9ad65, the lighter of the two — the darker #b98c49 drops
+     emerald text to 4.12:1, below AA at 14px) and one ink (#033b33, the brand
+     emerald). 6.03:1, and the button looks the same in both themes, which is
+     what a primary action should do. #b98c49 survives below as --gold for
+     hairlines and chips, where nothing is set on top of it. */
+  --primary: #d9ad65;
+  --primary-foreground: #033b33;
 
-  /* THE accent — electric indigo */
-  --accent-solid: #6366f1;
-  --accent-soft: #eef2ff;
+  --accent-solid: #b98c49;
+  --accent-soft: #f6efe2;
 
-  /* Champagne gold, demoted to a micro-accent: hairlines, chips, the wordmark.
-     `--gold-strong` is the only one legible as TEXT on white, and is what every
-     link or label reaching for gold must use. */
-  --gold: #d97706;
-  --gold-foreground: #ffffff;
-  --gold-soft: #fde68a;
-  --gold-strong: #b45309;
+  --gold: #b98c49;
+  --gold-foreground: #033b33;
+  --gold-soft: #ead9b8;
+  --gold-strong: #8a6526; /* the only gold legible as TEXT on ivory */
 
-  /* Brand surface — the sign-in panel and the landing hero. Obsidian, so the
-     product reads as an instrument rather than as one industry's colour. */
-  --brand: #0f172a;
-  --brand-deep: #090d16;
-  --brand-foreground: #f8fafc;
+  /* Brand surfaces — sidebar, header, sign-in panel, landing hero. */
+  --brand: #033b33; /* deep emerald */
+  --brand-deep: #022a24;
+  --brand-foreground: #f4f5f0;
 
-  --secondary: #eef1f6;
-  --secondary-foreground: #0b1120;
+  --secondary: #eef1ee;
+  --secondary-foreground: #11211d;
 
-  --muted: #f1f4f8;
-  --muted-foreground: #64748b;
+  --muted: #f1f3f0;
+  --muted-foreground: #5b6b66; /* stone with a green cast; AA on ivory */
 
-  --accent: #eef2ff; /* indigo-tinted hover wash */
-  --accent-foreground: #312e81;
+  --accent: #eaf2ef; /* emerald-tinted hover wash */
+  --accent-foreground: #173f38; /* forest teal */
 
-  --destructive: #e11d48; /* rose */
+  --destructive: #a33434; /* garnet */
   --destructive-foreground: #ffffff;
 
-  --success: #059669; /* emerald — and ONLY success */
-  --warning: #d97706; /* amber */
+  --success: #167969; /* muted jade teal */
+  --warning: #b07a2b;
 
-  --border: #e2e8f0;
-  --input: #cbd5e1;
-  --ring: #6366f1; /* indigo focus */
+  --border: #e3e5df;
+  /* One step quieter, for rules drawn INSIDE a surface — a row divider, or the
+     edge of a region nested in a card. A single border value used at every
+     depth is what makes a card-inside-a-card read as two equal boxes. */
+  --border-subtle: #eef0ea;
+  --input: #cdd2ca;
+  --ring: #b98c49; /* gold focus */
 
-  /* Chart sequence: indigo-led, each hue distinct at a glance and legible on
-     both grounds. */
-  --chart-1: #6366f1; /* indigo  */
-  --chart-2: #06b6d4; /* cyan    */
-  --chart-3: #f59e0b; /* amber   */
-  --chart-4: #e11d48; /* rose    */
-  --chart-5: #10b981; /* emerald */
-  --chart-6: #a855f7; /* violet  */
+  /* Jade-led, gold second: live data in teal, money in gold, then the status
+     hues. Each distinct at a glance and legible on ivory and on emerald. */
+  --chart-1: #167969; /* jade teal */
+  --chart-2: #b98c49; /* champagne gold */
+  --chart-3: #2f9e8a; /* light jade */
+  --chart-4: #a33434; /* garnet */
+  --chart-5: #173f38; /* forest teal */
+  --chart-6: #d1b071; /* pale gold */
 
   /*
    * The rail follows the theme, rather than staying obsidian in both.
@@ -112,70 +126,80 @@
    * active row. The chrome inside it is painted with these tokens rather than
    * hard-coded white alphas, which is what let it be dark-only before.
    */
-  --sidebar: #ffffff;
-  --sidebar-foreground: #475569;
-  --sidebar-primary: #4f46e5;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #eef2ff;
-  --sidebar-accent-foreground: #0b1120;
-  --sidebar-border: #e2e8f0;
-  --sidebar-ring: #6366f1;
+  /*
+   * The rail is deep emerald in BOTH themes — the one surface that does not
+   * invert. It is the brand, and in the client's reference it reads the same
+   * on the ivory page and on the dark one. Its chrome is painted from these
+   * tokens, so nothing inside it needs a hard-coded white alpha.
+   */
+  --sidebar: #033b33;
+  --sidebar-foreground: #b9c9c3;
+  --sidebar-primary: #d9ad65; /* gold marks the active row */
+  --sidebar-primary-foreground: #033b33;
+  --sidebar-accent: #173f38; /* forest teal — hover / selected surface */
+  --sidebar-accent-foreground: #f4f5f0;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-ring: #b98c49;
 }
 
 .dark {
-  --background: #090b10; /* obsidian */
-  --foreground: #f8fafc;
+  /* The client's dark set, verbatim: green-tinted charcoal rather than black,
+     so the dark theme reads as the same product with the lights down. */
+  --background: #071b18;
+  --foreground: #f4f5f0;
 
-  --card: #0e131f;
-  --card-foreground: #f8fafc;
+  --card: #102722;
+  --card-foreground: #f4f5f0;
 
-  --popover: #111725;
-  --popover-foreground: #f8fafc;
+  --popover: #123029;
+  --popover-foreground: #f4f5f0;
 
-  /* The accent lifts a step in dark so it still reads as lit rather than as a
-     hole punched in the canvas. */
-  --primary: #6366f1;
-  --primary-foreground: #ffffff;
+  /* The same gold and the same emerald ink as light mode — 6.05:1 here. A
+     primary action that changes colour between themes reads as two different
+     controls. */
+  --primary: #d9ad65;
+  --primary-foreground: #033b33;
 
-  --accent-solid: #818cf8;
-  --accent-soft: #1e1b4b;
+  --accent-solid: #d9ad65;
+  --accent-soft: #1d3b33;
 
-  --gold: #fbbf24;
-  --gold-foreground: #1c1305;
-  --gold-soft: #78350f;
-  --gold-strong: #fcd34d;
+  --gold: #d9ad65;
+  --gold-foreground: #033b33;
+  --gold-soft: #4a3a1c;
+  --gold-strong: #e6c48a;
 
-  --secondary: #171e2e;
-  --secondary-foreground: #f8fafc;
+  --secondary: #16352e;
+  --secondary-foreground: #f4f5f0;
 
-  --muted: #151b28;
-  --muted-foreground: #94a3b8;
+  --muted: #14302a;
+  --muted-foreground: #9fb3ac; /* lifted for contrast — audit finding #20 */
 
-  --accent: #1c2338;
-  --accent-foreground: #e0e7ff;
+  --accent: #173f38; /* forest teal */
+  --accent-foreground: #e4efea;
 
-  --destructive: #fb7185;
-  --destructive-foreground: #1c0710;
+  --destructive: #e08585;
+  --destructive-foreground: #2a0d0d;
 
-  --success: #34d399;
-  --warning: #fbbf24;
+  --success: #40dcc1; /* teal accent */
+  --warning: #d9ad65;
 
   /* Hairlines, not drawn boxes: a translucent white edge picks up whatever
      surface it sits on, so one token works on the canvas and on a raised card. */
   --border: rgba(255, 255, 255, 0.08);
+  --border-subtle: rgba(255, 255, 255, 0.045);
   --input: rgba(255, 255, 255, 0.12);
-  --ring: #818cf8;
+  --ring: #d9ad65;
 
-  --chart-1: #818cf8; /* indigo  */
-  --chart-2: #22d3ee; /* cyan    */
-  --chart-3: #fbbf24; /* amber   */
-  --chart-4: #fb7185; /* rose    */
-  --chart-5: #34d399; /* emerald */
-  --chart-6: #c084fc; /* violet  */
+  --chart-1: #40dcc1; /* teal accent */
+  --chart-2: #d9ad65; /* gold */
+  --chart-3: #6fd6bf; /* pale jade */
+  --chart-4: #e08585; /* garnet */
+  --chart-5: #2f9e8a; /* jade */
+  --chart-6: #e6c48a; /* pale gold */
 
-  --brand: #0e131f;
-  --brand-deep: #06080d;
-  --brand-foreground: #f8fafc;
+  --brand: #003b32;
+  --brand-deep: #022a24;
+  --brand-foreground: #f4f5f0;
 
   /*
    * In dark mode the sidebar has to be a SURFACE, not another shade of page.
@@ -197,14 +221,14 @@
    * sit above the cards that sit on the page, and it has to be unmistakable
    * at a glance or it is not doing its job.
    */
-  --sidebar: #141b2b;
-  --sidebar-foreground: #94a3b8;
-  --sidebar-primary: #818cf8;
-  --sidebar-primary-foreground: #0b1120;
-  --sidebar-accent: #1a2234;
-  --sidebar-accent-foreground: #f8fafc;
-  --sidebar-border: rgba(255, 255, 255, 0.14);
-  --sidebar-ring: #818cf8;
+  --sidebar: #003b32; /* navigation emerald, a step above the page */
+  --sidebar-foreground: #a9bdb7;
+  --sidebar-primary: #d9ad65;
+  --sidebar-primary-foreground: #033b33;
+  --sidebar-accent: #173f38; /* forest teal */
+  --sidebar-accent-foreground: #f4f5f0;
+  --sidebar-border: rgba(255, 255, 255, 0.1);
+  --sidebar-ring: #d9ad65;
 }
 
 @theme {
@@ -240,6 +264,7 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-border: var(--border);
+  --color-border-subtle: var(--border-subtle);
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-chart-1: var(--chart-1);
@@ -369,15 +394,84 @@ body {
  * than it was, and a table of prices shouted over the item names next to it.
  * Nothing here was ever set bigger; it only read that way.
  *
- * Relative, so it follows whatever it is applied to: a 24px headline figure
- * and a 13px table cell both come down by the same proportion, and the tabular
- * alignment a column depends on is untouched.
+ * `@layer base` is load-bearing, not decoration. This rule used to sit
+ * unlayered, and an unlayered declaration outranks everything inside
+ * `@layer utilities` — so `font-size` here silently beat every `text-*` class
+ * written beside it. All 142 numerals that declared a size were ignored, and
+ * the app had no numeral hierarchy at all: a `text-[10px]` notification badge
+ * and a `text-xl` headline figure both computed to 14.72px, because both are
+ * 0.92 × a 16px parent. That is what made ordinary counts read as display
+ * figures.
+ *
+ * In the base layer the precedence is the one the markup assumes: a `text-*`
+ * utility wins where one is written, and the 0.92 correction still applies to
+ * the ~420 numerals that declare no size and simply follow their container.
  */
-.num {
-  font-family: var(--font-mono);
-  font-size: 0.92em;
-  font-variant-numeric: tabular-nums lining-nums;
-  letter-spacing: -0.01em;
+/*
+ * A surface inside a surface is a region, not a second card.
+ *
+ * Every Card draws the same radius, the same hairline and the same shadow, so
+ * a card nested in a card rendered as two boxes of equal weight — the panels
+ * inside the HR hub, the tiles inside a section. Depth was being spent and
+ * nothing bought with it.
+ *
+ * One rule, rather than a prop threaded through 57 screens: a nested card
+ * drops its shadow, takes the quieter hairline and steps its radius down, so
+ * the outer surface stays the thing that lifts off the canvas and the inner
+ * one reads as a region within it.
+ *
+ * Deliberately UNLAYERED. It has to beat `shadow-sm` and `rounded-xl`, which
+ * Tailwind puts in `@layer utilities`, and a layered rule always loses to a
+ * utility however specific it is — the same trap that made `.num` silently
+ * override every size class for months. Unlayered declarations outrank every
+ * layer, and the two-level selector keeps the blast radius to exactly the case
+ * it describes. A nested card that genuinely must float can still say so with
+ * its own `shadow-*`, since an inline utility on the element beats this.
+ */
+[data-slot="card"] [data-slot="card"] {
+  border-color: var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: none;
+}
+
+@layer base {
+  .num {
+    font-family: var(--font-mono);
+    /*
+     * Match the numerals to the letters beside them, at whatever size they are
+     * set.
+     *
+     * IBM Plex Mono draws about a third larger than Hanken Grotesk at the same
+     * font-size — measured twice, independently: the generated fallback faces
+     * report an x-height of 71 against 53 per 100px (1.34), and "1,56,000" set
+     * at 14px measures 72px against 55px (1.31). So a figure never looked a
+     * size larger than its label by accident; it WAS a size larger.
+     *
+     * This used to be `font-size: 0.92em`, which took 8% off a 32% excess and
+     * left numerals a fifth too big — which is why asking for "smaller
+     * numbers" three times never fixed it. `font-size-adjust` is the property
+     * for the job: 0.53 is Hanken Grotesk's own x-height ratio, so the browser
+     * scales the mono until its x-height matches the sans's. Measured here at
+     * 0.759 — almost exactly the 1/1.32 the ratio predicts.
+     *
+     * It also survives a declared size, which the `em` could not: a numeral in
+     * a 24px tile and one inheriting 13px in a table are both corrected.
+     */
+    font-size-adjust: 0.53;
+    font-variant-numeric: tabular-nums lining-nums;
+    letter-spacing: -0.01em;
+  }
+
+  /*
+   * Chrome before 127 and Safari before 16.4 ignore the property above. They
+   * fall back to the old proportional trick, tuned to the ratio we measured
+   * rather than the 0.92 that was guessed.
+   */
+  @supports not (font-size-adjust: 0.53) {
+    .num {
+      font-size: 0.76em;
+    }
+  }
 }
 
 /* Display face: a geometric sans set tight. The old serif needed a

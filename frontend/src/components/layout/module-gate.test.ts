@@ -75,7 +75,6 @@ describe("the HR module routes", () => {
     "/hrms/roster",
     "/hrms/reports",
     "/hrms/schedule",
-    "/hrms/employees",
     "/hrms/setup",
   ];
 
@@ -106,6 +105,13 @@ describe("the HR module routes", () => {
   });
 
   it("keeps pay on its own entitlement, as it already was", () => {
+    // `hrms/employees` joined payroll as a sidebar entry on 24 Oct 2026: its
+    // hub card was removed as a duplicate, and that card was its only way in.
+    // So it resolves to its OWN slug and is refused to somebody holding just
+    // `hrms` — the employee master is store_manager+, which is the point.
+    expect(navSlugForPath("/hrms/employees")).toBe("hrms/employees");
+    expect(roleDecision("/hrms/employees", "salesperson", { hrms: "own" })).toBe("refuse");
+
     // `hrms/payroll` IS a nav item and a MODULES slug, so it is the one HR route
     // that resolves to itself — removing it from somebody leaves the rest open.
     expect(navSlugForPath("/hrms/payroll")).toBe("hrms/payroll");

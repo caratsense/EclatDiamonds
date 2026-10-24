@@ -21,6 +21,12 @@ interface PaginationBarProps {
   onPageChange: (page: number) => void;
   /** Changing the page size should also reset the caller's page to 1. */
   onPageSizeChange: (pageSize: number) => void;
+  /**
+   * Override the sizes offered. The default set suits a catalogue or ledger
+   * of thousands; a list bounded by headcount needs a smaller first step, or
+   * its pager never appears at all.
+   */
+  pageSizeOptions?: readonly number[];
   className?: string;
 }
 
@@ -35,6 +41,7 @@ export function PaginationBar({
   total,
   onPageChange,
   onPageSizeChange,
+  pageSizeOptions = PAGE_SIZE_OPTIONS,
   className,
 }: PaginationBarProps) {
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
@@ -62,7 +69,7 @@ export function PaginationBar({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {PAGE_SIZE_OPTIONS.map((size) => (
+            {pageSizeOptions.map((size) => (
               <SelectItem key={size} value={String(size)}>
                 {size} per page
               </SelectItem>

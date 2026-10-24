@@ -8,7 +8,6 @@ import { toast } from "sonner";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -144,10 +143,6 @@ export function DailyReportsTable() {
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <CardTitle>Submitted reports</CardTitle>
-              <CardDescription>
-                Recent store-close reports — open any to read the full text,
-                save a row as PDF, or download the whole range consolidated
-              </CardDescription>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {realStores.length > 1 ? (
