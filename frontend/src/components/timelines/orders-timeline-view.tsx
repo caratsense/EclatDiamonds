@@ -318,10 +318,6 @@ export function OrdersTimelineView() {
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base">Ongoing orders</CardTitle>
-                  <CardDescription>
-                    Select a row to preview its stage progression above, or open
-                    full details.
-                  </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <Table>
@@ -429,10 +425,6 @@ export function OrdersTimelineView() {
                 <Truck className="h-4 w-4" />
                 Stock in transit
               </CardTitle>
-              <CardDescription>
-                Raw material and finished stock moving from factory/warehouse to
-                the storefront (replenishment).
-              </CardDescription>
             </CardHeader>
             <CardContent>
               {replenLoading ? (

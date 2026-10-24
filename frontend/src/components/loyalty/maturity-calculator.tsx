@@ -126,7 +126,7 @@ export function MaturityCalculator() {
           </div>
           <div className="flex items-center justify-between border-t pt-2">
             <dt className="font-semibold">Maturity buying power</dt>
-            <dd className="num text-lg font-semibold">
+            <dd className="num text-[13px] font-semibold">
               {formatINR(maturityValue)}
             </dd>
           </div>

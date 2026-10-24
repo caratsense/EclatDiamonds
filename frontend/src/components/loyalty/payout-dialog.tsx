@@ -126,7 +126,7 @@ export function PayoutDialog({ open, onOpenChange, code }: PayoutDialogProps) {
               <BadgeIndianRupee className="h-4 w-4" />
               {balanceAfter != null ? "Balance now" : "Available balance"}
             </span>
-            <span className="num text-lg font-semibold text-gold-strong">
+            <span className="num text-[13px] font-semibold text-gold-strong">
               {formatINR(shownBalance)}
             </span>
           </div>

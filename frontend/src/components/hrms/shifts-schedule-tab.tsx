@@ -457,9 +457,6 @@ function HolidaysCard({
           <CalendarDays className="h-4 w-4 text-muted-foreground" />
           Store holidays
         </CardTitle>
-        <CardDescription>
-          One-off closures for this store (festivals, maintenance).
-        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         {canEdit ? (

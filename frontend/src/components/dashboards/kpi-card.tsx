@@ -128,7 +128,7 @@ export function KpiCard({
         </p>
         {/* Numeric hero wears the mono "assay readout" — the display serif's
             oldstyle figures bounce off the baseline (never set digits in it). */}
-        <p className="num mt-1.5 text-[28px] font-semibold leading-none tracking-tight text-foreground">
+        <p className="num mt-1.5 text-[15px] font-semibold leading-none tracking-tight text-foreground">
           {format === "inr" ? formatINRCompact(value) : formatNumber(value)}
         </p>
         <p className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground">

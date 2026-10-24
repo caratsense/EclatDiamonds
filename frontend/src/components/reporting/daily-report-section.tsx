@@ -4,10 +4,8 @@ import { useState } from "react";
 import { Download } from "lucide-react";
 import { toast } from "sonner";
 
-import {
-  DailyReportForm,
-  todayLocal,
-} from "@/components/reporting/daily-report-form";
+import { todayLocal } from "@/components/reporting/daily-report-form";
+import { DailyReportDialog } from "@/components/reporting/daily-report-dialog";
 import { DailyReportsTable } from "@/components/reporting/daily-reports-table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -119,21 +117,31 @@ function DsrSheetDownload() {
  * to type on WhatsApp is now filed here: a grouped entry form with a live
  * WhatsApp-style preview, plus the list of recently submitted reports.
  */
-export function DailyReportSection() {
+export function DailyReportSection({
+  showFileButton = true,
+}: {
+  /**
+   * Off when the PAGE already carries a File DSR button in its header — the
+   * manager view does, and two buttons for one action read as two actions.
+   */
+  showFileButton?: boolean;
+} = {}) {
   return (
     <section id="file-dsr" className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="font-display text-lg font-bold tracking-tight text-foreground">
+          <h2 className="font-display text-base font-bold tracking-tight text-foreground">
             Daily Report (DSR)
           </h2>
           <p className="text-sm text-muted-foreground">
             Type it once. Head office reads every store’s evening digest.
           </p>
         </div>
-        <DsrSheetDownload />
+        <div className="flex items-center gap-2">
+          <DsrSheetDownload />
+          {showFileButton ? <DailyReportDialog /> : null}
+        </div>
       </div>
-      <DailyReportForm />
       <DailyReportsTable />
     </section>
   );

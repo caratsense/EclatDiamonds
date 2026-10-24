@@ -57,7 +57,7 @@ function RollupTile({
   hero?: boolean;
 }) {
   return (
-    <Card className="facet-top group relative overflow-hidden">
+    <div className="group relative overflow-hidden">
       <div
         aria-hidden
         className={cn(
@@ -67,7 +67,7 @@ function RollupTile({
             : "from-[color-mix(in_srgb,var(--foreground)_8%,transparent)] opacity-50",
         )}
       />
-      <CardContent className="relative p-5">
+      <div className="relative p-5">
         <div className="flex items-center gap-2.5">
           <span
             className={cn(
@@ -83,11 +83,14 @@ function RollupTile({
             {label}
           </p>
         </div>
-        {/* Numeric hero in the mono readout — serif oldstyle figures misalign. */}
-        <p className="num mt-3.5 text-[26px] font-semibold leading-none tracking-tight text-foreground">
+        {/* Numeric hero in the mono readout — serif oldstyle figures misalign.
+            Set smaller than a dashboard tile: three of these sit side by side
+            above a table, and at 26px they were the loudest thing on a page
+            whose subject is the table. */}
+        <p className="num mt-2.5 text-[15px] font-semibold leading-none tracking-tight text-foreground">
           {value}
         </p>
-        <div className="mt-4 space-y-1.5 border-t pt-3">
+        <div className="mt-3 space-y-1 border-t pt-2.5">
           {rows.map((r) => (
             <div
               key={r.label}
@@ -98,8 +101,8 @@ function RollupTile({
             </div>
           ))}
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
 
@@ -167,10 +170,14 @@ export function PeriodRollup({
           </CardContent>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <Card className="facet-top overflow-hidden p-0">
+          {/* One strip, divided — not three cards. The three figures are read
+              across as a single line of the day's trade, and three bordered
+              boxes made them look like three unrelated reports. */}
+          <CardContent className="grid grid-cols-1 divide-y divide-border p-0 md:grid-cols-3 md:divide-x md:divide-y-0">
           {query.isLoading || !s ? (
             Array.from({ length: 3 }).map((_, i) => (
-              <Skeleton key={i} className="h-44 rounded-xl" />
+              <Skeleton key={i} className="h-40 rounded-none" />
             ))
           ) : (
             (() => {
@@ -225,7 +232,8 @@ export function PeriodRollup({
               );
             })()
           )}
-        </div>
+          </CardContent>
+        </Card>
       )}
     </section>
   );

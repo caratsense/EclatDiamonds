@@ -74,7 +74,7 @@ function Tile({
         </span>
         <div className="min-w-0">
           <p className="text-xs text-muted-foreground">{label}</p>
-          <p className="num truncate text-xl font-semibold">{value}</p>
+          <p className="num truncate text-[13px] font-semibold">{value}</p>
           <p className="text-xs text-muted-foreground">{sub}</p>
         </div>
       </CardContent>

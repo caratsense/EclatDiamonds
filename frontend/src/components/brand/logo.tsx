@@ -7,10 +7,6 @@ import { cn } from "@/lib/utils";
  * (e.g. "Carat" + "Space"). Derived from PRODUCT_NAME so a rename stays a
  * one-line change in lib/brand.ts.
  */
-const LOCKUP_PREFIX = "Carat";
-const LOCKUP_SUFFIX = PRODUCT_NAME.startsWith(LOCKUP_PREFIX)
-  ? PRODUCT_NAME.slice(LOCKUP_PREFIX.length)
-  : PRODUCT_NAME;
 
 /**
  * Modern faceted diamond prism icon for CaratOS.
@@ -27,13 +23,13 @@ export function CaratIcon({ className }: { className?: string }) {
     >
       <defs>
         <linearGradient id="carat-brand-grad-a" x1="4" y1="4" x2="28" y2="28" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#818cf8" />
-          <stop offset="50%" stopColor="#6366f1" />
-          <stop offset="100%" stopColor="#38bdf8" />
+          <stop offset="0%" stopColor="#e6c48a" />
+          <stop offset="50%" stopColor="#b98c49" />
+          <stop offset="100%" stopColor="#167969" />
         </linearGradient>
         <linearGradient id="carat-brand-grad-b" x1="16" y1="4" x2="16" y2="28" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#c084fc" />
-          <stop offset="100%" stopColor="#6366f1" />
+          <stop offset="0%" stopColor="#d9ad65" />
+          <stop offset="100%" stopColor="#033b33" />
         </linearGradient>
       </defs>
       {/* Faceted gemstone prism */}
@@ -107,16 +103,18 @@ export function Logo({
       )}
     >
       {showIcon && (
-        <CaratIcon className="h-7 w-7 shrink-0 text-primary drop-shadow-[0_0_12px_rgba(99,102,241,0.35)]" />
+        <CaratIcon className="h-7 w-7 shrink-0 text-primary drop-shadow-[0_0_12px_rgba(185,140,73,0.35)]" />
       )}
       {isDefaultBrand ? (
-        <span className="flex items-center text-xl font-extrabold tracking-tight text-inherit">
-          {PRODUCT_NAME.startsWith(LOCKUP_PREFIX) && (
-            <span className="text-slate-900 dark:text-white">{LOCKUP_PREFIX}</span>
-          )}
-          <span className="ml-1 bg-gradient-to-r from-indigo-500 via-indigo-400 to-cyan-500 dark:from-indigo-400 dark:via-indigo-300 dark:to-cyan-400 bg-clip-text font-black text-transparent">
-            {LOCKUP_SUFFIX}
-          </span>
+        /*
+         * One word, one colour. The lockup used to split the name on "Carat"
+         * and set the second half in an indigo-to-cyan gradient; "Nibhana" has
+         * no such seam, so the whole wordmark is simply champagne gold against
+         * the emerald rail — the house pairing, and the only place the display
+         * serif and the accent meet.
+         */
+        <span className="font-display text-xl font-bold tracking-tight text-[var(--sidebar-primary)]">
+          {PRODUCT_NAME}
         </span>
       ) : (
         <div className="flex flex-col min-w-0 leading-tight">

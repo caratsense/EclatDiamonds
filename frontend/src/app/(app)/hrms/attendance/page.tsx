@@ -34,7 +34,7 @@ import {
 import { useMyAttendance } from "@/lib/queries/hrms";
 import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
-import { AttendanceCalendar } from "./attendance-calendar";
+import { AttendanceCalendar, AttendanceLegend } from "./attendance-calendar";
 import { MyDayList } from "./my-day-list";
 
 /** The month key the self-service queries are keyed on (YYYY-MM). */
@@ -55,6 +55,50 @@ function monthLabel(month: string): string {
     year: "numeric",
     timeZone: "UTC",
   });
+}
+
+/**
+ * Which month is on screen. Shared by the calendar and the list, which read the
+ * same month and so must offer the same way of changing it.
+ */
+function MonthControls({
+  month,
+  atCurrentMonth,
+  onChange,
+}: {
+  month: string;
+  atCurrentMonth: boolean;
+  onChange: (month: string) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Button
+        variant="outline"
+        size="icon"
+        aria-label="Previous month"
+        onClick={() => onChange(shiftMonth(month, -1))}
+      >
+        <ChevronLeft className="h-4 w-4" />
+      </Button>
+      <span className="min-w-[9rem] text-center text-sm font-medium">{monthLabel(month)}</span>
+      <Button
+        variant="outline"
+        size="icon"
+        aria-label="Next month"
+        disabled={atCurrentMonth}
+        onClick={() => onChange(shiftMonth(month, 1))}
+      >
+        <ChevronRight className="h-4 w-4" />
+      </Button>
+      {atCurrentMonth ? (
+        <Badge variant="outline">This month</Badge>
+      ) : (
+        <Button variant="outline" size="sm" onClick={() => onChange(thisMonth())}>
+          This month
+        </Button>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -130,19 +174,27 @@ export default function AttendancePage() {
     <>
       <SectionHeader
         title="Attendance"
-        purpose="Your own punches and month, and — for a manager — the store's register and the corrections waiting on a decision."
         primaryAction={audience === "my" ? "Request Correction" : undefined}
         onPrimaryAction={
           audience === "my" ? () => setFixDate(todayDate) : undefined
         }
       />
 
-      {/* Who this is about. Everything below is scoped to this choice. */}
+      {/*
+       * Who this is about, beside the content rather than above it.
+       *
+       * This was a full-width tab bar of its own, stacked on top of a second
+       * full-width tab bar — two rows of navigation before any attendance was
+       * visible. It is one choice between two words, so it sits on the same
+       * line as the tabs it scopes.
+       */}
       <Tabs value={audience} onValueChange={setAudience} className="space-y-4">
-        <TabsList className="flex h-auto flex-wrap">
-          <TabsTrigger value="my">My Data</TabsTrigger>
-          {isManager ? <TabsTrigger value="team">Team</TabsTrigger> : null}
-        </TabsList>
+        {isManager ? (
+          <TabsList className="ml-auto w-fit">
+            <TabsTrigger value="my">My data</TabsTrigger>
+            <TabsTrigger value="team">Team</TabsTrigger>
+          </TabsList>
+        ) : null}
 
         <TabsContent value="my" className="space-y-4">
           <Tabs value={myTab} onValueChange={setMyTab} className="space-y-4">
@@ -184,46 +236,26 @@ export default function AttendancePage() {
                   <StatTiles tiles={tiles} />
                 ) : null}
 
-                {/* One filter bar: which month. */}
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    aria-label="Previous month"
-                    onClick={() => setMonth(shiftMonth(month, -1))}
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                  </Button>
-                  <span className="min-w-[9rem] text-center text-sm font-medium">
-                    {monthLabel(month)}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    aria-label="Next month"
-                    disabled={atCurrentMonth}
-                    onClick={() => setMonth(shiftMonth(month, 1))}
-                  >
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                  {atCurrentMonth ? (
-                    <Badge variant="outline">This month</Badge>
-                  ) : (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setMonth(thisMonth())}
-                    >
-                      This month
-                    </Button>
-                  )}
-                </div>
               </>
             ) : null}
 
             <TabsContent value="overview">
               <Card>
-                <CardContent className="p-3 sm:p-4">
+                <CardContent className="space-y-4 p-3 sm:p-4">
+                  {/*
+                    Month controls and colour key on one line above the grid,
+                    per the comp (Figma 1382:2422) — both belong to the calendar
+                    beneath them, so they sit inside its card rather than
+                    floating above it as a page-level filter bar.
+                  */}
+                  <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+                    <MonthControls
+                      month={month}
+                      atCurrentMonth={atCurrentMonth}
+                      onChange={setMonth}
+                    />
+                    <AttendanceLegend />
+                  </div>
                   {isLoading ? (
                     <Skeleton className="h-80 rounded-xl" />
                   ) : isError ? (
@@ -242,7 +274,14 @@ export default function AttendancePage() {
 
             <TabsContent value="list">
               <Card>
-                <CardContent className="p-0 sm:p-2">
+                <CardContent className="space-y-3 p-3 sm:p-4">
+                  {/* The list reads the same month the calendar does, so it
+                      carries the same control. */}
+                  <MonthControls
+                    month={month}
+                    atCurrentMonth={atCurrentMonth}
+                    onChange={setMonth}
+                  />
                   {isLoading ? (
                     <div className="space-y-2 p-3">
                       {Array.from({ length: 6 }).map((_, i) => (

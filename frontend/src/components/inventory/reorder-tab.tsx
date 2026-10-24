@@ -190,9 +190,6 @@ function ReorderContent() {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Reorder requests</CardTitle>
-          <CardDescription>
-            This store&apos;s reorder asks and where each one stands.
-          </CardDescription>
         </CardHeader>
         <CardContent>
           {isLoading ? (

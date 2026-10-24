@@ -487,7 +487,7 @@ function SummaryTile({
         <Icon className="h-3.5 w-3.5" />
         {label}
       </div>
-      <div className="num mt-1 text-2xl font-semibold text-foreground">
+      <div className="num mt-1 text-[15px] font-semibold text-foreground">
         {value}
       </div>
     </div>

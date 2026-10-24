@@ -328,7 +328,7 @@ function Tally({ label, value }: { label: string; value: number }) {
   return (
     <div className="rounded-lg border px-3 py-2">
       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="num text-lg font-semibold">{value}</p>
+      <p className="num text-[13px] font-semibold">{value}</p>
     </div>
   );
 }

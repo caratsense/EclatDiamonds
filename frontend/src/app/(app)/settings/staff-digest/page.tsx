@@ -19,6 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { HelpNote } from "@/components/ui/help-note";
 import {
   useDigestPreview,
   useDigestSettings,
@@ -143,11 +144,20 @@ export default function StaffDigestPage() {
                   />
                   Also send it on WhatsApp
                 </label>
-                <p className="text-xs text-muted-foreground">
-                  WhatsApp needs a template the provider has approved, because this goes out
-                  long after the last time the person messaged us. Without one it is skipped
-                  and the reason is shown below &mdash; it is not silently dropped.
-                </p>
+                <HelpNote
+                  label="Why a template is needed"
+                  more={
+                    <>
+                      This goes out long after the last time the person messaged
+                      us, which is outside the window a free-text reply is
+                      allowed in. Without an approved template the digest is
+                      skipped and the reason is shown below &mdash; it is not
+                      silently dropped.
+                    </>
+                  }
+                >
+                  WhatsApp needs a template the provider has approved.
+                </HelpNote>
                 <div className="grid gap-2 sm:grid-cols-2">
                   <div className="space-y-1">
                     <Label htmlFor="template">Template name</Label>

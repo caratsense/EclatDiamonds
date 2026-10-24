@@ -9,19 +9,69 @@
 
 ## Aesthetic direction (one line)
 
-**Warm metal on linen.** A porcelain canvas, warm graphite ink, and *one* fine-gold accent
-that behaves like light catching a polished bevel. Quiet and disciplined everywhere; the
-gold appears only on the thing you should touch or read first.
+**Cool slate with an indigo accent.** A near-white (light) or obsidian (dark) canvas, slate
+ink, and indigo for the thing you should touch. Gold survives as a secondary marker on
+rate/metal surfaces only.
 
-What we deliberately rejected (the generic-admin tells the brief forbids):
-- **Indigo/violet primary (`#4f46e5`)** — the default shadcn/SaaS "AI dashboard" colour. **Removed.**
-- **Cool blue-black text** — replaced with warm graphite.
-- **Single typeface for everything** — replaced with three faces, three jobs.
-- No purple gradients, no cream + high-contrast-serif + terracotta cliché, no emoji.
+> ### ⚠ This section described a product that did not exist (corrected 2026-10-24)
+> Until today this file specified a jewellery identity — porcelain `#F6F4F0`, warm graphite,
+> a single fine-gold accent `#B08D3B`, Éclat's emerald on brand surfaces, and **Fraunces**
+> for titles — and listed, as a thing it had *rejected*, "**Indigo/violet primary
+> (`#4f46e5`)** — the default shadcn/SaaS 'AI dashboard' colour. **Removed.**"
+>
+> `globals.css` has shipped `--primary: #4f46e5` the whole time: the exact hex the document
+> said was removed. The ground is cool slate, not warm porcelain; muted text is slate
+> `#64748b`, not stone; the display face is Plus Jakarta Sans, not Fraunces (`layout.tsx`
+> records the swap, this file was never updated). Three of the four "generic-admin tells"
+> the document forbade were shipping.
+>
+> The client's call on 24 October was to **keep the indigo** — it matches the designer's
+> current Figma comps — and to make this document describe what is actually built. The
+> jewellery direction below is kept only as history. Do not implement from it.
 
 ---
 
 ## STEP 1 — Tokens
+
+### Palette as built (read `globals.css`; this table is the summary)
+
+| Token | Light | Dark | Where it's used |
+|---|---|---|---|
+| `--background` | `#f7f8fa` | `#090b10` | App canvas. |
+| `--foreground` | `#0f172a` | `#f8fafc` | Primary text. |
+| `--card` | `#ffffff` | `#0e131f` | Raised surfaces. |
+| `--primary` | `#4f46e5` | `#6366f1` | Primary action fill, active nav, selected state. |
+| `--muted-foreground` | `#64748b` | `#94a3b8` | Secondary text, labels, meta. |
+| `--border` | `#e2e8f0` | `rgba(255,255,255,.08)` | Card edges, input outlines. |
+| `--border-subtle` | `#eef1f5` | `rgba(255,255,255,.045)` | Rules **inside** a surface (added 2026-10-24). |
+| `--ring` | `#6366f1` | `#818cf8` | Focus. |
+| `--gold` | `#d97706` | `#fbbf24` | Metal-rate surfaces only — no longer the brand accent. |
+
+Status: `--destructive` · `--success` · `--warning`, rendered as soft tinted pills (see
+`ui/badge.tsx`), not heavy fills. Charts are an indigo-led sequence.
+
+### Two rules that are easy to get wrong
+
+**Numerals are optically corrected, not just sized** (`.num`, 2026-10-24). IBM Plex Mono
+draws about a third larger than Hanken Grotesk at the same `font-size` — measured twice:
+the generated fallback faces report an x-height of 71 against 53 per 100px, and `1,56,000`
+at 14px measures 72px against 55px. The fix is `font-size-adjust: 0.53` (Hanken's own
+x-height ratio), which survives a declared size; the old `font-size: 0.92em` took 8% off a
+32% excess and left every figure a fifth too big. `.num` sits in `@layer base` so a
+`text-*` utility still wins — **unlayered it beat every size class in the app**, which is
+why 142 declared numeral sizes did nothing at all.
+
+**A card inside a card is a region, not a card.** `[data-slot="card"] [data-slot="card"]`
+drops the shadow, takes `--border-subtle` and steps the radius down. The rule is
+deliberately **unlayered**, because it has to beat `shadow-sm` and `rounded-xl` in
+`@layer utilities` — a layered rule loses to a utility however specific it is.
+
+---
+
+### History — the "Assay" direction (not implemented)
+
+> Everything below this line describes the jewellery identity the product was specified
+> with and never shipped. Kept for context if the direction is ever revisited.
 
 ### Palette (the brand palette is 6; status adds 3 jewel tones)
 

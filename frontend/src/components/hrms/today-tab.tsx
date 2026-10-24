@@ -1,18 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Pencil, RefreshCw, Users } from "lucide-react";
-import {
-  Bar,
-  BarChart,
-  Cell,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { useEffect, useMemo, useState } from "react";
+import { Pencil, RefreshCw, Search, Users } from "lucide-react";
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,6 +14,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Input } from "@/components/ui/input";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 import {
   Select,
   SelectContent,
@@ -154,9 +146,11 @@ export function TodayTab({
 
       {query.isLoading ? (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <Skeleton key={i} className="h-24 rounded-xl" />
+          {/* Nine: "Due today" plus one per state, the same grid the loaded
+              board settles into, so nothing shifts when the data lands. */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {Array.from({ length: 9 }).map((_, i) => (
+              <Skeleton key={i} className="h-[104px] rounded-xl" />
             ))}
           </div>
           <Skeleton className="h-64 rounded-xl" />
@@ -210,24 +204,32 @@ function SnapshotMeta({ data }: { data: TodaySnapshot }) {
     minute: "2-digit",
     ...(tz ? { timeZone: tz } : {}),
   });
+  const first = data.stores[0]?.date;
+  const dateLabel = first
+    ? new Date(`${first}T00:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short" })
+    : "";
   const dates = [...new Set(data.stores.map((s) => `${s.date} · ${s.timezone}`))];
+  /*
+   * One line, not two. This stated the time with its timezone, then the
+   * business date with the SAME timezone directly beneath it — and where
+   * branches disagreed it recited every branch, its date and its zone inline.
+   * The split only matters when the dates actually differ, so that is the only
+   * case that says anything; the detail moves to the tooltip.
+   */
+  const split = dates.length > 1;
+  const detail = split
+    ? data.stores.map((s) => `${s.storeName}: ${s.date} (${s.timezone})`).join(", ")
+    : undefined;
   return (
     <div className="text-sm">
-      <p className="font-medium">
-        Snapshot at <span className="num">{at}</span>
-        {tz ? <span className="text-muted-foreground"> ({tz})</span> : null}
-      </p>
-      <p className="text-xs text-muted-foreground">
-        Business date{" "}
-        {dates.length === 1 ? (
-          <span className="num">{dates[0]}</span>
-        ) : (
-          data.stores.map((s) => (
-            <span key={s.storeId} className="mr-2 inline-block">
-              {s.storeName}: <span className="num">{s.date}</span> ({s.timezone})
-            </span>
-          ))
-        )}
+      <p className="font-medium" title={detail}>
+        <span className="num">{at}</span>
+        {dateLabel ? <span className="text-muted-foreground"> · {dateLabel}</span> : null}
+        {split ? (
+          <span className="text-muted-foreground">
+            {" "}· {dates.length} business dates across branches
+          </span>
+        ) : null}
       </p>
     </div>
   );
@@ -243,72 +245,88 @@ function KpiTiles({
   onFilter: (f: Filter) => void;
 }) {
   const sum = DAY_STATES.reduce((n, s) => n + (data.counts[s] ?? 0), 0);
+  // Each employee holds exactly one state, so the tiles must sum to the number
+  // due. Warned rather than rendered: the customer cannot act on a broken
+  // invariant, and the console is where whoever can will see it.
+  useEffect(() => {
+    if (sum !== data.denominator) {
+      console.warn(
+        `[attendance] day states sum to ${sum} but ${data.denominator} are due`,
+        data.counts,
+      );
+    }
+  }, [sum, data.denominator, data.counts]);
+  /*
+   * Eight tiles, always, each carrying its share of the people due — the
+   * designer's comp (Figma 1395:2681) and the client's call over the audit's
+   * suggestion to hide the empty ones. A state that reads 0 is information on
+   * this board: "nobody is absent" is the thing a manager wants confirmed, and
+   * a tile that comes and goes with the data moves every tile beside it.
+   *
+   * The figure is 24px rather than the comp's 34px, which is the size the
+   * client settled on: the hero number on the page without reopening the
+   * complaint that the product's numerals shout.
+   */
+  const share = (n: number) =>
+    data.denominator > 0 ? `${Math.round((n / data.denominator) * 100)}%` : "—";
   return (
-    <div className="space-y-2">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8">
-        <button
-          type="button"
-          onClick={() => onFilter(null)}
-          data-active={filter === null ? "" : undefined}
-          className="facet-top rounded-xl border bg-card p-3 text-left shadow-sm transition-shadow hover:shadow-md"
-        >
-          <p className="text-xs text-muted-foreground">Due today</p>
-          <p className="num text-2xl font-semibold">{data.denominator}</p>
-          <p className="text-xs text-muted-foreground">Show everyone</p>
-        </button>
-        {DAY_STATES.map((s) => {
-          const active = filter === s;
-          return (
-            <div
-              key={s}
-              className={cn(
-                "flex flex-col rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-md",
-                active && "border-primary ring-2 ring-primary/30",
-              )}
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <button
+        type="button"
+        onClick={() => onFilter(null)}
+        data-active={filter === null ? "" : undefined}
+        className="facet-top rounded-xl border bg-card p-4 text-left shadow-sm transition-shadow hover:shadow-md"
+      >
+        <p className="text-[13px] text-muted-foreground">Due today</p>
+        <p className="num mt-1 text-[24px] font-semibold leading-none">{data.denominator}</p>
+        <p className="mt-1.5 text-xs text-muted-foreground">Show everyone</p>
+      </button>
+      {DAY_STATES.map((s) => {
+        const active = filter === s;
+        const count = data.counts[s] ?? 0;
+        return (
+          <div
+            key={s}
+            className={cn(
+              "flex flex-col rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-md",
+              active && "border-primary ring-2 ring-primary/30",
+            )}
+          >
+            <button
+              type="button"
+              aria-pressed={active}
+              onClick={() => onFilter(active ? null : s)}
+              className="flex-1 rounded-xl p-4 pb-1 text-left"
             >
+              <span className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
+                <span
+                  aria-hidden
+                  className="h-2 w-2 shrink-0 rounded-full"
+                  style={{ background: STATE_COLORS[s] }}
+                />
+                {DAY_STATE_LABELS[s]}
+              </span>
+              <span className="num mt-1 block text-[24px] font-semibold leading-none">{count}</span>
+              <span className="mt-1.5 block text-xs text-muted-foreground">{share(count)}</span>
+            </button>
+            {s === "present" ? (
               <button
                 type="button"
-                aria-pressed={active}
-                onClick={() => onFilter(active ? null : s)}
-                className="flex-1 rounded-xl p-3 pb-1 text-left"
+                aria-pressed={filter === "late"}
+                onClick={() => onFilter(filter === "late" ? null : "late")}
+                className={cn(
+                  "px-4 pb-3 text-left text-xs underline-offset-2 hover:underline",
+                  filter === "late" ? "font-semibold text-warning" : "text-muted-foreground",
+                )}
               >
-                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <span
-                    aria-hidden
-                    className="h-2 w-2 shrink-0 rounded-full"
-                    style={{ background: STATE_COLORS[s] }}
-                  />
-                  {DAY_STATE_LABELS[s]}
-                </span>
-                <span className="num block text-2xl font-semibold">{data.counts[s] ?? 0}</span>
+                incl. <span className="num">{data.counts.late ?? 0}</span> late
               </button>
-              {s === "present" ? (
-                <button
-                  type="button"
-                  aria-pressed={filter === "late"}
-                  onClick={() => onFilter(filter === "late" ? null : "late")}
-                  className={cn(
-                    "px-3 pb-2 text-left text-xs underline-offset-2 hover:underline",
-                    filter === "late" ? "font-semibold text-warning" : "text-muted-foreground",
-                  )}
-                >
-                  incl. <span className="num">{data.counts.late ?? 0}</span> late
-                </button>
-              ) : (
-                <span className="pb-2" />
-              )}
-            </div>
-          );
-        })}
-      </div>
-      <p className="num text-xs text-muted-foreground">
-        {DAY_STATES.map((s) => data.counts[s] ?? 0).join(" + ")} = {sum}
-        {sum !== data.denominator ? (
-          <span className="ml-2 font-sans text-destructive">
-            (does not match {data.denominator} due — report this)
-          </span>
-        ) : null}
-      </p>
+            ) : (
+              <span className="pb-3" />
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -319,44 +337,66 @@ function StateDonut({ data }: { data: TodaySnapshot }) {
     name: DAY_STATE_LABELS[s],
     value: data.counts[s] ?? 0,
   })).filter((d) => d.value > 0);
+  const pct = (n: number) =>
+    data.denominator > 0 ? `${Math.round((n / data.denominator) * 100)}%` : "—";
   return (
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-base">Today at a glance</CardTitle>
-        <CardDescription>Share of the {data.denominator} people due today.</CardDescription>
+        <CardDescription>
+          Share of the <span className="num">{data.denominator}</span> people due today.
+        </CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="relative h-56">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={slices}
-                dataKey="value"
-                nameKey="name"
-                innerRadius="62%"
-                outerRadius="90%"
-                paddingAngle={1}
-                stroke="var(--card)"
-                isAnimationActive={false}
-              >
-                {slices.map((d) => (
-                  <Cell key={d.state} fill={STATE_COLORS[d.state]} />
-                ))}
-              </Pie>
-              <Tooltip formatter={(v) => [`${v} people`, ""]} />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-            <span className="num text-2xl font-semibold">
-              {data.denominator > 0
-                ? Math.round(
-                    ((data.counts.present + data.counts.half_day) / data.denominator) * 100,
-                  )
-                : 0}
-              %
-            </span>
-            <span className="text-xs text-muted-foreground">at work</span>
+        {/*
+          Donut beside a readout, per the comp (Figma 1395:2681). The ring alone
+          could be hovered for a number; the table states every one of them at
+          once, which is what somebody scanning the board actually wants. Only
+          states with somebody in them appear — a zero slice has no arc to
+          label, so listing it would point at nothing.
+        */}
+        <div className="flex flex-col items-center gap-4 sm:flex-row">
+          <div className="relative h-44 w-44 shrink-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={slices}
+                  dataKey="value"
+                  nameKey="name"
+                  innerRadius="64%"
+                  outerRadius="92%"
+                  paddingAngle={1}
+                  stroke="var(--card)"
+                  isAnimationActive={false}
+                >
+                  {slices.map((d) => (
+                    <Cell key={d.state} fill={STATE_COLORS[d.state]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(v) => [`${v} people`, ""]} />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+              <span className="num text-[24px] font-semibold leading-none">
+                {data.denominator}
+              </span>
+              <span className="mt-1 text-xs text-muted-foreground">Due today</span>
+            </div>
           </div>
+          <dl className="min-w-0 flex-1 space-y-1.5">
+            {slices.map((d) => (
+              <div key={d.state} className="flex items-center gap-2 text-[13px]">
+                <span
+                  aria-hidden
+                  className="h-2 w-2 shrink-0 rounded-full"
+                  style={{ background: STATE_COLORS[d.state] }}
+                />
+                <dt className="min-w-0 flex-1 truncate text-muted-foreground">{d.name}</dt>
+                <dd className="num font-semibold">{d.value}</dd>
+                <dd className="num w-10 text-right text-muted-foreground">{pct(d.value)}</dd>
+              </div>
+            ))}
+          </dl>
         </div>
       </CardContent>
     </Card>
@@ -364,18 +404,24 @@ function StateDonut({ data }: { data: TodaySnapshot }) {
 }
 
 function StoreBars({ data }: { data: TodaySnapshot }) {
-  const rows = useMemo(
-    () =>
-      data.stores.map((st) => {
-        const row: Record<string, string | number> = { store: st.storeName };
-        for (const s of DAY_STATES) row[s] = 0;
-        for (const r of data.rows) {
-          if (r.storeId === st.storeId) row[r.state] = (row[r.state] as number) + 1;
-        }
-        return row;
-      }),
-    [data],
-  );
+  /*
+   * One bar per branch: how many of its staff are due today, biggest first.
+   *
+   * This was a stacked recharts bar carrying all eight states at once, which
+   * asked the reader to compare seven colours across five rows to answer the
+   * question the card actually poses — which branch has the most people in.
+   * The comp (Figma 1395:2681) draws a single track per branch, and the state
+   * breakdown stays one card to the left where the donut already gives it.
+   */
+  const rows = useMemo(() => {
+    const due = data.stores.map((st) => ({
+      storeId: st.storeId,
+      name: st.storeName,
+      count: data.rows.filter((r) => r.storeId === st.storeId).length,
+    }));
+    return due.sort((a, b) => b.count - a.count);
+  }, [data]);
+  const max = Math.max(1, ...rows.map((r) => r.count));
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -383,30 +429,22 @@ function StoreBars({ data }: { data: TodaySnapshot }) {
         <CardDescription>Each bar is one store&apos;s staff due today.</CardDescription>
       </CardHeader>
       <CardContent>
-        <div style={{ height: Math.max(160, rows.length * 44 + 40) }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={rows} layout="vertical" margin={{ left: 8, right: 16 }}>
-              <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} />
-              <YAxis
-                type="category"
-                dataKey="store"
-                width={120}
-                tick={{ fontSize: 11 }}
-              />
-              <Tooltip />
-              {DAY_STATES.map((s) => (
-                <Bar
-                  key={s}
-                  dataKey={s}
-                  name={DAY_STATE_LABELS[s]}
-                  stackId="a"
-                  fill={STATE_COLORS[s]}
-                  isAnimationActive={false}
+        <ul className="space-y-2.5">
+          {rows.map((r) => (
+            <li key={r.storeId} className="flex items-center gap-3 text-[13px]">
+              <span className="w-32 shrink-0 truncate text-right text-muted-foreground" title={r.name}>
+                {r.name}
+              </span>
+              <span className="h-5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
+                <span
+                  className="block h-full rounded-full bg-primary/70"
+                  style={{ width: `${Math.max(2, (r.count / max) * 100)}%` }}
                 />
-              ))}
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+              </span>
+              <span className="num w-8 shrink-0 text-right font-semibold">{r.count}</span>
+            </li>
+          ))}
+        </ul>
       </CardContent>
     </Card>
   );
@@ -432,30 +470,68 @@ function DrillDown({
   /** Nobody corrects their own attendance (the API refuses it too). */
   selfId?: string;
 }) {
-  const shown = rows
+  // Search and paging, per the comp (Figma 1395:2681). Both are client-side:
+  // the snapshot already holds every row due today, so asking the server again
+  // to show somebody a different slice of what is on the page would be slower
+  // and no more correct.
+  const [q, setQ] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+
+  const matched = rows
     .filter((r) =>
       filter === null ? true : filter === "late" ? r.state === "present" && r.isLate : r.state === filter,
     )
+    .filter((r) => {
+      const needle = q.trim().toLowerCase();
+      if (!needle) return true;
+      return [r.employeeCode, r.name, r.storeName, refName(r.department)]
+        .some((v) => (v ?? "").toLowerCase().includes(needle));
+    })
     .sort((a, b) => a.name.localeCompare(b.name));
+
+  // A narrowed filter or search can strip the page out from under the reader.
+  const lastPage = Math.max(1, Math.ceil(matched.length / pageSize));
+  const safePage = Math.min(page, lastPage);
+  const shown = matched.slice((safePage - 1) * pageSize, safePage * pageSize);
+
   const title =
     filter === null ? "Everyone due today" : filter === "late" ? "Late today" : DAY_STATE_LABELS[filter];
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+      <CardHeader className="flex flex-col gap-3 space-y-0 pb-2 sm:flex-row sm:items-center sm:justify-between">
         <CardTitle className="text-base">
-          {title} <span className="num text-muted-foreground">({shown.length})</span>
+          {title} <span className="num text-muted-foreground">({matched.length})</span>
         </CardTitle>
-        {filter !== null ? (
-          <Button variant="ghost" size="sm" onClick={onClear}>
-            Show everyone
-          </Button>
-        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative">
+            <Search
+              className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+              aria-hidden
+            />
+            <Input
+              value={q}
+              onChange={(e) => {
+                setQ(e.target.value);
+                setPage(1);
+              }}
+              aria-label="Search the people due today"
+              placeholder="Search by code, name, store or department…"
+              className="h-9 w-full pl-8 sm:w-[300px]"
+            />
+          </div>
+          {filter !== null ? (
+            <Button variant="ghost" size="sm" onClick={onClear}>
+              Show everyone
+            </Button>
+          ) : null}
+        </div>
       </CardHeader>
       <CardContent>
-        {shown.length === 0 ? (
+        {matched.length === 0 ? (
           <p className="rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground">
-            Nobody in this group right now.
+            {q.trim() ? `Nobody matches “${q.trim()}”.` : "Nobody in this group right now."}
           </p>
         ) : (
           <div className="overflow-x-auto">
@@ -533,6 +609,21 @@ function DrillDown({
             </Table>
           </div>
         )}
+        {matched.length > pageSize ? (
+          <PaginationBar
+            page={safePage}
+            pageSize={pageSize}
+            total={matched.length}
+            onPageChange={setPage}
+            onPageSizeChange={(n) => {
+              setPageSize(n);
+              setPage(1);
+            }}
+            // Bounded by headcount, not by catalogue size: the shared default
+            // starts at 50, which a branch roster never reaches.
+            pageSizeOptions={[25, 50, 100]}
+          />
+        ) : null}
       </CardContent>
     </Card>
   );

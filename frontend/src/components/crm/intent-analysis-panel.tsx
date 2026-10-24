@@ -459,7 +459,7 @@ function Assessed({
             />
           </svg>
           <span className="absolute flex flex-col items-center">
-            <span className="num text-xl font-bold leading-none tracking-tight">{score}</span>
+            <span className="num text-[13px] font-bold leading-none tracking-tight">{score}</span>
             <span className="text-[8px] font-semibold uppercase tracking-wider text-muted-foreground">
               Score
             </span>

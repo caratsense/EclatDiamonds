@@ -326,7 +326,7 @@ function Total({ label, value, hint }: { label: string; value: string; hint?: st
     <Card>
       <CardContent className="space-y-1 pt-6">
         <p className="text-xs text-muted-foreground">{label}</p>
-        <p className="text-xl font-semibold tabular-nums">{value}</p>
+        <p className="text-lg font-semibold tabular-nums">{value}</p>
         {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
       </CardContent>
     </Card>

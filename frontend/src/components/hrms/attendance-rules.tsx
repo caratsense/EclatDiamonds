@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { AlertTriangle, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
@@ -24,19 +25,36 @@ export function AttendanceRulesBanner() {
   const off = (data ?? []).filter((r) => !r.automaticAbsence);
   if (!off.length) return null;
   return (
-    <div role="status" className="mb-4 flex gap-3 rounded-xl border border-warning/40 bg-warning/10 p-4 text-sm">
-      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
-      <div className="space-y-1">
-        <p className="font-medium">
-          Automatic absence is off at {off.length === 1 ? off[0].name : `${off.length} locations`}
-        </p>
-        <p className="text-muted-foreground">
-          Weekly offs, holidays, shifts and grace minutes are not confirmed
-          {off.length > 1 ? ` (${off.map((r) => r.name).join(", ")})` : ""}, so a day nobody punched
-          stays &ldquo;Not marked&rdquo; instead of &ldquo;Absent&rdquo;. Mark attendance by hand until
-          head office sets them up and confirms them under Shifts &amp; Schedule.
-        </p>
-      </div>
+    /*
+     * The count, and a way to act on it. Nothing else.
+     *
+     * This used to print the number of branches, then every branch by NAME
+     * inline, then three sentences explaining the consequence and the remedy —
+     * on a full-width amber panel above the page. At twelve branches that was a
+     * wall of red text before any content; the list also grows with the
+     * business, so it gets worse as the client succeeds.
+     *
+     * The names belong on the screen that fixes them, which the link goes to.
+     * The full list stays reachable on hover for anyone who wants it here.
+     */
+    <div
+      role="status"
+      className="mb-4 flex items-center gap-3 rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm"
+    >
+      <AlertTriangle className="h-4 w-4 shrink-0 text-warning" />
+      <p className="min-w-0 flex-1" title={off.map((r) => r.name).join(", ")}>
+        Automatic absence is off at{" "}
+        <span className="font-medium">
+          {off.length === 1 ? off[0].name : `${off.length} branches`}
+        </span>
+        <span className="text-muted-foreground"> — mark those days by hand until they are set up.</span>
+      </p>
+      <Link
+        href="/hrms/roster"
+        className="shrink-0 font-medium text-warning underline-offset-4 hover:underline"
+      >
+        Set up
+      </Link>
     </div>
   );
 }

@@ -178,7 +178,7 @@ export function EditableCommissionTab({
         <Card>
           <CardContent className="space-y-1 p-4">
             <p className="text-xs text-muted-foreground">Attributed sales</p>
-            <p className="num text-2xl font-semibold">
+            <p className="num text-[15px] font-semibold">
               {formatINRCompact(totalSales)}
             </p>
           </CardContent>
@@ -186,7 +186,7 @@ export function EditableCommissionTab({
         <Card>
           <CardContent className="space-y-1 p-4">
             <p className="text-xs text-muted-foreground">Payable incentive</p>
-            <p className="num text-2xl font-semibold">
+            <p className="num text-[15px] font-semibold">
               {formatINRCompact(totalIncentive)}
             </p>
           </CardContent>
@@ -194,7 +194,7 @@ export function EditableCommissionTab({
         <Card>
           <CardContent className="space-y-1 p-4">
             <p className="text-xs text-muted-foreground">Target achievers</p>
-            <p className="num text-2xl font-semibold">
+            <p className="num text-[15px] font-semibold">
               {achievers}/{rows.length}
             </p>
           </CardContent>

@@ -18,7 +18,6 @@ import { MetalRatesWidget } from "@/components/rates/metal-rates-widget";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -260,9 +259,6 @@ function MyTasksCard({
     <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Tasks</CardTitle>
-        <CardDescription>
-          Tasks raised across departments for follow-up.
-        </CardDescription>
         <div className="flex flex-wrap gap-1.5 pt-2">
           {TASK_VIEWS.map((v) => (
             <Button

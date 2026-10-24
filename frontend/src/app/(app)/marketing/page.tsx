@@ -218,10 +218,6 @@ export default function MarketingPage() {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <CardTitle className="text-base">Agency tasks</CardTitle>
-                  <CardDescription>
-                    Tasks shared with external agencies — review and approve
-                    submissions.
-                  </CardDescription>
                 </div>
                 {canCreateDeliverable ? (
                   <Button
@@ -297,9 +293,6 @@ export default function MarketingPage() {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <CardTitle className="text-base">Creative assets</CardTitle>
-                  <CardDescription>
-                    Creative uploaded by agencies for sign-off.
-                  </CardDescription>
                 </div>
                 {canCreateDeliverable ? (
                   <Button

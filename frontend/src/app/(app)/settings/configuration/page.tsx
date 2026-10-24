@@ -52,6 +52,8 @@ export default function ConfigurationPage() {
   const applyPack = useApplyPack();
   /** The industry the user has asked to switch to, pending confirmation. */
   const [pendingPack, setPending] = useState<{ code: string; name: string } | null>(null);
+  // The other eleven industries stay shut until somebody asks for them.
+  const [showAll, setShowAll] = useState(false);
 
   async function apply(code: string, name: string) {
     setPending(null);
@@ -110,7 +112,29 @@ export default function ConfigurationPage() {
             )}
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {/*
+           * The eleven industries Eclat is not in are behind a disclosure.
+           *
+           * This listed all twelve as equal cards — Pharmacy, Real estate,
+           * Automotive, Wholesale — each with a three-line description and a
+           * "Use this" button, on a jewellery tenant's settings page. None of
+           * them will ever be pressed, pressing one re-shapes the whole
+           * organisation's menu, and the one card that matters was lost among
+           * them. Switching is rare and deliberate, so it asks first.
+           */}
+          {!showAll ? (
+            <button
+              type="button"
+              onClick={() => setShowAll(true)}
+              className="text-sm font-medium text-primary underline-offset-4 hover:underline"
+            >
+              Change industry
+            </button>
+          ) : null}
+
+          <div
+            className={`grid gap-3 sm:grid-cols-2 lg:grid-cols-4 ${showAll ? "" : "hidden"}`}
+          >
             {packs?.packs.map((p) => {
               const current = config?.industry.packCode === p.code;
               return (
@@ -145,11 +169,12 @@ export default function ConfigurationPage() {
               );
             })}
           </div>
-          <p className="text-xs text-muted-foreground">
-            Your vocabulary, custom fields and sales stages are only ever added to — anything
-            you have renamed or created yourself is kept exactly as it is. Your industry does
-            decide which sections your team sees in the menu, so changing it changes that list.
-          </p>
+          {showAll ? (
+            <p className="text-xs text-muted-foreground">
+              Nothing you have renamed or created is lost — packs only add. Your industry does
+              decide which sections appear in the menu.
+            </p>
+          ) : null}
         </CardContent>
       </Card>
 
