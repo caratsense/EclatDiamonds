@@ -396,3 +396,11 @@ Owner's go-ahead: "check the prs and merge if everything is right then deploy it
 - **The advert just tapped picks the campaign**, not the thread's first visit; each campaign's first reply is recorded on its message, so a returning customer still gets the new advert's opener. One turn at a time per thread.
 - **The walk-in conversation is for customers who came from no advert.**
 - **Product name CaratSpace; the shop's name Nibhana** (PR #40, 10 Oct), as the client asked.
+
+# 2026-10-26 — the client is Nibhana, the software is CaratSpace (PR #52)
+
+Owner, 26 Oct: "eclat was brand name which name has changed to nibhana we are creating a software for them Caratspace previously Caratos".
+
+- **The product name stays CaratSpace** (`PRODUCT_NAME`, backend and frontend). PR #52 had set it to Nibhana on the belief that CaratSpace had moved to its own repository; it has not. Nibhana, formerly Éclat Diamonds, is the client and stays in `TENANT_NAME`.
+- **The app wears the client's colours**: emerald and champagne gold from PR #52 are kept, with the CaratSpace wordmark in gold. Supersedes the 10 Oct line "Product name CaratSpace; the shop's name Nibhana" only in that the shop's colours now dress the app.
+- **Everything else in PR #52 is merged as written**: the Figma DSR and CRM screens, the app a size smaller, broadcasts beside customers, and three audit fixes (a replaced DSR keeps its old figures in the trail, a locked payroll month is not redrafted, an auto-approved discount is audited), now each with a test.

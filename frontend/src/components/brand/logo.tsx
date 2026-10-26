@@ -108,8 +108,8 @@ export function Logo({
       {isDefaultBrand ? (
         /*
          * One word, one colour. The lockup used to split the name on "Carat"
-         * and set the second half in an indigo-to-cyan gradient; "Nibhana" has
-         * no such seam, so the whole wordmark is simply champagne gold against
+         * and set the second half in an indigo-to-cyan gradient; now the whole
+         * wordmark is simply champagne gold against
          * the emerald rail — the house pairing, and the only place the display
          * serif and the accent meet.
          */

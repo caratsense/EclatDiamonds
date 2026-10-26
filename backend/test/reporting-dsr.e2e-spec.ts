@@ -2,6 +2,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request = require('supertest');
 import { AppModule } from '../src/app.module';
+import { PrismaService } from '../src/prisma/prisma.service';
 
 /**
  * Module 10 — DSR (Daily Sales Report) create/file backend validation.
@@ -113,5 +114,19 @@ describe('DSR create/file validation (e2e)', () => {
       .set(auth(tokens.manager))
       .send({ channel: 'whatsapp', to: '+91 98765 43210' });
     expect(res.status).not.toBe(400);
+  });
+
+  it('filing the same store and day again says it replaced the report, and the trail keeps the old figures', async () => {
+    const first = await daily(tokens.manager, { storeId: SURAT, reportDate: yesterday(), walkIns: 4 });
+    expect([200, 201]).toContain(first.status);
+    const second = await daily(tokens.manager, { storeId: SURAT, reportDate: yesterday(), walkIns: 7 });
+    expect([200, 201]).toContain(second.status);
+    expect(second.body.replacedExisting).toBe(true);
+
+    const trail = await app.get(PrismaService).auditLog.findFirst({
+      where: { action: 'report.refile', entityId: second.body.id },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect((trail?.metadata as { replaced?: { walkIns?: number } } | null)?.replaced?.walkIns).toBe(4);
   });
 });
