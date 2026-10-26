@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -524,10 +525,37 @@ export class PayrollService {
    * an employee has been shown a number, it does not move because somebody
    * corrected a roster afterwards.
    */
+  /**
+   * Refuse to draft a payslip for a month whose payroll is locked.
+   *
+   * A lock means "this month is settled". Nothing consulted it on the way into
+   * a payroll run, so a weekly-off ticked today rewrote a closed month: the
+   * 24 Oct audit changed one person's off day and re-ran August, and their
+   * draft came back with 8 off days against the 4 their colleagues had. The
+   * off has no effective date, so it applies to every month the run touches —
+   * and generation is the only place that can stop the past being rewritten
+   * until it does.
+   *
+   * `reopenedAt: null` so a month deliberately reopened for a late correction
+   * still runs, which is what reopening is for.
+   */
+  private async assertMonthNotLocked(organisationId: string, periodKey: string) {
+    const lock = await this.prisma.payrollPeriodLock.findFirst({
+      where: { organisationId, month: periodKey, reopenedAt: null },
+      select: { lockedAt: true },
+    });
+    if (lock) {
+      throw new ConflictException(
+        `Payroll for ${periodKey} is locked, so its payslips cannot be redrafted. Reopen the month first if a correction is genuinely needed.`,
+      );
+    }
+  }
+
   async generate(user: AuthUser, input: { userId: string; periodKey: string }) {
     if (!PAYROLL_ROLES.includes(user.role)) {
       throw new ForbiddenException('Only a manager can generate a payslip.');
     }
+    await this.assertMonthNotLocked(user.organisationId, input.periodKey);
     const result = await this.draftOne(user, input.userId, input.periodKey);
     if (result.issued) {
       throw new BadRequestException(
@@ -552,6 +580,7 @@ export class PayrollService {
       throw new ForbiddenException('Only a manager can generate payslips.');
     }
     parsePeriod(input.periodKey);
+    await this.assertMonthNotLocked(user.organisationId, input.periodKey);
     const storeIds = this.scope.effectiveStoreIds(user, input.storeId);
     const stores = await this.prisma.store.findMany({
       where: {

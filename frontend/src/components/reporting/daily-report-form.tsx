@@ -473,9 +473,22 @@ export function DailyReportForm({
       return;
     }
     try {
-      await createReport.mutateAsync(draft);
-      toast.success("Daily report filed", {
-        description: `${storeLabel} · ${reportDate}`,
+      const saved = await createReport.mutateAsync(draft);
+      /*
+       * Say which of the two things happened.
+       *
+       * One report is kept per store per day, so filing the same day twice
+       * REPLACES the first — and both used to report "Daily report filed",
+       * which is how a manager could overwrite an evening's figures and be
+       * told it had gone fine. The server now says whether it replaced
+       * anything (and records the old figures in the audit trail); this just
+       * repeats it back honestly.
+       */
+      const replaced = (saved as { replacedExisting?: boolean } | undefined)?.replacedExisting;
+      toast.success(replaced ? "Earlier report replaced" : "Daily report filed", {
+        description: replaced
+          ? `${storeLabel} · ${reportDate} — the figures filed earlier for this day were overwritten.`
+          : `${storeLabel} · ${reportDate}`,
       });
       resetFigures();
       // Only after the server accepted it: a dialog that closes on a failed
