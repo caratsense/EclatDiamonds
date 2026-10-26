@@ -762,9 +762,7 @@ function RotationTab() {
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Slow-moving stock</CardTitle>
           <CardDescription>
-            The oldest pieces in stock by idle age — candidates to rotate to a
-            higher-demand branch. Use Raise Transfer to move a piece to another
-            store.
+            Oldest by idle age — candidates to rotate to a busier branch.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">

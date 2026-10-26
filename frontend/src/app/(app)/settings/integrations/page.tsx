@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { HelpNote } from "@/components/ui/help-note";
 import { useUpdateIntegrationConfig } from "@/lib/queries/meta-admin";
 import {
   useCreateIntegration,
@@ -479,12 +480,18 @@ function IntegrationCard({
             >
               Add number
             </Button>
-            <p className="w-full text-xs text-muted-foreground">
-              The numeric Phone Number ID from WhatsApp Manager, not the visible phone number.{" "}
-              {purpose === "internal"
-                ? `A staff line answers people linked to a ${PRODUCT_NAME} account and says nothing to anybody else.`
-                : "A customer line answers anyone who writes in, and is where ad clicks arrive."}
-            </p>
+            <HelpNote
+              className="w-full"
+              label={purpose === "internal" ? "What a staff line does" : "What a customer line does"}
+              more={
+                purpose === "internal"
+                  ? `A staff line answers people linked to a ${PRODUCT_NAME} account and says nothing to anybody else.`
+                  : "A customer line answers anyone who writes in, and is where ad clicks arrive."
+              }
+            >
+              The numeric Phone Number ID from WhatsApp Manager, not the visible
+              phone number.
+            </HelpNote>
           </div>
 
           {/*

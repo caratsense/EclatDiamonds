@@ -13,6 +13,7 @@ import { StoreScopeService } from '../common/store-scope.service';
 import { SequenceService } from '../common/sequence.service';
 import { ROLE_RANK } from '../common/role.util';
 import { AuditService } from '../common/audit.service';
+import { PRODUCT_NAME } from '../common/brand';
 import {
   CreateReferralCodeDto,
   CreateReferralDto,
@@ -426,7 +427,7 @@ export class LoyaltyService {
     const invoiceNo = dto.invoiceNo.trim();
 
     // A credit is money paid on a bill, so it names a real one. Where the bill
-    // has reached CaratSpace from the shop's system, the credit cannot be on
+    // has reached the platform from the shop's system, the credit cannot be on
     // more than it came to. Bills arrive every 15 minutes, so a manager may
     // record ahead of the sync; a salesperson waits for the bill to arrive.
     const sale = await this.prisma.sale.findFirst({
@@ -440,7 +441,7 @@ export class LoyaltyService {
     }
     if (!sale && !canOverridePct) {
       throw new BadRequestException(
-        `Bill ${invoiceNo} has not reached CaratSpace yet. Record the referral once it has, or ask your manager.`,
+        `Bill ${invoiceNo} has not reached ${PRODUCT_NAME} yet. Record the referral once it has, or ask your manager.`,
       );
     }
 

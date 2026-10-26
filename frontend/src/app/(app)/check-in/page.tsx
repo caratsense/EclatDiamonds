@@ -635,7 +635,7 @@ function CheckInScreen({ onNewDay }: { onNewDay: () => void }) {
             <div className="space-y-5">
               <div className="rounded-xl border bg-card p-6 text-center">
                 <CheckCircle2 className="mx-auto h-14 w-14 text-success" />
-                <p className="num mt-4 text-2xl font-semibold">
+                <p className="num mt-4 text-[15px] font-semibold">
                   Checked in at {today!.checkInLocal ?? formatTime(today!.checkInAt)}
                 </p>
               </div>
@@ -726,7 +726,7 @@ function CheckInScreen({ onNewDay }: { onNewDay: () => void }) {
                 <p className="text-sm text-muted-foreground">
                   Welcome to {storeName}
                 </p>
-                <p className="num mt-3 text-2xl font-semibold">
+                <p className="num mt-3 text-[15px] font-semibold">
                   Signed in at {formatTime(lastPunch.checkInAt)}
                 </p>
                 <div className="mt-3 flex flex-wrap items-center justify-center gap-2">

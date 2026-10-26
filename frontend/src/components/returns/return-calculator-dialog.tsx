@@ -597,7 +597,7 @@ function ValueCard({
         {label}
       </span>
 
-      <span className="num mt-1.5 text-2xl font-semibold tabular-nums">
+      <span className="num mt-1.5 text-[15px] font-semibold tabular-nums">
         {hasInput ? (loading ? "…" : formatINR(total)) : "—"}
       </span>
       <span className="text-xs text-muted-foreground">{hint}</span>

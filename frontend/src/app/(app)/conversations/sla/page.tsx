@@ -261,7 +261,8 @@ export default function ResponseSlaPage() {
         />
       ) : (
         <div className="rounded-lg border">
-          <Table>
+          {/* Every measured reply, oldest to newest. Scrolls in its own box so the page does not grow with the data. */}
+        <Table maxHeight="60vh">
             <TableHeader>
               <TableRow>
                 <TableHead>Customer</TableHead>

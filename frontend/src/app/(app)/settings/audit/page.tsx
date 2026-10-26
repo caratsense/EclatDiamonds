@@ -347,7 +347,8 @@ export default function AuditLogPage() {
       </div>
 
       <div className="rounded-xl border">
-        <Table>
+        {/* The audit log only ever grows. Scrolls in its own box so the page does not grow with the data. */}
+        <Table maxHeight="70vh">
           <TableHeader>
             <TableRow>
               <TableHead className="w-[170px]">When</TableHead>

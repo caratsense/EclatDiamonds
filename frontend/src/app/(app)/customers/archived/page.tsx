@@ -19,6 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { HelpNote } from "@/components/ui/help-note";
 import { useParties, useRestoreParty } from "@/lib/queries/parties";
 import { useDebouncedValue } from "@/lib/queries/search";
 import { apiErrorMessage } from "@/lib/utils";
@@ -73,12 +74,20 @@ export default function ArchivedContactsPage() {
           All customers
         </Link>
         <h1 className="font-display text-2xl font-bold tracking-tight">Archived contacts</h1>
-        <p className="max-w-2xl text-sm text-muted-foreground">
-          Hidden from the directory, search, the counter lookup and every campaign
-          audience. Nothing has been deleted — consent, opt-out and blacklist
-          records are kept exactly as they were, which is what stops an archived
-          contact being messaged again under a new record.
-        </p>
+        <HelpNote
+          className="max-w-2xl text-sm"
+          label="What archiving does and does not do"
+          more={
+            <>
+              Nothing has been deleted — consent, opt-out and blacklist records
+              are kept exactly as they were, which is what stops an archived
+              contact being messaged again under a new record.
+            </>
+          }
+        >
+          Hidden from the directory, search, the counter lookup and every
+          campaign audience.
+        </HelpNote>
       </div>
 
       <Input

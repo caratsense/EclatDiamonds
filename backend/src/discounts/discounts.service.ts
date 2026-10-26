@@ -243,6 +243,35 @@ export class DiscountsService {
       );
     }
 
+    /*
+     * An auto-approval is still an approval, so it goes in the trail.
+     *
+     * `decide()` audits an explicit approve or reject, but a request that
+     * falls within the requester's OWN caps is approved at creation and never
+     * passes through it — so the 24 Oct audit raised an 8% diamond discount
+     * as Head Office, had it approved against Head Office's 100% cap, and
+     * found nothing in the audit log. The money moved and no one was named.
+     *
+     * The cap that allowed it is recorded alongside the decision, because the
+     * interesting question afterwards is never "was it approved" but "under
+     * whose authority".
+     */
+    if (status === 'approved') {
+      await this.audit.record(user, {
+        action: 'discount.auto_approve',
+        entityType: 'DiscountRequest',
+        entityId: row.id,
+        storeId: dto.storeId,
+        summary: `Auto-approved discount ${row.ref} (${diamondPercent}% diamond / ${makingPercent}% making) for ${dto.customerName}, within ${user.role} caps`,
+        metadata: {
+          diamondPercent,
+          makingPercent,
+          approvedUnderRole: user.role,
+          roleCaps: requesterCaps,
+        },
+      });
+    }
+
     return toView(row, user.role);
   }
 

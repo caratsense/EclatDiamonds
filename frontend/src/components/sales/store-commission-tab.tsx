@@ -15,6 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { HelpNote } from "@/components/ui/help-note";
 import { formatINR, formatPercent } from "@/lib/format";
 import {
   useCommissionSummary,
@@ -53,13 +54,20 @@ export function StoreCommissionTab({ canConfigure }: { canConfigure: boolean }) 
             className="w-full sm:w-auto"
           />
         </div>
-        <p className="max-w-xl text-xs text-muted-foreground">
-          Qualifying sales are the store&apos;s billed sales for the calendar
-          month (store timezone), minus billed sale returns; cancelled bills are
-          excluded. A return request not yet billed as a sale return does not
-          reduce the figure. Commission = (qualifying sales − threshold) × rate,
-          never below zero.
-        </p>
+        <HelpNote
+          className="max-w-xl"
+          label="What counts as a qualifying sale"
+          more={
+            <>
+              Qualifying sales are the store&apos;s billed sales for the calendar
+              month in the store&apos;s own timezone, minus billed sale returns;
+              cancelled bills are excluded. A return request not yet billed as a
+              sale return does not reduce the figure.
+            </>
+          }
+        >
+          Commission = (qualifying sales − threshold) × rate, never below zero.
+        </HelpNote>
       </div>
 
       {query.isLoading ? (

@@ -204,7 +204,7 @@ function Stat({
           {tone === "bad" ? <AlertTriangle className="h-3.5 w-3.5 text-destructive" /> : null}
           {label}
         </div>
-        <p className="text-2xl font-semibold tabular-nums">{value}</p>
+        <p className="text-xl font-semibold tabular-nums">{value}</p>
         <p className="text-xs text-muted-foreground">{hint}</p>
       </CardContent>
     </Card>

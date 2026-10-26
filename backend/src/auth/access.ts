@@ -41,6 +41,7 @@ export const MODULES = [
   'campaigns', 'lead-forms', 'marketing',
   // HRM
   'settings/team', 'hrms', 'sales-performance', 'settings/targets', 'hrms/payroll',
+  'hrms/employees',
   // Back-office & Approvals
   'approvals', 'requests', 'ticketing', 'finance',
   // Administration
@@ -97,6 +98,18 @@ const STORE_MANAGER: ModuleSlug[] = [
   'payments', 'loyalty/programme',
   'inventory', 'stock-transfers', 'inventory/dead-stock', 'data/images',
   'settings/team', 'sales-performance', 'settings/targets', 'hrms/payroll',
+  /*
+   * The employee master, so it can be a sidebar item rather than a card nested
+   * on the HR hub. Granted exactly where 'hrms/payroll' is and at the same
+   * 'store' depth: a manager reads the record of the people in the branches
+   * they already run, and no further.
+   *
+   * Deliberately NOT added to the API-prefix map below. GET /hrms/employees
+   * stays gated on the 'hrms' screen, because other screens lean on it — the
+   * reports tab's employee picker among them — and moving the gate would take
+   * that endpoint away from roles that hold 'hrms' but not this screen.
+   */
+  'hrms/employees',
   'approvals',
 ];
 

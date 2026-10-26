@@ -4,7 +4,7 @@ import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 
 import { DonutChart } from "@/components/chart/echart";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatINRCompact } from "@/lib/format";
 import type { PaymentSource } from "@/lib/mock/reporting";
 
@@ -18,7 +18,6 @@ export function PaymentPie({ data, href = "/payments" }: { data: PaymentSource[]
             Payment Sources
             <ArrowUpRight className="h-4 w-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
           </CardTitle>
-          <CardDescription>How today&apos;s collections were tendered</CardDescription>
         </CardHeader>
         <CardContent>
           <DonutChart

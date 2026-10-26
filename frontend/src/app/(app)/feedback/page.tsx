@@ -94,7 +94,7 @@ export default function FeedbackPage() {
           <CardContent className="p-4">
             <div className="text-xs text-muted-foreground">Average rating</div>
             <div className="mt-1 flex items-center gap-2">
-              <span className="font-[family-name:var(--font-display-face)] text-3xl tabular-nums">
+              <span className="font-[family-name:var(--font-display-face)] text-2xl tabular-nums">
                 {summary.data?.averageRating ?? "—"}
               </span>
               <Stars value={summary.data?.averageRating ?? null} />
@@ -104,7 +104,7 @@ export default function FeedbackPage() {
         <Card>
           <CardContent className="p-4">
             <div className="text-xs text-muted-foreground">Answers</div>
-            <div className="mt-1 font-[family-name:var(--font-display-face)] text-3xl tabular-nums">
+            <div className="mt-1 font-[family-name:var(--font-display-face)] text-2xl tabular-nums">
               {summary.data?.responses ?? "—"}
             </div>
             <div className="text-xs text-muted-foreground">
@@ -130,7 +130,7 @@ export default function FeedbackPage() {
         <Card>
           <CardContent className="p-4">
             <div className="text-xs text-muted-foreground">Window</div>
-            <div className="mt-1 font-[family-name:var(--font-display-face)] text-3xl tabular-nums">
+            <div className="mt-1 font-[family-name:var(--font-display-face)] text-2xl tabular-nums">
               {summary.data?.windowDays ?? "—"}d
             </div>
           </CardContent>

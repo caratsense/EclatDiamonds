@@ -218,9 +218,10 @@ export default function StoreComparisonPage() {
           <Card>
             <CardHeader>
               <CardTitle>Revenue by store</CardTitle>
+              {/* The one thing not inferable from the title: this chart ignores
+                  the store picker and always shows every branch. */}
               <CardDescription>
-                Every store side by side — today&apos;s revenue across all
-                branches, whichever store is active.
+                All branches, whichever store is active.
               </CardDescription>
             </CardHeader>
             <CardContent>

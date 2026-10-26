@@ -46,9 +46,7 @@ export function FootfallByHourChart({ data }: { data: HourlyFootfall[] }) {
     <Card>
       <CardHeader>
         <CardTitle>Footfall by hour</CardTitle>
-        <CardDescription>
-          Walk-ins across the trading day. Peak hour highlighted.
-        </CardDescription>
+        <CardDescription>Peak hour highlighted.</CardDescription>
       </CardHeader>
       <CardContent>
         {hasData ? (

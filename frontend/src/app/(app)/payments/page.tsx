@@ -282,7 +282,7 @@ export default function PaymentsPage() {
               <CardContent className="flex items-center gap-3 py-4">
                 <CheckCircle2 className="h-5 w-5 text-success" />
                 <div>
-                  <p className="num text-2xl font-semibold">{matched}</p>
+                  <p className="num text-[15px] font-semibold">{matched}</p>
                   <p className="text-xs text-muted-foreground">Matched</p>
                 </div>
               </CardContent>
@@ -291,7 +291,7 @@ export default function PaymentsPage() {
               <CardContent className="flex items-center gap-3 py-4">
                 <CircleHelp className="h-5 w-5 text-destructive" />
                 <div>
-                  <p className="num text-2xl font-semibold">{unmatched}</p>
+                  <p className="num text-[15px] font-semibold">{unmatched}</p>
                   <p className="text-xs text-muted-foreground">Unmatched</p>
                 </div>
               </CardContent>
@@ -300,7 +300,7 @@ export default function PaymentsPage() {
               <CardContent className="flex items-center gap-3 py-4">
                 <Clock className="h-5 w-5 text-muted-foreground" />
                 <div>
-                  <p className="num text-2xl font-semibold">{pending}</p>
+                  <p className="num text-[15px] font-semibold">{pending}</p>
                   <p className="text-xs text-muted-foreground">Pending settle</p>
                 </div>
               </CardContent>
@@ -312,9 +312,6 @@ export default function PaymentsPage() {
               <CardTitle className="text-base">
                 Store-reported vs bank statement
               </CardTitle>
-              <CardDescription>
-                Variances between store-reported and bank figures, flagged for review.
-              </CardDescription>
             </CardHeader>
             <CardContent>
               <Table>

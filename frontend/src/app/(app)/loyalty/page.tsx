@@ -193,9 +193,6 @@ export default function LoyaltyPage() {
         <Card>
           <CardHeader>
             <CardTitle>Scheme enrollment</CardTitle>
-            <CardDescription>
-              Onboard a customer onto a monthly gold-savings plan.
-            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />

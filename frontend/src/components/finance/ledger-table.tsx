@@ -1,6 +1,6 @@
 "use client";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -35,10 +35,10 @@ export function LedgerTable({ data, isLoading }: LedgerTableProps) {
     <Card>
       <CardHeader>
         <CardTitle>General Ledger — AP / AR</CardTitle>
-        <CardDescription>Recent receivables and payables across stores</CardDescription>
       </CardHeader>
       <CardContent>
-        <Table>
+        {/* Receivables and payables across every store. Scrolls in its own box so the page does not grow with the data. */}
+        <Table maxHeight="60vh">
           <TableHeader>
             <TableRow>
               <TableHead>Ref</TableHead>

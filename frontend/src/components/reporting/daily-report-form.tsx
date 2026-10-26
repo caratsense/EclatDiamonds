@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { ChevronDown, FileText } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -101,12 +102,67 @@ function NumberField({
   );
 }
 
-/** Small uppercase group heading inside the form. */
-function GroupLabel({ children }: { children: React.ReactNode }) {
+/**
+ * One numbered block of the store's sheet, collapsible.
+ *
+ * The sheet has five parts and a manager fills perhaps two of them on a quiet
+ * day, so the form used to be a single long scroll in which the fields that
+ * mattered were lost among the ones that did not. Collapsed, a block states its
+ * own figures — "Booking value: ₹0 • Amount received: ₹0" — so nothing is
+ * hidden by closing it; the summary IS the block, read at a glance.
+ *
+ * Open by default for the two blocks every report fills (footfall and the
+ * counter sale), closed for the three that most do not.
+ */
+function FormSection({
+  title,
+  summary,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  summary: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const bodyId = `dsr-sec-${title.replace(/\W+/g, "-").toLowerCase()}`;
+
   return (
-    <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
-      {children}
-    </p>
+    <div className="overflow-hidden rounded-lg border">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={bodyId}
+        onClick={() => setOpen((o) => !o)}
+        className={cn(
+          "flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors",
+          open ? "bg-accent" : "hover:bg-accent/50",
+        )}
+      >
+        <FileText className="h-4 w-4 shrink-0 text-primary" />
+        {/* The heading never wraps: it is the block's name and two lines of it
+            pushes the summary off the row. The summary gives way instead. */}
+        <span className="shrink-0 whitespace-nowrap text-[13px] font-medium uppercase tracking-[0.04em] text-primary">
+          {title}
+        </span>
+        {/* The figures stay readable while the block is shut. */}
+        <span className="num ml-auto truncate text-xs text-muted-foreground">
+          {open ? null : summary}
+        </span>
+        <ChevronDown
+          className={cn(
+            "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+            open && "rotate-180",
+          )}
+        />
+      </button>
+      {open ? (
+        <div id={bodyId} className="space-y-3 px-4 pb-4 pt-3.5">
+          {children}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -255,7 +311,18 @@ function PaymentSplitFields({
  * delivery is the automated head-office digest, so previewing a message nobody
  * sends by hand was clutter. The form reads as one column, like the sheet.
  */
-export function DailyReportForm() {
+export function DailyReportForm({
+  inDialog = false,
+  onCancel,
+  onFiled,
+}: {
+  /** Rendered inside the filing dialog: no card of its own, actions on a bar. */
+  inDialog?: boolean;
+  /** Shown as a Cancel button when given — the dialog closes itself. */
+  onCancel?: () => void;
+  /** Called after a report files successfully, so the dialog can close. */
+  onFiled?: () => void;
+} = {}) {
   const { currentStore, user, stores } = useSession();
   const createReport = useCreateDailyReport();
 
@@ -406,29 +473,34 @@ export function DailyReportForm() {
       return;
     }
     try {
-      await createReport.mutateAsync(draft);
-      toast.success("Daily report filed", {
-        description: `${storeLabel} · ${reportDate}`,
+      const saved = await createReport.mutateAsync(draft);
+      /*
+       * Say which of the two things happened.
+       *
+       * One report is kept per store per day, so filing the same day twice
+       * REPLACES the first — and both used to report "Daily report filed",
+       * which is how a manager could overwrite an evening's figures and be
+       * told it had gone fine. The server now says whether it replaced
+       * anything (and records the old figures in the audit trail); this just
+       * repeats it back honestly.
+       */
+      const replaced = (saved as { replacedExisting?: boolean } | undefined)?.replacedExisting;
+      toast.success(replaced ? "Earlier report replaced" : "Daily report filed", {
+        description: replaced
+          ? `${storeLabel} · ${reportDate} — the figures filed earlier for this day were overwritten.`
+          : `${storeLabel} · ${reportDate}`,
       });
       resetFigures();
+      // Only after the server accepted it: a dialog that closes on a failed
+      // save takes the manager's typing with it.
+      onFiled?.();
     } catch {
       toast.error("Could not file the report. Please try again.");
     }
   }
 
-  return (
-    <div className="max-w-3xl">
-      {/* Entry form */}
-      <Card>
-        <CardHeader>
-          <CardTitle>File today&apos;s report</CardTitle>
-          <CardDescription>
-            {currentStore.isAggregate && !storeId
-              ? "Choose the store you're filing for"
-              : `Store-close figures for ${storeLabel}`}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
+  const content = (
+    <div className="space-y-6">
           {/* Store / date / time */}
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="grid gap-1.5">
@@ -499,8 +571,11 @@ export function DailyReportForm() {
           </div>
 
           {/* Traffic funnel */}
-          <div className="space-y-2.5">
-            <GroupLabel>1 · Footfall</GroupLabel>
+          <FormSection
+            title="1 · Footfall"
+            defaultOpen
+            summary={`Walk-ins: ${walkIns || 0} • Converted: ${conversions || 0}`}
+          >
             <p className="text-[11px] text-muted-foreground">
               Counts only — a walk-in is logged whether or not the customer left
               a name or number.
@@ -533,11 +608,14 @@ export function DailyReportForm() {
                 {funnelError}
               </p>
             ) : null}
-          </div>
+          </FormSection>
 
           {/* Table A — counter sale */}
-          <div className="space-y-3 rounded-lg border p-3.5">
-            <GroupLabel>2 · Table A — counter sale</GroupLabel>
+          <FormSection
+            title="2 · Table A — counter sale"
+            defaultOpen
+            summary={`Sale value: ${formatINR(draft.deliveredBilled)}`}
+          >
             <div className="grid gap-3 sm:grid-cols-2">
               <NumberField
                 id="dsr-counter-value"
@@ -553,11 +631,13 @@ export function DailyReportForm() {
               onChange={setCounterSplit}
               expected={draft.deliveredBilled}
             />
-          </div>
+          </FormSection>
 
           {/* Table B — customised sale */}
-          <div className="space-y-3 rounded-lg border p-3.5">
-            <GroupLabel>3 · Table B — customised sale</GroupLabel>
+          <FormSection
+            title="3 · Table B — customised sale"
+            summary={`Booking value: ${formatINR(draft.bookingsNew)} • Amount received: ${formatINR(draft.advanceReceived)}`}
+          >
             <div className="grid gap-3 sm:grid-cols-2">
               <NumberField
                 id="dsr-booking-value"
@@ -581,11 +661,15 @@ export function DailyReportForm() {
               expected={draft.advanceReceived}
               withBank
             />
-          </div>
+          </FormSection>
 
           {/* The customised-order book */}
-          <div className="space-y-2.5">
-            <GroupLabel>4 · Customised order book</GroupLabel>
+          <FormSection
+            title="4 · Customised order book"
+            summary={`Open: ${formatINR(toNumber(bookingsOpen) ?? 0)} • Closed: ${formatINR(
+              toNumber(bookingsClosed) ?? 0,
+            )} • Closing: ${formatINR(closing)}`}
+          >
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="grid gap-1.5">
                 <NumberField
@@ -625,12 +709,15 @@ export function DailyReportForm() {
               Closing is calculated — open + booked today − completed today — and
               becomes tomorrow&apos;s opening automatically when you file.
             </p>
-          </div>
+          </FormSection>
 
           {/* Remark */}
-          <div className="grid gap-1.5">
-            <Label htmlFor="dsr-remark" className="text-xs">
-              5 · Remark
+          <FormSection
+            title="5 · Remark"
+            summary={remark.trim() ? remark.trim() : "No remarks added"}
+          >
+            <Label htmlFor="dsr-remark" className="sr-only">
+              Remark
             </Label>
             <Textarea
               id="dsr-remark"
@@ -639,7 +726,7 @@ export function DailyReportForm() {
               value={remark}
               onChange={(e) => setRemark(e.target.value)}
             />
-          </div>
+          </FormSection>
 
           {/* Submitted by */}
           <div className="grid gap-1.5">
@@ -654,15 +741,55 @@ export function DailyReportForm() {
             />
           </div>
 
-          <div className="flex justify-end pt-1">
-            <Button
-              variant="gold"
-              onClick={submit}
-              disabled={createReport.isPending}
-            >
-              {createReport.isPending ? "Filing…" : "File report"}
-            </Button>
-          </div>
+    </div>
+  );
+
+  const actions = (
+    <>
+      {onCancel ? (
+        <Button type="button" variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+      ) : null}
+      <Button variant="gold" onClick={submit} disabled={createReport.isPending}>
+        {createReport.isPending ? "Filing…" : "File report"}
+      </Button>
+    </>
+  );
+
+  /*
+   * In a dialog the sheet is the whole screen, so it carries no card of its
+   * own: the five blocks scroll in their own pane and the actions sit on a bar
+   * below it. The bar is a SIBLING of the scrolling pane rather than sticky
+   * inside it — the dialog is a padded grid, so a sticky child pins to the
+   * inside of that padding and leaves the bar floating short of the bottom.
+   */
+  if (inDialog) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">{content}</div>
+        <div className="flex shrink-0 justify-end gap-3 border-t px-6 py-4">
+          {actions}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-3xl">
+      {/* Entry form */}
+      <Card>
+        <CardHeader>
+          <CardTitle>File today&apos;s report</CardTitle>
+          <CardDescription>
+            {currentStore.isAggregate && !storeId
+              ? "Choose the store you're filing for"
+              : `Store-close figures for ${storeLabel}`}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {content}
+          <div className="flex justify-end gap-3 pt-6">{actions}</div>
         </CardContent>
       </Card>
     </div>

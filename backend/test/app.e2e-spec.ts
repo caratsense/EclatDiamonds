@@ -2,6 +2,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request = require('supertest');
 import { AppModule } from '../src/app.module';
+import { PrismaService } from '../src/prisma/prisma.service';
 
 /**
  * Critical-path regression suite for the Eclat backend.
@@ -259,6 +260,12 @@ describe('Eclat backend — critical paths (e2e)', () => {
       expect(res.status).toBe(201);
       expect(res.body.status).toBe('approved');
       expect(res.body.requestedRole).toBe('salesperson');
+
+      // Approved on the way in is still an approval: it is in the trail, with the role whose caps allowed it.
+      const trail = await app.get(PrismaService).auditLog.findFirst({
+        where: { action: 'discount.auto_approve', entityId: res.body.id },
+      });
+      expect((trail?.metadata as { approvedUnderRole?: string } | null)?.approvedUnderRole).toBe('salesperson');
     });
 
     it('salesperson discount at 6% (> 2% ceiling) -> escalated', async () => {

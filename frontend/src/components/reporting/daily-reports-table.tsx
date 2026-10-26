@@ -8,7 +8,6 @@ import { toast } from "sonner";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -144,10 +143,6 @@ export function DailyReportsTable() {
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <CardTitle>Submitted reports</CardTitle>
-              <CardDescription>
-                Recent store-close reports — open any to read the full text,
-                save a row as PDF, or download the whole range consolidated
-              </CardDescription>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {realStores.length > 1 ? (
@@ -202,7 +197,10 @@ export function DailyReportsTable() {
           </div>
         </CardHeader>
         <CardContent>
-          <Table>
+          {/* A store-close log is read by scanning a column, so it is set one
+              step tighter than the app's default table — smaller figures and
+              less air per row, so more days fit on a screen at once. */}
+          <Table className="text-[13px] [&_td]:py-1.5">
             <TableHeader>
               <TableRow>
                 <TableHead>Store</TableHead>
@@ -259,7 +257,12 @@ export function DailyReportsTable() {
                     <TableCell className="font-medium">
                       {r.storeName ?? r.storeId}
                     </TableCell>
-                    <TableCell className="num">{dateLabel(r.reportDate)}</TableCell>
+                    {/* A date never wraps. In the two-column overview this
+                        table is two thirds of the page, and "03 Oct 2026"
+                        broke across three lines and took the row with it. */}
+                    <TableCell className="num whitespace-nowrap">
+                      {dateLabel(r.reportDate)}
+                    </TableCell>
                     <TableCell className="num text-right">
                       {formatNumber(r.walkIns)}
                     </TableCell>

@@ -2,11 +2,38 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
-function Table({ className, ...props }: React.ComponentProps<"table">) {
+/**
+ * `maxHeight` turns the table into its own scroll region, with the header
+ * pinned.
+ *
+ * Without it a long table simply makes the page long: the walk-in log's 200
+ * rows produced a 17,755px page, which pushed that screen's own KPIs 9,404px
+ * below the fold and scrolled the column headings away on the first flick, so
+ * every row after the first screenful was unlabelled. Capping the table keeps
+ * the headings, the surrounding card and the page's other content in view.
+ *
+ * Opt-in rather than a default, because a short table should size to its
+ * content — a five-row table in a fixed 60vh box is just as wrong in the other
+ * direction. Pass any CSS length: `maxHeight="60vh"`.
+ */
+function Table({
+  className,
+  maxHeight,
+  ...props
+}: React.ComponentProps<"table"> & { maxHeight?: string }) {
   return (
-    <div className="relative w-full overflow-auto">
+    <div
+      className={cn("relative w-full overflow-auto", maxHeight && "overscroll-contain")}
+      style={maxHeight ? { maxHeight } : undefined}
+    >
       <table
-        className={cn("w-full caption-bottom text-sm", className)}
+        className={cn(
+          "w-full caption-bottom text-sm",
+          // The pinned header needs an OPAQUE fill: TableHeader's own tint is
+          // `bg-muted/40`, and at 40% the rows would scroll visibly through it.
+          maxHeight && "[&_thead]:sticky [&_thead]:top-0 [&_thead]:z-10 [&_thead]:bg-card",
+          className,
+        )}
         {...props}
       />
     </div>

@@ -47,7 +47,7 @@ export function AttributionPanel({ partyId }: { partyId: string }) {
           <p className="text-xs uppercase tracking-wide text-muted-foreground">
             Credited revenue
           </p>
-          <p className="num text-lg font-semibold">{formatINR(Number(data.revenue.total))}</p>
+          <p className="num text-[13px] font-semibold">{formatINR(Number(data.revenue.total))}</p>
           <p className="text-xs text-muted-foreground">
             {data.revenue.sales} sale{data.revenue.sales === 1 ? "" : "s"} · {data.revenue.note}
           </p>

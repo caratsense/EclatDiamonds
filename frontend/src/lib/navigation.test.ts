@@ -109,11 +109,18 @@ describe("navigation", () => {
      * would be invisible to every role, AND module-gate, which resolves a path
      * to the longest matching nav slug, would refuse the page it names.
      *
-     * `hrms/payroll` is the exception, and a real one: it has been a MODULES
-     * slug in auth/access.ts and a CORE_NAVIGATION route all along.
+     * There are TWO exceptions, and both are real: `hrms/payroll` has been a
+     * MODULES slug in auth/access.ts and a CORE_NAVIGATION route all along,
+     * and `hrms/employees` joined it on 24 Oct 2026 — the employee master was
+     * reachable ONLY from a card on the /hrms hub, so removing that card (at
+     * the client's request, as a duplicate of the sidebar) would have orphaned
+     * the page. Making it a sidebar entry means wiring the slug into all three
+     * lists: here, CORE_NAVIGATION below, and MODULES + STORE_MANAGER in the
+     * backend's auth/access.ts. Miss one and the entry is invisible to every
+     * role while the gate refuses the route.
      */
     const underHrms = NAV_ITEMS.map((i) => i.slug).filter((s) => s.startsWith("hrms/"));
-    expect(underHrms).toEqual(["hrms/payroll"]);
+    expect(underHrms).toEqual(["hrms/payroll", "hrms/employees"]);
   });
 
   it("keeps every core-navigation route in the sidebar", () => {

@@ -59,6 +59,7 @@ async function teardown(prisma: PrismaService) {
   await prisma.rawPunchEvent.deleteMany({ where: { organisationId: A.org } });
   await prisma.storeHoliday.deleteMany({ where: { organisationId: A.org } });
   await prisma.leaveRequest.deleteMany({ where: { organisationId: A.org } });
+  await prisma.payrollPeriodLock.deleteMany({ where: { organisationId: A.org } });
   // Applying leave through the API seeds the year's allocation rows, and
   // LeaveBalance restricts the user delete below.
   await prisma.leaveBalance.deleteMany({ where: { user: { organisationId: A.org } } });
@@ -398,6 +399,30 @@ describe('Individual weekly offs and attendance-based payslips (e2e)', () => {
     expect(res.body.status).toBe('draft');
     // Said on every slip, so "net pay" is never read as take-home.
     expect(res.body.note).toMatch(/before tax/i);
+  });
+
+  it('a locked month is not redrafted until it is reopened', async () => {
+    await prisma.payrollPeriodLock.create({ data: { organisationId: A.org, month: PERIOD } });
+    try {
+      const refused = await request(server())
+        .post('/hrms/payroll/payslips/generate')
+        .set(auth(mgrT))
+        .send({ userId: 'u_pay_rep', periodKey: PERIOD })
+        .expect(409);
+      expect(JSON.stringify(refused.body)).toMatch(/locked/i);
+
+      await prisma.payrollPeriodLock.updateMany({
+        where: { organisationId: A.org, month: PERIOD },
+        data: { reopenedAt: new Date() },
+      });
+      await request(server())
+        .post('/hrms/payroll/payslips/generate')
+        .set(auth(mgrT))
+        .send({ userId: 'u_pay_rep', periodKey: PERIOD })
+        .expect(201);
+    } finally {
+      await prisma.payrollPeriodLock.deleteMany({ where: { organisationId: A.org } });
+    }
   });
 
   it('an absence costs exactly one day; a half day costs half', async () => {

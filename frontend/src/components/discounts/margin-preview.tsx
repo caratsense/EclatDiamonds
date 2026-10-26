@@ -49,7 +49,7 @@ export function MarginPreview({
         <div className="flex items-center justify-between gap-3">
           <div className="text-center">
             <p className="text-xs text-muted-foreground">Margin before</p>
-            <p className="num text-base font-semibold">
+            <p className="num text-[15px] font-semibold">
               {formatPercent(marginPctBefore)}
             </p>
             <p className="num text-xs text-muted-foreground">
@@ -61,7 +61,7 @@ export function MarginPreview({
             <p className="text-xs text-muted-foreground">Margin after</p>
             <p
               className={cn(
-                "num text-base font-semibold",
+                "num text-[15px] font-semibold",
                 lossMaking ? "text-destructive" : "text-success",
               )}
             >
@@ -73,7 +73,7 @@ export function MarginPreview({
           </div>
           <div className="text-center">
             <p className="text-xs text-muted-foreground">Erosion</p>
-            <p className="num flex items-center gap-1 text-base font-semibold text-warning">
+            <p className="num flex items-center gap-1 text-[15px] font-semibold text-warning">
               <TrendingDown className="h-4 w-4" />
               {formatPercent(erosion)}
             </p>

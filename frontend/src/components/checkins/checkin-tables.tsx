@@ -225,7 +225,9 @@ export function CheckInLog({ checkins }: { checkins: CheckIn[] }) {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <Table>
+        {/* The day's log can run to hundreds of rows; it scrolls in its own
+            box so the page keeps its KPIs and this card keeps its headings. */}
+        <Table maxHeight="60vh">
           <TableHeader>
             <TableRow>
               <TableHead>In</TableHead>

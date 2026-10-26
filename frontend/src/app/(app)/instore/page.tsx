@@ -120,19 +120,20 @@ function LeadCard({
         </div>
 
         <div className="flex gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            className="flex-1"
-            asChild
-            disabled={!lead.partyId}
-          >
+          {/*
+            Auto width, not flex-1. Both actions used to split the card between
+            them, which stretched a 32px "sm" button to 581px — so a small
+            control rendered as a slab the width of the row, and the gold one
+            twice over on every card. Gold is meant to mark the single thing to
+            press; at that size it marks the whole list.
+          */}
+          <Button size="sm" variant="outline" asChild disabled={!lead.partyId}>
             <Link href={`/conversations?partyId=${lead.partyId ?? ""}`}>
               <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
               Chat
             </Link>
           </Button>
-          <Button size="sm" className="flex-1" onClick={onVisit} disabled={!lead.partyId}>
+          <Button size="sm" onClick={onVisit} disabled={!lead.partyId}>
             <MapPin className="mr-1.5 h-3.5 w-3.5" />
             Record visit
           </Button>
@@ -387,7 +388,7 @@ export default function InStorePage() {
                       ) : null}
                       <Button
                         size="sm"
-                        className="w-full"
+                        className="self-start"
                         onClick={() => setVisitFor({ id: p.partyId, name: p.name })}
                       >
                         <MapPin className="mr-1.5 h-3.5 w-3.5" />

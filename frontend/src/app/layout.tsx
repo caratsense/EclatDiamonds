@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Hanken_Grotesk, Plus_Jakarta_Sans, IBM_Plex_Mono } from "next/font/google";
+import { Hanken_Grotesk, Fraunces, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 
 import { Providers } from "@/components/providers";
@@ -39,8 +39,21 @@ const sans = Hanken_Grotesk({
   display: "swap",
 });
 
-const displayFace = Plus_Jakarta_Sans({
+/*
+ * Page titles. Fraunces, a high-contrast serif, restored 24 Oct 2026 with the
+ * emerald-and-gold palette: the client's reference pairs "elegant serif
+ * headings with a clean sans-serif for tables, labels and metrics", and a
+ * grotesk display face over a grotesk UI face bought no distinction at all.
+ *
+ * Only the `wght` axis loads, so the `WONK` axis sits at 0 and the playful
+ * letterforms that got this face dropped once before never appear. Its figures
+ * can be oldstyle and bounce off the baseline, so numerals wear `.num` (the
+ * mono readout) and never the serif — `.font-display` forces `lining-nums` as
+ * a safety net.
+ */
+const displayFace = Fraunces({
   subsets: ["latin"],
+  axes: ["SOFT", "WONK"],
   variable: "--font-display-face",
   display: "swap",
 });

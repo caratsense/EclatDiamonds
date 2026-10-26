@@ -954,13 +954,64 @@ export class ReportingService {
         );
       }
     }
+    /*
+     * An overwrite is recorded, with the figures it replaced.
+     *
+     * The upsert above is deliberate and stays — one report per store per day,
+     * and the WhatsApp bot's submit relies on the same idempotent shape. What
+     * was wrong is that a correction was indistinguishable from a first
+     * filing: the 24 Oct audit filed Surat Main twice for the same day, the
+     * second filing silently replaced the first, both said "Daily report
+     * filed", and the original figures were gone with nothing anywhere
+     * recording that they had ever existed.
+     *
+     * So: read the row first, keep what it held, and write an audit line that
+     * carries the previous figures. A replaced report is now recoverable from
+     * the trail, and the caller is told which of the two things happened so it
+     * can say so rather than claiming a fresh filing.
+     */
+    const previous = await this.prisma.dailyReport.findUnique({
+      where: { storeId_reportDate: { storeId, reportDate } },
+      include: { store: true },
+    });
+
     const created = await this.prisma.dailyReport.upsert({
       where: { storeId_reportDate: { storeId, reportDate } },
       create: { organisationId: user.organisationId, storeId, reportDate, ...fields },
       update: fields,
       include: { store: true },
     });
-    return this.toDailyView(created);
+
+    const day = reportDate.toISOString().slice(0, 10);
+    await this.audit.record(user, {
+      action: previous ? 'report.refile' : 'report.file',
+      entityType: 'DailyReport',
+      entityId: created.id,
+      storeId,
+      summary: previous
+        ? `Replaced ${created.store?.name ?? 'the store'}'s report for ${day}`
+        : `Filed ${created.store?.name ?? 'the store'}'s report for ${day}`,
+      metadata: previous
+        ? {
+            // Enough to put the old figures back by hand. The whole row would
+            // be a second copy of the report in the trail.
+            replaced: {
+              filedAt: previous.createdAt,
+              walkIns: previous.walkIns,
+              seriousEnquiries: previous.seriousEnquiries,
+              conversions: previous.conversions,
+              deliveredBilled: previous.deliveredBilled.toString(),
+              bookingsNew: previous.bookingsNew.toString(),
+              advanceReceived: previous.advanceReceived.toString(),
+              cash: previous.cash.toString(),
+              card: previous.card.toString(),
+              upi: previous.upi.toString(),
+            },
+          }
+        : null,
+    });
+
+    return { ...this.toDailyView(created), replacedExisting: Boolean(previous) };
   }
 
   /** GET /reporting/daily?date=&storeId= — store-scoped list, most recent first. */

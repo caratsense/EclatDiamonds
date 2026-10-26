@@ -27,6 +27,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { HelpNote } from "@/components/ui/help-note";
 import { formatNumber } from "@/lib/format";
 import {
   useCatalogueConflicts,
@@ -439,11 +440,21 @@ function CredentialForm({
             Test connection
           </Button>
         </form>
-        <p className="text-[11px] text-muted-foreground">
-          Enter the API base (…/v1/api) or the exact products endpoint (…/v1/api/products) — both are saved as the same
-          products endpoint. Saving reads one product to prove the address works; it imports nothing. The {TENANT_NAME} product
-          feed is public, so no token is needed; a token, if given, is stored encrypted and never shown again.
-        </p>
+        <HelpNote
+          label="What this accepts, and what saving does"
+          more={
+            <>
+              Enter the API base (…/v1/api) or the exact products endpoint
+              (…/v1/api/products) — both are saved as the same products
+              endpoint. Saving reads one product to prove the address works; it
+              imports nothing. The {TENANT_NAME} product feed is public, so no
+              token is needed; a token, if given, is stored encrypted and never
+              shown again.
+            </>
+          }
+        >
+          Paste the address of your website&apos;s product feed.
+        </HelpNote>
       </CardContent>
     </Card>
   );

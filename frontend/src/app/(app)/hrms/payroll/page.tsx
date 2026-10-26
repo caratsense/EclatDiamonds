@@ -38,7 +38,7 @@ import {
 } from "@/lib/queries/payroll";
 import { formatINR } from "@/lib/format";
 import { PRODUCT_NAME } from "@/lib/brand";
-import { apiErrorMessage } from "@/lib/utils";
+import { apiErrorMessage, cn } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 
 /**
@@ -62,6 +62,13 @@ function weekdayShort(key: string): string {
   return ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][d.getUTCDay()];
 }
 
+type OffsPanel = "weekly" | "dated";
+
+const OFFS_PANELS: { id: OffsPanel; label: string }[] = [
+  { id: "weekly", label: "Weekly offs" },
+  { id: "dated", label: "Dated offs" },
+];
+
 export default function PayrollPage() {
   const role = useSession((s) => s.role);
   const stores = useSession((s) => s.stores);
@@ -69,6 +76,11 @@ export default function PayrollPage() {
 
   const [storeId, setStoreId] = useState("");
   const [period, setPeriod] = useState(currentPeriodKey());
+  // Which of the three panels is on show. The offs tab is remembered while
+  // the run history is open, so closing the history returns to the table the
+  // reader was last in rather than resetting to the first one.
+  const [offsTab, setOffsTab] = useState<OffsPanel>("weekly");
+  const [showRuns, setShowRuns] = useState(false);
   const [openSlip, setOpenSlip] = useState<string | null>(null);
 
   const roster = useWeekOffRoster(storeId || undefined);
@@ -200,17 +212,59 @@ export default function PayrollPage() {
         ) : null}
       </div>
 
-      {/* ---------------------------------------------------------------- */}
+      {/*
+        One card, three panels, per the comp (Figma 1402:3110 / 1402:3361).
+
+        These were three full-height cards stacked down the page — two offs
+        tables and the run history — so reading the runs meant scrolling past
+        every employee twice. They answer three different questions about the
+        same month, which makes them a switch rather than a sequence.
+      */}
       {canManage ? (
         <Card>
+          <CardHeader className="gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="inline-flex rounded-lg bg-muted p-1">
+                {OFFS_PANELS.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    aria-pressed={!showRuns && offsTab === t.id}
+                    onClick={() => {
+                      setOffsTab(t.id);
+                      setShowRuns(false);
+                    }}
+                    className={cn(
+                      "rounded-md px-4 py-1.5 text-sm transition-colors",
+                      !showRuns && offsTab === t.id
+                        ? "bg-background font-medium shadow-sm"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+              <Button
+                variant={showRuns ? "default" : "outline"}
+                size="sm"
+                aria-pressed={showRuns}
+                onClick={() => setShowRuns((v) => !v)}
+              >
+                <History className="size-4" /> Payroll runs · {period}
+              </Button>
+            </div>
+          </CardHeader>
+
+          {!showRuns && offsTab === "weekly" ? (
+        <div>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <CalendarOff className="size-4" /> Weekly offs
             </CardTitle>
             <CardDescription>
               Tick a day to give somebody their own weekly off. Their days replace the
-              branch&rsquo;s &mdash; they do not add to it. Untick everything and they follow the
-              branch again.
+              branch&rsquo;s &mdash; they do not add to it.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -258,12 +312,11 @@ export default function PayrollPage() {
               </div>
             )}
           </CardContent>
-        </Card>
+        </div>
       ) : null}
 
-      {/* ---------------------------------------------------------------- */}
-      {canManage ? (
-        <Card>
+          {!showRuns && offsTab === "dated" ? (
+        <div>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <CalendarOff className="size-4" /> Dated offs — the whole month
@@ -327,20 +380,19 @@ export default function PayrollPage() {
               </div>
             )}
           </CardContent>
-        </Card>
+        </div>
       ) : null}
 
-      {/* ---------------------------------------------------------------- */}
-      {canManage ? (
-        <Card>
+          {showRuns ? (
+        <div>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <History className="size-4" /> Payroll runs for {period}
             </CardTitle>
             <CardDescription>
-              Once a branch&rsquo;s month has closed there, {PRODUCT_NAME} drafts its payslips and tells
-              the branch&rsquo;s managers and head office. It only drafts &mdash; nothing is issued
-              or paid automatically. Re-run a month after late corrections or if a run failed.
+              Once a branch&rsquo;s month has closed there, {PRODUCT_NAME} drafts its payslips and
+              tells the branch&rsquo;s managers and head office. It only drafts &mdash; nothing is
+              issued or paid automatically.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -424,6 +476,8 @@ export default function PayrollPage() {
               </div>
             )}
           </CardContent>
+        </div>
+          ) : null}
         </Card>
       ) : null}
 

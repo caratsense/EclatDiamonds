@@ -918,7 +918,7 @@ export function QuoteBuilder({ open, onOpenChange }: QuoteBuilderProps) {
           <div className="flex flex-wrap items-center justify-between gap-2 border-t px-6 py-3">
             <div>
               <p className="text-xs text-muted-foreground">Grand total</p>
-              <p className="num text-lg font-semibold">{formatINR(preview.grand)}</p>
+              <p className="num text-[13px] font-semibold">{formatINR(preview.grand)}</p>
             </div>
             <p className="hidden text-[11px] text-muted-foreground lg:block">
               Alt+N item · Alt+D diamond · Alt+C colour stone · Ctrl+Enter save

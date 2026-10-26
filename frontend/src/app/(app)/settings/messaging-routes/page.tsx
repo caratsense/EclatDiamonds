@@ -17,6 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { HelpNote } from "@/components/ui/help-note";
 import {
   ROUTE_STATE,
   useClearMessagingRoute,
@@ -250,12 +251,19 @@ export default function MessagingRoutesPage() {
             </CardContent>
           </Card>
 
-          <p className="text-xs text-muted-foreground">
-            A conversation stays on the number it started on, even if you re-map the branch
-            afterwards. Moving an existing thread to another number would start a second
-            conversation on the customer&rsquo;s phone and lose the 24-hour reply window on the
-            first.
-          </p>
+          <HelpNote
+            label="Why re-mapping does not move existing threads"
+            more={
+              <>
+                Moving an existing thread to another number would start a second
+                conversation on the customer&rsquo;s phone and lose the 24-hour
+                reply window on the first.
+              </>
+            }
+          >
+            A conversation stays on the number it started on, even if you re-map
+            the branch afterwards.
+          </HelpNote>
         </>
       )}
     </div>
