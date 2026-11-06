@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { SectionHeader } from "@/components/section/section-header";
 import { ModeChart } from "@/components/payments/mode-chart";
+import { ChartError } from "@/components/chart/echart";
 import { SalesSection } from "@/components/sales/sales-section";
 import { DirectSaleDialog } from "@/components/sales/direct-sale-dialog";
 import { Badge } from "@/components/ui/badge";
@@ -264,6 +265,14 @@ export default function PaymentsPage() {
               <CardContent>
                 {paymentsQuery.isLoading ? (
                   <Skeleton className="h-[240px] rounded-xl" />
+                ) : paymentsQuery.isError ? (
+                  // The list above already says the fetch failed; the donut was
+                  // still reporting "no collections", which is a different claim.
+                  <ChartError
+                    height={240}
+                    message="Couldn't load the mode breakdown."
+                    onRetry={() => paymentsQuery.refetch()}
+                  />
                 ) : (
                   <ModeChart data={modeBreakdown} />
                 )}

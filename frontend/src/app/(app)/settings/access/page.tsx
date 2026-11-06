@@ -127,12 +127,12 @@ export default function AccessPage() {
         purpose={item?.purpose ?? ""}
         primaryAction="Add Staff"
         onPrimaryAction={() => setAddOpen(true)}
+        actions={
+          <Button variant="outline" onClick={() => setRolesOpen(true)}>
+            <Shield className="h-4 w-4" /> Roles
+          </Button>
+        }
       />
-      <div className="mb-3 flex justify-end">
-        <Button variant="outline" size="sm" onClick={() => setRolesOpen(true)}>
-          <Shield className="h-3.5 w-3.5" /> Roles
-        </Button>
-      </div>
       <AddStaffDialog
         open={addOpen}
         onOpenChange={setAddOpen}
@@ -140,7 +140,7 @@ export default function AccessPage() {
         roster={staff.data ?? []}
       />
       <RoleManagerDialog open={rolesOpen} onOpenChange={setRolesOpen} />
-      <div className="grid gap-4 lg:grid-cols-[18rem_1fr]">
+      <div className="grid items-start gap-4 lg:grid-cols-[19rem_1fr]">
         <Card className="h-fit">
           <CardHeader className="pb-2">
             <CardTitle className="text-base">People</CardTitle>
@@ -479,7 +479,11 @@ function PersonAccess({
           ) : null}
         </div>
       </CardHeader>
-      <CardContent className="space-y-5">
+      {/* The list is ~45 rows of screens. Left to grow it made the page five
+          viewports tall, so the person's name, their role and the Save button
+          all scrolled away from the switches they apply to. Capped here, the
+          header stays put and only the list moves. */}
+      <CardContent className="max-h-[32rem] space-y-5 overflow-y-auto overscroll-contain">
         {isHeadOffice ? (
           <p className="py-10 text-center text-sm text-muted-foreground">
             {data.name} is head office and always has every screen. To limit
@@ -511,7 +515,7 @@ function PersonAccess({
                         </Badge>
                       ) : null}
                     </div>
-                    <div role="radiogroup" aria-label={i.title} className="flex rounded-md border p-0.5">
+                    <div role="radiogroup" aria-label={i.title} className="flex shrink-0 rounded-md bg-muted p-0.5">
                       {([
                         { value: "none" as AccessOverride, label: "Off" },
                         { value: onLevel(data.role), label: "On" },
@@ -525,12 +529,10 @@ function PersonAccess({
                             aria-checked={active}
                             onClick={() => setDraft((d) => ({ ...d, [i.slug]: l.value }))}
                             className={cn(
-                              "rounded px-4 py-1 text-xs font-medium",
+                              "rounded-[3px] px-4 py-1 text-xs font-medium transition-colors",
                               active
-                                ? l.value === "none"
-                                  ? "bg-muted text-foreground"
-                                  : "bg-primary text-primary-foreground"
-                                : "text-muted-foreground hover:bg-muted/60",
+                                ? "bg-card text-foreground shadow-sm ring-1 ring-border"
+                                : "text-muted-foreground hover:text-foreground",
                             )}
                           >
                             {l.label}

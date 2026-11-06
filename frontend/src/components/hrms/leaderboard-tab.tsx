@@ -119,6 +119,7 @@ export function LeaderboardTab({ rows }: { rows: LeaderboardRow[] }) {
             ]}
             valueFormatter={(v) => formatNumber(v)}
             height={300}
+            emptyMessage="No footfall, quotes or sales logged this month yet"
           />
         </CardContent>
       </Card>

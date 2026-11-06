@@ -35,7 +35,7 @@ function ChartCard({
   children: React.ReactNode;
 }) {
   const card = (
-    <Card className={href ? "group transition-shadow hover:shadow-md" : undefined}>
+    <Card className={href ? "group transition-colors hover:border-primary/40" : undefined}>
       <CardHeader>
         <CardTitle className="flex items-center gap-1.5">
           {title}
@@ -75,6 +75,7 @@ export function SalesTrendChart({ data, href }: { data: TrendPoint[]; href?: str
           { name: "Target", data: data.map((d) => d.target), dashed: true, color: t.palette[1] },
         ]}
         height={260}
+        emptyMessage="No billed sales in the last 12 months yet"
       />
     </ChartCard>
   );
@@ -133,6 +134,7 @@ export function LeadFunnelChart({
           centerValue={rate != null ? `${rate}%` : "—"}
           centerLabel="CONVERTED"
           height={220}
+          emptyMessage="No leads in these days yet"
         />
         <BarChart
           categories={days.map((d) => dayLabel(d.date))}
@@ -142,6 +144,7 @@ export function LeadFunnelChart({
           ]}
           valueFormatter={formatNumber}
           height={220}
+          emptyMessage="No leads in these days yet"
         />
       </div>
     </ChartCard>
@@ -166,6 +169,7 @@ export function StoreComparisonChart({ data, href }: { data: StoreCompare[]; hre
           { name: "Target", data: data.map((d) => d.target), color: t.palette[2] },
         ]}
         height={260}
+        emptyMessage="No store revenue or targets recorded this month yet"
       />
     </ChartCard>
   );

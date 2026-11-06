@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
   CalendarDays,
   Clock,
@@ -32,12 +32,17 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn, apiErrorMessage, positiveNumberInput } from "@/lib/utils";
 import { useStoresAdmin } from "@/lib/queries/stores";
-import {
-  StoreScopeField,
-  useStoreScope,
-} from "@/components/common/store-scope-field";
 import {
   WEEK_DAYS,
   WEEK_DAYS_SHORT,
@@ -79,11 +84,24 @@ function formatHolidayDate(iso: string): string {
 interface ShiftsScheduleTabProps {
   shifts: Shift[];
   holidays: Holiday[];
+  /** Resolved by the page, so the store picker can sit above the tab strip. */
+  storeId: string;
+  storeLabel: string;
+  /**
+   * Head office's leave-balance corrections. Passed in rather than rendered
+   * here because the role gate belongs to the page that owns it; absent for
+   * every other role, and then the tab is not offered at all.
+   */
+  leaveBalances?: ReactNode;
 }
 
-export function ShiftsScheduleTab({ shifts, holidays }: ShiftsScheduleTabProps) {
-  const { targetStoreId, storeLabel, pickedStoreId, setPickedStoreId } =
-    useStoreScope();
+export function ShiftsScheduleTab({
+  shifts,
+  holidays,
+  storeId,
+  storeLabel,
+  leaveBalances,
+}: ShiftsScheduleTabProps) {
   // Salespeople are view-only for shifts / week-off / holidays; store_manager+
   // may edit (the backend enforces the same via @Roles('store_manager'+)).
   const role = useSession((s) => s.role);
@@ -126,144 +144,197 @@ export function ShiftsScheduleTab({ shifts, holidays }: ShiftsScheduleTabProps) 
   }, [holidays]);
 
   return (
-    <div className="space-y-4">
-      <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
+    <Tabs defaultValue="shift-setup" className="space-y-4">
+      {/*
+        One strip, three subjects. The screen used to stack all of them — the
+        shift table, the week-off grid, the holiday list and head office's
+        balance corrections — so somebody who came to change a grace window
+        scrolled past three unrelated settings to reach it.
+      */}
+      <TabsList className="h-auto w-full gap-0 overflow-x-auto rounded-xl border border-border/80 bg-card px-2 pb-0 pt-1">
+        <SetupTab value="shift-setup">Shift setup</SetupTab>
+        <SetupTab value="days-off">Days off &amp; holidays</SetupTab>
+        {leaveBalances ? (
+          <SetupTab value="leave-balances">Leave balances</SetupTab>
+        ) : null}
+      </TabsList>
 
-      <AttendanceRulesCard storeId={targetStoreId} canConfirm={role === "head_office"} />
-
-      {/* --- Shifts / batches --------------------------------------- */}
-      <Card>
-        <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
-          <div className="space-y-1.5">
-            <CardTitle className="flex items-center gap-2">
-              <Clock className="h-4 w-4 text-muted-foreground" />
-              Shifts &amp; batches
-            </CardTitle>
-            <CardDescription>
-              Second-batch staff aren&apos;t marked late — lateness is measured
-              against their own shift start&nbsp;+&nbsp;buffer.
-            </CardDescription>
-          </div>
-          {canEdit ? (
-            <Button size="sm" className="shrink-0" onClick={() => setShiftOpen(true)}>
-              <Plus className="h-4 w-4" />
-              Add shift
-            </Button>
-          ) : null}
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {shifts.length === 0 ? (
-            <p className="rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground">
-              No shifts for this store yet — add the morning and (for mall
-              stores) the night / 2nd batch.
-            </p>
-          ) : (
-            shifts.map((s) => (
-              <div
-                key={s.id}
-                className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
+      <TabsContent value="shift-setup" className="mt-0 space-y-4">
+        {/* --- Shifts / batches ------------------------------------- */}
+        <Card>
+          <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
+            <div className="space-y-1.5">
+              <CardTitle className="flex items-center gap-2">
+                <Clock className="h-4 w-4 text-muted-foreground" />
+                Shifts &amp; batches
+              </CardTitle>
+              <CardDescription>
+                Second-batch staff aren&apos;t marked late — lateness is measured
+                against their own shift start&nbsp;+&nbsp;buffer.
+              </CardDescription>
+            </div>
+            {canEdit ? (
+              <Button
+                variant="gold"
+                size="sm"
+                className="shrink-0"
+                onClick={() => setShiftOpen(true)}
               >
-                <div className="flex items-center gap-3">
-                  <div
-                    className={cn(
-                      "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg",
-                      "bg-muted text-muted-foreground",
-                    )}
-                  >
-                    {s.isNightBatch ? (
-                      <Moon className="h-4 w-4" />
-                    ) : (
-                      <Sun className="h-4 w-4" />
-                    )}
-                  </div>
-                  <div className="leading-tight">
-                    <div className="flex flex-wrap items-center gap-2">
-                      {s.code ? (
-                        <Badge variant="outline" className="num">
-                          {s.code}
-                        </Badge>
-                      ) : null}
-                      <p className="font-medium">{s.name}</p>
-                      {s.isFlexible ? <Badge variant="gold">Flexible</Badge> : null}
-                      {s.isNightBatch ? (
-                        <Badge variant="secondary" className="gap-1">
-                          <Moon className="h-3 w-3" />
-                          Night / 2nd batch
-                        </Badge>
-                      ) : null}
-                    </div>
-                    <p className="num text-xs text-muted-foreground">
-                      {s.startTime}–{s.endTime}
-                      {s.isFlexible ? " · never marked late" : ""}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex shrink-0 items-center gap-1">
-                  {s.isFlexible ? null : (
-                    <Badge variant="outline" className="w-fit">
-                      <span className="num">{s.bufferMins}</span>
-                      &nbsp;min grace
-                    </Badge>
-                  )}
+                <Plus className="h-4 w-4" />
+                Add shift
+              </Button>
+            ) : null}
+          </CardHeader>
+          <CardContent className="px-0 sm:px-6">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Shift</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Timing</TableHead>
+                  <TableHead>Grace period</TableHead>
+                  <TableHead>Late rule</TableHead>
                   {canEdit ? (
-                    <>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label={`Edit shift ${s.name}`}
-                        onClick={() => setEditingShift(s)}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="text-destructive"
-                        aria-label={`Delete shift ${s.name}`}
-                        onClick={() => {
-                          setForceDelete(false);
-                          setDeletingShift(s);
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </>
+                    <TableHead className="text-right">Actions</TableHead>
                   ) : null}
-                </div>
-              </div>
-            ))
-          )}
-        </CardContent>
-      </Card>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {shifts.length === 0 ? (
+                  <TableRow>
+                    <TableCell
+                      colSpan={canEdit ? 6 : 5}
+                      className="py-10 text-center text-sm text-muted-foreground"
+                    >
+                      No shifts for this store yet — add the morning and (for
+                      mall stores) the night / 2nd batch.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  shifts.map((s) => (
+                    <TableRow key={s.id}>
+                      <TableCell>
+                        <div className="flex items-center gap-2.5">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                            {s.isNightBatch ? (
+                              <Moon className="h-4 w-4" />
+                            ) : (
+                              <Sun className="h-4 w-4" />
+                            )}
+                          </span>
+                          {s.code ? (
+                            <Badge variant="outline" className="num">
+                              {s.code}
+                            </Badge>
+                          ) : null}
+                          <span className="font-medium">{s.name}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {s.isFlexible ? (
+                            <Badge variant="warning">Flexible</Badge>
+                          ) : (
+                            <Badge variant="secondary">Fixed</Badge>
+                          )}
+                          {/* The comp has no column of its own for the batch,
+                              and it changes how the day is scored, so it rides
+                              with the type rather than being dropped. */}
+                          {s.isNightBatch ? (
+                            <Badge variant="outline">Night / 2nd batch</Badge>
+                          ) : null}
+                        </div>
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        <span className="num">
+                          {s.startTime}–{s.endTime}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        {s.isFlexible ? (
+                          <span className="text-muted-foreground">—</span>
+                        ) : (
+                          <Badge variant="outline" className="whitespace-nowrap">
+                            <span className="num">{s.bufferMins}</span>
+                            &nbsp;min
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {s.isFlexible ? "Never marked late" : "After grace period"}
+                      </TableCell>
+                      {canEdit ? (
+                        <TableCell>
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label={`Edit shift ${s.name}`}
+                              onClick={() => setEditingShift(s)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive"
+                              aria-label={`Delete shift ${s.name}`}
+                              onClick={() => {
+                                setForceDelete(false);
+                                setDeletingShift(s);
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      ) : null}
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        {/* --- Weekly off day -------------------------------------- */}
-        <WeekOffCard
-          storeId={targetStoreId}
-          storeName={storeLabel}
+        {/*
+          The comp puts a "default grace period" setting in this slot. There is
+          no such thing to save: grace is per shift (`bufferMins`) and no store
+          default exists on the API, so the slot keeps the settings card we do
+          have — the rules head office confirms before automatic absence starts.
+        */}
+        <AttendanceRulesCard storeId={storeId} canConfirm={role === "head_office"} />
+
+        <ShiftAssignments
+          storeId={storeId}
+          shifts={shifts.filter((s) => s.storeId === storeId)}
           canEdit={canEdit}
         />
+      </TabsContent>
 
-        {/* --- Store holidays -------------------------------------- */}
-        <HolidaysCard
-          storeId={targetStoreId}
-          storeName={storeLabel}
-          upcoming={upcoming}
-          canEdit={canEdit}
-        />
-      </div>
+      <TabsContent value="days-off" className="mt-0">
+        <div className="grid gap-4 lg:grid-cols-2">
+          <WeekOffCard storeId={storeId} storeName={storeLabel} canEdit={canEdit} />
+          <HolidaysCard
+            storeId={storeId}
+            storeName={storeLabel}
+            upcoming={upcoming}
+            canEdit={canEdit}
+          />
+        </div>
+      </TabsContent>
 
-      <ShiftAssignments
-        storeId={targetStoreId}
-        shifts={shifts.filter((s) => s.storeId === targetStoreId)}
-        canEdit={canEdit}
-      />
+      {leaveBalances ? (
+        <TabsContent value="leave-balances" className="mt-0">
+          {leaveBalances}
+        </TabsContent>
+      ) : null}
 
       {shiftOpen ? (
         <ShiftDialog
           open
           onOpenChange={setShiftOpen}
-          storeId={targetStoreId}
+          storeId={storeId}
           storeName={storeLabel}
         />
       ) : null}
@@ -295,7 +366,30 @@ export function ShiftsScheduleTab({ shifts, holidays }: ShiftsScheduleTabProps) 
           onConfirm={() => removeShift(deletingShift, forceDelete)}
         />
       ) : null}
-    </div>
+    </Tabs>
+  );
+}
+
+/**
+ * Underline-only tab: a red rule under the active label and nothing else. The
+ * segmented pill the primitive defaults to would read as a control floating in
+ * the strip's own card, rather than as the card's own heading row.
+ */
+function SetupTab({ value, children }: { value: string; children: ReactNode }) {
+  return (
+    <TabsTrigger
+      value={value}
+      /*
+        Equal thirds, centred — the comp gives each tab `flex-[1_0_0]` across
+        the strip's full width rather than letting them hug their labels, so
+        the three subjects read as peers and the red underline marks a third of
+        the bar instead of a word. `min-w-0` lets a long label truncate rather
+        than forcing the strip to scroll.
+      */
+      className="min-w-0 flex-1 rounded-none border-b-4 border-transparent px-3 pb-2.5 pt-2 text-sm text-muted-foreground data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:font-bold data-[state=active]:text-foreground data-[state=active]:shadow-none"
+    >
+      {children}
+    </TabsTrigger>
   );
 }
 
@@ -391,7 +485,7 @@ function WeekOffCard({
           {canEdit ? (
             <Button
               size="sm"
-              variant="outline"
+              variant="gold"
               onClick={save}
               disabled={setWeekOff.isPending || shownDay === shownSaved}
             >

@@ -23,6 +23,7 @@ export function BudgetVarianceChart({ data }: { data: BudgetActual[] }) {
             { name: "Actual", data: data.map((d) => d.actual), color: t.palette[0] },
           ]}
           height={280}
+          emptyMessage="No budget set and nothing booked this month yet"
         />
       </CardContent>
     </Card>
@@ -52,6 +53,7 @@ export function CashFlowChart({ data }: { data: CashFlowPoint[] }) {
             { name: "New-Store Setup", data: data.map((d) => d.newStore), dashed: true, color: t.palette[4] },
           ]}
           height={280}
+          emptyMessage="No inflow or committed outflow projected yet"
         />
       </CardContent>
     </Card>

@@ -15,6 +15,7 @@ import * as XLSX from "xlsx";
 import { toast } from "sonner";
 
 import { SectionHeader } from "@/components/section/section-header";
+import { ChartError } from "@/components/chart/echart";
 import { AgingChart } from "@/components/inventory/aging-chart";
 import { CreateTransferDialog } from "@/components/inventory/create-transfer-dialog";
 import { ReorderTab } from "@/components/inventory/reorder-tab";
@@ -217,7 +218,8 @@ export default function InventoryPage() {
 
   // KPI cards + aging distribution are computed server-side over the WHOLE
   // store-scoped set, so they never reflect only the current page or mock data.
-  const { data: summary } = useStockSummary();
+  const summaryQuery = useStockSummary();
+  const summary = summaryQuery.data;
 
   const selectedRows = rows.filter((r) => selected.has(r.id));
 
@@ -366,7 +368,23 @@ export default function InventoryPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <AgingChart data={summary?.aging ?? []} metric={agingMetric} />
+          {/*
+            Three different facts, three different panels. `summary?.aging ?? []`
+            alone made the chart say "No stock in these buckets" while the
+            request was still in flight, and again when it had failed — a shop
+            with a full safe was told its shelves were empty.
+          */}
+          {summaryQuery.isLoading ? (
+            <Skeleton className="h-[220px] rounded-xl" />
+          ) : summaryQuery.isError ? (
+            <ChartError
+              height={220}
+              message="Couldn't load the aging distribution."
+              onRetry={() => summaryQuery.refetch()}
+            />
+          ) : (
+            <AgingChart data={summary?.aging ?? []} metric={agingMetric} />
+          )}
         </CardContent>
       </Card>
 

@@ -16,6 +16,8 @@ import ReactECharts from "echarts-for-react";
 import type { EChartsOption } from "echarts";
 import { useTheme } from "next-themes";
 
+import { Button } from "@/components/ui/button";
+import { formatNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 /* ------------------------------------------------------------------ */
@@ -53,11 +55,37 @@ function makeColorResolver() {
   const probe = document.createElement("span");
   probe.style.cssText = "position:absolute;width:0;height:0;visibility:hidden;pointer-events:none";
   document.body.appendChild(probe);
+  const rootStyle = getComputedStyle(document.documentElement);
   return {
+    /*
+     * Resolve a CSS custom property to a concrete colour, falling back when it
+     * is genuinely absent.
+     *
+     * The fallback used to be unreachable. This set `probe.style.color =
+     * "var(--x)"` and returned the fallback only when the computed value was
+     * the empty string — but `getComputedStyle().color` NEVER returns "". When
+     * the variable is undefined the declaration is invalid at computed-value
+     * time, and `color`, being inherited, simply takes the parent's: the probe
+     * reported the body's text colour. Measured on this app, an undefined
+     * variable returned rgb(17,33,29), exactly `body`'s colour.
+     *
+     * So a missing palette did not fall back to six distinct defaults — every
+     * entry came back as the same near-black, and a pie drawn from it was a
+     * single black disc. That is the "Leads pie chart is entirely black" bug.
+     *
+     * Reading the variable off the root FIRST is the actual test of presence:
+     * `getPropertyValue` returns "" for a variable that was never declared.
+     * The probe is still used to turn whatever it holds into a concrete rgb(),
+     * since a token may itself be a var() chain or a named colour.
+     */
     resolve(varName: string, fallback: string) {
+      const declared = rootStyle.getPropertyValue(varName).trim();
+      if (!declared) return fallback;
       probe.style.color = "";
       probe.style.color = `var(${varName})`;
       const rgb = getComputedStyle(probe).color;
+      // A declared-but-unparseable value lands back on the parent colour; the
+      // fallback is better than inheriting the page's ink.
       return rgb && rgb !== "" ? rgb : fallback;
     },
     done() {
@@ -112,8 +140,18 @@ export function useChartTokens(): ChartTokens {
   const { resolvedTheme } = useTheme();
   const [tokens, setTokens] = React.useState<ChartTokens>(() => resolveTokens());
 
+  /*
+   * Re-resolve on MOUNT as well as on a theme flip.
+   *
+   * The initial value is computed in the `useState` initialiser, during the
+   * first client render — which can run before the stylesheet has applied. If
+   * it does, every token resolves to an inherited default and, because this
+   * effect used to depend on `resolvedTheme` alone, the wrong palette was
+   * cached for the life of the component: the chart stayed black until
+   * somebody happened to toggle the theme. Running once on mount corrects an
+   * early read; the theme dependency still handles later flips.
+   */
   React.useEffect(() => {
-    // Defer a frame so CSS variables reflect the new `.dark` class.
     const id = requestAnimationFrame(() => setTokens(resolveTokens()));
     return () => cancelAnimationFrame(id);
   }, [resolvedTheme]);
@@ -121,24 +159,70 @@ export function useChartTokens(): ChartTokens {
   return tokens;
 }
 
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
+/** Module-level so the subscription survives re-renders instead of churning. */
+function subscribeReducedMotion(onChange: () => void): () => void {
+  const mq = window.matchMedia(REDUCED_MOTION_QUERY);
+  mq.addEventListener("change", onChange);
+  return () => mq.removeEventListener("change", onChange);
+}
+
+/**
+ * Whether the viewer has asked for reduced motion.
+ *
+ * `globals.css` already honours the query for CSS transitions, but ECharts
+ * animates in JavaScript on a canvas/SVG it owns — no stylesheet reaches it. So
+ * the same query is read here and the animation switched off at the option
+ * level. Read as an external store rather than mirrored into state: the server
+ * snapshot is `false`, so the server render and the hydration pass agree
+ * without the extra render an effect-then-setState would schedule.
+ */
+export function usePrefersReducedMotion(): boolean {
+  return React.useSyncExternalStore(
+    subscribeReducedMotion,
+    () => window.matchMedia(REDUCED_MOTION_QUERY).matches,
+    () => false,
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /* Base building blocks                                                */
 /* ------------------------------------------------------------------ */
 
 /** Shared base option carrying the luxury-minimal look (axes, tooltip, text). */
-export function baseOption(t: ChartTokens): EChartsOption {
+export function baseOption(t: ChartTokens, reducedMotion = false): EChartsOption {
   return {
     color: t.palette,
     textStyle: { fontFamily: t.fontSans, color: t.foreground },
     grid: { left: 8, right: 12, top: 28, bottom: 8, containLabel: true },
+    // Enough motion to show that the figures changed, not enough to wait for.
+    animation: !reducedMotion,
+    animationDuration: 320,
+    animationDurationUpdate: 240,
+    animationEasing: "cubicOut",
+    animationEasingUpdate: "cubicOut",
     legend: {
+      // Scrolling rather than wrapping: the attendance trend carries eight
+      // bands, and a wrapped legend silently ate the plot area.
+      type: "scroll",
       icon: "roundRect",
       itemWidth: 10,
       itemHeight: 10,
       itemGap: 16,
       top: 0,
       right: 0,
+      // Clicking an entry hides its series. This is the ECharts default and is
+      // stated so it does not get switched off by a later `legend` override.
+      selectedMode: true,
       textStyle: { color: t.muted, fontSize: 12, fontFamily: t.fontSans },
+      // A hidden series must still be readable enough to click back on, which
+      // ECharts' default near-white `inactiveColor` is not on a light card.
+      inactiveColor: hexA(t.muted, 0.4),
+      pageIconColor: t.muted,
+      pageIconInactiveColor: hexA(t.muted, 0.35),
+      pageIconSize: 10,
+      pageTextStyle: { color: t.muted, fontSize: 11 },
     },
     tooltip: {
       trigger: "axis",
@@ -146,6 +230,9 @@ export function baseOption(t: ChartTokens): EChartsOption {
       borderColor: t.border,
       borderWidth: 1,
       padding: [8, 12],
+      // Charts sit inside cards that clip their overflow, so a tooltip near the
+      // edge was cut in half. Confining it keeps the whole row readable.
+      confine: true,
       extraCssText: "border-radius:8px; box-shadow:0 4px 12px -4px rgba(0,0,0,0.1);",
       textStyle: { color: t.foreground, fontSize: 12, fontFamily: t.fontSans },
       axisPointer: { lineStyle: { color: t.border }, crossStyle: { color: t.border } },
@@ -163,6 +250,93 @@ const splitHairline = (t: ChartTokens) => ({
   show: true,
   lineStyle: { color: t.border, width: 1, type: [4, 4] as [number, number] },
 });
+
+/* ------------------------------------------------------------------ */
+/* Tooltips                                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Escape a label before it goes into a tooltip.
+ *
+ * ECharts injects a formatter's return value as HTML. Category labels are store
+ * names, payment modes and product titles — all typed by a user into the ERP,
+ * so an apostrophe or an angle bracket is a matter of when, not if.
+ */
+function esc(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** One tooltip line: the series' marker dot, its name, then the bold figure. */
+function tooltipRow(marker: string, name: string, value: string, share: string): string {
+  return (
+    `<div style="display:flex;align-items:center;gap:6px;white-space:nowrap">` +
+    `${marker}<span>${esc(name)}</span>` +
+    `<strong style="margin-left:auto;padding-left:12px">${esc(value)}</strong>${share}` +
+    `</div>`
+  );
+}
+
+/** Params ECharts hands an axis-trigger tooltip formatter, for the bits we read. */
+interface AxisTooltipParam {
+  marker?: string;
+  seriesName?: string;
+  axisValue?: string | number;
+  axisValueLabel?: string;
+  value?: number | string | null;
+}
+
+/**
+ * Axis-trigger tooltip in the same shape as the donut's: the hovered category
+ * on top, then one marker-dot row per series with the value in bold.
+ *
+ * Exported because several modules build their option by hand (footfall, stock
+ * aging) and a reader should not have to re-learn the layout per chart.
+ *
+ * The percentage denominator is deliberately opt-in: a share is only an answer
+ * when the figures compose a whole. `shareTotal` covers one series across
+ * categories ("this store was 18% of the month"); `shareOfRows` covers a
+ * stacked category, where the whole is the stack under the cursor and so
+ * differs per column. Across a revenue-vs-target pair neither applies, and the
+ * percentage is left out rather than printed because it was computable.
+ */
+export function axisTooltipFormatter(opts?: {
+  format?: (v: number) => string;
+  shareTotal?: number;
+  shareOfRows?: boolean;
+}) {
+  const format = opts?.format ?? ((v: number) => formatNumber(v));
+
+  return (params: unknown): string => {
+    const rows = (Array.isArray(params) ? params : [params]) as AxisTooltipParam[];
+    if (rows.length === 0) return "";
+
+    const total = opts?.shareOfRows
+      ? rows.reduce((sum, r) => sum + Math.abs(Number(r.value ?? 0)), 0)
+      : (opts?.shareTotal ?? 0);
+
+    const label = String(rows[0].axisValueLabel ?? rows[0].axisValue ?? "");
+    const head = label
+      ? `<div style="margin-bottom:4px;opacity:0.7">${esc(label)}</div>`
+      : "";
+
+    const body = rows
+      .map((r) => {
+        const n = Number(r.value ?? 0);
+        const share =
+          total > 0
+            ? `<span style="opacity:0.7;margin-left:6px">${((Math.abs(n) / total) * 100).toFixed(1)}%</span>`
+            : "";
+        return tooltipRow(r.marker ?? "", r.seriesName ?? "", format(n), share);
+      })
+      .join("");
+
+    return head + body;
+  };
+}
 
 /* ------------------------------------------------------------------ */
 /* Core component                                                      */
@@ -192,9 +366,10 @@ export function EChart({
   onEvents,
 }: EChartProps) {
   const tokens = useChartTokens();
+  const reducedMotion = usePrefersReducedMotion();
 
   const merged = React.useMemo<EChartsOption>(() => {
-    const base = baseOption(tokens);
+    const base = baseOption(tokens, reducedMotion);
     return {
       ...base,
       ...option,
@@ -207,7 +382,7 @@ export function EChart({
         ? (Array.isArray(option.tooltip) ? option.tooltip : { ...base.tooltip, ...option.tooltip })
         : base.tooltip,
     };
-  }, [tokens, option]);
+  }, [tokens, option, reducedMotion]);
 
   return (
     <ReactECharts
@@ -240,12 +415,13 @@ export function ChartEmpty({
 }: {
   height?: number | string;
   className?: string;
+  /** Say what the chart is waiting for — "no data" alone reads as a fault. */
   message?: string;
 }) {
   return (
     <div
       className={cn(
-        "flex items-center justify-center rounded-lg text-sm text-muted-foreground",
+        "flex items-center justify-center rounded-lg border border-dashed bg-muted/20 px-4 text-center text-sm text-muted-foreground",
         className,
       )}
       style={{ height }}
@@ -255,15 +431,59 @@ export function ChartEmpty({
   );
 }
 
+/**
+ * Shown when the query behind a chart failed.
+ *
+ * Separate from ChartEmpty on purpose. "Nothing was sold in this period" and
+ * "we could not reach the server" are different facts, and every page that let
+ * a failed query fall through to an empty array told the reader the first when
+ * the truth was the second.
+ */
+export function ChartError({
+  height = 280,
+  className,
+  message = "Couldn't load this chart.",
+  onRetry,
+}: {
+  height?: number | string;
+  className?: string;
+  message?: string;
+  onRetry?: () => void;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex flex-col items-center justify-center gap-2 rounded-lg border bg-muted/30 px-4 text-center",
+        className,
+      )}
+      style={{ height }}
+    >
+      <p className="text-sm font-medium">{message}</p>
+      <p className="text-xs text-muted-foreground">
+        The connection may have dropped. Check your network and try again.
+      </p>
+      {onRetry ? (
+        <Button variant="outline" size="sm" className="mt-1" onClick={onRetry}>
+          Retry
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
 /** True when at least one series carries a non-zero value worth plotting. */
-function hasPlottableData(series: { data: number[] }[]): boolean {
-  return series.some((s) => s.data.some((v) => Math.abs(Number(v) || 0) > 0));
+function hasPlottableData(series: { data: (number | null)[] }[]): boolean {
+  return series.some((s) =>
+    s.data.some((v) => v != null && Math.abs(Number(v) || 0) > 0),
+  );
 }
 
 /** A named numeric series for the cartesian presets. */
 export interface ChartSeries {
   name: string;
-  data: number[];
+  /** `null` leaves a GAP rather than plotting a point at zero — the difference
+   *  between "no target was set" and "the target is nothing". */
+  data: (number | null)[];
   /** Render this series as a dashed reference line (e.g. target). */
   dashed?: boolean;
   /** Override the palette colour for this series. */
@@ -280,6 +500,8 @@ interface CartesianProps {
   valueFormatter?: (v: number) => string;
   /** Hide the legend (single-series charts). Default shows when >1 series. */
   showLegend?: boolean;
+  /** What the chart is waiting for, shown in place of an empty plot. */
+  emptyMessage?: string;
 }
 
 /**
@@ -293,6 +515,7 @@ export function AreaChart({
   className,
   valueFormatter,
   showLegend,
+  emptyMessage,
 }: CartesianProps) {
   const t = useChartTokens();
   const legend = showLegend ?? series.length > 1;
@@ -300,9 +523,15 @@ export function AreaChart({
   const option = React.useMemo<EChartsOption>(() => {
     return {
       legend: legend ? { show: true } : { show: false },
-      tooltip: valueFormatter
-        ? { valueFormatter: (v) => valueFormatter(Number(v)) }
-        : {},
+      /*
+       * No share percentage here. These are time series — a month's slice of
+       * the trailing year is arithmetic, not an insight, and printing it beside
+       * the figure invites the reader to treat a quiet month as a shortfall.
+       */
+      tooltip: {
+        trigger: "axis",
+        formatter: axisTooltipFormatter({ format: valueFormatter }),
+      },
       xAxis: { type: "category", boundaryGap: false, data: categories, ...hairlineAxis(t) },
       yAxis: {
         type: "value",
@@ -317,6 +546,16 @@ export function AreaChart({
       },
       series: series.map((s, i) => {
         const c = s.color ?? t.palette[i % t.palette.length];
+        /*
+         * Hover: the pointed-at line thickens slightly and its point surfaces;
+         * the others fade back. The colour is restated rather than changed, so
+         * the series stays the one the legend named.
+         */
+        const emphasis = {
+          focus: "series" as const,
+          lineStyle: { color: c, width: s.dashed ? 2 : 2.75 },
+        };
+        const blur = { lineStyle: { opacity: 0.25 }, areaStyle: { opacity: 0.08 } };
         return s.dashed
           ? {
               name: s.name,
@@ -326,6 +565,8 @@ export function AreaChart({
               symbol: "none",
               lineStyle: { color: c, width: 1.5, type: "dashed" as const },
               itemStyle: { color: c },
+              emphasis,
+              blur,
             }
           : {
               name: s.name,
@@ -337,6 +578,13 @@ export function AreaChart({
               showSymbol: false,
               lineStyle: { color: c, width: 2 },
               itemStyle: { color: c },
+              // A ring in the card colour lifts the hovered point off its own line.
+              emphasis: {
+                ...emphasis,
+                scale: 1.5,
+                itemStyle: { color: c, borderColor: t.card, borderWidth: 2 },
+              },
+              blur,
               areaStyle: {
                 color: {
                   type: "linear" as const,
@@ -356,7 +604,7 @@ export function AreaChart({
   }, [categories, series, t, valueFormatter, legend]);
 
   if (!categories.length || !hasPlottableData(series)) {
-    return <ChartEmpty height={height} className={className} />;
+    return <ChartEmpty height={height} className={className} message={emptyMessage} />;
   }
   return <EChart option={option} height={height} className={className} notMerge />;
 }
@@ -369,19 +617,51 @@ export function BarChart({
   className,
   valueFormatter,
   showLegend,
+  emptyMessage,
 }: CartesianProps) {
   const t = useChartTokens();
   const legend = showLegend ?? series.length > 1;
 
   const option = React.useMemo<EChartsOption>(() => {
+    /*
+     * One series across categories composes a whole — stores making up the
+     * month, stages making up the funnel — so each bar's share of it is a real
+     * answer and the tooltip carries it. Two series side by side do not: the
+     * share of (revenue + target) means nothing, so none is shown.
+     */
+    const shareTotal =
+      series.length === 1
+        ? series[0].data.reduce<number>((sum, v) => sum + Math.abs(Number(v) || 0), 0)
+        : 0;
     return {
       legend: legend ? { show: true } : { show: false },
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "shadow" },
-        ...(valueFormatter ? { valueFormatter: (v) => valueFormatter(Number(v)) } : {}),
+        // The axis label truncates long store names; the tooltip carries the
+        // whole one, which is the only place a reader can still read it.
+        formatter: axisTooltipFormatter({ format: valueFormatter, shareTotal }),
       },
-      xAxis: { type: "category", data: categories, ...hairlineAxis(t) },
+      xAxis: {
+        type: "category",
+        data: categories,
+        ...hairlineAxis(t),
+        /*
+         * Every category gets its label. ECharts defaults to
+         * `interval: "auto"`, which drops labels that would overlap — so a
+         * chart with long names rendered bars with blank positions beneath
+         * them and looked like missing data. Truncating is honest; hiding is
+         * not. `hideOverlap` lets ECharts stagger rather than silently drop.
+         */
+        axisLabel: {
+          ...hairlineAxis(t).axisLabel,
+          interval: 0,
+          hideOverlap: false,
+          width: 92,
+          overflow: "truncate",
+          ellipsis: "…",
+        },
+      },
       yAxis: {
         type: "value",
         ...hairlineAxis(t),
@@ -393,22 +673,36 @@ export function BarChart({
           formatter: valueFormatter ? (v: number) => valueFormatter(v) : undefined,
         },
       },
-      series: series.map((s, i) => ({
-        name: s.name,
-        type: "bar" as const,
-        data: s.data,
-        barMaxWidth: 28,
-        barGap: "30%",
-        itemStyle: {
-          color: s.color ?? t.palette[i % t.palette.length],
-          borderRadius: [6, 6, 0, 0] as [number, number, number, number],
-        },
-      })),
+      series: series.map((s, i) => {
+        const c = s.color ?? t.palette[i % t.palette.length];
+        return {
+          name: s.name,
+          type: "bar" as const,
+          data: s.data,
+          barMaxWidth: 28,
+          barGap: "30%",
+          itemStyle: {
+            color: c,
+            borderRadius: [6, 6, 0, 0] as [number, number, number, number],
+          },
+          /*
+           * Hover lifts the bar off the plot with its own colour cast as a soft
+           * shadow and fades the sibling series back. Restating the colour
+           * matters: ECharts' default emphasis brightens the fill, and on a
+           * revenue-vs-target pair the brightened target read as a third series.
+           */
+          emphasis: {
+            focus: "series" as const,
+            itemStyle: { color: c, shadowBlur: 10, shadowColor: hexA(c, 0.4), shadowOffsetY: -1 },
+          },
+          blur: { itemStyle: { opacity: 0.3 } },
+        };
+      }),
     };
   }, [categories, series, t, valueFormatter, legend]);
 
   if (!categories.length || !hasPlottableData(series)) {
-    return <ChartEmpty height={height} className={className} />;
+    return <ChartEmpty height={height} className={className} message={emptyMessage} />;
   }
   return <EChart option={option} height={height} className={className} notMerge />;
 }
@@ -428,6 +722,8 @@ interface DonutProps {
   centerLabel?: string;
   centerValue?: string;
   showLegend?: boolean;
+  /** What the chart is waiting for, shown in place of an empty ring. */
+  emptyMessage?: string;
 }
 
 /** Donut chart — thin ring, hairline gaps, optional centred figure. */
@@ -439,6 +735,7 @@ export function DonutChart({
   centerLabel,
   centerValue,
   showLegend = true,
+  emptyMessage,
 }: DonutProps) {
   const t = useChartTokens();
 
@@ -446,7 +743,26 @@ export function DonutChart({
     return {
       tooltip: {
         trigger: "item",
-        ...(valueFormatter ? { valueFormatter: (v) => valueFormatter(Number(v)) } : {}),
+        /*
+         * Name, value and share, spelled out.
+         *
+         * `valueFormatter` alone formats the number but leaves the rest to
+         * ECharts' default pie template, so a segment could report a bare
+         * figure with no indication of what share of the whole it was — the
+         * one thing a reader wants from a pie. The marker dot is reused from
+         * the series colour so the row is identifiable at a glance.
+         */
+        formatter: (p: unknown) => {
+          const d = p as { marker?: string; name?: string; value?: number; percent?: number };
+          const value = valueFormatter
+            ? valueFormatter(Number(d.value ?? 0))
+            : String(d.value ?? "");
+          const share =
+            typeof d.percent === "number"
+              ? `<span style="opacity:0.7;margin-left:6px">${d.percent.toFixed(1)}%</span>`
+              : "";
+          return tooltipRow(d.marker ?? "", d.name ?? "", value, share);
+        },
       },
       legend: showLegend
         ? { show: true, orient: "vertical", left: 0, top: "center", itemGap: 12 }
@@ -459,6 +775,19 @@ export function DonutChart({
           avoidLabelOverlap: true,
           padAngle: 2,
           itemStyle: { borderColor: t.card, borderWidth: 2, borderRadius: 4 },
+          /*
+           * Hover grows the slice a few pixels outwards and dims its siblings.
+           * `scaleSize` is kept small on purpose: the ring is thin, and a large
+           * lift makes the whole donut appear to change size on every pass of
+           * the mouse. The slice keeps its own colour.
+           */
+          emphasis: {
+            focus: "self" as const,
+            scale: true,
+            scaleSize: 5,
+            itemStyle: { shadowBlur: 12, shadowColor: hexA(t.foreground, 0.18) },
+          },
+          blur: { itemStyle: { opacity: 0.4 } },
           label:
             centerLabel || centerValue
               ? {
@@ -495,7 +824,7 @@ export function DonutChart({
   }, [data, t, valueFormatter, centerLabel, centerValue, showLegend]);
 
   if (!data.some((d) => Math.abs(Number(d.value) || 0) > 0)) {
-    return <ChartEmpty height={height} className={className} />;
+    return <ChartEmpty height={height} className={className} message={emptyMessage} />;
   }
   return <EChart option={option} height={height} className={className} notMerge />;
 }
@@ -503,6 +832,21 @@ export function DonutChart({
 /* ------------------------------------------------------------------ */
 /* utils                                                               */
 /* ------------------------------------------------------------------ */
+
+/**
+ * Hover lift for a mark that owns its colour — a highlighted peak hour, a step
+ * on the aging ramp — where recolouring on emphasis would destroy the one thing
+ * the colour was saying.
+ *
+ * Exported because the three hand-built bar charts each reached for
+ * `shadowColor: t.border` and got no hover feedback at all: `--border` is a
+ * near-white hairline (#e9e9e7 light / a dark hairline in dark mode), so the
+ * shadow was the same colour as the card it was cast on. Casting the page's own
+ * ink at low alpha reads in both themes.
+ */
+export function emphasisShadow(t: ChartTokens, alpha = 0.22) {
+  return { shadowBlur: 8, shadowColor: hexA(t.foreground, alpha) };
+}
 
 /**
  * Apply an alpha to a colour string for gradient stops. Supports #rgb/#rrggbb

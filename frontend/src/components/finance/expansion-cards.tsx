@@ -82,7 +82,7 @@ export function ExpansionCards() {
                 </div>
                 <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
                   <div
-                    className="h-full rounded-full bg-primary"
+                    className="h-full rounded-full bg-foreground/70"
                     style={{
                       width: `${Math.min(100, Math.max(0, p.overallProgress))}%`,
                     }}

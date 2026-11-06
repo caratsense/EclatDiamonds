@@ -23,7 +23,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { AreaChart } from "@/components/chart/echart";
+import { AreaChart, ChartError } from "@/components/chart/echart";
 import { getNavItem } from "@/lib/navigation";
 import { formatINR, formatINRCompact } from "@/lib/format";
 import { DASHBOARD_PERIODS, type DashboardPeriod } from "@/lib/queries/dashboard";
@@ -160,12 +160,21 @@ export default function ActivityPage() {
         <CardContent>
           {query.isLoading ? (
             <Skeleton className="h-[260px] rounded-xl" />
+          ) : query.isError ? (
+            // Without this the empty `flow` reads as "nobody billed", which is
+            // exactly the claim this card is here to make honestly.
+            <ChartError
+              height={260}
+              message="Couldn't load the day-by-day figures."
+              onRetry={() => query.refetch()}
+            />
           ) : (
             <AreaChart
               categories={flow.map((d) => d.label)}
               series={[{ name: "Sales", data: flow.map((d) => d.sales) }]}
               height={260}
               valueFormatter={formatINRCompact}
+              emptyMessage="Nothing was billed in this window"
             />
           )}
         </CardContent>

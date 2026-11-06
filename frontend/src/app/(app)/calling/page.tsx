@@ -82,7 +82,7 @@ function TaskRow({ task, onAct }: { task: QueueTask; onAct: () => void }) {
   const customerName = task.customer?.name ?? "Customer";
 
   return (
-    <Card className="hover:shadow-md transition-shadow">
+    <Card className="transition-colors hover:border-primary/40">
       <CardContent className="flex flex-wrap items-start justify-between gap-4 p-4">
         <div className="min-w-0 flex-1 space-y-1.5">
           <div className="flex flex-wrap items-center gap-2">
@@ -169,7 +169,7 @@ function Kpi({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`rounded-xl border bg-card p-4 text-left shadow-sm transition-shadow hover:shadow-md ${
+      className={`rounded-xl border bg-card p-4 text-left shadow-sm transition-colors hover:border-primary/40 ${
         active ? "border-foreground" : "border-border/80"
       }`}
     >

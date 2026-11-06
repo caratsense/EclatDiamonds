@@ -23,6 +23,7 @@ export function ModeChart({ data }: ModeChartProps) {
       data={slices}
       valueFormatter={formatINRCompact}
       height={240}
+      emptyMessage="No collections recorded for this store yet"
     />
   );
 }

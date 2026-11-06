@@ -7,6 +7,7 @@ import {
 } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
+import { useStoreKey } from "@/lib/queries/keys";
 import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
 
@@ -49,12 +50,21 @@ export interface SetTargetInput {
   amount: number;
 }
 
-/** GET /targets?period — configured target rows for the month. */
+/**
+ * GET /targets?period — configured target rows for the month.
+ *
+ * Keyed on the active store as well as the period: both endpoints here are
+ * scoped server-side by X-Store-Id (targets.controller.ts reads @StoreHeader),
+ * so a key of period alone served the previously selected branch's targets from
+ * cache after a switch in the topbar — and the dashboard's target bars are
+ * drawn from these same numbers.
+ */
 export function useTargets(period: string) {
   const role = useSession((s) => s.role);
+  const storeId = useStoreKey();
   const canView = ROLE_RANK[role] >= ROLE_RANK.store_manager;
   return useQuery({
-    queryKey: ["targets", period],
+    queryKey: ["targets", period, storeId],
     enabled: canView && !!period,
     queryFn: async () => {
       const { data } = await api.get<{ items: TargetRow[] }>("/targets", {
@@ -68,9 +78,10 @@ export function useTargets(period: string) {
 /** GET /targets/achievement?period — per-store target vs. achieved. */
 export function useTargetAchievement(period: string) {
   const role = useSession((s) => s.role);
+  const storeId = useStoreKey();
   const canView = ROLE_RANK[role] >= ROLE_RANK.store_manager;
   return useQuery({
-    queryKey: ["targets", "achievement", period],
+    queryKey: ["targets", "achievement", period, storeId],
     enabled: canView && !!period,
     queryFn: async () => {
       const { data } = await api.get<{ items: TargetAchievementRow[] }>(
@@ -84,8 +95,10 @@ export function useTargetAchievement(period: string) {
 
 /** Invalidate every target-derived cache, including the store-comparison feed. */
 function invalidateTargets(qc: ReturnType<typeof useQueryClient>) {
+  // `["targets"]` is a prefix match, so it already takes the achievement query
+  // with it. The dashboard's target line and the store-comparison bars are
+  // drawn from these same numbers, hence the second key.
   qc.invalidateQueries({ queryKey: ["targets"] });
-  qc.invalidateQueries({ queryKey: ["targets", "achievement"] });
   qc.invalidateQueries({ queryKey: ["dashboard", "charts"] });
 }
 

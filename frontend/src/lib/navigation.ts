@@ -409,11 +409,28 @@ export const NAV_ITEMS: NavItem[] = [
      * jewellery-gated.
      */
     module: 1,
+    /*
+     * The route stays `campaigns`; only the words change.
+     *
+     * The slug is an entitlement the server knows (auth/access.ts MODULES),
+     * a CORE_NAVIGATION entry, the target of notification links and whatever
+     * anybody has bookmarked. Renaming it would buy nothing a label cannot.
+     */
     slug: "campaigns",
-    title: "Campaigns",
+    /*
+     * "Broadcasts", because "campaign" meant three different things in this
+     * product and a manager asked, twice, which one this was:
+     *   - this screen: a WhatsApp broadcast to our OWN customers (outbound)
+     *   - Bot Scripts: Meta's ad campaigns, and what the bot says when
+     *     somebody taps one (inbound)
+     *   - Marketing (module 16): agency planning, budgets and deliverables
+     * Only the second of those is a "campaign" as the rest of the industry
+     * uses the word, so this one gives the name up.
+     */
+    title: "Broadcasts",
     purpose:
       "Send one approved message to a group of customers, with consent checked per person.",
-    primaryAction: "New Campaign",
+    primaryAction: "New Broadcast",
     icon: Send,
     /*
      * With the customers it writes to, not in Setup.

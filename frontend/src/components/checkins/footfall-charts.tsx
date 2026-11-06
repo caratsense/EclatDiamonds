@@ -3,7 +3,13 @@
 import * as React from "react";
 import type { EChartsOption } from "echarts";
 
-import { ChartEmpty, EChart, useChartTokens } from "@/components/chart/echart";
+import {
+  axisTooltipFormatter,
+  ChartEmpty,
+  EChart,
+  emphasisShadow,
+  useChartTokens,
+} from "@/components/chart/echart";
 import {
   Card,
   CardContent,
@@ -11,6 +17,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { formatNumber } from "@/lib/format";
 import type { HourlyFootfall, StoreFootfall } from "@/lib/mock/checkins";
 
 export function FootfallByHourChart({ data }: { data: HourlyFootfall[] }) {
@@ -20,8 +27,18 @@ export function FootfallByHourChart({ data }: { data: HourlyFootfall[] }) {
   const hasData = data.some((d) => d.visitors > 0);
 
   const option = React.useMemo<EChartsOption>(() => {
+    const dayTotal = data.reduce((sum, d) => sum + d.visitors, 0);
     return {
-      tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
+      tooltip: {
+        trigger: "axis",
+        axisPointer: { type: "shadow" },
+        // The hours compose the day, so each bar's share of it is a real answer
+        // — "a third of the footfall arrived between 6 and 7".
+        formatter: axisTooltipFormatter({
+          format: (v) => `${formatNumber(v)} ${v === 1 ? "visitor" : "visitors"}`,
+          shareTotal: dayTotal,
+        }),
+      },
       xAxis: { type: "category", data: data.map((d) => d.hour) },
       yAxis: { type: "value", minInterval: 1 },
       series: [
@@ -37,6 +54,9 @@ export function FootfallByHourChart({ data }: { data: HourlyFootfall[] }) {
               borderRadius: [4, 4, 0, 0] as [number, number, number, number],
             },
           })),
+          // Each bar carries its own colour, so emphasis only lifts it — the
+          // peak hour must still be the amber one under the cursor.
+          emphasis: { itemStyle: emphasisShadow(t) },
         },
       ],
     };
@@ -72,7 +92,16 @@ export function FootfallByStoreChart({ data }: { data: StoreFootfall[] }) {
     const round = [0, 4, 4, 0] as [number, number, number, number];
     return {
       legend: { show: true },
-      tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
+      tooltip: {
+        trigger: "axis",
+        axisPointer: { type: "shadow" },
+        /*
+         * No share here: walk-ins and sales closed are two measures of the same
+         * store, not two parts of one total, and a percentage across them would
+         * read as a conversion rate while meaning nothing of the kind.
+         */
+        formatter: axisTooltipFormatter({ format: (v) => formatNumber(v) }),
+      },
       grid: { left: 8, right: 16, top: 28, bottom: 8, containLabel: true },
       xAxis: { type: "value", minInterval: 1 },
       yAxis: { type: "category", data: rows.map((r) => r.name) },
@@ -83,6 +112,11 @@ export function FootfallByStoreChart({ data }: { data: StoreFootfall[] }) {
           barMaxWidth: 18,
           data: rows.map((r) => r.today),
           itemStyle: { color: t.palette[5], borderRadius: round },
+          emphasis: {
+            focus: "series",
+            itemStyle: { color: t.palette[5], ...emphasisShadow(t) },
+          },
+          blur: { itemStyle: { opacity: 0.3 } },
         },
         {
           name: "Converted",
@@ -90,6 +124,11 @@ export function FootfallByStoreChart({ data }: { data: StoreFootfall[] }) {
           barMaxWidth: 18,
           data: rows.map((r) => r.converted),
           itemStyle: { color: t.palette[4], borderRadius: round },
+          emphasis: {
+            focus: "series",
+            itemStyle: { color: t.palette[4], ...emphasisShadow(t) },
+          },
+          blur: { itemStyle: { opacity: 0.3 } },
         },
       ],
     };

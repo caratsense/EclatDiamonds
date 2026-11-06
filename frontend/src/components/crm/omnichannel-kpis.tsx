@@ -86,7 +86,7 @@ const STAGE_ICON: Record<string, typeof TrendingUp> = {
 
 /** The icon's tinted plate — the same square on every chart row and stage. */
 const PLATE =
-  "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent text-primary";
+  "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent text-muted-foreground";
 
 /**
  * The headline tiles carry a smaller plate. Seven of them sit across the row,
@@ -94,7 +94,7 @@ const PLATE =
  * label clipped mid-word — a tile nobody can read the heading of.
  */
 const PLATE_SM =
-  "flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent text-primary";
+  "flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent text-muted-foreground";
 
 export function OmnichannelKpis({ storeId }: { storeId?: string }) {
   const t = useT();
@@ -366,7 +366,7 @@ function Channels({ data, loading }: { data?: OmnichannelSummary; loading: boole
                 <span className="w-24 shrink-0 truncate">{r.label}</span>
                 <span className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
                   <span
-                    className="block h-full rounded-full bg-primary"
+                    className="block h-full rounded-full bg-foreground/70"
                     style={{ width: max ? `${Math.max((r.count / max) * 100, 2)}%` : "0%" }}
                   />
                 </span>
@@ -421,7 +421,7 @@ function Funnel({ data, loading }: { data?: OmnichannelSummary; loading: boolean
                   <div className="mt-1.5 flex items-center gap-2">
                     <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
                       <span
-                        className="block h-full rounded-full bg-primary"
+                        className="block h-full rounded-full bg-foreground/70"
                         style={{ width: `${share}%` }}
                       />
                     </span>

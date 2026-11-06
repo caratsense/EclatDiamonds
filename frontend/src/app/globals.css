@@ -4,231 +4,296 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
-  Nibhana — "Luxury Emerald & Champagne Gold" design system.
-  Full spec + rationale: docs/DESIGN_SYSTEM.md.
+  CaratSpace standard theme — neutral greys carrying the app, one red accent.
 
-  Direction: luxury jewellery ERP, not a generic admin console.
+  This replaced "Nibhana — Luxury Emerald & Champagne Gold" (emerald #033b33,
+  champagne gold #d9ad65, jade teal #167969) on 29 Oct 2026, on the client's
+  instruction: the standard CaratSpace theme is the design now, and the
+  jewellery-specific palette is gone. Hexes below are sampled from the comp
+  (Figma 1440:2422), not derived — where one of them is changed it is because
+  it failed WCAG AA as text, and each such case is measured in a comment
+  beside it rather than quietly adjusted.
 
-  This replaced "Obsidian" (indigo on slate) on 24 Oct 2026. Obsidian existed
-  because the product was a multi-industry platform and green collided with
-  `--success`; the app now wears the colours of the client it is built for,
-  Nibhana (formerly Éclat Diamonds), while the product stays CaratSpace.
-  The collision is resolved by giving success a DIFFERENT green:
-  jade teal `#167969`, distinct from the emerald `#033b33` of the brand.
-
-  - Canvas: warm ivory (#f8f8f5) in light, green-tinted charcoal (#071b18) in
-    dark. Never flat white, never pure black.
-  - Rail: deep emerald in BOTH themes — the one surface that does not invert.
-  - THE accent: champagne gold. It marks the primary action, the active nav
-    row, focus and selection, and nothing else.
-  - Live data: jade teal. Money: gold. Status keeps garnet for danger.
-  - Ink: emerald-tinted graphite on ivory, warm bone on charcoal.
+  - Ground: #f8f9fa, FLAT. The comp has no wash on it, so the two radial
+    gradients the previous theme painted on `body` are gone.
+  - Surfaces: plain white cards, #e5e7eb hairline, #f7f8f9 table headers.
+  - THE accent: RED (#c62828), a calmer one than the comp's. It marks the
+    primary action, the active nav row, the active tab underline, focus and the
+    notification badge — nothing else. See the note on --primary for the four
+    hexes rejected either side of it, and the two neighbours that bound it.
+  - The SECOND action is black (#030303), not red: "Add shift", "Save". The
+    accent is one hero per screen; black is every other filled button. The `--gold-*`
+    family carries it (see the note there), so `variant="gold"` buttons —
+    43 of them — render as the comp's black action with no component edits.
+  - Status: a burgundy for danger, deliberately deeper than the accent so a
+    Delete and a Save are not the same colour; green for success; the comp's
+    burnt orange for warning.
+  - Ink: #101112 on the light ground, #f2f3f5 on near-black.
 
   Single source of truth — restyles every page.
 */
 
 :root {
-  --radius: 0.625rem; /* restrained: 10px */
+  --radius: 0.375rem; /* 6px. Was 10px, which rounded every button and dialog
+                        enough to read soft; 6 keeps the edge crisp. */
 
   /*
-   * Nibhana — Luxury Emerald & Champagne Gold (24 Oct 2026).
-   *
-   * Hexes are the client's own, sampled from the ECLAT OS reference and handed
-   * over verbatim. Deep emerald carries the brand surfaces, champagne gold
-   * marks the one thing to press, jade teal carries live data. Warm ivory
-   * rather than white: the ground is meant to read as paper, not screen.
+   * CaratSpace standard theme (29 Oct 2026) — the comp's own hexes.
    */
 
-  --background: #f8f8f5; /* warm ivory */
-  --foreground: #11211d; /* emerald-tinted ink, never blue-black */
+  --background: #f8f9fa; /* page ground, flat */
+  --foreground: #101112; /* ink */
 
   --card: #ffffff;
-  --card-foreground: #11211d;
+  --card-foreground: #101112;
 
   --popover: #ffffff;
-  --popover-foreground: #11211d;
+  --popover-foreground: #101112;
 
-  /* Primary action = champagne gold with DEEP EMERALD ink, and the SAME pair
-     in both themes.
-     
-     Three inks were tried on this button and all three were wrong. White fails
-     outright (3.04:1 light, 2.08:1 dark). A brown-black read muddy against the
-     metal. The page ink #11211d passed but left light and dark disagreeing,
-     and the sidebar's gold button was already using emerald while this one
-     used near-black — two gold buttons, two text colours, on one screen.
-     
-     So: one gold (#d9ad65, the lighter of the two — the darker #b98c49 drops
-     emerald text to 4.12:1, below AA at 14px) and one ink (#033b33, the brand
-     emerald). 6.03:1, and the button looks the same in both themes, which is
-     what a primary action should do. #b98c49 survives below as --gold for
-     hairlines and chips, where nothing is set on top of it. */
-  --primary: #d9ad65;
-  --primary-foreground: #033b33;
+  /* Primary accent = RED with WHITE text, the SAME pair in both themes.
 
-  --accent-solid: #b98c49;
-  --accent-soft: #f6efe2;
+     Deliberately NOT the comp's hex, and arrived at by bracketing from both
+     sides. Too hot, rejected in turn: #ff0000 (the Figma frame's own fill,
+     2,965px of it in the export), #e60000 ("cheap" — five percent down from
+     the brand red is the step that reads as brick rather than signal), and
+     #f30000 sampled off the supplied artwork. Too cold, also rejected:
+     #9b1c1c, which solved the shouting by reading as maroon and lost the red.
 
-  --gold: #b98c49;
-  --gold-foreground: #033b33;
-  --gold-soft: #ead9b8;
-  --gold-strong: #8a6526; /* the only gold legible as TEXT on ivory */
+     #c62828 is the middle: unmistakably red (dE 15.3 from that maroon) and
+     unmistakably calmer than the brand hex (dE 30.6 from #f30000). The
+     saturation is what does it — a fully saturated hue-0 red is a warning
+     colour, and at interface scale (a nav wash, a tab underline, a 2px rule)
+     it shouts whatever its lightness. Backing the chroma off is the move that
+     neither darkening nor brightening could make.
 
-  /* Brand surfaces — sidebar, header, sign-in panel, landing hero. */
-  --brand: #033b33; /* deep emerald */
-  --brand-deep: #022a24;
-  --brand-foreground: #f4f5f0;
+     It also settles the contrast problem the brand red could not: white on it
+     is 5.62:1 against #f30000's 4.37:1, which was UNDER the 4.5:1 AA floor for
+     the 14px label a button carries and was shipping flagged. As text it
+     clears AA where it lands — 5.62:1 on a white card, 5.33:1 on the ground,
+     4.92:1 on its own #fdecec nav wash — with room for the
+     `hover:bg-primary/90` the button draws on top.
 
-  --secondary: #eef1ee;
-  --secondary-foreground: #11211d;
+     Watch two neighbours when editing. --action-ink (#030303) is the black
+     filled button, so the accent must stay visibly a red: nothing deeper than
+     about #a51c1c. And --destructive has to stay separable — see the note
+     there, because a mid red is the one accent value that squeezes it. */
+  --primary: #c62828;
+  --primary-foreground: #ffffff;
 
-  --muted: #f1f3f0;
-  --muted-foreground: #5b6b66; /* stone with a green cast; AA on ivory */
+  --accent-solid: #c62828;
+  --accent-soft: #fdecec; /* the active-nav wash, tinted to the accent */
 
-  --accent: #eaf2ef; /* emerald-tinted hover wash */
-  --accent-foreground: #173f38; /* forest teal */
+  /* The BLACK action. A separate role from the red, and the one the comp uses
+     most: "Add shift", "Save", every filled button that is not the single hero.
 
-  --destructive: #a33434; /* garnet */
+     `--action-ink` is the honest name and the one new work should reach for.
+     The `--gold-*` family is pointed at it rather than deleted — `bg-gold`,
+     `text-gold-foreground`, `text-gold-strong` and a dozen
+     `color-mix(... var(--gold) ...)` washes are read across ~90 call sites, so
+     repointing is what keeps them all rendering something sensible. The family
+     is now NEUTRAL, not a hue: a near-black fill, a grey chip wash and ink for
+     text. Nothing in it is gold any more; the name is kept only because the
+     utilities generated from it are. */
+  --action-ink: #030303;
+  --action-ink-foreground: #ffffff;
+
+  --gold: #030303; /* = --action-ink; white on it: 20.6:1 */
+  --gold-foreground: #ffffff;
+  --gold-soft: #f1f2f3; /* neutral chip */
+  --gold-strong: #101112; /* was "the only gold legible as text"; now just ink */
+
+  /* Brand surfaces — sign-in panel, landing hero. Near-black, because the one
+     thing red must not be is a large filled surface. */
+  --brand: #101112;
+  --brand-deep: #030303;
+  --brand-foreground: #ffffff;
+
+  --secondary: #f1f2f3; /* neutral chip */
+  --secondary-foreground: #101112;
+
+  --muted: #f4f5f6; /* icon tile */
+  /* The comp's body-muted #7b8290 measures 3.66:1 on the ground and fails AA,
+     and this token sets the secondary text on every screen. #636c7c is the
+     comp's own table-head grey and measures 5.02:1 on the ground, 5.29:1 on a
+     white card. #7b8290 survives below as --chart-4, where 3:1 is the bar. */
+  --muted-foreground: #636c7c;
+
+  --accent: #f1f2f3; /* neutral hover wash — the red one is --sidebar-accent */
+  --accent-foreground: #101112;
+
+  /* Danger must stay separable from the accent, and a mid red accent is the
+     hardest case there is: it sits between the two places this token has been.
+     Measured against #c62828, BOTH prior values collapse — the old wine
+     #b00020 is dE 8.3 away, and the crimson #d81b3c that worked against the
+     maroon is dE 11.7. Either would make Delete and Save read as one control,
+     exactly what this token exists to prevent.
+
+     So danger goes deeper than either: #9b0f2e, a burgundy at dE 22.0, which
+     separates by lightness AND by hue. White on it: 8.39:1.
+     If the accent is ever re-tuned, re-measure this pair first. */
+  --destructive: #9b0f2e;
   --destructive-foreground: #ffffff;
 
-  --success: #167969; /* muted jade teal */
-  --warning: #b07a2b;
+  --success: #1a7f4f; /* white on it 5.01:1; as text on the ground 4.75:1 */
+  /* The comp's warning ink #b66c24 reads 3.86:1 on the ground and 3.70:1 on its
+     own #fff2e4 chip — both under AA. Darkened one step to 4.89:1; Badge
+     derives the chip wash from this token, so the pair stays in step. */
+  --warning: #a05d1c;
 
-  --border: #e3e5df;
+  --border: #e7e9ed; /* table / generic hairline */
   /* One step quieter, for rules drawn INSIDE a surface — a row divider, or the
      edge of a region nested in a card. A single border value used at every
      depth is what makes a card-inside-a-card read as two equal boxes. */
-  --border-subtle: #eef0ea;
-  --input: #cdd2ca;
-  --ring: #b98c49; /* gold focus */
+  --border-subtle: #f0f1f3;
+  --input: #e3e5e8;
+  /* The field's own SURFACE, as distinct from --input (its border).
 
-  /* Jade-led, gold second: live data in teal, money in gold, then the status
-     hues. Each distinct at a glance and legible on ivory and on emerald. */
-  --chart-1: #167969; /* jade teal */
-  --chart-2: #b98c49; /* champagne gold */
-  --chart-3: #2f9e8a; /* light jade */
-  --chart-4: #a33434; /* garnet */
-  --chart-5: #173f38; /* forest teal */
-  --chart-6: #d1b071; /* pale gold */
+     Every field shipped `bg-transparent`, which means a field takes whatever
+     is behind it. On a white card that is fine — the border alone reads. In
+     dark it was the bug the client reported as "fields are not visible":
+     inside a dialog the field, the dialog and the page were all within a few
+     units of each other, so a form looked like a list of labels.
+
+     A fixed hex cannot fix that, because a field sits on the card on one
+     screen and inside a popover on the next, and "recessed" has to hold for
+     both. So dark uses a translucent BLACK wash that darkens whatever it is
+     over, and the well stays a well at every elevation. */
+  --input-surface: #ffffff;
+  --ring: #c62828; /* accent focus */
+
+  /* Red-led, the comp's burnt orange second, then the grey ramp. There are
+     only two hues in this theme, so series 3-5 separate by lightness instead,
+     and #8e95a1 is as light as a grey can get and still clear 3:1 on white.
+     The sixth is a paler red — adjacent enough to series 1 that it is kept
+     last, where a chart has to reach six series before the two meet.
+     Measured on white: 5.62 / 4.07 / 13.07 / 3.86 / 3.02 / 3.24. */
+  --chart-1: #c62828; /* the accent red */
+  --chart-2: #b66c24; /* the comp's warning orange */
+  --chart-3: #2b313c; /* near-ink slate */
+  --chart-4: #7b8290; /* the comp's body grey */
+  --chart-5: #8e95a1; /* lightest grey that still clears 3:1 on white */
+  --chart-6: #d9706b; /* pale red; 3.24:1 on white, clears the 3:1 chart bar */
 
   /*
-   * The rail follows the theme, rather than staying obsidian in both.
+   * The rail is WHITE on the light ground, as the comp has it — the emerald
+   * column the previous theme kept in both modes is gone.
    *
-   * It was dark in light mode too, on the argument that a fixed frame should
-   * not invert. Two things were wrong with that in practice. The wordmark
-   * renders `text-slate-900 dark:text-white`, so in light mode it drew near
-   * black on a near-black rail and all but vanished — the "Carat OS" that
-   * reads as washed out in every light-mode screenshot. And a dark column
-   * beside a porcelain page is simply the heaviest object on screen, which is
-   * not what a navigation rail is for.
-   *
-   * So light mode gets a white rail on the porcelain page, separated by the
-   * same hairline every other surface uses, with the indigo wash for the
-   * active row. The chrome inside it is painted with these tokens rather than
-   * hard-coded white alphas, which is what let it be dark-only before.
+   * Its active row is the one place the accent appears as an area rather than
+   * a mark: a #fdecec wash behind a red label, with the rail's own left
+   * border picking up --sidebar-primary. Under the brand red the label had to
+   * be a deeper shade than the fill to be legible at all (#ff0000 on #fff0f0
+   * is 3.61:1, #e60000 is 4.35:1, and only #cc0000 cleared AA). #c62828 needs
+   * no such split — one token reads 4.92:1 on its own wash.
    */
-  /*
-   * The rail is deep emerald in BOTH themes — the one surface that does not
-   * invert. It is the brand, and in the client's reference it reads the same
-   * on the ivory page and on the dark one. Its chrome is painted from these
-   * tokens, so nothing inside it needs a hard-coded white alpha.
-   */
-  --sidebar: #033b33;
-  --sidebar-foreground: #b9c9c3;
-  --sidebar-primary: #d9ad65; /* gold marks the active row */
-  --sidebar-primary-foreground: #033b33;
-  --sidebar-accent: #173f38; /* forest teal — hover / selected surface */
-  --sidebar-accent-foreground: #f4f5f0;
-  --sidebar-border: rgba(255, 255, 255, 0.08);
-  --sidebar-ring: #b98c49;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #646b76; /* the comp's nav label; 5.38:1 on white */
+  --sidebar-primary: #c62828; /* the accent marks the active row */
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #fdecec; /* active / hover wash */
+  --sidebar-accent-foreground: #c62828; /* 4.92:1 on that wash */
+  --sidebar-border: #e6e8eb; /* the comp's rail edge */
+  --sidebar-ring: #c62828;
 }
 
 .dark {
-  /* The client's dark set, verbatim: green-tinted charcoal rather than black,
-     so the dark theme reads as the same product with the lights down. */
-  --background: #071b18;
-  --foreground: #f4f5f0;
+  /*
+   * Derived, not given: the comp is the light theme only. The grounds invert to
+   * a neutral near-black (no hue cast, because the light theme has none either
+   * — its greys are very slightly cool and nothing more), the accent stays red,
+   * and every value that carries text was measured against #0a0b0d rather than
+   * eyeballed. The red lifts one step for anything used as TEXT on the dark
+   * ground, which is the opposite of what the light theme needs and is why the
+   * two sides do not share those values.
+   */
+  --background: #0a0b0d;
+  --foreground: #f2f3f5;
 
-  --card: #102722;
-  --card-foreground: #f4f5f0;
+  --card: #1a1d22;
+  --card-foreground: #f2f3f5;
 
-  --popover: #123029;
-  --popover-foreground: #f4f5f0;
+  --popover: #20242a;
+  --popover-foreground: #f2f3f5;
 
-  /* The same gold and the same emerald ink as light mode — 6.05:1 here. A
+  /* The same red and the same white as light mode — 5.62:1 here too. A
      primary action that changes colour between themes reads as two different
-     controls. */
-  --primary: #d9ad65;
-  --primary-foreground: #033b33;
+     controls. The MARK, though, has to lift: #c62828 on near-black is 3.0:1
+     and barely holds, so --accent-solid below is a lit red, not this. */
+  --primary: #c62828;
+  --primary-foreground: #ffffff;
 
-  --accent-solid: #d9ad65;
-  --accent-soft: #1d3b33;
+  --accent-solid: #e4625f; /* the lit red: 5.26:1 on the rail, 5.71:1 on the page */
+  --accent-soft: #2a1416;
 
-  --gold: #d9ad65;
-  --gold-foreground: #033b33;
-  --gold-soft: #4a3a1c;
-  --gold-strong: #e6c48a;
+  /* The black action inverts to a white one: a near-white fill with ink on it
+     is the dark-mode equivalent of #030303 with white, and keeps "Save" reading
+     as the neutral filled button rather than a second red. */
+  --action-ink: #f2f3f5;
+  --action-ink-foreground: #0d0e10;
 
-  --secondary: #16352e;
-  --secondary-foreground: #f4f5f0;
+  --gold: #f2f3f5; /* = --action-ink */
+  --gold-foreground: #0d0e10;
+  --gold-soft: #22262b;
+  --gold-strong: #e9ebed; /* ink, as text */
 
-  --muted: #14302a;
-  --muted-foreground: #9fb3ac; /* lifted for contrast — audit finding #20 */
+  --secondary: #262a30;
+  --secondary-foreground: #f2f3f5;
 
-  --accent: #173f38; /* forest teal */
-  --accent-foreground: #e4efea;
+  --muted: #1f2328;
+  --muted-foreground: #a2a9b4; /* 8.16:1 on the ground */
 
-  --destructive: #e08585;
-  --destructive-foreground: #2a0d0d;
+  --accent: #2a2e35; /* neutral hover wash */
+  --accent-foreground: #f2f3f5;
 
-  --success: #40dcc1; /* teal accent */
-  --warning: #d9ad65;
+  /* Crimson, not the accent's hue — the same separation the light theme
+     makes, for the same reason. #ff6b6b sat only dE 15 from the lit red mark;
+     this is dE 17.5 and reads as a different colour, not a brighter one. */
+  --destructive: #ff7a90; /* 7.76:1 as text on the ground */
+  --destructive-foreground: #2a0008; /* 7.41:1 on that crimson */
+
+  --success: #3ddc91; /* 10.9:1 */
+  --warning: #e0a060; /* 8.61:1 */
 
   /* Hairlines, not drawn boxes: a translucent white edge picks up whatever
      surface it sits on, so one token works on the canvas and on a raised card. */
-  --border: rgba(255, 255, 255, 0.08);
-  --border-subtle: rgba(255, 255, 255, 0.045);
-  --input: rgba(255, 255, 255, 0.12);
-  --ring: #d9ad65;
+  --border: rgba(255, 255, 255, 0.14);
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.18);
+  --input-surface: rgba(0, 0, 0, 0.34); /* recesses against card AND popover */
+  --ring: #e4625f;
 
-  --chart-1: #40dcc1; /* teal accent */
-  --chart-2: #d9ad65; /* gold */
-  --chart-3: #6fd6bf; /* pale jade */
-  --chart-4: #e08585; /* garnet */
-  --chart-5: #2f9e8a; /* jade */
-  --chart-6: #e6c48a; /* pale gold */
+  /* The light ramp inverted: red still leads, the orange sits second, and
+     the greys run from light to mid so they separate against black rather than
+     against white. Each clears 3:1 on the #0a0b0d ground (the darkest, series
+     5, is 3.26:1 — re-measured when the ground was darkened for surface
+     separation; every series gained a little). */
+  --chart-1: #e4625f; /* the lit red */
+  --chart-2: #e0a060;
+  --chart-3: #c9ced6;
+  --chart-4: #8e95a1;
+  --chart-5: #5b6372;
+  --chart-6: #e8918d; /* pale red */
 
-  --brand: #003b32;
-  --brand-deep: #022a24;
-  --brand-foreground: #f4f5f0;
+  --brand: #1a1d22;
+  --brand-deep: #0a0b0d;
+  --brand-foreground: #f2f3f5;
 
   /*
    * In dark mode the sidebar has to be a SURFACE, not another shade of page.
    *
-   * It was #07090e against a #090b10 background — roughly two values per
-   * channel apart, with an 8%-white hairline for an edge. In light mode the
-   * same token is #0b0f19 on #f7f8fa, and that contrast IS the design: a dark
-   * rail against a pale app. Carried into dark mode the intent inverts into
-   * nothing, because there is no darker left to go, so the rail dissolves into
-   * the background and the app looks like one undifferentiated sheet.
-   *
-   * It now sits ABOVE the page rather than below it, which is the convention
-   * this palette already uses for every other surface (`--card` is #0e131f on
-   * the same background).
-   *
-   * The first attempt at this used #0d121c and was reported as no change at
-   * all — correctly, because four to twelve values per channel is not a
-   * boundary anybody can see. A rail is chrome, not content: it is allowed to
-   * sit above the cards that sit on the page, and it has to be unmistakable
-   * at a glance or it is not doing its job.
+   * The light theme's white rail on a #f8f9fa ground is a real boundary; mirror
+   * it naively and the rail ends up darker than the page, which it cannot be —
+   * there is no darker left to go, so it dissolves and the app reads as one
+   * undifferentiated sheet. So it sits ABOVE the page instead, at the same
+   * value as --card, which is the convention every other surface here uses.
    */
-  --sidebar: #003b32; /* navigation emerald, a step above the page */
-  --sidebar-foreground: #a9bdb7;
-  --sidebar-primary: #d9ad65;
-  --sidebar-primary-foreground: #033b33;
-  --sidebar-accent: #173f38; /* forest teal */
-  --sidebar-accent-foreground: #f4f5f0;
-  --sidebar-border: rgba(255, 255, 255, 0.1);
-  --sidebar-ring: #d9ad65;
+  --sidebar: #15181c; /* a step above the page, below the card */
+  --sidebar-foreground: #a2a9b4;
+  --sidebar-primary: #e4625f; /* 5.26:1 on the rail */
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #2a1416; /* the red wash, as dark as the ground allows */
+  --sidebar-accent-foreground: #e8918d; /* 7.0:1 on that wash */
+  --sidebar-border: rgba(255, 255, 255, 0.14);
+  --sidebar-ring: #e4625f;
 }
 
 @theme {
@@ -246,6 +311,8 @@
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-action-ink: var(--action-ink);
+  --color-action-ink-foreground: var(--action-ink-foreground);
   --color-gold: var(--gold);
   --color-gold-foreground: var(--gold-foreground);
   --color-gold-soft: var(--gold-soft);
@@ -266,6 +333,7 @@
   --color-border: var(--border);
   --color-border-subtle: var(--border-subtle);
   --color-input: var(--input);
+  --color-input-surface: var(--input-surface);
   --color-ring: var(--ring);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
@@ -298,15 +366,15 @@
   --font-serif: var(--font-display-face), var(--font-sans-face), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-mono-face), ui-monospace, "SFMono-Regular", monospace;
 
-  /* Elevation by luminance and depth, not by a heavy drop. On obsidian a black
-     shadow is invisible, so the dark theme's separation comes from the surface
-     token and the hairline; these carry the light theme and the lifted glass
-     surfaces in both. */
-  --shadow-xs: 0 1px 2px 0 rgba(2, 6, 23, 0.05);
-  --shadow-sm: 0 1px 2px -1px rgba(2, 6, 23, 0.07), 0 1px 3px 0 rgba(2, 6, 23, 0.06);
-  --shadow-md: 0 2px 6px -2px rgba(2, 6, 23, 0.09), 0 6px 16px -6px rgba(2, 6, 23, 0.12);
-  --shadow-lg: 0 10px 30px -10px rgba(2, 6, 23, 0.18);
-  --shadow-xl: 0 20px 50px -16px rgba(2, 6, 23, 0.26);
+  /* Elevation by luminance and depth, not by a heavy drop. On near-black a
+     black shadow is invisible, so the dark theme's separation comes from the
+     surface token and the hairline; these carry the light theme and the lifted
+     glass surfaces in both. Neutral ink now, not the slate-blue it was. */
+  --shadow-xs: 0 1px 2px 0 rgba(16, 17, 18, 0.05);
+  --shadow-sm: 0 1px 2px -1px rgba(16, 17, 18, 0.07), 0 1px 3px 0 rgba(16, 17, 18, 0.06);
+  --shadow-md: 0 2px 6px -2px rgba(16, 17, 18, 0.09), 0 6px 16px -6px rgba(16, 17, 18, 0.12);
+  --shadow-lg: 0 10px 30px -10px rgba(16, 17, 18, 0.18);
+  --shadow-xl: 0 20px 50px -16px rgba(16, 17, 18, 0.26);
 }
 
 * {
@@ -314,23 +382,24 @@
 }
 
 body {
-  /* One very faint indigo wash — never flat white, never flat black. */
+  /* Flat, deliberately. Two fixed radial washes used to tint the corners with
+     the accent, which worked when the accent was champagne gold and does not
+     when it is red — a pink haze at the top of every screen, and a ground that
+     is no longer the #f8f9fa the comp specifies. The comp has nothing behind
+     the cards but the one grey. */
   background-color: var(--background);
-  background-image:
-    radial-gradient(1100px 560px at 100% -8%, color-mix(in srgb, var(--accent-solid) 10%, transparent), transparent 62%),
-    radial-gradient(900px 480px at -6% -4%, color-mix(in srgb, var(--accent-solid) 6%, transparent), transparent 58%);
-  background-attachment: fixed;
   color: var(--foreground);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
 
-/* ── Signature element: the specular edge ────────────────────────────────────
-   A thin luminous hairline along the top edge — the highlight a light source
-   leaves on a machined edge. It marks primary actions and selected / active
-   states, and brightens on hover or when active. This used to be a gold
-   gradient on a warm surface; on obsidian the same idea is white light with an
-   indigo core, which is what actually reads as "lit" rather than "painted". */
+/* ── The specular edge — sign-in panels only ─────────────────────────────────
+   A thin luminous hairline along the top edge, the highlight a light source
+   leaves on a machined edge. It reads as intended on the sign-in page, whose
+   panels are glass on a lit obsidian ground. It used to be on the buttons and
+   on six in-app cards as well, and there it read as a smear: a gradient on a
+   flat white surface in daylight has no light source to be a highlight of.
+   Keep it to the panels that sit on that ground; the app proper is flat. */
 .facet-top {
   position: relative;
   isolation: isolate;
@@ -366,13 +435,14 @@ body {
  * operational table full of them scrolls badly on the phones this runs on.
  */
 .glass {
-  background: rgba(255, 255, 255, 0.78);
-  border: 1px solid rgba(226, 232, 240, 0.85);
+  /* 0.79 is the alpha the comp's section cards render at. */
+  background: rgba(255, 255, 255, 0.79);
+  border: 1px solid rgba(229, 231, 235, 0.85);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   box-shadow:
     inset 0 1px 0 0 rgba(255, 255, 255, 0.9),
-    0 8px 28px rgba(15, 23, 42, 0.06);
+    0 8px 28px rgba(16, 17, 18, 0.06);
 }
 
 :is(.dark *) .glass,
@@ -407,6 +477,47 @@ body {
  * utility wins where one is written, and the 0.92 correction still applies to
  * the ~420 numerals that declare no size and simply follow their container.
  */
+/*
+ * Touch targets, on touch devices only.
+ *
+ * Measured at 1024x768: sidebar rows and group headers 32px, the screen search
+ * 38px, top-bar and page buttons 40px. Every interactive control in the
+ * product is under the 44px that a fingertip needs — the same thing our own
+ * 24 Oct audit found at 390px ("all 20 controls under 44px"), and the same
+ * thing the Zoho study found on their side (11 of 11 under).
+ *
+ * This is deliberately NOT a global size bump. On a mouse-driven screen a
+ * 32px row is correct for an operations tool, and inflating every control to
+ * 44px would cost a third of the vertical space on screens that hold a lot of
+ * dense data. `pointer: coarse` is the honest signal: it is true on the
+ * showroom tablets and phones that need the room and false on the desks that
+ * do not, regardless of viewport width — a tablet in landscape is 1024px wide
+ * and so is a small laptop window.
+ *
+ * Checkboxes get a smaller floor than 44px on purpose. They sit in table rows
+ * where a 44px box would set the row height for everything beside it; 24px is
+ * the practical compromise, and the row itself stays tappable.
+ */
+@media (pointer: coarse) {
+  button,
+  [role="button"],
+  [role="tab"],
+  summary,
+  select,
+  textarea,
+  input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]),
+  nav a,
+  aside a {
+    min-height: 44px;
+  }
+
+  input[type="checkbox"],
+  input[type="radio"] {
+    min-width: 24px;
+    min-height: 24px;
+  }
+}
+
 /*
  * A surface inside a surface is a region, not a second card.
  *
@@ -483,17 +594,11 @@ body {
   letter-spacing: -0.02em;
 }
 
-/* Champagne micro-accent for the wordmark and hero accents only. */
-.text-gradient-gold {
-  background: linear-gradient(100deg, #fcd34d 0%, #f59e0b 55%, #d97706 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-
-/* The same treatment in the accent, for a heading that has to carry the eye. */
+/* A heading that has to carry the eye, on the marketing page only.
+   Used on the landing hero, which sits on an obsidian ground — hence the
+   lighter stops than the app's #c62828. */
 .text-gradient-accent {
-  background: linear-gradient(100deg, #a5b4fc 0%, #818cf8 45%, #6366f1 100%);
+  background: linear-gradient(100deg, #e59b96 0%, #d4514e 45%, #c62828 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -531,21 +636,23 @@ body {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   LANDING PAGE — scoped premium theme (obsidian + electric indigo).
+   LANDING PAGE — scoped premium theme (obsidian ground, accent red).
    Everything here lives under `.landing` so it NEVER touches the global
    :root / .dark palette the operational app runs on. All tokens are prefixed
-   `--l-` and are only defined on the wrapper.
+   `--l-` and are only defined on the wrapper. The ground stays near-black —
+   a marketing hero is allowed to be dark whatever the app does — but the
+   accent follows the app, so the two no longer disagree about the brand.
    ───────────────────────────────────────────────────────────────────────── */
 .landing {
   /* landing-only palette */
-  --l-bg: #090b10;
-  --l-surface: #0e131f;
+  --l-bg: #0a0b0d;
+  --l-surface: #15171b;
   --l-hairline: rgba(255, 255, 255, 0.08);
-  --l-gold: #818cf8; /* the marking accent; named for the slot, not the hue */
-  --l-gold-dark: #6366f1;
-  --l-ivory: #f8fafc;
-  --l-ivory-70: rgba(248, 250, 252, 0.72);
-  --l-ivory-55: rgba(248, 250, 252, 0.55);
+  --l-gold: #e4625f; /* the marking accent; named for the slot, not the hue */
+  --l-gold-dark: #c62828;
+  --l-ivory: #f8f9fa;
+  --l-ivory-70: rgba(248, 249, 250, 0.72);
+  --l-ivory-55: rgba(248, 249, 250, 0.55);
 
   background-color: var(--l-bg);
   color: var(--l-ivory);
@@ -571,9 +678,9 @@ body {
    rather than one vertical fade, so the ground has a direction to it. */
 .landing-gradient {
   background:
-    radial-gradient(40rem 30rem at 20% 15%, rgba(99, 102, 241, 0.18), transparent 70%),
-    radial-gradient(40rem 30rem at 82% 82%, rgba(56, 189, 248, 0.12), transparent 70%),
-    linear-gradient(180deg, #0b0f17 0%, #06080d 100%);
+    radial-gradient(40rem 30rem at 20% 15%, rgba(198, 40, 40, 0.22), transparent 70%),
+    radial-gradient(40rem 30rem at 82% 82%, rgba(229, 155, 150, 0.08), transparent 70%),
+    linear-gradient(180deg, #0f1012 0%, #07080a 100%);
 }
 
 /* Soft radial glow that sits behind the dashboard preview. */
@@ -584,7 +691,7 @@ body {
   width: 62%;
   height: 78%;
   border-radius: 9999px;
-  background: radial-gradient(closest-side, rgba(99, 102, 241, 0.32), transparent 72%);
+  background: radial-gradient(closest-side, rgba(198, 40, 40, 0.38), transparent 72%);
   filter: blur(26px);
   opacity: 0.7;
   pointer-events: none;

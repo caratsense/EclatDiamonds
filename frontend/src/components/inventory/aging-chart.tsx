@@ -3,8 +3,14 @@
 import * as React from "react";
 import type { EChartsOption } from "echarts";
 
-import { ChartEmpty, EChart, useChartTokens } from "@/components/chart/echart";
-import { formatINRCompact } from "@/lib/format";
+import {
+  axisTooltipFormatter,
+  ChartEmpty,
+  EChart,
+  emphasisShadow,
+  useChartTokens,
+} from "@/components/chart/echart";
+import { formatINRCompact, formatNumber } from "@/lib/format";
 import type { AgingBucket } from "@/lib/mock/inventory";
 
 interface AgingChartProps {
@@ -21,12 +27,21 @@ export function AgingChart({ data, metric = "items" }: AgingChartProps) {
   const option = React.useMemo<EChartsOption>(() => {
     // Warm-to-hot ramp across the palette: fresh → aging → dead stock.
     const fills = [t.palette[4], t.palette[1], t.palette[3], t.palette[0], t.palette[2]];
+    // The buckets partition the whole stock, so "38% is sitting over 180 days"
+    // is the figure a merchandiser actually acts on.
+    const stockTotal = data.reduce(
+      (sum, d) => sum + (byValue ? (d.value ?? 0) : d.items),
+      0,
+    );
     return {
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "shadow" },
-        valueFormatter: (v) =>
-          byValue ? formatINRCompact(Number(v)) : `${Number(v)} items`,
+        formatter: axisTooltipFormatter({
+          format: (v) =>
+            byValue ? formatINRCompact(v) : `${formatNumber(v)} ${v === 1 ? "item" : "items"}`,
+          shareTotal: stockTotal,
+        }),
       },
       xAxis: { type: "category", data: data.map((d) => d.bucket) },
       yAxis: {
@@ -48,6 +63,9 @@ export function AgingChart({ data, metric = "items" }: AgingChartProps) {
               borderRadius: [6, 6, 0, 0] as [number, number, number, number],
             },
           })),
+          // Lift only. Each bucket owns its place on the warm-to-hot ramp, and
+          // an emphasis that recolours it loses the one thing the ramp says.
+          emphasis: { itemStyle: emphasisShadow(t) },
         },
       ],
     };

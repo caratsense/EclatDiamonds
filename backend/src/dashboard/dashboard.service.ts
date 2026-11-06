@@ -453,7 +453,22 @@ export class DashboardService {
     const currentPeriod = `${ty}-${String(tm).padStart(2, '0')}`;
     const [stores, storeMonthTargets] = await Promise.all([
       this.prisma.store.findMany({
-        where: { id: { in: storeIds }, attendanceOnly: false },
+        /*
+         * Trading branches only.
+         *
+         * This filtered `attendanceOnly` but not the aggregate ("All Stores")
+         * or holding rows, so the comparison plotted a category for a store
+         * that cannot take a sale — staging data showed "Staging Store" with
+         * revenue 0 and target 0, a full-width pair of empty bars sitting
+         * beside the real branches. Payroll already excludes both on the same
+         * reasoning (`payroll.service.ts` generateForStore).
+         */
+        where: {
+          id: { in: storeIds },
+          attendanceOnly: false,
+          isAggregate: false,
+          isHolding: false,
+        },
         select: { id: true, name: true, city: true },
       }),
       resolveEffectiveTargets(this.prisma, { storeIds, periods: [currentPeriod] }),
@@ -471,7 +486,16 @@ export class DashboardService {
           store: st.name,
           city: st.city ?? null,
           revenue: num(agg._sum.totalAmount),
-          target: targetByStore.get(st.id) ?? 0,
+          /*
+           * `null` where no target is set, not 0.
+           *
+           * A branch with no target published for the month was sent as 0, and
+           * a 0 plots as a real bar sitting on the axis — which reads as "the
+           * target is zero" rather than "nobody has set one". ECharts draws a
+           * gap for null, and the tooltip says nothing rather than something
+           * untrue.
+           */
+          target: targetByStore.get(st.id) ?? null,
         };
       }),
     );

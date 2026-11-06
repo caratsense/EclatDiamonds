@@ -98,6 +98,11 @@ export function useRecordPayment() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["payments", "list"] });
       qc.invalidateQueries({ queryKey: ["payments", "reconciliation"] });
+      // The DSR's payment-sources donut groups today's Payment rows by mode —
+      // the same rows this just wrote. Left out, a collection taken at the
+      // counter was missing from the day's mode split on the reporting screen
+      // while the ledger beside it already listed it.
+      qc.invalidateQueries({ queryKey: ["reporting", "dsr"] });
     },
   });
 }

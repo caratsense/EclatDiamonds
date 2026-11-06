@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,13 @@ interface SectionHeaderProps {
   /** Label for the primary CTA. */
   primaryAction?: string;
   onPrimaryAction?: () => void;
+  /**
+   * Secondary controls, rendered to the LEFT of the primary CTA on the header's
+   * own row. Without this a page with a second button had nowhere to put it but
+   * a right-aligned strip of its own under the header, which read as a floating
+   * orphan and cost a band of empty page above the content.
+   */
+  actions?: ReactNode;
 }
 
 /**
@@ -35,6 +43,7 @@ export function SectionHeader({
   purpose,
   primaryAction,
   onPrimaryAction,
+  actions,
 }: SectionHeaderProps) {
   const t = useT();
 
@@ -63,19 +72,20 @@ export function SectionHeader({
           */}
         </div>
 
-        {primaryAction ? (
-          <Button
-            variant="gold"
-            onClick={onPrimaryAction}
-            className="shrink-0 shadow-sm"
-          >
-            <Plus className="h-4 w-4" />
-            {t(primaryAction, primaryAction)}
-          </Button>
+        {actions || primaryAction ? (
+          <div className="flex shrink-0 items-center gap-2">
+            {actions}
+            {primaryAction ? (
+              <Button variant="gold" onClick={onPrimaryAction} className="shrink-0">
+                <Plus className="h-4 w-4" />
+                {t(primaryAction, primaryAction)}
+              </Button>
+            ) : null}
+          </div>
         ) : null}
       </div>
       <div
-        className={`${purpose ? "mt-5" : "mt-3"} h-px bg-gradient-to-r from-border via-border to-transparent`}
+        className={`${purpose ? "mt-5" : "mt-3"} h-px bg-border`}
       />
     </div>
   );

@@ -521,7 +521,7 @@ function CheckInScreen({ onNewDay }: { onNewDay: () => void }) {
 
   return (
     <div className="mx-auto flex min-h-[70vh] w-full max-w-md flex-col justify-center px-4 py-8">
-      <Card className="facet-top overflow-hidden">
+      <Card className="overflow-hidden">
         <CardHeader className="space-y-1.5 text-center">
           <CardTitle className="text-2xl">Good day, {firstName}</CardTitle>
           <CardDescription>

@@ -23,7 +23,12 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ChartEmpty, EChart, useChartTokens } from "@/components/chart/echart";
+import {
+  axisTooltipFormatter,
+  ChartEmpty,
+  EChart,
+  useChartTokens,
+} from "@/components/chart/echart";
 import { StatTiles } from "@/components/hrms/stat-tiles";
 import {
   DepartmentFilterSelect,
@@ -224,7 +229,12 @@ function TrendChart({ trend }: { trend: TrendPoint[] }) {
     return {
       legend: { show: true, left: 0, right: "auto" },
       grid: { top: 36 },
-      tooltip: { trigger: "axis" },
+      tooltip: {
+        trigger: "axis",
+        // The bands stack to that day's headcount, so each one's share of the
+        // column is the figure a manager reads ("a fifth of the floor was late").
+        formatter: axisTooltipFormatter({ format: (v) => n(v), shareOfRows: true }),
+      },
       xAxis: {
         type: "category",
         boundaryGap: false,
@@ -267,7 +277,7 @@ function TrendChart({ trend }: { trend: TrendPoint[] }) {
 
 function BreakdownBars({ rows }: { rows: (BreakdownRow & { id: string; name: string })[] }) {
   if (rows.length === 0) {
-    return <ChartEmpty height={160} message="No data for this period" />;
+    return <ChartEmpty height={160} message="No staff attendance recorded in this period" />;
   }
   const sorted = [...rows].sort((a, b) => b.attendanceRate - a.attendanceRate);
   return (

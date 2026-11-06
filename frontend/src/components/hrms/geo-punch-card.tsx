@@ -348,7 +348,7 @@ export function GeoPunchCard() {
 
   return (
     <>
-    <Card className="facet-top overflow-hidden">
+    <Card className="overflow-hidden">
       <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
         <div className="space-y-1.5">
           <CardTitle className="flex items-center gap-2">

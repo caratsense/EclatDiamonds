@@ -170,7 +170,7 @@ export function PeriodRollup({
           </CardContent>
         </Card>
       ) : (
-        <Card className="facet-top overflow-hidden p-0">
+        <Card className="overflow-hidden p-0">
           {/* One strip, divided — not three cards. The three figures are read
               across as a single line of the day's trade, and three bordered
               boxes made them look like three unrelated reports. */}

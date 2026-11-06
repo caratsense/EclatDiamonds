@@ -1897,6 +1897,11 @@ function ThreadView({
             <IntentAnalysisPanel
               conversationId={id}
               partyId={party?.id}
+              // Lets the panel follow the score while this thread is open
+              // instead of holding the one it loaded with: the bot rescores on
+              // every message the customer sends, and this is how the panel
+              // knows whether it has caught up with them.
+              lastInboundAt={lastInboundAt}
               // No `onClose`: the panel it used to close is permanent now, so
               // the component hides its own ✕ rather than offering a button
               // that would dismiss the whole CRM column from inside one card.
