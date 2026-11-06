@@ -87,12 +87,29 @@ export interface StoreCompare {
   /** City for disambiguation — the backend sends it alongside the store name. */
   city?: string | null;
   revenue: number;
-  target: number;
+  /** `null` when no target is published for the month — NOT zero. A zero plots
+   *  as a bar on the axis and reads as a target of nothing. */
+  target: number | null;
 }
 
-/** Chart label: `name — city` so two stores in the same city never collide. */
+
+/**
+ * An axis label for one store: its NAME, and nothing else.
+ *
+ * This used to append the city, which the server explicitly does not intend —
+ * `dashboard.service.ts` comments that bars are labelled by store name because
+ * it is unique, with "City kept for tooltip". Appending it produced duplicated
+ * labels like "Surat — Main — Surat" and "Ahmedabad — C.G. Road — Ahmedabad",
+ * 31 characters wide.
+ *
+ * That is what made store labels go missing: ECharts' category axis defaults
+ * to `interval: "auto"`, which silently DROPS labels that would overlap. With
+ * labels that long on a 500px chart, some positions simply rendered blank —
+ * the bars were always right, the names were being hidden. The axis now also
+ * pins `interval: 0` (see BarChart) so nothing is dropped quietly again.
+ */
 export function storeCompareLabel(s: StoreCompare): string {
-  return s.city ? `${s.store} — ${s.city}` : s.store;
+  return s.store;
 }
 
 export const STORE_COMPARISON: StoreCompare[] = [

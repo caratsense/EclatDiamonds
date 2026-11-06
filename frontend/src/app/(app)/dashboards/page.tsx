@@ -14,6 +14,7 @@ import {
   SalesTrendChart,
   StoreComparisonChart,
 } from "@/components/dashboards/dashboard-charts";
+import { ChartError } from "@/components/chart/echart";
 import { MetalRatesWidget } from "@/components/rates/metal-rates-widget";
 import {
   Card,
@@ -141,10 +142,15 @@ export default function DashboardsPage() {
         ) : null}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Seven across on a wide screen, not four. At four the seventh tile
+          started a second row that then sat three-quarters empty, which read
+          as a dashboard with nothing in it. Seven columns at the 12px gap come
+          out around 158px per tile, which is what the compact two-line tile
+          was sized for. */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-7">
         {kpisQuery.isLoading
           ? Array.from({ length: 7 }).map((_, i) => (
-              <Skeleton key={i} className="h-28 rounded-xl" />
+              <Skeleton key={i} className="h-[76px] rounded-xl" />
             ))
           : kpis.map((k, i) => (
               <KpiCard
@@ -168,6 +174,19 @@ export default function DashboardsPage() {
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
           <Skeleton className="h-[340px] rounded-xl" />
           <Skeleton className="h-[340px] rounded-xl" />
+        </div>
+      ) : chartsQuery.isError ? (
+        /*
+         * A failed charts query used to fall through to `?? []`, and every chart
+         * below then said "no data for this period" — telling the shop it sold
+         * nothing when in fact nothing had been fetched.
+         */
+        <div className="mt-4">
+          <ChartError
+            height={340}
+            message="Couldn't load the dashboard charts."
+            onRetry={() => chartsQuery.refetch()}
+          />
         </div>
       ) : (
         <>

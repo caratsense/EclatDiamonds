@@ -12,7 +12,7 @@ import type { PaymentSource } from "@/lib/mock/reporting";
 export function PaymentPie({ data, href = "/payments" }: { data: PaymentSource[]; href?: string }) {
   return (
     <Link href={href} className="block">
-      <Card className="group transition-shadow hover:shadow-md">
+      <Card className="group transition-colors hover:border-primary/40">
         <CardHeader>
           <CardTitle className="flex items-center gap-1.5">
             Payment Sources
@@ -24,6 +24,7 @@ export function PaymentPie({ data, href = "/payments" }: { data: PaymentSource[]
             data={data.map((d) => ({ name: d.source, value: d.amount }))}
             valueFormatter={formatINRCompact}
             height={260}
+            emptyMessage="No payments taken today yet"
           />
         </CardContent>
       </Card>

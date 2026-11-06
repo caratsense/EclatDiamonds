@@ -149,7 +149,7 @@ function ResultCard({
     <article
       data-testid="similarity-result"
       onClick={onOpen}
-      className="flex w-full cursor-pointer flex-col overflow-hidden rounded-xl border bg-card shadow-sm transition-shadow hover:border-primary/40 hover:shadow-md"
+      className="flex w-full cursor-pointer flex-col overflow-hidden rounded-xl border bg-card shadow-sm transition-colors hover:border-primary/40"
     >
       <button
         type="button"

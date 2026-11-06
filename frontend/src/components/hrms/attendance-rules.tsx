@@ -131,7 +131,14 @@ export function AttendanceRulesCard({ storeId, canConfirm }: { storeId: string; 
                 className="w-44"
               />
             </div>
-            <Button size="sm" disabled={!through || confirm.isPending} onClick={() => save(through)}>
+            {/* The settings card's own commit: black, not red. Red is the one
+                hero per screen, and here that is the roster link in the header. */}
+            <Button
+              size="sm"
+              variant="gold"
+              disabled={!through || confirm.isPending}
+              onClick={() => save(through)}
+            >
               Confirm
             </Button>
             {r.confirmedThrough ? (

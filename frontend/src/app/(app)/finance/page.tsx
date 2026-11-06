@@ -4,6 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { SectionHeader } from "@/components/section/section-header";
+import { ChartError } from "@/components/chart/echart";
 import { KpiCard } from "@/components/dashboards/kpi-card";
 import { LedgerTable } from "@/components/finance/ledger-table";
 import { ExpansionCards } from "@/components/finance/expansion-cards";
@@ -128,8 +129,30 @@ export default function FinancePage() {
           </>
         ) : (
           <>
-            <BudgetVarianceChart data={budget} />
-            <CashFlowChart data={cashflow} />
+            {/*
+              Each chart answers for its own query. The banner above says the
+              page is incomplete, but a chart still drawn from `?? []` says
+              "nothing booked this month" in the same breath — and that reads as
+              a fact about the business rather than about the connection.
+            */}
+            {budgetQuery.isError ? (
+              <ChartError
+                height={360}
+                message="Couldn't load budget vs actual."
+                onRetry={() => budgetQuery.refetch()}
+              />
+            ) : (
+              <BudgetVarianceChart data={budget} />
+            )}
+            {cashflowQuery.isError ? (
+              <ChartError
+                height={360}
+                message="Couldn't load the cash-flow forecast."
+                onRetry={() => cashflowQuery.refetch()}
+              />
+            ) : (
+              <CashFlowChart data={cashflow} />
+            )}
           </>
         )}
       </div>

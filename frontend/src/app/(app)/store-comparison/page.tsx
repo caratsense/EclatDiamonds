@@ -55,11 +55,13 @@ interface Row {
   id: number;
   store: string;
   revenue: number;
-  target: number;
+  /** `null` when no target is published for the month. */
+  target: number | null;
   /** Share of total revenue across all stores (%). */
   share: number;
-  /** Revenue ÷ target (%); 0 when no target is set. */
-  achievement: number;
+  /** Revenue ÷ target (%); `null` when no target is set, so the column can say
+   *  so instead of printing a confident 0%. */
+  achievement: number | null;
 }
 
 function sortValue(r: Row, key: SortKey): number | string {
@@ -70,10 +72,12 @@ function sortValue(r: Row, key: SortKey): number | string {
       return r.revenue;
     case "share":
       return r.share;
+    // A store with no target sorts below every store that has one, rather
+    // than tying with a genuine zero.
     case "target":
-      return r.target;
+      return r.target ?? -1;
     case "achievement":
-      return r.achievement;
+      return r.achievement ?? -1;
   }
 }
 
@@ -93,13 +97,14 @@ export default function StoreComparisonPage() {
     () => data.reduce((sum, d) => sum + d.revenue, 0),
     [data],
   );
+  // A store with no published target contributes nothing to the total rather
+  // than a zero — the distinction the API now makes by sending null.
   const totalTarget = useMemo(
-    () => data.reduce((sum, d) => sum + d.target, 0),
+    () => data.reduce((sum, d) => sum + (d.target ?? 0), 0),
     [data],
   );
-  // Backend leaves target = 0 until store targets are configured — only surface
-  // the target/achievement columns once at least one store actually has one.
-  const hasTargets = useMemo(() => data.some((d) => d.target > 0), [data]);
+  // Only surface the target/achievement columns once a store actually has one.
+  const hasTargets = useMemo(() => data.some((d) => (d.target ?? 0) > 0), [data]);
 
   const rows: Row[] = useMemo(
     () =>
@@ -109,7 +114,8 @@ export default function StoreComparisonPage() {
         revenue: d.revenue,
         target: d.target,
         share: total > 0 ? (d.revenue / total) * 100 : 0,
-        achievement: d.target > 0 ? (d.revenue / d.target) * 100 : 0,
+        // Null target means none was set, so there is no achievement to state.
+        achievement: d.target && d.target > 0 ? (d.revenue / d.target) * 100 : null,
       })),
     [data, total],
   );
@@ -163,7 +169,7 @@ export default function StoreComparisonPage() {
     if (hasTargets) {
       series.push({
         name: "Target",
-        data: chartRows.map((r) => r.target),
+        data: chartRows.map((r) => r.target ?? null),
         color: t.palette[2],
       });
     }
@@ -230,6 +236,7 @@ export default function StoreComparisonPage() {
                 valueFormatter={formatINRCompact}
                 series={chartSeries}
                 height={320}
+                emptyMessage="No revenue or targets recorded for any branch yet"
               />
             </CardContent>
           </Card>
@@ -326,16 +333,20 @@ export default function StoreComparisonPage() {
                         {hasTargets ? (
                           <>
                             <TableCell className="num text-right text-muted-foreground">
-                              {formatINR(r.target)}
+                              {/* A branch with no published target says so,
+                                  rather than printing a confident Rs 0. */}
+                              {r.target == null ? "—" : formatINR(r.target)}
                             </TableCell>
                             <TableCell className="text-right">
                               <Badge
                                 variant={
-                                  r.achievement >= 100 ? "success" : "secondary"
+                                  (r.achievement ?? 0) >= 100 ? "success" : "secondary"
                                 }
                               >
                                 <span className="num">
-                                  {formatPercent(r.achievement, 0)}
+                                  {r.achievement == null
+                                    ? "—"
+                                    : formatPercent(r.achievement, 0)}
                                 </span>
                               </Badge>
                             </TableCell>

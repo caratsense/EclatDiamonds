@@ -343,18 +343,80 @@ export function useSaveAdSetRules() {
   });
 }
 
-/** The most recent assessment. `null` means nobody has assessed this yet. */
-export function useLatestQualification(target: {
-  partyId?: string;
-  leadId?: string;
-  conversationId?: string;
-}) {
+/** How long after a customer's message a score may still be on its way. */
+const SCORING_GRACE_MS = 2 * 60 * 1000;
+
+/**
+ * Is the score still catching up with what the customer just said?
+ *
+ * The bot rescores a thread on every inbound message it answers, so the newest
+ * assessment should be younger than the newest inbound message. When it is
+ * older, either the webhook has not finished writing the new one yet or it
+ * never will (scoring switched off, nothing readable in the message). The grace
+ * window decides between the two without asking the server: inside it, a score
+ * is plausibly in flight; outside it, this is simply the latest there is.
+ */
+export function qualificationCatchingUp(
+  row: Qualification | null | undefined,
+  lastInboundAt: string | null | undefined,
+  now: number = Date.now(),
+): boolean {
+  if (!lastInboundAt || !row) return false;
+  const spoke = new Date(lastInboundAt).getTime();
+  if (Number.isNaN(spoke)) return false;
+  return new Date(row.createdAt).getTime() < spoke && now - spoke < SCORING_GRACE_MS;
+}
+
+/**
+ * The most recent assessment. `null` means nobody has assessed this yet.
+ *
+ * WHY THIS POLLS, when the rest of this file waits to be told.
+ *
+ * The score changes without anyone on this screen doing anything: a customer
+ * replies, Meta posts the message to our webhook, the bot answers and rescores
+ * the thread (`scoreIntent` → `assessFromBot`), and a new row lands. Nothing
+ * reaches the browser from any of that — there is no socket, no event stream
+ * and no pending request to piggyback on — so an invalidation tied to the real
+ * event is not available to the client, and the panel showed whatever the score
+ * was when the thread was opened until somebody pressed Refresh.
+ *
+ * Reading is cheap and never recomputes: the endpoint returns the newest stored
+ * row. Only the explicit Refresh assesses, so following the data cannot race
+ * with it or double-score a thread.
+ *
+ * Pass `lastInboundAt` to follow a live thread; omit it and this behaves as it
+ * always did, which is what the customer profile wants — no message arrives
+ * while a profile is open.
+ */
+export function useLatestQualification(
+  target: {
+    partyId?: string;
+    leadId?: string;
+    conversationId?: string;
+  },
+  options: {
+    /** The newest thing the customer said. Enables following, and calibrates it. */
+    lastInboundAt?: string | null;
+    /** Held while the user's own assessment is in flight, so the two cannot cross. */
+    paused?: boolean;
+  } = {},
+) {
   const enabled = !!(target.partyId || target.leadId || target.conversationId);
+  const { lastInboundAt, paused } = options;
   return useQuery({
     queryKey: ["crm", "qualification", "latest", target],
     enabled,
     queryFn: async () =>
       (await api.get<Qualification | null>("/crm/qualification/latest", { params: target })).data,
+    /*
+     * Faster only while a score is owed, then back to a minute. React Query
+     * leaves `refetchIntervalInBackground` off by default, so neither rate
+     * applies to a tab nobody is looking at.
+     */
+    refetchInterval: (q) => {
+      if (!lastInboundAt || paused) return false;
+      return qualificationCatchingUp(q.state.data, lastInboundAt) ? 5_000 : 60_000;
+    },
   });
 }
 

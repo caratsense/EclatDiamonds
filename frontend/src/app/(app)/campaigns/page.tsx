@@ -109,13 +109,13 @@ export default function CampaignsPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <SectionHeader
-          title="Campaigns"
+          title="Broadcasts"
           purpose="Reach a group of customers on WhatsApp, with consent checked for every person at the moment of sending."
         />
         <Button asChild>
           <Link href="/campaigns/new">
             <Plus className="mr-2 h-4 w-4" />
-            New campaign
+            New broadcast
           </Link>
         </Button>
       </div>
@@ -132,7 +132,7 @@ export default function CampaignsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Your campaigns</CardTitle>
+          <CardTitle className="text-base">Your broadcasts</CardTitle>
         </CardHeader>
         <CardContent>
           {campaigns.isLoading ? (
@@ -143,20 +143,20 @@ export default function CampaignsPage() {
             </div>
           ) : campaigns.isError ? (
             <p className="text-sm text-muted-foreground">
-              {apiErrorMessage(campaigns.error, "Could not load your campaigns.")}
+              {apiErrorMessage(campaigns.error, "Could not load your broadcasts.")}
             </p>
           ) : !campaigns.data?.length ? (
             <EmptyState
               icon={Megaphone}
-              title="No campaigns yet"
-              description="A campaign sends one approved message to a group of customers you choose."
+              title="No broadcasts yet"
+              description="A broadcast sends one approved message to a group of customers you choose."
             />
           ) : (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Campaign</TableHead>
+                    <TableHead>Broadcast</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Audience</TableHead>
                     <TableHead>Delivery</TableHead>

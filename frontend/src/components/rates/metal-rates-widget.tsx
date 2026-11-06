@@ -60,15 +60,15 @@ export function MetalRatesWidget({ className }: { className?: string; compact?: 
   const cards = tab === "Gold" ? GOLD_CARDS.map(([m, t]) => [byMetal(m), t] as const).filter(([r]) => r) : silver ? ([[silver, "Silver (999) /g"]] as const) : [];
 
   return (
-    <div className={cn("rounded-2xl border border-border/80 bg-[#0d151c] p-4 text-slate-100 shadow-xl backdrop-blur-md", className)}>
+    <div className={cn("rounded-2xl border bg-card p-4 text-card-foreground", className)}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2 rounded-lg border border-slate-700/60 bg-slate-900/60 px-3 py-1.5 text-xs font-medium text-slate-300 shadow-xs">
-            <Calendar className="h-3.5 w-3.5 text-emerald-400" />
+          <div className="flex items-center gap-2 rounded-lg border bg-muted px-3 py-1.5 text-xs font-medium text-muted-foreground">
+            <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
             <span>{shownOn ? day(shownOn) : "—"}</span>
           </div>
           {silver ? (
-            <div className="flex items-center rounded-lg border border-slate-800 bg-slate-950/80 p-0.5 text-xs">
+            <div className="flex items-center rounded-lg border bg-muted p-0.5 text-xs">
               {(["Gold", "Silver"] as Tab[]).map((t) => (
                 <button
                   key={t}
@@ -76,7 +76,9 @@ export function MetalRatesWidget({ className }: { className?: string; compact?: 
                   onClick={() => setTab(t)}
                   className={cn(
                     "rounded-md px-3.5 py-1 text-xs font-semibold transition-all",
-                    tab === t ? "bg-[#059669] text-white shadow-xs" : "text-slate-400 hover:bg-slate-800/50 hover:text-slate-200",
+                    tab === t
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:bg-accent hover:text-foreground",
                   )}
                 >
                   {t}
@@ -86,39 +88,39 @@ export function MetalRatesWidget({ className }: { className?: string; compact?: 
           ) : null}
         </div>
         {fine?.stale ? (
-          <span className="flex items-center gap-1 text-xs text-amber-400">
+          <span className="flex items-center gap-1 text-xs text-warning">
             <AlertTriangle className="h-3.5 w-3.5" /> {staleNote(fine)}
           </span>
         ) : null}
       </div>
 
       {isLoading ? (
-        <p className="mt-3.5 text-sm text-slate-400">Loading rates…</p>
+        <p className="mt-3.5 text-sm text-muted-foreground">Loading rates…</p>
       ) : cards.length === 0 ? (
-        <p className="mt-3.5 text-sm text-slate-400">No rate on record yet.</p>
+        <p className="mt-3.5 text-sm text-muted-foreground">No rate on record yet.</p>
       ) : (
         <div className="mt-3.5 grid grid-cols-2 gap-3 sm:grid-cols-4">
           {cards.map(([r, title]) => (
-            <div key={title} className="flex flex-col justify-between rounded-xl border border-slate-800/80 bg-[#131f28]/80 p-3.5">
-              <span className="text-xs font-medium text-slate-400">{title}</span>
-              <span className="mt-2.5 font-display text-xl font-bold tracking-tight text-white sm:text-2xl">
+            <div key={title} className="flex flex-col justify-between rounded-xl border bg-muted/40 p-3.5">
+              <span className="text-xs font-medium text-muted-foreground">{title}</span>
+              <span className="num mt-2.5 text-xl font-bold tracking-tight sm:text-2xl">
                 {r!.ratePerGram < 1000 ? `₹${r!.ratePerGram.toFixed(2)}` : formatINR(Math.round(r!.ratePerGram))}
               </span>
-              {tab === "Silver" ? <span className="mt-1 text-[11px] text-slate-400">{formatINR(Math.round(r!.ratePerGram * 1000))} /kg</span> : null}
+              {tab === "Silver" ? <span className="mt-1 text-[11px] text-muted-foreground">{formatINR(Math.round(r!.ratePerGram * 1000))} /kg</span> : null}
             </div>
           ))}
         </div>
       )}
 
       {tab === "Gold" && DERIVED_ROW.some(([m]) => byMetal(m)) ? (
-        <p className="mt-3 text-[11px] text-slate-400">
+        <p className="mt-3 text-[11px] text-muted-foreground">
           {DERIVED_ROW.filter(([m]) => byMetal(m))
             .map(([m, label]) => `${label} ${formatINR(Math.round(byMetal(m)!.ratePerGram))}/g`)
             .join(" · ")}{" "}
           — derived from 999 by purity (not published by IBJA)
         </p>
       ) : null}
-      <p className="mt-2 text-[11px] text-slate-400">Source: {rateSourceLabel(fine)}</p>
+      <p className="mt-2 text-[11px] text-muted-foreground">Source: {rateSourceLabel(fine)}</p>
     </div>
   );
 }

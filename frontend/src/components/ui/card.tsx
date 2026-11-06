@@ -12,11 +12,11 @@ function Card({ className, ...props }: React.ComponentProps<"div">) {
       className={cn(
         // border-border/80 rather than the flat token: at full strength the
         // outline competes with the content; at 80% it separates the surface
-        // without drawing a box around every paragraph. `transition-shadow`
-        // is here so a card that IS clickable can add `hover:shadow-md` and
-        // have it animate; it is not added globally, because a card nobody
-        // can click should not respond to a pointer passing over it.
-        "rounded-xl border border-border/80 bg-card text-card-foreground shadow-sm transition-shadow",
+        // without drawing a box around every paragraph. A clickable card
+        // signals itself by warming its border (`hover:border-primary/40`),
+        // not by blooming a shadow or lifting off the page — depth is
+        // reserved for things that genuinely float, like a dropdown.
+        "rounded-xl border border-border/80 bg-card text-card-foreground shadow-sm",
         className,
       )}
       {...props}

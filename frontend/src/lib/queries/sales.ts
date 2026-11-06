@@ -18,6 +18,33 @@ import type { Role } from "@/lib/types";
 
 const SALES_KEY = "sales";
 
+/**
+ * A bill is the input to almost every figure on the dashboard — the KPI tiles,
+ * the twelve-month trend, the store comparison (which the Store Comparison page
+ * reads under `["dashboard","charts","all-stores"]`) and the day-by-day activity
+ * flow. None of those were invalidated here, so billing a sale left the
+ * dashboard showing the pre-sale figures for the whole of React Query's default
+ * stale window: the shop recorded a sale and the chart said it had not.
+ *
+ * It is also the input to the DSR, whose headline tiles and per-store revenue
+ * bars are the same Sale rows read for the store's own today; and, when the
+ * bill carries an advance, the server writes a Payment alongside it
+ * (sales.service.ts `create`), which is what the collections ledger and the
+ * payment-mode donut on both the Payments and DSR screens are drawn from. A
+ * cash sale therefore landed in the till without appearing in the mode split.
+ *
+ * Scoped to the derived feeds rather than the whole `["dashboard"]` tree, which
+ * would also drop the task and hand-off lists a sale cannot change.
+ */
+function invalidateSalesDerived(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: [SALES_KEY] });
+  qc.invalidateQueries({ queryKey: ["dashboard", "kpis"] });
+  qc.invalidateQueries({ queryKey: ["dashboard", "charts"] });
+  qc.invalidateQueries({ queryKey: ["dashboard", "activity"] });
+  qc.invalidateQueries({ queryKey: ["payments"] });
+  qc.invalidateQueries({ queryKey: ["reporting", "dsr"] });
+}
+
 /** manual = direct sales entered here · all = every sale (incl. from orders). */
 export type SaleScope = "manual" | "all";
 
@@ -131,7 +158,7 @@ export function useCreateSale() {
       return data;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [SALES_KEY] });
+      invalidateSalesDerived(qc);
       // Completing an approved request marks it billed (saleId set) and a
       // fresh over-cap attempt queues a new request — refresh both lists.
       qc.invalidateQueries({ queryKey: ["discounts"] });
@@ -150,9 +177,9 @@ export function useCancelSale() {
       const { data } = await api.post<Sale>(`/sales/${id}/cancel`, { reason });
       return data;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [SALES_KEY] });
-    },
+    // A void removes the bill from every aggregate too — the charts exclude
+    // `isCancelled` rows, so they are as wrong after a void as after a sale.
+    onSuccess: () => invalidateSalesDerived(qc),
   });
 }
 

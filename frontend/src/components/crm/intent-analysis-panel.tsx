@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   HelpCircle,
   Lightbulb,
+  Loader2,
   PencilLine,
   RefreshCw,
   Sparkles,
@@ -24,6 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { StatusPill, type PillTone } from "@/components/ui/status-pill";
 import {
+  qualificationCatchingUp,
   useAssessConversation,
   useAssessLead,
   useLatestQualification,
@@ -63,6 +65,15 @@ interface IntentAnalysisPanelProps {
   conversationId?: string;
   leadId?: string;
   partyId?: string;
+  /**
+   * When the customer last wrote, from the thread this panel sits beside.
+   *
+   * Given it, the panel follows the score instead of waiting to be refreshed:
+   * the bot rescores the thread on every inbound message and this is the
+   * yardstick for whether the number on screen has caught up with the
+   * conversation yet.
+   */
+  lastInboundAt?: string | null;
   onClose?: () => void;
   onApplyAction?: (actionText: string) => void;
 }
@@ -78,19 +89,25 @@ export function IntentAnalysisPanel({
   conversationId,
   leadId,
   partyId,
+  lastInboundAt,
   onClose,
   onApplyAction,
 }: IntentAnalysisPanelProps) {
-  const { data, isLoading, isError, error, refetch } = useLatestQualification({
-    partyId,
-    leadId,
-    conversationId,
-  });
   const assessConversation = useAssessConversation();
   const assessLead = useAssessLead();
   const scoreByHand = useScoreByHand();
   const isAssessing = assessConversation.isPending || assessLead.isPending;
+  /*
+   * Read after the mutations so the follow can be held while one is running:
+   * the assessment the user asked for ends in a refetch of its own, and a poll
+   * landing in the middle of it would be answered with the row it replaced.
+   */
+  const { data, isLoading, isError, error, refetch } = useLatestQualification(
+    { partyId, leadId, conversationId },
+    { lastInboundAt, paused: isAssessing },
+  );
   const canAssess = Boolean(conversationId || leadId);
+  const catchingUp = qualificationCatchingUp(data, lastInboundAt);
 
   const role = useSession((s) => s.role);
   /*
@@ -158,6 +175,20 @@ export function IntentAnalysisPanel({
           ) : null}
         </div>
       </header>
+
+      {/*
+        Said out loud, because the alternative is a number that is quietly
+        wrong. Scoring happens on the webhook, after the customer's message is
+        already stored, so for a few seconds the thread holds something this
+        score has not read. The score below stays on screen — it is the real
+        last one — and this line says it is not the final word yet.
+      */}
+      {catchingUp ? (
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden />
+          Scoring the newest message…
+        </p>
+      ) : null}
 
       {isLoading ? (
         <div className="space-y-3">

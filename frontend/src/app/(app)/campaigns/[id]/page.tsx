@@ -55,7 +55,7 @@ import { useSession } from "@/store/use-session";
  */
 const EXCLUSION_LABELS: Record<string, string> = {
   blocked_customer: "Blocked customer",
-  campaign_cancelled: "Campaign cancelled",
+  campaign_cancelled: "Broadcast cancelled",
   policy_refused_at_send: "Consent or messaging rules refused it at send time",
 };
 
@@ -115,7 +115,7 @@ export default function CampaignDetailPage() {
           </Link>
         </Button>
         <p className="text-sm text-muted-foreground">
-          {apiErrorMessage(campaign.error, "Could not load this campaign.")}
+          {apiErrorMessage(campaign.error, "Could not load this broadcast.")}
         </p>
       </div>
     );
@@ -143,7 +143,7 @@ export default function CampaignDetailPage() {
       </Button>
 
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <SectionHeader title={c.name} purpose={c.description ?? "WhatsApp campaign."} />
+        <SectionHeader title={c.name} purpose={c.description ?? "WhatsApp broadcast."} />
         <div className="flex flex-wrap gap-2">
             {c.status === "awaiting_approval" && canApprove ? (
               <Button
@@ -153,7 +153,7 @@ export default function CampaignDetailPage() {
                     {
                       onSuccess: () => toast.success("Approved. The list is being built now."),
                       onError: (e) =>
-                        toast.error(apiErrorMessage(e, "Could not approve this campaign.")),
+                        toast.error(apiErrorMessage(e, "Could not approve this broadcast.")),
                     },
                   )
                 }
@@ -189,7 +189,7 @@ export default function CampaignDetailPage() {
                 variant="outline"
                 onClick={() =>
                   cancel.mutate(
-                    { id, body: { reason: "Stopped from the campaign screen" } },
+                    { id, body: { reason: "Stopped from the broadcast screen" } },
                     {
                       onSuccess: () => toast.success("Cancelled. Nobody else will be messaged."),
                       onError: (e) => toast.error(apiErrorMessage(e, "Could not cancel.")),
@@ -281,7 +281,7 @@ export default function CampaignDetailPage() {
           ) : !recipients.data?.items.length ? (
             <p className="py-6 text-center text-sm text-muted-foreground">
               {c.status === "draft" || c.status === "awaiting_approval"
-                ? "The list is built when the campaign is approved."
+                ? "The list is built when the broadcast is approved."
                 : "Nothing here."}
             </p>
           ) : (

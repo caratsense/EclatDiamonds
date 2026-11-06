@@ -275,7 +275,7 @@ function KpiTiles({
         type="button"
         onClick={() => onFilter(null)}
         data-active={filter === null ? "" : undefined}
-        className="facet-top rounded-xl border bg-card p-4 text-left shadow-sm transition-shadow hover:shadow-md"
+        className="rounded-xl border bg-card p-4 text-left shadow-sm transition-colors hover:border-primary/40"
       >
         <p className="text-[13px] text-muted-foreground">Due today</p>
         <p className="num mt-1 text-[24px] font-semibold leading-none">{data.denominator}</p>
@@ -288,7 +288,7 @@ function KpiTiles({
           <div
             key={s}
             className={cn(
-              "flex flex-col rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-md",
+              "flex flex-col rounded-xl border bg-card shadow-sm transition-colors hover:border-primary/40",
               active && "border-primary ring-2 ring-primary/30",
             )}
           >
@@ -437,7 +437,7 @@ function StoreBars({ data }: { data: TodaySnapshot }) {
               </span>
               <span className="h-5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
                 <span
-                  className="block h-full rounded-full bg-primary/70"
+                  className="block h-full rounded-full bg-foreground/70"
                   style={{ width: `${Math.max(2, (r.count / max) * 100)}%` }}
                 />
               </span>

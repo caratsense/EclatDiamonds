@@ -71,3 +71,8 @@ docs/zithara-analysis/screenshots/
 synceclatcaratsense/bak_export/*.json
 synceclatcaratsense/bak_export/.agent_token
 backend/staging-cutover.mjs
+
+# Locally rendered copies of the operations manual. The committed PDF is the
+# one built for the client; these are the by-products of rendering it here and
+# they churn on every run.
+docs/usermanual/*.local.*

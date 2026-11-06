@@ -246,7 +246,7 @@ export function EmployeesTab({
       </Card>
 
       {canManage && visibleSelected.length > 0 ? (
-        <div className="sticky top-2 z-10 flex flex-wrap items-center gap-2 rounded-lg border bg-card p-2 shadow-md">
+        <div className="sticky top-2 z-10 flex flex-wrap items-center gap-2 rounded-lg border bg-card p-2 shadow-sm">
           <span className="px-2 text-sm">
             <span className="num">{visibleSelected.length}</span> selected
           </span>

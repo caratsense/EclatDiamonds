@@ -378,7 +378,7 @@ function CampaignCard({ campaign }: { campaign: Campaign }) {
           </div>
           <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-muted">
             <div
-              className="h-full rounded-full bg-primary"
+              className="h-full rounded-full bg-foreground/70"
               style={{ width: `${Math.min(100, pct)}%` }}
             />
           </div>

@@ -22,6 +22,21 @@ import type {
  */
 const REMINDERS_KEY = "reminders";
 
+/**
+ * The dashboard's lead funnel ("came vs converted") counts Lead rows by the day
+ * they were created and the day they closed won, so creating a lead or closing
+ * one changes that chart as surely as it changes the CRM list. Only `["leads"]`
+ * was invalidated, so a lead marked won sat in the CRM as won while the funnel
+ * beside it still showed it in progress.
+ *
+ * Only the charts: the KPI tiles count sales, footfall, orders and stock, none
+ * of which a lead touches.
+ */
+function invalidateLeadsDerived(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ["leads"] });
+  qc.invalidateQueries({ queryKey: ["dashboard", "charts"] });
+}
+
 export interface CreateLeadInput {
   storeId: string;
   customerName: string;
@@ -106,9 +121,7 @@ export function useCreateLead() {
       const { data } = await api.post<Lead>("/leads", input);
       return data;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["leads"] });
-    },
+    onSuccess: () => invalidateLeadsDerived(qc),
   });
 }
 
@@ -137,7 +150,9 @@ export function useMoveLeadStage() {
       return data;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["leads"] });
+      // stage → order_placed sets outcome = won server-side, which is a
+      // conversion on the funnel.
+      invalidateLeadsDerived(qc);
       qc.invalidateQueries({ queryKey: [REMINDERS_KEY] });
     },
   });
@@ -211,8 +226,6 @@ export function useSetOutcome() {
       });
       return data;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["leads"] });
-    },
+    onSuccess: () => invalidateLeadsDerived(qc),
   });
 }

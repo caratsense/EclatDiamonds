@@ -225,7 +225,7 @@ function ReminderRow({
   }
 
   return (
-    <div className="facet-top flex flex-col gap-3 rounded-xl border bg-card p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-3 rounded-xl border bg-card p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
       {/* Who + what */}
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">

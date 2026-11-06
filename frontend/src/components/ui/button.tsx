@@ -9,18 +9,28 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        // Quiet ink action, marked by the gold light-catch (the signature).
+        /*
+         * Flat fills, no light-catch and no drop shadow.
+         *
+         * Every filled variant used to carry `.facet-top` — a 1px gradient
+         * hairline across the top edge — plus `shadow-sm`. That was the gold
+         * design system's signature, where it read as light on a polished
+         * bevel. Against a flat red it reads as a pink smear and a cheap
+         * bevelled button, and the CaratSpace comp draws its buttons flat:
+         * solid red, solid black, no highlight, no shadow. `.facet-top` still
+         * exists for the surfaces that opt into it deliberately.
+         */
         default:
-          "facet-top bg-primary text-primary-foreground shadow-sm hover:bg-primary/90",
-        // The one hero action per screen — a polished gold bar with ink engraving.
+          "bg-primary text-primary-foreground hover:bg-primary/90",
+        // The neutral/black action from the comp ("Add shift", "Save").
         gold:
-          "facet-top bg-gold text-gold-foreground shadow-sm hover:brightness-[1.06]",
+          "bg-gold text-gold-foreground hover:brightness-[1.08]",
         destructive:
-          "bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90",
+          "bg-destructive text-destructive-foreground hover:bg-destructive/90",
         outline:
-          "border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground",
+          "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
         secondary:
-          "bg-secondary text-secondary-foreground shadow-sm hover:bg-secondary/80",
+          "bg-secondary text-secondary-foreground hover:bg-secondary/80",
         ghost: "hover:bg-accent hover:text-accent-foreground",
         link: "text-gold-strong underline-offset-4 hover:underline",
       },

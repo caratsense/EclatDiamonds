@@ -45,7 +45,7 @@ export function ProductCard({ product, onOpen }: ProductCardProps) {
       type="button"
       onClick={() => onOpen(product)}
       data-testid="product-card"
-      className="group flex flex-col overflow-hidden rounded-xl border bg-card text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="group flex flex-col overflow-hidden rounded-xl border bg-card text-left shadow-sm transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <div className="relative flex aspect-square w-full items-center justify-center overflow-hidden bg-white">
         {src ? (

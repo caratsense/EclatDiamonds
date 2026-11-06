@@ -78,10 +78,10 @@ export function GoldRateChip() {
         </button>
       </DialogTrigger>
 
-      <DialogContent className="max-w-2xl border-border/80 bg-[#090e13] p-6 text-foreground sm:rounded-2xl">
+      <DialogContent className="max-w-2xl p-6 sm:rounded-2xl">
         <DialogHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-muted-foreground">
               <Coins className="h-4 w-4" />
             </div>
             <div>
@@ -99,7 +99,7 @@ export function GoldRateChip() {
               asChild
               variant="outline"
               size="sm"
-              className="gap-1.5 border-slate-700 bg-slate-900/60 text-xs text-slate-200 hover:bg-slate-800"
+              className="gap-1.5 text-xs"
               onClick={() => setOpen(false)}
             >
               <Link href="/settings/rates">

@@ -83,6 +83,9 @@ export function useCreateCheckin() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [CHECKINS_KEY] });
+      // The dashboard's Footfall Today tile counts these same rows. Left out,
+      // a walk-in registered at the door did not reach the manager's screen.
+      qc.invalidateQueries({ queryKey: ["dashboard", "kpis"] });
     },
   });
 }

@@ -7,6 +7,10 @@ import { SectionHeader } from "@/components/section/section-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  StoreScopeField,
+  useStoreScope,
+} from "@/components/common/store-scope-field";
 import { ShiftsScheduleTab } from "@/components/hrms/shifts-schedule-tab";
 import { TeamBalanceEditor } from "@/components/hrms/leave-balances";
 import { useHolidays, useShifts } from "@/lib/queries/hrms";
@@ -35,6 +39,11 @@ export default function HrSetupPage() {
   const role = useSession((s) => s.role);
   const isHeadOffice = role === "head_office";
 
+  // Held here, not in the tab body: the store the settings belong to is stated
+  // once, above the tab strip, and stays legible while the panels load.
+  const { targetStoreId, storeLabel, pickedStoreId, setPickedStoreId } =
+    useStoreScope();
+
   const shiftsQuery = useShifts();
   const holidaysQuery = useHolidays();
   const loading = shiftsQuery.isLoading || holidaysQuery.isLoading;
@@ -51,57 +60,61 @@ export default function HrSetupPage() {
 
       <SectionHeader
         title="Shifts & Schedule"
-        purpose="Shifts, weekly offs, holidays and the attendance rules each branch is measured against."
+        purpose="Manage branch shifts, weekly offs, holidays and employee leave settings."
       />
 
-      {/* Planning a particular week is the roster's job, not this screen's —
-          said here so nobody plans a Tuesday off in two places. */}
-      <div className="mb-4">
-        <Button asChild variant="outline" size="sm">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        {/* Null on a concrete store — then the row carries the roster link alone. */}
+        <div className="w-full sm:max-w-[32rem]">
+          <StoreScopeField value={pickedStoreId} onChange={setPickedStoreId} />
+        </div>
+
+        {/* Planning a particular week is the roster's job, not this screen's —
+            said here so nobody plans a Tuesday off in two places. */}
+        <Button asChild className="shrink-0">
           <Link href="/hrms/roster">
             <CalendarRange className="size-4" /> Plan a week on Roster &amp; Shifts
           </Link>
         </Button>
       </div>
 
-      <div className="space-y-6">
-        {loading ? (
-          <div className="space-y-4">
-            <Skeleton className="h-28 rounded-xl" />
-            <Skeleton className="h-64 rounded-xl" />
-          </div>
-        ) : failed ? (
-          <Card>
-            <CardContent className="space-y-3 py-8 text-center">
-              <p className="text-sm font-medium">
-                Couldn&apos;t load shifts &amp; schedule.
-              </p>
-              <p className="text-xs text-muted-foreground">
-                The connection may have dropped. Check your network and try again.
-              </p>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  shiftsQuery.refetch();
-                  holidaysQuery.refetch();
-                }}
-              >
-                Retry
-              </Button>
-            </CardContent>
-          </Card>
-        ) : (
-          <ShiftsScheduleTab
-            shifts={shiftsQuery.data ?? []}
-            holidays={holidaysQuery.data ?? []}
-          />
-        )}
-
-        {/* Head office only, and the correction panel alone — not the
-            self-service balances that sit above it on the Leave Tracker. */}
-        {isHeadOffice ? <TeamBalanceEditor /> : null}
-      </div>
+      {loading ? (
+        <div className="space-y-4">
+          <Skeleton className="h-28 rounded-xl" />
+          <Skeleton className="h-64 rounded-xl" />
+        </div>
+      ) : failed ? (
+        <Card>
+          <CardContent className="space-y-3 py-8 text-center">
+            <p className="text-sm font-medium">
+              Couldn&apos;t load shifts &amp; schedule.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              The connection may have dropped. Check your network and try again.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                shiftsQuery.refetch();
+                holidaysQuery.refetch();
+              }}
+            >
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <ShiftsScheduleTab
+          shifts={shiftsQuery.data ?? []}
+          holidays={holidaysQuery.data ?? []}
+          storeId={targetStoreId}
+          storeLabel={storeLabel}
+          /* Head office only, and the correction panel alone — not the
+             self-service balances that sit above it on the Leave Tracker. */
+          leaveBalances={isHeadOffice ? <TeamBalanceEditor /> : undefined}
+        />
+      )}
     </>
   );
 }

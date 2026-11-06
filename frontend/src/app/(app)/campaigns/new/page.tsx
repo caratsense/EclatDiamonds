@@ -93,7 +93,7 @@ export default function NewCampaignPage() {
       { definition, ...(storeIds.length ? { storeIds } : {}) },
       {
         onError: (e) =>
-          toast.error(apiErrorMessage(e, "Could not work out who this campaign would reach.")),
+          toast.error(apiErrorMessage(e, "Could not work out who this broadcast would reach.")),
       },
     );
   };
@@ -104,12 +104,12 @@ export default function NewCampaignPage() {
 
   const finish = () => {
     if (!name.trim()) {
-      toast.error("Give the campaign a name.");
+      toast.error("Give the broadcast a name.");
       setStep("Details");
       return;
     }
     if (!templateName.trim()) {
-      toast.error("Choose the approved template this campaign sends.");
+      toast.error("Choose the approved template this broadcast sends.");
       setStep("Message");
       return;
     }
@@ -144,7 +144,7 @@ export default function NewCampaignPage() {
             },
           );
         },
-        onError: (e) => toast.error(apiErrorMessage(e, "Could not create the campaign.")),
+        onError: (e) => toast.error(apiErrorMessage(e, "Could not create the broadcast.")),
       },
     );
   };
@@ -152,7 +152,7 @@ export default function NewCampaignPage() {
   return (
     <div className="space-y-6">
       <SectionHeader
-        title="New campaign"
+        title="New broadcast"
         purpose="Choose who it reaches, then what it says. Consent is checked again for every person at the moment of sending."
       />
 
@@ -181,12 +181,12 @@ export default function NewCampaignPage() {
       {step === "Details" ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">What is this campaign?</CardTitle>
+            <CardTitle className="text-base">What is this broadcast?</CardTitle>
             <CardDescription>Only your team sees these.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-1.5">
-              <Label>Campaign name</Label>
+              <Label>Broadcast name</Label>
               <Input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
