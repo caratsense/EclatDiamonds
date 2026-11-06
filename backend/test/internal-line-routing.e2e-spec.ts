@@ -6,6 +6,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { WhatsAppBotService } from '../src/whatsapp-bot/whatsapp-bot.service';
 import { WhatsAppIdentityService } from '../src/whatsapp-bot/whatsapp-identity.service';
+import { WhatsAppService } from '../src/integrations/whatsapp.service';
 
 /**
  * TWO NUMBERS, TWO BOTS, ONE WEBHOOK.
@@ -143,6 +144,25 @@ describe('two WhatsApp lines, one webhook (e2e)', () => {
         name: 'Two Line WhatsApp',
         status: 'connected',
       },
+    });
+
+    /*
+     * A token for that connection, sealed the way the product seals it.
+     *
+     * The fixture had none, which is not a state that exists: an integration
+     * marked `connected` with no credential cannot send, and the resolver says
+     * so. The bot tests below never noticed because they drive inbound
+     * handling, but anything asking "could this tenant send" got the right
+     * answer for the wrong reason.
+     */
+    const { CredentialCrypto } = await import('../src/integration/framework/credential-crypto');
+    const sealed = app.get(CredentialCrypto).encrypt('token-for-twoline', {
+      organisationId: ORG,
+      integrationId: INTEGRATION,
+      kind: 'access_token',
+    });
+    await prisma.integrationCredential.create({
+      data: { organisationId: ORG, integrationId: INTEGRATION, kind: 'access_token', ...sealed },
     });
 
     // The shopfront line. `purpose` is null, like every number registered
@@ -415,6 +435,26 @@ describe('two WhatsApp lines, one webhook (e2e)', () => {
 
   /* ----------------------------------------------------- the classification */
 
+  /*
+   * Shipped broken, found in production on 6 Nov 2026.
+   *
+   * `GET /integrations/status` is a single boolean, and the UI turns `false`
+   * into "WhatsApp is not connected yet. Anything you send from here will be
+   * prepared but not delivered" beside the quote send controls. It called
+   * `enabledFor`, which asked the resolver with NO audience — and a route-less
+   * question cannot be answered by a tenant holding more than one number, so
+   * the resolver correctly refused and the UI read the refusal as an outage.
+   *
+   * The shape below is the shape that broke: one shopfront line and one staff
+   * line, which is the second number most businesses ever add. Quotes were
+   * going out normally the whole time; only the banner was wrong, which is the
+   * worst version of the bug — it sends somebody to re-send by hand.
+   */
+  it('reports WhatsApp connected, with a staff line beside the shopfront one', async () => {
+    const whatsapp = app.get(WhatsAppService);
+    await expect(whatsapp.enabledFor(ORG)).resolves.toBe(true);
+  });
+
   it('treats an unclassified number as customer-facing, so nothing in production changes', async () => {
     const asset = await prisma.integrationAsset.findFirst({
       where: { integrationId: INTEGRATION, externalId: CUSTOMER_LINE },
@@ -440,6 +480,7 @@ async function teardown(prisma: PrismaService) {
   await prisma.party.deleteMany({ where: { organisationId: ORG } });
   await prisma.dailyReport.deleteMany({ where: { organisationId: ORG } });
   await prisma.storeMessagingRoute.deleteMany({ where: { organisationId: ORG } });
+  await prisma.integrationCredential.deleteMany({ where: { organisationId: ORG } });
   await prisma.integrationAsset.deleteMany({ where: { organisationId: ORG } });
   await prisma.integration.deleteMany({ where: { organisationId: ORG } });
   await prisma.userStore.deleteMany({ where: { storeId: STORE } });
