@@ -72,25 +72,40 @@ export class WhatsAppService {
   }
 
   /**
-   * Can this organisation actually send?
+   * Can this organisation actually send TO A CUSTOMER?
    *
    * Takes an organisation because the answer differs per tenant — one may have
    * connected their number while another has not. The old parameterless
    * `enabled` could only ever describe the platform, which is exactly the
    * assumption being removed.
+   *
+   * The audience is not optional here, and asking without it was a real bug.
+   * A route-less question cannot be answered by a tenant with more than one
+   * number — the resolver correctly refuses rather than pick one — and the
+   * single caller of this method is `GET /integrations/status`, which the UI
+   * turns into "WhatsApp is not connected yet" next to the send controls.
+   * So a shop that had added a staff line beside its shopfront number was told
+   * its WhatsApp was not connected while its quotes were going out normally:
+   * the warning came from the question, not from the connection.
+   *
+   * `customer` is the right audience to ask about because that banner guards
+   * customer-facing sends. A staff line alone is deliberately NOT "connected"
+   * for this purpose — a business that can only message its own staff cannot
+   * message a customer, and saying otherwise would be the same lie inverted.
    */
   async enabledFor(organisationId: string): Promise<boolean> {
-    return (await this.credentials.senderFor(organisationId)).usable;
+    return (await this.credentials.senderFor(organisationId, { audience: 'customer' })).usable;
   }
 
   /**
    * Whether ONE PARTICULAR message could leave, and the sentence to show when
    * it could not — without handing the caller the credential it would use.
    *
-   * `enabledFor` asks with no route at all, which for a tenant with several
-   * numbers always answers "no": nothing told it which one. A caller that knows
-   * the branch and the audience (a quote, to a customer) needs the answer for
-   * THAT send, before it queues something a person will be told about.
+   * `enabledFor` asks only "could a customer be reached at all", which is the
+   * right question for a banner and the wrong one for a send. A caller that
+   * knows the branch as well (a quote, from the branch that raised it) needs
+   * the answer for THAT send, before it queues something a person will be told
+   * about: the branch decides WHICH customer-facing number carries it.
    *
    * `scope` is part of the answer on purpose. "This tenant has no WhatsApp"
    * (`none`) and "this tenant has WhatsApp but not for this message" (`tenant`)

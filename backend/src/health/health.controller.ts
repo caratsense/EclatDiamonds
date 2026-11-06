@@ -104,11 +104,36 @@ export class HealthController {
         process.env.R2_SECRET_ACCESS_KEY &&
         (process.env.KNOWLEDGE_R2_BUCKET || process.env.R2_BUCKET),
     );
+    // All three are needed before the platform number can carry anything.
+    const whatsappPlatformParts = [
+      process.env.WHATSAPP_ACCESS_TOKEN,
+      process.env.WHATSAPP_PHONE_NUMBER_ID,
+      process.env.WHATSAPP_PLATFORM_ORGANISATION_ID,
+    ].filter(Boolean).length;
+    const whatsappPlatform =
+      whatsappPlatformParts === 3
+        ? 'configured'
+        : whatsappPlatformParts === 0
+          ? 'not_configured'
+          : 'misconfigured';
+
     const dependencies = {
       // Configured-or-not, stated plainly. "Not configured" is a normal state
       // for a deployment that has not connected a channel, NOT a fault — so it
       // is reported as its own value rather than as a failure.
-      whatsapp: process.env.WHATSAPP_ACCESS_TOKEN ? 'configured' : 'not_configured',
+      /*
+       * The PLATFORM binding only — tenants connect their own numbers in the
+       * database, and this endpoint has no tenant to ask about.
+       *
+       * It reported `configured` whenever the token alone was present, which
+       * on this deployment was true and useless: the token was set, the other
+       * two were not, so the platform number could never resolve and health
+       * said "configured" about a path that could not send. All three are
+       * required by `WhatsAppCredentialsService.senderFor`, so a partial set
+       * is `misconfigured` — the same distinction knowledgeStorage makes below,
+       * and the one that would have made this visible without a log dive.
+       */
+      whatsapp: whatsappPlatform,
       razorpay: process.env.RAZORPAY_KEY_ID ? 'configured' : 'not_configured',
       objectStorage: (process.env.STORAGE_PROVIDER ?? 'local') === 'local' ? 'local_disk' : 'configured',
       knowledgeStorage:
