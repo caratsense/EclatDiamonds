@@ -23,6 +23,7 @@
     "db:backup": "node scripts/db-backup.mjs",
     "db:restore:verify": "node scripts/db-restore-verify.mjs",
     "db:restore:drill": "node scripts/db-restore-drill.mjs",
+    "test:unit": "jest --config ./test/jest-unit.json",
     "test:e2e": "jest --config ./test/jest-e2e.json --runInBand",
     "test:db:setup": "node scripts/test-db.mjs setup",
     "test:db:drop": "node scripts/test-db.mjs drop",
