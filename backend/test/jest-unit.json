@@ -1,0 +1,13 @@
+{
+  "//": "Fast unit suite: no Nest container, no database, no network — only the pure functions the ads and routing paths are built from. The e2e suites in this folder boot the app and talk to Postgres, and each takes tens of minutes; this one runs in about a second, so it is the one to run on every change. `npm run test:unit`.",
+  "//isolatedModules": "Transpile without per-file type checking: 1.6s instead of 25s, which is the difference between a suite you run on every save and one you don't. ts-jest warns that this option moves to tsconfig in v30 — it is not set there on purpose, because the same flag would weaken type checking for the build and the e2e suites too. `npm run build` and `tsc --noEmit` still type-check these files in full.",
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": "..",
+  "roots": ["<rootDir>/src"],
+  "testEnvironment": "node",
+  "testRegex": "\\.spec\\.ts$",
+  "transform": {
+    "^.+\\.(t|j)s$": ["ts-jest", { "tsconfig": "<rootDir>/tsconfig.json", "isolatedModules": true }]
+  },
+  "testTimeout": 5000
+}

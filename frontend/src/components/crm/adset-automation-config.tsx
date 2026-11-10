@@ -91,13 +91,25 @@ function AdSetRulesEditor({ initialRules }: { initialRules: AdSetAutomationRule[
             conversation remains unassigned; {PRODUCT_NAME} never guesses a location.
           </p>
           <p className="mt-3">
-            <strong className="text-foreground">Which match fields work today.</strong>{" "}
+            <strong className="text-foreground">Ad set is usually the right field.</strong>{" "}
             A Click-to-WhatsApp click tells us the <strong className="text-foreground">ad ID</strong>{" "}
-            and nothing more — Meta does not send the ad set or campaign with it. Copy an ad ID
-            from Ads Manager and <em>Exact ad ID</em> rules route correctly right now, with no
-            extra Meta permissions. The ad-set fields stay here for when a Meta Marketing API
-            connection is approved; until then they will never match, and traffic they were
-            meant to catch stays unassigned rather than being routed on a guess.
+            and nothing else — no ad set, no campaign, no geography. {PRODUCT_NAME} then asks
+            Meta which ad set and campaign that ad belongs to, so all four match fields work.
+            Prefer the ad set: your marketing team already names ad sets after the branch, so
+            one rule per showroom covers every ad that showroom will ever run. Matching on the
+            ad ID instead means a new rule for every new creative, and forgetting one is silent.
+          </p>
+          <p className="mt-3">
+            <strong className="text-foreground">Only Click-to-WhatsApp ads can match.</strong>{" "}
+            An ad has to open WhatsApp to produce a referral at all. A lead-form or offer ad
+            (anything whose button is not a WhatsApp one) never reaches this screen, however
+            much it spends — so if a campaign is running and nothing is being routed, check the
+            ad&apos;s button in Ads Manager before changing a rule here.
+          </p>
+          <p className="mt-3">
+            If the lookup fails, or no rule matches, the conversation stays unassigned rather
+            than being routed on a guess: a guessed branch sends a customer to the wrong
+            showroom and nobody finds out from the software.
           </p>
         </CardContent>
       </Card>
