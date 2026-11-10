@@ -73,14 +73,14 @@ const DEFAULT_REQUESTABLE: SignupRole[] = ["salesperson", "store_manager"];
 const FIELD =
   "border-slate-300/80 bg-slate-50/70 text-slate-900 placeholder:text-slate-400 " +
   "dark:border-white/10 dark:bg-white/[0.02] dark:text-[#f8fafc] dark:placeholder:text-[#f8fafc]/25 " +
-  "focus:border-[#6366f1]/90 focus:bg-white dark:focus:bg-white/[0.04] focus:ring-1 focus:ring-[#6366f1]/40 transition-colors shadow-xs dark:shadow-none";
+  "focus:border-primary/90 focus:bg-white dark:focus:bg-white/[0.04] focus:ring-1 focus:ring-primary/40 transition-colors shadow-xs dark:shadow-none";
 
 /** The same, as a complete class list for the bare <input>/<select> elements. */
 const inputCls =
   "w-full rounded-md border border-slate-300/80 bg-slate-50/70 px-3 py-2 text-sm text-slate-900 " +
   "dark:border-white/10 dark:bg-white/[0.02] dark:text-[#f8fafc] " +
   "placeholder:text-slate-400 dark:placeholder:text-[#f8fafc]/25 " +
-  "focus:border-[#6366f1]/90 focus:bg-white dark:focus:bg-white/[0.04] focus:outline-none focus:ring-1 focus:ring-[#6366f1]/40 transition-colors shadow-xs dark:shadow-none";
+  "focus:border-primary/90 focus:bg-white dark:focus:bg-white/[0.04] focus:outline-none focus:ring-1 focus:ring-primary/40 transition-colors shadow-xs dark:shadow-none";
 
 /**
  * Self-registration card. Creates a PENDING request (never a live session): the
@@ -157,13 +157,13 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
   if (done) {
     return (
       <div className="glass facet-top relative rounded-2xl p-6 text-center">
-        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[#818cf8]/15 text-[#818cf8]">
+        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[color:var(--accent-solid)]/15 text-[color:var(--accent-solid)]">
           <MailCheck className="h-6 w-6" />
         </div>
         <h3 className="text-lg font-semibold text-slate-900 dark:text-[#f8fafc]">Request sent</h3>
         <p className="mt-2 text-sm text-slate-600 dark:text-[#f8fafc]/75">{done.message}</p>
         <div className="mt-4 rounded-lg border border-slate-200 dark:border-white/[0.08] bg-slate-100/80 dark:bg-black/25 p-3 text-left">
-          <p className="text-[11px] uppercase tracking-wider text-[#6366f1] dark:text-[#818cf8] font-semibold">
+          <p className="text-[11px] uppercase tracking-wider text-primary dark:text-accent-solid font-semibold">
             Your Login ID
           </p>
           <p className="mt-0.5 break-all font-mono text-sm font-bold text-slate-900 dark:text-[#f8fafc]">
@@ -178,7 +178,7 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
         <Button
           type="button"
           onClick={onBackToSignin}
-          className="mt-5 w-full bg-[#6366f1] text-white font-semibold hover:bg-[#4f46e5]"
+          className="mt-5 w-full bg-primary text-primary-foreground font-semibold hover:bg-primary/90"
         >
           Back to sign in
         </Button>
@@ -299,7 +299,7 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
       </div>
       {preview.data?.loginIdPreview ? (
         <div className="rounded-lg border border-slate-200/80 bg-slate-100/60 p-3 dark:border-white/[0.08] dark:bg-black/25">
-          <p className="text-[11px] uppercase tracking-wider text-[#6366f1] dark:text-[#818cf8]">
+          <p className="text-[11px] uppercase tracking-wider text-primary dark:text-accent-solid">
             Your Login ID will look like
           </p>
           <p className="mt-0.5 break-all font-mono text-sm text-slate-900 dark:text-[#f8fafc]">
@@ -315,7 +315,7 @@ function SignupCard({ onBackToSignin }: { onBackToSignin: () => void }) {
       ) : null}
       <Button
         type="submit"
-        className="w-full bg-[#6366f1] text-white font-semibold hover:bg-[#4f46e5]"
+        className="w-full bg-primary text-primary-foreground font-semibold hover:bg-primary/90"
         disabled={signup.isPending}
       >
         {signup.isPending ? (
@@ -454,13 +454,13 @@ function OrganisationSignupCard({
       </div>
 
       {selectedIndustry ? (
-        <div className="flex gap-2.5 rounded-lg border border-indigo-200/70 dark:border-white/[0.08] bg-indigo-50/60 dark:bg-black/25 p-3">
-          <Bot className="mt-0.5 h-4 w-4 shrink-0 text-[#6366f1] dark:text-[#818cf8]" />
+        <div className="flex gap-2.5 rounded-lg border border-primary/25 dark:border-white/[0.08] bg-primary/5 dark:bg-black/25 p-3">
+          <Bot className="mt-0.5 h-4 w-4 shrink-0 text-primary dark:text-accent-solid" />
           <div>
-            <p className="text-xs font-medium text-indigo-950 dark:text-[#f8fafc]">
+            <p className="text-xs font-medium text-foreground dark:text-[#f8fafc]">
               Industry-ready CRM setup
             </p>
-            <p className="mt-0.5 text-[11px] leading-relaxed text-indigo-900/75 dark:text-[#f8fafc]/55">
+            <p className="mt-0.5 text-[11px] leading-relaxed text-foreground/75 dark:text-[#f8fafc]/55">
               {selectedIndustry.description}
             </p>
           </div>
@@ -597,7 +597,7 @@ function OrganisationSignupCard({
 
       <Button
         type="submit"
-        className="w-full bg-[#6366f1] font-semibold text-white hover:bg-[#4f46e5] shadow-xs"
+        className="w-full bg-primary font-semibold text-primary-foreground hover:bg-primary/90 shadow-xs"
         disabled={createOrganisation.isPending || industriesQuery.isLoading}
       >
         {createOrganisation.isPending ? (
@@ -705,8 +705,11 @@ function LoginPage() {
           className="absolute inset-0 z-0 opacity-75 dark:opacity-100"
           style={{
             backgroundImage:
-              "radial-gradient(40rem 30rem at 20% 20%, rgba(99,102,241,0.14), transparent 70%)," +
-              "radial-gradient(40rem 30rem at 80% 80%, rgba(56,189,248,0.10), transparent 70%)",
+              // Same two sources as `.landing-gradient` in globals.css, which this
+              // panel sits beside — indigo and sky here were the last of the old
+              // theme, and read as a blue cast behind a red brand.
+              "radial-gradient(40rem 30rem at 20% 20%, rgba(198,40,40,0.22), transparent 70%)," +
+              "radial-gradient(40rem 30rem at 80% 80%, rgba(229,155,150,0.08), transparent 70%)",
           }}
         />
         <div className="absolute inset-0 z-0 bg-gradient-to-b from-transparent via-[#eef2f8]/40 dark:via-[#090b10]/40 to-[#e2e8f0]/60 dark:to-[#06080d]/90" />
@@ -714,8 +717,8 @@ function LoginPage() {
         {/* Top Header */}
         <div className="relative z-10 flex items-center justify-between">
           {creatingOrganisation ? (
-            <div className="flex items-center gap-2 text-[#6366f1] dark:text-[#818cf8]">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-indigo-500/30 bg-indigo-500/10">
+            <div className="flex items-center gap-2 text-primary dark:text-accent-solid">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-primary/30 bg-primary/10">
                 <Bot className="h-5 w-5" />
               </div>
               <span className="font-display text-xl font-bold">{PRODUCT_NAME}</span>
@@ -723,8 +726,8 @@ function LoginPage() {
           ) : (
             <Logo className="h-10 w-auto" />
           )}
-          <span className="inline-flex items-center gap-2 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-3.5 py-1 text-xs font-medium text-[#4f46e5] dark:text-[#818cf8]">
-            <Sparkles className="h-3.5 w-3.5 text-[#6366f1] dark:text-[#818cf8]" />
+          <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3.5 py-1 text-xs font-medium text-[color:var(--primary)] dark:text-[color:var(--accent-solid)]">
+            <Sparkles className="h-3.5 w-3.5 text-primary dark:text-accent-solid" />
             {creatingOrganisation ? "Universal AI CRM" : "Omnichannel AI CRM"}
           </span>
         </div>
@@ -732,7 +735,7 @@ function LoginPage() {
         {/* Middle Content & Live Glassmorphism Widgets */}
         <div className="relative z-10 my-auto max-w-lg space-y-7 py-8">
           <div>
-            <span className="text-xs font-medium uppercase tracking-[0.2em] text-[#6366f1] dark:text-[#818cf8]">
+            <span className="text-xs font-medium uppercase tracking-[0.2em] text-primary dark:text-accent-solid">
               {creatingOrganisation ? "Built for every industry" : PRODUCT_NAME}
             </span>
             <h1 className="mt-3 font-display text-4xl font-bold leading-[1.05] tracking-tight text-slate-900 dark:text-[#f8fafc] xl:text-[3.25rem]">
@@ -786,12 +789,12 @@ function LoginPage() {
                 key={card.title}
                 className="glass flex items-start gap-3.5 rounded-2xl p-4 shadow-xs"
               >
-                <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-500/10 text-[#6366f1] dark:bg-[#818cf8]/15 dark:text-[#818cf8]">
+                <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-[color:var(--primary)] dark:bg-[color:var(--accent-solid)]/15 dark:text-[color:var(--accent-solid)]">
                   <card.icon className="h-5 w-5" />
                   {card.live ? (
                     <span className="absolute -right-0.5 -top-0.5 flex h-2.5 w-2.5">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#818cf8] opacity-70" />
-                      <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#6366f1]" />
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[color:var(--accent-solid)] opacity-70" />
+                      <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[color:var(--primary)]" />
                     </span>
                   ) : null}
                 </div>
@@ -826,7 +829,7 @@ function LoginPage() {
           <div className="flex items-center justify-between">
             <div>
               {creatingOrganisation ? (
-                <div className="flex items-center gap-2 text-[#6366f1] dark:text-[#818cf8]">
+                <div className="flex items-center gap-2 text-primary dark:text-accent-solid">
                   <Bot className="h-6 w-6" />
                   <span className="font-display text-xl font-bold">{PRODUCT_NAME}</span>
                 </div>
@@ -923,7 +926,7 @@ function LoginPage() {
                 </div>
                 <Button
                   type="submit"
-                  className="w-full bg-[#6366f1] text-white font-semibold hover:bg-[#4f46e5] shadow-xs"
+                  className="w-full bg-primary text-primary-foreground font-semibold hover:bg-primary/90 shadow-xs"
                   disabled={login.isPending}
                 >
                   {login.isPending ? (
@@ -950,7 +953,7 @@ function LoginPage() {
                   className={
                     "flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-colors " +
                     (signupKind === "join"
-                      ? "bg-[#6366f1] text-white shadow-xs"
+                      ? "bg-[color:var(--primary)] text-white shadow-xs"
                       : "text-slate-600 dark:text-[#f8fafc]/65 hover:bg-white/60 dark:hover:bg-white/5")
                   }
                 >
@@ -962,7 +965,7 @@ function LoginPage() {
                   className={
                     "flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-colors " +
                     (signupKind === "organisation"
-                      ? "bg-[#6366f1] text-white shadow-xs"
+                      ? "bg-[color:var(--primary)] text-white shadow-xs"
                       : "text-slate-600 dark:text-[#f8fafc]/65 hover:bg-white/60 dark:hover:bg-white/5")
                   }
                 >
@@ -993,7 +996,7 @@ function LoginPage() {
             <button
               type="button"
               onClick={() => setMode("signin")}
-              className="flex w-full items-center justify-center gap-1.5 text-sm text-slate-600 dark:text-[#f8fafc]/70 transition-colors hover:text-[#6366f1] dark:hover:text-[#818cf8]"
+              className="flex w-full items-center justify-center gap-1.5 text-sm text-slate-600 dark:text-[#f8fafc]/70 transition-colors hover:text-[color:var(--primary)] dark:hover:text-[color:var(--accent-solid)]"
             >
               <ArrowLeft className="h-3.5 w-3.5" /> Back to sign in
             </button>
@@ -1004,7 +1007,7 @@ function LoginPage() {
                 setSignupKind("join");
                 setMode("signup");
               }}
-              className="flex w-full items-center justify-center gap-1.5 text-sm text-slate-600 dark:text-[#f8fafc]/70 transition-colors hover:text-[#6366f1] dark:hover:text-[#818cf8]"
+              className="flex w-full items-center justify-center gap-1.5 text-sm text-slate-600 dark:text-[#f8fafc]/70 transition-colors hover:text-[color:var(--primary)] dark:hover:text-[color:var(--accent-solid)]"
             >
               New here? Request an account
             </button>
