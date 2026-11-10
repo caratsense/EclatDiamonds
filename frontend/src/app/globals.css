@@ -310,6 +310,10 @@
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
+  /* The LIT accent, for marks on a dark ground. Mapped so a surface that is
+     dark in both themes (the sign-in panel) can say `text-accent-solid`
+     instead of pasting a hex per theme. */
+  --color-accent-solid: var(--accent-solid);
   --color-primary-foreground: var(--primary-foreground);
   --color-action-ink: var(--action-ink);
   --color-action-ink-foreground: var(--action-ink-foreground);
