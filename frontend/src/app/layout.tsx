@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Hanken_Grotesk, Fraunces, IBM_Plex_Mono } from "next/font/google";
+import { Hanken_Grotesk, Plus_Jakarta_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 
 import { Providers } from "@/components/providers";
@@ -11,18 +11,8 @@ import { PRODUCT_NAME } from "@/lib/brand";
  *  - Hanken Grotesk (--font-sans-face): the workhorse UI face for dense
  *    operational data — a premium grotesk, deliberately not the ubiquitous Inter.
  *  - Plus Jakarta Sans (--font-display-face): page titles and the single hero
- *    figure per screen. This slot used to hold Fraunces, a jewellery-house
- *    serif — which was right when this was one jeweller's system and wrong the
- *    moment it became a universal operations platform. A bookish serif on a
- *    clinic's roster or a mill's stock ledger reads as dated rather than
- *    considered, and it fought the dense grotesk beside it on every screen.
- *    Jakarta is a geometric sans with real weight at 700 and slightly more
- *    character than the grotesk under it, so the two pair without competing.
- *
- *    The VARIABLE NAME is deliberately unchanged. Forty-six call sites reach
- *    for `--font-display-face` or the `font-display` utility; renaming the slot
- *    would have meant touching every one of them to change one typeface, and
- *    the slot's job ("the display face") has not changed at all.
+ *    figure per screen. See the note above the loader for why this is a sans
+ *    and not the jewellery-house serif it twice reverted to.
  *  - IBM Plex Mono (--font-mono-face): the "assay readout" — tabular figures for
  *    weights, carats, prices and every numeric column. Not a variable font, so
  *    its weights are listed explicitly.
@@ -40,20 +30,27 @@ const sans = Hanken_Grotesk({
 });
 
 /*
- * Page titles. Fraunces, a high-contrast serif, restored 24 Oct 2026 with the
- * emerald-and-gold palette: the client's reference pairs "elegant serif
- * headings with a clean sans-serif for tables, labels and metrics", and a
- * grotesk display face over a grotesk UI face bought no distinction at all.
+ * Page titles and the single hero figure per screen.
  *
- * Only the `wght` axis loads, so the `WONK` axis sits at 0 and the playful
- * letterforms that got this face dropped once before never appear. Its figures
- * can be oldstyle and bounce off the baseline, so numerals wear `.num` (the
- * mono readout) and never the serif — `.font-display` forces `lining-nums` as
- * a safety net.
+ * This slot has been round-tripped twice and the serif lost both times. Fraunces
+ * was restored on 24 Oct 2026 for one reason, stated in the commit: it paired
+ * with the emerald-and-gold palette, whose reference called for "elegant serif
+ * headings with a clean sans-serif for tables". That palette was replaced five
+ * days later by the CaratSpace red-and-black theme, and nobody moved the
+ * typeface back — so a serif chosen for a design that no longer exists was
+ * still setting every page title, including the sign-in screen a client sees
+ * first.
+ *
+ * Jakarta is a geometric sans with real weight at 700 and a little more
+ * character than the grotesk beneath it, so the two pair without competing.
+ * `globals.css` has described this slot as "a geometric sans" since the first
+ * attempt; with Fraunces in it, that comment was describing something else.
+ *
+ * The VARIABLE NAME stays `--font-display-face`. Forty-six call sites reach for
+ * it or for the `font-display` utility, and the slot's job has not changed.
  */
-const displayFace = Fraunces({
+const displayFace = Plus_Jakarta_Sans({
   subsets: ["latin"],
-  axes: ["SOFT", "WONK"],
   variable: "--font-display-face",
   display: "swap",
 });
