@@ -1,4 +1,10 @@
-import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
@@ -180,9 +186,17 @@ export class CheckinsService {
       { header: 'Budget', key: 'budgetRange', width: 10 },
       { header: 'Outcome', key: 'outcome', width: 14 },
       { header: 'Attended by', key: 'rep', width: 18 },
+      { header: 'Manager', key: 'manager', width: 18 },
       { header: 'Non-purchase reason', key: 'nonPurchaseReason', width: 28 },
+      { header: 'Recommended action (HQ)', key: 'recommendedAction', width: 30 },
       { header: 'Saving scheme', key: 'savingScheme', width: 12 },
       { header: 'Scheme reason', key: 'savingSchemeReason', width: 24 },
+      { header: 'Google review taken', key: 'googleReview', width: 18 },
+      { header: 'Referral name', key: 'referralName', width: 20 },
+      { header: 'Referral number', key: 'referralPhone', width: 16 },
+      { header: 'Delivery date', key: 'deliveryDate', width: 13 },
+      { header: 'NPS message sent', key: 'npsSent', width: 18 },
+      { header: 'NPS response received', key: 'npsResponse', width: 20 },
       { header: 'Remark', key: 'remark', width: 30 },
     ];
     ws.getRow(1).font = { bold: true };
@@ -203,9 +217,33 @@ export class CheckinsService {
         budgetRange: survey.budgetRange ?? '',
         outcome: r.outcome,
         rep: r.repName ?? '',
+        manager: r.managerName ?? '',
         nonPurchaseReason: survey.nonPurchaseReason ?? '',
+        recommendedAction: r.recommendedAction ?? '',
         savingScheme: survey.savingScheme ?? '',
         savingSchemeReason: survey.savingSchemeReason ?? '',
+        /*
+         * Three states, not two. Blank means nobody recorded an answer, which
+         * is not the same as NO — and on a register head office reconciles by
+         * hand, "" reading as "no" would understate every branch.
+         */
+        googleReview:
+          r.googleReviewTaken === null || r.googleReviewTaken === undefined
+            ? ''
+            : r.googleReviewTaken
+              ? 'YES'
+              : 'NO',
+        referralName: r.referralName ?? '',
+        referralPhone: r.referralPhone ?? '',
+        deliveryDate: r.deliveryDate
+          ? r.deliveryDate.toLocaleDateString('en-IN', { timeZone: tz })
+          : '',
+        npsSent: r.npsMessageSentAt
+          ? r.npsMessageSentAt.toLocaleDateString('en-IN', { timeZone: tz })
+          : '',
+        npsResponse: r.npsResponseReceivedAt
+          ? r.npsResponseReceivedAt.toLocaleDateString('en-IN', { timeZone: tz })
+          : '',
         remark: r.remark ?? '',
       });
     }
@@ -316,6 +354,26 @@ export class CheckinsService {
         repId: dto.repId ?? user.id,
         repName: dto.repName ?? user.name,
         timeIn: new Date(),
+        /*
+         * COLUMNS, not `metadata`, unlike the survey answers above.
+         *
+         * The survey is tenant-defined and sparse, which is what metadata is
+         * for. These are the client's register: each one is a column in the
+         * sheet head office reconciles against, and three of them (the NPS
+         * pair, the referral number) are read by features rather than only
+         * displayed. A JSON blob cannot be indexed, filtered or exported by
+         * name without every reader knowing its shape.
+         */
+        ...(dto.visitDate ? { visitDate: new Date(dto.visitDate) } : {}),
+        ...(dto.managerName?.trim() ? { managerName: dto.managerName.trim() } : {}),
+        ...(dto.googleReviewTaken === undefined
+          ? {}
+          : { googleReviewTaken: dto.googleReviewTaken }),
+        ...(dto.referralName?.trim() ? { referralName: dto.referralName.trim() } : {}),
+        ...(dto.referralPhone?.trim() ? { referralPhone: dto.referralPhone.trim() } : {}),
+        ...(dto.recommendedAction?.trim()
+          ? { recommendedAction: dto.recommendedAction.trim() }
+          : {}),
         ...(Object.keys(survey).length ? { metadata: survey } : {}),
       },
     });
@@ -404,11 +462,24 @@ export class CheckinsService {
       if (!owner) throw new NotFoundException('That follow-up owner is not available.');
     }
 
+    /*
+     * A delivery date belongs to a custom order and to nothing else. A direct
+     * sale leaves the counter with the customer, so a date on one is either a
+     * mis-click or a misunderstanding — and stored quietly it would show up in
+     * the register as a promise nobody made.
+     */
+    if (dto.deliveryDate && dto.outcome !== 'custom_order') {
+      throw new BadRequestException(
+        'A delivery date applies to a custom order. For a direct sale the customer leaves with the piece.',
+      );
+    }
+
     const row = await this.prisma.checkIn.update({
       where: { id },
       data: {
         timeOut: new Date(),
         outcome: dto.outcome ?? 'left',
+        ...(dto.deliveryDate ? { deliveryDate: parseYmdUtc(dto.deliveryDate) } : {}),
         ...(dto.remark !== undefined ? { remark: dto.remark.trim() || null } : {}),
         ...(followUpDate ? { followUpDate: parseYmdUtc(followUpDate) } : {}),
         ...(followUpDate

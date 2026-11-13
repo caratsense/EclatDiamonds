@@ -24,6 +24,9 @@ const CHECKINS_KEY = "checkins";
 
 /** Backend purpose enum values (CheckinPurpose) accepted by POST /checkins. */
 export type CheckinPurposeInput =
+  // The register's two purposes that had no value here before.
+  | "purchase"
+  | "return_exchange"
   | "bridal"
   | "investment"
   | "repair"
@@ -119,11 +122,9 @@ export function useCheckoutCheckin() {
 
 /** Map a frontend visit-purpose label to the backend enum for POST writes. */
 export const PURPOSE_TO_ENUM: Record<VisitPurpose, CheckinPurposeInput> = {
-  Browsing: "browsing",
-  Bridal: "bridal",
-  "Gold Coin / Investment": "investment",
-  "Repair / Service": "repair",
-  "Gold Scheme": "scheme",
-  Exchange: "other",
-  "Quote Follow-up": "quote_followup",
+  Purchase: "purchase",
+  "Scheme Installments": "scheme",
+  Repair: "repair",
+  "Return/ Exchange": "return_exchange",
+  Exploring: "browsing",
 };

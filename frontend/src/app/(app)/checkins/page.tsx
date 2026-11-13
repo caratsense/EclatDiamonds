@@ -333,12 +333,11 @@ function todayYmd(): string {
 }
 
 const PURPOSE_OPTIONS: VisitPurpose[] = [
-  "Browsing",
-  "Bridal",
-  "Gold Coin / Investment",
-  "Repair / Service",
-  "Gold Scheme",
-  "Quote Follow-up",
+  "Purchase",
+  "Scheme Installments",
+  "Repair",
+  "Return/ Exchange",
+  "Exploring",
 ];
 
 /** Unified dialog for logging walk-ins, items shown, and outcome in one popup. */
@@ -351,24 +350,44 @@ function UnifiedWalkinDialog({
 }) {
   const { targetStoreId, storeLabel, pickedStoreId, setPickedStoreId } =
     useStoreScope();
-  /* The New Customer Data form's option lists, verbatim. */
+  /*
+   * The client's Walkin Register, option for option, read from the live form
+   * (Nov 2026). Spellings are theirs: "Word of Mourth" is a typo in the form
+   * and is kept, because an answer recorded here has to match an answer
+   * recorded there — correcting it on our side alone would split one answer
+   * into two in the reporting.
+   *
+   * "Other" is NOT offered on any of these. The form has no such option, and a
+   * free-text escape hatch is how a register stops being countable.
+   */
   const WALKIN_SOURCES = [
-    "Word of Mouth", "Direct Walk In", "Social Media", "Google Search",
+    "Word of Mourth", "Direct Walk In", "Social Media", "Google Search",
     "Hoardings", "Newspaper", "Radio", "Website", "Whatsapp", "Exhibition",
-    "Other",
   ];
   const WALKIN_CATEGORIES = [
     "Rings", "Earrings", "Pendants", "Mangalsutra", "Necklace Sets",
-    "Bracelets/Bangles", "Other",
+    "Bracelets/Bangles",
   ];
+  const WALKIN_OCCASIONS = [
+    "Wedding", "Gifting", "Self-Purchase",
+    "Festivals (Diwali, Dhanteras, ETC)",
+    "Other Events Birthday, Anniversary, ect)",
+    "Investments", "Casual Social Outing", "Daily Wear/ Social Wear",
+  ];
+  /*
+   * Theirs, not ours. We had one `<50k` bucket where the register has three
+   * below 50k, so a budget recorded here could not be mapped back to the band
+   * head office actually sorts on.
+   */
   const WALKIN_BUDGETS = [
-    { value: "<50k", label: "Under \u20B950k" },
-    { value: "50k-2L", label: "\u20B950k \u2013 2L" },
+    { value: "<25k", label: "Under \u20B925k" },
+    { value: "25k-50k", label: "\u20B925k \u2013 50k" },
+    { value: "50k-1L", label: "\u20B950k \u2013 1L" },
+    { value: "1-2L", label: "\u20B91 \u2013 2L" },
     { value: "2-5L", label: "\u20B92 \u2013 5L" },
     { value: "5-10L", label: "\u20B95 \u2013 10L" },
-    { value: "10-20L", label: "\u20B910 \u2013 20L" },
-    { value: ">20L", label: "Above \u20B920L" },
-    { value: "na", label: "Not applicable" },
+    { value: "10>", label: "Above \u20B910L" },
+    { value: "na", label: "Not Applicable" },
   ];
   const createCheckin = useCreateCheckin();
   const checkoutCheckin = useCheckoutCheckin();

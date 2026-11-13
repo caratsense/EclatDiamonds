@@ -380,6 +380,13 @@ enum CampaignType {
 }
 
 enum CheckinPurpose {
+  /// The client's register offers five purposes; two of them had no value
+  /// here, so the form could not be reproduced. `purchase` and
+  /// `return_exchange` are those two. The rest map onto what already existed:
+  /// "Scheme Installments" is `scheme`, "Repair" is `repair`, "Exploring" is
+  /// `browsing`. The unused values stay — rows already carry them.
+  purchase
+  return_exchange
   bridal
   investment
   repair
@@ -391,7 +398,11 @@ enum CheckinPurpose {
 
 enum CheckinOutcome {
   in_store
+  /// Shown as "Direct Sale" — the client's wording (walk-in review, Nov 2026).
+  /// The stored value is unchanged so existing rows and reports still read.
   sale_closed
+  /// Billed now, made later: carries `deliveryDate`, which a direct sale does not.
+  custom_order
   quote_given
   follow_up
   left
@@ -1753,14 +1764,14 @@ model Quote {
   leadId         String?
   assignedRepId  String?
 
-  customerName String
-  phone        String?
+  customerName    String
+  phone           String?
   /// The customer's own address as typed on the quote, printed under their
   /// name. Not `billTo` below, which is the GST bill-to block.
   customerAddress String?
-  status       QuoteStatus @default(draft)
-  kind         QuoteKind   @default(sale)
-  validUntil   DateTime?
+  status          QuoteStatus @default(draft)
+  kind            QuoteKind   @default(sale)
+  validUntil      DateTime?
 
   /// Round 2: free-text remarks (e.g. repair notes).
   remarks      String?
@@ -1781,6 +1792,8 @@ model Quote {
 
   /// Money rollup snapshot (recomputed from lines, persisted for fast listing).
   /**
+   * /**
+   * /**
    * /**
    * /**
    * /*
@@ -3190,6 +3203,41 @@ model CheckIn {
 
   store Store  @relation(fields: [storeId], references: [id])
   party Party? @relation(fields: [partyId], references: [id])
+
+  /// ── The walk-in register, as the client's Google form asks for it ────────
+  ///
+  /// These exist because the exported register carried eight columns the
+  /// product never captured, so the sheet was filled by hand beside a system
+  /// that already held half the visit.
+
+  /// The form asks for a DATE as well as the time of entry, because a register
+  /// is often written up after the fact. `timeIn` stays the moment the row was
+  /// opened; this is the day being reported on.
+  visitDate DateTime? @db.Date
+
+  /// Who was on the floor, as distinct from `attendedBy` — the form's "Sales
+  /// Person Name" already maps to that, and the manager is a second person.
+  managerName String?
+
+  /// Asked of every walk-in on the form, and mandatory there. Nullable here so
+  /// a row written before this existed is "not recorded", not "no".
+  googleReviewTaken Boolean?
+
+  referralName  String?
+  referralPhone String?
+
+  /// "Sales Person Recommended Action (needed from HQ)" — a request upward,
+  /// not a follow-up this branch will do itself (that is `preferredAction`).
+  recommendedAction String?
+
+  /// Only a custom order has one; a direct sale leaves with the piece.
+  deliveryDate DateTime? @db.Date
+
+  /// NPS is tracked ON the visit, not only in a side table: the register's last
+  /// two columns are "NPS Message Sent" and "NPS Response Received", and a
+  /// customer who never replies has to stay visible against their visit.
+  npsMessageSentAt      DateTime?
+  npsResponseReceivedAt DateTime?
 
   /// What the customer asked about during this visit.
   productInteractions ProductInteraction[]
