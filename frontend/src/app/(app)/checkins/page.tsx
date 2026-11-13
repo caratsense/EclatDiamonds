@@ -100,7 +100,9 @@ function sortHour(label: string): number {
   return period === "a" ? base : base + 12;
 }
 
-const CLOSED_OUTCOMES = new Set(["sale_closed"]);
+/* A custom order is a sale: billed now, made later. Leaving it out counted a
+   paid order as an unconverted visit. */
+const CLOSED_OUTCOMES = new Set(["sale_closed", "custom_order"]);
 
 /**
  * Was this walk-in today?
@@ -306,7 +308,10 @@ export default function CheckinsPage() {
 /** Outcome options offered for the visit. */
 const OUTCOME_OPTIONS: { value: CheckinOutcomeInput; label: string }[] = [
   { value: "in_store", label: "Still in store (active visit)" },
-  { value: "sale_closed", label: "Sale closed" },
+  /* "Direct Sale" is the client's wording; the stored value is unchanged so
+     existing rows and every report still read. */
+  { value: "sale_closed", label: "Direct Sale" },
+  { value: "custom_order", label: "Custom order placed" },
   { value: "quote_given", label: "Quote given" },
   { value: "follow_up", label: "Follow up" },
   { value: "left", label: "Just browsing / left" },
@@ -418,13 +423,19 @@ function UnifiedWalkinDialog({
    * own Other: lines do.
    */
   const [customerType, setCustomerType] = useState<"" | "new" | "existing">("");
+  /* The register's own columns (walk-in review, Nov 2026). */
+  const [visitDate, setVisitDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [managerName, setManagerName] = useState("");
+  const [googleReview, setGoogleReview] = useState<"" | "yes" | "no">("");
+  const [referralName, setReferralName] = useState("");
+  const [referralPhone, setReferralPhone] = useState("");
+  const [recommendedAction, setRecommendedAction] = useState("");
+  const [deliveryDate, setDeliveryDate] = useState("");
   const [birthday, setBirthday] = useState("");
   const [anniversary, setAnniversary] = useState("");
   const [source, setSource] = useState("");
-  const [sourceOther, setSourceOther] = useState("");
   const [occasion, setOccasion] = useState("");
   const [productCategory, setProductCategory] = useState("");
-  const [productCategoryOther, setProductCategoryOther] = useState("");
   const [budgetRange, setBudgetRange] = useState("");
   const [nonPurchaseReason, setNonPurchaseReason] = useState("");
   const [savingScheme, setSavingScheme] = useState<"" | "yes" | "no">("");
@@ -465,14 +476,21 @@ function UnifiedWalkinDialog({
     setBirthday("");
     setAnniversary("");
     setSource("");
-    setSourceOther("");
     setOccasion("");
     setProductCategory("");
-    setProductCategoryOther("");
     setBudgetRange("");
     setNonPurchaseReason("");
     setSavingScheme("");
     setSavingSchemeReason("");
+    /* The register's fields, or the next walk-in inherits this one's referral
+       and manager. The date returns to today rather than to blank. */
+    setVisitDate(new Date().toISOString().slice(0, 10));
+    setManagerName("");
+    setGoogleReview("");
+    setReferralName("");
+    setReferralPhone("");
+    setRecommendedAction("");
+    setDeliveryDate("");
     setOutcome("in_store");
     setRemark("");
     setFollowUpDate("");
@@ -504,8 +522,17 @@ function UnifiedWalkinDialog({
     }
     const normalizedPhone =
       !anonymous && phone.trim() ? normalizeCustomerPhone(phone) : null;
-    if (!anonymous && phone.trim() && !normalizedPhone)
+    /*
+     * Required since the walk-in review. A visit with no number cannot be
+     * followed up, cannot be sent an NPS request, and cannot be matched to the
+     * customer when they return. `anonymous` is still honoured: a walk-in who
+     * would not give a number is logged as such rather than blocked.
+     */
+    if (!anonymous && !phone.trim())
+      next.phone = "A mobile number is required. Tick “anonymous” if they would not give one.";
+    else if (!anonymous && !normalizedPhone)
       next.phone = "Enter a 10-digit mobile, or an international number starting with +.";
+    if (!googleReview) next.googleReview = "Record whether a Google review was taken.";
     if (outcome === "follow_up" && !followUpDate && !reminderAt) {
       next.followUpDate = "Pick the follow-up date or a reminder.";
     }
@@ -523,9 +550,10 @@ function UnifiedWalkinDialog({
       // Step 1: Create check-in
       // "Other" wins over the list choice when its box is filled, exactly as
       // the form's Other: lines behave.
-      const chosenSource = source === "Other" ? sourceOther.trim() : source;
-      const chosenCategory =
-        productCategory === "Other" ? productCategoryOther.trim() : productCategory;
+      /* No "Other" on either list any more — the register does not offer one,
+         so there is no free-text branch left to take. */
+      const chosenSource = source;
+      const chosenCategory = productCategory;
       const row = await createCheckin.mutateAsync({
         storeId: targetStoreId,
         customerName,
@@ -536,6 +564,12 @@ function UnifiedWalkinDialog({
         anniversary: !anonymous && anniversary ? anniversary : undefined,
         source: chosenSource || undefined,
         occasion: occasion.trim() || undefined,
+        visitDate: visitDate || undefined,
+        managerName: managerName.trim() || undefined,
+        googleReviewTaken: googleReview ? googleReview === "yes" : undefined,
+        referralName: referralName.trim() || undefined,
+        referralPhone: referralPhone.trim() || undefined,
+        recommendedAction: recommendedAction.trim() || undefined,
         productCategory: chosenCategory || undefined,
         budgetRange: budgetRange || undefined,
         nonPurchaseReason: nonPurchaseReason.trim() || undefined,
@@ -758,26 +792,108 @@ function UnifiedWalkinDialog({
                 </Select>
               </div>
               <div className="grid gap-1.5">
+                {/* A list, not a text box: head office counts occasions, and
+                    "Diwali", "diwali" and "festival" do not add up. */}
                 <Label htmlFor="ci-occasion">Purchase occasion</Label>
+                <Select value={occasion || undefined} onValueChange={setOccasion}>
+                  <SelectTrigger id="ci-occasion">
+                    <SelectValue placeholder="Occasion" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {WALKIN_OCCASIONS.map((o) => (
+                      <SelectItem key={o} value={o}>
+                        {o}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            {/*
+              The register's own columns. They sit together rather than being
+              scattered through the survey because they are what head office
+              reconciles the sheet on, and a person filling this in is copying
+              from one place.
+            */}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-1.5">
+                <Label htmlFor="ci-visit-date">Date</Label>
                 <Input
-                  id="ci-occasion"
-                  placeholder="e.g. Wedding, Diwali, gift"
-                  value={occasion}
-                  onChange={(e) => setOccasion(e.target.value)}
+                  id="ci-visit-date"
+                  type="date"
+                  value={visitDate}
+                  onChange={(e) => setVisitDate(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="ci-manager">Manager</Label>
+                <Input
+                  id="ci-manager"
+                  placeholder="Who was on the floor"
+                  value={managerName}
+                  onChange={(e) => setManagerName(e.target.value)}
                 />
               </div>
             </div>
-            {source === "Other" ? (
+
+            <div className="grid gap-1.5">
+              <Label>
+                Google review taken <span className="text-destructive">*</span>
+              </Label>
+              <div className="flex gap-2">
+                {(["yes", "no"] as const).map((v) => (
+                  <Button
+                    key={v}
+                    type="button"
+                    size="sm"
+                    variant={googleReview === v ? "default" : "outline"}
+                    onClick={() => {
+                      setGoogleReview(v);
+                      clearError("googleReview");
+                    }}
+                  >
+                    {v === "yes" ? "YES" : "NO"}
+                  </Button>
+                ))}
+              </div>
+              {errors.googleReview ? (
+                <p className="text-xs text-destructive">{errors.googleReview}</p>
+              ) : null}
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
               <div className="grid gap-1.5">
-                <Label htmlFor="ci-source-other">Source — other</Label>
+                <Label htmlFor="ci-referral-name">Referral name</Label>
                 <Input
-                  id="ci-source-other"
-                  placeholder="How exactly?"
-                  value={sourceOther}
-                  onChange={(e) => setSourceOther(e.target.value)}
+                  id="ci-referral-name"
+                  placeholder="Who sent them (optional)"
+                  value={referralName}
+                  onChange={(e) => setReferralName(e.target.value)}
                 />
               </div>
-            ) : null}
+              <div className="grid gap-1.5">
+                <Label htmlFor="ci-referral-phone">Referral number</Label>
+                <Input
+                  id="ci-referral-phone"
+                  inputMode="tel"
+                  placeholder="Optional"
+                  value={referralPhone}
+                  onChange={(e) => setReferralPhone(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-1.5">
+              {/* Upward, not a follow-up this branch will do itself — that is
+                  the reminder below. */}
+              <Label htmlFor="ci-hq-action">Recommended action (needed from HQ)</Label>
+              <Input
+                id="ci-hq-action"
+                placeholder="What this branch needs from head office"
+                value={recommendedAction}
+                onChange={(e) => setRecommendedAction(e.target.value)}
+              />
+            </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="grid gap-1.5">
@@ -811,17 +927,6 @@ function UnifiedWalkinDialog({
                 </Select>
               </div>
             </div>
-            {productCategory === "Other" ? (
-              <div className="grid gap-1.5">
-                <Label htmlFor="ci-category-other">Category — other</Label>
-                <Input
-                  id="ci-category-other"
-                  placeholder="Which product?"
-                  value={productCategoryOther}
-                  onChange={(e) => setProductCategoryOther(e.target.value)}
-                />
-              </div>
-            ) : null}
           </div>
 
           {/* Section 2: Items Shown / Interest */}
