@@ -7,14 +7,18 @@
  * Replace with react-query hooks against the NestJS footfall endpoints later.
  */
 
+/*
+ * The client's register, verbatim (walk-in review, Nov 2026). Ours were a
+ * jeweller's own words — "Purchase", "Purchase" — and head office
+ * reconciles against a sheet that does not use them, so a visit logged here
+ * could not be matched to the row they had written by hand.
+ */
 export type VisitPurpose =
-  | "Browsing"
-  | "Bridal"
-  | "Gold Coin / Investment"
-  | "Repair / Service"
-  | "Gold Scheme"
-  | "Exchange"
-  | "Quote Follow-up";
+  | "Purchase"
+  | "Scheme Installments"
+  | "Repair"
+  | "Return/ Exchange"
+  | "Exploring";
 
 export type VisitOutcome =
   | "in_store"
@@ -99,7 +103,7 @@ export const CHECKINS_TODAY: CheckIn[] = [
     returning: true,
     phone: "+91 98250 11234",
     partySize: 2,
-    purpose: "Bridal",
+    purpose: "Purchase",
     repId: "s-101",
     repName: "Priya Sharma",
     repInitials: "PS",
@@ -115,7 +119,7 @@ export const CHECKINS_TODAY: CheckIn[] = [
     returning: false,
     phone: "+91 99090 44521",
     partySize: 1,
-    purpose: "Gold Coin / Investment",
+    purpose: "Purchase",
     repId: "s-102",
     repName: "Rohan Desai",
     repInitials: "RD",
@@ -131,7 +135,7 @@ export const CHECKINS_TODAY: CheckIn[] = [
     returning: true,
     phone: "+91 98795 33210",
     partySize: 3,
-    purpose: "Quote Follow-up",
+    purpose: "Exploring",
     repId: "s-101",
     repName: "Priya Sharma",
     repInitials: "PS",
@@ -147,7 +151,7 @@ export const CHECKINS_TODAY: CheckIn[] = [
     returning: false,
     phone: "+91 97250 88123",
     partySize: 1,
-    purpose: "Repair / Service",
+    purpose: "Repair",
     repId: "s-105",
     repName: "Karan Mehta",
     repInitials: "KM",
@@ -163,7 +167,7 @@ export const CHECKINS_TODAY: CheckIn[] = [
     returning: true,
     phone: "+91 98240 67788",
     partySize: 2,
-    purpose: "Gold Scheme",
+    purpose: "Scheme Installments",
     repId: "s-102",
     repName: "Rohan Desai",
     repInitials: "RD",
@@ -179,7 +183,7 @@ export const CHECKINS_TODAY: CheckIn[] = [
     returning: false,
     phone: "+91 99780 12009",
     partySize: 4,
-    purpose: "Bridal",
+    purpose: "Purchase",
     repId: "s-101",
     repName: "Priya Sharma",
     repInitials: "PS",
@@ -195,7 +199,7 @@ export const CHECKINS_TODAY: CheckIn[] = [
     returning: true,
     phone: "+91 98251 90876",
     partySize: 1,
-    purpose: "Exchange",
+    purpose: "Return/ Exchange",
     repId: "s-104",
     repName: "Vikram Joshi",
     repInitials: "VJ",
@@ -211,7 +215,7 @@ export const CHECKINS_TODAY: CheckIn[] = [
     returning: false,
     phone: "+91 98201 55667",
     partySize: 2,
-    purpose: "Bridal",
+    purpose: "Purchase",
     repId: "s-201",
     repName: "Aditya Nair",
     repInitials: "AN",
@@ -227,7 +231,7 @@ export const CHECKINS_TODAY: CheckIn[] = [
     returning: true,
     phone: "+91 99300 22118",
     partySize: 1,
-    purpose: "Browsing",
+    purpose: "Exploring",
     repId: "s-202",
     repName: "Fatima Shaikh",
     repInitials: "FS",
@@ -243,7 +247,7 @@ export const CHECKINS_TODAY: CheckIn[] = [
     returning: false,
     phone: "+91 98330 71245",
     partySize: 1,
-    purpose: "Gold Coin / Investment",
+    purpose: "Purchase",
     repId: "s-201",
     repName: "Aditya Nair",
     repInitials: "AN",
@@ -259,7 +263,7 @@ export const CHECKINS_TODAY: CheckIn[] = [
     returning: true,
     phone: "+91 98980 33421",
     partySize: 3,
-    purpose: "Bridal",
+    purpose: "Purchase",
     repId: "s-302",
     repName: "Harsh Solanki",
     repInitials: "HS",
@@ -275,7 +279,7 @@ export const CHECKINS_TODAY: CheckIn[] = [
     returning: false,
     phone: "+91 99240 88190",
     partySize: 2,
-    purpose: "Gold Scheme",
+    purpose: "Scheme Installments",
     repId: "s-302",
     repName: "Harsh Solanki",
     repInitials: "HS",

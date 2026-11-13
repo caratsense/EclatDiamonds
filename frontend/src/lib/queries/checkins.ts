@@ -24,6 +24,9 @@ const CHECKINS_KEY = "checkins";
 
 /** Backend purpose enum values (CheckinPurpose) accepted by POST /checkins. */
 export type CheckinPurposeInput =
+  // The register's two purposes that had no value here before.
+  | "purchase"
+  | "return_exchange"
   | "bridal"
   | "investment"
   | "repair"
@@ -35,7 +38,10 @@ export type CheckinPurposeInput =
 /** Backend outcome enum values (CheckinOutcome) accepted by PATCH /checkins/:id. */
 export type CheckinOutcomeInput =
   | "in_store"
+  /** Shown as "Direct Sale" — the client's wording. Stored value unchanged. */
   | "sale_closed"
+  /** Billed now, made later: the only outcome that carries a delivery date. */
+  | "custom_order"
   | "quote_given"
   | "follow_up"
   | "left";
@@ -43,6 +49,13 @@ export type CheckinOutcomeInput =
 export interface CreateCheckInInput {
   storeId: string;
   customerName: string;
+  /* The register's own columns (walk-in review, Nov 2026). */
+  visitDate?: string;
+  managerName?: string;
+  googleReviewTaken?: boolean;
+  referralName?: string;
+  referralPhone?: string;
+  recommendedAction?: string;
   phone?: string;
   purpose?: CheckinPurposeInput;
   repId?: string;
@@ -119,11 +132,9 @@ export function useCheckoutCheckin() {
 
 /** Map a frontend visit-purpose label to the backend enum for POST writes. */
 export const PURPOSE_TO_ENUM: Record<VisitPurpose, CheckinPurposeInput> = {
-  Browsing: "browsing",
-  Bridal: "bridal",
-  "Gold Coin / Investment": "investment",
-  "Repair / Service": "repair",
-  "Gold Scheme": "scheme",
-  Exchange: "other",
-  "Quote Follow-up": "quote_followup",
+  Purchase: "purchase",
+  "Scheme Installments": "scheme",
+  Repair: "repair",
+  "Return/ Exchange": "return_exchange",
+  Exploring: "browsing",
 };

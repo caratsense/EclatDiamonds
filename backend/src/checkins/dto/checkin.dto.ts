@@ -25,15 +25,58 @@ export class CreateCheckInDto {
   @IsRealName()
   customerName!: string;
 
-  /** Walk-ins may be foreign customers (client, 13 Oct): Indian or international. */
-  @IsOptional()
+  /**
+   * REQUIRED since the walk-in review (Nov 2026). The client's register marks
+   * it mandatory, and the reason is downstream: a visit with no number cannot
+   * be followed up, cannot be sent an NPS request and cannot be matched to the
+   * customer when they return — so the row is of no use to anyone.
+   *
+   * Walk-ins may be foreign customers (client, 13 Oct): Indian or international.
+   */
   @IsString()
+  @IsNotEmpty()
   @IsCustomerPhone()
-  phone?: string;
+  phone!: string;
 
   @IsOptional()
   @IsEnum(CheckinPurpose)
   purpose?: CheckinPurpose;
+
+  /**
+   * The day being reported on, `YYYY-MM-DD`. The register is often written up
+   * after the fact, which is why the form asks for a date at all rather than
+   * stamping the moment of entry — `timeIn` still records that.
+   */
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'visitDate must be YYYY-MM-DD.' })
+  visitDate?: string;
+
+  /** The manager on the floor — a second person from "Sales Person Name". */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  managerName?: string;
+
+  /** Mandatory on the form; optional here so an older client can still post. */
+  @IsOptional()
+  @IsBoolean()
+  googleReviewTaken?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  referralName?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsCustomerPhone()
+  referralPhone?: string;
+
+  /** What this branch needs FROM head office, not what it will do itself. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  recommendedAction?: string;
 
   @IsOptional()
   @IsString()
@@ -88,8 +131,13 @@ export class CreateCheckInDto {
   @MaxLength(80)
   productCategory?: string;
 
+  /*
+   * The client's register buckets, verbatim. Ours were coarser at the bottom
+   * (`<50k` covered three of theirs) so a reported figure could not be mapped
+   * back without losing the distinction head office actually sorts on.
+   */
   @IsOptional()
-  @IsIn(['<50k', '50k-2L', '2-5L', '5-10L', '10-20L', '>20L', 'na'])
+  @IsIn(['<25k', '25k-50k', '50k-1L', '1-2L', '2-5L', '5-10L', '10>', 'na'])
   budgetRange?: string;
 
   @IsOptional()
@@ -142,6 +190,15 @@ export class CheckoutDto {
   @IsOptional()
   @IsIn(['call', 'whatsapp', 'visit'])
   preferredAction?: 'call' | 'whatsapp' | 'visit';
+
+  /**
+   * When the piece reaches the customer, `YYYY-MM-DD`. Only a custom order has
+   * one — a direct sale leaves the counter with the customer — so the service
+   * refuses it on any other outcome rather than storing a date nothing means.
+   */
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'deliveryDate must be YYYY-MM-DD.' })
+  deliveryDate?: string;
 
   /**
    * When the employee is reminded, `YYYY-MM-DDTHH:MM` in the store's timezone.
