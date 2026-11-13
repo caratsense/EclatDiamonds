@@ -6,6 +6,7 @@ import { AuthUser, CurrentUser } from '../common/auth-user';
 import {
   QueueOmnichannelMessageDto,
   RecordConsentDto,
+  StartWhatsAppThreadDto,
   SubmitMessageTemplateDto,
   UpsertMessageTemplateDto,
 } from './dto/omnichannel.dto';
@@ -138,6 +139,43 @@ export class OmnichannelController {
     @Body() dto: QueueOmnichannelMessageDto,
   ) {
     return this.omnichannel.queue(user, conversationId, dto);
+  }
+
+  /**
+   * Message a number that has never written in.
+   *
+   * The gap this closes: every send door needed a conversation to already
+   * exist, which meant the customer had to message first. A salesperson
+   * holding a lead's phone number — the ordinary case — could record that they
+   * had messaged on WhatsApp but could not actually do it from here.
+   *
+   * No new permission or delivery path. `queueToContact` is the same call the
+   * quote PDF has always made, so consent, STOP, the 24-hour window, template
+   * approval, the outbox and the audit trail all apply exactly as they do
+   * there. It finds the contact point or creates it, which is what turns a
+   * bare number into a thread.
+   *
+   * The conversation id comes back on the message so the caller can open the
+   * thread it just started rather than hunting for it in the list.
+   */
+  @Post('messages')
+  async startThread(@CurrentUser() user: AuthUser, @Body() dto: StartWhatsAppThreadDto) {
+    const queued = await this.omnichannel.queueToContact(user, {
+      to: dto.to,
+      purpose: dto.purpose as MessagePurpose,
+      body: dto.body,
+      templateName: dto.templateName,
+      languageCode: dto.languageCode,
+      templateComponents: dto.templateComponents,
+      idempotencyKey: dto.idempotencyKey,
+    });
+    return {
+      conversationId: queued.message.conversationId,
+      messageId: queued.message.id,
+      status: queued.message.status,
+      deduplicated: queued.deduplicated,
+      policy: queued.policy,
+    };
   }
 }
 

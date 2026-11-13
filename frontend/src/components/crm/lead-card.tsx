@@ -11,6 +11,7 @@ import {
   type Lead,
   type LeadTemperature,
 } from "@/lib/mock/crm";
+import { WhatsAppCta } from "@/components/crm/whatsapp-cta";
 import { cn } from "@/lib/utils";
 
 /** Chip styling per temperature — Hot gets the gold treatment. */
@@ -48,6 +49,14 @@ export function LeadCard({ lead, onOpen, onDragStart, draggable }: LeadCardProps
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0];
 
   return (
+    /*
+     * The card itself is a <button>, so the WhatsApp CTA cannot live inside it
+     * — a button inside a button is invalid and React says so. It sits as a
+     * sibling in a positioned wrapper instead, which keeps the whole card
+     * clickable and the drag handle intact while still putting a send one tap
+     * away in the pipeline view.
+     */
+    <div className="relative">
     <button
       type="button"
       draggable={draggable}
@@ -102,7 +111,10 @@ export function LeadCard({ lead, onOpen, onDragStart, draggable }: LeadCardProps
         ) : null}
       </div>
 
-      <div className="mt-2 flex items-center justify-between gap-2">
+      {/* pr-7 reserves the bottom-right corner for the WhatsApp CTA, which is a
+          sibling of this button and would otherwise sit on top of the
+          temperature badge. */}
+      <div className="mt-2 flex items-center justify-between gap-2 pr-7">
         <p className="truncate text-[11px] text-muted-foreground">
           {lead.ref} · {lead.assignedRep}
         </p>
@@ -117,5 +129,19 @@ export function LeadCard({ lead, onOpen, onDragStart, draggable }: LeadCardProps
         ) : null}
       </div>
     </button>
+
+      {/* Bottom-right, clear of the temperature badge on the row above. */}
+      <div className="absolute bottom-2 right-2">
+        <WhatsAppCta
+          phone={lead.phone}
+          name={lead.customer}
+          variant="ghost"
+          size="icon"
+          label={null}
+          stopPropagation
+          className="h-6 w-6 text-muted-foreground hover:text-foreground"
+        />
+      </div>
+    </div>
   );
 }

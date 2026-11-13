@@ -44,6 +44,7 @@ import {
   useSetOutcome,
 } from "@/lib/queries/leads";
 import { useSession } from "@/store/use-session";
+import { WhatsAppCta } from "@/components/crm/whatsapp-cta";
 import { apiErrorMessage } from "@/lib/utils";
 import { reminderLabel } from "@/lib/reminder";
 
@@ -222,7 +223,16 @@ function LeadDetailBody({
       <DialogHeader>
         <div className="flex items-center justify-between gap-2 pr-6">
           <DialogTitle>{lead.customer}</DialogTitle>
-          <Badge variant="secondary">{stageLabel}</Badge>
+          <div className="flex items-center gap-2">
+            {/*
+              A real send, not a record of one. "Log WhatsApp" below writes
+              down that somebody messaged this lead; until now there was no way
+              to do the messaging, so the salesperson left for their own phone
+              and the thread never reached the CRM.
+            */}
+            <WhatsAppCta phone={lead.phone} name={lead.customer} />
+            <Badge variant="secondary">{stageLabel}</Badge>
+          </div>
         </div>
         <DialogDescription>
           {lead.ref} · {LEAD_SOURCE_LABELS[lead.source]} lead

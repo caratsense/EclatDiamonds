@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
+
+import { DonutChart, type DonutDatum } from "@/components/chart/echart";
 import {
   ArrowRight,
   ChevronDown,
@@ -47,13 +49,19 @@ const WINDOWS = [
 ];
 
 /** Distinct hues per band key, so the same band keeps its colour across screens. */
+/*
+ * The chart ramp, by band. The literal fallbacks these carried were the
+ * previous theme's emerald/amber/slate/red and an indigo — dead, because the
+ * variables are always defined in globals.css, but they would have resurrected
+ * the old palette the moment one was renamed.
+ */
 const BAND_TONE: Record<string, string> = {
-  hot: "var(--chart-1, #16a34a)",
-  warm: "var(--chart-2, #d97706)",
-  cold: "var(--chart-3, #64748b)",
-  negative: "var(--chart-4, #b91c1c)",
+  hot: "var(--chart-1)",
+  warm: "var(--chart-2)",
+  cold: "var(--chart-3)",
+  negative: "var(--chart-4)",
 };
-const FALLBACK_TONE = "var(--chart-5, #6366f1)";
+const FALLBACK_TONE = "var(--chart-5)";
 
 /**
  * A face per channel and per funnel stage.
@@ -248,21 +256,26 @@ function Intent({ data, loading }: { data?: OmnichannelSummary; loading: boolean
   const bands = data?.intent ?? null;
   const total = bands?.reduce((n, b) => n + b.count, 0) ?? 0;
 
-  const arcs = useMemo(() => {
-    if (!bands || !total) return [];
-    // One circle, one stroke per band, offset by everything before it. A donut
-    // drawn this way needs no charting library and no client-side maths beyond
-    // a running total.
-    let offset = 0;
-    return bands
-      .filter((b) => b.count > 0)
-      .map((b) => {
-        const fraction = b.count / total;
-        const arc = { ...b, fraction, offset, tone: BAND_TONE[b.key] ?? FALLBACK_TONE };
-        offset += fraction;
-        return arc;
-      });
-  }, [bands, total]);
+  /*
+   * The ring was hand-drawn: one <circle> per band with a strokeDasharray
+   * offset by everything before it. It needed no charting library, which was
+   * the argument for it — and it also had no hover, so this was the one figure
+   * on the dashboard a person could not interrogate while every chart beside
+   * it answered. DonutChart already carries the shared tooltip (name, value
+   * and share) and the same token ramp, so the ring joins the rest rather than
+   * being a second implementation of a pie.
+   */
+  const slices = useMemo<DonutDatum[]>(
+    () =>
+      (bands ?? [])
+        .filter((b) => b.count > 0)
+        .map((b) => ({
+          name: b.label,
+          value: b.count,
+          color: BAND_TONE[b.key] ?? FALLBACK_TONE,
+        })),
+    [bands],
+  );
 
   return (
     <div className="rounded-md border border-border p-4">
@@ -277,42 +290,20 @@ function Intent({ data, loading }: { data?: OmnichannelSummary; loading: boolean
         </p>
       ) : (
         <div className="flex flex-wrap items-center gap-5">
-          <svg viewBox="0 0 42 42" className="h-36 w-36 shrink-0" role="img"
-            aria-label={`Intent breakdown across ${total} assessments`}>
-            <circle cx="21" cy="21" r="15.9155" fill="none" stroke="var(--border)" strokeWidth="5" />
-            {arcs.map((a) => (
-              <circle
-                key={a.key}
-                cx="21"
-                cy="21"
-                r="15.9155"
-                fill="none"
-                stroke={a.tone}
-                strokeWidth="5"
-                strokeDasharray={`${a.fraction * 100} ${100 - a.fraction * 100}`}
-                strokeDashoffset={`${25 - a.offset * 100}`}
-              />
-            ))}
-            {/* The hole carries the total AND what it counts: a bare number
-                in the middle of a ring is read as a percentage by half the
-                people who see it. */}
-            <text
-              x="21"
-              y="20.5"
-              textAnchor="middle"
-              className="fill-foreground text-[7px] font-semibold tabular-nums"
-            >
-              {total}
-            </text>
-            <text
-              x="21"
-              y="25"
-              textAnchor="middle"
-              className="fill-muted-foreground text-[3px]"
-            >
-              Total leads
-            </text>
-          </svg>
+          {/* Legend off: the list beside it already gives count AND share,
+              which ECharts' own legend does not. */}
+          <DonutChart
+            data={slices}
+            height={160}
+            className="w-40 shrink-0"
+            showLegend={false}
+            centerValue={String(total)}
+            centerLabel="Total leads"
+            valueFormatter={(v) =>
+              `${v} ${v === 1 ? "lead" : "leads"}`
+            }
+            emptyMessage="Nothing scored yet"
+          />
 
           <ul className="min-w-0 flex-1 space-y-1.5 text-sm">
             {bands.map((b) => (
