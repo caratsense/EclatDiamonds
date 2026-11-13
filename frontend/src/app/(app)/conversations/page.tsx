@@ -22,6 +22,7 @@ import {
   Mail,
   MapPin,
   Megaphone,
+  MessageCirclePlus,
   MessageSquare,
   MoreVertical,
   Paperclip,
@@ -43,6 +44,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { StartWhatsAppDialog } from "@/components/crm/start-whatsapp-dialog";
 import { SectionHeader } from "@/components/section/section-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -369,6 +371,7 @@ function ConversationsContent() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
+  const [startOpen, setStartOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [starredIds, setStarredIds] = useState<Set<string>>(new Set());
   const [snoozedIds, setSnoozedIds] = useState<Set<string>>(new Set());
@@ -877,6 +880,20 @@ function ConversationsContent() {
               that do not exist.
             */}
             <div className="flex items-center gap-1 text-muted-foreground">
+              {/*
+                The search box has said "Search or start a new chat…" since this
+                screen was built, and there was no way to start one: every send
+                door needed a thread the customer had opened first. This is that
+                missing door.
+              */}
+              <button
+                type="button"
+                onClick={() => setStartOpen(true)}
+                className="h-7 w-7 rounded-md hover:bg-muted flex items-center justify-center"
+                title="Message someone new on WhatsApp"
+              >
+                <MessageCirclePlus className="h-3.5 w-3.5" />
+              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -1074,6 +1091,8 @@ function ConversationsContent() {
           </Card>
         )}
       </div>
+
+      <StartWhatsAppDialog open={startOpen} onOpenChange={setStartOpen} />
     </div>
   );
 }

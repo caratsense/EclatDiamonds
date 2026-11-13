@@ -592,6 +592,43 @@ export function useSendReply(conversationId: string) {
 }
 
 /**
+ * Open a thread with a number that has never written in.
+ *
+ * The 24-hour customer-care window is the whole reason this is not just
+ * `useSendReply` with a phone number. A customer who has not messaged has no
+ * open window, so the first thing out must be an approved template — the server
+ * returns 400 with that sentence if a bare body is sent, and the composer is
+ * built to prevent reaching that point rather than to report it afterwards.
+ *
+ * Returns the conversation it started so the caller can open the thread.
+ */
+export function useStartWhatsAppThread() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      to: string;
+      purpose?: "service" | "marketing";
+      body?: string;
+      templateName?: string;
+      languageCode?: string;
+      templateComponents?: unknown[];
+    }) =>
+      (
+        await api.post<{
+          conversationId: string;
+          messageId: string;
+          status: string;
+          deduplicated: boolean;
+          policy?: { mode?: string };
+        }>("/omnichannel/messages", { purpose: "service", ...input })
+      ).data,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["crm", "conversations"] });
+    },
+  });
+}
+
+/**
  * Status, handling and handoff notes.
  *
  * NOT ownership: `assignedUserId` was removed from this endpoint because it

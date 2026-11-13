@@ -147,6 +147,61 @@ export class SubmitMessageTemplateDto {
   examples?: string[];
 }
 
+/**
+ * Open a thread with a number that has never written in.
+ *
+ * Separate from `QueueOmnichannelMessageDto` because the two answer different
+ * questions. That one sends INTO a conversation the caller already named, so
+ * the recipient is settled before the body is read. This one carries the
+ * recipient itself, which is the whole point: until now the only way to reach
+ * a customer was to wait for them to message first, so a salesperson holding a
+ * lead's number had no way to use it.
+ *
+ * A number with no prior inbound has no open 24-hour customer-care window, so
+ * the first message out is a TEMPLATE or it is nothing. The service enforces
+ * that; the DTO only has to carry the name.
+ */
+export class StartWhatsAppThreadDto {
+  /**
+   * Raw as typed. Normalised server-side against the organisation's country,
+   * so a bare Indian mobile and a +country number both arrive here unchanged
+   * and the one normaliser decides — see `queueToContact`.
+   */
+  @IsString()
+  @MinLength(6)
+  @MaxLength(32)
+  to!: string;
+
+  @IsIn(['service', 'marketing'])
+  purpose!: 'service' | 'marketing';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(4096)
+  body?: string;
+
+  /** The approved template's NAME, as `queueToContact` takes it. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(512)
+  templateName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(16)
+  languageCode?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  templateComponents?: unknown[];
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Za-z0-9._:-]{8,120}$/)
+  idempotencyKey?: string;
+}
+
 export class QueueOmnichannelMessageDto {
   @IsOptional()
   @IsString()
