@@ -10,6 +10,7 @@ import {
   Matches,
   MaxLength,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import { CheckinOutcome, CheckinPurpose } from '@prisma/client';
 import { IsCustomerPhone, IsRealName } from '../../common/contact.util';
@@ -26,13 +27,29 @@ export class CreateCheckInDto {
   customerName!: string;
 
   /**
+   * A visitor who would not leave their details at all. The counter still has
+   * to be able to log the footfall, so this is the one case that escapes the
+   * mandatory name and number below.
+   */
+  @IsOptional()
+  @IsBoolean()
+  anonymous?: boolean;
+
+  /**
    * REQUIRED since the walk-in review (Nov 2026). The client's register marks
    * it mandatory, and the reason is downstream: a visit with no number cannot
    * be followed up, cannot be sent an NPS request and cannot be matched to the
    * customer when they return — so the row is of no use to anyone.
    *
+   * Except for an anonymous visit, which has no number by definition. Making
+   * this unconditional is what broke "Customer didn't share details": the form
+   * omits the field and every such check-in was rejected with a 400.
+   *
    * Walk-ins may be foreign customers (client, 13 Oct): Indian or international.
    */
+  // Anonymous waives the *presence* of a number, not its *format*: if one was
+  // typed anyway, it still has to be a number we can dial later.
+  @ValidateIf((o: CreateCheckInDto) => !o.anonymous || !!o.phone)
   @IsString()
   @IsNotEmpty()
   @IsCustomerPhone()
