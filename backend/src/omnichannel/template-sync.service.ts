@@ -6,6 +6,8 @@ import { AuditService } from '../common/audit.service';
 import { MetaGraphClient } from '../integrations/meta-graph.client';
 import { JobContext, JobsService } from '../jobs/jobs.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { IntegrationsRegistryService } from '../integration/framework/integrations-registry.service';
+import { MetaUploadService } from './meta-upload.service';
 import { providerTemplateStatus, type ProviderTemplateStatus } from './omnichannel-policy';
 import {
   TemplateDraftError,
@@ -72,7 +74,47 @@ export class TemplateSyncService implements OnModuleInit {
     private readonly graph: MetaGraphClient,
     private readonly jobs: JobsService,
     private readonly audit: AuditService,
+    private readonly registry: IntegrationsRegistryService,
+    private readonly uploads: MetaUploadService,
   ) {}
+
+  /**
+   * Upload a picture for a template header or a carousel card, and hand back
+   * the handle the submission needs.
+   *
+   * Kept here rather than in the controller because the access token lives
+   * behind the registry's decrypt path, which is deliberately server-side
+   * only. The upload service itself never learns which tenant it is acting
+   * for — it is given a token and a file and returns a handle.
+   */
+  async uploadImage(
+    user: AuthUser,
+    integrationId: string,
+    file?: { buffer?: Buffer; mimetype?: string; originalname?: string },
+  ): Promise<{ handle: string }> {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Choose an image.');
+    }
+    const ready = this.uploads.readiness();
+    if (!ready.ready) throw new BadRequestException(ready.reason);
+
+    const integration = await this.load(user.organisationId, integrationId);
+    const token = await this.registry.credentialFor(
+      user.organisationId,
+      integration.id,
+      'access_token',
+    );
+    if (!token) {
+      throw new BadRequestException('The WhatsApp access token is not configured for this connection.');
+    }
+
+    const handle = await this.uploads.uploadTemplateImage(token, {
+      buffer: file.buffer,
+      mimeType: file.mimetype ?? 'application/octet-stream',
+      filename: file.originalname,
+    });
+    return { handle };
+  }
 
   onModuleInit(): void {
     this.jobs.register(TEMPLATE_SYNC_JOB, async (payload, context) => this.runJob(payload, context));

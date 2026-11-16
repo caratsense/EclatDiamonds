@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 
 import { HumansOnly } from '../auth/machine.decorator';
 import { Roles } from '../auth/roles.decorator';
@@ -60,6 +70,29 @@ export class OmnichannelController {
     @Body() dto: UpsertMessageTemplateDto,
   ) {
     return this.omnichannel.upsertTemplate(user, integrationId, dto);
+  }
+
+  /**
+   * Upload a picture for a template header or a carousel card.
+   *
+   * Returns an opaque asset handle, not a URL: Meta reviews the actual image
+   * as part of approving the template, and the handle is the only reference it
+   * accepts at creation time. Uploaded before submitting so somebody can see
+   * the picture attached, then write the words around it.
+   */
+  @Roles('head_office')
+  @Post('integrations/:integrationId/templates/image')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 5 * 1024 * 1024, files: 1, fields: 2, parts: 3 },
+    }),
+  )
+  uploadTemplateImage(
+    @CurrentUser() user: AuthUser,
+    @Param('integrationId') integrationId: string,
+    @UploadedFile() file?: { buffer?: Buffer; mimetype?: string; originalname?: string },
+  ) {
+    return this.templateSync.uploadImage(user, integrationId, file);
   }
 
   /**

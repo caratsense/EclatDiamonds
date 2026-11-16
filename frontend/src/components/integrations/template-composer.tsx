@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Plus, Send } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { ImagePlus, Images, Plus, Send, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { useSubmitTemplate, type TemplateDraftInput } from "@/lib/queries/meta-admin";
+import {
+  useSubmitTemplate,
+  useUploadTemplateImage,
+  type TemplateCardInput,
+  type TemplateDraftInput,
+} from "@/lib/queries/meta-admin";
 import { TENANT_NAME } from "@/lib/brand";
 import { apiErrorMessage } from "@/lib/utils";
 
@@ -98,6 +103,63 @@ export function TemplateComposer({
   const [footer, setFooter] = useState("");
   const [examples, setExamples] = useState<string[]>([]);
 
+  /*
+   * A picture above the message, and/or a row of product cards.
+   *
+   * Both carry an asset HANDLE from Meta's resumable upload, never a URL:
+   * Meta reviews the real image when approving the template. `previewUrl` is
+   * a local blob so somebody can see what they attached, and is never sent.
+   */
+  const [headerFormat, setHeaderFormat] = useState<"TEXT" | "IMAGE">("TEXT");
+  const [header, setHeader] = useState("");
+  const [headerImage, setHeaderImage] = useState<{ handle: string; previewUrl: string } | null>(null);
+  const [cards, setCards] = useState<TemplateCardInput[]>([]);
+  const headerFileRef = useRef<HTMLInputElement>(null);
+  const cardFileRef = useRef<HTMLInputElement>(null);
+  const upload = useUploadTemplateImage(integrationId);
+
+  const isCarousel = cards.length > 0;
+
+  const pickHeaderImage = async (file?: File) => {
+    if (!file) return;
+    try {
+      const { handle } = await upload.mutateAsync(file);
+      setHeaderImage((prev) => {
+        if (prev) URL.revokeObjectURL(prev.previewUrl);
+        return { handle, previewUrl: URL.createObjectURL(file) };
+      });
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Could not upload that image."));
+    }
+  };
+
+  const addCard = async (file?: File) => {
+    if (!file) return;
+    try {
+      const { handle } = await upload.mutateAsync(file);
+      setCards((prev) => [
+        ...prev,
+        {
+          headerHandle: handle,
+          previewUrl: URL.createObjectURL(file),
+          buttons: [{ type: "QUICK_REPLY", text: "Show me more" }],
+        },
+      ]);
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Could not upload that image."));
+    }
+  };
+
+  const removeCard = (i: number) =>
+    setCards((prev) => {
+      const card = prev[i];
+      if (card?.previewUrl) URL.revokeObjectURL(card.previewUrl);
+      return prev.filter((_, n) => n !== i);
+    });
+
+  const patchCard = (i: number, patch: Partial<TemplateCardInput>) =>
+    setCards((prev) => prev.map((c, n) => (n === i ? { ...c, ...patch } : c)));
+
   const used = useMemo(() => placeholdersIn(body), [body]);
 
   /*
@@ -116,6 +178,36 @@ export function TemplateComposer({
     return value?.trim() ? value.trim() : whole;
   });
 
+  /*
+   * Meta's picture and carousel rules, checked while the cursor is still in
+   * the box.
+   *
+   * Every one of these, broken, comes back a DAY later as a rejection naming
+   * a component rather than the mistake — "carousel cards must have the same
+   * components" is not a sentence that tells you which card you forgot the
+   * button on. Kept out of the `problem` chain below because there are enough
+   * of them that a nested ternary stops being readable.
+   */
+  const pictureProblem: string | null = isCarousel
+    ? cards.length < 2
+      ? "A carousel needs at least 2 cards. One picture is a header, not a carousel."
+      : category !== "MARKETING"
+        ? "A carousel is a marketing template. Change the category to Marketing."
+        : headerImage || header.trim()
+          ? "A carousel carries its pictures on the cards, so remove the template's own header."
+          : cards.some((c) => c.buttons.length < 1)
+            ? "Every card needs at least one button."
+            : new Set(cards.map((c) => c.buttons.map((b) => b.type).join(","))).size > 1
+              ? "Every card must carry the same buttons."
+              : cards.some((c) => c.body?.trim()) && !cards.every((c) => c.body?.trim())
+                ? "Either every card has a line of text or none do."
+                : cards.some((c) => c.buttons.some((b) => b.type === "URL" && !b.url?.trim()))
+                  ? "A link button needs a link."
+                  : null
+    : headerFormat === "IMAGE" && !headerImage
+      ? "Upload the header image."
+      : null;
+
   const problem =
     !name.trim()
       ? "Give the template a name."
@@ -127,7 +219,7 @@ export function TemplateComposer({
             ? `Placeholders must run 1, 2, 3 with no gaps — this jumps to {{${gap}}}.`
             : missingExamples.length
               ? `Give a sample value for ${missingExamples.map((n) => `{{${n}}}`).join(", ")}.`
-              : null;
+              : pictureProblem;
 
   const reset = () => {
     setName("");
@@ -136,6 +228,16 @@ export function TemplateComposer({
     setExamples([]);
     setCategory("UTILITY");
     setLanguageCode("en_US");
+    setHeaderFormat("TEXT");
+    setHeader("");
+    setHeaderImage((prev) => {
+      if (prev) URL.revokeObjectURL(prev.previewUrl);
+      return null;
+    });
+    setCards((prev) => {
+      for (const c of prev) if (c.previewUrl) URL.revokeObjectURL(c.previewUrl);
+      return [];
+    });
   };
 
   const send = async () => {
@@ -148,6 +250,15 @@ export function TemplateComposer({
         body: body.trim(),
         ...(footer.trim() ? { footer: footer.trim() } : {}),
         ...(used.length ? { examples: used.map((n) => examples[n - 1]?.trim() ?? "") } : {}),
+        // A carousel replaces the template's own header, so the two are
+        // mutually exclusive here exactly as they are at Meta.
+        ...(isCarousel
+          ? { cards: cards.map(({ previewUrl: _preview, ...card }) => card) }
+          : headerFormat === "IMAGE" && headerImage
+            ? { headerFormat: "IMAGE" as const, headerHandle: headerImage.handle }
+            : header.trim()
+              ? { header: header.trim() }
+              : {}),
       });
       // Never "created" or "approved". It is in a queue at Meta, and saying
       // otherwise is how somebody builds a campaign on a template that is
@@ -286,6 +397,215 @@ export function TemplateComposer({
               </div>
             </div>
           )}
+
+          {/* ── Picture above the message ───────────────────────────────── */}
+          {!isCarousel && (
+            <div className="space-y-1.5">
+              <Label className="text-xs">Above the message</Label>
+              <div className="flex gap-2">
+                {(["TEXT", "IMAGE"] as const).map((f) => (
+                  <Button
+                    key={f}
+                    type="button"
+                    size="sm"
+                    variant={headerFormat === f ? "default" : "outline"}
+                    onClick={() => setHeaderFormat(f)}
+                  >
+                    {f === "TEXT" ? "A line of text" : "A picture"}
+                  </Button>
+                ))}
+              </div>
+
+              {headerFormat === "TEXT" ? (
+                <Input
+                  value={header}
+                  maxLength={60}
+                  onChange={(e) => setHeader(e.target.value)}
+                  placeholder={`${TENANT_NAME} — new arrivals`}
+                />
+              ) : (
+                <div className="flex items-center gap-3 rounded-lg border border-dashed p-3">
+                  {headerImage ? (
+                    /* eslint-disable-next-line @next/next/no-img-element -- a blob: preview of a local file */
+                    <img
+                      src={headerImage.previewUrl}
+                      alt="Header"
+                      className="h-16 w-16 rounded object-cover"
+                    />
+                  ) : null}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={upload.isPending}
+                    onClick={() => headerFileRef.current?.click()}
+                  >
+                    <ImagePlus className="size-4" />
+                    {upload.isPending ? "Uploading…" : headerImage ? "Replace" : "Upload image"}
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    JPEG or PNG, up to 5 MB. Meta reviews this picture with the template.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Carousel ────────────────────────────────────────────────── */}
+          <div className="space-y-2 rounded-lg border p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <Label className="text-xs">
+                  <Images className="mr-1 inline size-3.5" />
+                  Product cards {isCarousel ? `(${cards.length} of 10)` : "(optional)"}
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  A swipeable row under the message. Needs 2 to 10 cards, each with its own
+                  picture and at least one button. Marketing templates only.
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={upload.isPending || cards.length >= 10}
+                onClick={() => cardFileRef.current?.click()}
+              >
+                <Plus className="size-4" />
+                {upload.isPending ? "Uploading…" : "Add card"}
+              </Button>
+            </div>
+
+            {cards.map((card, i) => (
+              <div key={`${card.headerHandle}-${i}`} className="flex gap-3 rounded-lg border p-2">
+                {/* eslint-disable-next-line @next/next/no-img-element -- a blob: preview of a local file */}
+                <img
+                  src={card.previewUrl}
+                  alt={`Card ${i + 1}`}
+                  className="h-20 w-20 shrink-0 rounded object-cover"
+                />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <Input
+                    value={card.body ?? ""}
+                    maxLength={160}
+                    onChange={(e) => patchCard(i, { body: e.target.value })}
+                    placeholder="Card text (optional — but all cards or none)"
+                  />
+                  {card.buttons.map((b, bi) => (
+                    <div key={bi} className="flex flex-wrap items-center gap-2">
+                      <Select
+                        value={b.type}
+                        onValueChange={(v) =>
+                          patchCard(i, {
+                            buttons: card.buttons.map((x, n) =>
+                              n === bi ? { ...x, type: v as "QUICK_REPLY" | "URL" } : x,
+                            ),
+                          })
+                        }
+                      >
+                        <SelectTrigger className="h-8 w-[8.5rem]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="QUICK_REPLY">Quick reply</SelectItem>
+                          <SelectItem value="URL">Link</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        className="h-8 w-36"
+                        value={b.text}
+                        maxLength={25}
+                        onChange={(e) =>
+                          patchCard(i, {
+                            buttons: card.buttons.map((x, n) =>
+                              n === bi ? { ...x, text: e.target.value } : x,
+                            ),
+                          })
+                        }
+                        placeholder="Button label"
+                      />
+                      {b.type === "URL" ? (
+                        <Input
+                          className="h-8 min-w-0 flex-1"
+                          value={b.url ?? ""}
+                          onChange={(e) =>
+                            patchCard(i, {
+                              buttons: card.buttons.map((x, n) =>
+                                n === bi ? { ...x, url: e.target.value } : x,
+                              ),
+                            })
+                          }
+                          placeholder="https://…"
+                        />
+                      ) : null}
+                      {card.buttons.length > 1 ? (
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8"
+                          title="Remove this button"
+                          onClick={() =>
+                            patchCard(i, { buttons: card.buttons.filter((_, n) => n !== bi) })
+                          }
+                        >
+                          <X className="size-3.5" />
+                        </Button>
+                      ) : null}
+                    </div>
+                  ))}
+                  {card.buttons.length < 2 ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 text-xs"
+                      onClick={() =>
+                        patchCard(i, {
+                          buttons: [...card.buttons, { type: "QUICK_REPLY", text: "" }],
+                        })
+                      }
+                    >
+                      <Plus className="size-3.5" />
+                      Second button
+                    </Button>
+                  ) : null}
+                </div>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8 shrink-0"
+                  title={`Remove card ${i + 1}`}
+                  onClick={() => removeCard(i)}
+                >
+                  <X className="size-4" />
+                </Button>
+              </div>
+            ))}
+          </div>
+
+          {/* Meta accepts JPEG and PNG as a template image; nothing else. */}
+          <input
+            ref={headerFileRef}
+            type="file"
+            accept="image/jpeg,image/png"
+            className="hidden"
+            onChange={(e) => {
+              void pickHeaderImage(e.target.files?.[0]);
+              e.target.value = "";
+            }}
+          />
+          <input
+            ref={cardFileRef}
+            type="file"
+            accept="image/jpeg,image/png"
+            className="hidden"
+            onChange={(e) => {
+              void addCard(e.target.files?.[0]);
+              e.target.value = "";
+            }}
+          />
 
           <div className="space-y-1.5">
             <Label htmlFor="tpl-footer" className="text-xs">
