@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -33,7 +33,9 @@ import {
   Search,
   Send,
   Share2,
+  Loader2,
   Smile,
+  X,
   Sparkles,
   Star,
   Tag,
@@ -75,6 +77,7 @@ import {
   useConversations,
   useCustomerNotes,
   useQueueCounts,
+  useAttachPhoto,
   useSendReply,
   useUpdateConversation,
 } from "@/lib/queries/crm";
@@ -1115,7 +1118,43 @@ function ThreadView({
 }) {
   const { data, isLoading, isError, error, refetch } = useConversationThread(id);
   const send = useSendReply(id);
+  const attach = useAttachPhoto(id);
   const update = useUpdateConversation(id);
+
+  /*
+   * The photo waiting to go with the next message. Uploaded the moment it is
+   * picked, so the salesperson sees it attached and the send is then a single
+   * quick call rather than a file upload they are watching a spinner for.
+   */
+  const [photo, setPhoto] = useState<{
+    mediaUrl: string;
+    mediaType: string;
+    mediaFilename: string;
+    previewUrl: string;
+  } | null>(null);
+  const photoInput = useRef<HTMLInputElement>(null);
+
+  const onPickPhoto = async (file?: File) => {
+    if (!file) return;
+    try {
+      const stored = await attach.mutateAsync(file);
+      // Revoked when it is replaced or cleared, so a long shift spent sending
+      // photos does not accumulate blobs the tab never releases.
+      setPhoto((prev) => {
+        if (prev) URL.revokeObjectURL(prev.previewUrl);
+        return { ...stored, previewUrl: URL.createObjectURL(file) };
+      });
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Could not attach that photo."));
+    }
+  };
+
+  const clearPhoto = () => {
+    setPhoto((prev) => {
+      if (prev) URL.revokeObjectURL(prev.previewUrl);
+      return null;
+    });
+  };
 
   /**
    * Is WhatsApp's 24-hour customer-care window still open?
@@ -1162,10 +1201,8 @@ function ThreadView({
   // Dialog states for Zithara Right Sidebar Accordions
   const [noteDialogOpen, setNoteDialogOpen] = useState(false);
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
-  const [dealDialogOpen, setDealDialogOpen] = useState(false);
   const [noteText, setNoteText] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
-  const [dealAmount, setDealAmount] = useState("142000");
 
   const role = useSession((s) => s.role);
   const canReassign = ROLE_RANK[role] >= ROLE_RANK.store_manager;
@@ -1196,10 +1233,21 @@ function ThreadView({
   const party = conversation.party;
 
   const onSend = async () => {
-    if (!draft.trim() || send.isPending) return;
+    // A photo on its own is a message; the caption is optional.
+    if ((!draft.trim() && !photo) || send.isPending) return;
     try {
-      const result = await send.mutateAsync({ body: draft });
+      const result = await send.mutateAsync({
+        body: draft.trim() || undefined,
+        ...(photo
+          ? {
+              mediaUrl: photo.mediaUrl,
+              mediaType: photo.mediaType,
+              mediaFilename: photo.mediaFilename,
+            }
+          : {}),
+      });
       setDraft("");
+      setPhoto(null);
       toast.success(
         // 'queued' = accepted by the outbox and on its way. 'saved' = written
         // to the thread and deliberately NOT sent (opted out, or outside the
@@ -1735,7 +1783,33 @@ function ThreadView({
             </div>
           )}
 
-          {/* Action Row: Emoji + Plus + Input + Mic/Send */}
+          {/* The photo waiting to go. Shown rather than merely counted: the
+              one mistake worth catching here is sending the wrong piece. */}
+          {photo ? (
+            <div className="mb-2 flex items-center gap-2 rounded-lg border border-border/80 bg-muted/40 p-2">
+              {/* eslint-disable-next-line @next/next/no-img-element -- a blob: preview of a local file, never a remote asset */}
+              <img
+                src={photo.previewUrl}
+                alt={photo.mediaFilename}
+                className="h-12 w-12 rounded object-cover"
+              />
+              <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                {photo.mediaFilename}
+              </span>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7 shrink-0"
+                title="Remove this photo"
+                onClick={clearPhoto}
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ) : null}
+
+          {/* Action Row: Emoji + Attach + Input + Send */}
           <div className="flex items-end gap-2">
             <div className="flex items-center gap-0.5 text-muted-foreground pb-1">
               <Button
@@ -1753,11 +1827,33 @@ function ThreadView({
                 size="icon"
                 variant="ghost"
                 className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground"
-                title="Attach jewellery catalogue item or quotation"
-                onClick={() => setDealDialogOpen(true)}
+                title={
+                  windowOpen
+                    ? "Attach a photo"
+                    : "A photo can only be sent while the 24-hour window is open"
+                }
+                disabled={!windowOpen || attach.isPending}
+                onClick={() => photoInput.current?.click()}
               >
-                <Plus className="h-4 w-4" />
+                {attach.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Paperclip className="h-4 w-4" />
+                )}
               </Button>
+              {/* WhatsApp delivers these three as photos; anything else is
+                  refused by the server after sniffing the actual bytes. */}
+              <input
+                ref={photoInput}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={(e) => {
+                  void onPickPhoto(e.target.files?.[0]);
+                  // Cleared so picking the same file twice still fires.
+                  e.target.value = "";
+                }}
+              />
             </div>
 
             <div className="flex-1">
@@ -1781,7 +1877,7 @@ function ThreadView({
               />
             </div>
 
-            {draft.trim() && windowOpen ? (
+            {(draft.trim() || photo) && windowOpen ? (
               <Button
                 size="icon"
                 onClick={onSend}
@@ -1985,19 +2081,6 @@ function ThreadView({
               </button>
             </div>
 
-            <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
-              <span className="font-medium flex items-center gap-1.5">
-                <Tag className="h-3.5 w-3.5 text-muted-foreground" />
-                Deals
-              </span>
-              <button
-                type="button"
-                onClick={() => setDealDialogOpen(true)}
-                className="text-primary hover:underline text-[11px] font-medium"
-              >
-                + Add
-              </button>
-            </div>
 
             <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
               <span className="font-medium flex items-center gap-1.5">
@@ -2141,44 +2224,6 @@ function ThreadView({
       </Dialog>
 
       {/* 3. Add Deal Dialog */}
-      <Dialog open={dealDialogOpen} onOpenChange={setDealDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-base">Create Deal / Quotation</DialogTitle>
-            <DialogDescription className="text-xs">
-              Attach quotation to WhatsApp conversation.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3 py-2">
-            <div className="space-y-1">
-              <Label className="text-xs">Deal Name</Label>
-              <Input defaultValue="Solitaire Ring 0.50 ct VS" />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Estimated Value (₹)</Label>
-              <Input
-                inputMode="decimal"
-                value={dealAmount}
-                onChange={(e) => setDealAmount(positiveNumberInput(e.target.value))}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setDealDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => {
-                toast.success("Deal created & attached to WhatsApp conversation");
-                setDealDialogOpen(false);
-              }}
-            >
-              Save Deal
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

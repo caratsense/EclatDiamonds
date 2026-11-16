@@ -302,14 +302,9 @@ export class WhatsAppService {
   /**
    * Send a document (a quote PDF) as a WhatsApp document message.
    *
-   * The bytes are uploaded to the provider's own media store first and the
-   * message refers to the returned media id. Nothing is handed to Meta as a
-   * link, so no public or long-lived URL to the file ever has to exist.
-   *
-   * With a template, the document rides in the template's DOCUMENT header —
-   * the only way a document can open a conversation outside the 24-hour
-   * window. The template must actually have such a header; if it does not,
-   * the provider refuses and that refusal is what gets reported.
+   * Kept as the name the quote flow calls: a PDF is a document, and reading
+   * `sendDocument` at that call site says what is happening. The work is
+   * `sendMedia`, which an image uses too.
    */
   async sendDocument(
     organisationId: string,
@@ -318,6 +313,56 @@ export class WhatsAppService {
     route?: SenderRoute,
     template?: { name: string; languageCode: string; components?: unknown[] },
   ): Promise<WhatsAppSendResult> {
+    return this.sendMedia(organisationId, to, { ...document, kind: 'document' }, route, template);
+  }
+
+  /**
+   * Send an image — a product photograph a salesperson is showing a customer.
+   *
+   * Separate from `sendDocument` because WhatsApp renders the two differently:
+   * an image appears in the thread, a document appears as a file to download.
+   * A photograph sent as a document is technically delivered and useless.
+   */
+  async sendImage(
+    organisationId: string,
+    to: string,
+    image: { buffer: Buffer; filename: string; mimeType: string; caption?: string },
+    route?: SenderRoute,
+    template?: { name: string; languageCode: string; components?: unknown[] },
+  ): Promise<WhatsAppSendResult> {
+    return this.sendMedia(organisationId, to, { ...image, kind: 'image' }, route, template);
+  }
+
+  /**
+   * Upload bytes to the provider's media store and send them, as a message of
+   * their own or as a template's media header.
+   *
+   * The bytes are uploaded first and the message refers to the returned media
+   * id. Nothing is handed to Meta as a link, so no public or long-lived URL to
+   * a customer's document or a product photograph ever has to exist.
+   *
+   * With a template, the media rides in the template's header — the only way
+   * it can open a conversation outside the 24-hour window. The template must
+   * actually have a header of that format; if it does not, the provider
+   * refuses and that refusal is what gets reported.
+   *
+   * `filename` is sent for a document and withheld for an image: WhatsApp uses
+   * it as the download name of a file, and on an image it is rejected.
+   */
+  private async sendMedia(
+    organisationId: string,
+    to: string,
+    media: {
+      buffer: Buffer;
+      filename: string;
+      mimeType: string;
+      caption?: string;
+      kind: 'document' | 'image';
+    },
+    route?: SenderRoute,
+    template?: { name: string; languageCode: string; components?: unknown[] },
+  ): Promise<WhatsAppSendResult> {
+    const document = media;
     return this.send(
       organisationId,
       to,
@@ -347,7 +392,11 @@ export class WhatsAppService {
             `HTTP ${res.status}: media upload refused${uploaded?.error?.message ? ` — ${uploaded.error.message}` : ''}`,
           );
         }
-        const media = { id: uploaded.id, filename: document.filename };
+        // A document carries its download name; an image is refused with one.
+        const media =
+          document.kind === 'document'
+            ? { id: uploaded.id, filename: document.filename }
+            : { id: uploaded.id };
         if (template) {
           return {
             type: 'template',
@@ -355,7 +404,10 @@ export class WhatsAppService {
               name: template.name,
               language: { code: template.languageCode },
               components: [
-                { type: 'header', parameters: [{ type: 'document', document: media }] },
+                {
+                  type: 'header',
+                  parameters: [{ type: document.kind, [document.kind]: media }],
+                },
                 ...((template.components ?? []) as { type?: string }[]).filter(
                   (component) => component?.type !== 'header',
                 ),
@@ -364,8 +416,11 @@ export class WhatsAppService {
           };
         }
         return {
-          type: 'document',
-          document: { ...media, ...(document.caption ? { caption: document.caption } : {}) },
+          type: document.kind,
+          [document.kind]: {
+            ...media,
+            ...(document.caption ? { caption: document.caption } : {}),
+          },
         };
       },
       route,
