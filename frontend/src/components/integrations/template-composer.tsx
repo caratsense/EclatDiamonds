@@ -110,7 +110,21 @@ export function TemplateComposer({
    * Meta reviews the real image when approving the template. `previewUrl` is
    * a local blob so somebody can see what they attached, and is never sent.
    */
-  const [headerFormat, setHeaderFormat] = useState<"TEXT" | "IMAGE">("TEXT");
+  /*
+   * ONE choice, not two independent controls.
+   *
+   * It used to be a header format plus an optional list of cards, and adding
+   * a card hid the header section while leaving an uploaded header image in
+   * state. The picture vanished from the screen, stayed in the submission,
+   * and validation then demanded it be removed -- from a control that was no
+   * longer rendered. A dead end, reported from production.
+   *
+   * Meta treats these as three different template shapes, so the UI does too.
+   * Switching clears what no longer applies, which is what makes "the picture
+   * went somewhere" impossible rather than merely unlikely.
+   */
+  type Layout = "TEXT" | "IMAGE" | "CAROUSEL";
+  const [layout, setLayoutState] = useState<Layout>("TEXT");
   const [header, setHeader] = useState("");
   const [headerImage, setHeaderImage] = useState<{ handle: string; previewUrl: string } | null>(null);
   const [cards, setCards] = useState<TemplateCardInput[]>([]);
@@ -118,7 +132,24 @@ export function TemplateComposer({
   const cardFileRef = useRef<HTMLInputElement>(null);
   const upload = useUploadTemplateImage(integrationId);
 
-  const isCarousel = cards.length > 0;
+  const isCarousel = layout === "CAROUSEL";
+
+  const setLayout = (next: Layout) => {
+    setLayoutState(next);
+    if (next !== "TEXT") setHeader("");
+    if (next !== "IMAGE") {
+      setHeaderImage((prev) => {
+        if (prev) URL.revokeObjectURL(prev.previewUrl);
+        return null;
+      });
+    }
+    if (next !== "CAROUSEL") {
+      setCards((prev) => {
+        for (const c of prev) if (c.previewUrl) URL.revokeObjectURL(c.previewUrl);
+        return [];
+      });
+    }
+  };
 
   const pickHeaderImage = async (file?: File) => {
     if (!file) return;
@@ -193,9 +224,7 @@ export function TemplateComposer({
       ? "A carousel needs at least 2 cards. One picture is a header, not a carousel."
       : category !== "MARKETING"
         ? "A carousel is a marketing template. Change the category to Marketing."
-        : headerImage || header.trim()
-          ? "A carousel carries its pictures on the cards, so remove the template's own header."
-          : cards.some((c) => c.buttons.length < 1)
+        : cards.some((c) => c.buttons.length < 1)
             ? "Every card needs at least one button."
             : new Set(cards.map((c) => c.buttons.map((b) => b.type).join(","))).size > 1
               ? "Every card must carry the same buttons."
@@ -204,8 +233,8 @@ export function TemplateComposer({
                 : cards.some((c) => c.buttons.some((b) => b.type === "URL" && !b.url?.trim()))
                   ? "A link button needs a link."
                   : null
-    : headerFormat === "IMAGE" && !headerImage
-      ? "Upload the header image."
+    : layout === "IMAGE" && !headerImage
+      ? "Upload the picture that goes above the message."
       : null;
 
   const problem =
@@ -228,7 +257,7 @@ export function TemplateComposer({
     setExamples([]);
     setCategory("UTILITY");
     setLanguageCode("en_US");
-    setHeaderFormat("TEXT");
+    setLayoutState("TEXT");
     setHeader("");
     setHeaderImage((prev) => {
       if (prev) URL.revokeObjectURL(prev.previewUrl);
@@ -254,7 +283,7 @@ export function TemplateComposer({
         // mutually exclusive here exactly as they are at Meta.
         ...(isCarousel
           ? { cards: cards.map(({ previewUrl: _preview, ...card }) => card) }
-          : headerFormat === "IMAGE" && headerImage
+          : layout === "IMAGE" && headerImage
             ? { headerFormat: "IMAGE" as const, headerHandle: headerImage.handle }
             : header.trim()
               ? { header: header.trim() }
@@ -398,70 +427,86 @@ export function TemplateComposer({
             </div>
           )}
 
-          {/* ── Picture above the message ───────────────────────────────── */}
-          {!isCarousel && (
-            <div className="space-y-1.5">
-              <Label className="text-xs">Above the message</Label>
-              <div className="flex gap-2">
-                {(["TEXT", "IMAGE"] as const).map((f) => (
-                  <Button
-                    key={f}
-                    type="button"
-                    size="sm"
-                    variant={headerFormat === f ? "default" : "outline"}
-                    onClick={() => setHeaderFormat(f)}
-                  >
-                    {f === "TEXT" ? "A line of text" : "A picture"}
-                  </Button>
-                ))}
-              </div>
-
-              {headerFormat === "TEXT" ? (
-                <Input
-                  value={header}
-                  maxLength={60}
-                  onChange={(e) => setHeader(e.target.value)}
-                  placeholder={`${TENANT_NAME} — new arrivals`}
-                />
-              ) : (
-                <div className="flex items-center gap-3 rounded-lg border border-dashed p-3">
-                  {headerImage ? (
-                    /* eslint-disable-next-line @next/next/no-img-element -- a blob: preview of a local file */
-                    <img
-                      src={headerImage.previewUrl}
-                      alt="Header"
-                      className="h-16 w-16 rounded object-cover"
-                    />
-                  ) : null}
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={upload.isPending}
-                    onClick={() => headerFileRef.current?.click()}
-                  >
-                    <ImagePlus className="size-4" />
-                    {upload.isPending ? "Uploading…" : headerImage ? "Replace" : "Upload image"}
-                  </Button>
-                  <p className="text-xs text-muted-foreground">
-                    JPEG or PNG, up to 5 MB. Meta reviews this picture with the template.
-                  </p>
-                </div>
-              )}
+          {/* ── What this template looks like ───────────────────────────── */}
+          <div className="space-y-1.5">
+            <Label className="text-xs">What does this template look like?</Label>
+            <div className="flex flex-wrap gap-2">
+              {(
+                [
+                  ["TEXT", "Just words"],
+                  ["IMAGE", "One picture"],
+                  ["CAROUSEL", "Product cards"],
+                ] as const
+              ).map(([value, label]) => (
+                <Button
+                  key={value}
+                  type="button"
+                  size="sm"
+                  variant={layout === value ? "default" : "outline"}
+                  onClick={() => setLayout(value)}
+                >
+                  {label}
+                </Button>
+              ))}
             </div>
-          )}
+            <p className="text-xs text-muted-foreground">
+              {layout === "TEXT"
+                ? "An optional line above the message — usually the shop name."
+                : layout === "IMAGE"
+                  ? "One photo sits above the message. Meta reviews it with the template."
+                  : "A swipeable row under the message: 2–10 photos, each with its own buttons. Every card must carry the same buttons as the others."}
+            </p>
+
+            {layout === "TEXT" ? (
+              <Input
+                value={header}
+                maxLength={60}
+                onChange={(e) => setHeader(e.target.value)}
+                placeholder={`${TENANT_NAME} — new arrivals`}
+              />
+            ) : null}
+
+            {layout === "IMAGE" ? (
+              <div className="flex items-center gap-3 rounded-lg border border-dashed p-3">
+                {headerImage ? (
+                  /* eslint-disable-next-line @next/next/no-img-element -- a blob: preview of a local file */
+                  <img
+                    src={headerImage.previewUrl}
+                    alt="Above the message"
+                    className="h-16 w-16 rounded object-cover"
+                  />
+                ) : null}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={upload.isPending}
+                  onClick={() => headerFileRef.current?.click()}
+                >
+                  <ImagePlus className="size-4" />
+                  {upload.isPending ? "Uploading…" : headerImage ? "Replace photo" : "Upload photo"}
+                </Button>
+                <p className="text-xs text-muted-foreground">JPEG or PNG, up to 5 MB.</p>
+              </div>
+            ) : null}
+          </div>
+
 
           {/* ── Carousel ────────────────────────────────────────────────── */}
+          {/* Only when chosen: two upload buttons on screen at once is what
+              made it unclear which one a photo had gone to. */}
+          {isCarousel ? (
           <div className="space-y-2 rounded-lg border p-3">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <Label className="text-xs">
                   <Images className="mr-1 inline size-3.5" />
-                  Product cards {isCarousel ? `(${cards.length} of 10)` : "(optional)"}
+                  Product cards ({cards.length} of 10)
                 </Label>
                 <p className="text-xs text-muted-foreground">
-                  A swipeable row under the message. Needs 2 to 10 cards, each with its own
-                  picture and at least one button. Marketing templates only.
+                  {cards.length < 2
+                    ? `Add ${2 - cards.length} more — a carousel needs at least 2 cards.`
+                    : "Each card needs a photo and at least one button, and every card must carry the same buttons."}
                 </p>
               </div>
               <Button
@@ -584,6 +629,7 @@ export function TemplateComposer({
               </div>
             ))}
           </div>
+          ) : null}
 
           {/* Meta accepts JPEG and PNG as a template image; nothing else. */}
           <input
