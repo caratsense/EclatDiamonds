@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { gateDecision, navSlugForPath, roleDecision, roleForPage } from "./module-gate";
 import { CORE_NAVIGATION, NAV_ITEMS } from "@/lib/navigation";
+import type { AccessMap } from "@/lib/types";
 
 /**
  * The gate's decision table (MM4, MM3-03).
