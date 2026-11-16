@@ -90,6 +90,13 @@ const CORE_NAVIGATION = [
   // The bot's own wording, beside the inbox it speaks into. Core rather than
   // jewellery-only: every vertical with the CRM gets the bot, so every one of
   // them gets to choose its words.
+  /*
+   * CRM > NPS. In this list or it does not exist: the pack is the
+   * entitlement AND the navigation, so a slug missing here is both an
+   * empty sidebar and a 403 — which is exactly how NPS shipped invisible
+   * the first time.
+   */
+  'nps',
   'bot-script',
   // The right to change that wording, which head office may delegate. Core for
   // the same reason: wherever the bot speaks, somebody has to be able to edit it.
