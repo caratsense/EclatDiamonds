@@ -1314,6 +1314,8 @@ model Party {
   checkIns            CheckIn[]
   schemeMembers       SchemeMember[]
   returns             ReturnRecord[]
+  /// Asks to remove this customer, awaiting a manager or head office.
+  deletionRequests    SpecialRequest[]
 
   contactPoints       ContactPoint[]
   mergePrimary        MergeCandidate[]     @relation("MergePrimary")
@@ -3544,6 +3546,11 @@ enum SpecialRequestKind {
   purchase
   expense
   staff
+  /// Removing a customer from the directory (client, 16 Nov). Never done
+  /// directly: a salesperson's ask needs their manager, a manager's needs head
+  /// office. Approving it archives a customer with history and hard-deletes
+  /// one created by mistake — see SpecialRequestsService.decide.
+  customer_deletion
   other
 }
 
@@ -3609,12 +3616,22 @@ model SpecialRequest {
   /// How many more pieces the branch wants (kind = reorder).
   quantity  Int?
 
+  // --- customer_deletion payload ----------------------------------------------
+  /// The customer asked to be removed (kind = customer_deletion).
+  ///
+  /// `SetNull` rather than `Cascade`: approving the request may delete the
+  /// party, and the request itself is the record of WHO asked and WHO allowed
+  /// it. Cascading would erase exactly the audit trail the approval existed to
+  /// create.
+  partyId String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   store       Store                   @relation(fields: [storeId], references: [id])
   requestedBy User                    @relation("SpecialRequestRequester", fields: [requestedById], references: [id])
   product     Product?                @relation(fields: [productId], references: [id])
+  party       Party?                  @relation(fields: [partyId], references: [id], onDelete: SetNull)
   messages    SpecialRequestMessage[]
 
   @@index([storeId, createdAt])

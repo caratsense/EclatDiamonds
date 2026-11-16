@@ -380,17 +380,31 @@ export class FeedbackService {
       escalatedTaskId = task.id;
     }
 
+    const respondedAt = new Date();
     await this.prisma.feedbackRequest.update({
       where: { id: row.id },
       data: {
         status: 'responded',
         rating,
         comment: input.comment?.slice(0, 2000) ?? null,
-        respondedAt: new Date(),
+        respondedAt,
         escalatedTaskId,
         reviewLinkOffered: Boolean(reviewLink),
       },
     });
+
+    /*
+     * The walk-in register's "NPS response received" column, beside the "sent"
+     * one the outbox stamps. Both exist because head office reconciles the
+     * register against their own sheet row by row, and a column they can only
+     * get by joining to FeedbackRequest is one they cannot check.
+     */
+    if (row.checkInId) {
+      await this.prisma.checkIn.updateMany({
+        where: { id: row.checkInId, npsResponseReceivedAt: null },
+        data: { npsResponseReceivedAt: respondedAt },
+      });
+    }
 
     if (row.partyId) {
       await this.activity.record({

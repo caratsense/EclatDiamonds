@@ -27,6 +27,16 @@ const KIND_MIN_ROLE: Record<SpecialRequestKind, Role> = {
   reorder: Role.store_manager,
   expense: Role.store_manager,
   staff: Role.store_manager,
+  /*
+   * Removing a customer (client, 16 Nov): "if manager wants to it goes to head
+   * office for approval and if salesperson does it it should go to manager".
+   *
+   * That is precisely the one-rank-above rule below, so the floor only has to
+   * keep a salesperson from being an approver. `roleAbove` skips the dead
+   * area_manager tier, so a manager's own request lands on head office rather
+   * than stopping one rung short.
+   */
+  customer_deletion: Role.store_manager,
   other: Role.store_manager,
 };
 
@@ -49,6 +59,7 @@ export const REQUEST_KIND_LABELS: Record<SpecialRequestKind, string> = {
   purchase: 'Purchase',
   expense: 'Expense',
   staff: 'Staffing',
+  customer_deletion: 'Customer deletion',
   other: 'Other',
 };
 

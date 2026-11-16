@@ -1,6 +1,9 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, PartyType } from '@prisma/client';
+import { Prisma, PartyType, SpecialRequestKind } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { SpecialRequestsService } from '../special-requests/special-requests.service';
+import { ROLE_LABELS } from '../common/role.util';
+import { describeHistory, partyHistory, removalOutcome } from './party-history';
 import { AuditService } from '../common/audit.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuthUser } from '../common/auth-user';
@@ -131,6 +134,7 @@ export class PartiesService {
     private readonly prisma: PrismaService,
     private readonly scope: StoreScopeService,
     private readonly audit: AuditService,
+    private readonly requests: SpecialRequestsService,
   ) {}
 
   /**
@@ -141,6 +145,80 @@ export class PartiesService {
    * attached to nobody, and their notes would go with it. Archive is the door
    * for everyone else: reversible, audited, and the totals stay true.
    */
+  /**
+   * Ask for a customer to be removed.
+   *
+   * Nobody below head office may do it outright (client, 16 Nov): a
+   * salesperson's ask goes to their manager, a manager's to head office. The
+   * routing is not decided here — `resolveRequiredRole` already applies the
+   * one-rank-above rule to every kind of request, so this lands in the same
+   * approvals queue the branch already works, rather than a second inbox that
+   * only ever holds deletions.
+   *
+   * The consequence is worked out NOW and written into the request, so the
+   * approver is agreeing to a named outcome rather than to the word "delete".
+   */
+  async requestDeletion(user: AuthUser, id: string, reason: string) {
+    const trimmed = (reason ?? '').trim();
+    if (trimmed.length < 3) {
+      throw new BadRequestException('Say why this customer should be removed.');
+    }
+
+    const party = await this.prisma.party.findFirst({
+      where: { id, organisationId: user.organisationId },
+      select: { id: true, name: true, storeId: true, legacyId: true, archivedAt: true },
+    });
+    if (!party) throw new NotFoundException('Customer not found');
+    if (party.archivedAt) {
+      throw new BadRequestException(`${party.name} is already archived.`);
+    }
+
+    const pending = await this.prisma.specialRequest.findFirst({
+      where: {
+        organisationId: user.organisationId,
+        partyId: id,
+        kind: 'customer_deletion',
+        status: { in: ['pending', 'escalated'] },
+      },
+      select: { id: true, ref: true, requiredRole: true },
+    });
+    if (pending) {
+      throw new BadRequestException(
+        `${party.name} is already waiting on ${ROLE_LABELS[pending.requiredRole] ?? pending.requiredRole} (${pending.ref}).`,
+      );
+    }
+
+    const held = await partyHistory(this.prisma, id);
+    /*
+     * A Gati-synced customer comes straight back on the next sync, so deleting
+     * is not an outcome we can honestly offer. Archiving is, and it is what the
+     * approver will get — said here rather than discovered at approval time.
+     */
+    const outcome = party.legacyId ? 'archive' : removalOutcome(held);
+    const because = party.legacyId
+      ? 'synced from Gati, so a delete would come straight back'
+      : held.length
+        ? `${describeHistory(held)} on record`
+        : 'nothing on record';
+
+    const storeId = party.storeId ?? user.storeIds?.[0];
+    if (!storeId) {
+      throw new BadRequestException('This customer is not attached to a branch, so nobody owns the approval.');
+    }
+
+    const request = await this.requests.create(user, {
+      kind: SpecialRequestKind.customer_deletion,
+      storeId,
+      title: `Remove ${party.name}`,
+      details:
+        `${trimmed}\n\n` +
+        `If approved: ${outcome === 'delete' ? 'the customer record is deleted' : 'the customer is archived'} — ${because}.`,
+      partyId: id,
+    });
+
+    return { request, outcome, held: describeHistory(held) || null };
+  }
+
   async remove(user: AuthUser, id: string) {
     const party = await this.prisma.party.findFirst({
       where: { id, organisationId: user.organisationId },
@@ -153,37 +231,10 @@ export class PartiesService {
       );
     }
 
-    const [sales, ledger, payments, quotes, leads, conversations, checkIns, schemes, returns,
-      loyalty, customOrders, makingOrders, feedback, calls, tasks, notes] =
-      await Promise.all([
-        this.prisma.sale.count({ where: { partyId: id } }),
-        this.prisma.ledgerEntry.count({ where: { partyId: id } }),
-        this.prisma.payment.count({ where: { partyId: id } }),
-        this.prisma.quote.count({ where: { partyId: id } }),
-        this.prisma.lead.count({ where: { partyId: id } }),
-        this.prisma.conversation.count({ where: { partyId: id } }),
-        this.prisma.checkIn.count({ where: { partyId: id } }),
-        this.prisma.schemeMember.count({ where: { partyId: id } }),
-        this.prisma.returnRecord.count({ where: { partyId: id } }),
-        this.prisma.loyaltyAccount.count({ where: { partyId: id } }),
-        this.prisma.customOrder.count({ where: { partyId: id } }),
-        this.prisma.manufacturingOrder.count({ where: { partyId: id } }),
-        this.prisma.feedbackRequest.count({ where: { partyId: id } }),
-        this.prisma.callLog.count({ where: { partyId: id } }),
-        this.prisma.task.count({ where: { partyId: id } }),
-        this.prisma.leadNote.count({ where: { partyId: id } }),
-      ]);
-    const held: [string, number][] = [
-      ['sales', sales], ['ledger entries', ledger], ['payments', payments],
-      ['quotes', quotes], ['leads', leads], ['conversations', conversations],
-      ['visits', checkIns], ['scheme memberships', schemes], ['returns', returns],
-      ['loyalty accounts', loyalty], ['custom orders', customOrders],
-      ['manufacturing orders', makingOrders], ['feedback requests', feedback],
-      ['calls', calls], ['tasks', tasks], ['notes', notes],
-    ].filter(([, c]) => (c as number) > 0) as [string, number][];
+    const held = await partyHistory(this.prisma, id);
     if (held.length) {
       throw new BadRequestException(
-        `${party.name} has ${held.map(([w, c]) => `${c} ${w}`).join(', ')} on record. Archive them instead — it hides them from lists and keeps every number true.`,
+        `${party.name} has ${describeHistory(held)} on record. Archive them instead — it hides them from lists and keeps every number true.`,
       );
     }
 

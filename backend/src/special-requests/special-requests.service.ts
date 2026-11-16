@@ -18,6 +18,7 @@ import { SequenceService } from '../common/sequence.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { assertNotSelfApproval, assertUndecided } from '../common/approval.util';
 import { ROLE_LABELS, ROLE_RANK } from '../common/role.util';
+import { describeHistory, partyHistory, removalOutcome } from '../parties/party-history';
 import {
   canDecide,
   REQUEST_KIND_LABELS,
@@ -147,6 +148,11 @@ export class SpecialRequestsService {
             : null,
         productId: dto.kind === SpecialRequestKind.reorder ? dto.productId : null,
         quantity: dto.kind === SpecialRequestKind.reorder ? dto.quantity : null,
+        // Only a deletion request names a customer. Pinned to the kind for the
+        // same reason productId is: a stray id on another kind would make the
+        // approval screen offer to delete somebody nobody asked about.
+        partyId:
+          dto.kind === SpecialRequestKind.customer_deletion ? (dto.partyId ?? null) : null,
       },
       include: { messages: true, product: PRODUCT_SELECT },
     });
@@ -359,6 +365,8 @@ export class SpecialRequestsService {
     const approving = dto.status === 'approved';
     const decidedAt = new Date();
     let appliedRate: number | null = null;
+    /** What an approved deletion actually did, reported back to the approver. */
+    let removal: { outcome: 'delete' | 'archive'; name: string; held: string | null } | null = null;
 
     const updated = await this.prisma.$transaction(async (tx) => {
       let appliedRateId: string | null = null;
@@ -385,6 +393,50 @@ export class SpecialRequestsService {
         });
         appliedRateId = created.id;
         appliedRate = rate;
+      }
+
+      /*
+       * Approving a deletion carries it out, in this same transaction, so a
+       * crash between the two cannot leave a request marked approved against a
+       * customer still in the directory.
+       *
+       * Archive or delete is decided HERE, from the history as it stands now —
+       * not from what it was when the request was raised. A customer who was
+       * empty on Monday may have been sold to on Tuesday, and the approver's
+       * yes must not take the sale with it.
+       */
+      if (approving && row.kind === SpecialRequestKind.customer_deletion) {
+        if (!row.partyId) {
+          throw new BadRequestException(
+            'This request no longer names a customer — they were removed another way.',
+          );
+        }
+        const party = await tx.party.findFirst({
+          where: { id: row.partyId, organisationId: user.organisationId },
+          select: { id: true, name: true, legacyId: true, archivedAt: true },
+        });
+        if (!party) {
+          throw new BadRequestException('That customer no longer exists.');
+        }
+
+        const held = await partyHistory(tx, party.id);
+        // Gati would re-create a deleted row on the next sync, so archiving is
+        // the only outcome that actually holds for a synced customer.
+        const outcome = party.legacyId ? 'archive' : removalOutcome(held);
+
+        if (outcome === 'delete') {
+          await tx.party.delete({ where: { id: party.id } });
+        } else if (!party.archivedAt) {
+          await tx.party.update({
+            where: { id: party.id },
+            data: {
+              archivedAt: decidedAt,
+              archivedById: user.id,
+              archiveReason: `${REQUEST_KIND_LABELS.customer_deletion} ${row.ref} approved by ${user.name}`,
+            },
+          });
+        }
+        removal = { outcome, name: party.name, held: describeHistory(held) || null };
       }
 
       return tx.specialRequest.update({

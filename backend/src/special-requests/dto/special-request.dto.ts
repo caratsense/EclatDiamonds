@@ -87,6 +87,11 @@ export class CreateSpecialRequestDto {
   @Min(1)
   @Max(999)
   quantity?: number;
+
+  /** The customer being asked about (kind = customer_deletion). */
+  @IsOptional()
+  @IsString()
+  partyId?: string;
 }
 
 /** PATCH /requests/:id/decide — approve or reject. */
