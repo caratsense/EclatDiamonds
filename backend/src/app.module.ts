@@ -42,6 +42,7 @@ import { CatalogueModule } from './catalogue/catalogue.module';
 import { StorageModule } from './storage/storage.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { SpecialRequestsModule } from './special-requests/special-requests.module';
+import { NpsModule } from './nps/nps.module';
 import { AssistantModule } from './assistant/assistant.module';
 import { AuditModule } from './audit/audit.module';
 import { TargetsModule } from './targets/targets.module';
@@ -104,6 +105,7 @@ import { AttributionModule } from './attribution/attribution.module';
     StorageModule,
     NotificationsModule,
     SpecialRequestsModule,
+    NpsModule,
     AssistantModule,
     AuditModule,
     TargetsModule,

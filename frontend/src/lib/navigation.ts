@@ -39,6 +39,7 @@ import {
   Globe,
   Smartphone,
   PhoneCall,
+  Gauge,
   MessageSquareHeart,
   Timer,
   Archive,
@@ -958,6 +959,7 @@ export const NAV_GROUPS: NavGroup[] = NAV_GROUP_ORDER.map((label) => ({
 export const CORE_NAVIGATION: readonly string[] = Object.freeze([
   "crm",
   "conversations",
+  "nps",
   "bot-script",
   "customers",
   "customers/archived",
