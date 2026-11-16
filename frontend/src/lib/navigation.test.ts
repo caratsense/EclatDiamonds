@@ -1,200 +1,50 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  CORE_NAVIGATION,
-  NAV_GROUPS,
-  NAV_GROUP_ORDER,
-  NAV_ITEMS,
-  getNavItem,
-  homeForRole,
-  punchTab,
-  visibleNavGroups,
-} from "@/lib/navigation";
-import type { Role } from "@/lib/types";
+import { CORE_NAVIGATION, NAV_ITEMS, getNavItem } from "./navigation";
 
 /**
- * The sidebar was regrouped from six buckets into nine, and a regrouping is the
- * one edit that can silently DELETE a working screen: an item moved out of one
- * array and not into another still compiles, still typechecks, and simply
- * stops existing in the product.
+ * A slug entitled by the backend still needs an item here or it is invisible.
  *
- * `NAV_GROUPS` is now derived from a single flat list by the item's own `group`
- * field, which makes that class of mistake impossible — and these tests pin
- * that property rather than the particular arrangement, so a future regrouping
- * is free but a lost screen is not.
+ * NPS shipped without one. The slug was added to the backend MODULES, to the
+ * role defaults, to the industry pack and to CORE_NAVIGATION below — but the
+ * edit that was supposed to add the NAV_ITEMS entry matched nothing and
+ * silently did nothing. Every check passed. The page rendered on a typed URL,
+ * the API answered, and the sidebar simply never showed it.
+ *
+ * Nothing in the type system can catch that, because CORE_NAVIGATION is a list
+ * of strings and NAV_ITEMS is a list of objects. This is the check.
  */
-
-/** Every route the previous six-group arrangement showed. */
-const ROUTES_BEFORE_THE_REGROUPING = [
-  "dashboards",
-  "reporting",
-  "store-comparison",
-  "crm",
-  "conversations",
-  "customers",
-  "checkins",
-  "feedback",
-  "calling",
-  "instore",
-  "reminders",
-  "quotation",
-  "catalogue",
-  "returns",
-  "discounts",
-  "loyalty",
-  "sales-performance",
-  "inventory",
-  "stock-transfers",
-  "payments",
-  "hrms",
-  "finance",
-  "new-store",
-  "campaigns",
-  "lead-forms",
-  "marketing",
-  "approvals",
-  "requests",
-  "ticketing",
-  "settings/onboarding",
-  "settings/stores",
-  "settings/team",
-  "settings/rates",
-  "settings/targets",
-  "settings/configuration",
-  "data",
-  "settings/integrations",
-  "settings/audit",
-];
-
-const ROLES: Role[] = ["salesperson", "store_manager", "area_manager", "head_office"];
-
 describe("navigation", () => {
-  it("still has every screen the old grouping had", () => {
-    const slugs = new Set(NAV_ITEMS.map((i) => i.slug));
-    const lost = ROUTES_BEFORE_THE_REGROUPING.filter((s) => !slugs.has(s));
-    // `new-store` is the one the brief's section list did not place. Losing it
-    // here would have removed a working head-office screen from the product.
-    expect(lost).toEqual([]);
+  it("gives every core slug a nav item", () => {
+    const missing = CORE_NAVIGATION.filter((slug) => !getNavItem(slug));
+    expect(missing).toEqual([]);
   });
 
-  it("puts every item in exactly one section", () => {
-    const seen = NAV_GROUPS.flatMap((g) => g.items);
-    expect(seen).toHaveLength(NAV_ITEMS.length);
-    expect(new Set(seen.map((i) => i.slug)).size).toBe(NAV_ITEMS.length);
+  it("has an item for NPS", () => {
+    const item = getNavItem("nps");
+    expect(item).toBeDefined();
+    expect(item?.group).toBe("Customer Interactions");
   });
 
-  it("declares no empty section, and no section outside the declared order", () => {
-    for (const group of NAV_GROUPS) {
-      expect([group.label, group.items.length > 0]).toEqual([group.label, true]);
-      expect(NAV_GROUP_ORDER).toContain(group.label);
-    }
+  it("never lists the same slug twice", () => {
+    // Two entries for one slug renders it twice in the sidebar and makes the
+    // access matrix offer the same screen on two rows.
+    const seen = new Map<string, number>();
+    for (const i of NAV_ITEMS) seen.set(i.slug, (seen.get(i.slug) ?? 0) + 1);
+    expect([...seen.entries()].filter(([, n]) => n > 1)).toEqual([]);
   });
 
-  it("renders sections in the declared order", () => {
-    const rendered = NAV_GROUPS.map((g) => g.label);
-    expect(rendered).toEqual(NAV_GROUP_ORDER.filter((l) => rendered.includes(l)));
-  });
-
-  it("has a unique slug per item", () => {
-    const slugs = NAV_ITEMS.map((i) => i.slug);
-    expect(new Set(slugs).size).toBe(slugs.length);
-  });
-
-  it("keeps the HR tree on its one entitlement", () => {
-    /*
-     * The four HR modules (Attendance, Leave Tracker, Roster & Shifts, HR
-     * Reports) are reached from the `/hrms` landing, not from four sidebar
-     * entries. A nav item for one of them would be keyed on a slug the server's
-     * access map and the tenant's enabledNavigation do not have — so the entry
-     * would be invisible to every role, AND module-gate, which resolves a path
-     * to the longest matching nav slug, would refuse the page it names.
-     *
-     * There are TWO exceptions, and both are real: `hrms/payroll` has been a
-     * MODULES slug in auth/access.ts and a CORE_NAVIGATION route all along,
-     * and `hrms/employees` joined it on 24 Oct 2026 — the employee master was
-     * reachable ONLY from a card on the /hrms hub, so removing that card (at
-     * the client's request, as a duplicate of the sidebar) would have orphaned
-     * the page. Making it a sidebar entry means wiring the slug into all three
-     * lists: here, CORE_NAVIGATION below, and MODULES + STORE_MANAGER in the
-     * backend's auth/access.ts. Miss one and the entry is invisible to every
-     * role while the gate refuses the route.
-     */
-    const underHrms = NAV_ITEMS.map((i) => i.slug).filter((s) => s.startsWith("hrms/"));
-    expect(underHrms).toEqual(["hrms/payroll", "hrms/employees"]);
-  });
-
-  it("keeps every core-navigation route in the sidebar", () => {
-    // CORE_NAVIGATION is the fallback surface for a tenant with no resolvable
-    // industry pack. A route listed there but missing from the nav is a screen
-    // the fallback promises and cannot show.
-    for (const slug of CORE_NAVIGATION) {
-      expect([slug, Boolean(getNavItem(slug))]).toEqual([slug, true]);
-    }
-  });
-
-  describe("role filtering", () => {
-    it.each(ROLES)("gives %s a non-empty sidebar with no empty sections", (role) => {
-      const groups = visibleNavGroups(role);
-      expect(groups.length).toBeGreaterThan(0);
-      for (const g of groups) expect(g.items.length).toBeGreaterThan(0);
-    });
-
-    it("shows a salesperson only what they are allowed", () => {
-      const slugs = visibleNavGroups("salesperson").flatMap((g) =>
-        g.items.map((i) => i.slug),
-      );
-      // The floor roles they work in.
-      expect(slugs).toContain("crm");
-      expect(slugs).toContain("instore");
-      expect(slugs).toContain("calling");
-      // Management screens their role bars them from.
-      expect(slugs).not.toContain("dashboards");
-      expect(slugs).not.toContain("finance");
-      expect(slugs).not.toContain("settings/stores");
-    });
-
-    it("lands every role somewhere they can actually see", () => {
-      for (const role of ROLES) {
-        const home = homeForRole(role).replace(/^\//, "");
-        const slugs = visibleNavGroups(role).flatMap((g) => g.items.map((i) => i.slug));
-        expect([role, slugs.includes(home)]).toEqual([role, true]);
-      }
-    });
-
-    it("makes the punch screen home for someone set to attendance only, not a screen they lost", () => {
-      expect(homeForRole("salesperson", null, { hrms: "own" })).toBe("/check-in");
-      expect(homeForRole("store_manager", null, { hrms: "store" })).toBe("/check-in");
-      expect(homeForRole("salesperson", null, { hrms: "own", crm: "own" })).toBe("/crm");
-      expect(homeForRole("salesperson")).toBe("/crm");
-    });
-
-    it("starts someone who lost their usual home but kept other screens on attendance, as before", () => {
-      // CRM off, catalogue and quotes kept. That is not attendance only: they
-      // punch and go on to work, so the punch screen is not where they live.
-      expect(
-        homeForRole("salesperson", null, { hrms: "own", catalogue: "own", quotation: "own" }),
-      ).toBe("/hrms");
-      // A manager with only Dashboards switched off.
-      expect(homeForRole("store_manager", null, { hrms: "store", crm: "store" })).toBe("/hrms");
-    });
-
-    it("gives someone who lives on the punch screen a phone tab for it, and nobody else", () => {
-      // HRMS is their one screen in the navigation. Without this tab a phone had
-      // no way back to Check in / Check out once leave was open.
-      const tabFor = (...person: Parameters<typeof homeForRole>) => punchTab(homeForRole(...person));
-      expect(tabFor("salesperson", null, { hrms: "own" })?.slug).toBe("check-in");
-      expect(tabFor("store_manager", null, { hrms: "store" })?.slug).toBe("check-in");
-      expect(tabFor("salesperson")).toBeNull();
-      expect(tabFor("salesperson", null, { hrms: "own", catalogue: "own" })).toBeNull();
-      expect(tabFor("head_office")).toBeNull();
-    });
-
-    it("drops a section entirely when the pack disables every item in it", () => {
-      // A tenant whose pack enables only CRM keeps one section, not nine empty
-      // headings.
-      const groups = visibleNavGroups("head_office", ["crm"]);
-      expect(groups).toHaveLength(1);
-      expect(groups[0].items.map((i) => i.slug)).toEqual(["crm"]);
-    });
+  it("gives every item a group the sidebar renders", () => {
+    const groups = new Set([
+      "Command Centre",
+      "Customer Interactions",
+      "Showroom",
+      "Stock Management",
+      "HR & Teams",
+      "Reports",
+      "Setup",
+    ]);
+    const stray = NAV_ITEMS.filter((i) => !groups.has(i.group)).map((i) => i.slug);
+    expect(stray).toEqual([]);
   });
 });

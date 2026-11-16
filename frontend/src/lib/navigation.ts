@@ -281,6 +281,23 @@ export const NAV_ITEMS: NavItem[] = [
     rank: 70,
   },
   {
+    /*
+     * CRM > NPS. Its own screen beside Feedback rather than a tab inside it:
+     * Feedback is the product's generic 1-5 ask; NPS is the client's own form,
+     * its own stages and its own reconciliation against their sheet.
+     */
+    module: 1,
+    slug: "nps",
+    title: "NPS",
+    purpose:
+      "Who was asked, who replied, who filled the form — and the submissions still waiting to be matched.",
+    primaryAction: "",
+    icon: Gauge,
+    group: "Customer Interactions",
+    rank: 55,
+    roles: ["store_manager", "area_manager", "head_office"],
+  },
+  {
     module: 1,
     slug: "feedback",
     title: "Feedback Requests",
