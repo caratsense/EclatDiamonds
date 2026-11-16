@@ -144,6 +144,12 @@ export class ReplyDto {
   @IsString()
   @MaxLength(100)
   mediaType?: string;
+
+  /** As returned by POST :id/attachments. The customer never sees it on an image. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  mediaFilename?: string;
 }
 
 export class UpdateConversationDto {

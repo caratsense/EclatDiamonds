@@ -9,7 +9,10 @@ import {
   Post,
   Query,
   Res,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { IsIn, IsNotEmpty, IsOptional, IsString, MaxLength, ValidateIf } from 'class-validator';
 
@@ -360,6 +363,33 @@ export class CrmConversationsController {
     res.setHeader('Content-Disposition', 'inline');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.send(found.buffer);
+  }
+
+  /**
+   * Put a photograph into private storage so the next reply can carry it.
+   *
+   * Two steps rather than one multipart reply, because the bytes and the words
+   * are written at different moments: a salesperson picks the photo, sees it,
+   * then types the sentence that goes with it.
+   *
+   * The returned key is the ONLY key `queueOutbound` will attach — it is
+   * namespaced to this conversation and checked there. The attachment
+   * instruction was documented as never coming from a request body, precisely
+   * so a caller could not name another record's document, and that holds: what
+   * comes back names something they just uploaded here.
+   */
+  @Post(':id/attachments')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 5 * 1024 * 1024, files: 1, fields: 2, parts: 3 },
+    }),
+  )
+  attach(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @UploadedFile() file?: { buffer?: Buffer; originalname?: string; mimetype?: string },
+  ) {
+    return this.conversations.storeAttachment(user, id, file);
   }
 
   /** Saves the reply and marks it queued — see ConversationsService.queueOutbound. */

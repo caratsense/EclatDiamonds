@@ -577,7 +577,13 @@ export function useConversationThread(id: string | null) {
 export function useSendReply(conversationId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { body: string }) =>
+    mutationFn: async (input: {
+      body?: string;
+      /** From `useAttachPhoto` — the server only accepts a key it just issued. */
+      mediaUrl?: string;
+      mediaType?: string;
+      mediaFilename?: string;
+    }) =>
       (
         await api.post<{ delivery: { state: string; note: string } }>(
           `/crm/conversations/${conversationId}/messages`,
@@ -587,6 +593,31 @@ export function useSendReply(conversationId: string) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["crm", "conversation", conversationId] });
       void qc.invalidateQueries({ queryKey: ["crm", "conversations"] });
+    },
+  });
+}
+
+/**
+ * Put a photograph in private storage, ready for the next reply to carry.
+ *
+ * Separate from sending because the two happen at different moments: the
+ * salesperson picks the photo, sees it attached, then writes the line that
+ * goes with it. The key that comes back is scoped to this conversation — the
+ * server refuses any other, so there is nothing useful to tamper with.
+ */
+export function useAttachPhoto(conversationId: string) {
+  return useMutation({
+    mutationFn: async (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      return (
+        await api.post<{
+          mediaUrl: string;
+          mediaType: string;
+          mediaFilename: string;
+          bytes: number;
+        }>(`/crm/conversations/${conversationId}/attachments`, form)
+      ).data;
     },
   });
 }

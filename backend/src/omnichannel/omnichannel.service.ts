@@ -70,10 +70,23 @@ interface TemplateMetadata {
  * Only ever built by server code (a quote PDF), never accepted from a request
  * body: a caller who could name a key could name another record's document.
  */
+export const ATTACHABLE_IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/webp'] as const;
+export type AttachmentMime = 'application/pdf' | (typeof ATTACHABLE_IMAGE_MIMES)[number];
+
 export interface QueuedDocument {
   storageKey: string;
   filename: string;
-  mimeType: 'application/pdf';
+  /*
+   * Was `'application/pdf'` alone, which is why a product photograph could not
+   * be sent: the delivery path had no shape to carry one and failed the
+   * message with "media delivery is not connected yet".
+   */
+  mimeType: AttachmentMime;
+}
+
+/** Which WhatsApp message a stored attachment becomes. */
+export function attachmentKind(mimeType: string): 'document' | 'image' {
+  return (ATTACHABLE_IMAGE_MIMES as readonly string[]).includes(mimeType) ? 'image' : 'document';
 }
 
 interface MessageInstructions {
@@ -861,8 +874,11 @@ export class OmnichannelService implements OnModuleInit {
     conversationId: string;
     authorUserId: string;
     body: string | null;
+    /** A key in our own private storage, never a URL handed to anybody. */
     mediaUrl: string | null;
     mediaType: string | null;
+    /** What the customer sees the file called; images ignore it. */
+    mediaFilename?: string | null;
   }) {
     const conversation = await this.prisma.conversation.findFirst({
       where: { id: input.conversationId, organisationId: input.organisationId },
@@ -938,6 +954,21 @@ export class OmnichannelService implements OnModuleInit {
     const instructions: MessageInstructions = {
       purpose: 'service',
       queuedAt: now.toISOString(),
+      /*
+       * An attached photograph travels as the same instruction a quote PDF
+       * uses, so it goes down one delivery path rather than a second one
+       * written beside it. `mediaUrl` on an outbound message is a key in our
+       * own private storage, never a URL we hand to anybody.
+       */
+      ...(input.mediaUrl && input.mediaType
+        ? {
+            document: {
+              storageKey: input.mediaUrl,
+              filename: input.mediaFilename?.trim() || 'photo.jpg',
+              mimeType: input.mediaType as AttachmentMime,
+            },
+          }
+        : {}),
     };
 
     // Created WITH the delivery instruction, rather than written and promoted.
@@ -1771,11 +1802,18 @@ export class OmnichannelService implements OnModuleInit {
     if (!template && !message.body?.trim()) {
       return this.failPermanently(message, 'content_missing', 'The queued message has no text to send.');
     }
+    /*
+     * An attachment is delivered from `instructions.document`, which names a
+     * key in our own private storage. A media message carrying no instruction
+     * has no bytes we can fetch — an older queued row, or an inbound media URL
+     * copied onto an outbound message — so it still stops here instead of
+     * going out as bare text and being reported as delivered.
+     */
     if (!instructions.document && (message.mediaUrl || message.mediaType)) {
       return this.failPermanently(
         message,
-        'media_not_supported',
-        'WhatsApp media delivery is not connected yet; the attachment was not sent.',
+        'attachment_missing',
+        'This message has an attachment that was never stored, so it was not sent. Attach it again.',
       );
     }
     let documentBytes: Buffer | null = null;
@@ -1831,7 +1869,12 @@ export class OmnichannelService implements OnModuleInit {
     };
 
     const result = instructions.document && documentBytes
-      ? await this.whatsapp.sendDocument(
+      ? // A photograph has to arrive as an image. Sent as a document it is
+        // delivered correctly and is still useless: WhatsApp shows the customer
+        // a file to download rather than the ring they asked to see.
+        await this.whatsapp[
+          attachmentKind(instructions.document.mimeType) === 'image' ? 'sendImage' : 'sendDocument'
+        ](
           ctx.organisationId,
           recipient,
           {

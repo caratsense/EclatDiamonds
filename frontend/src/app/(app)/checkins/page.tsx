@@ -557,6 +557,9 @@ function UnifiedWalkinDialog({
       const row = await createCheckin.mutateAsync({
         storeId: targetStoreId,
         customerName,
+        // Sent explicitly: the server waives the mandatory number only for an
+        // anonymous visit, and it cannot infer that from the generated name.
+        anonymous: anonymous || undefined,
         phone: normalizedPhone ?? undefined,
         purpose,
         customerType: !anonymous && customerType ? customerType : undefined,

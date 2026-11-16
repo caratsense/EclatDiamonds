@@ -30,7 +30,7 @@ export const MODULES = [
   'dashboards', 'activity', 'reporting', 'store-comparison', 'management', 'reporting/scheduled',
   // CRM
   'conversations', 'crm', 'calling', 'reminders', 'customers', 'feedback', 'tasks',
-  'conversations/sla', 'customers/archived', 'bot-script', 'nps',
+  'conversations/sla', 'customers/archived', 'bot-script', 'bot-script/edit', 'nps',
   // Showroom floor
   'instore', 'checkins',
   // Commerce & Orders
@@ -146,6 +146,13 @@ export const HEAD_OFFICE_ONLY: ModuleSlug[] = [
   // is @Roles('head_office') already; listing it here keeps the sidebar from
   // offering somebody a page that would 403 on open.
   'settings/integrations/templates',
+  /*
+   * CHANGING the bot's wording, as distinct from reading it ('bot-script',
+   * which every manager holds). It rewords the conversation every branch has
+   * with every customer, so it starts where the other irreversible settings do
+   * — and, like them, head office can hand it to one person on purpose.
+   */
+  'bot-script/edit',
   'settings/messaging-routes', 'settings/access',
 ];
 
@@ -168,6 +175,9 @@ export const HEAD_OFFICE_DELEGABLE: ModuleSlug[] = [
   'settings/configuration',
   'settings/integrations',
   'settings/integrations/templates',
+  // The marketing team writes the campaign scripts; the owner should not have
+  // to become their typist, or hand over all of head office to avoid it.
+  'bot-script/edit',
   'settings/messaging-routes',
 ];
 
@@ -378,6 +388,20 @@ const SOFT_ROUTE_MODULES: [prefix: string, module: ModuleSlug][] = [
   ['integrations', 'settings/integrations'],
   ['omnichannel/templates', 'settings/integrations/templates'],
   ['omnichannel/integrations', 'settings/integrations/templates'],
+  /*
+   * The bot script's own two paths, which carry BOTH the open read and the
+   * head-office write. SOFT is what keeps those apart without the route table
+   * needing to know the method: somebody who does not hold 'bot-script/edit'
+   * passes straight through to each route's own @Roles, so GET stays open to a
+   * salesperson picking up a handed-off thread and PUT still refuses them.
+   * Somebody who DOES hold it is raised to head office here, which is the only
+   * reason a delegated script screen can save anything.
+   *
+   * Longer prefixes win in BY_LENGTH, so these beat ['crm/qualification','crm']
+   * above and the rest of that controller keeps its CRM scoping.
+   */
+  ['crm/qualification/bot-script', 'bot-script/edit'],
+  ['crm/qualification/bot-default', 'bot-script/edit'],
 ];
 
 type Route = { module: ModuleSlug | null; soft: boolean };
