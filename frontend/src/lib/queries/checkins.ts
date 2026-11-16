@@ -49,6 +49,8 @@ export type CheckinOutcomeInput =
 export interface CreateCheckInInput {
   storeId: string;
   customerName: string;
+  /** A visitor who left no details — the only case that may omit `phone`. */
+  anonymous?: boolean;
   /* The register's own columns (walk-in review, Nov 2026). */
   visitDate?: string;
   managerName?: string;
