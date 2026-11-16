@@ -52,7 +52,10 @@ describe("People & Access wording", () => {
         customRoleName: "Backoffice admin",
       }),
     ).toBe(
-      "Starts from what Backoffice admin (an area manager) gets. Changes apply to Stuti Kemani only.",
+      // No built-in anywhere: a created role is the role, not "an area
+      // manager with changes". Reach and approval level still come from the
+      // built-in, and that is said in Manage roles where it is chosen.
+      "Starts from what Backoffice admin gets. Changes apply to Stuti Kemani only.",
     );
   });
 

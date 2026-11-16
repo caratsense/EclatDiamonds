@@ -106,8 +106,16 @@ function assignableRoles(viewer: Role): StaffRole[] {
   return viewer === "head_office" ? [...below, "head_office"] : below;
 }
 
-function roleBadge(role: StaffRole) {
-  return <Badge variant="secondary">{ROLE_LABELS[role]}</Badge>;
+/**
+ * What somebody's role is CALLED.
+ *
+ * A role head office created is the role: "Backoffice admin", not "Area
+ * Manager". The built-in it was created from still sets reach and approval
+ * level, and that belongs in Manage roles where the choice is made — not on a
+ * badge next to a person's name.
+ */
+function roleBadge(role: StaffRole, customRoleName?: string | null) {
+  return <Badge variant="secondary">{customRoleName ?? ROLE_LABELS[role]}</Badge>;
 }
 
 export default function TeamPage() {
@@ -312,7 +320,7 @@ function UserRow({
           ) : null}
         </div>
       </TableCell>
-      <TableCell>{roleBadge(user.role)}</TableCell>
+      <TableCell>{roleBadge(user.role, user.customRoleName)}</TableCell>
       <TableCell>
         {user.stores.length ? (
           <div className="flex flex-wrap gap-1">
@@ -505,7 +513,7 @@ function PendingRow({
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           <span className="font-medium">{user.name}</span>
-          {roleBadge(user.role)}
+          {roleBadge(user.role, user.customRoleName)}
         </div>
         <div className="mt-0.5 text-xs text-muted-foreground">
           {user.phone ? <span className="num">{user.phone}</span> : null}
