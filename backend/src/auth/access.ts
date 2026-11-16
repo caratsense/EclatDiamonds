@@ -375,7 +375,20 @@ const SOFT_ROUTE_MODULES: [prefix: string, module: ModuleSlug][] = [
   ['crm/sla', 'conversations/sla'],
   ['crm/lead-forms', 'lead-forms'],
   ['lead-tags', 'settings/lead-tags'],
-  ['integrations-registry', 'conversations'],
+  /*
+   * Mapped to the TEMPLATES screen, not to Conversations.
+   *
+   * The controller is @Roles('head_office') as a whole, and the templates page
+   * reads it to find the WhatsApp Business Account id — without which the
+   * composer disables itself. Pointed at 'conversations' the delegation was
+   * useless: head office switched Message Templates on for somebody, the
+   * screen opened, this call 403'd, and "New template" stayed dead with no
+   * explanation. Reported from production on 16 Nov.
+   *
+   * Nobody loses anything. Whoever does not hold the templates screen falls
+   * through to the route's own @Roles exactly as before.
+   */
+  ['integrations-registry', 'settings/integrations/templates'],
   /*
    * The APIs behind the head-office screens head office may delegate. SOFT, so
    * somebody who does NOT hold the screen is unaffected and still meets the
@@ -402,6 +415,15 @@ const SOFT_ROUTE_MODULES: [prefix: string, module: ModuleSlug][] = [
    */
   ['crm/qualification/bot-script', 'bot-script/edit'],
   ['crm/qualification/bot-default', 'bot-script/edit'],
+  /*
+   * Campaign conversations live on the Bot Scripts screen and ARE bot script —
+   * "what the bot replies when a customer arrives from this ad". Saving one is
+   * @Roles('head_office'), and without this the route fell to the generic
+   * 'crm' mapping, which raised a delegated editor only as far as store
+   * manager and then 403'd them. The client reported exactly that: edit access
+   * granted, "Add campaign" unusable.
+   */
+  ['crm/qualification/adset-rules', 'bot-script/edit'],
 ];
 
 type Route = { module: ModuleSlug | null; soft: boolean };

@@ -33,4 +33,32 @@ describe("People & Access wording", () => {
     expect(alreadyTheStart).not.toContain("Role defaults");
     expect(alreadyTheStart).toContain("takes away the screens that were switched on");
   });
+
+
+  /*
+   * A named role says its own name.
+   *
+   * Head office created "Backoffice admin", put people in it, and every
+   * sentence then talked about an area manager — the built-in it happens to
+   * start from. The built-in is still worth saying, because it is where the
+   * starting screens come from, but it is not what the role is called.
+   */
+  it("leads with the role head office named", () => {
+    expect(
+      startingPointLine({
+        name: "Stuti Kemani",
+        role: "area_manager",
+        startsAttendanceOnly: false,
+        customRoleName: "Backoffice admin",
+      }),
+    ).toBe(
+      "Starts from what Backoffice admin (an area manager) gets. Changes apply to Stuti Kemani only.",
+    );
+  });
+
+  it("says 'an area manager', not 'a area manager'", () => {
+    expect(
+      startingPointLine({ name: "Dev", role: "area_manager", startsAttendanceOnly: false }),
+    ).toBe("Starts from what an area manager gets. Changes apply to Dev only.");
+  });
 });

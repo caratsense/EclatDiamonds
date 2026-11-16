@@ -182,7 +182,8 @@ export default function AccessPage() {
                 >
                   <div className="font-medium">{u.name}</div>
                   <div className="text-xs text-muted-foreground">
-                    {ROLE_LABELS[u.role]}
+                    {/* Same rule as the heading: their role is what it was named. */}
+                    {u.customRoleName ?? ROLE_LABELS[u.role]}
                     {u.stores.length ? ` · ${u.stores.map((s) => s.name).join(", ")}` : ""}
                   </div>
                 </button>
@@ -317,16 +318,24 @@ function PersonAccess({
     <Card>
       <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3 space-y-0">
         <div className="space-y-1">
+          {/*
+            The role head office NAMED leads, not the built-in it was built
+            from. A workspace that created "Backoffice admin" and put people in
+            it was shown "Area Manager" in every heading with its own name in
+            brackets — the product contradicting the person who had just named
+            the thing. The built-in still appears, because it is where the
+            starting screens come from, but as the footnote it always was.
+          */}
           <CardTitle className="text-base">
-            {data.name} · {ROLE_LABELS[data.role]}
+            {data.name} · {person?.customRoleName ?? ROLE_LABELS[data.role]}
             {person?.customRoleName ? (
               <span className="ml-2 text-xs font-normal text-muted-foreground">
-                ({person.customRoleName})
+                (based on {ROLE_LABELS[data.role].toLowerCase()})
               </span>
             ) : null}
           </CardTitle>
           <CardDescription>
-            {startingPointLine(data)}
+            {startingPointLine({ ...data, customRoleName: person?.customRoleName })}
             {changedCount ? ` ${changedCount} screen${changedCount === 1 ? " differs" : "s differ"} from the role.` : ""}
           </CardDescription>
           {person ? (

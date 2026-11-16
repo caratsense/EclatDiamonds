@@ -176,14 +176,56 @@ export function roleDecision(
 }
 
 /**
+ * Head-office screens head office may hand to one person, mirroring
+ * HEAD_OFFICE_DELEGABLE in the backend's auth/access.ts.
+ *
+ * The server raises such a person to head office for those routes, so the API
+ * accepts their save. Without the same rise here the screen opens and every
+ * control on it is disabled — which is exactly what the client reported: the
+ * grant was switched on, the page appeared, and "Add campaign" and "New
+ * template" stayed dead.
+ */
+const DELEGABLE_SCREENS = new Set([
+  "settings/onboarding",
+  "new-store",
+  "settings/configuration",
+  "settings/integrations",
+  "settings/integrations/templates",
+  "bot-script/edit",
+  "settings/messaging-routes",
+]);
+
+/**
+ * Screens whose RIGHT TO EDIT is a different slug from the page itself.
+ *
+ * Bot Scripts is readable by every manager (`bot-script`) and editable only by
+ * someone granted `bot-script/edit`. The page is `/bot-script`, so holding the
+ * edit slug has to raise the role on the screen that slug governs rather than
+ * on a page of its own — there is no `/bot-script/edit` to visit.
+ */
+const EDIT_GRANT_FOR: Record<string, string> = {
+  "bot-script": "bot-script/edit",
+};
+
+/**
  * The role a page is served at: the person's own, raised to store manager on a
  * screen they hold at `store` level, lowered to salesperson on one they hold at
- * `own` level. Head office and pages outside the navigation keep the real role.
+ * `own` level, and raised to head office on a delegated head-office screen.
+ * Head office and pages outside the navigation keep the real role.
  */
 export function roleForPage(pathname: string | null, role: Role, access?: AccessMap | null): Role {
   const slug = navSlugForPath(pathname);
-  const level = slug ? access?.[slug] : undefined;
-  if (!level || role === "head_office") return role;
+  if (!slug || role === "head_office") return role;
+
+  // Checked BEFORE the level rules: a delegated screen is granted at some
+  // level too, and the level rule would otherwise settle for store manager and
+  // leave every head-office control disabled.
+  const editSlug = EDIT_GRANT_FOR[slug];
+  if (editSlug && access?.[editSlug]) return "head_office";
+  if (DELEGABLE_SCREENS.has(slug) && access?.[slug]) return "head_office";
+
+  const level = access?.[slug];
+  if (!level) return role;
   if (level === "store" && ROLE_RANK[role] < ROLE_RANK.store_manager) return "store_manager";
   if (level === "own" && ROLE_RANK[role] >= ROLE_RANK.store_manager) return "salesperson";
   return role;

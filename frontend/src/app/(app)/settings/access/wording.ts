@@ -6,11 +6,32 @@ import { ROLE_LABELS } from "@/lib/types";
  * Kept out of the page so they can be checked without rendering it.
  */
 
-/** Where this person's starting point comes from. */
-export function startingPointLine(person: Pick<UserAccess, "name" | "role" | "startsAttendanceOnly">): string {
-  return person.startsAttendanceOnly
-    ? "Sales staff in this workspace start with attendance only. Switch on what this person needs."
-    : `Starts from what a ${ROLE_LABELS[person.role].toLowerCase()} gets. Changes apply to ${person.name} only.`;
+/** "a" or "an", so the sentence does not read "a area manager". */
+function article(word: string): string {
+  return /^[aeiou]/i.test(word) ? "an" : "a";
+}
+
+/**
+ * Where this person's starting point comes from.
+ *
+ * Named roles say their own name. Head office that created "Backoffice admin"
+ * should read a sentence about Backoffice admin, not about the built-in it
+ * happens to be built on — the built-in is an implementation detail of the
+ * role, not the role.
+ */
+export function startingPointLine(
+  person: Pick<UserAccess, "name" | "role" | "startsAttendanceOnly"> & {
+    customRoleName?: string | null;
+  },
+): string {
+  if (person.startsAttendanceOnly) {
+    return "Sales staff in this workspace start with attendance only. Switch on what this person needs.";
+  }
+  const base = ROLE_LABELS[person.role].toLowerCase();
+  const from = person.customRoleName
+    ? `${person.customRoleName} (${article(base)} ${base})`
+    : `${article(base)} ${base}`;
+  return `Starts from what ${from} gets. Changes apply to ${person.name} only.`;
 }
 
 /**
