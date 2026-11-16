@@ -300,6 +300,53 @@ export class WhatsAppService {
   }
 
   /**
+   * Put bytes in the provider's media store and return the id, without
+   * sending anything.
+   *
+   * A carousel needs this: each card's picture is a separate media id in the
+   * send payload, and there is no message to attach them to until all of them
+   * exist. The ids are short-lived at Meta (30 days), which is exactly why
+   * this happens at send time rather than once at template creation.
+   */
+  async uploadMedia(
+    organisationId: string,
+    media: { buffer: Buffer; mimeType: string; filename?: string },
+    route?: SenderRoute,
+  ): Promise<{ id: string | null; reason?: string }> {
+    const sender = await this.credentials.senderFor(organisationId, route ?? {});
+    if (!sender.usable || !sender.phoneNumberId || !sender.accessToken) {
+      return { id: null, reason: sender.reason ?? 'No usable WhatsApp credential.' };
+    }
+    const form = new FormData();
+    form.append('messaging_product', 'whatsapp');
+    form.append('type', media.mimeType);
+    form.append(
+      'file',
+      new Blob([new Uint8Array(media.buffer)], { type: media.mimeType }),
+      media.filename ?? 'card.jpg',
+    );
+    const res = await fetch(
+      `${this.graphBase}/${this.apiVersion}/${sender.phoneNumberId}/media`,
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${sender.accessToken}` },
+        body: form,
+        signal: AbortSignal.timeout(30_000),
+      },
+    );
+    const body = (await res.json().catch(() => null)) as
+      | { id?: string; error?: { message?: string } }
+      | null;
+    if (!res.ok || !body?.id) {
+      return {
+        id: null,
+        reason: `HTTP ${res.status}: media upload refused${body?.error?.message ? ` — ${body.error.message}` : ''}`,
+      };
+    }
+    return { id: body.id };
+  }
+
+  /**
    * Send a document (a quote PDF) as a WhatsApp document message.
    *
    * Kept as the name the quote flow calls: a PDF is a document, and reading

@@ -10,6 +10,11 @@ import { randomUUID } from 'node:crypto';
 
 import { AuditService, SYSTEM_ACTORS, type SystemActor } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
+import {
+  buildCarouselSendComponent,
+  carouselImageKeys,
+  type CarouselCardMedia,
+} from './carousel-send';
 import { readableParty } from '../common/sales-scope';
 import { StoreScopeService } from '../common/store-scope.service';
 import { ConversationsService } from '../crm/conversations.service';
@@ -1900,7 +1905,14 @@ export class OmnichannelService implements OnModuleInit {
           // identity (`name:language`) and Meta would not recognise it.
           template.name ?? '',
           template.metadata.languageCode,
-          instructions.templateComponents,
+          // A carousel's pictures are uploaded fresh for THIS send and the
+          // component is appended to whatever the caller already built.
+          await this.withCarousel(
+            ctx.organisationId,
+            template.metadata as unknown,
+            instructions.templateComponents,
+            senderRoute,
+          ),
           senderRoute,
         )
       : await this.whatsapp.sendText(
@@ -2004,6 +2016,50 @@ export class OmnichannelService implements OnModuleInit {
     return { delivered: true, status: 'sent', messageId: message.id, providerMessageId: result.messageId };
   }
 
+  /**
+   * Add the carousel component to a send, uploading each card's picture.
+   *
+   * Nothing happens for an ordinary template: the caller's components are
+   * returned untouched. For a carousel, every card's image is uploaded to the
+   * phone number's media store FOR THIS SEND — a media id is short-lived, and
+   * the asset handle used at creation is not accepted here.
+   *
+   * If any card fails, the whole carousel is abandoned and the original
+   * components are returned, so the send fails at Meta with a real reason
+   * rather than arriving with holes where pictures should be. A half-drawn
+   * carousel is worse than a refusal.
+   */
+  private async withCarousel(
+    organisationId: string,
+    metadata: unknown,
+    components: unknown[] | undefined,
+    route: { assetId?: string | null; storeId?: string | null; audience?: 'customer' },
+  ): Promise<unknown[] | undefined> {
+    const keys = carouselImageKeys(metadata);
+    if (!keys) return components;
+
+    const media: CarouselCardMedia[] = [];
+    for (const key of keys) {
+      const bytes = await this.storage.readPrivate(organisationId, key);
+      if (!bytes) {
+        this.log.warn(`Carousel card image missing (${key}); sending without the carousel.`);
+        return components;
+      }
+      const uploaded = await this.whatsapp.uploadMedia(
+        organisationId,
+        { buffer: bytes, mimeType: key.endsWith('.png') ? 'image/png' : 'image/jpeg' },
+        route,
+      );
+      if (!uploaded.id) {
+        this.log.warn(`Carousel card upload failed: ${uploaded.reason}`);
+        return components;
+      }
+      media.push({ mediaId: uploaded.id });
+    }
+
+    const rest = (components ?? []).filter((c) => (c as { type?: string })?.type !== 'carousel');
+    return [...rest, buildCarouselSendComponent(media)];
+  }
   private async failPermanently(
     message: { id: string; payload: unknown },
     code: string,

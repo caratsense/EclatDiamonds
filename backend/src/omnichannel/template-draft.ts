@@ -48,6 +48,14 @@ export interface TemplateButton {
  */
 export interface TemplateCard {
   headerHandle: string;
+  /**
+   * Where we kept the same picture.
+   *
+   * The handle gets the template approved; SENDING it needs a media id, which
+   * only exists after the image is uploaded again to the phone number's media
+   * store. Without this the card could be approved and never sent.
+   */
+  imageStorageKey?: string;
   /** Optional, but all-or-nothing across the carousel — see the builder. */
   body?: string;
   bodyExamples?: string[];
@@ -68,6 +76,8 @@ export interface TemplateDraft {
   headerFormat?: HeaderFormat;
   /** The uploaded asset handle for an IMAGE header. */
   headerHandle?: string;
+  /** Where that same picture was kept, so it can be sent later. */
+  headerImageStorageKey?: string;
   /** One small line below it. Usually the shop name. */
   footer?: string;
   /**
