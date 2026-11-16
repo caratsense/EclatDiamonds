@@ -2,7 +2,7 @@
   "name": "eclat-backend",
   "version": "0.1.0",
   "private": true,
-  "description": "Eclat / CaratSense — data layer (Prisma + PostgreSQL). NestJS app is added on top of this by the backend-engineer.",
+  "description": "Eclat / CaratSense \u2014 data layer (Prisma + PostgreSQL). NestJS app is added on top of this by the backend-engineer.",
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",
@@ -27,7 +27,8 @@
     "test:e2e": "jest --config ./test/jest-e2e.json --runInBand",
     "test:db:setup": "node scripts/test-db.mjs setup",
     "test:db:drop": "node scripts/test-db.mjs drop",
-    "test:e2e:isolated": "node scripts/run-e2e.mjs"
+    "test:e2e:isolated": "node scripts/run-e2e.mjs",
+    "check:di": "ts-node --transpile-only scripts/check-di.ts"
   },
   "prisma": {
     "seed": "node prisma/seed.mjs"

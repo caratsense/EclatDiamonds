@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 
 import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
@@ -8,6 +9,7 @@ import { JobContext, JobsService } from '../jobs/jobs.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { IntegrationsRegistryService } from '../integration/framework/integrations-registry.service';
 import { MetaUploadService } from './meta-upload.service';
+import { StorageService } from '../storage/storage.service';
 import { providerTemplateStatus, type ProviderTemplateStatus } from './omnichannel-policy';
 import {
   TemplateDraftError,
@@ -76,6 +78,7 @@ export class TemplateSyncService implements OnModuleInit {
     private readonly audit: AuditService,
     private readonly registry: IntegrationsRegistryService,
     private readonly uploads: MetaUploadService,
+    private readonly storage: StorageService,
   ) {}
 
   /**
@@ -91,7 +94,7 @@ export class TemplateSyncService implements OnModuleInit {
     user: AuthUser,
     integrationId: string,
     file?: { buffer?: Buffer; mimetype?: string; originalname?: string },
-  ): Promise<{ handle: string }> {
+  ): Promise<{ handle: string; storageKey: string }> {
     if (!file?.buffer?.length) {
       throw new BadRequestException('Choose an image.');
     }
@@ -113,7 +116,23 @@ export class TemplateSyncService implements OnModuleInit {
       mimeType: file.mimetype ?? 'application/octet-stream',
       filename: file.originalname,
     });
-    return { handle };
+
+    /*
+     * The bytes are kept as well as the handle, because the two are used at
+     * different moments and Meta will not accept one for the other. The handle
+     * is what gets the template APPROVED; sending it later needs a media id,
+     * which only exists after the same picture is uploaded again to the phone
+     * number's media store. Without keeping the image, an approved carousel
+     * would be unsendable and nobody would know until the first send.
+     */
+    const storageKey = await this.storage.savePrivate(
+      user.organisationId,
+      'template-images',
+      `${randomUUID()}.${(file.mimetype ?? '').includes('png') ? 'png' : 'jpg'}`,
+      file.buffer,
+    );
+
+    return { handle, storageKey };
   }
 
   onModuleInit(): void {
@@ -479,6 +498,21 @@ export class TemplateSyncService implements OnModuleInit {
           providerSyncedAt: submittedAt.toISOString(),
           ...(typeof response.id === 'string' ? { providerTemplateId: response.id } : {}),
           submittedFromDashboard: true,
+          /*
+           * Where the pictures live, in card order.
+           *
+           * Recorded because an approved carousel still cannot be SENT from a
+           * handle: every send needs a fresh media id per card, which only
+           * exists after the same image is uploaded again to the phone
+           * number's media store. These keys are how the deliverer finds the
+           * images to do that.
+           */
+          ...(draft.cards?.length
+            ? { cardImageKeys: draft.cards.map((c) => c.imageStorageKey ?? null) }
+            : {}),
+          ...(draft.headerImageStorageKey
+            ? { headerImageKey: draft.headerImageStorageKey }
+            : {}),
         } as unknown as Prisma.InputJsonValue,
       },
       select: { id: true, name: true, externalId: true, metadata: true },
