@@ -30,7 +30,7 @@ export const MODULES = [
   'dashboards', 'activity', 'reporting', 'store-comparison', 'management', 'reporting/scheduled',
   // CRM
   'conversations', 'crm', 'calling', 'reminders', 'customers', 'feedback', 'tasks',
-  'conversations/sla', 'customers/archived', 'bot-script', 'bot-script/edit',
+  'conversations/sla', 'customers/archived', 'bot-script', 'bot-script/edit', 'nps',
   // Showroom floor
   'instore', 'checkins',
   // Commerce & Orders
@@ -79,7 +79,7 @@ const STORE_MANAGER: ModuleSlug[] = [
    * words and cannot change them.
    */
   'bot-script',
-  'dashboards', 'feedback', 'conversations/sla', 'customers/archived',
+  'dashboards', 'feedback', 'nps', 'conversations/sla', 'customers/archived',
   /*
    * Bulk sending, at STORE level.
    *
@@ -330,6 +330,7 @@ const ROUTE_MODULES: [prefix: string, module: ModuleSlug | null][] = [
   ['leads', 'crm'],
   ['crm/leads', 'crm'],
   ['crm/pipelines', 'crm'],
+  ['crm/nps', 'nps'],
   ['crm/qualification', 'crm'],
   ['crm/round-robin', 'crm'],
   ['crm/segments', 'crm'],

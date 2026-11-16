@@ -595,6 +595,8 @@ model Organisation {
   audienceSegments             AudienceSegment[]
   callLogs                     CallLog[]
   feedbackRequests             FeedbackRequest[]
+  npsResponses                 NpsResponse[]
+  npsFollowups                 NpsFollowup[]
   messagingCampaigns           MessagingCampaign[]
   campaignRecipients           CampaignRecipient[]
   leadTags                     LeadTag[]
@@ -1316,6 +1318,8 @@ model Party {
   returns             ReturnRecord[]
   /// Asks to remove this customer, awaiting a manager or head office.
   deletionRequests    SpecialRequest[]
+  npsResponses        NpsResponse[]
+  npsFollowups        NpsFollowup[]
 
   contactPoints       ContactPoint[]
   mergePrimary        MergeCandidate[]     @relation("MergePrimary")
@@ -3250,6 +3254,9 @@ model CheckIn {
   @@index([followUpOwnerId, followUpDate])
   @@index([leadId])
   @@index([attendedById])
+  /// NPS form submissions and follow-up answers matched to this visit.
+  npsResponses    NpsResponse[]
+  npsFollowups    NpsFollowup[]
 }
 
 // ============================================================================
@@ -5803,6 +5810,26 @@ model FeedbackRequest {
   deliveryNote     String?
   dispatchAttempts Int       @default(0)
 
+  // --- NPS reminder and reply ---------------------------------------------
+  // Three SEPARATE facts the client's register keeps apart, and which must not
+  // be collapsed: we sent something, the customer said something back on
+  // WhatsApp, and the customer filled the form. A reply is not a submission —
+  // "thanks!" on WhatsApp tells us nothing about the ten questions.
+
+  /// When the reminder becomes due. Null = no reminder planned for this ask.
+  reminderDueAt  DateTime?
+  /// When the reminder actually left, by the same rule as `sentAt`.
+  reminderSentAt DateTime?
+  /// The reminder's own outbound Message, kept apart from the initial one.
+  reminderMessageId String?
+  /// When the customer last wrote back on WhatsApp. NOT a form submission.
+  repliedAt      DateTime?
+
+  /// The form submission(s) matched to this ask.
+  npsResponses   NpsResponse[]
+
+  @@index([organisationId, checkInId])
+
   createdById String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -5811,6 +5838,114 @@ model FeedbackRequest {
   @@index([organisationId, storeId, respondedAt])
   @@index([organisationId, partyId])
   @@index([status, scheduledFor])
+}
+
+/// A submission of the client's NPS Google Form, exactly as it was submitted.
+///
+/// Its own table rather than columns on FeedbackRequest because a response
+/// arrives INDEPENDENTLY of any request: the form is public, a customer may
+/// answer one we never sent, and an answer we cannot match to anybody must
+/// still be visible for somebody to reconcile by hand. Hanging these fields
+/// off FeedbackRequest would mean an unmatched response had nowhere to live
+/// and would be dropped on import — which is the one outcome the client
+/// cannot audit.
+///
+/// Every answer is stored as the submitted TEXT. The form's wording is the
+/// client's and changes without telling us; parsing "9 - Extremely likely"
+/// into an integer at import time would silently lose rows the day they
+/// reword an option. `score` is a best-effort read ALONGSIDE the original.
+model NpsResponse {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  /// The form's own submission time — the source of truth for ordering, and
+  /// half of the identity used to avoid importing the same row twice.
+  submittedAt DateTime
+
+  /// Verbatim from the sheet, before any cleaning.
+  rawName   String?
+  rawNumber String?
+  /// E.164-without-plus, or null when the submitted number is unusable. The
+  /// ONLY field matching is allowed to use — never the name.
+  phoneE164 String?
+
+  // The twelve reference columns, preserved in the client's own order.
+  firstPurchase     String?
+  recommendAnswer   String?
+  visitPurpose      String?
+  likedMost         String?
+  couldImprove      String?
+  notFound          String?
+  heardAboutUs      String?
+  followsSocial     String?
+  concerns          String?
+
+  /// 0..10 parsed from `recommendAnswer` when it begins with a number, else
+  /// null. The text is what is shown; this exists only so a branch average can
+  /// be computed without re-parsing on every read.
+  score Int?
+
+  /// 'matched' | 'unmatched' | 'ambiguous'
+  ///
+  /// `ambiguous` is a real outcome, not a failure: one number legitimately
+  /// belongs to several visits, and a response that could be any of them is
+  /// held for a person rather than attached to a guess.
+  matchState String @default("unmatched")
+  /// Why it matched, or why it did not — shown on the reconciliation screen.
+  matchNote  String?
+
+  partyId   String?
+  party     Party?           @relation(fields: [partyId], references: [id], onDelete: SetNull)
+  checkInId String?
+  checkIn   CheckIn?         @relation(fields: [checkInId], references: [id], onDelete: SetNull)
+  requestId String?
+  request   FeedbackRequest? @relation(fields: [requestId], references: [id], onDelete: SetNull)
+
+  /// Stable identity of the source row, so re-importing the sheet updates
+  /// rather than duplicates. Submission time plus number is what the sheet
+  /// itself guarantees unique; a Google row id would be better and is not
+  /// exposed by the CSV export.
+  importKey String @unique
+
+  importedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([organisationId, submittedAt])
+  @@index([organisationId, matchState])
+  @@index([organisationId, phoneE164])
+}
+
+/// The client's "Followup answers" tab: what a customer said when somebody
+/// chased them. Deliberately NOT an NPS submission — the client's sheet keeps
+/// the two apart and so does this, because a follow-up reply saying "will let
+/// you know" is not a completed feedback form.
+model NpsFollowup {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  submittedAt  DateTime
+  followupDate DateTime?
+  rawName      String?
+  rawNumber    String?
+  phoneE164    String?
+  response     String?
+
+  partyId   String?
+  party     Party?   @relation(fields: [partyId], references: [id], onDelete: SetNull)
+  checkInId String?
+  checkIn   CheckIn? @relation(fields: [checkInId], references: [id], onDelete: SetNull)
+
+  matchState String  @default("unmatched")
+  matchNote  String?
+
+  importKey  String   @unique
+  importedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([organisationId, submittedAt])
+  @@index([organisationId, phoneE164])
 }
 
 /// How long a customer may wait for a first reply, per tenant.
