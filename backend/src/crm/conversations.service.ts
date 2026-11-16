@@ -7,8 +7,11 @@ import {
   NotFoundException,
   forwardRef,
 } from '@nestjs/common';
-import { OmnichannelService } from '../omnichannel/omnichannel.service';
+import { randomUUID } from 'node:crypto';
+import { ATTACHABLE_IMAGE_MIMES, OmnichannelService } from '../omnichannel/omnichannel.service';
 import { StorageService } from '../storage/storage.service';
+import { sniffImageMime } from '../products/image-fetch.util';
+import { isOwnAttachmentKey } from './outbound-attachment';
 import { LeadSource, Prisma, Role } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
@@ -1964,15 +1967,85 @@ export class ConversationsService {
    * the 24-hour window" and "this customer opted out" need different actions
    * from the person who just typed.
    */
+  /**
+   * Store a photograph for this conversation and hand back the key to attach.
+   *
+   * Images only, and the type is taken from the bytes rather than from what
+   * the caller said they were: WhatsApp rejects a mislabelled image, and a
+   * .jpg that is really something else should not reach a customer either way.
+   */
+  async storeAttachment(
+    user: AuthUser,
+    conversationId: string,
+    file?: { buffer?: Buffer; originalname?: string; mimetype?: string },
+  ) {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Choose a photo to attach.');
+    }
+    // Proves the caller may act on this thread before anything is written.
+    await this.load(user, conversationId);
+
+    /*
+     * Checked against what WhatsApp actually delivers as a photo, not merely
+     * against "is this an image": the sniffer also recognises GIF and BMP, and
+     * WhatsApp takes neither as an image message. Letting one through would
+     * fail at the provider, after the salesperson had pressed send.
+     */
+    const sniffed = sniffImageMime(file.buffer);
+    if (!sniffed || !(ATTACHABLE_IMAGE_MIMES as readonly string[]).includes(sniffed)) {
+      throw new BadRequestException(
+        `WhatsApp sends photos as JPEG, PNG or WebP. ${
+          sniffed ? `This one is ${sniffed.replace('image/', '').toUpperCase()}` : 'This is not an image'
+        } — save it as a JPEG and attach it again.`,
+      );
+    }
+
+    const extension = sniffed === 'image/png' ? 'png' : sniffed === 'image/webp' ? 'webp' : 'jpg';
+    const key = await this.storage.savePrivate(
+      user.organisationId,
+      `outbound/${conversationId}`,
+      // Unique per upload: two photos attached to one thread must not collide,
+      // and the customer never sees this name on an image anyway.
+      `${randomUUID()}.${extension}`,
+      file.buffer,
+    );
+
+    return {
+      mediaUrl: key,
+      mediaType: sniffed,
+      mediaFilename: (file.originalname ?? `photo.${extension}`).slice(0, 120),
+      bytes: file.buffer.length,
+    };
+  }
+
   async queueOutbound(
     user: AuthUser,
     conversationId: string,
-    input: { body?: string; mediaUrl?: string; mediaType?: string },
+    input: { body?: string; mediaUrl?: string; mediaType?: string; mediaFilename?: string },
   ) {
     if (!input.body?.trim() && !input.mediaUrl) {
       throw new BadRequestException('A reply needs a message or an attachment.');
     }
     const conversation = await this.load(user, conversationId);
+
+    /*
+     * An attachment may only be one this conversation uploaded.
+     *
+     * `storeAttachment` namespaces the key to the conversation, and the check
+     * here is what gives that namespacing teeth: without it, a caller could
+     * send any key inside their own organisation — another thread's inbound
+     * photo, or a different customer's quote PDF — and we would dutifully
+     * deliver it. The org prefix alone does not prevent that, because every
+     * one of those keys carries the same org prefix.
+     */
+    if (
+      input.mediaUrl &&
+      !isOwnAttachmentKey(input.mediaUrl, user.organisationId, conversationId)
+    ) {
+      throw new BadRequestException(
+        'That attachment does not belong to this conversation. Upload it here first.',
+      );
+    }
 
     const outcome = await this.omnichannel.queueAgentReply({
       organisationId: user.organisationId,
@@ -1981,6 +2054,7 @@ export class ConversationsService {
       body: signAsAgent(input.body?.trim() ?? null, user.name, conversation.channel),
       mediaUrl: input.mediaUrl ?? null,
       mediaType: input.mediaType ?? null,
+      mediaFilename: input.mediaFilename ?? null,
     });
     const message = outcome.message;
 
