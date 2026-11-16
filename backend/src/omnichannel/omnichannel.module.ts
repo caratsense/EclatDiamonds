@@ -3,6 +3,7 @@ import { Global, Module, forwardRef } from '@nestjs/common';
 import { CrmModule } from '../crm/crm.module';
 import { OmnichannelController } from './omnichannel.controller';
 import { OmnichannelService } from './omnichannel.service';
+import { MetaUploadService } from './meta-upload.service';
 import { TemplateSyncService } from './template-sync.service';
 
 /** Universal messaging policy + durable delivery layer. */
@@ -10,7 +11,7 @@ import { TemplateSyncService } from './template-sync.service';
 @Module({
   imports: [forwardRef(() => CrmModule)],
   controllers: [OmnichannelController],
-  providers: [OmnichannelService, TemplateSyncService],
+  providers: [OmnichannelService, TemplateSyncService, MetaUploadService],
   exports: [OmnichannelService, TemplateSyncService],
 })
 export class OmnichannelModule {}

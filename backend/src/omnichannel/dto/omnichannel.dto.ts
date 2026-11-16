@@ -11,6 +11,7 @@ import {
 } from 'class-validator';
 
 import { OMNICHANNEL_CHANNELS } from '../omnichannel-policy';
+import { HEADER_FORMATS, type HeaderFormat, type TemplateCard } from '../template-draft';
 
 export class RecordConsentDto {
   @IsString()
@@ -108,6 +109,27 @@ export class UpsertMessageTemplateDto {
  * sentence about the thing they typed rather than a validator name.
  */
 export class SubmitMessageTemplateDto {
+  /** TEXT uses `header`; IMAGE uses `headerHandle` from the upload route. */
+  @IsOptional()
+  @IsIn(HEADER_FORMATS)
+  headerFormat?: HeaderFormat;
+
+  /** The asset handle the upload route returned. Never a URL or a media id. */
+  @IsOptional()
+  @IsString()
+  headerHandle?: string;
+
+  /*
+   * 2-10 product cards. Shape-checked in buildTemplatePayload rather than by
+   * decorators: the rules are relational (all cards the same, text on all or
+   * none) and a per-field decorator cannot see across the array. The message
+   * a person reads about a broken carousel is written there, once.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  cards?: TemplateCard[];
+
   @IsString()
   @Matches(/^[a-z0-9_]{1,512}$/, {
     message: 'name may use lowercase letters, numbers and underscores only',

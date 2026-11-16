@@ -232,14 +232,60 @@ export function useSyncTemplates() {
 }
 
 /** What the client types here, on its way to Meta for review. */
+/** A button on a carousel card. Meta allows one or two per card. */
+export interface TemplateButtonInput {
+  type: "QUICK_REPLY" | "URL";
+  text: string;
+  url?: string;
+  urlExample?: string;
+}
+
+/** One product card: a picture, optional line of text, and its buttons. */
+export interface TemplateCardInput {
+  /** The handle from `useUploadTemplateImage` — not a URL. */
+  headerHandle: string;
+  /** Local preview only; never sent. */
+  previewUrl?: string;
+  body?: string;
+  bodyExamples?: string[];
+  buttons: TemplateButtonInput[];
+}
+
 export interface TemplateDraftInput {
   name: string;
   languageCode: string;
   category: "MARKETING" | "UTILITY" | "AUTHENTICATION";
   body: string;
   header?: string;
+  /** TEXT uses `header`; IMAGE uses `headerHandle`. */
+  headerFormat?: "TEXT" | "IMAGE";
+  headerHandle?: string;
   footer?: string;
   examples?: string[];
+  /** 2–10 cards turns this into a carousel. */
+  cards?: Omit<TemplateCardInput, "previewUrl">[];
+}
+
+/**
+ * Upload a picture and get back the asset handle a template submission needs.
+ *
+ * Meta reviews the actual image as part of approving the template, so this has
+ * to happen BEFORE submitting — and the handle it returns is not a URL and not
+ * the media id used when sending. The two are not interchangeable.
+ */
+export function useUploadTemplateImage(integrationId: string) {
+  return useMutation({
+    mutationFn: async (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      return (
+        await api.post<{ handle: string }>(
+          `/omnichannel/integrations/${integrationId}/templates/image`,
+          form,
+        )
+      ).data;
+    },
+  });
 }
 
 export interface SubmittedTemplate {

@@ -19,6 +19,41 @@
 export const TEMPLATE_CATEGORIES = ['MARKETING', 'UTILITY', 'AUTHENTICATION'] as const;
 export type TemplateCategory = (typeof TEMPLATE_CATEGORIES)[number];
 
+/** What sits above the message: a line of text, or a picture. */
+export const HEADER_FORMATS = ['TEXT', 'IMAGE'] as const;
+export type HeaderFormat = (typeof HEADER_FORMATS)[number];
+
+/**
+ * A button on a carousel card.
+ *
+ * Meta allows quick_reply, url and phone_number. Only the first two are
+ * offered: a phone button on a jewellery carousel would ring the branch from a
+ * card the customer is still browsing, and nobody has asked for it.
+ */
+export interface TemplateButton {
+  type: 'QUICK_REPLY' | 'URL';
+  text: string;
+  /** URL buttons only. May carry a single `{{1}}` for a per-send suffix. */
+  url?: string;
+  /** The sample Meta reviews the URL variable with. */
+  urlExample?: string;
+}
+
+/**
+ * One product card in a carousel.
+ *
+ * `headerHandle` is NOT a URL and NOT a media id. It is the asset handle the
+ * Resumable Upload API returns, which is the only thing Meta accepts when a
+ * template is CREATED — see MetaUploadService.
+ */
+export interface TemplateCard {
+  headerHandle: string;
+  /** Optional, but all-or-nothing across the carousel — see the builder. */
+  body?: string;
+  bodyExamples?: string[];
+  buttons: TemplateButton[];
+}
+
 export interface TemplateDraft {
   /** Lowercase, digits and underscores. Meta's own constraint, not ours. */
   name: string;
@@ -29,6 +64,10 @@ export interface TemplateDraft {
   body: string;
   /** One line above the message. Plain text only here; no variables. */
   header?: string;
+  /** TEXT uses `header`; IMAGE uses `headerHandle`. Defaults to TEXT. */
+  headerFormat?: HeaderFormat;
+  /** The uploaded asset handle for an IMAGE header. */
+  headerHandle?: string;
   /** One small line below it. Usually the shop name. */
   footer?: string;
   /**
@@ -36,13 +75,30 @@ export interface TemplateDraft {
    * the body has any, and rejects the submission outright without them.
    */
   examples?: string[];
+  /**
+   * 2–10 product cards. Present means this is a carousel, which changes the
+   * shape of the whole template: the body sits ABOVE the cards and each card
+   * carries its own picture and buttons.
+   */
+  cards?: TemplateCard[];
 }
 
 export interface TemplateComponent {
-  type: 'HEADER' | 'BODY' | 'FOOTER';
-  format?: 'TEXT';
-  text: string;
-  example?: { header_text?: string[]; body_text?: string[][] };
+  type: 'HEADER' | 'BODY' | 'FOOTER' | 'BUTTONS' | 'CAROUSEL';
+  format?: HeaderFormat;
+  text?: string;
+  example?: {
+    header_text?: string[];
+    body_text?: string[][];
+    header_handle?: string[];
+  };
+  buttons?: {
+    type: 'quick_reply' | 'url';
+    text: string;
+    url?: string;
+    example?: string[];
+  }[];
+  cards?: { components: TemplateComponent[] }[];
 }
 
 export interface MetaTemplatePayload {
@@ -58,6 +114,12 @@ const MAX_BODY = 1024;
 const MAX_HEADER = 60;
 const MAX_FOOTER = 60;
 const MAX_VARIABLES = 10;
+/** Carousel limits, all Meta's. One card is a header; eleven is refused. */
+const MIN_CARDS = 2;
+const MAX_CARDS = 10;
+const MAX_CARD_BUTTONS = 2;
+const MAX_CARD_BODY = 160;
+const MAX_BUTTON_TEXT = 25;
 
 const NAME_RE = /^[a-z0-9_]+$/;
 const LANGUAGE_RE = /^[a-z]{2,3}(_[A-Z]{2})?$/;
@@ -157,18 +219,38 @@ export function buildTemplatePayload(draft: TemplateDraft): MetaTemplatePayload 
 
   const components: TemplateComponent[] = [];
 
-  const header = (draft.header ?? '').trim();
-  if (header) {
-    if (header.length > MAX_HEADER) {
-      fail(`The header is ${header.length} characters; Meta allows ${MAX_HEADER}.`);
+  const headerFormat: HeaderFormat = draft.headerFormat ?? 'TEXT';
+  if (headerFormat === 'IMAGE') {
+    /*
+     * A picture above the message. The handle comes from the Resumable Upload
+     * API, never from our own media store: the id returned by
+     * `/{phone-number-id}/media` works when SENDING and is rejected when
+     * CREATING, which is a confusing afternoon if you only learn it from Meta's
+     * error.
+     */
+    if (!draft.headerHandle?.trim()) {
+      fail('Upload the header image before submitting this template.');
     }
-    // Variables in a header need their own example array and a different shape.
-    // Refused rather than supported: nobody has asked for one, and a half-built
-    // version would be discovered by a rejection rather than by a message here.
-    if (placeholdersIn(header).length) {
-      fail('A header cannot contain placeholders. Put the variable part in the message instead.');
+    components.push({
+      type: 'HEADER',
+      format: 'IMAGE',
+      example: { header_handle: [draft.headerHandle!.trim()] },
+    });
+  } else {
+    const header = (draft.header ?? '').trim();
+    if (header) {
+      if (header.length > MAX_HEADER) {
+        fail(`The header is ${header.length} characters; Meta allows ${MAX_HEADER}.`);
+      }
+      // Variables in a header need their own example array and a different
+      // shape. Refused rather than supported: nobody has asked for one, and a
+      // half-built version would be discovered by a rejection rather than by a
+      // message here.
+      if (placeholdersIn(header).length) {
+        fail('A header cannot contain placeholders. Put the variable part in the message instead.');
+      }
+      components.push({ type: 'HEADER', format: 'TEXT', text: header });
     }
-    components.push({ type: 'HEADER', format: 'TEXT', text: header });
   }
 
   components.push({
@@ -188,7 +270,117 @@ export function buildTemplatePayload(draft: TemplateDraft): MetaTemplatePayload 
     components.push({ type: 'FOOTER', text: footer });
   }
 
+  if (draft.cards?.length) {
+    components.push(buildCarousel(draft, headerFormat));
+  }
+
   return { name, language: languageCode, category: draft.category, components };
+}
+
+/**
+ * The carousel component: the row of product cards under the message.
+ *
+ * Meta's rules, each of which is a rejection a day later if broken, so each is
+ * a sentence here instead:
+ *   - 2 to 10 cards. One card is not a carousel; eleven is refused.
+ *   - MARKETING only.
+ *   - every card must have the SAME components as every other, so a body on
+ *     one means a body on all, and the buttons must match in number and kind.
+ *   - 1 to 2 buttons per card.
+ *   - a carousel replaces the template's own header, so there cannot be both.
+ */
+function buildCarousel(draft: TemplateDraft, headerFormat: HeaderFormat): TemplateComponent {
+  const cards = draft.cards ?? [];
+
+  if (draft.category !== 'MARKETING') {
+    fail(
+      `A carousel is a marketing template; this one is ${draft.category}. ` +
+        'Change the category to Marketing, or remove the cards.',
+    );
+  }
+  if (cards.length < MIN_CARDS || cards.length > MAX_CARDS) {
+    fail(
+      `A carousel needs between ${MIN_CARDS} and ${MAX_CARDS} cards; this one has ${cards.length}.` +
+        (cards.length === 1 ? ' One picture is a header, not a carousel.' : ''),
+    );
+  }
+  if (headerFormat === 'IMAGE' || draft.header?.trim()) {
+    fail('A carousel carries the pictures on its cards, so the template itself cannot have a header too.');
+  }
+
+  const withBody = cards.filter((c) => c.body?.trim()).length;
+  if (withBody && withBody !== cards.length) {
+    // Meta's own words: all cards must have the same components, so that every
+    // card is the same height on the customer's screen.
+    fail(
+      `Either every card has a line of text or none do — ${withBody} of ${cards.length} have one.`,
+    );
+  }
+
+  const shape = (c: TemplateCard) => c.buttons.map((b) => b.type).join(',');
+  const firstShape = shape(cards[0]);
+  cards.forEach((card, i) => {
+    const n = i + 1;
+    if (!card.headerHandle?.trim()) fail(`Card ${n} has no picture.`);
+    if (card.buttons.length < 1 || card.buttons.length > MAX_CARD_BUTTONS) {
+      fail(`Card ${n} has ${card.buttons.length} buttons; a card needs 1 or ${MAX_CARD_BUTTONS}.`);
+    }
+    if (shape(card) !== firstShape) {
+      fail(
+        `Every card must carry the same buttons. Card 1 has ${firstShape || 'none'} and card ${n} has ${shape(card) || 'none'}.`,
+      );
+    }
+    for (const button of card.buttons) {
+      if (!button.text.trim()) fail(`A button on card ${n} has no label.`);
+      if (button.text.length > MAX_BUTTON_TEXT) {
+        fail(`"${button.text}" is ${button.text.length} characters; a button label allows ${MAX_BUTTON_TEXT}.`);
+      }
+      if (button.type === 'URL' && !button.url?.trim()) {
+        fail(`The "${button.text}" button on card ${n} needs a link.`);
+      }
+      if (button.type === 'URL' && placeholdersIn(button.url ?? '').length && !button.urlExample?.trim()) {
+        fail(`The link on card ${n} has a {{1}}, so Meta needs a sample value for it.`);
+      }
+    }
+    if (card.body && card.body.length > MAX_CARD_BODY) {
+      fail(`Card ${n}'s text is ${card.body.length} characters; Meta allows ${MAX_CARD_BODY}.`);
+    }
+  });
+
+  return {
+    type: 'CAROUSEL',
+    cards: cards.map((card) => {
+      const parts: TemplateComponent[] = [
+        { type: 'HEADER', format: 'IMAGE', example: { header_handle: [card.headerHandle.trim()] } },
+      ];
+      if (card.body?.trim()) {
+        const used = placeholdersIn(card.body);
+        const examples = (card.bodyExamples ?? []).map((e) => (e ?? '').trim());
+        if (used.length && examples.length !== used.length) {
+          fail(`Give a sample for each {{n}} on a card: ${used.length} needed, ${examples.length} given.`);
+        }
+        parts.push({
+          type: 'BODY',
+          text: card.body.trim(),
+          ...(used.length ? { example: { body_text: [examples] } } : {}),
+        });
+      }
+      parts.push({
+        type: 'BUTTONS',
+        buttons: card.buttons.map((b) =>
+          b.type === 'URL'
+            ? {
+                type: 'url' as const,
+                text: b.text.trim(),
+                url: b.url!.trim(),
+                ...(b.urlExample?.trim() ? { example: [b.urlExample.trim()] } : {}),
+              }
+            : { type: 'quick_reply' as const, text: b.text.trim() },
+        ),
+      });
+      return { components: parts };
+    }),
+  };
 }
 
 /**
