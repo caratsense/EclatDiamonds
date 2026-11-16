@@ -92,6 +92,26 @@ api.interceptors.request.use((config) => {
   if (token) config.headers.Authorization = `Bearer ${token}`;
   const storeId = getStoredStoreId();
   if (storeId) config.headers["X-Store-Id"] = storeId;
+
+  /*
+   * A FormData body must never go out as application/json.
+   *
+   * This instance defaults every request to `application/json`, which is right
+   * for the hundred that send objects and silently fatal for the twelve that
+   * send files: the default overrides the `multipart/form-data` axios would
+   * otherwise generate, the boundary never gets written, and the server's
+   * multer parses no file. The request succeeds with a 400 that says "choose a
+   * file", and nothing between the click and the log says why.
+   *
+   * It had already caught somebody — `imports.ts` carries a long comment about
+   * it and passes the header by hand — and it caught the template-image and
+   * chat-photo uploads months later, because a per-call workaround only
+   * protects the calls that remember it. Clearing it here protects all of them,
+   * including the next one somebody writes.
+   */
+  if (typeof FormData !== "undefined" && config.data instanceof FormData) {
+    delete config.headers["Content-Type"];
+  }
   return config;
 });
 
