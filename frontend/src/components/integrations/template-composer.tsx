@@ -666,16 +666,73 @@ export function TemplateComposer({
             />
           </div>
 
-          {/* What the customer receives, not what was typed. */}
-          {body.trim() && (
+          {/*
+            What the customer receives, not what was typed.
+            
+            The whole message, in the order WhatsApp stacks it: the picture or
+            line above, the words, the small print, then the cards. It exists
+            because a template is written with {{1}} and read with a name in
+            it, and because the shape itself is easy to get wrong -- somebody
+            who can SEE that their photo is sitting above the message rather
+            than on a card never has to wonder where it went.
+          */}
+          {(body.trim() || headerImage || cards.length > 0) && (
             <div className="space-y-1.5">
               <Label className="text-xs">What the customer sees</Label>
-              <div className="rounded-xl rounded-tl-sm border border-black/[0.04] bg-[#d9fdd3] p-3 text-[13.5px] leading-relaxed text-[#111b21] shadow-xs dark:border-white/[0.04] dark:bg-[#005c4b] dark:text-[#e9edef]">
-                <p className="whitespace-pre-wrap">{preview}</p>
+              <div className="rounded-xl rounded-tl-sm border border-black/[0.04] bg-[#d9fdd3] p-2 text-[13.5px] leading-relaxed text-[#111b21] shadow-xs dark:border-white/[0.04] dark:bg-[#005c4b] dark:text-[#e9edef]">
+                {layout === "IMAGE" && headerImage ? (
+                  /* eslint-disable-next-line @next/next/no-img-element -- blob: preview of a local file */
+                  <img
+                    src={headerImage.previewUrl}
+                    alt=""
+                    className="mb-1.5 max-h-44 w-full rounded-lg object-cover"
+                  />
+                ) : null}
+
+                {layout === "TEXT" && header.trim() ? (
+                  <p className="px-1 pb-1 font-semibold">{header.trim()}</p>
+                ) : null}
+
+                <p className="whitespace-pre-wrap px-1">{preview || " "}</p>
+
                 {footer.trim() && (
-                  <p className="mt-1.5 text-[11px] opacity-60">{footer.trim()}</p>
+                  <p className="mt-1.5 px-1 text-[11px] opacity-60">{footer.trim()}</p>
                 )}
+
+                {/* The cards sit UNDER the message and scroll sideways, which
+                    is the part people cannot picture from a form. */}
+                {cards.length > 0 ? (
+                  <div className="-mx-1 mt-2 flex snap-x gap-2 overflow-x-auto pb-1">
+                    {cards.map((card, i) => (
+                      <div
+                        key={`${card.headerHandle}-preview-${i}`}
+                        className="w-40 shrink-0 snap-start overflow-hidden rounded-lg bg-white/85 text-[#111b21] dark:bg-black/25 dark:text-[#e9edef]"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element -- blob: preview of a local file */}
+                        <img src={card.previewUrl} alt="" className="h-24 w-full object-cover" />
+                        {card.body?.trim() ? (
+                          <p className="px-2 pt-1.5 text-[12px] leading-snug">{card.body.trim()}</p>
+                        ) : null}
+                        <div className="p-1.5 pt-1">
+                          {card.buttons.map((b, bi) => (
+                            <div
+                              key={bi}
+                              className="mt-1 rounded border-t border-black/10 pt-1 text-center text-[11.5px] font-medium text-[#1da5f2] dark:border-white/10"
+                            >
+                              {b.text.trim() || (b.type === "URL" ? "Link" : "Quick reply")}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
+              {cards.length > 1 ? (
+                <p className="text-[11px] text-muted-foreground">
+                  Swipe the cards sideways — that is how the customer sees them.
+                </p>
+              ) : null}
             </div>
           )}
         </div>
