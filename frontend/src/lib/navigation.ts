@@ -215,6 +215,28 @@ export const NAV_ITEMS: NavItem[] = [
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
+    /*
+     * A permission, not a page: the screen is "Bot Scripts" above and this is
+     * the right to SAVE it. It exists here only so People & Access can offer
+     * the toggle — that editor renders NAV_GROUPS, so a grantable slug with no
+     * item here would be a permission the owner could never actually give.
+     *
+     * `hidden` keeps it out of the sidebar, where a second Bot Scripts entry
+     * leading to the same page would only confuse.
+     */
+    module: 1,
+    slug: "bot-script/edit",
+    title: "Bot Scripts — allow editing",
+    purpose:
+      "Lets this person change the bot's wording, not only read it. Head office otherwise.",
+    primaryAction: "",
+    icon: Bot,
+    group: "Customer Interactions",
+    rank: 81,
+    hidden: true,
+    roles: ["head_office"],
+  },
+  {
     module: 1,
     slug: "crm",
     title: "CRM & Leads",
@@ -959,6 +981,7 @@ export const CORE_NAVIGATION: readonly string[] = Object.freeze([
   "crm",
   "conversations",
   "bot-script",
+  "bot-script/edit",
   "customers",
   "customers/archived",
   "conversations/sla",
