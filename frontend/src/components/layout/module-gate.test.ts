@@ -321,3 +321,62 @@ describe("per-person access (auth/access.ts)", () => {
     expect(roleForPage("/crm", "head_office", { crm: "own" })).toBe("head_office");
   });
 });
+
+describe("roleForPage", () => {
+  const marketing = "marketing" as const;
+  const manager = "store_manager" as const;
+
+  describe("the two screens reported broken", () => {
+    it("serves Bot Scripts at head office for someone granted the edit right", () => {
+      // The page is /bot-script; the grant is the separate slug bot-script/edit.
+      const access = { "bot-script": "store", "bot-script/edit": "store" } as AccessMap;
+      expect(roleForPage("/bot-script", marketing, access)).toBe("head_office");
+    });
+
+    it("serves Message Templates at head office for someone granted it", () => {
+      const access = { "settings/integrations/templates": "store" } as AccessMap;
+      expect(roleForPage("/settings/integrations/templates", marketing, access)).toBe(
+        "head_office",
+      );
+    });
+  });
+
+  describe("the elevation does not leak", () => {
+    it("leaves Bot Scripts read-only without the edit grant", () => {
+      // Every manager can READ the script. Only the edit grant may write it.
+      const access = { "bot-script": "store" } as AccessMap;
+      expect(roleForPage("/bot-script", manager, access)).toBe(manager);
+    });
+
+    it("does not raise a person on a screen they were not granted", () => {
+      const access = { "bot-script/edit": "store" } as AccessMap;
+      expect(roleForPage("/settings/integrations/templates", marketing, access)).toBe(marketing);
+    });
+
+    it("does not raise anyone on an ordinary screen", () => {
+      const access = { crm: "store", "bot-script/edit": "store" } as AccessMap;
+      expect(roleForPage("/crm", marketing, access)).toBe("store_manager");
+    });
+
+    it("ignores a grant the person does not hold", () => {
+      expect(roleForPage("/bot-script", marketing, {} as AccessMap)).toBe(marketing);
+      expect(roleForPage("/bot-script", marketing, null)).toBe(marketing);
+    });
+  });
+
+  describe("the existing level rules still hold", () => {
+    it("raises a salesperson to store manager on a store-level screen", () => {
+      expect(roleForPage("/crm", "salesperson", { crm: "store" } as AccessMap)).toBe(
+        "store_manager",
+      );
+    });
+
+    it("lowers a manager to salesperson on an own-level screen", () => {
+      expect(roleForPage("/crm", manager, { crm: "own" } as AccessMap)).toBe("salesperson");
+    });
+
+    it("leaves head office alone", () => {
+      expect(roleForPage("/bot-script", "head_office", {} as AccessMap)).toBe("head_office");
+    });
+  });
+});

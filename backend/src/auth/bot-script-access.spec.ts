@@ -65,8 +65,19 @@ describe('bot-script/edit — delegating the right to change the wording', () =>
     });
 
     it('leaves the rest of that controller on CRM scoping', () => {
+      /*
+       * `adset-rules` used to be asserted here as CRM, and that was wrong.
+       *
+       * Campaign conversations are shown on the Bot Scripts screen and ARE bot
+       * script — "what the bot replies when a customer arrives from this ad".
+       * Leaving them on the generic CRM mapping raised a delegated editor only
+       * to store manager, so saving one 403'd. The client reported it from
+       * production: edit access granted, "Add campaign" unusable. It now sits
+       * with the other two bot-script routes, asserted in
+       * delegated-screens.spec.ts.
+       */
       expect(routeForPath('crm/qualification/ai-settings')?.module).toBe('crm');
-      expect(routeForPath('crm/qualification/adset-rules')?.module).toBe('crm');
+      expect(routeForPath('crm/qualification/meta-ads')?.module).toBe('crm');
     });
   });
 
