@@ -126,6 +126,32 @@ export function useArchiveParty() {
 }
 
 /**
+ * Ask for a customer to be removed.
+ *
+ * Nobody below head office may do it outright, so this raises an approval
+ * instead: a salesperson's ask goes to their manager, a manager's to head
+ * office. The reply says which outcome was requested — a customer with any
+ * history is archived rather than deleted, because deleting would take their
+ * sales and payments with them.
+ */
+export function useRequestPartyDeletion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, reason }: { id: string; reason: string }) => {
+      const { data } = await api.post<{
+        request: { ref: string; requiredRoleLabel?: string };
+        outcome: "delete" | "archive";
+        held: string | null;
+      }>(`/parties/${id}/deletion-request`, { reason });
+      return data;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["requests"] });
+    },
+  });
+}
+
+/**
  * Put a contact back in the working lists.
  *
  * Visible again is not the same as messageable again — a restored contact who

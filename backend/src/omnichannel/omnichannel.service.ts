@@ -1962,10 +1962,32 @@ export class OmnichannelService implements OnModuleInit {
     });
     // A feedback ask counts as sent when the PROVIDER took it, not when it was
     // composed — the response rate is measured against this.
-    await this.prisma.feedbackRequest.updateMany({
+    const asked = await this.prisma.feedbackRequest.findMany({
       where: { organisationId: ctx.organisationId, messageId: message.id, sentAt: null },
-      data: { sentAt, status: 'sent' },
+      select: { id: true, checkInId: true },
     });
+    if (asked.length) {
+      await this.prisma.feedbackRequest.updateMany({
+        where: { id: { in: asked.map((a) => a.id) } },
+        data: { sentAt, status: 'sent' },
+      });
+      /*
+       * The walk-in register's own "NPS message sent" column.
+       *
+       * It is a copy of what FeedbackRequest already knows, and deliberately
+       * so: head office reconciles the register against their sheet, and a
+       * column that is only true after a join is a column they cannot check.
+       * Written here rather than at compose time for the same reason as
+       * `sentAt` — the register should say what actually left the building.
+       */
+      const visits = asked.map((a) => a.checkInId).filter((id): id is string => !!id);
+      if (visits.length) {
+        await this.prisma.checkIn.updateMany({
+          where: { id: { in: visits }, npsMessageSentAt: null },
+          data: { npsMessageSentAt: sentAt },
+        });
+      }
+    }
     await this.activity.record({
       organisationId: ctx.organisationId,
       storeId: message.conversation.storeId,

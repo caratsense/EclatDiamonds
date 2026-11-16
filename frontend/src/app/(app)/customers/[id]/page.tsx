@@ -37,6 +37,7 @@ import {
 import { AttributionPanel } from "@/components/crm/attribution-panel";
 import { ArchiveContactButton } from "@/components/crm/archive-contact-button";
 import { DeleteContactButton } from "@/components/crm/delete-contact-button";
+import { RequestDeletionButton } from "@/components/crm/request-deletion-button";
 import { PartyTagsField } from "@/components/crm/lead-tags-field";
 import { QualificationPanel } from "@/components/crm/qualification-panel";
 import { TENANT_NAME } from "@/lib/brand";
@@ -193,6 +194,9 @@ export default function Customer360Page({
           )}
           <ArchiveContactButton partyId={customer.id} name={customer.name} />
           <DeleteContactButton partyId={customer.id} name={customer.name} />
+          {/* For everyone below head office, who cannot use either of the two
+              above. Renders nothing for head office itself. */}
+          <RequestDeletionButton partyId={customer.id} name={customer.name} />
         </div>
       </div>
 

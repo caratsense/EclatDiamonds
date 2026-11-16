@@ -90,6 +90,24 @@ export class PartiesController {
    * Anyone with records is refused with the counts and pointed at Archive,
    * which hides them reversibly and keeps every number true. Head office only.
    */
+  /**
+   * POST /parties/:id/deletion-request — ask for a customer to be removed.
+   *
+   * Deliberately open to a salesperson, which the `DELETE` below is not: the
+   * point of the client's ask (16 Nov) is that the floor CAN start this and
+   * somebody above them finishes it. Routing is the approvals ladder's, so a
+   * salesperson's request lands on their manager and a manager's on head
+   * office.
+   */
+  @Post(':id/deletion-request')
+  requestDeletion(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: ArchivePartyDto,
+  ) {
+    return this.parties.requestDeletion(user, id, dto.reason);
+  }
+
   @Roles('head_office')
   @Delete(':id')
   remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
