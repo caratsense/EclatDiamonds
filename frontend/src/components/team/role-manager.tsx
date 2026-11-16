@@ -119,7 +119,14 @@ export function RoleManagerDialog({
                     <div>
                       <p className="text-sm font-medium">{r.name}</p>
                       <p className="text-xs text-muted-foreground">
-                        {ROLE_LABELS[r.baseRole]} reach ·{" "}
+                        {/*
+                          The ONLY place the built-in is named, and here it is
+                          named for what it governs — how far this role sees
+                          and who signs off its approvals — not as what the
+                          role is called. Everywhere a person is identified,
+                          the created role stands on its own.
+                        */}
+                        Sees and approves like {ROLE_LABELS[r.baseRole].toLowerCase()} ·{" "}
                         {Object.keys(r.overrides ?? {}).length} screen change
                         {Object.keys(r.overrides ?? {}).length === 1 ? "" : "s"}
                       </p>

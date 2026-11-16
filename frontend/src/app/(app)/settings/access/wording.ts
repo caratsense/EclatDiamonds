@@ -14,10 +14,14 @@ function article(word: string): string {
 /**
  * Where this person's starting point comes from.
  *
- * Named roles say their own name. Head office that created "Backoffice admin"
- * should read a sentence about Backoffice admin, not about the built-in it
- * happens to be built on — the built-in is an implementation detail of the
- * role, not the role.
+ * A role head office created IS the role. It is not "an area manager with
+ * changes": they named it, they chose its screens, and the product calling it
+ * something else — anywhere a person reads it as an identity — is the product
+ * contradicting them.
+ *
+ * The built-in it was created from still decides reach and approval level, and
+ * that is real. It belongs where that choice is MADE, in Manage roles, phrased
+ * as what it governs. It does not belong in a sentence about who somebody is.
  */
 export function startingPointLine(
   person: Pick<UserAccess, "name" | "role" | "startsAttendanceOnly"> & {
@@ -28,9 +32,7 @@ export function startingPointLine(
     return "Sales staff in this workspace start with attendance only. Switch on what this person needs.";
   }
   const base = ROLE_LABELS[person.role].toLowerCase();
-  const from = person.customRoleName
-    ? `${person.customRoleName} (${article(base)} ${base})`
-    : `${article(base)} ${base}`;
+  const from = person.customRoleName ?? `${article(base)} ${base}`;
   return `Starts from what ${from} gets. Changes apply to ${person.name} only.`;
 }
 

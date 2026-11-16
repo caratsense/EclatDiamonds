@@ -328,11 +328,6 @@ function PersonAccess({
           */}
           <CardTitle className="text-base">
             {data.name} · {person?.customRoleName ?? ROLE_LABELS[data.role]}
-            {person?.customRoleName ? (
-              <span className="ml-2 text-xs font-normal text-muted-foreground">
-                (based on {ROLE_LABELS[data.role].toLowerCase()})
-              </span>
-            ) : null}
           </CardTitle>
           <CardDescription>
             {startingPointLine({ ...data, customRoleName: person?.customRoleName })}
