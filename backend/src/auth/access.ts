@@ -354,6 +354,35 @@ const ROUTE_MODULES: [prefix: string, module: ModuleSlug | null][] = [
   ['stock/vin', null],
   ['stock-transfers', 'stock-transfers'],
   ['stock', 'inventory'],
+  /*
+   * Your own attendance is not an HR screen.
+   *
+   * `['hrms','hrms']` below hands the whole /hrms API to the HR hub, so turning
+   * that screen off for somebody also stopped them clocking in, reading their
+   * own punches, or resolving their store's geofence — observed in production
+   * as repeated 403s on GET /hrms/attendance/me and GET /hrms/geofence after a
+   * head office tailored a colleague's screens.
+   *
+   * The HR screen is for seeing OTHER people's attendance. These routes are
+   * the person's own and already carry @Permit('self.attendance' | 'self.leave'),
+   * which every role holds; null here leaves them to that and to the role
+   * checks, exactly as the shared APIs above.
+   *
+   * Longest prefix wins, so each of these beats the 'hrms' entry. Deliberately
+   * NOT listed: bare `hrms/attendance` and `hrms/leave`, which the service
+   * widens to the caller's whole scope and which therefore do belong to the
+   * screen.
+   */
+  ['hrms/attendance/me', null],
+  ['hrms/attendance/check-in', null],
+  ['hrms/attendance/check-out', null],
+  ['hrms/geofence', null],
+  ['hrms/schedule/me', null],
+  ['hrms/regularize', null],
+  ['hrms/leave/balances', null],
+  ['hrms/leave/preview', null],
+  ['hrms/holidays', null],
+  ['hrms/shifts', null],
   ['hrms', 'hrms'],
   // Store commission plan + monthly summary live on the Sales Performance screen.
   ['commissions', 'sales-performance'],
