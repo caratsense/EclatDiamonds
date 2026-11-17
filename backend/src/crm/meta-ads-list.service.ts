@@ -221,6 +221,14 @@ export class MetaAdsListService {
        * the same page size, carries its campaign with it, and pages cleanly.
        */
       const byCampaign = new Map<string, MetaCampaignChoice>();
+      /*
+       * Campaigns running right now whose ads go somewhere other than
+       * WhatsApp. Counted so the picker can SAY it dropped them: this account
+       * runs hundreds of catalogue and lead-form campaigns, and silently
+       * showing only the handful that open a chat is indistinguishable from
+       * stale data when the ones you just launched are among the hundreds.
+       */
+      const nonWhatsApp = new Set<string>();
       let after: string | null = null;
       for (let page = 0; page < MAX_PAGES; page += 1) {
         const response: GraphAdsResponse = await this.graph.getForIntegration<GraphAdsResponse>(
@@ -245,7 +253,11 @@ export class MetaAdsListService {
           if (!adId || !adName || adStatus !== 'ACTIVE') continue;
           // An ad that does not open WhatsApp can never produce a referral, so
           // a conversation attached to it could never fire.
-          if (!toWhatsApp(text(ad?.creative?.call_to_action_type))) continue;
+          if (!toWhatsApp(text(ad?.creative?.call_to_action_type))) {
+            const otherId = text(ad?.campaign?.id);
+            if (otherId) nonWhatsApp.add(otherId);
+            continue;
+          }
           const campaignId = text(ad?.campaign?.id);
           const campaignName = text(ad?.campaign?.name);
           if (!campaignId || !campaignName) continue;
@@ -269,11 +281,24 @@ export class MetaAdsListService {
       }
       const campaigns = [...byCampaign.values()];
       if (!campaigns.length) {
-        return unavailable(
-          'No running campaign sends people to WhatsApp, so there is nothing to attach a conversation to yet.',
-        );
+        /*
+         * "Nothing is running" and "plenty is running, none of it opens a
+         * chat" are different situations and need different sentences. The
+         * second is the one this account is actually in, and answering it with
+         * the first is what sent somebody looking for a sync bug.
+         */
+        return {
+          ...unavailable(
+            nonWhatsApp.size
+              ? `None of your ${nonWhatsApp.size} running campaigns open WhatsApp. A bot conversation ` +
+                'can only attach to a click-to-WhatsApp ad — a lead form or a catalogue ad never opens ' +
+                'a chat, so there is nothing for the bot to reply in.'
+              : 'No running campaign sends people to WhatsApp, so there is nothing to attach a conversation to yet.',
+          ),
+          otherRunning: nonWhatsApp.size,
+        };
       }
-      return { available: true, reason: null, campaigns };
+      return { available: true, reason: null, campaigns, otherRunning: nonWhatsApp.size };
     } catch (error) {
       // MetaGraphError messages are already redacted and bounded; anything else
       // stays in the log, and the client gets one plain sentence.
