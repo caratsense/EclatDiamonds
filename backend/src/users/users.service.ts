@@ -86,10 +86,16 @@ export class UsersService {
   ) {}
 
   // ── Delegation / privilege-escalation guards ───────────────────────────────
-  // These two helpers are THE security core: every mutation runs through them so
-  // a user can only ever provision/modify principals STRICTLY BELOW their own
-  // rank, inside their own store scope. head_office (allStores) bypasses scope
-  // but is still bound by the strictly-below-rank rule (it can never mint an HO).
+  // These helpers are THE security core: every mutation runs through them so a
+  // user can only ever provision/modify principals below their own rank, inside
+  // their own store scope. head_office (allStores) bypasses scope.
+  //
+  // Head office is the one exception to "below", in both directions: it may
+  // mint a peer executive (7 Oct) and, since the delegation fix, manage one.
+  // What keeps that from being a takeover is not the rank check but the two
+  // refusals on the destructive paths — assertNotSelf and
+  // assertNotLastHeadOffice — so neither may be removed without restoring the
+  // strict inequality here.
 
   /**
    * A user may only assign/target a role strictly below their own rank — with
@@ -114,17 +120,79 @@ export class UsersService {
   }
 
   /**
-   * A user may only modify a target whose CURRENT role is strictly below their
-   * own (never a peer or a superior), and — for scoped (non-HO) actors — only
-   * when the target's store is inside their scope. Pass `storeId=null/undefined`
-   * to skip the store check (e.g. a not-yet-assigned user).
+   * A user may only modify a target whose CURRENT role is below their own — with
+   * the same exception `assertAssignableRole` already makes: HEAD OFFICE MAY
+   * MANAGE A PEER HEAD OFFICE.
+   *
+   * The 7 Oct rule let head office CREATE an equal but never manage one, on the
+   * reasoning that minting is additive and takeover is not. In practice that
+   * made delegation a one-way door: the client appointed a second executive to
+   * run People & Access, and then could not correct her name, her login, or a
+   * single screen — "You cannot manage a user at or above your own role" on a
+   * person they had just created. It also left no way back; an executive who
+   * left could only be removed at the database.
+   *
+   * Peer management is the ordinary administrator model, and it is safe only
+   * because the three ways it could be abused are closed where they live, not
+   * here: `assertNotSelf` stops an account disarming itself, and
+   * `assertNotLastHeadOffice` stops the last executive being demoted,
+   * deactivated or deleted by anyone including themselves. Both are called on
+   * the destructive paths; this check stays open so the everyday ones work.
+   *
+   * For scoped (non-HO) actors the target's store must also be inside their
+   * scope. Pass `storeId=null/undefined` to skip that (e.g. an unassigned user).
    */
   private assertCanManage(actor: AuthUser, targetRole: Role, storeId?: string | null): void {
-    if (ROLE_RANK[targetRole] >= ROLE_RANK[actor.role]) {
+    const peerHeadOffice = actor.role === 'head_office' && targetRole === 'head_office';
+    if (!peerHeadOffice && ROLE_RANK[targetRole] >= ROLE_RANK[actor.role]) {
       throw new ForbiddenException('You cannot manage a user at or above your own role');
     }
     if (storeId) {
       this.scope.assertStoreAllowed(actor, storeId);
+    }
+  }
+
+  /**
+   * Refuse an action aimed at the actor's own account.
+   *
+   * Before peer head office could be managed, the rank check made this
+   * impossible by accident — an account could never be its own target because
+   * its role was never below itself. Opening peer management removes that
+   * accident, so the protection has to be stated.
+   */
+  private assertNotSelf(actor: AuthUser, targetId: string, action: string): void {
+    if (actor.id === targetId) {
+      throw new BadRequestException(`You cannot ${action} your own account.`);
+    }
+  }
+
+  /**
+   * Refuse to leave the organisation with no active head office.
+   *
+   * Every path that can take one away — demotion, deactivation, deletion —
+   * asks first. Without this, two executives can lock each other out, or the
+   * last one can step down, and nobody short of a developer at the database
+   * can give the organisation an administrator again.
+   */
+  private async assertNotLastHeadOffice(
+    organisationId: string,
+    targetId: string,
+    targetRole: Role,
+    action: string,
+  ): Promise<void> {
+    if (targetRole !== 'head_office') return;
+    const others = await this.prisma.user.count({
+      where: {
+        organisationId,
+        role: 'head_office',
+        isActive: true,
+        id: { not: targetId },
+      },
+    });
+    if (others === 0) {
+      throw new BadRequestException(
+        `This is the only active head office account. Appoint another before you ${action} this one.`,
+      );
     }
   }
 
@@ -299,9 +367,15 @@ export class UsersService {
   async updateRole(actor: AuthUser, id: string, dto: UpdateUserRoleDto) {
     const existing = await this.getOrThrow(actor, id);
     const storeId = await this.primaryStoreId(id);
-    // Cannot touch a peer/superior or someone out of scope; new role must be below actor.
+    // Cannot touch a superior or someone out of scope; new role must be below
+    // actor (head office excepted, both ways — see assertCanManage).
     this.assertCanManage(actor, existing.role, storeId);
     this.assertAssignableRole(actor, dto.role);
+    if (existing.role === 'head_office' && dto.role !== 'head_office') {
+      // Stepping an executive down is the demotion half of a takeover.
+      this.assertNotSelf(actor, id, 'change the role of');
+      await this.assertNotLastHeadOffice(actor.organisationId, id, existing.role, 'change the role of');
+    }
 
     // A screen given at `own` must not hold the person below their new role.
     // Only head office edits access, so a manager's role change leaves it alone.
@@ -669,6 +743,7 @@ export class UsersService {
     }
     const storeId = await this.primaryStoreId(id);
     this.assertCanManage(actor, target.role, storeId);
+    await this.assertNotLastHeadOffice(actor.organisationId, id, target.role, 'delete');
 
     // One transaction, so a refusal changes nothing. Store links, offs and
     // notifications go with the row by cascade.
@@ -745,6 +820,8 @@ export class UsersService {
     const target = await this.getOrThrow(actor, id);
     const storeId = await this.primaryStoreId(id);
     this.assertCanManage(actor, target.role, storeId);
+    this.assertNotSelf(actor, id, 'deactivate');
+    await this.assertNotLastHeadOffice(actor.organisationId, id, target.role, 'deactivate');
 
     const reassignToId = dto.reassignToId?.trim() || null;
     let reassigned: { leads: number; checkIns: number } | null = null;
@@ -1456,6 +1533,12 @@ export class UsersService {
     const storeId = await this.primaryStoreId(userId);
     this.assertCanManage(actor, target.role, storeId);
     this.assertAssignableRole(actor, role.baseRole);
+    if (target.role === 'head_office' && role.baseRole !== 'head_office') {
+      // A custom role carries a base role, so applying one demotes just as
+      // surely as PATCH /role does. Same two refusals.
+      this.assertNotSelf(actor, userId, 'change the role of');
+      await this.assertNotLastHeadOffice(actor.organisationId, userId, target.role, 'change the role of');
+    }
 
     const overrides = this.cleanOverridesFor(
       role.baseRole,

@@ -101,8 +101,9 @@ const STAFF_ROLES: StaffRole[] = ["salesperson", "marketing", "store_manager", "
  */
 function assignableRoles(viewer: Role): StaffRole[] {
   const below = STAFF_ROLES.filter((r) => ROLE_RANK[r] < ROLE_RANK[viewer]);
-  // Head office may mint an equal — creation only; managing an existing head
-  // office account stays impossible from the UI (the server refuses it).
+  // Head office may mint an equal, and since the delegation fix may manage one
+  // too — the server allows both, and refuses only the ways a peer executive
+  // could be removed (yourself, or the last one).
   return viewer === "head_office" ? [...below, "head_office"] : below;
 }
 
@@ -257,8 +258,17 @@ function UserRow({
 
   const activate = useActivateStaff();
 
-  // Never act on a peer or a superior — hide every action in that case.
-  const canManage = ROLE_RANK[user.role] < ROLE_RANK[viewerRole];
+  /*
+   * Never act on a superior, nor on a peer — except that head office may act on
+   * another head office, which is what delegating People & Access requires.
+   *
+   * This line is the UI half of the bug the client hit: having appointed a
+   * second executive, every action on her row was hidden here, and the one
+   * route that still reached the server (the edit dialog) came back "You
+   * cannot manage a user at or above your own role". Mirrors assertCanManage.
+   */
+  const peerHeadOffice = viewerRole === "head_office" && user.role === "head_office";
+  const canManage = peerHeadOffice || ROLE_RANK[user.role] < ROLE_RANK[viewerRole];
   const canRoleOrStore = ROLE_RANK[viewerRole] >= ROLE_RANK.store_manager;
   const canDeactivate = ROLE_RANK[viewerRole] >= ROLE_RANK.store_manager;
   const deleteStaff = useDeleteStaff();
