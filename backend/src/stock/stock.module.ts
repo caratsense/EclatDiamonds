@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { StockController } from './stock.controller';
+import { StockByStoreService } from './stock-by-store.service';
 import { StockService } from './stock.service';
 import { DeadStockService } from './dead-stock.service';
 import { DeadStockController, StockVinController } from './dead-stock.controller';
@@ -14,7 +15,7 @@ import { DeadStockController, StockVinController } from './dead-stock.controller
  */
 @Module({
   controllers: [StockController, DeadStockController, StockVinController],
-  providers: [StockService, DeadStockService],
+  providers: [StockService, DeadStockService, StockByStoreService],
   exports: [DeadStockService],
 })
 export class StockModule {}
