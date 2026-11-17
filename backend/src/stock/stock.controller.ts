@@ -2,6 +2,11 @@ import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common
 import { Permit } from '../auth/permissions';
 import { StockService } from './stock.service';
 import {
+  StockByStoreService,
+  STOCK_SOURCES,
+  type StockSource,
+} from './stock-by-store.service';
+import {
   BulkAdjustStockDto,
   BulkImportStockDto,
   CreateStockDto,
@@ -15,7 +20,28 @@ import { Roles } from '../auth/roles.decorator';
 
 @Controller('stock')
 export class StockController {
-  constructor(private readonly stock: StockService) {}
+  constructor(
+    private readonly stock: StockService,
+    private readonly byStore: StockByStoreService,
+  ) {}
+
+  /**
+   * Stock as each branch holds it, with the data state behind each number.
+   *
+   * Separate from `/stock/summary` on purpose: that answers "how much is
+   * there", this answers "where is it, where did it come from, and can I
+   * trust what this store is telling me" — which is the question the client
+   * said the inventory screens could not answer.
+   */
+  @Permit('inventory.read')
+  @Get('by-store')
+  listByStore(@CurrentUser() user: AuthUser, @Query('source') source?: string) {
+    return this.byStore.byStore(user, {
+      source: (STOCK_SOURCES as readonly string[]).includes(source ?? '')
+        ? (source as StockSource)
+        : undefined,
+    });
+  }
 
   /**
    * List stock items. Without `page`/`pageSize` returns the plain array
