@@ -530,19 +530,35 @@ export function CampaignScriptsConfig() {
                     </SelectContent>
                   </Select>
                   {/*
-                    What a script on a lead form actually does. A form lead has
-                    not opened WhatsApp, so nothing is waiting to be replied
-                    to: the script runs from the moment they arrive, and
-                    somebody has to get them there first. Said here rather than
-                    discovered later from a script that appears never to fire.
+                    What arrives from a lead form, and why the reply should not
+                    be a questionnaire.
+                    ----------------------------------------------------------
+                    Meta hands the customer into WhatsApp with their answers
+                    pre-filled, and they send that as the first message. Read
+                    from a real conversation in production:
+
+                      Hello! I filled in your form and would like to know more
+                      about your business.
+                      Full name: ...
+                      When is your wedding?: 3-6 months
+                      Budget: ₹50,000 — ₹1,00,000
+                      What kind of jewellery...?: Necklace set
+                      Preferred Store: Nibhana, Bandra Linking
+
+                    So the window is already open and no template is involved —
+                    but without a rule of its own that enquiry met the default
+                    script, which opened "just a couple of quick questions" and
+                    asked for things the customer had just typed. Saying this
+                    where the reply is written is the only place it prevents
+                    that.
                   */}
                   {pickedCampaign?.kinds?.includes("lead_form") ? (
                     <p className="rounded-md bg-muted/50 p-2 text-[11px] text-muted-foreground">
-                      This campaign collects a form on Meta, so the customer is not in WhatsApp
-                      yet. The conversation starts when they get there — either they tap{" "}
-                      <strong>Chat on WhatsApp</strong> on the form&apos;s last screen, or you send
-                      an approved template and they reply. From their first reply onwards this
-                      script runs exactly as it does for a click-to-WhatsApp ad.
+                      People from this campaign arrive having already filled the form, and their
+                      answers are the first message they send — name, budget, timeline, preferred
+                      branch. Write a reply that <strong>uses</strong> those answers rather than
+                      asking for them again, and keep the questions below empty unless you need
+                      something the form does not collect.
                     </p>
                   ) : null}
                   {pickedCampaign && pickedCampaign.ads.length ? (

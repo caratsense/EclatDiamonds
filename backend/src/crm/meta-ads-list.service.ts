@@ -11,13 +11,17 @@ import { PrismaService } from '../prisma/prisma.service';
  *             sends a referral, the 24-hour window opens, and the script
  *             replies. Free-form.
  *
- * `lead_form` A Meta instant form. The customer fills it in without ever
- *             opening WhatsApp, so there is no window and nothing for the
- *             script to reply to YET. It starts when the lead reaches
- *             WhatsApp: either they tap "Chat on WhatsApp" on the form's end
- *             screen, or the business sends an approved template first and
- *             they answer. Either way the reply opens the window and the
- *             script runs from there.
+ * `lead_form` A Meta instant form. The customer fills it in and Meta hands
+ *             them into WhatsApp with their answers pre-filled; they send
+ *             that as the first message. So this behaves exactly like the
+ *             above -- referral, open window, no template -- and the only
+ *             real difference is that the opening message already contains
+ *             the name, budget, timeline and preferred branch. Confirmed on a
+ *             live conversation (ad 120256672661940226, "16/11 - bridal lead
+ *             - Broadway"), which arrived with evidence `measured` and a
+ *             click id, and met the DEFAULT script because no rule could be
+ *             attached to a lead ad yet -- so it asked for what the customer
+ *             had just typed.
  */
 export type MetaAdKind = 'whatsapp' | 'lead_form';
 
