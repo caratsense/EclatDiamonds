@@ -1,6 +1,10 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
-import { AdSetRulesService, type AdSetAutomationRule } from '../crm/adset-rules.service';
+import {
+  AdSetRulesService,
+  type AdSetAutomationRule,
+  type CampaignQuestion,
+} from '../crm/adset-rules.service';
 import { normaliseDefaultConversation } from '../crm/bot-script.service';
 import { AI_RESPONDER, type AiResponder } from '../crm/ai-responder';
 import {
@@ -56,6 +60,36 @@ const WALK_IN_ID = '__walk_in__';
  * about price, stock or timing that the owner did not approve.
  */
 const DEFAULT_CLOSING = 'Thank you! A colleague will reply to you right here shortly.';
+
+/**
+ * The campaign's opener, with its first question attached when it has one.
+ *
+ * Extracted from `handle` so the rule a client is told to follow can be tested
+ * rather than asserted: leave the questions empty and the customer gets the
+ * opener and nothing else; configure one and it is appended to the opener
+ * immediately, on that same first reply.
+ *
+ * Which matters most on a lead form, where the customer's first message
+ * already contains the answers -- so a configured question asks them for what
+ * they have just typed.
+ *
+ * An opener that already ends in a question keeps its own; the configured
+ * first question is then asked on the NEXT turn rather than being lost, which
+ * is why the caller stamps the question only when this reports asking one.
+ */
+export function composeOpener(
+  firstReply: string,
+  questions: CampaignQuestion[] | null | undefined,
+): { text: string; asksFirstQuestion: boolean } {
+  const first = questions?.[0];
+  const firstQuestion = first ? phraseQuestion(first) : null;
+  const alreadyAsks = firstReply.trimEnd().endsWith('?');
+  const asksFirstQuestion = Boolean(firstQuestion) && !alreadyAsks;
+  return {
+    text: asksFirstQuestion ? `${firstReply}\n\n${firstQuestion}` : firstReply,
+    asksFirstQuestion,
+  };
+}
 
 /**
  * One question as the customer reads it.
@@ -260,19 +294,12 @@ export class CampaignBotService {
     // guiding question after a blank line when one is configured and the
     // opener does not already end by asking something.
     if (openerSent === 0 && rule.firstReply) {
-      const opener = rule.firstReply;
-      const first = rule.questions?.[0];
-      const alreadyAsks = opener.trimEnd().endsWith('?');
-      const firstQuestion = first ? phraseQuestion(first) : null;
-      // An opener that already ends in a question keeps its own; the
-      // configured first question is then asked on the next turn instead of
-      // being lost, which is why the stamp is conditional.
-      const asksNow = Boolean(firstQuestion) && !alreadyAsks;
+      const { text, asksFirstQuestion } = composeOpener(rule.firstReply, rule.questions);
       return {
         authorType: 'bot',
-        text: asksNow ? `${opener}\n\n${firstQuestion}` : opener,
+        text,
         openerFor: rule.id,
-        ...(asksNow ? { askedQuestion: { rule: rule.id, index: 0 } } : {}),
+        ...(asksFirstQuestion ? { askedQuestion: { rule: rule.id, index: 0 } } : {}),
       };
     }
 
