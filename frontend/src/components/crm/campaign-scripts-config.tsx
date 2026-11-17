@@ -484,10 +484,10 @@ export function CampaignScriptsConfig() {
                         refreshAds.mutate(undefined, {
                           onSuccess: (fresh) =>
                             toast.success(
-                              `${fresh.campaigns.length} WhatsApp campaign${fresh.campaigns.length === 1 ? "" : "s"} found`,
+                              `${fresh.campaigns.length} campaign${fresh.campaigns.length === 1 ? "" : "s"} found`,
                               {
                                 description: fresh.otherRunning
-                                  ? `${fresh.otherRunning} other running campaigns don't open WhatsApp.`
+                                  ? `${fresh.otherRunning} other running campaigns can't reach WhatsApp.`
                                   : undefined,
                               },
                             ),
@@ -500,10 +500,10 @@ export function CampaignScriptsConfig() {
                   </div>
                   {otherRunning ? (
                     <p className="text-[11px] text-muted-foreground">
-                      {pickerCampaigns.length} of your running campaigns open WhatsApp and can
-                      carry a conversation. The other {otherRunning} are not listed because their
-                      ads go somewhere else — a lead form or the website — so there is no chat for
-                      the bot to reply in.
+                      {pickerCampaigns.length} of your running campaigns can carry a conversation —
+                      click-to-WhatsApp ads and lead forms. The other {otherRunning} are not listed
+                      because their ads go to the website, the catalogue or a profile, so the
+                      customer never reaches WhatsApp at all.
                     </p>
                   ) : null}
                   <Select value={pickedCampaign?.id ?? ""} onValueChange={pickCampaign}>
@@ -514,10 +514,37 @@ export function CampaignScriptsConfig() {
                       {pickerCampaigns.map((c) => (
                         <SelectItem key={c.id} value={c.id}>
                           {c.name}
+                          {/*
+                            A lead form and a click-to-WhatsApp ad are scripted
+                            the same way but start differently, and the names
+                            alone ("1/11 Leads - Rohini") do not say which is
+                            which. Labelled so the note below is expected.
+                          */}
+                          {c.kinds?.includes("lead_form") ? (
+                            <span className="ml-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+                              {c.kinds.includes("whatsapp") ? "Mixed" : "Lead form"}
+                            </span>
+                          ) : null}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                  {/*
+                    What a script on a lead form actually does. A form lead has
+                    not opened WhatsApp, so nothing is waiting to be replied
+                    to: the script runs from the moment they arrive, and
+                    somebody has to get them there first. Said here rather than
+                    discovered later from a script that appears never to fire.
+                  */}
+                  {pickedCampaign?.kinds?.includes("lead_form") ? (
+                    <p className="rounded-md bg-muted/50 p-2 text-[11px] text-muted-foreground">
+                      This campaign collects a form on Meta, so the customer is not in WhatsApp
+                      yet. The conversation starts when they get there — either they tap{" "}
+                      <strong>Chat on WhatsApp</strong> on the form&apos;s last screen, or you send
+                      an approved template and they reply. From their first reply onwards this
+                      script runs exactly as it does for a click-to-WhatsApp ad.
+                    </p>
+                  ) : null}
                   {pickedCampaign && pickedCampaign.ads.length ? (
                     <>
                     <p className="text-[11px] text-muted-foreground">

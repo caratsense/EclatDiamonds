@@ -286,10 +286,22 @@ export function adIdFromLink(link: string): string | null {
 }
 
 /** One running ad as Meta reports it, for the campaign editor's picker. */
+/**
+ * How the customer gets into WhatsApp, which decides who speaks first.
+ *
+ * `whatsapp`  they open the chat and write; the script replies.
+ * `lead_form` they fill a Meta instant form and are not in WhatsApp yet. The
+ *             script runs once they arrive — by tapping "Chat on WhatsApp" on
+ *             the form's end screen, or by answering a template.
+ */
+export type MetaAdKind = "whatsapp" | "lead_form";
+
 export interface MetaAdChoice {
   id: string;
   name: string;
   status: string;
+  /** How this ad reaches WhatsApp — see MetaAdKind. */
+  kind?: MetaAdKind;
   /** The other ids this ad can arrive as on a referral; saved with the rule. */
   aliasIds?: string[];
 }
@@ -299,6 +311,8 @@ export interface MetaCampaignChoice {
   name: string;
   status: string;
   ads: MetaAdChoice[];
+  /** The kinds its listed ads are; a campaign may run both. */
+  kinds?: MetaAdKind[];
 }
 
 /**
@@ -313,9 +327,9 @@ export interface MetaAdsListing {
   reason: string | null;
   campaigns: MetaCampaignChoice[];
   /**
-   * Campaigns running right now whose ads do NOT open WhatsApp, and which are
-   * therefore absent from `campaigns`. Shown so the gap is explained rather
-   * than mistaken for stale data.
+   * Campaigns running right now that cannot reach WhatsApp at all (catalogue,
+   * website, profile), and which are therefore absent from `campaigns`. Shown
+   * so the gap is explained rather than mistaken for stale data.
    */
   otherRunning?: number;
   /** When this was read from Meta, so the age is visible. */

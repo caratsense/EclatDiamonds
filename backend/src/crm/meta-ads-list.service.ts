@@ -4,10 +4,29 @@ import { META_ADS_PROVIDER_CODE } from '../integrations/meta-asset-ownership.ser
 import { MetaGraphClient, MetaGraphError } from '../integrations/meta-graph.client';
 import { PrismaService } from '../prisma/prisma.service';
 
+/**
+ * How a customer reaches WhatsApp from this ad, which decides who speaks first.
+ *
+ * `whatsapp`  Click-to-WhatsApp. The customer opens the chat and writes, Meta
+ *             sends a referral, the 24-hour window opens, and the script
+ *             replies. Free-form.
+ *
+ * `lead_form` A Meta instant form. The customer fills it in without ever
+ *             opening WhatsApp, so there is no window and nothing for the
+ *             script to reply to YET. It starts when the lead reaches
+ *             WhatsApp: either they tap "Chat on WhatsApp" on the form's end
+ *             screen, or the business sends an approved template first and
+ *             they answer. Either way the reply opens the window and the
+ *             script runs from there.
+ */
+export type MetaAdKind = 'whatsapp' | 'lead_form';
+
 export interface MetaAdChoice {
   id: string;
   name: string;
   status: string;
+  /** How this ad gets the customer into WhatsApp — see MetaAdKind. */
+  kind: MetaAdKind;
   /**
    * The other ids this same ad can arrive as on a Click-to-WhatsApp referral:
    * its page-post id and its Instagram media id. Meta does not always send the
@@ -22,6 +41,11 @@ export interface MetaCampaignChoice {
   name: string;
   status: string;
   ads: MetaAdChoice[];
+  /**
+   * The kinds its listed ads are. Usually one, but a campaign may legitimately
+   * run both, and the editor labels it from this rather than guessing.
+   */
+  kinds: MetaAdKind[];
 }
 
 export interface MetaAdsListing {
@@ -87,14 +111,35 @@ const MAX_PAGES = 5;
  */
 
 /**
- * Only ads that actually land the customer in WhatsApp can start a scripted
- * conversation -- a website or lead-form ad never produces a referral, so a
- * script attached to it could never fire. On this account 45 of the 50 running
- * campaigns are of that second kind, and listing them would bury the five that
- * work. Meta spells the destination in the creative's call to action.
+ * Which ads can carry a scripted conversation, and how.
+ *
+ * Originally this listed Click-to-WhatsApp only, on the reasoning that a lead
+ * form never produces a referral so a script attached to one could never fire.
+ * True of the referral, wrong about the lead: a form lead reaches WhatsApp a
+ * moment later -- by tapping "Chat on WhatsApp" on the form's end screen, or
+ * by answering a template -- and from their reply onwards it is an ordinary
+ * conversation that a script can run. The client asked for lead forms by name
+ * (17 Nov); their lead campaigns are already one per branch.
+ *
+ * Read from the ad set's destination, with the creative's call to action as a
+ * fallback. Both are needed, and neither alone is enough: on this account 245
+ * active ads report destination UNDEFINED, some of which carry the CTA
+ * WHATSAPP_MESSAGE and genuinely do open a chat; while the lead forms declare
+ * ON_AD or WEBSITE_AND_LEAD_FORM and carry CTAs (GET_OFFER, SEE_DETAILS) that
+ * say nothing about any destination.
+ *
+ * A website, catalogue, Instagram-profile or post ad is still left out. Those
+ * never reach WhatsApp at all, so there is no conversation to script.
  */
-function toWhatsApp(callToAction: string | null): boolean {
-  return Boolean(callToAction && callToAction.toUpperCase().includes('WHATSAPP'));
+const WHATSAPP_DESTINATIONS = new Set(['WHATSAPP']);
+const LEAD_FORM_DESTINATIONS = new Set(['ON_AD', 'WEBSITE_AND_LEAD_FORM']);
+
+export function adKind(destination: string | null, callToAction: string | null): MetaAdKind | null {
+  const dest = destination?.toUpperCase() ?? '';
+  const cta = callToAction?.toUpperCase() ?? '';
+  if (WHATSAPP_DESTINATIONS.has(dest) || cta.includes('WHATSAPP')) return 'whatsapp';
+  if (LEAD_FORM_DESTINATIONS.has(dest)) return 'lead_form';
+  return null;
 }
 
 /**
@@ -237,7 +282,7 @@ export class MetaAdsListService {
           `act_${accountId}/ads`,
           {
             fields:
-              'id,name,status,campaign{id,name,status},' +
+              'id,name,status,campaign{id,name,status},adset{destination_type},' +
               'creative{call_to_action_type,effective_object_story_id,effective_instagram_media_id}',
             // Running ads only — the whole point of the picker.
             effective_status: '["ACTIVE"]',
@@ -251,9 +296,13 @@ export class MetaAdsListService {
           const adName = text(ad?.name);
           const adStatus = text(ad?.status);
           if (!adId || !adName || adStatus !== 'ACTIVE') continue;
-          // An ad that does not open WhatsApp can never produce a referral, so
-          // a conversation attached to it could never fire.
-          if (!toWhatsApp(text(ad?.creative?.call_to_action_type))) {
+          // An ad that never reaches WhatsApp at all has no conversation to
+          // script. A lead form does reach it, a moment later — see adKind.
+          const kind = adKind(
+            text(ad?.adset?.destination_type),
+            text(ad?.creative?.call_to_action_type),
+          );
+          if (!kind) {
             const otherId = text(ad?.campaign?.id);
             if (otherId) nonWhatsApp.add(otherId);
             continue;
@@ -267,13 +316,16 @@ export class MetaAdsListService {
             name: campaignName,
             status: campaignStatus,
             ads: [],
+            kinds: [],
           };
           existing.ads.push({
             id: adId,
             name: adName,
             status: adStatus,
+            kind,
             aliasIds: aliasesFor(ad?.creative),
           });
+          if (!existing.kinds.includes(kind)) existing.kinds.push(kind);
           byCampaign.set(campaignId, existing);
         }
         after = text(response?.paging?.cursors?.after);
@@ -289,11 +341,12 @@ export class MetaAdsListService {
          */
         return {
           ...unavailable(
-            nonWhatsApp.size
-              ? `None of your ${nonWhatsApp.size} running campaigns open WhatsApp. A bot conversation ` +
-                'can only attach to a click-to-WhatsApp ad — a lead form or a catalogue ad never opens ' +
-                'a chat, so there is nothing for the bot to reply in.'
-              : 'No running campaign sends people to WhatsApp, so there is nothing to attach a conversation to yet.',
+              nonWhatsApp.size
+                ? `None of your ${nonWhatsApp.size} running campaigns can reach WhatsApp. A bot ` +
+                  'conversation needs either a click-to-WhatsApp ad or a lead form — a catalogue, ' +
+                  'website or profile ad never gets the customer into a chat, so there is nothing ' +
+                  'for the bot to reply in.'
+                : 'No running campaign reaches WhatsApp, so there is nothing to attach a conversation to yet.',
           ),
           otherRunning: nonWhatsApp.size,
         };
@@ -358,6 +411,8 @@ interface GraphAdsResponse {
     name?: string;
     status?: string;
     campaign?: { id?: string; name?: string; status?: string };
+    /** Where the ad sends the customer: WHATSAPP, ON_AD (instant form), … */
+    adset?: { destination_type?: string };
     creative?: GraphCreative;
   }>;
   paging?: { next?: string; cursors?: { after?: string } };
