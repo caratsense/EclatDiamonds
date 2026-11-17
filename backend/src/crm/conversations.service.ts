@@ -741,6 +741,29 @@ export class ConversationsService {
     }
   }
 
+  /**
+   * Where the lead came FROM, as the CRM's own vocabulary says it.
+   *
+   * This was hardcoded `'whatsapp'`, which is true of the channel the customer
+   * wrote on and says nothing about where they clicked. Every ad lead in
+   * production therefore read "WhatsApp" -- 105 of 107, with not one filed
+   * under Instagram or Meta Ads -- while the conversations behind them split
+   * roughly 30 Facebook to 14 Instagram. Filtering the pipeline by Instagram
+   * returned nothing, and the honest reading of that screen was that no advert
+   * had ever produced a lead.
+   *
+   * The platform is the one the referral's own source URL names
+   * (`platformFromSourceUrl`), so this re-states a fact Meta already gave us
+   * rather than inferring one. `LeadSource` has no `facebook`, so a Facebook
+   * click is the generic `meta_ads`; anything the provider did not name stays
+   * `whatsapp`, which is where an organic enquiry genuinely belongs.
+   */
+  private leadSourceFor(platform: string | null): LeadSource {
+    if (platform === 'instagram') return 'instagram';
+    if (platform === 'facebook' || platform === 'messenger') return 'meta_ads';
+    return 'whatsapp';
+  }
+
   private async recordAdOrigin(
     organisationId: string,
     ref: AdReferral,
@@ -811,7 +834,7 @@ export class ConversationsService {
                 // can call is not a lead, which is what the anonymous version
                 // produced.
                 phone: party?.phone ?? party?.whatsapp ?? null,
-                source: 'whatsapp',
+                source: this.leadSourceFor(platformFromSourceUrl(ref.sourceUrl ?? null)),
                 interest: ref.headline ?? null,
                 originKey,
               },
@@ -958,7 +981,10 @@ export class ConversationsService {
       customerName: input.customerName?.trim() || 'WhatsApp customer',
       phone: phone ?? conversation.externalThreadId ?? null,
       interest,
-      source: LeadSource.whatsapp,
+      // A person converting the thread by hand does not change where the
+      // customer clicked, so this is filed the same way the automatic paths
+      // file it. Converting an Instagram enquiry used to relabel it WhatsApp.
+      source: this.leadSourceFor(conversation.sourcePlatform ?? null),
       identitySource: 'conversation_conversion',
       summary: 'A conversation was converted into a lead.',
       auditAction: 'crm.lead_converted_from_conversation',
@@ -1028,6 +1054,10 @@ export class ConversationsService {
           storeId: true,
           sourceAdId: true,
           sourceClickId: true,
+          // Stamped on the row when the referral arrived, so the lead this
+          // backfill opens is filed under the same platform as the inbound
+          // path would have filed it.
+          sourcePlatform: true,
         },
       });
       // Not routed yet, or never came from an ad: nothing to open.
@@ -1082,7 +1112,7 @@ export class ConversationsService {
             partyId: convo.partyId,
             customerName: party?.name ?? 'WhatsApp customer',
             phone: party?.phone ?? party?.whatsapp ?? null,
-            source: 'whatsapp',
+            source: this.leadSourceFor(convo.sourcePlatform),
             originKey,
           },
           select: { id: true },
