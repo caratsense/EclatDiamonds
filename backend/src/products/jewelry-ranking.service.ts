@@ -70,6 +70,14 @@ export interface RankOutcome {
   matchLevel: MatchLevel;
   closenessScore: number;
   results: RankedHit[];
+  /**
+   * The top two candidates scored within `minMargin` of each other.
+   *
+   * Surfaced rather than acted on: a screen can say "several pieces look
+   * alike" while still showing them. Suppressing the results instead is what
+   * made real photographs return nothing at all.
+   */
+  ambiguous?: boolean;
 }
 
 export interface RankOptions {
@@ -229,15 +237,34 @@ export function rankCandidates(
   const second = byDesign[1];
   const margin = best.closeness - (second?.closeness ?? 0);
 
-  // No-match: absolute floor OR ambiguous (not clearly close AND no standout).
-  const noMatch =
-    best.closeness < t.weak || (best.closeness < t.close && margin < t.minMargin);
-  if (noMatch) {
+  /*
+   * No-match is the ABSOLUTE floor, and nothing else.
+   *
+   * It used to also discard everything when the best score was below `close`
+   * AND the runner-up sat within `minMargin` — an ambiguity gate. That is the
+   * right rule for deduplication, where a near-tie means "do not guess", and
+   * the wrong one for searching a jewellery catalogue, where near-ties are
+   * the normal case: a dozen gold bands genuinely do look alike.
+   *
+   * What it did in production: a catalogue image matched itself at ~95 and
+   * sailed past the gate, while a phone photograph of the SAME piece scored
+   * in the fifties with a runner-up two points behind — and every result was
+   * thrown away. The client reported that as "it only recognises the
+   * catalogue pictures, not new photos".
+   *
+   * Ambiguity is now REPORTED instead of enforced. The candidates come back
+   * at the level their score earns, and `ambiguous` says the top two were
+   * close together. The person is looking at the photographs and can tell
+   * them apart; returning nothing denies them that.
+   */
+  const ambiguous = margin < t.minMargin;
+  if (best.closeness < t.weak) {
     return {
       status: 'NO_CLOSE_MATCH',
       matchLevel: 'NO_CLOSE_MATCH',
       closenessScore: best.closeness,
       results: [],
+      ambiguous,
     };
   }
 
@@ -258,6 +285,9 @@ export function rankCandidates(
     matchLevel: results[0].matchLevel,
     closenessScore: results[0].closenessScore,
     results,
+    // Carried on the success path too: this is where it matters, because
+    // these are the results somebody is about to act on.
+    ambiguous,
   };
 }
 
