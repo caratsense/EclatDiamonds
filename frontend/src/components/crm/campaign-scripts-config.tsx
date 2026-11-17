@@ -366,7 +366,15 @@ export function CampaignScriptsConfig() {
               key={rule.id}
               className="flex flex-wrap items-start justify-between gap-3 rounded-lg border p-3"
             >
-              <div className="min-w-0 space-y-1">
+              {/*
+                `flex-1` as well as `min-w-0`: without the first it never
+                claims the free width, and without the second it refuses to
+                shrink below its content — and that content includes an
+                18-digit ad id, which is a single unbreakable word. Together
+                they were what pushed the card wider than the page and put a
+                sideways scrollbar on a screen with room to spare.
+              */}
+              <div className="min-w-0 flex-1 space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">{rule.name}</span>
                   {!rule.enabled ? <Badge variant="secondary">Off</Badge> : null}
@@ -381,9 +389,11 @@ export function CampaignScriptsConfig() {
                     <Badge variant="secondary">Routing only — no script</Badge>
                   )}
                 </div>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-xs break-words text-muted-foreground">
                   Matches {MATCH_LABELS[rule.matchField]}{" "}
-                  <span className="font-mono">{rule.matchValue}</span>
+                  {/* break-all, not break-words: an ad id has no spaces and no
+                      hyphens, so there is nowhere for a normal break to go. */}
+                  <span className="font-mono break-all">{rule.matchValue}</span>
                   {rule.storeId
                     ? ` · ${stores.find((s) => s.id === rule.storeId)?.name ?? rule.storeId}`
                     : ""}
@@ -392,7 +402,7 @@ export function CampaignScriptsConfig() {
                     : ""}
                 </p>
                 {rule.firstReply ? (
-                  <p className="line-clamp-2 max-w-xl text-xs text-muted-foreground">
+                  <p className="line-clamp-2 text-xs break-words text-muted-foreground">
                     “{rule.firstReply}”
                   </p>
                 ) : null}
@@ -419,7 +429,11 @@ export function CampaignScriptsConfig() {
       </CardContent>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+        {/* Wider than the default: this dialog holds the campaign picker, the
+            ad picker, a first reply and up to five questions. At max-w-lg
+            every one of them was cramped into a column narrower than the
+            sentences inside it. */}
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{editingId ? "Edit campaign" : "Add campaign"}</DialogTitle>
             <DialogDescription>
