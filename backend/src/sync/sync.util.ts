@@ -51,6 +51,39 @@ export function bool(v: unknown): boolean {
  * join: 14KT×2128, 9KT×450, 18KT×112). The extractor may also attach an explicit
  * `Karat` int; prefer it, else parse the token off any code field.
  */
+/**
+ * Gati encodes the product group as a 2-letter code at the end of the leading
+ * token of the design/piece code: `10880RG` -> RG, `SDNK01033` -> NK,
+ * `12037ARG` -> RG (design 12037, variant A, group RG).
+ */
+export const CODE_GROUP: Record<string, string> = {
+  RG: 'ring',
+  PD: 'pendant',
+  BG: 'bangle',
+  BR: 'bracelet',
+  NK: 'necklace',
+  ER: 'earrings',
+  CH: 'chain',
+  CG: 'chain',
+};
+
+/**
+ * The group a code names, or null when it names none.
+ *
+ * Lives here, beside `karatFromRow`, which reads the same codes for purity.
+ * The data migration 20261117090000_reclassify_stock_category repairs rows
+ * stored under the old reading and mirrors this table in SQL; the two must
+ * agree, which is why the table has one home rather than a copy per caller.
+ */
+export function groupFromToken(raw: unknown): string | null {
+  const two = String(raw ?? '')
+    .split('-')[0]
+    .replace(/[^A-Za-z]/g, '')
+    .slice(-2)
+    .toUpperCase();
+  return CODE_GROUP[two] ?? null;
+}
+
 export function karatFromRow(r: any): number | null {
   const explicit = Number(r?.Karat);
   if (Number.isFinite(explicit) && explicit > 0) return explicit;

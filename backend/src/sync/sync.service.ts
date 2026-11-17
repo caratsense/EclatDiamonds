@@ -25,6 +25,7 @@ import {
   int,
   karatFromMetal,
   maxWatermark,
+  groupFromToken,
   karatFromRow,
   str,
   KNOWN_INWARD_STATUSES,
@@ -170,24 +171,32 @@ const CATEGORY_RULES: [RegExp, string][] = [
  * row classified as `other`. Strip non-letters from the leading token and read
  * the last two letters.
  */
-const CODE_GROUP: Record<string, string> = {
-  RG: 'ring',
-  PD: 'pendant',
-  BG: 'bangle',
-  BR: 'bracelet',
-  NK: 'necklace',
-  ER: 'earrings',
-  CH: 'chain',
-  CG: 'chain',
-};
+/*
+ * Every field that might carry the group code, tried until one does.
+ *
+ * This was `StyleCode ?? StyleSKUNo ?? JewelCode ?? InwardSKUNo`, which commits
+ * to the first field that is PRESENT rather than the first that is readable.
+ * Inward rows send no StyleCode, so `JewelCode` won -- and on this install
+ * JewelCode is an inward serial (`A01225`), not a design code. One letter, no
+ * group, and the English-word scan below has nothing to find in a serial
+ * either, so 996 of 1,428 pieces in production (70%) classified as `other`
+ * while their own SKU read `APD00004`, `30059ER`, `12037ARG`, `10954NK`.
+ *
+ * That is what "the filters are not working" was: picking Rings returned 177
+ * of the pieces that are rings, and the rest were filed under Other.
+ *
+ * `karatFromRow` reads the same codes and puts InwardSKUNo first, which is why
+ * purity was always right while category was not. Order no longer decides
+ * anything on its own -- a field that yields no known group is skipped.
+ */
+const CODE_FIELDS = ['StyleCode', 'StyleSKUNo', 'InwardSKUNo', 'JewelCode'] as const;
 
 function categoryFromCode(r: Rec): string | null {
-  const token = String(r.StyleCode ?? r.StyleSKUNo ?? r.JewelCode ?? r.InwardSKUNo ?? '').split('-')[0];
-  const two = token
-    .replace(/[^A-Za-z]/g, '')
-    .slice(-2)
-    .toUpperCase();
-  return CODE_GROUP[two] ?? null;
+  for (const f of CODE_FIELDS) {
+    const group = groupFromToken(r[f]);
+    if (group) return group;
+  }
+  return null;
 }
 
 /** Category from the Gati product-group code first, then an English-word scan

@@ -36,7 +36,7 @@ export const MODULES = [
   // Commerce & Orders
   'catalogue', 'quotation', 'payments', 'discounts', 'returns', 'loyalty', 'loyalty/programme',
   // Inventory & Supply
-  'inventory', 'stock-transfers', 'inventory/dead-stock',
+  'inventory', 'stock-transfers', 'inventory/dead-stock', 'inventory/by-store',
   // Marketing & Inbound
   'campaigns', 'lead-forms', 'marketing',
   // HRM
@@ -96,7 +96,7 @@ const STORE_MANAGER: ModuleSlug[] = [
    */
   'campaigns',
   'payments', 'loyalty/programme',
-  'inventory', 'stock-transfers', 'inventory/dead-stock', 'data/images',
+  'inventory', 'stock-transfers', 'inventory/dead-stock', 'inventory/by-store', 'data/images',
   'settings/team', 'sales-performance', 'settings/targets', 'hrms/payroll',
   /*
    * The employee master, so it can be a sidebar item rather than a card nested
@@ -389,6 +389,17 @@ const SOFT_ROUTE_MODULES: [prefix: string, module: ModuleSlug][] = [
    * through to the route's own @Roles exactly as before.
    */
   ['integrations-registry', 'settings/integrations/templates'],
+  /*
+   * The store-wise stock API, governed by the SCREEN that shows it.
+   *
+   * Without this it falls to ['stock','inventory'] below, so somebody granted
+   * "Stock by Store" and not "Inventory & Stock" would see the page and get a
+   * 403 from it — the same mismatch between what a screen is given and what
+   * its routes demand that broke the delegated bot-script and template
+   * screens. SOFT, so anybody holding plain `inventory` is unaffected and
+   * still meets the route's own @Permit.
+   */
+  ['stock/by-store', 'inventory/by-store'],
   /*
    * The APIs behind the head-office screens head office may delegate. SOFT, so
    * somebody who does NOT hold the screen is unaffected and still meets the
