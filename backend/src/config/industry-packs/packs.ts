@@ -414,6 +414,7 @@ const JEWELLERY: IndustryPack = {
       'loyalty/programme',
       'sales-performance',
       'inventory',
+  'inventory/by-store',
       'inventory/dead-stock',
       'stock-transfers',
       'payments',

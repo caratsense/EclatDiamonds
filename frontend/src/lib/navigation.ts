@@ -847,6 +847,23 @@ export const NAV_ITEMS: NavItem[] = [
     rank: 100,
   },
   {
+    /*
+     * Stock as each BRANCH holds it, beside Inventory rather than inside it.
+     * Inventory answers "what do we have"; this answers "where is it, where
+     * did it come from, and can I trust this branch's number" — the question
+     * the client said the screens could not answer.
+     */
+    module: 9,
+    slug: "inventory/by-store",
+    title: "Stock by Store",
+    purpose: "What each branch holds, where it came from, and whether its data arrived.",
+    primaryAction: "",
+    icon: Boxes,
+    group: "Stock Management",
+    rank: 20,
+    roles: ["store_manager", "area_manager", "head_office"],
+  },
+  {
     module: 9,
     slug: "inventory/dead-stock",
     title: "Dead Stock",
@@ -1040,6 +1057,7 @@ export function getNavItem(slug: string): NavItem | undefined {
 export const STOREPERSON_NAVIGATION: ReadonlySet<string> = new Set([
   "catalogue",
   "inventory",
+  "inventory/by-store",
   "inventory/dead-stock",
   "data/images",
   "hrms",

@@ -60,7 +60,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatGrams, formatINR, formatPurity } from "@/lib/format";
-import { CATEGORY_LABELS, METAL_LABELS, type Metal } from "@/lib/mock/catalogue";
+import {
+  CATEGORY_LABELS,
+  METAL_LABELS,
+  type Metal,
+  type ProductCategory,
+} from "@/lib/mock/catalogue";
 import {
   DEAD_STOCK_THRESHOLD_DAYS,
   type StockStatus,
@@ -192,6 +197,51 @@ export default function InventoryPage() {
 
   function clearSelection() {
     setSelected(new Set());
+  }
+
+  /*
+   * The filters currently narrowing the table, in the user's words. Used only
+   * to explain an empty result -- a filter that excluded everything looks
+   * exactly like an empty inventory otherwise.
+   */
+  const activeFilters: { label: string; value: string }[] = [
+    q ? { label: "Search", value: q } : null,
+    category !== "all"
+      ? { label: "Category", value: CATEGORY_LABELS[category as ProductCategory] ?? category }
+      : null,
+    metal !== "all"
+      ? { label: "Purity", value: METAL_LABELS[metal as Metal] ?? metal }
+      : null,
+    status !== "all"
+      ? {
+          label: "Status",
+          value: STATUS_FILTERS.find((s) => s.value === status)?.label ?? status,
+        }
+      : null,
+    ageBucket !== "all"
+      ? {
+          label: "Age",
+          value: AGE_BUCKETS.find((b) => b.value === ageBucket)?.label ?? ageBucket,
+        }
+      : null,
+    showStoreFilter && storeFilter !== "all"
+      ? {
+          label: "Store",
+          value: realStores.find((s) => s.id === storeFilter)?.name ?? storeFilter,
+        }
+      : null,
+  ].filter((f): f is { label: string; value: string } => f !== null);
+
+  function clearFilters() {
+    setSearch("");
+    setQ("");
+    setCategory("all");
+    setMetal("all");
+    setStatus("all");
+    setAgeBucket("all");
+    setStoreFilter("all");
+    setPage(1);
+    clearSelection();
   }
 
   function onFilterChange(setter: (v: string) => void) {
@@ -632,9 +682,43 @@ export default function InventoryPage() {
                     <TableRow>
                       <TableCell
                         colSpan={canManage ? 9 : 8}
-                        className="py-10 text-center text-muted-foreground"
+                        className="py-10 text-center"
                       >
-                        No stock entries yet. Add a piece to begin.
+                        {/*
+                          An empty table has two completely different meanings
+                          and used to report only one of them. "No stock
+                          entries yet. Add a piece to begin." told somebody who
+                          had just picked a category that the branch holds no
+                          stock at all -- which reads as the filter having done
+                          nothing, and was reported as the filters being
+                          broken. Name the filters that excluded the rows and
+                          offer to drop them.
+                        */}
+                        {activeFilters.length > 0 ? (
+                          <div className="mx-auto max-w-md space-y-3">
+                            <p className="text-sm font-medium">
+                              No pieces match these filters.
+                            </p>
+                            <div className="flex flex-wrap justify-center gap-1.5">
+                              {activeFilters.map((f) => (
+                                <Badge key={f.label} variant="secondary">
+                                  {f.label}: {f.value}
+                                </Badge>
+                              ))}
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              The branch may still hold stock that these
+                              filters exclude.
+                            </p>
+                            <Button variant="outline" size="sm" onClick={clearFilters}>
+                              Clear filters
+                            </Button>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">
+                            No stock entries yet. Add a piece to begin.
+                          </span>
+                        )}
                       </TableCell>
                     </TableRow>
                   ) : null}
