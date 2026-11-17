@@ -189,8 +189,8 @@ export class CrmQualificationController {
   // Management information: store manager and above, never a salesperson.
   @Roles('store_manager')
   @Get('meta-ads')
-  metaAds(@CurrentUser() user: AuthUser) {
-    return this.metaAdsList.list(user.organisationId);
+  metaAds(@CurrentUser() user: AuthUser, @Query('refresh') refresh?: string) {
+    return this.metaAdsList.list(user.organisationId, refresh === '1' || refresh === 'true');
   }
 
   /** Current policy + whether an AI provider is actually configured. */

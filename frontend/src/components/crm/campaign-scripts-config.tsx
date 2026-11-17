@@ -45,6 +45,7 @@ import {
   useAdSetRules,
   useBotDefault,
   useMetaAdsListing,
+  useRefreshMetaAds,
   useSaveAdSetRules,
   useSaveBotDefault,
   type AdSetAutomationRule,
@@ -163,6 +164,7 @@ export function CampaignScriptsConfig() {
   // Fetched only while the dialog is open for someone who can edit — a closed
   // list, or a viewer who cannot save anyway, never costs a Graph call.
   const metaAds = useMetaAdsListing(open && canEdit);
+  const refreshAds = useRefreshMetaAds();
 
   const rules = data ?? [];
   const linkAdId = adIdFromLink(draft.adLink ?? "");
@@ -174,6 +176,8 @@ export function CampaignScriptsConfig() {
    * choice to fall out of sync.
    */
   const pickerCampaigns = metaAds.data?.available ? metaAds.data.campaigns : [];
+  /** Running campaigns deliberately filtered out, so the list can say so. */
+  const otherRunning = metaAds.data?.otherRunning ?? 0;
   const pickedCampaign =
     pickerCampaigns.find((c) =>
       draft.matchField === "campaign_name"
@@ -440,6 +444,54 @@ export function CampaignScriptsConfig() {
               {pickerCampaigns.length ? (
                 <div className="grid gap-1.5 rounded-md border bg-muted/30 p-2.5">
                   <p className="text-xs font-medium">Pick from your running ads</p>
+                  {/*
+                    Say what is NOT in the list.
+
+                    The account runs hundreds of catalogue and lead-form
+                    campaigns and only a handful that open WhatsApp. The picker
+                    showed the handful and said nothing about the rest, so a
+                    brand-new lead-form campaign appearing nowhere read as "the
+                    CRM has stopped pulling my ads" — when it had pulled them
+                    and discarded them, correctly.
+                  */}
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[11px] text-muted-foreground">
+                      {metaAds.data?.readAt
+                        ? `Read from Meta ${new Date(metaAds.data.readAt).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })}. Refreshes on its own every few minutes.`
+                        : "Read live from your Meta account."}
+                    </p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 shrink-0 text-[11px]"
+                      disabled={refreshAds.isPending}
+                      onClick={() =>
+                        refreshAds.mutate(undefined, {
+                          onSuccess: (fresh) =>
+                            toast.success(
+                              `${fresh.campaigns.length} WhatsApp campaign${fresh.campaigns.length === 1 ? "" : "s"} found`,
+                              {
+                                description: fresh.otherRunning
+                                  ? `${fresh.otherRunning} other running campaigns don't open WhatsApp.`
+                                  : undefined,
+                              },
+                            ),
+                          onError: (e) => toast.error(apiErrorMessage(e, "Could not reach Meta.")),
+                        })
+                      }
+                    >
+                      {refreshAds.isPending ? "Checking Meta…" : "Check for new ads"}
+                    </Button>
+                  </div>
+                  {otherRunning ? (
+                    <p className="text-[11px] text-muted-foreground">
+                      {pickerCampaigns.length} of your running campaigns open WhatsApp and can
+                      carry a conversation. The other {otherRunning} are not listed because their
+                      ads go somewhere else — a lead form or the website — so there is no chat for
+                      the bot to reply in.
+                    </p>
+                  ) : null}
                   <Select value={pickedCampaign?.id ?? ""} onValueChange={pickCampaign}>
                     <SelectTrigger aria-label="Running campaign">
                       <SelectValue placeholder="Choose a running campaign" />

@@ -29,6 +29,20 @@ export interface MetaAdsListing {
   /** Why the picker cannot be offered. Null whenever `available` is true. */
   reason: string | null;
   campaigns: MetaCampaignChoice[];
+  /**
+   * Running campaigns deliberately left out because their ads do not open
+   * WhatsApp.
+   *
+   * Counted and reported because the silence was read as staleness. The
+   * account runs hundreds of catalogue and lead-form campaigns; the picker
+   * showed the eight that can carry a WhatsApp conversation and said nothing
+   * about the rest, so a new lead-form campaign appearing nowhere looked
+   * exactly like "the CRM is not pulling new ads". It was pulling them and
+   * discarding them, correctly, without saying so.
+   */
+  otherRunning?: number;
+  /** When this was actually read from Meta, so the age is visible. */
+  readAt?: string;
 }
 
 interface CacheEntry {
@@ -109,16 +123,26 @@ export class MetaAdsListService {
     private readonly graph: MetaGraphClient,
   ) {}
 
-  async list(organisationId: string): Promise<MetaAdsListing> {
+  /**
+   * `refresh` skips the cache.
+   *
+   * The five-minute cache is right for a picker somebody opens repeatedly, and
+   * wrong the moment a marketer launches a campaign and wants to script it
+   * now. Waiting out a cache they cannot see reads as "the CRM is not pulling
+   * my ads" — so there is a button, and it does exactly what it says.
+   */
+  async list(organisationId: string, refresh = false): Promise<MetaAdsListing> {
     const hit = this.cache.get(organisationId);
-    if (hit && hit.expiresAt > Date.now()) return hit.value;
+    if (!refresh && hit && hit.expiresAt > Date.now()) return hit.value;
 
     const value = await this.fetch(organisationId);
+    const readAt = new Date().toISOString();
+    const stamped: MetaAdsListing = { ...value, readAt };
     this.cache.set(organisationId, {
-      value,
+      value: stamped,
       expiresAt: Date.now() + (value.available ? SUCCESS_TTL_MS : FAILURE_TTL_MS),
     });
-    return value;
+    return stamped;
   }
 
   private async fetch(organisationId: string): Promise<MetaAdsListing> {

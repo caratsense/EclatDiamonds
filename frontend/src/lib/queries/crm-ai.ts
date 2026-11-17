@@ -312,6 +312,28 @@ export interface MetaAdsListing {
   /** Why the picker cannot be offered. Null whenever `available` is true. */
   reason: string | null;
   campaigns: MetaCampaignChoice[];
+  /**
+   * Campaigns running right now whose ads do NOT open WhatsApp, and which are
+   * therefore absent from `campaigns`. Shown so the gap is explained rather
+   * than mistaken for stale data.
+   */
+  otherRunning?: number;
+  /** When this was read from Meta, so the age is visible. */
+  readAt?: string;
+}
+
+/** Force a fresh read from Meta, past the server's five-minute cache. */
+export function useRefreshMetaAds() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () =>
+      (await api.get<MetaAdsListing>("/crm/qualification/meta-ads?refresh=1")).data,
+    onSuccess: (fresh) => {
+      // Seed the cache with what we just read, so the list updates without a
+      // second round trip.
+      qc.setQueryData(["crm", "qualification", "meta-ads"], fresh);
+    },
+  });
 }
 
 export function useMetaAdsListing(enabled = true) {
