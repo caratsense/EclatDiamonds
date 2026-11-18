@@ -23,7 +23,7 @@ describe('the cadence the client agreed', () => {
   });
 
   it('is the spacing that was shown and approved', () => {
-    expect([...FOLLOW_UP_CADENCE_DAYS]).toEqual([1, 3, 7, 14, 30, 45, 60, 90, 120, 150]);
+    expect([...FOLLOW_UP_CADENCE_DAYS]).toEqual([1, 2, 7, 14, 21, 28, 35, 42, 49, 56]);
   });
 
   it('starts the next day, while the enquiry is still warm', () => {
@@ -36,13 +36,19 @@ describe('the cadence the client agreed', () => {
     expect(days.every((d, i) => i === 0 || d > days[i - 1])).toBe(true);
   });
 
-  it('eases off: the last gap is far wider than the first', () => {
-    // Not monotonic — 14->30 is 16 days and 30->45 is 15 — and it does not
-    // need to be. What matters is that it starts tight and ends monthly.
+  it('is 24 hours, 48 hours, then weekly', () => {
+    // The client's own words on 18 Nov. The first two are measured from the
+    // lead, not from each other, which is why the second is day 2 and not 3.
     const gaps = FOLLOW_UP_CADENCE_DAYS.map((d, i) => d - (FOLLOW_UP_CADENCE_DAYS[i - 1] ?? 0));
-    expect(gaps[0]).toBe(1);
-    expect(gaps[gaps.length - 1]).toBe(30);
-    expect(gaps[gaps.length - 1]).toBeGreaterThan(gaps[0] * 10);
+    expect(FOLLOW_UP_CADENCE_DAYS[0]).toBe(1);
+    expect(FOLLOW_UP_CADENCE_DAYS[1]).toBe(2);
+    expect(gaps.slice(3)).toEqual([7, 7, 7, 7, 7, 7, 7]);
+  });
+
+  it('finishes within eight weeks', () => {
+    // A jewellery enquiry goes cold long before five months, which is what
+    // the first version of this cadence spread ten touches over.
+    expect(FOLLOW_UP_CADENCE_DAYS[FOLLOW_UP_CADENCE_DAYS.length - 1]).toBe(56);
   });
 
   it('keeps the cap and the cadence as one fact', () => {
@@ -66,8 +72,8 @@ describe('the rows generated for one lead', () => {
   it('lands on the dates the client was shown', () => {
     const dates = rows.map((r) => r.dueDate.toISOString().slice(0, 10));
     expect(dates).toEqual([
-      '2026-11-19', '2026-11-21', '2026-11-25', '2026-12-02', '2026-12-18',
-      '2027-01-02', '2027-01-17', '2027-02-16', '2027-03-18', '2027-04-17',
+      '2026-11-19', '2026-11-20', '2026-11-25', '2026-12-02', '2026-12-09',
+      '2026-12-16', '2026-12-23', '2026-12-30', '2027-01-06', '2027-01-13',
     ]);
   });
 
@@ -99,7 +105,7 @@ describe('where the clock starts', () => {
     expect(fromToday.every((r) => r.dueDate > today)).toBe(true);
     // Same lead counted from its enquiry date would already be entirely overdue.
     const fromEnquiry = sopFollowUps('l', 's', enquiry);
-    expect(fromEnquiry.filter((r) => r.dueDate < today)).toHaveLength(8);
+    expect(fromEnquiry.filter((r) => r.dueDate < today)).toHaveLength(10);
   });
 });
 
@@ -110,8 +116,8 @@ describe('addUtcDays stays on calendar days', () => {
   });
 
   it('crosses a year end', () => {
-    expect(addUtcDays(new Date(Date.UTC(2026, 11, 18)), 30).toISOString().slice(0, 10))
-      .toBe('2027-01-17');
+    expect(addUtcDays(new Date(Date.UTC(2026, 11, 28)), 7).toISOString().slice(0, 10))
+      .toBe('2027-01-04');
   });
 
   it('keeps midnight, so a @db.Date column stores the day meant', () => {
