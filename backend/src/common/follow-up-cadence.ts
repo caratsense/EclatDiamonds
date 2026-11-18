@@ -10,12 +10,32 @@
  * copies of a number that has to agree is three places to miss when it
  * changes, which is why the cadence now has one home.
  *
- * Front-loaded on purpose, and chosen with the client: the first touch is the
- * next day while the enquiry is still warm, and the gaps widen to monthly once
- * it is clear the sale is not immediate. Ten in five months, not ten in a
- * fortnight.
+ * Revised 18 Nov after the client reconsidered: 24 hours, 48 hours, then a
+ * week, then weekly. Ten touches across eight weeks rather than the five
+ * months the first version spread them over -- a jewellery enquiry goes cold
+ * long before month five, and the client knows her customers.
  */
-export const FOLLOW_UP_CADENCE_DAYS = [1, 3, 7, 14, 30, 45, 60, 90, 120, 150] as const;
+export const FOLLOW_UP_CADENCE_DAYS = [1, 2, 7, 14, 21, 28, 35, 42, 49, 56] as const;
+
+/*
+ * ONE AMBIGUITY, DELIBERATELY NOT RESOLVED IN SILENCE.
+ *
+ * The instruction was "first in 24 hours, second in 48 hours, third after a
+ * week, then consecutive ones each after a week". The first two are plainly
+ * measured FROM THE LEAD, which is why they are days 1 and 2 rather than 1 and
+ * 3. "Third after a week" has two readings:
+ *
+ *   from the lead    -> day 7   (what is implemented, matching the first two)
+ *   from the second  -> day 9
+ *
+ * A day either way, and the weekly run after it shifts with whichever is
+ * chosen. Change the third entry and the rest follow; the tests state the
+ * dates, so the diff will show exactly what moved.
+ *
+ * The earlier meeting note said "follow-up gaps: 24 hours, 48 hours, 1 week
+ * and 2 weeks", which reads as GAPS and would give 1, 3, 10, 24. That is a
+ * third cadence again, and it is older than the instruction above.
+ */
 
 /**
  * The cap the client asked for — "after that no reminder for that customer".
