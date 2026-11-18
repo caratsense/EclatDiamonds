@@ -27,9 +27,12 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   useSubmitTemplate,
   useUploadTemplateImage,
+  type TemplateButtonInput,
   type TemplateCardInput,
   type TemplateDraftInput,
 } from "@/lib/queries/meta-admin";
+import { Badge } from "@/components/ui/badge";
+import { WhatsAppPreview } from "@/components/integrations/whatsapp-preview";
 import { TENANT_NAME } from "@/lib/brand";
 import { apiErrorMessage } from "@/lib/utils";
 
@@ -128,6 +131,13 @@ export function TemplateComposer({
   const [header, setHeader] = useState("");
   const [headerImage, setHeaderImage] = useState<{ handle: string; previewUrl: string } | null>(null);
   const [cards, setCards] = useState<TemplateCardInput[]>([]);
+  /*
+   * Up to two tappable buttons. The client asked for these after reviewing the
+   * feedback template: a form link as plain text in the body reads worse than
+   * a "Give feedback" button, and WhatsApp renders the button as a control.
+   * A carousel carries its buttons per card, so these are hidden there.
+   */
+  const [buttons, setButtons] = useState<TemplateButtonInput[]>([]);
   const headerFileRef = useRef<HTMLInputElement>(null);
   const cardFileRef = useRef<HTMLInputElement>(null);
   const upload = useUploadTemplateImage(integrationId);
@@ -278,6 +288,18 @@ export function TemplateComposer({
         category,
         body: body.trim(),
         ...(footer.trim() ? { footer: footer.trim() } : {}),
+        ...(!isCarousel && buttons.length
+          ? {
+              buttons: buttons.map((b) => ({
+                type: b.type,
+                text: b.text.trim(),
+                ...(b.type === "URL" ? { url: (b.url ?? "").trim() } : {}),
+                ...(b.type === "URL" && (b.urlExample ?? "").trim()
+                  ? { urlExample: (b.urlExample ?? "").trim() }
+                  : {}),
+              })),
+            }
+          : {}),
         ...(used.length ? { examples: used.map((n) => examples[n - 1]?.trim() ?? "") } : {}),
         // A carousel replaces the template's own header, so the two are
         // mutually exclusive here exactly as they are at Meta.
@@ -667,67 +689,112 @@ export function TemplateComposer({
           </div>
 
           {/*
-            What the customer receives, not what was typed.
-            
-            The whole message, in the order WhatsApp stacks it: the picture or
-            line above, the words, the small print, then the cards. It exists
-            because a template is written with {{1}} and read with a name in
-            it, and because the shape itself is easy to get wrong -- somebody
-            who can SEE that their photo is sitting above the message rather
-            than on a card never has to wonder where it went.
+            Buttons. Hidden for a carousel, which puts them on each card and
+            where Meta refuses both at once.
+
+            Two is a deliberate floor rather than Meta's ceiling: its combined
+            button rules vary by type and change, and two URL-or-quick-reply
+            buttons sit inside every variant of them.
           */}
-          {(body.trim() || headerImage || cards.length > 0) && (
-            <div className="space-y-1.5">
-              <Label className="text-xs">What the customer sees</Label>
-              <div className="rounded-xl rounded-tl-sm border border-black/[0.04] bg-[#d9fdd3] p-2 text-[13.5px] leading-relaxed text-[#111b21] shadow-xs dark:border-white/[0.04] dark:bg-[#005c4b] dark:text-[#e9edef]">
-                {layout === "IMAGE" && headerImage ? (
-                  /* eslint-disable-next-line @next/next/no-img-element -- blob: preview of a local file */
-                  <img
-                    src={headerImage.previewUrl}
-                    alt=""
-                    className="mb-1.5 max-h-44 w-full rounded-lg object-cover"
-                  />
-                ) : null}
-
-                {layout === "TEXT" && header.trim() ? (
-                  <p className="px-1 pb-1 font-semibold">{header.trim()}</p>
-                ) : null}
-
-                <p className="whitespace-pre-wrap px-1">{preview || " "}</p>
-
-                {footer.trim() && (
-                  <p className="mt-1.5 px-1 text-[11px] opacity-60">{footer.trim()}</p>
-                )}
-
-                {/* The cards sit UNDER the message and scroll sideways, which
-                    is the part people cannot picture from a form. */}
-                {cards.length > 0 ? (
-                  <div className="-mx-1 mt-2 flex snap-x gap-2 overflow-x-auto pb-1">
-                    {cards.map((card, i) => (
-                      <div
-                        key={`${card.headerHandle}-preview-${i}`}
-                        className="w-40 shrink-0 snap-start overflow-hidden rounded-lg bg-white/85 text-[#111b21] dark:bg-black/25 dark:text-[#e9edef]"
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element -- blob: preview of a local file */}
-                        <img src={card.previewUrl} alt="" className="h-24 w-full object-cover" />
-                        {card.body?.trim() ? (
-                          <p className="px-2 pt-1.5 text-[12px] leading-snug">{card.body.trim()}</p>
-                        ) : null}
-                        <div className="p-1.5 pt-1">
-                          {card.buttons.map((b, bi) => (
-                            <div
-                              key={bi}
-                              className="mt-1 rounded border-t border-black/10 pt-1 text-center text-[11.5px] font-medium text-[#1da5f2] dark:border-white/10"
-                            >
-                              {b.text.trim() || (b.type === "URL" ? "Link" : "Quick reply")}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
+          {!isCarousel ? (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">
+                  Buttons <span className="text-muted-foreground">(optional, up to 2)</span>
+                </Label>
+                {buttons.length < 2 ? (
+                  <div className="flex gap-1.5">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        setButtons((b) => [...b, { type: "URL", text: "", url: "" }])
+                      }
+                    >
+                      Add link button
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setButtons((b) => [...b, { type: "QUICK_REPLY", text: "" }])}
+                    >
+                      Add reply button
+                    </Button>
                   </div>
                 ) : null}
               </div>
+
+              {buttons.map((b, i) => (
+                <div key={i} className="space-y-1.5 rounded-md border p-2.5">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="text-[11px]">
+                      {b.type === "URL" ? "Opens a link" : "Sends a reply"}
+                    </Badge>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="ml-auto h-7 px-2 text-xs"
+                      onClick={() => setButtons((list) => list.filter((_, j) => j !== i))}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                  <Input
+                    aria-label={`Button ${i + 1} label`}
+                    value={b.text}
+                    maxLength={25}
+                    placeholder={b.type === "URL" ? "Give feedback" : "Not now"}
+                    onChange={(e) =>
+                      setButtons((list) =>
+                        list.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)),
+                      )
+                    }
+                  />
+                  {b.type === "URL" ? (
+                    <Input
+                      aria-label={`Button ${i + 1} link`}
+                      value={b.url ?? ""}
+                      placeholder="https://forms.gle/…"
+                      onChange={(e) =>
+                        setButtons((list) =>
+                          list.map((x, j) => (j === i ? { ...x, url: e.target.value } : x)),
+                        )
+                      }
+                    />
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {/*
+            What the customer receives, not what was typed.
+
+            One renderer, shared with the template detail view, so a message
+            being written and the same message being reviewed afterwards
+            cannot look different. It exists because a template is written
+            with {{1}} and read with a name in it, and because the shape is
+            easy to get wrong — somebody who can SEE their photo sitting above
+            the message rather than on a card never has to wonder where it went.
+          */}
+          {(body.trim() || headerImage || cards.length > 0 || buttons.length > 0) && (
+            <div className="space-y-1.5">
+              <Label className="text-xs">What the customer sees</Label>
+              <WhatsAppPreview
+                headerImageUrl={layout === "IMAGE" ? headerImage?.previewUrl ?? null : null}
+                header={layout === "TEXT" ? header : null}
+                body={preview || " "}
+                footer={footer}
+                buttons={isCarousel ? [] : buttons.map((b) => ({ type: b.type, text: b.text }))}
+                cards={cards.map((c) => ({
+                  previewUrl: c.previewUrl,
+                  body: c.body,
+                  buttons: c.buttons.map((b) => ({ type: b.type, text: b.text })),
+                }))}
+              />
               {cards.length > 1 ? (
                 <p className="text-[11px] text-muted-foreground">
                   Swipe the cards sideways — that is how the customer sees them.

@@ -35,6 +35,7 @@ import {
 } from "@/lib/queries/meta-admin";
 import { NumbersOnAccount } from "@/components/integrations/numbers-on-account";
 import { TemplateComposer } from "@/components/integrations/template-composer";
+import { TemplateDetail } from "@/components/integrations/template-detail";
 import { useIntegrations } from "@/lib/queries/tenant-config";
 import { apiErrorMessage } from "@/lib/utils";
 
@@ -82,6 +83,8 @@ function Templates() {
   // Derived, not stored-and-synced: the first connection is the default until
   // somebody picks another. An effect that assigned it would re-render for no
   // reason and fight the list arriving.
+  /** The template whose detail is open, or null. */
+  const [detail, setDetail] = useState<MessageTemplateRow | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
   const integrationId = chosen ?? connections[0]?.id ?? null;
   const setIntegrationId = setChosen;
@@ -205,13 +208,32 @@ function Templates() {
                   <TableHead>Provider says</TableHead>
                   <TableHead>Can be sent</TableHead>
                   <TableHead>Confirmed</TableHead>
+                  <TableHead className="w-16" />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((row) => {
                   const ok = isSendable(row);
                   return (
-                    <TableRow key={row.id}>
+                    /*
+                      The whole row opens the template. It used to open
+                      nothing, which is why the client could see that Meta had
+                      approved a message but never what the message said.
+                    */
+                    <TableRow
+                      key={row.id}
+                      onClick={() => setDetail(row)}
+                      className="cursor-pointer"
+                      tabIndex={0}
+                      role="button"
+                      aria-label={`Open ${row.name ?? row.externalId}`}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setDetail(row);
+                        }
+                      }}
+                    >
                       <TableCell>
                         <div className="space-y-0.5">
                           {/* The bare provider name. `externalId` is the local
@@ -252,6 +274,9 @@ function Templates() {
                       <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                         {when(row.lastVerifiedAt)}
                       </TableCell>
+                      <TableCell className="text-right">
+                        <span className="text-xs text-muted-foreground">View</span>
+                      </TableCell>
                     </TableRow>
                   );
                 })}
@@ -259,7 +284,8 @@ function Templates() {
             </Table>
           )}
         </CardContent>
-      </Card>
+      </Card>
+      <TemplateDetail row={detail} onClose={() => setDetail(null)} />
     </div>
   );
 }
