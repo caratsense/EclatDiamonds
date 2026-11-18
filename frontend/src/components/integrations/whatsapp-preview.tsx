@@ -97,11 +97,21 @@ export function WhatsAppPreview({
         <div className="overflow-hidden rounded-lg bg-white shadow-sm dark:bg-[#202c33]">
           {headerImageUrl ? (
             /*
-              1.91:1 — WhatsApp's own header ratio. Fixed here on purpose: an
-              image at another shape IS cropped on the phone, and a preview
-              that letterboxes it instead would hide exactly that.
+              THE WHOLE PICTURE, AT ITS OWN SHAPE.
+              
+              This used to be locked to aspect-[1.91/1] with object-cover,
+              on my assertion that WhatsApp requires that ratio. It does not.
+              Meta publishes no required pixel size or aspect ratio for a
+              template header; 1.91:1 is a recommendation from integration
+              vendors, not a rule, and Meta's own template preview shows the
+              image uncropped at its natural shape.
+              
+              The client noticed before I did: she had uploaded a picture Meta
+              accepted whole and watched our preview cut it. A preview that
+              crops what we do not crop is worse than no preview, because it
+              reports damage the product never does.
             */
-            <div className="aspect-[1.91/1] w-full bg-muted">
+            <div className="w-full bg-muted">
               {/*
                 A plain img, not next/image: the source is Meta's own CDN
                 (scontent.whatsapp.net) for an approved template and a local
@@ -109,7 +119,11 @@ export function WhatsAppPreview({
                 and the optimiser has nothing to add to a 1200x628 preview.
               */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={headerImageUrl} alt="" className="h-full w-full object-cover" />
+              <img
+                src={headerImageUrl}
+                alt=""
+                className="h-auto max-h-64 w-full object-contain"
+              />
             </div>
           ) : null}
 
