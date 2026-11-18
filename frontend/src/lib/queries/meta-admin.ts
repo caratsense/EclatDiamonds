@@ -164,6 +164,17 @@ export interface MessageTemplateRow {
      * recorded before either existed.
      */
     bodyPreview?: string;
+    /**
+     * The rest of the message, kept so a template can be reviewed and not
+     * merely identified. Absent on templates synchronised before this existed;
+     * one "Synchronise now" fills them in.
+     */
+    headerFormat?: string;
+    headerText?: string;
+    /** Meta's own CDN URL for an approved image header. */
+    headerImageUrl?: string;
+    footerText?: string;
+    buttons?: { type: "URL" | "QUICK_REPLY"; text: string; url?: string }[];
   };
 }
 
@@ -263,7 +274,12 @@ export interface TemplateDraftInput {
   footer?: string;
   examples?: string[];
   /** 2–10 cards turns this into a carousel. */
-  cards?: Omit<TemplateCardInput, "previewUrl">[];
+  cards?: Omit<TemplateCardInput, "previewUrl">[];
+  /**
+   * Up to two tappable buttons under the message. A carousel carries its
+   * buttons on each card instead, and the server refuses both at once.
+   */
+  buttons?: TemplateButtonInput[];
 }
 
 /**

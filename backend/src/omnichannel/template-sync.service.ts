@@ -597,7 +597,16 @@ function wabaId(config: unknown): string | null {
  * Returns an empty object rather than a null field when there is nothing to
  * say, so the caller can spread it and leave any existing preview untouched.
  */
-function previewFromComponents(components: unknown): { bodyPreview?: string } {
+interface TemplatePreview {
+  bodyPreview?: string;
+  headerFormat?: string;
+  headerText?: string;
+  headerImageUrl?: string;
+  footerText?: string;
+  buttons?: { type: 'URL' | 'QUICK_REPLY'; text: string; url?: string }[];
+}
+
+function previewFromComponents(components: unknown): TemplatePreview {
   if (!Array.isArray(components)) return {};
   const body = components.find(
     (c) => jsonObject(c).type === 'BODY' && typeof jsonObject(c).text === 'string',
@@ -616,7 +625,48 @@ function previewFromComponents(components: unknown): { bodyPreview?: string } {
     return typeof value === 'string' && value.trim() ? value.trim() : whole;
   });
 
-  return { bodyPreview: filled.slice(0, 2_000) };
+  /*
+   * The rest of the message, so a template can be REVIEWED and not merely
+   * identified. The client's words were "I am unable to review my message" and
+   * "I cannot even see the templates that are created in detail" -- true, and
+   * the reason was here: the body was kept and the picture, the footer and the
+   * buttons were read from Meta and thrown away.
+   *
+   * For an approved template Meta returns `header_handle` as a real https URL
+   * on its own CDN, so the picture can be rendered rather than described.
+   */
+  const header = components.map(jsonObject).find((c) => c.type === 'HEADER');
+  const footer = components.map(jsonObject).find((c) => c.type === 'FOOTER');
+  const buttonBlock = components.map(jsonObject).find((c) => c.type === 'BUTTONS');
+  const handles = Array.isArray(jsonObject(header?.example).header_handle)
+    ? (jsonObject(header?.example).header_handle as unknown[])
+    : [];
+  const headerImageUrl = typeof handles[0] === 'string' && /^https?:\/\//.test(handles[0])
+    ? (handles[0] as string)
+    : undefined;
+
+  const buttons = (Array.isArray(buttonBlock?.buttons) ? buttonBlock!.buttons : [])
+    .map(jsonObject)
+    .filter((b) => typeof b.text === 'string' && String(b.text).trim())
+    .map((b) => ({
+      type: String(b.type).toUpperCase() === 'URL' ? ('URL' as const) : ('QUICK_REPLY' as const),
+      text: String(b.text).trim().slice(0, 40),
+      ...(typeof b.url === 'string' ? { url: String(b.url).slice(0, 500) } : {}),
+    }))
+    .slice(0, 10);
+
+  return {
+    bodyPreview: filled.slice(0, 2_000),
+    ...(header?.format ? { headerFormat: String(header.format) } : {}),
+    ...(typeof header?.text === 'string' && header.text.trim()
+      ? { headerText: String(header.text).trim().slice(0, 200) }
+      : {}),
+    ...(headerImageUrl ? { headerImageUrl } : {}),
+    ...(typeof footer?.text === 'string' && footer.text.trim()
+      ? { footerText: String(footer.text).trim().slice(0, 200) }
+      : {}),
+    ...(buttons.length ? { buttons } : {}),
+  };
 }
 
 function jsonObject(value: unknown): Record<string, unknown> {

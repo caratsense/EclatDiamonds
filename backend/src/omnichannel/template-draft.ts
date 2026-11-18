@@ -72,6 +72,19 @@ export interface TemplateDraft {
   body: string;
   /** One line above the message. Plain text only here; no variables. */
   header?: string;
+  /**
+   * Up to two tappable buttons under the message.
+   *
+   * The client asked for these by name: a feedback request whose form link is
+   * plain text in the body reads as a worse message than one with a "Give
+   * feedback" button, and WhatsApp renders the button as a real control.
+   *
+   * Two is a deliberate floor rather than Meta's ceiling. Meta's combined
+   * button rules vary by type and change; two URL-or-quick-reply buttons is
+   * inside every variant of them, and is what the carousel already allows per
+   * card, so the two paths agree.
+   */
+  buttons?: TemplateButton[];
   /** TEXT uses `header`; IMAGE uses `headerHandle`. Defaults to TEXT. */
   headerFormat?: HeaderFormat;
   /** The uploaded asset handle for an IMAGE header. */
@@ -130,6 +143,43 @@ const MAX_CARDS = 10;
 const MAX_CARD_BUTTONS = 2;
 const MAX_CARD_BODY = 160;
 const MAX_BUTTON_TEXT = 25;
+
+/** See TemplateDraft.buttons — a floor Meta always permits, not its ceiling. */
+const MAX_TEMPLATE_BUTTONS = 2;
+
+/**
+ * One button in the shape Meta wants, validated on the way.
+ *
+ * Shared by the message-level buttons and the carousel's per-card ones so a
+ * rule fixed in one is fixed in both — the label length and the URL example
+ * were already duplicated once.
+ */
+function metaButton(b: TemplateButton): NonNullable<TemplateComponent['buttons']>[number] {
+  const text = (b.text ?? '').trim();
+  if (!text) fail('Give every button a label.');
+  if (text.length > MAX_BUTTON_TEXT) {
+    fail(`The button "${text}" is ${text.length} characters; Meta allows ${MAX_BUTTON_TEXT}.`);
+  }
+  if (b.type === 'QUICK_REPLY') return { type: 'quick_reply', text };
+
+  const url = (b.url ?? '').trim();
+  if (!url) fail(`The button "${text}" needs a link.`);
+  if (!/^https?:\/\//i.test(url)) {
+    fail(`The link on "${text}" must start with http:// or https://.`);
+  }
+  const vars = placeholdersIn(url);
+  if (vars.length > 1 || (vars.length === 1 && vars[0] !== 1)) {
+    fail(`A link may carry at most one {{1}} at its end. "${url}" does not.`);
+  }
+  if (vars.length === 1) {
+    const sample = (b.urlExample ?? '').trim();
+    // Meta reviews the variable with a real value; without one it rejects a
+    // day later, which is the slowest possible way to learn this.
+    if (!sample) fail(`Give a sample value for the {{1}} in the link on "${text}".`);
+    return { type: 'url', text, url, example: [sample] };
+  }
+  return { type: 'url', text, url };
+}
 
 const NAME_RE = /^[a-z0-9_]+$/;
 const LANGUAGE_RE = /^[a-z]{2,3}(_[A-Z]{2})?$/;
@@ -280,6 +330,19 @@ export function buildTemplatePayload(draft: TemplateDraft): MetaTemplatePayload 
     components.push({ type: 'FOOTER', text: footer });
   }
 
+  const buttons = draft.buttons ?? [];
+  if (buttons.length) {
+    if (draft.cards?.length) {
+      // A carousel carries buttons on each CARD. A template-level set as well
+      // means two different things claim the same row on the screen.
+      fail('A carousel template puts its buttons on each card, not on the message.');
+    }
+    if (buttons.length > MAX_TEMPLATE_BUTTONS) {
+      fail(`A template can have at most ${MAX_TEMPLATE_BUTTONS} buttons; this one has ${buttons.length}.`);
+    }
+    components.push({ type: 'BUTTONS', buttons: buttons.map(metaButton) });
+  }
+
   if (draft.cards?.length) {
     components.push(buildCarousel(draft, headerFormat));
   }
@@ -375,19 +438,11 @@ function buildCarousel(draft: TemplateDraft, headerFormat: HeaderFormat): Templa
           ...(used.length ? { example: { body_text: [examples] } } : {}),
         });
       }
-      parts.push({
-        type: 'BUTTONS',
-        buttons: card.buttons.map((b) =>
-          b.type === 'URL'
-            ? {
-                type: 'url' as const,
-                text: b.text.trim(),
-                url: b.url!.trim(),
-                ...(b.urlExample?.trim() ? { example: [b.urlExample.trim()] } : {}),
-              }
-            : { type: 'quick_reply' as const, text: b.text.trim() },
-        ),
-      });
+      // Same converter the message-level buttons use. The loop above has
+      // already refused the card-specific problems with better wording; this
+      // adds the rules both kinds share, including the http:// check the
+      // carousel never made.
+      parts.push({ type: 'BUTTONS', buttons: card.buttons.map(metaButton) });
       return { components: parts };
     }),
   };
