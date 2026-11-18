@@ -28,10 +28,10 @@ import {
   UpdateLeadDto,
   UpdateOutcomeDto,
 } from './dto/lead.dto';
+import { FOLLOW_UP_CADENCE_DAYS } from '../common/follow-up-cadence';
 
-/** SOP follow-up cadence (days from lead-created date). Extensible via more seqs. */
-const FU1_DAYS = 7;
-const FU2_DAYS = 30;
+// SOP follow-up cadence lives in common/follow-up-cadence.ts — one home, so
+// this path, lead intake and the QR path cannot drift apart.
 
 /** Today as a UTC-midnight Date, matching how Prisma stores/reads `@db.Date`. */
 function todayUtc(): Date {
@@ -344,8 +344,12 @@ export class LeadsService {
     const base = todayUtc();
     await this.prisma.leadFollowUp.createMany({
       data: [
-        { leadId: lead.id, storeId: lead.storeId, seq: 1, dueDate: addDaysUtc(base, FU1_DAYS) },
-        { leadId: lead.id, storeId: lead.storeId, seq: 2, dueDate: addDaysUtc(base, FU2_DAYS) },
+        ...FOLLOW_UP_CADENCE_DAYS.map((days, i) => ({
+          leadId: lead.id,
+          storeId: lead.storeId,
+          seq: i + 1,
+          dueDate: addDaysUtc(base, days),
+        })),
       ],
     });
 

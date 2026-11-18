@@ -12,6 +12,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID }
 import { canOpen, canOpenById } from '../auth/access';
 import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
+import { sopFollowUps } from '../common/follow-up-cadence';
 import { SequenceService } from '../common/sequence.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { businessDate, resolveTz, startOfDayAgoInTz, zonedParts } from '../common/tz.util';
@@ -1089,10 +1090,7 @@ export class AdvancedCrmService {
         });
         const localDate = businessDate(now, resolveTz(store.timezone));
         await tx.leadFollowUp.createMany({
-          data: [
-            { leadId: created.id, storeId: store.id, seq: 1, dueDate: addUtcDays(localDate, 7), note: 'QR enquiry follow-up' },
-            { leadId: created.id, storeId: store.id, seq: 2, dueDate: addUtcDays(localDate, 30), note: 'QR enquiry follow-up' },
-          ],
+          data: sopFollowUps(created.id, store.id, localDate, 'QR enquiry follow-up'),
         });
         await this.activity.record({
           organisationId: payload.organisationId, type: 'lead.created',
