@@ -8,10 +8,10 @@ import { businessDate, resolveTz } from '../common/tz.util';
 import { ActivityService } from './activity.service';
 import { IdentityService, type ContactKind } from './identity.service';
 import { AdvancedCrmService } from './advanced-crm.service';
+import { sopFollowUps } from '../common/follow-up-cadence';
 
-/** SOP follow-up cadence, matching the manual and QR paths. */
-const FOLLOW_UP_1_DAYS = 7;
-const FOLLOW_UP_2_DAYS = 30;
+// SOP follow-up cadence lives in common/follow-up-cadence.ts, shared with the
+// manual and QR paths.
 
 /** Advance a UTC calendar date. Local to this file so intake owns its own dates. */
 function addUtcDays(value: Date, days: number): Date {
@@ -171,10 +171,7 @@ export class LeadIntakeService {
         // A lead taken at 11pm in Kolkata is due seven days later there.
         const localDate = businessDate(now, resolveTz(store.timezone));
         await tx.leadFollowUp.createMany({
-          data: [
-            { leadId: created.id, storeId: store.id, seq: 1, dueDate: addUtcDays(localDate, FOLLOW_UP_1_DAYS), note: input.followUpNote },
-            { leadId: created.id, storeId: store.id, seq: 2, dueDate: addUtcDays(localDate, FOLLOW_UP_2_DAYS), note: input.followUpNote },
-          ],
+          data: sopFollowUps(created.id, store.id, localDate, input.followUpNote),
         });
 
         await this.activity.record(
