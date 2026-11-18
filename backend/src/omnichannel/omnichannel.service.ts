@@ -65,6 +65,18 @@ interface TemplateMetadata {
   /** When that verdict was read. Absent on every row predating template sync. */
   providerSyncedAt: string | null;
   bodyPreview?: string;
+  /*
+   * The rest of the message, so a template can be REVIEWED and not merely
+   * identified. Written by TemplateSyncService from the provider's own
+   * components. Absent on anything synchronised before that existed, which the
+   * detail view says plainly rather than drawing an empty bubble.
+   */
+  headerFormat?: string;
+  headerText?: string;
+  /** Meta's own CDN URL for an approved image header. */
+  headerImageUrl?: string;
+  footerText?: string;
+  buttons?: { type: 'URL' | 'QUICK_REPLY'; text: string; url?: string }[];
   variables: string[];
   recordedAt: string;
 }
@@ -2247,6 +2259,28 @@ function templateMetadata(value: unknown): TemplateMetadata {
     providerStatus: providerTemplateStatus(raw.providerStatus),
     providerSyncedAt: typeof raw.providerSyncedAt === 'string' ? raw.providerSyncedAt : null,
     ...(typeof raw.bodyPreview === 'string' ? { bodyPreview: raw.bodyPreview } : {}),
+    /*
+     * The rest of the message. This projection is an ALLOW-LIST — anything not
+     * named here is dropped on the way out, which is how the picture, the
+     * footer and the buttons reached the database and never reached the
+     * screen. Adding a metadata field means adding it in both places.
+     */
+    ...(typeof raw.headerFormat === 'string' ? { headerFormat: raw.headerFormat } : {}),
+    ...(typeof raw.headerText === 'string' ? { headerText: raw.headerText } : {}),
+    ...(typeof raw.headerImageUrl === 'string' ? { headerImageUrl: raw.headerImageUrl } : {}),
+    ...(typeof raw.footerText === 'string' ? { footerText: raw.footerText } : {}),
+    ...(Array.isArray(raw.buttons)
+      ? {
+          buttons: raw.buttons
+            .map((b) => (b && typeof b === 'object' ? (b as Record<string, unknown>) : {}))
+            .filter((b) => typeof b.text === 'string')
+            .map((b) => ({
+              type: b.type === 'URL' ? ('URL' as const) : ('QUICK_REPLY' as const),
+              text: String(b.text),
+              ...(typeof b.url === 'string' ? { url: b.url } : {}),
+            })),
+        }
+      : {}),
     variables: Array.isArray(raw.variables)
       ? raw.variables.filter((item): item is string => typeof item === 'string')
       : [],
