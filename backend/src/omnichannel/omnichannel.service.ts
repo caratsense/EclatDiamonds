@@ -65,6 +65,18 @@ interface TemplateMetadata {
   /** When that verdict was read. Absent on every row predating template sync. */
   providerSyncedAt: string | null;
   bodyPreview?: string;
+  /**
+   * The body as written, with `{{1}}` still in it, and the samples beside it.
+   *
+   * `bodyPreview` has the samples substituted, which is right for reading and
+   * wrong for editing: putting it back in the editor would submit a template
+   * that greets every customer by the name in the example. The editor opens
+   * from these two.
+   */
+  bodySource?: string;
+  bodyExamples?: string[];
+  /** A carousel cannot be edited here; its cards are not recoverable. */
+  isCarousel?: boolean;
   /*
    * The rest of the message, so a template can be REVIEWED and not merely
    * identified. Written by TemplateSyncService from the provider's own
@@ -2259,12 +2271,21 @@ function templateMetadata(value: unknown): TemplateMetadata {
     providerStatus: providerTemplateStatus(raw.providerStatus),
     providerSyncedAt: typeof raw.providerSyncedAt === 'string' ? raw.providerSyncedAt : null,
     ...(typeof raw.bodyPreview === 'string' ? { bodyPreview: raw.bodyPreview } : {}),
+    ...(typeof raw.bodySource === 'string' ? { bodySource: raw.bodySource } : {}),
+    ...(Array.isArray(raw.bodyExamples)
+      ? {
+          bodyExamples: raw.bodyExamples.filter(
+            (item): item is string => typeof item === 'string',
+          ),
+        }
+      : {}),
     /*
      * The rest of the message. This projection is an ALLOW-LIST — anything not
      * named here is dropped on the way out, which is how the picture, the
      * footer and the buttons reached the database and never reached the
      * screen. Adding a metadata field means adding it in both places.
      */
+    ...(typeof raw.isCarousel === 'boolean' ? { isCarousel: raw.isCarousel } : {}),
     ...(typeof raw.headerFormat === 'string' ? { headerFormat: raw.headerFormat } : {}),
     ...(typeof raw.headerText === 'string' ? { headerText: raw.headerText } : {}),
     ...(typeof raw.headerImageUrl === 'string' ? { headerImageUrl: raw.headerImageUrl } : {}),

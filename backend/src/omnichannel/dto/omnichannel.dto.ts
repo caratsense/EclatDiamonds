@@ -11,7 +11,13 @@ import {
 } from 'class-validator';
 
 import { OMNICHANNEL_CHANNELS } from '../omnichannel-policy';
-import { HEADER_FORMATS, type HeaderFormat, type TemplateCard } from '../template-draft';
+import {
+  HEADER_FORMATS,
+  MAX_TEMPLATE_BUTTONS,
+  type HeaderFormat,
+  type TemplateButton,
+  type TemplateCard,
+} from '../template-draft';
 
 export class RecordConsentDto {
   @IsString()
@@ -129,6 +135,23 @@ export class SubmitMessageTemplateDto {
   @IsArray()
   @ArrayMaxSize(10)
   cards?: TemplateCard[];
+
+  /*
+   * The tappable buttons under the message.
+   *
+   * This field was missing while the editor already sent it, and the pipe runs
+   * with `forbidNonWhitelisted`, so every submission carrying a button came
+   * back 400 "property buttons should not exist" -- the CTA the client asked
+   * for could be typed and never submitted.
+   *
+   * Checked like `cards` above: the array and its ceiling here, the per-button
+   * rules in buildTemplatePayload, which can say which button is wrong and
+   * why.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(MAX_TEMPLATE_BUTTONS)
+  buttons?: TemplateButton[];
 
   @IsString()
   @Matches(/^[a-z0-9_]{1,512}$/, {

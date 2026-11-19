@@ -497,6 +497,15 @@ export class TemplateSyncService implements OnModuleInit {
           providerStatus: status,
           providerSyncedAt: submittedAt.toISOString(),
           ...(typeof response.id === 'string' ? { providerTemplateId: response.id } : {}),
+          /*
+           * The header, footer and buttons as submitted.
+           *
+           * Only `syncNow` used to write these, so a template created here
+           * showed its name and its status and nothing else until the next
+           * synchronisation -- which is a long time to look at a screen that
+           * says a template exists and will not say what it says.
+           */
+          ...templateShapeMetadata(draft),
           submittedFromDashboard: true,
           /*
            * Where the pictures live, in card order.
@@ -537,6 +546,169 @@ export class TemplateSyncService implements OnModuleInit {
       providerTemplateId: typeof response.id === 'string' ? response.id : null,
       preview: previewOf(draft.body, draft.examples ?? []),
       submittedAt: submittedAt.toISOString(),
+    };
+  }
+
+  /**
+   * Change a template that already exists at Meta, and put it back in review.
+   *
+   * The client asked for this against Meta's own screen: "it gives edit option
+   * in template so that is not there". Without it a typo in an approved
+   * template meant inventing `..._v2` and leaving the wrong one behind, which
+   * is how a WhatsApp account ends up with four nearly identical templates and
+   * nobody knowing which one sends.
+   *
+   * ## What cannot change, and why it is refused here
+   *
+   * Meta's edit edge takes components and category. It does NOT take a name or
+   * a language: those identify the template, and changing one means a new
+   * template with a new review. Rather than silently ignoring a renamed draft
+   * -- which would save nothing and report success -- the rename is refused
+   * with the reason.
+   *
+   * Category is refused while the template is PENDING, because Meta refuses it
+   * then too; saying so here saves a round trip and gives a sentence instead
+   * of a Graph error code.
+   *
+   * ## The edit un-approves it, and we record that
+   *
+   * An approved template goes back to PENDING the moment it is edited. So
+   * `providerOwnershipVerified` drops to false and the status is written as
+   * PENDING -- the same rule as submission, for the same reason: this call
+   * cannot authorise a send, and the template stops being sendable until
+   * `syncNow` reads APPROVED from Meta again.
+   */
+  async edit(user: AuthUser, integrationId: string, assetId: string, draft: TemplateDraft) {
+    await this.load(user.organisationId, integrationId);
+
+    const asset = await this.prisma.integrationAsset.findFirst({
+      where: {
+        id: assetId,
+        integrationId,
+        organisationId: user.organisationId,
+        kind: TEMPLATE_ASSET_KIND,
+      },
+      select: { id: true, name: true, externalId: true, metadata: true },
+    });
+    if (!asset) throw new NotFoundException('Template not found');
+
+    const existing = jsonObject(asset.metadata);
+    const providerTemplateId =
+      typeof existing.providerTemplateId === 'string' ? existing.providerTemplateId : null;
+    if (!providerTemplateId) {
+      throw new BadRequestException(
+        'Meta has not told us this template\'s id yet, so there is nothing to edit against. ' +
+          'Press Synchronise now first.',
+      );
+    }
+
+    let payload;
+    try {
+      payload = buildTemplatePayload(draft);
+    } catch (error) {
+      if (error instanceof TemplateDraftError) throw new BadRequestException(error.message);
+      throw error;
+    }
+
+    const key = templateKey(payload.name, payload.language);
+    if (key !== asset.externalId) {
+      throw new BadRequestException(
+        `A template's name and language are what identify it at Meta and cannot be changed. ` +
+          `This one is "${asset.name}" (${existing.languageCode ?? 'unknown language'}); ` +
+          'submit a new template instead.',
+      );
+    }
+
+    const currentStatus = providerTemplateStatus(existing.providerStatus);
+    const currentCategory =
+      typeof existing.category === 'string' ? existing.category.toUpperCase() : null;
+    const categoryChanged = currentCategory !== null && currentCategory !== payload.category;
+    if (categoryChanged && currentStatus === 'PENDING') {
+      throw new BadRequestException(
+        'Meta will not change a template\'s category while it is still under review. ' +
+          'Wait for the verdict, then change it.',
+      );
+    }
+
+    try {
+      await this.graph.postForIntegration(
+        user.organisationId,
+        integrationId,
+        providerTemplateId,
+        {
+          components: payload.components,
+          ...(categoryChanged ? { category: payload.category } : {}),
+        },
+        WHATSAPP_PROVIDER_CODE,
+      );
+    } catch (error) {
+      const message = bounded(error);
+      await this.prisma.integration
+        .updateMany({ where: { id: integrationId, organisationId: user.organisationId }, data: { lastError: message } })
+        .catch(() => undefined);
+      this.logger.warn(`WhatsApp template edit failed for ${integrationId}: ${message}`);
+      throw error;
+    }
+
+    const editedAt = new Date();
+    const updated = await this.prisma.integrationAsset.update({
+      where: { id: asset.id },
+      data: {
+        // Edited is not approved, exactly as submitted is not approved.
+        providerOwnershipVerified: false,
+        lastVerifiedAt: editedAt,
+        lastError: 'Edited at Meta; awaiting review. Provider reports PENDING.',
+        metadata: {
+          /*
+           * Spread what was there so the fields only a sync knows -- the
+           * approved header image's CDN URL, the card image keys -- survive an
+           * edit instead of being erased by a shorter object.
+           */
+          ...existing,
+          category: payload.category.toLowerCase(),
+          approvalStatus: 'pending',
+          providerStatus: 'PENDING',
+          providerSyncedAt: editedAt.toISOString(),
+          variables: placeholdersIn(draft.body).map((n) => `{{${n}}}`),
+          bodyPreview: previewOf(draft.body, draft.examples ?? []),
+          ...templateShapeMetadata(draft),
+          /*
+           * A re-uploaded picture replaces the recorded one; an edit that left
+           * the pictures alone keeps the keys that are already there, because
+           * those are what the deliverer uses to find the images again.
+           */
+          ...(draft.cards?.length
+            ? { cardImageKeys: draft.cards.map((c) => c.imageStorageKey ?? null) }
+            : {}),
+          ...(draft.headerImageStorageKey
+            ? { headerImageKey: draft.headerImageStorageKey }
+            : {}),
+          editedFromDashboard: true,
+          editedAt: editedAt.toISOString(),
+        } as unknown as Prisma.InputJsonValue,
+      },
+      select: { id: true, name: true, metadata: true },
+    });
+
+    await this.audit.record(user, {
+      action: 'omnichannel.template_edited',
+      entityType: 'IntegrationAsset',
+      entityId: asset.id,
+      summary: `${user.name ?? 'Head office'} edited the WhatsApp template "${payload.name}" (${payload.language}); Meta is reviewing it again`,
+      metadata: { integrationId, category: payload.category, categoryChanged },
+    });
+
+    this.logger.log(`template ${payload.name}:${payload.language} edited -> PENDING`);
+
+    return {
+      id: updated.id,
+      name: updated.name,
+      languageCode: payload.language,
+      category: payload.category.toLowerCase(),
+      providerStatus: 'PENDING' as ProviderTemplateStatus,
+      providerTemplateId,
+      preview: previewOf(draft.body, draft.examples ?? []),
+      editedAt: editedAt.toISOString(),
     };
   }
 
@@ -599,6 +771,17 @@ function wabaId(config: unknown): string | null {
  */
 interface TemplatePreview {
   bodyPreview?: string;
+  /**
+   * The body as it was written, placeholders intact, plus the samples.
+   *
+   * The preview above is the sentence a customer reads, which is the wrong
+   * thing to put back in an editor: `{{1}}` has already become "Priya", so
+   * re-submitting it would approve a template that greets every customer by
+   * the name of the one in the example. Editing needs the source.
+   */
+  bodySource?: string;
+  bodyExamples?: string[];
+  isCarousel?: boolean;
   headerFormat?: string;
   headerText?: string;
   headerImageUrl?: string;
@@ -657,6 +840,12 @@ function previewFromComponents(components: unknown): TemplatePreview {
 
   return {
     bodyPreview: filled.slice(0, 2_000),
+    bodySource: text.slice(0, 2_000),
+    bodyExamples: values.filter((v): v is string => typeof v === 'string'),
+    // A carousel is a different template shape, and its cards cannot be
+    // rebuilt from what Meta returns here, so the editor refuses to open one
+    // rather than quietly submitting it as a plain message.
+    isCarousel: components.map(jsonObject).some((c) => c.type === 'CAROUSEL'),
     ...(header?.format ? { headerFormat: String(header.format) } : {}),
     ...(typeof header?.text === 'string' && header.text.trim()
       ? { headerText: String(header.text).trim().slice(0, 200) }
@@ -666,6 +855,44 @@ function previewFromComponents(components: unknown): TemplatePreview {
       ? { footerText: String(footer.text).trim().slice(0, 200) }
       : {}),
     ...(buttons.length ? { buttons } : {}),
+  };
+}
+
+/**
+ * The parts of a draft the detail screen draws: which header, its words, the
+ * footer, and the buttons.
+ *
+ * Every key is always present, `null` when the draft does not have it. That is
+ * what makes an edit able to REMOVE a footer or a button: the edit merges over
+ * the metadata already stored, and a key left out of the merge keeps its old
+ * value, which would show a button the author had just deleted.
+ *
+ * `headerImageUrl` is nulled rather than set. The https address is Meta's, it
+ * only exists once Meta has reviewed the picture, and at this point we hold
+ * nothing but the opaque upload handle. A sync writes the real one; claiming
+ * one here would draw the previous picture under the new words.
+ */
+function templateShapeMetadata(draft: TemplateDraft): Record<string, unknown> {
+  const header = (draft.header ?? '').trim();
+  const footer = (draft.footer ?? '').trim();
+  const format = draft.headerFormat ?? (draft.headerHandle ? 'IMAGE' : null);
+  return {
+    // The source, so this template can be opened and edited rather than only
+    // read. See TemplatePreview.bodySource for why the preview will not do.
+    bodySource: draft.body,
+    bodyExamples: draft.examples?.length ? draft.examples : null,
+    isCarousel: Boolean(draft.cards?.length),
+    headerFormat: format,
+    headerText: format !== 'IMAGE' && header ? header : null,
+    headerImageUrl: null,
+    footerText: footer || null,
+    buttons: draft.buttons?.length
+      ? draft.buttons.map((b) => ({
+          type: b.type,
+          text: b.text,
+          ...(b.url ? { url: b.url } : {}),
+        }))
+      : null,
   };
 }
 

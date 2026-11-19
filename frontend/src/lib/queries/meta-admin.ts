@@ -165,6 +165,19 @@ export interface MessageTemplateRow {
      */
     bodyPreview?: string;
     /**
+     * The body as written, `{{1}}` intact, with its sample values beside it.
+     *
+     * `bodyPreview` has the samples substituted, which is what a reviewer
+     * should read and the last thing an editor should open: re-submitting it
+     * would approve a template that greets every customer by the name in the
+     * example. The edit dialog opens from these two, and falls back to saying
+     * the source is not known yet rather than guessing.
+     */
+    bodySource?: string;
+    bodyExamples?: string[];
+    /** A carousel: a different template shape, and not editable from here. */
+    isCarousel?: boolean;
+    /**
      * The rest of the message, kept so a template can be reviewed and not
      * merely identified. Absent on templates synchronised before this existed;
      * one "Synchronise now" fills them in.
@@ -274,7 +287,7 @@ export interface TemplateDraftInput {
   footer?: string;
   examples?: string[];
   /** 2–10 cards turns this into a carousel. */
-  cards?: Omit<TemplateCardInput, "previewUrl">[];
+  cards?: Omit<TemplateCardInput, "previewUrl">[];
   /**
    * Up to two tappable buttons under the message. A carousel carries its
    * buttons on each card instead, and the server refuses both at once.
@@ -330,6 +343,29 @@ export function useSubmitTemplate(integrationId: string) {
       (
         await api.post<SubmittedTemplate>(
           `/omnichannel/integrations/${integrationId}/templates/submit`,
+          draft,
+        )
+      ).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["omnichannel", "templates"] }),
+  });
+}
+
+/**
+ * POST /omnichannel/integrations/:id/templates/:assetId/edit — change a
+ * template that already exists at Meta.
+ *
+ * Meta reviews an edited template again, so this takes an approved template
+ * back to PENDING and it stops being sendable until a sync says otherwise.
+ * The name and the language are not editable at Meta and the server refuses a
+ * draft that changes either.
+ */
+export function useEditTemplate(integrationId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ assetId, ...draft }: TemplateDraftInput & { assetId: string }) =>
+      (
+        await api.post<SubmittedTemplate & { editedAt: string }>(
+          `/omnichannel/integrations/${integrationId}/templates/${assetId}/edit`,
           draft,
         )
       ).data,
