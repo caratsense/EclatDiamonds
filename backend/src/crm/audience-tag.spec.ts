@@ -17,19 +17,30 @@ import { compileSegment, parseSegmentDefinition } from './audience-segment.dsl';
  */
 
 const compile = (definition: unknown) =>
-  compileSegment(parseSegmentDefinition(definition), { now: new Date('2026-11-19T00:00:00Z') });
+  compileSegment(parseSegmentDefinition(definition), new Date('2026-11-19T00:00:00Z'));
 
 const tagRule = (op: string, value: string[]) => ({
   match: 'all',
   conditions: [{ field: 'party.tag', op, value }],
 });
 
+/**
+ * What one tag rule compiles to. Each value is tried as an id and as a name,
+ * because the builder sends ids and the API and older saved segments send names
+ * — see audience-tag-name.spec.ts for that half.
+ */
+const tagged = (values: string[]) => ({
+  partyTagAssignments: {
+    some: {
+      OR: [{ tagId: { in: values } }, { tag: { name: { in: values, mode: 'insensitive' } } }],
+    },
+  },
+});
+
 describe('including customers by tag', () => {
   it('matches a customer carrying any of the chosen tags', () => {
     const { where } = compile(tagRule('in', ['tag-meta', 'tag-walkin']));
-    expect(where).toEqual({
-      AND: [{ partyTagAssignments: { some: { tagId: { in: ['tag-meta', 'tag-walkin'] } } } }],
-    });
+    expect(where).toEqual({ AND: [tagged(['tag-meta', 'tag-walkin'])] });
   });
 
   it('reads as something a person can check before sending', () => {
@@ -43,9 +54,7 @@ describe('excluding customers by tag', () => {
     // The whole point. A suppression tag that silently includes the people it
     // names would message exactly the customers it was added to protect.
     const { where } = compile(tagRule('not_in', ['tag-optout']));
-    expect(where).toEqual({
-      AND: [{ NOT: { partyTagAssignments: { some: { tagId: { in: ['tag-optout'] } } } } }],
-    });
+    expect(where).toEqual({ AND: [{ NOT: tagged(['tag-optout']) }] });
   });
 
   it('says so in the reason, so the exclusion is visible on review', () => {
@@ -67,12 +76,8 @@ describe('combining tags with the rest of an audience', () => {
     });
     const and = (where as { AND: unknown[] }).AND;
     expect(and).toHaveLength(3);
-    expect(and).toContainEqual({
-      partyTagAssignments: { some: { tagId: { in: ['tag-meta'] } } },
-    });
-    expect(and).toContainEqual({
-      NOT: { partyTagAssignments: { some: { tagId: { in: ['tag-optout'] } } } },
-    });
+    expect(and).toContainEqual(tagged(['tag-meta']));
+    expect(and).toContainEqual({ NOT: tagged(['tag-optout']) });
   });
 
   it('gives "has ALL of these tags" without a new operator', () => {
@@ -90,9 +95,7 @@ describe('combining tags with the rest of an audience', () => {
 
   it('gives "has ANY of these tags" from one condition', () => {
     const { where } = compile(tagRule('in', ['tag-bridal', 'tag-vip']));
-    expect(where).toEqual({
-      AND: [{ partyTagAssignments: { some: { tagId: { in: ['tag-bridal', 'tag-vip'] } } } }],
-    });
+    expect(where).toEqual({ AND: [tagged(['tag-bridal', 'tag-vip'])] });
   });
 
   it('ors the conditions under match: any', () => {

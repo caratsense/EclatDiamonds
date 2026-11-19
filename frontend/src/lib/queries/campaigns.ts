@@ -138,7 +138,7 @@ export const SEGMENT_FIELD_GROUPS: {
           { op: "in", label: "has any of" },
           { op: "not_in", label: "does not have" },
         ],
-        hint: "Meta Leads, Walk-in Leads, a branch tag",
+        hint: "Picked from your own tags — Meta Leads, Walk-in Leads, a branch tag",
       },
       {
         field: "party.type",

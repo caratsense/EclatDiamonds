@@ -332,7 +332,39 @@ function compileCondition(c: SegmentCondition, now: Date): { where: Prisma.Party
     }
     case 'party.tag': {
       const values = asStringArray(c.value, c.field);
-      const has = { partyTagAssignments: { some: { tagId: { in: values } } } };
+      /*
+       * A TAG IS NAMED BY ITS ID OR BY ITS NAME.
+       *
+       * The builder sends ids, picked from the tenant's own list. Everything
+       * else sends names: an audience built against the API, and every segment
+       * saved while the value editor was a free-text box -- the client typed
+       * "meta leads", the name of her own tag, and matched nobody.
+       *
+       * Resolved inside the filter rather than by looking the names up first,
+       * because this function is pure: it has no tenant to look them up in,
+       * and taking one would mean an async compiler on both call paths. The
+       * join is tenant-safe without it. An assignment is only reachable
+       * through a party, and the caller has already scoped the party query to
+       * its own organisation, so another tenant's tag of the same name cannot
+       * be reached. `insensitive` matches the vocabulary's own rule, which
+       * already refuses "Meta Leads" beside "meta leads" in one tenant.
+       *
+       * A value that is neither an id nor a name matches no assignment, so an
+       * include reaches nobody and an exclude suppresses nobody. Names are
+       * never dropped from the list before the query: an emptied list would
+       * compile to "has any tag at all", which is everybody the rule was
+       * meant to narrow.
+       */
+      const has: Prisma.PartyWhereInput = {
+        partyTagAssignments: {
+          some: {
+            OR: [
+              { tagId: { in: values } },
+              { tag: { name: { in: values, mode: 'insensitive' } } },
+            ],
+          },
+        },
+      };
       /*
        * `not_in` is honoured here deliberately. Most fields in this compiler
        * switch on the FIELD and ignore the operator, so a `not_in` elsewhere
