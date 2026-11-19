@@ -39,7 +39,7 @@ import {
   type SignupRole,
 } from "@/lib/queries/auth";
 import { useDebouncedValue } from "@/lib/queries/search";
-import { phoneInputValue } from "@/lib/utils";
+import { apiErrorMessage, phoneInputValue } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { configuredOrgSlug, isUsableOrgSlug, normaliseOrgSlug } from "./org-slug";
@@ -684,9 +684,28 @@ function LoginPage() {
         onSuccess: finishLogin,
         onError: (err) => {
           const status = (err as AxiosError)?.response?.status;
+          /*
+           * SAY WHICH 401 THIS IS.
+           *
+           * Every 401 used to read "Login ID and password do not match", and
+           * one of them is not that at all: after five failures the server
+           * freezes the handle for fifteen minutes and answers "Too many
+           * failed attempts. Try again in a few minutes." Printing the wrong
+           * sentence over it sent a salesperson and her manager round a loop
+           * for three days — reset the password, try again inside the freeze,
+           * read "password does not match", reset it again. Each burst of
+           * retries re-armed the lock, so the account could never come back.
+           *
+           * The server's own message is used when it sends one. It is written
+           * for the person reading it and never names which handle exists, so
+           * showing it gives nothing away.
+           */
           toast.error(
             status === 401
-              ? "That Login ID or mobile number and password do not match."
+              ? apiErrorMessage(
+                  err,
+                  "That Login ID or mobile number and password do not match.",
+                )
               : "Couldn't sign in. Check your connection and try again.",
           );
         },
