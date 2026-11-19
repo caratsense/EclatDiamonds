@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { LeadSource, LeadStage, PartyType, Prisma } from '@prisma/client';
 
 /**
  * The audience condition language.
@@ -104,24 +104,102 @@ export interface SegmentDefinition {
   conditions: SegmentCondition[];
 }
 
+/*
+ * The database's own vocabularies, so a rule can only ask for a value that
+ * exists. Typed from the Prisma enums rather than copied: adding a lead source
+ * and forgetting this list is how a new channel becomes unselectable, and
+ * copying it wrong is how a selectable value becomes a 500.
+ */
+export const PARTY_TYPES = Object.values(PartyType);
+export const LEAD_STAGES = Object.values(LeadStage);
+export const LEAD_SOURCES = Object.values(LeadSource);
+
 /** Bounded so a pathological rule tree cannot become a pathological query. */
 export const MAX_CONDITIONS = 25;
 
 // ---------------------------------------------------------------- parsing
 
+/**
+ * What a rule is called on screen.
+ *
+ * The messages below are read by whoever is building the audience, and they
+ * used to quote the internal key: a rule left unfilled came back as
+ * `"party.tag" needs a non-empty list of values`. The client hit that, read it
+ * as the builder refusing to count at all, and concluded she could not build
+ * an audience from branches alone. A name she recognises and a sentence that
+ * says what to do would have cost her nothing.
+ *
+ * Falls back to the key, which is better than a blank: an unnamed field here
+ * is one somebody added above and did not name, and the key at least finds it.
+ */
+const FIELD_LABELS: Record<string, string> = {
+  'party.id': 'Named customers',
+  'party.tag': 'Tag',
+  'party.type': 'Record type',
+  'party.storeId': 'Branch',
+  'party.city': 'City',
+  'party.state': 'State',
+  'party.createdAt': 'Added',
+  'party.importBatchId': 'Came from an import',
+  'party.isBlacklisted': 'Blocked',
+  'lead.stage': 'Enquiry stage',
+  'lead.source': 'Enquiry source',
+  'lead.storeId': 'Enquiry branch',
+  'lead.ownerId': 'Enquiry owner',
+  'lead.createdAt': 'Enquiry raised',
+  'interaction.lastAt': 'Last activity',
+  'transaction.orderCount': 'Has ever bought',
+  'transaction.totalSpend': 'An order worth at least',
+  'intent.score': 'Interest score',
+  'consent.marketing': 'Marketing consent',
+};
+
+function labelFor(field: string): string {
+  return FIELD_LABELS[field] ?? field;
+}
+
 function asStringArray(value: unknown, field: string): string[] {
   if (!Array.isArray(value) || value.length === 0) {
-    throw new BadRequestException(`"${field}" needs a non-empty list of values.`);
+    throw new BadRequestException(
+      `The "${labelFor(field)}" rule has nothing chosen in it. ` +
+        'Pick a value, or delete that rule with the bin beside it.',
+    );
   }
   if (value.length > 200) {
-    throw new BadRequestException(`"${field}" accepts at most 200 values.`);
+    throw new BadRequestException(`"${labelFor(field)}" accepts at most 200 values.`);
   }
   return value.map((v) => {
     if (typeof v !== 'string' || !v.trim()) {
-      throw new BadRequestException(`"${field}" accepts text values only.`);
+      throw new BadRequestException(`"${labelFor(field)}" accepts text values only.`);
     }
     return v.trim();
   });
+}
+
+/**
+ * The values a database enum column will actually accept.
+ *
+ * Without this the list went to Prisma as written and Postgres refused it, so
+ * "Enquiry stage is one of customer" — a plausible thing to type, and what the
+ * generic value box's own placeholder suggested — came back as "Something went
+ * wrong. The team has been notified." A rule that matches nobody should say
+ * zero; only a rule the system cannot evaluate should be an error, and then it
+ * should say which word was wrong and what the choices are.
+ */
+function asEnumArray<T extends string>(
+  value: unknown,
+  field: string,
+  allowed: readonly T[],
+): T[] {
+  const values = asStringArray(value, field);
+  const unknown = values.filter((v) => !allowed.includes(v as T));
+  if (unknown.length) {
+    throw new BadRequestException(
+      `"${labelFor(field)}" does not have ${unknown.map((v) => `"${v}"`).join(', ')}. ` +
+        `Choose from: ${allowed.join(', ')}.`,
+    );
+  }
+  return values as T[];
 }
 
 function asNumber(value: unknown, field: string): number {
@@ -209,6 +287,78 @@ function daysAgo(now: Date, days: number): Date {
 }
 
 /**
+ * Exclude on a column that is allowed to be empty.
+ *
+ * `notIn` on its own drops every row where the column is null, because in SQL
+ * `city NOT IN ('Mumbai')` is unknown rather than true when there is no city.
+ * Most of this client's customers arrived from WhatsApp with no city, state,
+ * branch or import on record, so "city is not Mumbai" would quietly come back
+ * with almost nobody. A customer the rule never named stays in — the same way
+ * a customer with no tags at all survives a tag exclusion.
+ */
+function withoutAnyOf(
+  column: 'city' | 'state' | 'storeId' | 'importBatchId',
+  values: string[],
+): Prisma.PartyWhereInput {
+  return { OR: [{ [column]: { notIn: values } }, { [column]: null }] } as Prisma.PartyWhereInput;
+}
+
+/**
+ * The built-in fields that cannot honestly answer "is not one of", and the
+ * tests they do offer.
+ *
+ * Every field that CAN express an exclusion now does, in its own case below.
+ * These cannot: a day count, a money figure, a score and a yes/no have no list
+ * to be outside of, and their negative is the other test they already carry.
+ * Refusing is the only safe third answer, because the one this compiler used to
+ * give was to ignore the operator and compile the include — on a broadcast,
+ * a suppression rule messaging exactly the people it was written to protect.
+ */
+const FIELDS_WITHOUT_AN_EXCLUSION: Record<string, string> = {
+  'party.isBlacklisted': 'blocked and not blocked',
+  'party.createdAt': '"in the last (days)" and "more than (days) ago"',
+  'party.birthday': 'the date being on record and the date being missing',
+  'party.anniversary': 'the date being on record and the date being missing',
+  'lead.createdAt': '"in the last (days)" and "more than (days) ago"',
+  'interaction.lastAt': '"in the last (days)" and "nothing for (days)"',
+  'transaction.orderCount': '"never bought" and "bought at least once"',
+  'transaction.totalSpend': '"at least" and "at most"',
+  'intent.score': '"at least" and "at most"',
+  'consent.marketing': 'given and withdrawn',
+};
+
+/**
+ * A value shaped like an id this system generates, rather than something a
+ * person typed.
+ *
+ * It decides only what a reason may SAY. A tag chosen in the builder arrives as
+ * an id, and an id cannot be turned back into a name here: this compiler is
+ * pure and has no tenant to look one up in. So a name is quoted and an id is
+ * counted. Reading one wrongly costs a quoted id or an uncounted name on the
+ * preview; it can never change which customers the rule matches.
+ */
+function looksLikeId(value: string): boolean {
+  return /^c[a-z0-9]{20,}$/.test(value);
+}
+
+/**
+ * How a tag rule says what was picked.
+ *
+ * The preview's "Because" list is what a manager approves a broadcast from, and
+ * "1 selected tag(s)" is not something anyone can check against what they chose.
+ */
+function describeTags(values: string[]): string {
+  const named = values.filter((v) => !looksLikeId(v)).map((v) => `"${v}"`);
+  const fromTheList = values.length - named.length;
+  if (fromTheList) {
+    named.push(
+      fromTheList === 1 ? '1 tag picked from your list' : `${fromTheList} tags picked from your list`,
+    );
+  }
+  return named.join(' or ');
+}
+
+/**
  * Compile one condition to a Party filter fragment.
  *
  * `now` is passed in rather than read here so that a preview and the expansion
@@ -244,14 +394,23 @@ function compileCondition(c: SegmentCondition, now: Date): { where: Prisma.Party
     }
   }
 
+  const insteadOffers = FIELDS_WITHOUT_AN_EXCLUSION[c.field];
+  if (c.op === 'not_in' && insteadOffers) {
+    throw new BadRequestException(
+      `"${c.field}" cannot be used as an exclusion. It supports ${insteadOffers}.`,
+    );
+  }
+
   switch (c.field) {
     // ------------------------------------------------------------ party
     case 'party.type': {
-      const values = asStringArray(c.value, c.field);
-      return {
-        where: { types: { hasSome: values as never } },
-        reason: `is a ${values.join(' or ')}`,
-      };
+      const values = asEnumArray(c.value, c.field, PARTY_TYPES);
+      // `types` is a list, so the exclusion is "plays none of these roles". A
+      // party carrying no role at all is not one of them and stays in.
+      const plays: Prisma.PartyWhereInput = { types: { hasSome: values } };
+      return c.op === 'not_in'
+        ? { where: { NOT: plays }, reason: `is not a ${values.join(' or ')}` }
+        : { where: plays, reason: `is a ${values.join(' or ')}` };
     }
     case 'party.id': {
       const values = asStringArray(c.value, c.field);
@@ -264,10 +423,9 @@ function compileCondition(c: SegmentCondition, now: Date): { where: Prisma.Party
     }
     case 'party.storeId': {
       const values = asStringArray(c.value, c.field);
-      return {
-        where: c.op === 'not_in' ? { storeId: { notIn: values } } : { storeId: { in: values } },
-        reason: c.op === 'not_in' ? 'not at the chosen branches' : 'at the chosen branches',
-      };
+      return c.op === 'not_in'
+        ? { where: withoutAnyOf('storeId', values), reason: 'not at the chosen branches' }
+        : { where: { storeId: { in: values } }, reason: 'at the chosen branches' };
     }
     case 'party.city':
     case 'party.state': {
@@ -280,10 +438,15 @@ function compileCondition(c: SegmentCondition, now: Date): { where: Prisma.Party
         };
       }
       const values = asStringArray(c.value, c.field);
-      return {
-        where: { [col]: { in: values } } as Prisma.PartyWhereInput,
-        reason: `${col} is one of ${values.join(', ')}`,
-      };
+      return c.op === 'not_in'
+        ? {
+            where: withoutAnyOf(col, values),
+            reason: `${col} is not ${values.join(' or ')}`,
+          }
+        : {
+            where: { [col]: { in: values } } as Prisma.PartyWhereInput,
+            reason: `${col} is one of ${values.join(', ')}`,
+          };
     }
     case 'party.isBlacklisted': {
       const on = c.value === true || c.value === 'true';
@@ -299,10 +462,15 @@ function compileCondition(c: SegmentCondition, now: Date): { where: Prisma.Party
       if (c.op === 'is_not_set') {
         return { where: { importBatchId: null }, reason: 'was not imported' };
       }
-      return {
-        where: { importBatchId: { in: asStringArray(c.value, c.field) } },
-        reason: 'came from the chosen import',
-      };
+      {
+        const values = asStringArray(c.value, c.field);
+        return c.op === 'not_in'
+          ? {
+              where: withoutAnyOf('importBatchId', values),
+              reason: 'did not come from the chosen import',
+            }
+          : { where: { importBatchId: { in: values } }, reason: 'came from the chosen import' };
+      }
     case 'party.createdAt': {
       const days = asPositiveInt(c.value, c.field);
       return c.op === 'older_than_days'
@@ -316,19 +484,36 @@ function compileCondition(c: SegmentCondition, now: Date): { where: Prisma.Party
       // is "the date is set", with the day-window applied by the caller when a
       // tenant enables occasion campaigns.
       const col = c.field === 'party.birthday' ? 'birthday' : 'anniversary';
-      return {
-        where: { [col]: { not: null } } as Prisma.PartyWhereInput,
-        reason: `has a ${col} on record`,
-      };
+      // `is_not_set` is read, not ignored. Ignoring it compiled "has no
+      // birthday on record" into its opposite -- the same silent inversion as
+      // a `not_in` that includes, reached by a different operator.
+      return c.op === 'is_not_set'
+        ? {
+            where: { [col]: null } as Prisma.PartyWhereInput,
+            reason: `has no ${col} on record`,
+          }
+        : {
+            where: { [col]: { not: null } } as Prisma.PartyWhereInput,
+            reason: `has a ${col} on record`,
+          };
     }
 
     // ------------------------------------------------------------- lead
     case 'lead.stage': {
-      const values = asStringArray(c.value, c.field);
-      return {
-        where: { leads: { some: { stage: { in: values as never } } } },
-        reason: `has a lead at stage ${values.join(' or ')}`,
-      };
+      const values = asEnumArray(c.value, c.field, LEAD_STAGES);
+      // An exclusion on a lead is `none`, not `NOT some` of one lead: a
+      // customer with a second enquiry elsewhere in the pipeline must still be
+      // excluded, and a customer with no enquiry at all must still be kept.
+      const atStage: Prisma.LeadWhereInput = { stage: { in: values } };
+      return c.op === 'not_in'
+        ? {
+            where: { leads: { none: atStage } },
+            reason: `has no lead at stage ${values.join(' or ')}`,
+          }
+        : {
+            where: { leads: { some: atStage } },
+            reason: `has a lead at stage ${values.join(' or ')}`,
+          };
     }
     case 'party.tag': {
       const values = asStringArray(c.value, c.field);
@@ -366,34 +551,53 @@ function compileCondition(c: SegmentCondition, now: Date): { where: Prisma.Party
         },
       };
       /*
-       * `not_in` is honoured here deliberately. Most fields in this compiler
-       * switch on the FIELD and ignore the operator, so a `not_in` elsewhere
-       * is accepted and then silently compiled as an include -- the opposite
-       * of what the rule says. An exclusion that quietly includes is the worst
-       * possible failure for a broadcast, so this field reads the operator.
+       * `not_in` is a real NOT, never an include. This compiler once switched
+       * on the FIELD and ignored the operator everywhere but here, so a
+       * `not_in` on any other field was accepted and then compiled as the
+       * include -- the opposite of what the rule said. Every field now either
+       * reads the operator or refuses it; nothing silently inverts.
        */
       if (c.op === 'not_in') {
-        return { where: { NOT: has }, reason: `is not tagged ${values.length} selected tag(s)` };
+        return { where: { NOT: has }, reason: `is not tagged ${describeTags(values)}` };
       }
-      return { where: has, reason: `is tagged ${values.length} selected tag(s)` };
+      return { where: has, reason: `is tagged ${describeTags(values)}` };
     }
     case 'lead.source': {
-      const values = asStringArray(c.value, c.field);
-      return {
-        where: { leads: { some: { source: { in: values as never } } } },
-        reason: `came in through ${values.join(' or ')}`,
-      };
+      const values = asEnumArray(c.value, c.field, LEAD_SOURCES);
+      const cameIn: Prisma.LeadWhereInput = { source: { in: values } };
+      return c.op === 'not_in'
+        ? {
+            where: { leads: { none: cameIn } },
+            reason: `did not come in through ${values.join(' or ')}`,
+          }
+        : { where: { leads: { some: cameIn } }, reason: `came in through ${values.join(' or ')}` };
     }
-    case 'lead.storeId':
-      return {
-        where: { leads: { some: { storeId: { in: asStringArray(c.value, c.field) } } } },
-        reason: 'has a lead at the chosen branches',
-      };
-    case 'lead.ownerId':
-      return {
-        where: { leads: { some: { ownerId: { in: asStringArray(c.value, c.field) } } } },
-        reason: 'has a lead owned by the chosen staff',
-      };
+    case 'lead.storeId': {
+      const values = asStringArray(c.value, c.field);
+      const atBranch: Prisma.LeadWhereInput = { storeId: { in: values } };
+      return c.op === 'not_in'
+        ? {
+            where: { leads: { none: atBranch } },
+            reason: 'has no lead at the chosen branches',
+          }
+        : {
+            where: { leads: { some: atBranch } },
+            reason: 'has a lead at the chosen branches',
+          };
+    }
+    case 'lead.ownerId': {
+      const values = asStringArray(c.value, c.field);
+      const ownedBy: Prisma.LeadWhereInput = { ownerId: { in: values } };
+      return c.op === 'not_in'
+        ? {
+            where: { leads: { none: ownedBy } },
+            reason: 'has no lead owned by the chosen staff',
+          }
+        : {
+            where: { leads: { some: ownedBy } },
+            reason: 'has a lead owned by the chosen staff',
+          };
+    }
     case 'lead.createdAt': {
       const days = asPositiveInt(c.value, c.field);
       return c.op === 'older_than_days'
@@ -424,10 +628,15 @@ function compileCondition(c: SegmentCondition, now: Date): { where: Prisma.Party
     }
     case 'transaction.orderCount': {
       const n = asNumber(c.value, c.field);
-      if (c.op === 'lte' && n === 0) {
-        return { where: { sales: { none: {} } }, reason: 'has never bought' };
-      }
-      if (n <= 1) {
+      if (c.op === 'lte') {
+        // Only "at most nothing" can be honoured. "At most one order" used to
+        // fall through to "has bought at least once", which is the opposite
+        // rule: it kept the customer with ten orders and dropped the one with
+        // none.
+        if (n === 0) {
+          return { where: { sales: { none: {} } }, reason: 'has never bought' };
+        }
+      } else if (n <= 1) {
         return { where: { sales: { some: {} } }, reason: 'has bought at least once' };
       }
       // Prisma cannot express "count(sales) >= n" in a filter. Rather than

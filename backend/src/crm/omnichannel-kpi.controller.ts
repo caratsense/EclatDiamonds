@@ -4,6 +4,7 @@ import { Type } from 'class-transformer';
 import { IsInt, IsOptional, IsString, Length, Max, Min } from 'class-validator';
 
 import { AuthUser, CurrentUser } from '../common/auth-user';
+import { StoreHeader } from '../common/store-header.decorator';
 import { OmnichannelKpiService } from './omnichannel-kpi.service';
 
 export class OmnichannelSummaryDto {
@@ -29,9 +30,16 @@ export class OmnichannelKpiController {
   constructor(private readonly kpi: OmnichannelKpiService) {}
 
   // Management information: store manager and above, never a salesperson.
+  // Branch from the store switcher unless the caller named one — the floor app
+  // names the counter it is standing at, every other screen means "wherever the
+  // top bar is pointed".
   @Roles('store_manager')
   @Get('summary')
-  summary(@CurrentUser() user: AuthUser, @Query() query: OmnichannelSummaryDto) {
-    return this.kpi.summary(user, query);
+  summary(
+    @CurrentUser() user: AuthUser,
+    @Query() query: OmnichannelSummaryDto,
+    @StoreHeader() store?: string,
+  ) {
+    return this.kpi.summary(user, { ...query, storeId: query.storeId ?? store });
   }
 }

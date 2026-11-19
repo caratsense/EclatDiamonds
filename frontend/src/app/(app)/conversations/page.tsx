@@ -381,8 +381,6 @@ function ConversationsContent() {
 
   const queue = searchParams.get("queue") ?? "open";
   const partyId = searchParams.get("partyId");
-  /** Which branch's leads to show. Empty means every branch this user can read. */
-  const storeFilter = searchParams.get("store") ?? "";
   /** Which platform the lead arrived on. Empty means all of them. */
   const channelFilter = searchParams.get("channel") ?? "";
   /** Which Meta surface the AD was tapped on. Empty means all of them. */
@@ -393,25 +391,23 @@ function ConversationsContent() {
   const isHeadOffice = useSession((s) => s.role) === "head_office";
 
   /*
-   * The branches this person may read, straight from the session.
+   * The branch is the store switcher in the top bar, and nothing else.
    *
-   * The aggregate "All Stores" row is dropped: it is a UI convenience on the
-   * store switcher, not a place a conversation can belong to, and filtering by
-   * it would silently return nothing.
-   *
-   * The control only appears when there is a real choice to make. A manager who
-   * runs one branch already sees exactly their own leads — offering them a
-   * one-option filter would imply they might be missing something.
+   * This screen used to carry a second branch menu of its own, because the top
+   * bar's `X-Store-Id` was the one thing the conversations list never read —
+   * so picking a branch up there changed nothing here. Now that the server
+   * honours it, two controls for one question can only disagree: the page menu
+   * said "All branches" while the top bar said Mumbai Bandra, and one of the
+   * two had to be lying. The top bar is the one that scopes every other screen,
+   * so it is the one that stays.
    */
-  const stores = useSession((s) => s.stores);
-  const filterableStores = (stores ?? []).filter((s) => !s.isAggregate);
-  const showStoreFilter = filterableStores.length > 1;
+  const currentStore = useSession((s) => s.currentStore);
+  const branchName = currentStore.isAggregate ? null : currentStore.name;
 
   const navigate = (next: {
     queue?: string | null;
     partyId?: string | null;
     thread?: string | null;
-    store?: string | null;
     channel?: string | null;
     source?: string | null;
   }) => {
@@ -430,17 +426,13 @@ function ConversationsContent() {
       if (next.thread) params.set("thread", next.thread);
       else params.delete("thread");
     }
-    if (next.store !== undefined) {
-      if (next.store) params.set("store", next.store);
-      else params.delete("store");
-      // The open thread belongs to the branch being filtered away, so keeping
-      // it selected would show a conversation the list no longer contains.
-      params.delete("thread");
-    }
     if (next.channel !== undefined) {
       if (next.channel) params.set("channel", next.channel);
       else params.delete("channel");
-      params.delete("thread"); // same reason as the branch filter above
+      // The open thread may belong to the channel being filtered away, so
+      // keeping it selected would show a conversation the list no longer
+      // contains.
+      params.delete("thread");
     }
     if (next.source !== undefined) {
       if (next.source) params.set("source", next.source);
@@ -465,19 +457,20 @@ function ConversationsContent() {
             : { status: "open" as const };
 
   /*
-   * The branch filter NARROWS the queue; it never replaces it.
+   * The branch NARROWS the queue; it never replaces it.
    *
-   * The server intersects `storeId` with the caller's own visibility, so this
-   * can only ever show fewer conversations than the tab already would — asking
-   * for a branch you cannot read returns nothing rather than that branch's
-   * inbox. Not applied to a party lookup, which is already one customer.
+   * It is not passed here at all: every request already carries `X-Store-Id`
+   * from the store switcher, and the server intersects it with the caller's own
+   * visibility — so this can only ever show fewer conversations than the tab
+   * would, and asking for a branch you cannot read is refused rather than
+   * answered. A party lookup is already one customer, so it skips the queue
+   * filters entirely.
    */
   const list = useConversations(
     partyId
       ? { partyId }
       : {
           ...serverQueueParams,
-          ...(storeFilter ? { storeId: storeFilter } : {}),
           ...(channelFilter ? { channel: channelFilter } : {}),
           ...(sourceFilter ? { sourcePlatform: sourceFilter } : {}),
         },
@@ -786,26 +779,13 @@ function ConversationsContent() {
               <option value="unknown">Ad — source unknown</option>
             </select>
           </div>
-          {showStoreFilter && (
-            <div className="flex items-center gap-1.5">
-              <MapPin className="h-3.5 w-3.5 text-muted-foreground" />
-              <select
-                aria-label="Filter conversations by branch"
-                value={storeFilter}
-                onChange={(e) => navigate({ store: e.target.value || null })}
-                className={`h-8 rounded-md border bg-background px-2 text-xs font-medium ${
-                  storeFilter
-                    ? "border-[#25D366]/40 text-[#128C7E] dark:text-[#25D366]"
-                    : "border-border text-muted-foreground"
-                }`}
-              >
-                <option value="">All branches</option>
-                {filterableStores.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
+          {/* The branch this inbox is showing. Read-only on purpose — it is the
+              store switcher in the top bar, and a second control for the same
+              question is a way for the screen to contradict itself. */}
+          {branchName && (
+            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <MapPin className="h-3.5 w-3.5" />
+              <span>{branchName}</span>
             </div>
           )}
           {/*
@@ -945,24 +925,16 @@ function ConversationsContent() {
             ) : threads.length === 0 ? (
               <div className="p-6 text-center text-xs text-muted-foreground">
                 <MessageSquare className="h-8 w-8 mx-auto mb-2 text-muted-foreground/40" />
-                {/* An empty list because of a filter is a different fact from
-                    an empty inbox, and it has a different remedy — so it says
-                    which branch is empty, and offers the way back. */}
-                {storeFilter ? (
+                {/* An empty branch is a different fact from an empty inbox, and
+                    it has a different remedy — so it names the branch, and says
+                    where to change it rather than offering a second control. */}
+                {branchName ? (
                   <>
-                    <p className="font-medium text-foreground">
-                      Nothing at{" "}
-                      {filterableStores.find((s) => s.id === storeFilter)?.name ?? "this branch"}
+                    <p className="font-medium text-foreground">Nothing at {branchName}</p>
+                    <p className="mt-1">
+                      No conversations here in this queue. Change the branch in the top bar to
+                      look somewhere else.
                     </p>
-                    <p className="mt-1">No conversations here in this queue.</p>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="mt-2 text-xs"
-                      onClick={() => navigate({ store: null })}
-                    >
-                      Show all branches
-                    </Button>
                   </>
                 ) : (
                   <>

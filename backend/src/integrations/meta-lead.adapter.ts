@@ -11,6 +11,7 @@ import { ActivityService } from '../crm/activity.service';
 import { SequenceService } from '../common/sequence.service';
 import type { MetaLeadRecord, MetaLeadSink, MetaLeadSinkResult } from './meta-contracts';
 import { MetaLeadAdsService } from './meta-lead-ads.service';
+import { ProvenanceTagsService } from '../crm/provenance-tags.service';
 
 /** Cap on how much provider form data we retain per lead. */
 const MAX_RETAINED_FIELDS = 40;
@@ -66,6 +67,7 @@ export class MetaLeadAdapter implements MetaLeadSink, OnModuleInit {
     private readonly activity: ActivityService,
     private readonly sequence: SequenceService,
     private readonly advanced: AdvancedCrmService,
+    private readonly provenanceTags: ProvenanceTagsService,
   ) {}
 
   onModuleInit(): void {
@@ -146,7 +148,13 @@ export class MetaLeadAdapter implements MetaLeadSink, OnModuleInit {
             ? { attributes: { metaLeadForm: custom } as Prisma.InputJsonValue }
             : {}),
         },
-        select: { id: true },
+        select: { id: true, partyId: true, source: true },
+      });
+      await this.provenanceTags.tagNewLead({
+        organisationId: lead.organisationId,
+        leadId: created.id,
+        partyId: created.partyId,
+        source: created.source,
       });
       leadId = created.id;
     } catch (err) {

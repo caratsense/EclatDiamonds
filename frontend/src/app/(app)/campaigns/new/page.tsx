@@ -2,7 +2,18 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, Check, Plus, RefreshCw, ShieldCheck, Tag, Trash2, Users } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  ChevronDown,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  Tag,
+  Trash2,
+  Users,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { SectionHeader } from "@/components/section/section-header";
@@ -34,10 +45,13 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  CAMPAIGN_VARIABLE_SOURCES,
   SEGMENT_FIELD_GROUPS,
   useAudiencePreview,
   useCreateCampaign,
   useSubmitCampaign,
+  type CampaignVariable,
+  type CampaignVariableSource,
   type SegmentCondition,
   type SegmentDefinition,
 } from "@/lib/queries/campaigns";
@@ -73,6 +87,16 @@ const NULLARY_OPS = new Set(["is_set", "is_not_set"]);
 export default function NewCampaignPage() {
   const router = useRouter();
   const stores = useSession((s) => s.stores);
+  /*
+   * Head office and an area manager release broadcasts themselves.
+   *
+   * Approval exists so a message to thousands is seen by somebody senior to
+   * whoever wrote it; when the author IS that person it is a second button,
+   * not a check. The server decides this too — this only stops the screen
+   * promising a queue nobody is waiting in.
+   */
+  const baseRole = useSession((s) => s.baseRole);
+  const approvesOwnWork = baseRole === "head_office" || baseRole === "area_manager";
   const realStores = useMemo(() => stores.filter((s) => !s.isAggregate), [stores]);
 
   const [step, setStep] = useState<Step>("Details");
@@ -86,6 +110,17 @@ export default function NewCampaignPage() {
   const [templateName, setTemplateName] = useState("");
   const [templateLanguage, setTemplateLanguage] = useState("en_US");
   const [bodyPreview, setBodyPreview] = useState("");
+  /*
+   * What fills the template's {{1}}, {{2}} … for each customer.
+   *
+   * Held beside the template rather than inside it because it belongs to this
+   * broadcast: the same approved template can greet one audience by first name
+   * and another by branch. Picking a template rebuilds these rows, since a
+   * mapping for a different template's variables would be nonsense.
+   */
+  const [variables, setVariables] = useState<CampaignVariable[]>([]);
+  /** The approved wording with its `{{n}}` intact, so the rows read in context. */
+  const [templateSource, setTemplateSource] = useState("");
   const [scheduledAt, setScheduledAt] = useState("");
 
   const preview = useAudiencePreview();
@@ -122,6 +157,23 @@ export default function NewCampaignPage() {
       setStep("Message");
       return;
     }
+    /*
+     * Checked here as well as on the server, because the server's refusal
+     * lands on APPROVAL — by which point a manager has already signed off on a
+     * broadcast that cannot go out.
+     */
+    const unfilled = variables.find((v) =>
+      v.source === "fixed" ? !v.text?.trim() : !v.fallback.trim(),
+    );
+    if (unfilled) {
+      toast.error(
+        unfilled.source === "fixed"
+          ? `Type the wording for {{${unfilled.slot}}}.`
+          : `Give {{${unfilled.slot}}} something to say when a customer has no name on record.`,
+      );
+      setStep("Message");
+      return;
+    }
     create.mutate(
       {
         name: name.trim(),
@@ -130,6 +182,7 @@ export default function NewCampaignPage() {
         templateName: templateName.trim(),
         templateLanguage: templateLanguage.trim(),
         ...(bodyPreview.trim() ? { bodyPreview: bodyPreview.trim() } : {}),
+        ...(variables.length ? { templateVariables: variables } : {}),
         ...(storeIds.length ? { storeIds } : {}),
         ...(scheduledAt ? { scheduledAt: new Date(scheduledAt).toISOString() } : {}),
       },
@@ -139,7 +192,11 @@ export default function NewCampaignPage() {
             { id: campaign.id },
             {
               onSuccess: () => {
-                toast.success(`"${campaign.name}" is waiting for approval.`);
+                toast.success(
+                  approvesOwnWork
+                    ? `"${campaign.name}" is approved and queued.`
+                    : `"${campaign.name}" is waiting for approval.`,
+                );
                 router.push(`/campaigns/${campaign.id}`);
               },
               onError: (e) => {
@@ -302,6 +359,32 @@ export default function NewCampaignPage() {
                           exclude={c.op === "not_in"}
                           onChange={(tagIds) => updateCondition(i, { value: tagIds })}
                         />
+                      ) : c.field === "party.storeId" ? (
+                        /*
+                          The tenant's own branches, from the session. A list
+                          that ships with the release would be wrong for every
+                          tenant but the first.
+                        */
+                        <ChoiceValuePicker
+                          label="Branch"
+                          options={realStores.map((st) => ({ value: st.id, label: st.name }))}
+                          value={Array.isArray(c.value) ? (c.value as string[]) : []}
+                          onChange={(picked) => updateCondition(i, { value: picked })}
+                        />
+                      ) : meta?.options ? (
+                        /*
+                          A field with a fixed vocabulary is picked from, never
+                          typed into. Typing "customer" on Enquiry stage sent
+                          that word to Postgres as an enum value, which refused
+                          it — so a plausible rule came back as "Something went
+                          wrong" rather than matching nobody.
+                        */
+                        <ChoiceValuePicker
+                          label={meta.label}
+                          options={meta.options}
+                          value={Array.isArray(c.value) ? (c.value as string[]) : []}
+                          onChange={(picked) => updateCondition(i, { value: picked })}
+                        />
                       ) : (
                         <Input
                           value={
@@ -405,9 +488,12 @@ export default function NewCampaignPage() {
                     <div className="font-[family-name:var(--font-display-face)] text-4xl tabular-nums">
                       {preview.data.total.toLocaleString()}
                     </div>
+                    {/* The sendable figure, not the contactable one. Blocked
+                        customers have a number and are still never messaged, so
+                        showing `contactable` here promised a bigger send than
+                        the campaign screen afterwards reported. */}
                     <p className="text-xs text-muted-foreground">
-                      people match. {preview.data.contactable.toLocaleString()} have a number we can
-                      message.
+                      people match. {preview.data.sendable.toLocaleString()} will be messaged.
                     </p>
                   </div>
 
@@ -504,8 +590,30 @@ export default function NewCampaignPage() {
                 // of it. Cleared along with the choice so a stale preview can
                 // never outlive the template it described.
                 setBodyPreview(picked?.preview ?? "");
+                setTemplateSource(picked?.source ?? "");
+                /*
+                 * One row per variable, defaulted to the thing almost every
+                 * template's first variable is. Rebuilt on every pick: a
+                 * mapping left over from another template would fill the wrong
+                 * slots with the right-looking values.
+                 */
+                setVariables(
+                  Array.from({ length: picked?.variableCount ?? 0 }, (_, i) => ({
+                    slot: i + 1,
+                    source: "customer_first_name" as const,
+                    fallback: "there",
+                  })),
+                );
               }}
             />
+
+            {variables.length ? (
+              <VariableMapper
+                variables={variables}
+                source={templateSource}
+                onChange={setVariables}
+              />
+            ) : null}
           </CardContent>
         </Card>
       ) : null}
@@ -547,7 +655,7 @@ export default function NewCampaignPage() {
               label="Audience"
               value={
                 preview.data
-                  ? `${preview.data.total.toLocaleString()} match, ${preview.data.contactable.toLocaleString()} contactable`
+                  ? `${preview.data.total.toLocaleString()} match, ${preview.data.sendable.toLocaleString()} will be messaged`
                   : "Not counted yet"
               }
             />
@@ -569,7 +677,11 @@ export default function NewCampaignPage() {
               }
             />
             <div className="pt-2">
-              <Badge variant="outline">Needs approval before anything is sent</Badge>
+              <Badge variant="outline">
+                {approvesOwnWork
+                  ? "You can release this yourself"
+                  : "Needs approval before anything is sent"}
+              </Badge>
             </div>
           </CardContent>
         </Card>
@@ -587,7 +699,7 @@ export default function NewCampaignPage() {
             ) : (
               <Check className="mr-2 h-4 w-4" />
             )}
-            Send for approval
+            {approvesOwnWork ? "Approve and send" : "Send for approval"}
           </Button>
         ) : (
           <Button onClick={() => go(1)}>
@@ -705,6 +817,146 @@ function TagValuePicker({
         ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+/**
+ * One of a fixed set of values — a record type, an enquiry stage, a source.
+ *
+ * Built like the tag picker beside it rather than reusing it: the tag list is
+ * the tenant's own and arrives over the network, these are the database's own
+ * vocabulary and ship with the release. What they share is that neither can be
+ * typed into, which is the whole point.
+ */
+function ChoiceValuePicker({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: { value: string; label: string }[];
+  value: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const chosen = options.filter((o) => value.includes(o.value));
+  const toggle = (v: string) =>
+    onChange(value.includes(v) ? value.filter((x) => x !== v) : [...value, v]);
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" className="justify-between font-normal">
+          <span className="truncate">
+            {chosen.length ? chosen.map((o) => o.label).join(", ") : `Choose ${label.toLowerCase()}`}
+          </span>
+          <ChevronDown className="size-4 shrink-0 opacity-60" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-56">
+        <DropdownMenuLabel>{label}</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {options.map((o) => (
+          <DropdownMenuItem
+            key={o.value}
+            onSelect={(e) => {
+              // Keep the menu open: these rules are usually "one of several".
+              e.preventDefault();
+              toggle(o.value);
+            }}
+            className="justify-between"
+          >
+            {o.label}
+            {value.includes(o.value) ? <Check className="size-4" /> : null}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/**
+ * What fills each `{{n}}` when the broadcast goes out.
+ *
+ * A template is approved with its placeholders intact and the real values
+ * travel with each individual send. The wizard used to pick a template and
+ * send nothing, so an approved template with one variable was refused by Meta
+ * on every recipient — after the campaign was already running, and reported as
+ * though those customers had been deliberately skipped.
+ *
+ * The stand-in is a required field, not a nicety: Meta refuses a message with
+ * a blank value in it, so a customer with no name on record would fail the
+ * send rather than merely read oddly.
+ */
+function VariableMapper({
+  variables,
+  source,
+  onChange,
+}: {
+  variables: CampaignVariable[];
+  source: string;
+  onChange: (next: CampaignVariable[]) => void;
+}) {
+  const patch = (slot: number, change: Partial<CampaignVariable>) =>
+    onChange(variables.map((v) => (v.slot === slot ? { ...v, ...change } : v)));
+
+  return (
+    <div className="space-y-3 rounded-lg border bg-muted/20 p-3">
+      <div className="space-y-1">
+        <Label className="text-xs">What fills the blanks</Label>
+        <p className="text-[11px] text-muted-foreground">
+          This template has {variables.length} variable{variables.length === 1 ? "" : "s"}. Each
+          customer gets their own value.
+        </p>
+        {source ? (
+          <p className="whitespace-pre-wrap rounded-md border bg-background p-2 text-[11px] leading-relaxed text-muted-foreground">
+            {source}
+          </p>
+        ) : null}
+      </div>
+
+      {variables.map((v) => (
+        <div key={v.slot} className="grid gap-2 sm:grid-cols-[4rem_minmax(0,1fr)_minmax(0,1fr)]">
+          <span className="pt-2 font-mono text-xs text-muted-foreground">{`{{${v.slot}}}`}</span>
+          <Select
+            value={v.source}
+            onValueChange={(next) =>
+              patch(v.slot, {
+                source: next as CampaignVariableSource,
+                // Switching to a fixed wording drops a stand-in that no longer
+                // applies; switching away from one restores a usable default
+                // rather than leaving the field empty and invalid.
+                ...(next === "fixed" ? { fallback: "" } : { text: "", fallback: "there" }),
+              })
+            }
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {CAMPAIGN_VARIABLE_SOURCES.map((s) => (
+                <SelectItem key={s.value} value={s.value}>
+                  {s.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {v.source === "fixed" ? (
+            <Input
+              value={v.text ?? ""}
+              onChange={(e) => patch(v.slot, { text: e.target.value })}
+              placeholder="Diwali collection"
+            />
+          ) : (
+            <Input
+              value={v.fallback}
+              onChange={(e) => patch(v.slot, { fallback: e.target.value })}
+              placeholder="If we don't know — e.g. there"
+            />
+          )}
+        </div>
+      ))}
+    </div>
   );
 }
 

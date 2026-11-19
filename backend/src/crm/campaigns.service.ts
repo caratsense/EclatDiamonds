@@ -22,6 +22,21 @@ import {
   compileSegment,
   parseSegmentDefinition,
 } from './audience-segment.dsl';
+import {
+  CampaignVariableError,
+  type VariableMapping,
+  parseVariableMappings,
+  resolveVariables,
+  templateComponentsFor,
+  variableSlotsIn,
+} from './campaign-variables';
+import {
+  HAS_CONTACT_POINT,
+  campaignAudienceWhere,
+  campaignContactValue,
+  previewAudienceWhere,
+  visibleStores,
+} from './campaign-audience';
 
 export const CAMPAIGN_EXPAND_JOB = 'campaign.expand';
 export const CAMPAIGN_SEND_JOB = 'campaign.send';
@@ -187,7 +202,7 @@ export class CampaignsService implements OnModuleInit {
     const definition = await this.resolveDefinition(user, input);
     const now = new Date();
     const compiled = compileSegment(definition, now);
-    const where = this.tenantScope(user, compiled.where, input.storeIds);
+    const where = previewAudienceWhere(user, compiled.where, input.storeIds);
 
     const [total, sample, contactable] = await Promise.all([
       this.prisma.party.count({ where }),
@@ -209,21 +224,37 @@ export class CampaignsService implements OnModuleInit {
       // scope for a branch-limited user; setting OR again by spreading would
       // replace it and quietly count every branch in the tenant.
       this.prisma.party.count({
-        where: {
-          AND: [where, { OR: [{ whatsapp: { not: null } }, { phone: { not: null } }] }],
-        },
+        where: { AND: [where, HAS_CONTACT_POINT] },
       }),
     ]);
 
     // Exclusions the audience itself cannot express, counted honestly and
     // separately so the reviewer sees why the sendable number is lower.
+    // Counted among the CONTACTABLE rather than the whole audience: a blocked
+    // customer with no number at all is already in `noContactPoint`, and
+    // counting them twice would make the figures below stop adding up.
     const blocked = await this.prisma.party.count({
-      where: { AND: [where, { isBlacklisted: true }] },
+      where: { AND: [where, HAS_CONTACT_POINT, { isBlacklisted: true }] },
     });
 
     return {
       total,
+      /**
+       * Has a number on file. An upper bound, honestly: whether that number can
+       * be read is decided per customer at expansion, and a figure that
+       * normalised fifty thousand numbers to be exact is not a figure an
+       * interactive screen can afford. Anything that falls out there is
+       * reported on the campaign itself rather than quietly disappearing.
+       */
       contactable,
+      /**
+       * The number that has to survive to the send, and the one the campaign
+       * screen later calls `targeted`: contactable, less the blocked. The
+       * headline used to be `contactable`, which counts blocked customers that
+       * expansion then writes as excluded — so the preview promised a larger
+       * send than the manager actually got, by exactly the blocked count.
+       */
+      sendable: contactable - blocked,
       /**
        * Consent is NOT counted here. It is an event log where the latest event
        * wins, which a filter cannot express, and a number derived from "has ever
@@ -262,54 +293,6 @@ export class CampaignsService implements OnModuleInit {
       throw new BadRequestException('Choose a saved audience or describe one.');
     }
     return parseSegmentDefinition(input.definition);
-  }
-
-  /**
-   * The tenant filter, applied AFTER compilation and never from user input.
-   * `storeIds` narrows further, and is intersected with the caller's own store
-   * scope so a manager cannot preview another branch's customers by naming it.
-   */
-  private tenantScope(
-    user: AuthUser,
-    compiled: Prisma.PartyWhereInput,
-    storeIds?: string[],
-  ): Prisma.PartyWhereInput {
-    const scope: Prisma.PartyWhereInput = {
-      organisationId: user.organisationId,
-      /*
-       * An archived contact is never in an audience.
-       *
-       * This is the single most important exclusion of the set: a segment rule
-       * is written once and re-evaluated on every send, so a contact archived
-       * after the segment was built would otherwise walk back into it silently.
-       * Placed here rather than in the compiled rule because the rule is the
-       * tenant's, and this is not theirs to switch off.
-       */
-      archivedAt: null,
-      AND: [compiled],
-    };
-    const allowed = this.visibleStores(user, storeIds);
-    if (allowed) {
-      // A party with no branch is org-level and stays visible to anyone who can
-      // see any branch — excluding it would silently drop head-office records.
-      scope.OR = [{ storeId: { in: allowed } }, { storeId: null }];
-    }
-    return scope;
-  }
-
-  /** null = every store (org-wide role and no explicit narrowing). */
-  private visibleStores(user: AuthUser, requested?: string[]): string[] | null {
-    const orgWide = user.role === 'head_office' || user.role === 'area_manager';
-    if (orgWide) {
-      return requested?.length ? requested : null;
-    }
-    const own = user.storeIds ?? [];
-    if (!requested?.length) return own;
-    const intersection = requested.filter((s) => own.includes(s));
-    if (!intersection.length) {
-      throw new BadRequestException('You do not have access to the branches you chose.');
-    }
-    return intersection;
   }
 
   // ========================================================== campaigns
@@ -370,6 +353,7 @@ export class CampaignsService implements OnModuleInit {
       segmentId: row.segmentId,
       templateName: row.templateName,
       templateLanguage: row.templateLanguage,
+      templateVariables: row.templateVariables ?? null,
       bodyPreview: row.bodyPreview,
       storeIds: row.storeIds,
       scheduledAt: row.scheduledAt,
@@ -406,6 +390,7 @@ export class CampaignsService implements OnModuleInit {
       templateName?: string;
       templateLanguage?: string;
       bodyPreview?: string;
+      templateVariables?: unknown;
       storeIds?: string[];
       scheduledAt?: string;
       marketingCampaignId?: string;
@@ -442,7 +427,14 @@ export class CampaignsService implements OnModuleInit {
         templateName: input.templateName?.trim() || null,
         templateLanguage: input.templateLanguage?.trim() || null,
         bodyPreview: input.bodyPreview?.trim() || null,
-        storeIds: this.visibleStores(user, input.storeIds) ?? [],
+        /*
+         * Stored as given and checked on approval, not here. A draft is
+         * allowed to be half-written -- somebody picks the template on one
+         * visit and says what fills it on the next -- and refusing an
+         * incomplete mapping at this point would make that impossible.
+         */
+        templateVariables: toJsonOrNull(input.templateVariables),
+        storeIds: visibleStores(user, input.storeIds) ?? [],
         scheduledAt: input.scheduledAt ? new Date(input.scheduledAt) : null,
         marketingCampaignId: input.marketingCampaignId ?? null,
         createdById: user.id,
@@ -473,10 +465,11 @@ export class CampaignsService implements OnModuleInit {
       data.templateLanguage = input.templateLanguage.trim() || null;
     }
     if (typeof input.bodyPreview === 'string') data.bodyPreview = input.bodyPreview.trim() || null;
+    if ('templateVariables' in input) data.templateVariables = toJsonOrNull(input.templateVariables);
     if (typeof input.scheduledAt === 'string') data.scheduledAt = new Date(input.scheduledAt);
     if (input.scheduledAt === null) data.scheduledAt = null;
     if (Array.isArray(input.storeIds)) {
-      data.storeIds = this.visibleStores(user, input.storeIds as string[]) ?? [];
+      data.storeIds = visibleStores(user, input.storeIds as string[]) ?? [];
     }
     if (input.definition !== undefined) {
       data.audienceSnapshot = parseSegmentDefinition(
@@ -503,7 +496,23 @@ export class CampaignsService implements OnModuleInit {
     if (row.status !== 'draft') {
       throw new ConflictException('Only a draft can be sent for approval.');
     }
-    this.assertSendable(row);
+    await this.assertSendable(user, row);
+
+    /*
+     * AN APPROVER DOES NOT QUEUE FOR THEMSELVES.
+     *
+     * Approval exists so a broadcast to thousands of customers is seen by
+     * somebody senior to whoever wrote it. When the author IS that person it
+     * stops being a check and becomes a second button — head office writing a
+     * campaign, sending it to themselves, and approving it a moment later.
+     * The client asked for exactly this: "head office should definitely not
+     * require that".
+     *
+     * The record still says both things happened and who did them, because
+     * removing the ceremony is not the same as removing the trail.
+     */
+    if (isApprover(user)) return this.approveDraft(user, row, true);
+
     const updated = await this.prisma.messagingCampaign.update({
       where: { id: row.id },
       data: { status: 'awaiting_approval' },
@@ -531,14 +540,32 @@ export class CampaignsService implements OnModuleInit {
     if (row.status !== 'awaiting_approval') {
       throw new ConflictException('Only a campaign awaiting approval can be approved.');
     }
-    this.assertSendable(row);
+    return this.approveDraft(user, row, false);
+  }
+
+  /** The approval itself, shared by the two ways of reaching it. */
+  private async approveDraft(
+    user: AuthUser,
+    row: Awaited<ReturnType<CampaignsService['loadCampaign']>>,
+    ownWork: boolean,
+  ) {
+    await this.assertSendable(user, row);
 
     const definition = await this.resolveDefinition(user, {
       segmentId: row.segmentId ?? undefined,
       definition: row.audienceSnapshot ?? undefined,
     });
 
-    const asset = await this.resolveTemplateAsset(user, row);
+    /*
+     * The mapping is checked HERE, not at the provider.
+     *
+     * A template with an unfilled `{{1}}` is refused by Meta once per
+     * recipient, after the campaign is already running, and each refusal reads
+     * as that customer's problem rather than the campaign's. Approval is the
+     * last moment anybody is looking at this, so it is where it is caught.
+     */
+    const { assetId } = await this.variableMappingsFor(user, row);
+    const asset = { id: assetId };
 
     const updated = await this.prisma.messagingCampaign.update({
       where: { id: row.id },
@@ -561,7 +588,11 @@ export class CampaignsService implements OnModuleInit {
       action: 'campaign.approved',
       entityType: 'MessagingCampaign',
       entityId: row.id,
-      summary: `Approved the campaign "${row.name}".`,
+      // Says which of the two routes this was. "Approved their own" is the
+      // fact an auditor would want and the one the shortcut could hide.
+      summary: ownWork
+        ? `Approved their own campaign "${row.name}" and released it.`
+        : `Approved the campaign "${row.name}".`,
     });
 
     await this.jobs.enqueue({
@@ -722,15 +753,12 @@ export class CampaignsService implements OnModuleInit {
 
     const definition = parseSegmentDefinition(campaign.audienceSnapshot);
     const compiled = compileSegment(definition, new Date());
-    const where: Prisma.PartyWhereInput = {
-      organisationId: ctx.organisationId,
-      AND: [
-        compiled.where,
-        ...(campaign.storeIds.length
-          ? [{ OR: [{ storeId: { in: campaign.storeIds } }, { storeId: null }] }]
-          : []),
-      ],
-    };
+    // The same builder the preview went through, so the archive exclusion and
+    // the branch scope cannot be present on one side and missing on the other.
+    const where = campaignAudienceWhere(
+      { organisationId: ctx.organisationId, storeIds: campaign.storeIds },
+      compiled.where,
+    );
 
     const total = await this.prisma.party.count({ where });
     if (total > MAX_AUDIENCE) {
@@ -753,7 +781,8 @@ export class CampaignsService implements OnModuleInit {
 
     let cursor: string | undefined;
     let created = 0;
-    let excluded = 0;
+    let blocked = 0;
+    let unreadable = 0;
     for (;;) {
       const batch = await this.prisma.party.findMany({
         where,
@@ -767,20 +796,26 @@ export class CampaignsService implements OnModuleInit {
 
       const rows: Prisma.CampaignRecipientCreateManyInput[] = [];
       for (const p of batch) {
-        const normalized = this.identity.normalize('whatsapp', p.whatsapp ?? p.phone ?? '', country);
+        const normalized = campaignContactValue(p, (raw) =>
+          this.identity.normalize('whatsapp', raw, country),
+        );
         if (!normalized) {
-          excluded += 1;
-          continue; // nothing to key a recipient row on
+          // Counted apart from the blocked: `contactValue` is half the unique
+          // key, so there is nothing to key a recipient row on and this person
+          // leaves no trace on the campaign screen. The audit line below is
+          // where the preview's figure and the sent figure are reconciled.
+          unreadable += 1;
+          continue;
         }
-        const blocked = p.isBlacklisted;
-        if (blocked) excluded += 1;
+        const isBlocked = p.isBlacklisted;
+        if (isBlocked) blocked += 1;
         rows.push({
           organisationId: ctx.organisationId,
           campaignId: campaign.id,
           partyId: p.id,
           contactValue: normalized,
-          status: blocked ? 'excluded' : 'pending',
-          exclusionReason: blocked ? 'blocked_customer' : null,
+          status: isBlocked ? 'excluded' : 'pending',
+          exclusionReason: isBlocked ? 'blocked_customer' : null,
         });
       }
       if (rows.length) {
@@ -800,10 +835,12 @@ export class CampaignsService implements OnModuleInit {
       action: 'campaign.expanded',
       entityType: 'MessagingCampaign',
       entityId: campaign.id,
-      summary: `Expanded "${campaign.name}" to ${created} recipients; ${excluded} excluded.`,
+      summary:
+        `Expanded "${campaign.name}" to ${created} recipients; ` +
+        `${blocked} blocked, ${unreadable} with no usable number.`,
     });
     await this.enqueueSend(ctx.organisationId, campaign.id);
-    return { created, excluded };
+    return { created, blocked, unreadable };
   }
 
   /**
@@ -843,6 +880,52 @@ export class CampaignsService implements OnModuleInit {
 
     if (!batch.length) return this.finish(ctx.organisationId, campaign.id);
 
+    /*
+     * What fills the template's {{n}} for each person in this chunk.
+     *
+     * Parsed once per chunk rather than per recipient -- it is the same mapping
+     * for all of them -- and the customers it reads from are fetched in one
+     * query, because a name lookup per recipient is a hundred round trips per
+     * chunk on a campaign that may run to thousands.
+     *
+     * A mapping that no longer matches its template (the template was edited at
+     * Meta after approval, so a variable appeared) stops the whole campaign
+     * here. The alternative is sending to some of the audience and failing on
+     * the rest, which is the one outcome nobody can undo.
+     */
+    let mappings: VariableMapping[] = [];
+    if (campaign.templateVariables !== null && campaign.templateVariables !== undefined) {
+      try {
+        mappings = parseVariableMappings(
+          campaign.templateVariables,
+          variableSlotsIn(campaign.bodyPreview ?? ''),
+        );
+      } catch {
+        // bodyPreview is the approved wording WITH its samples substituted, so
+        // it carries no {{n}} and the count above is 0. Fall back to trusting
+        // the stored mapping as saved: approval already checked it against the
+        // provider's own template.
+        mappings = parseVariableMappings(
+          campaign.templateVariables,
+          Array.isArray(campaign.templateVariables) ? campaign.templateVariables.length : 0,
+        );
+      }
+    }
+
+    const subjects = new Map<string, { name: string | null; branchName: string | null }>();
+    if (mappings.length) {
+      const ids = batch.map((r) => r.partyId).filter((id): id is string => Boolean(id));
+      const parties = ids.length
+        ? await this.prisma.party.findMany({
+            where: { id: { in: ids }, organisationId: ctx.organisationId },
+            select: { id: true, name: true, store: { select: { name: true } } },
+          })
+        : [];
+      for (const p of parties) {
+        subjects.set(p.id, { name: p.name, branchName: p.store?.name ?? null });
+      }
+    }
+
     // The campaign runs as the approver. Sending as nobody would bypass store
     // scope inside queueToContact; sending as the creator would let an
     // unapproved author's scope decide what an approver signed off on.
@@ -863,6 +946,11 @@ export class CampaignsService implements OnModuleInit {
           purpose: 'marketing',
           templateName: campaign.templateName,
           languageCode: campaign.templateLanguage,
+          // Undefined when the template takes no values: Meta refuses an empty
+          // parameter list as firmly as a missing one.
+          templateComponents: templateComponentsFor(
+            resolveVariables(mappings, subjects.get(recipient.partyId ?? '') ?? {}),
+          ),
           idempotencyKey: `campaign:${campaign.id}:${recipient.id}`,
         });
         await this.prisma.campaignRecipient.update({
@@ -952,12 +1040,62 @@ export class CampaignsService implements OnModuleInit {
     return row;
   }
 
-  private assertSendable(row: { templateName: string | null; templateLanguage: string | null }) {
+  /**
+   * Everything that has to be true before a campaign may move towards customers.
+   *
+   * Both the submit and the approve path come through here, and any future one
+   * should too: the wizard is not what protects the send. These endpoints can
+   * be POSTed at directly, and the screen's own count is a number the browser
+   * holds — neither is a reason to believe anybody is on the other end.
+   */
+  private async assertSendable(
+    user: AuthUser,
+    row: Prisma.MessagingCampaignGetPayload<object>,
+  ) {
     if (!row.templateName || !row.templateLanguage) {
       throw new BadRequestException(
         'A WhatsApp campaign needs an approved template name and its language, for example en_US.',
       );
     }
+    await this.assertAudienceReachesSomeone(user, row);
+  }
+
+  /**
+   * Refuse a broadcast that would reach nobody.
+   *
+   * Counted here rather than trusted from the request, and counted through the
+   * same tenant scope the preview screen uses, so the refusal names the same
+   * number the manager was shown. An audience that matches no one spends an
+   * approval, finishes as a "completed" campaign that sent nothing, and tells
+   * nobody what went wrong — the rules were simply wrong, which is a sentence
+   * worth saying out loud.
+   */
+  private async assertAudienceReachesSomeone(
+    user: AuthUser,
+    row: Prisma.MessagingCampaignGetPayload<object>,
+  ) {
+    const definition = await this.resolveDefinition(user, {
+      segmentId: row.segmentId ?? undefined,
+      definition: row.audienceSnapshot ?? undefined,
+    });
+    const compiled = compileSegment(definition, new Date());
+    /*
+     * The SEND's audience, not the previewer's.
+     *
+     * `campaignAudienceWhere` is the clause expansion itself uses — the
+     * campaign's own frozen branches, not whatever branches this approver can
+     * currently see. A gate measured against a different set from the one that
+     * will actually run is a gate that passes sends it should stop.
+     */
+    const where = campaignAudienceWhere(row, compiled.where);
+
+    const [total, contactable] = await Promise.all([
+      this.prisma.party.count({ where }),
+      this.prisma.party.count({ where: { AND: [where, HAS_CONTACT_POINT] } }),
+    ]);
+
+    const refusal = audienceRefusal({ total, contactable });
+    if (refusal) throw new BadRequestException(refusal);
   }
 
   /**
@@ -973,11 +1111,19 @@ export class CampaignsService implements OnModuleInit {
     const asset = await this.prisma.integrationAsset.findFirst({
       where: {
         organisationId: user.organisationId,
-        kind: 'whatsapp_template',
+        /*
+         * `message_template`, which is what the template sync and the outbox
+         * both write (TEMPLATE_ASSET_KIND). This read asked for
+         * 'whatsapp_template' — a kind nothing in the system has ever
+         * written — so approving ANY campaign failed with "synchronise
+         * templates first", however many times anybody synchronised. It is
+         * the reason no broadcast has ever been sent.
+         */
+        kind: 'message_template',
         externalId: key,
         integration: { providerCode: 'whatsapp_cloud' },
       },
-      select: { id: true },
+      select: { id: true, metadata: true },
     });
     if (!asset) {
       throw new BadRequestException(
@@ -985,6 +1131,42 @@ export class CampaignsService implements OnModuleInit {
       );
     }
     return asset;
+  }
+
+  /**
+   * How many `{{n}}` the chosen template carries, from what Meta told us.
+   *
+   * Read from the template rather than from the author's recollection of it:
+   * the mapping has to match what the provider approved, and the provider is
+   * the only authority on that. `variables` is the projected list; the source
+   * body is the fallback for a row recorded before that list was kept.
+   */
+  private templateSlots(metadata: unknown): number {
+    const raw = (metadata ?? {}) as Record<string, unknown>;
+    if (Array.isArray(raw.variables)) return raw.variables.length;
+    return typeof raw.bodySource === 'string' ? variableSlotsIn(raw.bodySource) : 0;
+  }
+
+  /**
+   * The mapping for a campaign, checked against its template.
+   *
+   * Throws the author's own sentence rather than a validator name — this runs
+   * on approval, which is the last moment anybody is looking.
+   */
+  private async variableMappingsFor(
+    user: AuthUser,
+    row: { templateName: string | null; templateLanguage: string | null; templateVariables: unknown },
+  ): Promise<{ assetId: string; mappings: VariableMapping[] }> {
+    const asset = await this.resolveTemplateAsset(user, row);
+    try {
+      return {
+        assetId: asset.id,
+        mappings: parseVariableMappings(row.templateVariables, this.templateSlots(asset.metadata)),
+      };
+    } catch (error) {
+      if (error instanceof CampaignVariableError) throw new BadRequestException(error.message);
+      throw error;
+    }
   }
 
   private assertManager(user: AuthUser, what: string) {
@@ -999,13 +1181,55 @@ export class CampaignsService implements OnModuleInit {
    * campaign for their branch; releasing it to customers is a head-office act.
    */
   private assertApprover(user: AuthUser) {
-    const allowed: Role[] = ['head_office', 'area_manager'];
-    if (!allowed.includes(user.role)) {
+    if (!isApprover(user)) {
       throw new BadRequestException(
         'Only head office or an area manager can approve a campaign.',
       );
     }
   }
+}
+
+/**
+ * A value on its way into a nullable Json column.
+ *
+ * `Prisma.JsonNull` rather than `null`: the latter means "leave this alone" to
+ * Prisma, so clearing a mapping by passing null would silently keep the old one
+ * — and a campaign would send values its author believed they had removed.
+ */
+function toJsonOrNull(value: unknown): Prisma.InputJsonValue | typeof Prisma.JsonNull {
+  return value === undefined || value === null
+    ? Prisma.JsonNull
+    : (value as Prisma.InputJsonValue);
+}
+
+/**
+ * May this person release a broadcast to customers?
+ *
+ * Head office and an area manager. A store manager may draft one for their
+ * branch; letting it reach customers is somebody else's signature.
+ */
+function isApprover(user: AuthUser): boolean {
+  const allowed: Role[] = ['head_office', 'area_manager'];
+  return allowed.includes(user.role);
+}
+
+/**
+ * Why an audience cannot be broadcast to, in words a manager can act on — or
+ * null when it can.
+ *
+ * Sending to nobody is not a send; it is a mistake in the rules, and the
+ * refusal has to say which mistake. "Nobody matches" sends her back to the
+ * rules; "nobody who matches has a number" tells her the rules are right and
+ * the records are not, which is a different afternoon's work.
+ */
+export function audienceRefusal(counts: { total: number; contactable: number }): string | null {
+  if (counts.total === 0) {
+    return 'These rules match nobody, so there is no one to send to. Change the audience, count who it reaches, and try again.';
+  }
+  if (counts.contactable === 0) {
+    return `None of the ${counts.total} people who match have a phone or WhatsApp number, so nothing could be delivered. Change the audience, count who it reaches, and try again.`;
+  }
+  return null;
 }
 
 function isUniqueViolation(error: unknown): boolean {

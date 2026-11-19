@@ -37,6 +37,34 @@ export interface CampaignCounts {
   cancelled: number;
 }
 
+/**
+ * Where one `{{n}}` gets its value when a broadcast goes out.
+ *
+ * Mirrors VARIABLE_SOURCES in the backend's campaign-variables. `fallback` is
+ * not optional for anything read off the customer: Meta refuses a message with
+ * a blank value in it, so a customer with no name recorded would fail the send
+ * rather than merely read oddly.
+ */
+export type CampaignVariableSource =
+  | "customer_first_name"
+  | "customer_name"
+  | "branch_name"
+  | "fixed";
+
+export interface CampaignVariable {
+  slot: number;
+  source: CampaignVariableSource;
+  text?: string;
+  fallback: string;
+}
+
+export const CAMPAIGN_VARIABLE_SOURCES: { value: CampaignVariableSource; label: string }[] = [
+  { value: "customer_first_name", label: "Customer's first name" },
+  { value: "customer_name", label: "Customer's full name" },
+  { value: "branch_name", label: "Their branch" },
+  { value: "fixed", label: "The same wording for everyone" },
+];
+
 export interface Campaign {
   id: string;
   name: string;
@@ -46,6 +74,7 @@ export interface Campaign {
   segmentId: string | null;
   templateName: string | null;
   templateLanguage: string | null;
+  templateVariables: CampaignVariable[] | null;
   bodyPreview: string | null;
   storeIds: string[];
   scheduledAt: string | null;
@@ -81,6 +110,8 @@ export interface AudienceSegment {
 export interface AudiencePreview {
   total: number;
   contactable: number;
+  /** Contactable less the blocked — the figure the campaign later calls `targeted`. */
+  sendable: number;
   consentCheckedAtSend: boolean;
   excluded: { noContactPoint: number; blocked: number };
   reasons: string[];
@@ -117,7 +148,22 @@ export interface CampaignRecipientRow {
  */
 export const SEGMENT_FIELD_GROUPS: {
   label: string;
-  fields: { field: string; label: string; ops: { op: string; label: string }[]; hint?: string }[];
+  fields: {
+    field: string;
+    label: string;
+    ops: { op: string; label: string }[];
+    hint?: string;
+    /**
+     * A fixed vocabulary, when the field has one.
+     *
+     * `value` is the database's own word and `label` is the one a jeweller
+     * uses. Typing into these used to be possible and produced "Something went
+     * wrong": the text went to Postgres as an enum value and was refused, so a
+     * plausible word like "customer" on Enquiry stage crashed the preview
+     * instead of matching nobody.
+     */
+    options?: { value: string; label: string }[];
+  }[];
 }[] = [
   {
     label: "Who they are",
@@ -144,7 +190,34 @@ export const SEGMENT_FIELD_GROUPS: {
         field: "party.type",
         label: "Record type",
         ops: [{ op: "in", label: "is one of" }],
-        hint: "customer, supplier, staff",
+        options: [
+          { value: "customer", label: "Customer" },
+          { value: "supplier", label: "Supplier" },
+          { value: "staff", label: "Staff" },
+          { value: "salesperson", label: "Salesperson" },
+          { value: "branch", label: "Branch" },
+          { value: "account", label: "Account" },
+        ],
+      },
+      {
+        /*
+         * The branch a customer belongs to.
+         *
+         * The chips under the rules already narrow a broadcast to branches,
+         * but only as a filter over the whole audience. As a RULE it composes:
+         * "at Bandra OR tagged Meta Leads", or "everyone except Head Office".
+         * The client asked for it beside City, and the compiler has always
+         * understood the field — it was simply never offered.
+         *
+         * Options are the tenant's own branches, so they are filled in by the
+         * screen from the session rather than listed here.
+         */
+        field: "party.storeId",
+        label: "Branch",
+        ops: [
+          { op: "in", label: "is one of" },
+          { op: "not_in", label: "is not one of" },
+        ],
       },
       { field: "party.city", label: "City", ops: [{ op: "in", label: "is one of" }, { op: "contains", label: "contains" }] },
       { field: "party.state", label: "State", ops: [{ op: "in", label: "is one of" }] },
@@ -169,8 +242,31 @@ export const SEGMENT_FIELD_GROUPS: {
   {
     label: "Where they came from",
     fields: [
-      { field: "lead.stage", label: "Enquiry stage", ops: [{ op: "in", label: "is one of" }] },
-      { field: "lead.source", label: "Enquiry source", ops: [{ op: "in", label: "is one of" }] },
+      {
+        field: "lead.stage",
+        label: "Enquiry stage",
+        ops: [{ op: "in", label: "is one of" }],
+        options: [
+          { value: "inquiry", label: "Enquiry" },
+          { value: "quotation", label: "Quotation sent" },
+          { value: "order_placed", label: "Order placed" },
+        ],
+      },
+      {
+        field: "lead.source",
+        label: "Enquiry source",
+        ops: [{ op: "in", label: "is one of" }],
+        options: [
+          { value: "walk_in", label: "Walk-in" },
+          { value: "phone", label: "Phone" },
+          { value: "whatsapp", label: "WhatsApp" },
+          { value: "website", label: "Website" },
+          { value: "instagram", label: "Instagram" },
+          { value: "meta_ads", label: "Meta ad or lead form" },
+          { value: "referral", label: "Referral" },
+          { value: "imported", label: "Imported from a file" },
+        ],
+      },
       {
         field: "lead.createdAt",
         label: "Enquiry raised",
@@ -316,6 +412,7 @@ export function useCreateCampaign() {
       definition?: SegmentDefinition;
       templateName?: string;
       templateLanguage?: string;
+      templateVariables?: CampaignVariable[];
       bodyPreview?: string;
       storeIds?: string[];
       scheduledAt?: string;

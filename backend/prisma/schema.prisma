@@ -1249,6 +1249,13 @@ model Party {
   id             String       @id @default(cuid())
   storeId        String?
   name           String
+  /// 0 for a name starting with a letter or digit, 1 for anything else.
+  ///
+  /// Computed by Postgres, never written from here: the column is GENERATED
+  /// ALWAYS AS … STORED (see 20261119160000_party_name_group). Ordering the
+  /// directory by this and then by name puts the emoji-named WhatsApp contacts
+  /// after the real names instead of on page one in front of them.
+  nameGroup      Int?
   /// The name as it arrived, kept the first time a person renames this party.
   /// A WhatsApp profile name full of hearts and symbols is unreadable in a list
   /// but it IS what the customer calls themselves on the channel we message
@@ -5582,6 +5589,12 @@ model MessagingCampaign {
   /// Resolved IntegrationAsset at approval time, so a template deleted from the
   /// tenant afterwards fails loudly instead of sending something else.
   templateAssetId  String?
+  /// What fills the template's `{{1}}`, `{{2}}` … for each recipient: one row
+  /// per placeholder naming its source (the customer's name, their branch, or
+  /// a fixed wording) and what to send when that source is empty. Campaigns
+  /// used to send no parameters at all, so any template with a variable was
+  /// rejected by the provider on every recipient. See crm/campaign-variables.
+  templateVariables Json?
   /// Rendered example for the review screen. NOT what is sent.
   bodyPreview      String?
 

@@ -36,6 +36,7 @@ import { AdvancedCrmService } from './advanced-crm.service';
 import { LeadIntakeService } from './lead-intake.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import type { AdReferral } from '../integration/contracts/ad-referral';
+import { ProvenanceTagsService } from './provenance-tags.service';
 
 /**
  * ConversationsService — the unified inbox (Phase A3).
@@ -191,6 +192,7 @@ export class ConversationsService {
     private readonly omnichannel: OmnichannelService,
     private readonly storage: StorageService,
     private readonly notifications: NotificationsService,
+    private readonly provenanceTags: ProvenanceTagsService,
   ) {}
 
   private readonly logger = new Logger(ConversationsService.name);
@@ -838,9 +840,17 @@ export class ConversationsService {
                 interest: ref.headline ?? null,
                 originKey,
               },
-              select: { id: true },
+              select: { id: true, partyId: true, source: true },
             });
             leadId = created.id;
+            // Tagged where it came from as it is created, so a broadcast built
+            // on tags keeps seeing new enquiries without a backfill.
+            await this.provenanceTags.tagNewLead({
+              organisationId,
+              leadId: created.id,
+              partyId: created.partyId,
+              source: created.source,
+            });
           } catch (err) {
             // Lost the race. The other delivery created this lead; returning
             // theirs IS the correct outcome, not an error.
@@ -1115,9 +1125,15 @@ export class ConversationsService {
             source: this.leadSourceFor(convo.sourcePlatform),
             originKey,
           },
-          select: { id: true },
+          select: { id: true, partyId: true, source: true },
         });
         leadId = created.id;
+        await this.provenanceTags.tagNewLead({
+          organisationId,
+          leadId: created.id,
+          partyId: created.partyId,
+          source: created.source,
+        });
       } catch (err) {
         // A concurrent assignment, or the inbound path finally routing, won the
         // race. Returning theirs IS the correct outcome.
@@ -1642,21 +1658,50 @@ export class ConversationsService {
   }
 
   /**
+   * The branch the store switcher is pointed at, as an extra `AND` term.
+   *
+   * Separate from `visibility()` because the two answer different questions.
+   * `visibility()` is what this person is ALLOWED to read and is never relaxed;
+   * this is what they have ASKED to look at, and it can only ever remove rows
+   * from that. `assertStoreAllowed` is what keeps it that way — a branch
+   * outside the caller's scope is refused rather than silently honoured.
+   *
+   * Unbranched threads stay — see StoreScopeService.storeOrUnbranchedFilter for
+   * the rule and why it is this way round. Here it also means that choosing a
+   * branch never hides the central queue from head office, which is the one
+   * place an unrouted enquiry is waiting for somebody to claim it.
+   *
+   * Returns an array so an absent branch adds nothing at all rather than a
+   * clause that matches everything.
+   */
+  private branchClause(
+    user: AuthUser,
+    requestedStoreId?: string,
+  ): Prisma.ConversationWhereInput[] {
+    if (!requestedStoreId || requestedStoreId === 'all') return [];
+    this.scope.assertStoreAllowed(user, requestedStoreId);
+    return [{ OR: [{ storeId: requestedStoreId }, { storeId: null }] }];
+  }
+
+  /**
    * How many threads sit in each queue, for the caller.
    *
-   * Counted BY THE SERVER, under exactly the same `visibility()` predicate the
-   * list uses. Counting on the client would mean counting the page it happens to
-   * have fetched — a badge reading "50" on a capped list, and a store manager
-   * being told how many threads exist in a queue they are not allowed to read.
+   * Counted BY THE SERVER, under exactly the same `visibility()` predicate AND
+   * the same branch as the list. Counting on the client would mean counting the
+   * page it happens to have fetched — a badge reading "50" on a capped list, and
+   * a store manager being told how many threads exist in a queue they are not
+   * allowed to read. Counting every branch while the list below shows one is the
+   * same lie told the other way round.
    *
    * The keys match the queue tabs one-for-one. Labels are deliberately NOT here:
    * what a tenant calls a location or a customer is a product decision that
    * belongs to the screen, not to a counting query.
    */
-  async queueCounts(user: AuthUser): Promise<Record<string, number>> {
+  async queueCounts(user: AuthUser, requestedStoreId?: string): Promise<Record<string, number>> {
+    const branch = this.branchClause(user, requestedStoreId);
     const scoped = (extra: Prisma.ConversationWhereInput): Prisma.ConversationWhereInput => ({
       organisationId: user.organisationId,
-      AND: [this.visibility(user), extra],
+      AND: [this.visibility(user), ...branch, extra],
     });
 
     const queues: [string, Prisma.ConversationWhereInput][] = [
@@ -1708,7 +1753,10 @@ export class ConversationsService {
       routingReview?: boolean;
       /** Queue: inbound traffic not yet linked to a customer. */
       unidentified?: boolean;
-      /** Queue: one store's conversations (still intersected with the caller's scope). */
+      /**
+       * The branch the store switcher is pointed at — `X-Store-Id`, or the
+       * literal 'all'. Still intersected with the caller's own scope.
+       */
       storeId?: string;
       /**
        * One customer's threads. Narrowing, like every other filter here: the
@@ -1732,7 +1780,7 @@ export class ConversationsService {
     // A requested store is INTERSECTED with the caller's own scope, never
     // substituted for it — a filter must not become a way to read another
     // store's inbox.
-    if (opts.storeId) this.scope.assertStoreAllowed(user, opts.storeId);
+    const branch = this.branchClause(user, opts.storeId);
     if (opts.nonAd && user.role !== 'head_office') {
       throw new ForbiddenException('Only head office can read conversations no ad brought in.');
     }
@@ -1763,10 +1811,7 @@ export class ConversationsService {
         // AND, not a sibling OR: a top-level `storeId` alongside an `OR` that
         // admits `storeId: null` is contradictory, and Prisma would AND them
         // into something nobody intended.
-        AND: [
-          this.visibility(user),
-          ...(opts.storeId ? [{ storeId: opts.storeId }] : []),
-        ],
+        AND: [this.visibility(user), ...branch],
       },
       orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }],
       take,

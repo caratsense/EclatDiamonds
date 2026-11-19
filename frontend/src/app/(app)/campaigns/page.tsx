@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -102,6 +103,7 @@ function DeliveryCell({ campaign }: { campaign: Campaign }) {
 }
 
 export default function CampaignsPage() {
+  const router = useRouter();
   const [filter, setFilter] = useState("all");
   const campaigns = useCampaigns(filter === "all" ? undefined : filter);
 
@@ -165,7 +167,19 @@ export default function CampaignsPage() {
                 </TableHeader>
                 <TableBody>
                   {campaigns.data.map((c) => (
-                    <TableRow key={c.id}>
+                    /*
+                      The whole row opens the broadcast, not just its name.
+                      The client pressed the status badge of a campaign waiting
+                      for her approval, nothing happened, and she reported that
+                      there was no way to approve it at all — the Approve
+                      button is on the detail screen, one click away behind a
+                      link that was only the few characters of the name.
+                    */
+                    <TableRow
+                      key={c.id}
+                      className="cursor-pointer"
+                      onClick={() => router.push(`/campaigns/${c.id}`)}
+                    >
                       <TableCell>
                         <Link
                           href={`/campaigns/${c.id}`}

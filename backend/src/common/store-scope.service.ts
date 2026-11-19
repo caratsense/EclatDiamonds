@@ -100,6 +100,36 @@ export class StoreScopeService {
   }
 
   /**
+   * `storeFilter`, widened to keep rows that have no branch at all.
+   *
+   * THE RULE the branch picker follows, written once so every list agrees:
+   * choosing a branch narrows a list to that branch and never removes a row
+   * whose `storeId` is null. An org-level customer, an unrouted ad thread, a
+   * head-office task meant for everybody — none of those is AT another branch,
+   * so a branch choice has nothing to exclude there.
+   *
+   * It is the only answer that works for the people on the floor. Only head
+   * office and an area manager are offered the "All Stores" entry in the store
+   * switcher; a store manager and a salesperson always send a concrete branch,
+   * so hiding unbranched rows whenever a branch is chosen would hide them from
+   * those users permanently. That is exactly how an organisation-wide task once
+   * became visible to nobody, and how 400-odd customers with no branch sat in
+   * the database unreachable from the directory.
+   *
+   * Widening is by branch only, never by tenant: `storeFilter` is already
+   * organisation-bounded and every call site ANDs an `organisationId`.
+   *
+   * Spread it into a `where` that has no other top-level `OR`, or push it into
+   * an `AND` array alongside one.
+   */
+  storeOrUnbranchedFilter(
+    user: AuthUser,
+    requestedStoreId?: string,
+  ): { OR: [{ storeId: { in: string[] } | string }, { storeId: null }] } {
+    return { OR: [this.storeFilter(user, requestedStoreId), { storeId: null }] };
+  }
+
+  /**
    * A `where` fragment for ORGANISATION-level / nullable-store models (gold &
    * diamond rates, discount limits/presets, scheme plans, sync state, legacy rows,
    * audit reads, …). Use this where `storeFilter` cannot (a row with a null storeId

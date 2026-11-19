@@ -9,6 +9,7 @@ import { ActivityService } from './activity.service';
 import { IdentityService, type ContactKind } from './identity.service';
 import { AdvancedCrmService } from './advanced-crm.service';
 import { sopFollowUps } from '../common/follow-up-cadence';
+import { ProvenanceTagsService } from './provenance-tags.service';
 
 // SOP follow-up cadence lives in common/follow-up-cadence.ts, shared with the
 // manual and QR paths.
@@ -89,6 +90,7 @@ export class LeadIntakeService {
     private readonly audit: AuditService,
     private readonly sequence: SequenceService,
     private readonly advanced: AdvancedCrmService,
+    private readonly provenanceTags: ProvenanceTagsService,
   ) {}
 
   async capture(input: LeadIntakeInput): Promise<LeadIntakeResult> {
@@ -224,9 +226,16 @@ export class LeadIntakeService {
       throw error;
     }
 
-    // Advisory, and outside the transaction: a lead that exists and is unowned
-    // is a far better outcome than a submission refused because the branch has
-    // no eligible salesperson today.
+    // Both of these are advisory and both are outside the transaction: a lead
+    // that exists, unowned and untagged, is a far better outcome than a
+    // submission refused because the branch has no eligible salesperson today
+    // or because a label could not be written.
+    await this.provenanceTags.tagNewLead({
+      organisationId,
+      leadId: lead.id,
+      partyId: identity.partyId,
+      source: input.source,
+    });
     const assigned = await this.advanced.autoAssignLead(organisationId, lead.id);
 
     return {

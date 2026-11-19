@@ -4,6 +4,7 @@ import { Throttle } from '@nestjs/throttler';
 import { Public } from '../auth/public.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { AuthUser, CurrentUser } from '../common/auth-user';
+import { StoreHeader } from '../common/store-header.decorator';
 import { FeedbackService } from './feedback.service';
 import {
   FeedbackSettingsDto,
@@ -26,17 +27,26 @@ export class FeedbackController {
   constructor(private readonly feedback: FeedbackService) {}
 
   // Management information: store manager and above, never a salesperson.
+  // Branch from the store switcher unless the caller named one.
   @Roles('store_manager')
   @Get('summary')
-  summary(@CurrentUser() user: AuthUser, @Query() query: FeedbackSummaryDto) {
-    return this.feedback.summary(user, query);
+  summary(
+    @CurrentUser() user: AuthUser,
+    @Query() query: FeedbackSummaryDto,
+    @StoreHeader() store?: string,
+  ) {
+    return this.feedback.summary(user, { ...query, storeId: query.storeId ?? store });
   }
 
   // Management information: store manager and above, never a salesperson.
   @Roles('store_manager')
   @Get('responses')
-  list(@CurrentUser() user: AuthUser, @Query() query: ListFeedbackDto) {
-    return this.feedback.list(user, query);
+  list(
+    @CurrentUser() user: AuthUser,
+    @Query() query: ListFeedbackDto,
+    @StoreHeader() store?: string,
+  ) {
+    return this.feedback.list(user, { ...query, storeId: query.storeId ?? store });
   }
 
   @Get('settings')

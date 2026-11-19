@@ -376,7 +376,6 @@ export function useConversations(params: {
   unidentified?: boolean;
   /** Conversations no ad brought in. Head office only; the server refuses others. */
   nonAd?: boolean;
-  storeId?: string;
   /**
    * Which Meta surface the ad was tapped on — 'instagram' | 'facebook' |
    * 'messenger', or 'unknown' for an ad lead whose referral had no readable
@@ -387,6 +386,9 @@ export function useConversations(params: {
   /** Every thread belonging to one customer, newest first. */
   partyId?: string;
 }) {
+  // No `storeId` parameter: the branch travels on `X-Store-Id` with every
+  // request, and the server narrows the inbox to it. Sending it here as well
+  // would be a second branch control that could disagree with the top bar.
   const storeKey = useStoreKey();
   return useQuery({
     queryKey: ["crm", "conversations", params, storeKey],
@@ -401,7 +403,6 @@ export function useConversations(params: {
             routingReview: params.routingReview ? "true" : undefined,
             unidentified: params.unidentified ? "true" : undefined,
             nonAd: params.nonAd ? "true" : undefined,
-            storeId: params.storeId,
             sourcePlatform: params.sourcePlatform,
             partyId: params.partyId,
           },

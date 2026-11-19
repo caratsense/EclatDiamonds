@@ -667,11 +667,11 @@ export class CallingService {
     user: AuthUser,
     opts: { mine?: boolean; storeId?: string },
   ): Prisma.TaskWhereInput {
-    if (opts.storeId) this.scope.assertStoreAllowed(user, opts.storeId);
     return {
       organisationId: user.organisationId,
       /*
-       * The same fix DashboardService.listTasks already carries.
+       * The same rule DashboardService.listTasks carries, and now the same
+       * helper.
        *
        * `storeFilter` is `{ storeId: { in: [...] } }`, and a task with a NULL
        * storeId matches no `in` list. Organisation-wide tasks are a supported,
@@ -679,9 +679,10 @@ export class CallingService {
        * successfully and then appeared in neither the queue nor any of the four
        * counts. A head-office follow-up was invisible to the people meant to
        * make it. Bounded by organisation, so widening the store test cannot
-       * cross a tenant.
+       * cross a tenant, and `storeOrUnbranchedFilter` still refuses a branch
+       * outside the caller's scope.
        */
-      OR: [this.scope.storeFilter(user, opts.storeId), { storeId: null }],
+      ...this.scope.storeOrUnbranchedFilter(user, opts.storeId),
       // A salesperson's queue is always their own, whatever the request says.
       ...(opts.mine || isSalesScoped(user) ? { assigneeId: user.id } : {}),
     };

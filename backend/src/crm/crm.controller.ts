@@ -17,6 +17,7 @@ import type { Response } from 'express';
 import { IsIn, IsNotEmpty, IsOptional, IsString, MaxLength, ValidateIf } from 'class-validator';
 
 import { AuthUser, CurrentUser } from '../common/auth-user';
+import { StoreHeader } from '../common/store-header.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { ActivityService } from './activity.service';
 import { ConversationsService } from './conversations.service';
@@ -233,14 +234,22 @@ export class CrmConversationsController {
     @Query('limit') limit?: string,
     @Query('routingReview') routingReview?: string,
     @Query('unidentified') unidentified?: string,
-    @Query('storeId') storeId?: string,
+    @StoreHeader() store?: string,
     @Query('partyId') partyId?: string,
     @Query('nonAd') nonAd?: string,
     @Query('sourcePlatform') sourcePlatform?: string,
   ) {
-    // Every one of these narrows the caller's own scope; none widens it. The
-    // store filter is asserted against their allowed stores in the service, and
-    // `nonAd` is refused there for anyone below head office.
+    /*
+     * Every one of these narrows the caller's own scope; none widens it. The
+     * store filter is asserted against their allowed stores in the service, and
+     * `nonAd` is refused there for anyone below head office.
+     *
+     * The branch comes from `@StoreHeader()`, not a bare `@Query('storeId')`.
+     * The store switcher in the top bar sends `X-Store-Id` on every request and
+     * this was the one list that only ever read the query string — so picking
+     * Mumbai Bandra up there left head office looking at Borivali's inbox as
+     * well. The decorator still accepts `?storeId` for callers that pass one.
+     */
     return this.conversations.list(user, {
       status,
       handling,
@@ -249,7 +258,7 @@ export class CrmConversationsController {
       routingReview: routingReview === 'true',
       unidentified: unidentified === 'true',
       nonAd: nonAd === 'true',
-      storeId: storeId || undefined,
+      storeId: store || undefined,
       partyId: partyId || undefined,
       sourcePlatform: sourcePlatform || undefined,
       limit: limit ? Number(limit) : undefined,
@@ -259,12 +268,16 @@ export class CrmConversationsController {
   /**
    * How many threads are in each queue, for this caller.
    *
+   * Takes the same branch as the list does. A badge counting every branch above
+   * a list showing one is a screen contradicting itself — the tab says 103 and
+   * eight rows are there, and the salesperson believes the list is broken.
+   *
    * Declared before `@Get(':id')` deliberately — Nest matches in declaration
    * order, so a route added below it would be swallowed by the id parameter.
    */
   @Get('queues')
-  queues(@CurrentUser() user: AuthUser) {
-    return this.conversations.queueCounts(user);
+  queues(@CurrentUser() user: AuthUser, @StoreHeader() store?: string) {
+    return this.conversations.queueCounts(user, store || undefined);
   }
 
   /**
@@ -457,14 +470,14 @@ export class CrmActivityController {
     @CurrentUser() user: AuthUser,
     @Query('limit') limit?: string,
     @Query('types') types?: string,
-    @Query('storeId') storeId?: string,
+    @StoreHeader() store?: string,
     @Query('since') since?: string,
   ) {
     const parsedSince = since ? new Date(since) : undefined;
     return this.activity.feed(user, {
       limit: limit ? Number(limit) : undefined,
       types: types ? types.split(',').filter(Boolean) : undefined,
-      storeId,
+      storeId: store || undefined,
       since: parsedSince && !Number.isNaN(parsedSince.valueOf()) ? parsedSince : undefined,
     });
   }
