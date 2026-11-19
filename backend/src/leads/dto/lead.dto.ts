@@ -243,10 +243,26 @@ export class UpdateFollowUpDto {
   @IsBoolean()
   done?: boolean;
 
-  /** Optional note; on done=true it is appended to the lead as a LeadNote. */
+  /** The remark; mandatory when done=true, and appended to the lead as a LeadNote. */
   @IsOptional()
   @IsString()
   note?: string;
+
+  /**
+   * Stop reminding about this customer: every follow-up still pending on the
+   * lead is closed. A separate, explicit decision — completing a follow-up
+   * never does this by itself (client, Nov: "if the follow-up is done and
+   * everything is sorted, no further reminder for that customer is needed").
+   */
+  @IsOptional()
+  @IsBoolean()
+  stopReminders?: boolean;
+
+  /** The day the NEXT follow-up falls due; it replaces the pending schedule. */
+  @IsOptional()
+  @IsString()
+  @Matches(YMD, { message: 'nextDueDate must be yyyy-mm-dd' })
+  nextDueDate?: string;
 }
 
 /** GET /leads/reminders query. */

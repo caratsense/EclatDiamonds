@@ -42,7 +42,12 @@ import { useSession } from "@/store/use-session";
 import { apiErrorMessage } from "@/lib/utils";
 import { ReminderDefaultsCard } from "@/components/reminders/reminder-defaults-card";
 import { ROLE_RANK } from "@/lib/types";
-import { reminderLabel } from "@/lib/reminder";
+import {
+  followUpDoneBody,
+  followUpDoneProblem,
+  reminderLabel,
+  type FollowUpNextStep,
+} from "@/lib/reminder";
 
 const nav = getNavItem("reminders")!;
 
@@ -317,6 +322,25 @@ function cnDue(bucket: ReminderBucket) {
   return `${base} border-border text-muted-foreground hover:text-foreground`;
 }
 
+/** What happens to the rest of the schedule, in the order a counter decides it. */
+const NEXT_STEPS: { value: FollowUpNextStep; label: string; hint: string }[] = [
+  {
+    value: "keep",
+    label: "Keep the schedule",
+    hint: "The reminders already booked for this customer still go out.",
+  },
+  {
+    value: "stop",
+    label: "Stop reminders",
+    hint: "Everything is sorted — nothing further is needed for this customer.",
+  },
+  {
+    value: "reschedule",
+    label: "Follow up later",
+    hint: "Replaces the pending reminder; there is never a second one beside it.",
+  },
+];
+
 function CompleteDialog({
   item,
   onOpenChange,
@@ -325,16 +349,40 @@ function CompleteDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const complete = useCompleteFollowUp();
-  const [note, setNote] = useState("");
+  const [remark, setRemark] = useState("");
+  const [next, setNext] = useState<FollowUpNextStep>("keep");
+  const [nextDueDate, setNextDueDate] = useState("");
+  // The reason it cannot be saved is shown once they have tried, not while
+  // they are still typing the first letter of the remark.
+  const [tried, setTried] = useState(false);
+
+  const draft = { remark, next, nextDueDate };
+  const problem = followUpDoneProblem(draft);
+  const chosen = NEXT_STEPS.find((s) => s.value === next)!;
+
+  function reset() {
+    setRemark("");
+    setNext("keep");
+    setNextDueDate("");
+    setTried(false);
+  }
 
   function confirm() {
     if (!item) return;
+    setTried(true);
+    if (problem) return;
     complete.mutate(
-      { id: item.id, note: note.trim() || undefined },
+      { id: item.id, ...followUpDoneBody(draft) },
       {
         onSuccess: () => {
-          toast.success(`Follow-up with ${item.customer} marked done`);
-          setNote("");
+          toast.success(
+            next === "stop"
+              ? `Follow-up done — no further reminders for ${item.customer}`
+              : next === "reschedule"
+                ? `Follow-up done — next one on ${fmtDate(nextDueDate)}`
+                : `Follow-up with ${item.customer} marked done`,
+          );
+          reset();
           onOpenChange(false);
         },
         onError: (err) => toast.error(apiErrorMessage(err, "Could not mark done.")),
@@ -346,7 +394,7 @@ function CompleteDialog({
     <Dialog
       open={!!item}
       onOpenChange={(open) => {
-        if (!open) setNote("");
+        if (!open) reset();
         onOpenChange(open);
       }}
     >
@@ -360,14 +408,65 @@ function CompleteDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-1.5">
-          <Label htmlFor="fu-note">Remark (optional)</Label>
+          <Label htmlFor="fu-note">Remark</Label>
           <Textarea
             id="fu-note"
             placeholder="e.g. Spoke to customer — coming in Saturday to finalise."
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
+            value={remark}
+            aria-invalid={tried && problem?.field === "remark"}
+            onChange={(e) => setRemark(e.target.value)}
           />
+          <p className="text-[11px] text-muted-foreground">
+            Every follow-up is recorded with what was said — it goes on the
+            customer&apos;s notes.
+          </p>
         </div>
+
+        <div className="grid gap-1.5">
+          <span id="fu-next" className="text-sm font-medium">
+            Next reminder
+          </span>
+          <div
+            role="radiogroup"
+            aria-labelledby="fu-next"
+            className="flex flex-wrap gap-2"
+          >
+            {NEXT_STEPS.map((step) => (
+              <Button
+                key={step.value}
+                type="button"
+                size="sm"
+                role="radio"
+                aria-checked={next === step.value}
+                variant={next === step.value ? "default" : "outline"}
+                onClick={() => setNext(step.value)}
+              >
+                {step.label}
+              </Button>
+            ))}
+          </div>
+          <p className="text-[11px] text-muted-foreground">{chosen.hint}</p>
+        </div>
+
+        {next === "reschedule" ? (
+          <div className="grid gap-1.5">
+            <Label htmlFor="fu-next-date">Next follow-up on</Label>
+            <Input
+              id="fu-next-date"
+              type="date"
+              min={todayISO()}
+              value={nextDueDate}
+              aria-invalid={tried && problem?.field === "nextDueDate"}
+              onChange={(e) => setNextDueDate(e.target.value)}
+              className="w-[11rem]"
+            />
+          </div>
+        ) : null}
+
+        {tried && problem ? (
+          <p className="text-xs text-destructive">{problem.message}</p>
+        ) : null}
+
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel

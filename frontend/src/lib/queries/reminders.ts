@@ -9,6 +9,7 @@ import {
 import { api } from "@/lib/api";
 import { useStoreKey } from "@/lib/queries/keys";
 import type { LeadSource } from "@/lib/mock/crm";
+import type { FollowUpDoneBody } from "@/lib/reminder";
 
 /**
  * Module 1 — Reminders (SOP follow-ups).
@@ -19,7 +20,7 @@ import type { LeadSource } from "@/lib/mock/crm";
  *
  * Live hooks against the backend the CRM agent is building:
  *   GET   /leads/reminders?scope=today|overdue|upcoming|pending|all
- *   PATCH /leads/reminders/:id  { dueDate?, done?, note? }
+ *   PATCH /leads/reminders/:id  { dueDate?, done?, note?, stopReminders?, nextDueDate? }
  */
 
 export type ReminderScope =
@@ -69,15 +70,18 @@ export function useReminders(scope: ReminderScope) {
   });
 }
 
-/** PATCH /leads/reminders/:id — mark a follow-up done (with an optional note). */
+/**
+ * PATCH /leads/reminders/:id — mark a follow-up done.
+ *
+ * The remark is mandatory, and the body also carries what should happen to the
+ * rest of the schedule: nothing, stop reminding this customer, or book the next
+ * follow-up (which replaces the pending one). Built by `followUpDoneBody`.
+ */
 export function useCompleteFollowUp() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, note }: { id: string; note?: string }) => {
-      const { data } = await api.patch<ReminderItem>(
-        `/leads/reminders/${id}`,
-        { done: true, ...(note ? { note } : {}) },
-      );
+    mutationFn: async ({ id, ...body }: { id: string } & FollowUpDoneBody) => {
+      const { data } = await api.patch<ReminderItem>(`/leads/reminders/${id}`, body);
       return data;
     },
     onSuccess: () => {
